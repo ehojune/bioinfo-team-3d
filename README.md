@@ -1,5 +1,8 @@
 # labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.2)
 
+[![test](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
+저장소: https://github.com/ehojune/bioinfo-team-3d
+
 CLI 코딩 에이전트(Claude Code · Codex · Gemini CLI)를 **연구소 직원**처럼 굴리는 플랫폼의 1단계 골격입니다.
 CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은 **Paper2Agent로 파견직**이 되어 팀에 합류합니다.
 모든 작업은 폰 승인 · 예산 캡 · 실험노트(출처 기록) 아래에서 돌아갑니다.
