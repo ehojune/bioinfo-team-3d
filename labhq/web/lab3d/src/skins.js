@@ -73,6 +73,31 @@ function localAssetURL(value) {
   return url.href;
 }
 
+// Attachments follow the rig's world pose, not its model/export units. Keep
+// source nodes separate: fallback poses must still move the actual hands.
+function sceneAnchors(scene,sources) {
+  const anchors={},position=new THREE.Vector3(),rotation=new THREE.Quaternion();
+  const discardedScale=new THREE.Vector3(),unit=new THREE.Vector3(1,1,1);
+  const inverseParent=new THREE.Matrix4(),world=new THREE.Matrix4();
+  for(const key of Object.keys(sources)){
+    const proxy=new THREE.Group();proxy.name=`attachment:${key}`;
+    proxy.matrixAutoUpdate=false;scene.add(proxy);anchors[key]=proxy;
+  }
+  return {anchors,
+    sync(){
+      scene.updateWorldMatrix(true,false);inverseParent.copy(scene.matrixWorld).invert();
+      for(const [key,source] of Object.entries(sources)){
+        source.updateWorldMatrix(true,false);
+        source.matrixWorld.decompose(position,rotation,discardedScale);
+        world.compose(position,rotation.normalize(),unit);
+        const proxy=anchors[key];proxy.matrix.multiplyMatrices(inverseParent,world);proxy.matrixWorldNeedsUpdate=true;
+        proxy.visible=true;for(let node=source;node;node=node.parent)if(!node.visible){proxy.visible=false;break;}
+      }
+    },
+    dispose(){Object.values(anchors).forEach(proxy=>proxy.removeFromParent());}
+  };
+}
+
 export async function buildGLTF(ctx,entry) {
   const manager=new THREE.LoadingManager();manager.setURLModifier(localAssetURL);
   const gltf=await new GLTFLoader(manager).loadAsync(localAssetURL(entry.src));
@@ -82,16 +107,20 @@ export async function buildGLTF(ctx,entry) {
   transform.scale.setScalar(entry.scale??1);transform.position.set(...(entry.offset||[0,.67,0]));transform.rotation.y=entry.rotationY||0;
   root.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(transform),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
-  const origin=root.position;
   const estimated={head:[center.x,box.max.y-size.y*.25,center.z],handL:[box.min.x,box.min.y+size.y*.5,center.z],handR:[box.max.x,box.min.y+size.y*.5,center.z]};
-  const anchors={},handRest=[];
+  const sources={},handRest=[];
   for(const [key,name] of Object.entries({head:'anchor_head',handL:'anchor_hand_l',handR:'anchor_hand_r'})){
     const node=model.getObjectByName(name);
-    if(node)anchors[key]=node;
-    else {const anchor=new THREE.Group();anchor.position.fromArray(estimated[key]).sub(origin);pose.add(anchor);anchors[key]=anchor;}
-    if(key!=='head')handRest.push({node:anchors[key],position:anchors[key].position.clone(),quaternion:anchors[key].quaternion.clone()});
+    if(node)sources[key]=node;
+    else {
+      const anchor=new THREE.Group();anchor.name=`source:${key}`;
+      anchor.position.fromArray(estimated[key]);transform.worldToLocal(anchor.position);
+      transform.add(anchor);sources[key]=anchor;
+    }
+    if(key!=='head')handRest.push({node:sources[key],position:sources[key].position.clone(),quaternion:sources[key].quaternion.clone()});
   }
-  anchors.label=new THREE.Group();anchors.label.position.set(0,.60,1.60);root.add(anchors.label);
+  sources.label=new THREE.Group();sources.label.name='source:label';sources.label.position.set(0,.60,1.60);root.add(sources.label);
+  const attachments=sceneAnchors(ctx.shapes.scene,sources),anchors=attachments.anchors;
   const mixer=new THREE.AnimationMixer(model),materials=new Set(),geometries=new Set(),textures=new Set(),skeletons=new Set();
   let triangles=0,drawCalls=0;
   const originals=new Map(),ink=new THREE.MeshBasicMaterial({color:'#354D47'});
@@ -112,12 +141,13 @@ export async function buildGLTF(ctx,entry) {
       handRest.forEach(h=>{h.node.position.copy(h.position);h.node.quaternion.copy(h.quaternion);});
       const clip=THREE.AnimationClip.findByName(gltf.animations,entry.clips?.[next]||next);
       action=clip?mixer.clipAction(clip):null;if(action)action.reset().play();
+      attachments.sync();
     },
     update(dt,t,{reduced=false,silhouette=false}={}){
       if(disposed)return;
       if(outline!==silhouette){outline=silhouette;originals.forEach((m,node)=>{node.material=outline?ink:m;});}
       const a=reduced?0:1,phase=t+ctx.index*.81;
-      if(action&&!silhouette){pose.position.set(0,0,0);pose.rotation.set(0,0,0);mixer.update(reduced?0:dt);return;}
+      if(action&&!silhouette){pose.position.set(0,0,0);pose.rotation.set(0,0,0);mixer.update(reduced?0:dt);attachments.sync();return;}
       pose.position.y=a*.017*Math.sin(phase*2);pose.rotation.set(0,0,0);
       handRest.forEach(h=>{h.node.position.copy(h.position);h.node.quaternion.copy(h.quaternion);});
       const fallback=silhouette?'queued':state;
@@ -126,8 +156,9 @@ export async function buildGLTF(ctx,entry) {
       if(fallback==='hibernating'){pose.rotation.x=.16;pose.rotation.z=.10;pose.position.y=a*.016*Math.sin(phase*.85);}
       if(fallback==='done'){pose.position.y=a*.045*Math.sin(phase*5);handRest.forEach((h,i)=>h.node.rotateZ((i?1:-1)*1.2));}
       if(fallback==='error')pose.rotation.z=a*.065*Math.sin(phase*7);
+      attachments.sync();
     },
-    dispose(){if(disposed)return;disposed=true;mixer.stopAllAction();mixer.uncacheRoot(model);root.removeFromParent();
+    dispose(){if(disposed)return;disposed=true;mixer.stopAllAction();mixer.uncacheRoot(model);attachments.dispose();root.removeFromParent();
       geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());skeletons.forEach(s=>s.dispose());ink.dispose();}
   };
   ctx.parent.add(root);api.setState(ctx.def.state);return api;

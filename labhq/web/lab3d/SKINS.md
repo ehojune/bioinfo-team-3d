@@ -17,6 +17,7 @@
 | 앵커 | `anchor_head`, `anchor_hand_l`, `anchor_hand_r`; 없으면 변환 후 바운딩박스로 추정 |
 | 손 움직임 | 손 앵커를 손/팔 메시 또는 뼈의 부모로 두면 클립 없는 상태에서도 손 올리기 적용 |
 | 표지·이름표 | head에 공용 승인 깃발·zZ·체크·땀방울. label은 좌석 앞 공용 이름표 위치 |
+| 표지 크기 | 상태 표지는 스킨 scale과 무관하게 같은 크기로 보인다. |
 | 애니메이션 | clips는 상태→클립 이름. 매핑 누락은 같은 상태 이름을 찾고, 클립이 없으면 몸 흔들기·기울기·손 포즈로 대체 |
 | 해제 | 공용 표지 dispose 후 스킨 dispose. glTF mixer·geometry·material·texture·skeleton을 해제 |
 | 모델 예산 | 권장 ≤5,000 triangles · ≤4 draw calls/명 · 파일당 ≤2MB. 기본 사무실은 한 자릿수 draw calls 목표 |
