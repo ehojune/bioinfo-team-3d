@@ -34,7 +34,7 @@ PI는 웹 사무실(폰 포함)에서 실시간 상태를 보고 승인한다. �
 
 [3] 작업 순서
 P0 완료: public 저장소 ehojune/bioinfo-team-3d
-P0+ CI: .github/workflows/test.yml로 push와 PR마다 pytest를 돌리고, README 맨 위에 저장소 주소와 CI 배지를 넣는다.
+P0+ 완료(#2): .github/workflows/test.yml이 모든 브랜치 push와 PR마다 pytest를 돌리고, README 맨 위에 저장소 주소와 CI 배지가 있다.
 P1 실제 CLI 연동: claude/codex/gemini --version 기록 → ⛔ 실제 계정으로 첫 실행 전 확인 → 임시 디렉터리에서 엔진별 direct 요청 1개씩.
    실제 stream 출력을 tests/fixtures/에 저장하고 파서 테스트를 추가한다. 반드시 확인: Claude --permission-prompt-tool과
    --settings deny 규칙, Codex exec의 MCP 호출 자동 취소 이슈(openai/codex#24135), Gemini stream-json 이벤트 이름과 승인 모드.
