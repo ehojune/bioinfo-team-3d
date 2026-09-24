@@ -1,0 +1,112 @@
+"""OpenAI Codex CLI adapter (`codex exec --json`).
+
+Role instructions go to AGENTS.md in the workspace (Codex reads it as project guidance).
+Prompts use compact XML blocks (task / output contract / action safety / verification / grounding),
+which Codex follows more reliably than long prose.
+
+Caveat: depending on the Codex version, MCP tool calls inside `codex exec` can be auto-cancelled
+waiting for an approval nobody can give (openai/codex#24135). If hpc_* calls get cancelled, add
+the approval override your version supports to engines.codex.extra_args (e.g. an
+approval_policy/-c setting) rather than bypassing the sandbox.
+"""
+
+from __future__ import annotations
+
+import json
+
+from ..util import short
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+
+
+def _toml(v: object) -> str:
+    if isinstance(v, dict):
+        return "{" + ", ".join(f"{k} = {_toml(x)}" for k, x in v.items()) + "}"
+    return json.dumps(v)  # JSON strings/arrays/bools/numbers are valid TOML here
+
+
+class CodexAdapter(AgentAdapter):
+    engine = "codex"
+
+    def prepare(self, ctx: RunContext) -> None:
+        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        if ctx.task.output_schema:
+            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema))
+
+    def compose_prompt(self, ctx: RunContext) -> str:
+        t = ctx.task
+        blocks = [f"<task>\n{ctx.prompt}\n</task>"]
+        if t.output_schema:
+            blocks.append("<structured_output_contract>\nReturn only JSON that matches the provided output "
+                          "schema. No prose outside the JSON.\n</structured_output_contract>")
+        blocks.append("<action_safety>\nStay inside the workspace and the listed project dirs. No unrelated "
+                      "refactors. Heavy compute and anything touching restricted data goes through the "
+                      "labhq_hpc tools.\n</action_safety>")
+        blocks.append("<verification_loop>\nBefore finishing, check that every deliverable exists in ./outputs "
+                      "and that tests or sanity checks you ran actually passed; report what you verified.\n"
+                      "</verification_loop>")
+        blocks.append("<grounding_rules>\nTie every claim to a file, command output or cited source. Label "
+                      "hypotheses as hypotheses.\n</grounding_rules>")
+        return "\n\n".join(blocks)
+
+    def build_command(self, ctx: RunContext) -> list[str]:
+        a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
+        flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), "-s", a.sandbox,
+                 "-o", str(ctx.meta_dir / "last_message.txt")]
+        if a.model:
+            flags += ["-m", a.model]
+        for d in ctx.extra_dirs:
+            flags += ["--add-dir", d]
+        if t.output_schema:
+            flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
+        for s in ctx.mcp_servers:
+            key = f"mcp_servers.{s.name}"
+            if s.type == "stdio":
+                command, args = wrap_cwd(s)
+                flags += ["-c", f"{key}.command={_toml(command)}", "-c", f"{key}.args={_toml(args)}"]
+                if s.env:
+                    flags += ["-c", f"{key}.env={_toml(expand_env(s.env))}"]
+            else:
+                flags += ["-c", f"{key}.url={_toml(s.url)}"]
+        flags += b.extra_args
+        prompt = self.compose_prompt(ctx)
+        if t.resume_session_id:
+            return [b.bin, "exec", *flags, "resume", t.resume_session_id, prompt]
+        return [b.bin, "exec", *flags, prompt]
+
+    async def handle_line(self, line: str, st: RunState, ctx: RunContext) -> None:
+        ev = json.loads(line)
+        typ = ev.get("type")
+        if typ == "thread.started":
+            st.session_id = ev.get("thread_id")
+            await ctx.emit("agent.status", {"state": "working", "engine": "codex"})
+        elif typ in ("item.started", "item.completed"):
+            item = ev.get("item") or {}
+            it = item.get("type") or item.get("item_type")
+            if it in ("agent_message", "assistant_message") and typ == "item.completed":
+                st.text_parts.append(item.get("text", ""))
+                await ctx.emit("agent.log", {"text": short(item.get("text"), 2000)})
+            elif it == "reasoning" and typ == "item.completed":
+                await ctx.emit("agent.log", {"level": "thinking", "text": short(item.get("text"), 400)})
+            elif it == "command_execution":
+                if typ == "item.started":
+                    await ctx.emit("agent.tool", {"name": "shell", "input": short(item.get("command"), 300)})
+                elif item.get("exit_code") not in (None, 0):
+                    await ctx.emit("agent.tool_error", {"text": short(item.get("aggregated_output"), 400)})
+            elif it == "mcp_tool_call" and typ == "item.started":
+                await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
+            elif it == "file_change" and typ == "item.completed":
+                await ctx.emit("agent.tool", {"name": "edit", "input": short(item.get("changes"), 300)})
+            elif it == "web_search" and typ == "item.started":
+                await ctx.emit("agent.tool", {"name": "web_search", "input": short(item.get("query"), 200)})
+        elif typ == "turn.completed":
+            st.usage = ev.get("usage") or {}
+            await ctx.emit("agent.usage", {"tokens": st.usage})
+        elif typ in ("turn.failed", "error"):
+            err = ev.get("error")
+            st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
+
+    def finalize(self, st: RunState, ctx: RunContext, returncode: int | None):
+        last = ctx.meta_dir / "last_message.txt"
+        if last.exists() and last.read_text().strip():
+            st.final_text = last.read_text()
+        return super().finalize(st, ctx, returncode)

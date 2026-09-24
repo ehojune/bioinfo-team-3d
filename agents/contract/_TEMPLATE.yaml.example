@@ -1,0 +1,31 @@
+# 파견직(contract agent) 템플릿 — 보통은 `labhq recruit`가 자동으로 만듭니다.
+# 직접 쓰려면 파일명을 <id>.yaml 로 바꾸세요 ("_"로 시작하면 로드되지 않음).
+id: c_example
+name: 예시 파견연구원
+role: "[파견] 논문 X의 방법으로 Y 분석"
+character: paper-hat-chick          # UI: 논문 종이모자를 쓴 병아리
+engine: claude_code
+model: sonnet
+employment: contract
+builtin_mcp: [approval, hpc]
+mcp:
+  - name: paper_example
+    type: stdio
+    command: /abs/path/to/talent/example/build/labhq_mcp/.venv/bin/python
+    args: [/abs/path/to/talent/example/build/labhq_mcp/src/example_mcp.py]
+    cwd: /abs/path/to/talent/example/build/labhq_mcp
+    env:
+      EXAMPLE_API_KEY: ${EXAMPLE_API_KEY}   # 값은 runner 환경변수에서 — YAML에 비밀값 금지
+contract:
+  paper: https://doi.org/10.xxxx/xxxxx
+  repo: https://github.com/org/repo
+  kind: full                         # consultant(스킬만) | technician(MCP만) | full(둘 다)
+  hired_at: 1790000000
+  expires_at: 1792592000             # 만료되면 자동으로 인재풀(talent_dir)로 이동
+  status: active                     # probation | active
+  skill_dir: /abs/path/to/talent/example/skill/example-paper
+  talent_dir: /abs/path/to/talent/example
+system_prompt: |
+  You are a contract specialist hired from a published method. Apply the paper's method through
+  its tools; if the request is outside its validated scope, hand it back to the CSO.
+tags: [contract, paper2agent]

@@ -1,0 +1,75 @@
+# cp config/labhq.example.yaml config/labhq.yaml && export LABHQ_CONFIG=$PWD/config/labhq.yaml
+gateway:
+  host: 127.0.0.1            # 폰에서 접속하려면 Tailscale IP나 0.0.0.0 + TLS 프록시
+  port: 8787
+  url: ws://127.0.0.1:8787   # runner가 접속할 주소 (원격이면 wss://…)
+  runner_token: change-me-runner
+  client_token: change-me-client
+
+runner:
+  id: lab-workstation
+  max_parallel: 4
+  workspace_root: ~/.labhq/runs     # 태스크별 실험노트 폴더
+  agents_dir: ../agents             # 이 파일 기준 상대경로
+  talent_dir: ~/.labhq/talent       # 인재풀 (파견직 빌드 + 계약서 보관)
+  broker_port: 8788
+  task_timeout_s: 21600
+  job_poll_s: 60
+
+engines:
+  claude_code: {bin: claude}
+  codex: {bin: codex, extra_args: []}
+  gemini: {bin: gemini}
+
+hpc:
+  scheduler: sge              # sge | pbs | mock | none
+  ssh_host: null              # 로그인 노드에서 qsub을 돌려야 하면 호스트 지정 (작업공간은 공유 FS에)
+  user: null                  # null → 현재 계정
+  default_queue: null
+  sge: {pe: smp, mem_resource: h_vmem, mem_per_slot: true, runtime_resource: h_rt}
+  pbs:
+    resource_template: "nodes=1:ppn={cores},mem={mem},walltime={walltime}"   # Torque
+    pro: false                # PBS Pro면 true + "select=1:ncpus={cores}:mem={mem}" 템플릿
+
+policy:
+  data_zones:                 # 통제접근 데이터: 원본을 LLM 대화로 읽지 않고 HPC 작업으로만 처리
+    - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
+  approvals:
+    hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인
+    timeout_s: 3600
+  budget:
+    per_task_usd: 5
+    per_request_usd: 30
+
+recruit:
+  agent_id: recruiter
+  permission_mode: auto       # 무인 변환. 가능하면 컨테이너/VM 안에서 runner를 돌리세요
+  max_budget_usd: 25
+  default_ttl_days: 30
+  contract_engine: claude_code
+  contract_model: sonnet
+
+github:
+  token_env: GITHUB_TOKEN        # 게이트웨이 호스트의 환경변수에서 읽음 (YAML에 토큰 금지). fine-grained PAT: Issues·Contents RW
+  dashboard_url: null            # 예: https://labhq.<tailnet>.ts.net — 이슈 본문에 사무실 링크
+  codex_mention: "@codex"        # PR에서 Codex에게 말할 때는 답글이어도 항상 붙임
+
+projects:                        # 프로젝트마다 GitHub 저장소 하나. 요청에 --project 를 주면 거기로 업데이트
+  - id: my-project
+    name: 내 프로젝트
+    repo: your-account/my-project      # owner/name
+    branch: main
+    reports_dir: labhq/reports
+    visibility: private                # public이면 allow_public_reports: true 없이는 아무것도 안 올림
+    local_dir: ~/projects/my-project   # 러너의 클론 경로 → 에이전트가 여기서 작업
+    issues: true                       # 요청마다 이슈 1개 (계획·리뷰·최종 보고 코멘트)
+    commit_reports: true               # 최종 보고서를 reports_dir에 커밋
+    codex_review: false
+
+orchestrator:
+  cso_agent: cso
+  chief_of_staff_agent: chief_of_staff
+  reviewer_agent: sci_reviewer
+  max_revisions: 1
+  max_steps: 12
+  max_parallel_steps: 4

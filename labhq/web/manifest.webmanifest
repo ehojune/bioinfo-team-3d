@@ -1,0 +1,9 @@
+{
+  "name": "labhq 사무실",
+  "short_name": "labhq",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F3F6F8",
+  "theme_color": "#1D2B38",
+  "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

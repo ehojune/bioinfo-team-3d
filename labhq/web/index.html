@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>labhq 사무실</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="labhq">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=Jua&display=swap">
+<!--LABHQ_BOOT-->
+<style>
+:root{
+  --paper:#F3F6F8;--panel:#FFFFFF;--floor:#E3E9EF;--wall:#D5DEE7;--ink:#1D2B38;--muted:#5A6B7B;--line:#C9D3DC;--hover:rgba(255,255,255,.45);
+  --desk-top:#CDB89E;--desk-front:#A98F74;--chair:#A3AFBA;--screen:#26313C;--board:#FCFDFD;--board-edge:#AEB9C3;
+  --working:#2F9E5E;--sleep:#3A6FD8;--wait:#D8961C;--error:#D5483F;--done:#6B7C8C;
+  --working-bg:#E3F3E9;--sleep-bg:#E5EDFB;--wait-bg:#FAF0DA;--error-bg:#FBE6E4;
+  --working-ink:#1D7443;--sleep-ink:#2A56AD;--wait-ink:#7F5400;--error-ink:#A8322B;
+  --focus:#3A6FD8;
+  --tile:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='28'%3E%3Cpath d='M0 14 28 0 56 14 28 28Z' fill='none' stroke='%231D2B38' stroke-opacity='.07'/%3E%3C/svg%3E");
+  --ui:"IBM Plex Sans KR","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;
+  --hand:"Jua","IBM Plex Sans KR","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  color-scheme:light;box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --paper:#111A22;--panel:#16212B;--floor:#19242F;--wall:#1E2A36;--ink:#E4ECF2;--muted:#98A9B8;--line:#2C3B49;--hover:rgba(255,255,255,.04);
+  --desk-top:#806C58;--desk-front:#665648;--chair:#46535F;--screen:#0B1117;--board:#22303C;--board-edge:#3A4B5A;
+  --working:#43BE78;--sleep:#6A95F2;--wait:#EDB042;--error:#EF6B61;--done:#8C9CAB;
+  --working-bg:#163224;--sleep-bg:#18253F;--wait-bg:#372C12;--error-bg:#3B1B19;
+  --working-ink:#7FDCA5;--sleep-ink:#9BB9F7;--wait-ink:#F3C874;--error-ink:#F59D96;--focus:#6A95F2;
+  --tile:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='28'%3E%3Cpath d='M0 14 28 0 56 14 28 28Z' fill='none' stroke='%23FFFFFF' stroke-opacity='.05'/%3E%3C/svg%3E");
+  color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --paper:#111A22;--panel:#16212B;--floor:#19242F;--wall:#1E2A36;--ink:#E4ECF2;--muted:#98A9B8;--line:#2C3B49;--hover:rgba(255,255,255,.04);
+  --desk-top:#806C58;--desk-front:#665648;--chair:#46535F;--screen:#0B1117;--board:#22303C;--board-edge:#3A4B5A;
+  --working:#43BE78;--sleep:#6A95F2;--wait:#EDB042;--error:#EF6B61;--done:#8C9CAB;
+  --working-bg:#163224;--sleep-bg:#18253F;--wait-bg:#372C12;--error-bg:#3B1B19;
+  --working-ink:#7FDCA5;--sleep-ink:#9BB9F7;--wait-ink:#F3C874;--error-ink:#F59D96;--focus:#6A95F2;
+  --tile:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='28'%3E%3Cpath d='M0 14 28 0 56 14 28 28Z' fill='none' stroke='%23FFFFFF' stroke-opacity='.05'/%3E%3C/svg%3E");
+  color-scheme:dark;}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.55 var(--ui);-webkit-font-smoothing:antialiased;padding-bottom:100px}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+a{color:var(--sleep-ink)}
+
+/* header */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--paper);border-bottom:1px solid var(--line)}
+.top-in{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:14px;padding:10px 16px;flex-wrap:wrap}
+.brand{margin:0;font:400 24px/1 var(--hand)}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-left:auto}
+.conn i{width:8px;height:8px;border-radius:50%;background:var(--done)}
+.conn.live i{background:var(--working)}.conn.demo i{background:var(--sleep)}.conn.offline i,.conn.auth i{background:var(--error)}
+.cost{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.note{max-width:1280px;margin:0 auto;padding:0 16px 8px;font-size:13px;color:var(--muted)}
+.tokenbar{display:none;max-width:1280px;margin:0 auto;padding:0 16px 10px;gap:8px;align-items:center;flex-wrap:wrap}
+.tokenbar.show{display:flex}
+.tokenbar input{min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:6px 10px;width:min(320px,100%)}
+
+/* layout */
+.layout{max-width:1280px;margin:0 auto;padding:14px 16px;display:grid;gap:18px}
+@media (min-width:1000px){.layout{grid-template-columns:minmax(0,1.45fr) minmax(330px,1fr);align-items:start}}
+
+/* office */
+.office{background:var(--floor) var(--tile);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.wall{display:flex;align-items:flex-end;gap:10px;padding:12px 12px 0;background:var(--wall);border-bottom:6px solid var(--desk-front)}
+.board{flex:1;min-width:0;background:var(--board);border:3px solid var(--board-edge);border-bottom-width:6px;border-radius:6px 6px 2px 2px;padding:7px 10px 9px;margin-bottom:10px}
+.board-title{font:17px/1.3 var(--hand);margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board-empty{font:15px/1.3 var(--hand);color:var(--muted);margin:2px 0}
+.phases{display:flex;flex-wrap:wrap;gap:3px 10px;margin:0 0 5px;padding:0;list-style:none;font:500 12px/1.4 var(--ui);color:var(--muted)}
+.phases li::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid currentColor;margin-right:4px;vertical-align:1px}
+.phases li.on{color:var(--ink)}.phases li.on::before{background:currentColor}
+.phases li.now{color:var(--working-ink)}.phases li.now::before{background:var(--working);border-color:var(--working)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font:500 12px/1.5 var(--ui);padding:0 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+.chip.st-working{border-color:var(--working);color:var(--working-ink);background:var(--working-bg)}
+.chip.st-done{color:var(--ink)}
+.chip.st-revise{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
+.chip.st-error{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
+.rack,.door{flex:none;width:52px;height:auto;display:block}
+.rack-body{fill:#2B3642}.rack-slot{fill:#3A4652}
+.led{fill:#56616C}.led.queued{fill:var(--wait)}.led.running{fill:var(--working)}.led.completed{fill:#8FA0AF}.led.failed{fill:var(--error)}
+.door-frame{fill:var(--desk-front)}.door-gap{fill:#0E151B}.door-panel{fill:var(--desk-top)}.door-knob{fill:#E9D9A6}
+.zones{padding:4px 8px 10px}
+.zone{padding:8px 2px 6px}
+.zone+.zone{border-top:1px dashed var(--line)}
+.zone h3{margin:0 0 0 8px;font:500 12px/1.4 var(--ui);color:var(--muted)}
+.seats{display:grid;grid-template-columns:repeat(auto-fill,minmax(94px,1fr));gap:0 6px}
+.seat{position:relative;display:flex;flex-direction:column;align-items:center;padding:26px 2px 8px;border:0;border-radius:14px;background:none;cursor:pointer;text-align:center;min-width:0}
+.seat:hover{background:var(--hover)}
+.seat svg{width:100%;max-width:112px;height:auto;overflow:visible}
+.seat .bubble{position:absolute;top:3px;left:50%;transform:translateX(-50%);max-width:calc(100% - 2px);padding:1px 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);font:14px/1.4 var(--hand);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.seat.st-idle .bubble,.seat.empty .bubble{visibility:hidden}
+.st-working .bubble{border-color:var(--working);color:var(--working-ink)}
+.st-hibernating .bubble{border-color:var(--sleep);color:var(--sleep-ink)}
+.st-waiting .bubble{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
+.st-error .bubble{border-color:var(--error);color:var(--error-ink)}
+.nm{display:block;font:17px/1.15 var(--hand);margin-top:1px}
+.sub{display:block;font:12px/1.35 var(--ui);color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.seat.empty{cursor:default}.seat.empty .nm{color:var(--muted)}
+.seat.drop{background:var(--working-bg);outline:2px dashed var(--working)}
+.offline .seat svg{filter:grayscale(.8);opacity:.7}
+
+/* seat svg parts */
+.spot{fill:var(--line);opacity:.5}
+.st-working .spot{fill:var(--working);opacity:.22}.st-hibernating .spot{fill:var(--sleep);opacity:.22}
+.st-waiting .spot{fill:var(--wait);opacity:.3}.st-error .spot{fill:var(--error);opacity:.25}
+.chair{fill:var(--chair)}.chair-empty{fill:none;stroke:var(--chair);stroke-width:1.4;stroke-dasharray:3 3}
+.desk-top{fill:var(--desk-top)}.desk-front{fill:var(--desk-front)}.screen{fill:var(--screen)}
+.glow{fill:var(--sleep);opacity:.15}
+.st-working .glow{fill:var(--working);opacity:.55}.st-waiting .glow{fill:var(--wait);opacity:.45}
+.st-error .glow{fill:var(--error);opacity:.5}.st-hibernating .glow{opacity:.05}
+.code rect{fill:#E3EAF0;opacity:0}.st-working .code rect{opacity:.9}
+.m-dots,.m-bang,.m-check,.m-z,.m-sweat,.paw-up,.eyes-closed{display:none}
+.st-queued .m-dots,.st-waiting .m-bang,.st-waiting .paw-up,.st-done .m-check,.st-hibernating .m-z,
+.st-hibernating .eyes-closed,.st-error .m-sweat{display:inline}
+.st-waiting .paw-l,.st-hibernating .eyes-open{display:none}
+.m-z text{font:12px var(--hand);fill:var(--sleep)}.m-z text:nth-child(2){font-size:14px}.m-z text:nth-child(3){font-size:17px}
+.m-dots text{font:18px var(--hand);fill:var(--muted)}
+.m-bang circle{fill:var(--wait)}.m-bang text{font:600 12px var(--ui);fill:#fff}
+.m-check circle{fill:var(--working)}.m-check path{stroke:#fff}
+@media (prefers-reduced-motion:no-preference){
+  .char,.paw,.paw-up,.m-bang,.m-z text,.code rect,.door-panel{transform-box:fill-box}
+  .char{transform-origin:50% 100%}
+  .st-idle .char{animation:breathe 3.4s ease-in-out infinite}
+  .st-working .char{animation:bob .8s ease-in-out infinite}
+  .st-working .paw-l{animation:type .34s ease-in-out infinite}
+  .st-working .paw-r{animation:type .34s ease-in-out .17s infinite}
+  .st-working .code rect{transform-origin:0 50%;animation:line 1.2s steps(5) infinite}
+  .st-working .code rect:nth-child(2){animation-delay:.4s}.st-working .code rect:nth-child(3){animation-delay:.8s}
+  .st-waiting .paw-up{transform-origin:50% 100%;animation:wave 1.1s ease-in-out infinite}
+  .st-waiting .m-bang{transform-origin:50% 50%;animation:pulse 1s ease-in-out infinite}
+  .st-hibernating .char{animation:breathe 4.8s ease-in-out infinite}
+  .st-hibernating .m-z text{animation:float 2.7s ease-in-out infinite}
+  .st-hibernating .m-z text:nth-child(2){animation-delay:.6s}.st-hibernating .m-z text:nth-child(3){animation-delay:1.2s}
+  .st-done .char{animation:hop .55s ease-out 2}
+  .st-error .char{animation:shake .38s ease-in-out 3}
+  .led.running{animation:blink .9s steps(2) infinite}
+  .seat.arriving{animation:walkin 1.8s ease-out both}
+  .door-panel{transform-origin:0 50%;transition:transform .5s ease}
+}
+.door.open .door-panel{transform:scaleX(.28)}
+@keyframes breathe{50%{transform:translateY(-1px) scaleY(1.012)}}
+@keyframes bob{50%{transform:translateY(-1.6px)}}
+@keyframes type{50%{transform:translateY(-2.6px)}}
+@keyframes line{from{transform:scaleX(.2)}to{transform:scaleX(1)}}
+@keyframes wave{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(14deg)}}
+@keyframes pulse{50%{transform:scale(1.2)}}
+@keyframes float{0%{opacity:0;transform:translate(0,4px)}40%{opacity:1}100%{opacity:0;transform:translate(3px,-7px)}}
+@keyframes hop{40%{transform:translateY(-7px)}}
+@keyframes shake{25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+@keyframes blink{50%{opacity:.25}}
+@keyframes walkin{0%{transform:translateX(-160px);opacity:0}25%{opacity:1}100%{transform:none}}
+
+/* panels */
+.panels{display:grid;gap:22px;align-content:start;min-width:0}
+.panel h2{margin:0 0 8px;font:600 16px/1.3 var(--ui);display:flex;align-items:baseline;gap:8px}
+.panel h2 .n{font:500 13px var(--ui);color:var(--muted)}
+.list{list-style:none;margin:0;padding:0}
+.empty-note{color:var(--muted);font-size:14px;margin:0}
+.ap{border:1px solid var(--wait);background:var(--wait-bg);border-radius:12px;padding:10px 12px;display:grid;grid-template-columns:36px minmax(0,1fr);gap:2px 10px}
+.ap+.ap{margin-top:8px}
+.ap .who svg{width:36px;height:36px;display:block}
+.ap .kind{font:600 12px/1.5 var(--ui);color:var(--wait-ink)}
+.ap .kind span{font-weight:400;color:var(--muted);margin-left:6px}
+.ap .sum{margin:0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.ap .why{margin:2px 0 0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.ap .acts{display:flex;gap:8px;margin-top:8px}
+.ap.sug{border-color:var(--line);background:var(--panel)}.ap.sug .kind{color:var(--sleep-ink)}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn.go{background:var(--working);border-color:var(--working);color:#fff}
+.btn:disabled{opacity:.5;cursor:default}
+.req-pick{margin:0 0 6px}
+.req-pick select{max-width:100%;min-height:36px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:0 8px}
+.req-text{font-size:15px;margin:0 0 6px;overflow-wrap:anywhere}
+.req-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted);margin:6px 0 0}
+.dag{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:6px;margin-top:6px}
+.dag svg{display:block}
+.dag-node rect{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
+.dag-node.st-working rect{stroke:var(--working);fill:var(--working-bg)}
+.dag-node.st-done rect{stroke:var(--done)}
+.dag-node.st-revise rect{stroke:var(--wait);fill:var(--wait-bg)}
+.dag-node.st-error rect{stroke:var(--error);fill:var(--error-bg)}
+.dag-node text{font:500 12px var(--ui);fill:var(--ink)}.dag-node text.s{font-weight:400;fill:var(--muted)}
+.dag-edge{fill:none;stroke:var(--line);stroke-width:1.5}
+.gh{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}
+details.report{margin-top:8px}
+details.report summary{cursor:pointer;font-weight:500}
+details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}
+.msg{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:2px 8px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
+.msg .av svg,.glyph{width:28px;height:28px;display:block}
+.glyph{display:grid;place-items:center;border-radius:50%;background:var(--wall);font:600 10px var(--ui);color:var(--muted)}
+.msg b{font:15px/1.3 var(--hand);font-weight:400}
+.msg b i{font-style:normal;color:var(--muted)}
+.msg p{margin:1px 0 0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.msg time{font-size:12px;color:var(--muted);white-space:nowrap}
+.msg.alert p{color:var(--wait-ink)}
+.job{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
+.job small{color:var(--muted)}
+.state{font:500 12px/1.6 var(--ui);padding:0 7px;border-radius:6px;border:1px solid var(--line);white-space:nowrap}
+.state.running{border-color:var(--working);color:var(--working-ink);background:var(--working-bg)}
+.state.queued,.state.held{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
+.state.failed{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
+
+/* composer */
+.composer{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--paper);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+.composer-in{max-width:1280px;margin:0 auto;display:flex;gap:8px;align-items:center}
+.memo{flex:none;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;font:15px var(--hand);background:#FFF1A8;color:#6B5200;border:1px solid #E3CE6E;border-radius:4px;padding:7px 10px;transform:rotate(-3deg)}
+.ghost{position:fixed;z-index:50;pointer-events:none;transform:rotate(-6deg);margin:-18px 0 0 -26px}
+@media (max-width:620px){.memo{display:none}}
+#ask{flex:1;min-width:0;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px 12px}
+.composer select{flex:none;max-width:30%;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 6px}
+.composer .btn{min-height:44px}
+@media (max-width:620px){
+  body{padding-bottom:150px}
+  .composer-in{flex-wrap:wrap;gap:6px 8px}
+  #ask{order:1;flex:1 1 60%}
+  #send{order:2}
+  .composer select{order:3;flex:1 1 40%;max-width:none;min-height:38px;font-size:14px}
+  .toast{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+}
+
+/* sheet + toast */
+dialog.sheet{border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);padding:0;width:min(520px,calc(100% - 24px));max-height:86%}
+dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
+.sheet-in{padding:16px 18px 18px}
+.sheet-head{display:flex;gap:12px;align-items:center}
+.sheet-head svg{width:84px;height:84px;flex:none}
+.sheet h2{margin:0;font:24px/1.2 var(--hand);font-weight:400}
+.sheet .role{margin:2px 0 0;color:var(--muted);font-size:14px}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:14px 0;font-size:14px}
+.facts dt{color:var(--muted)}.facts dd{margin:0;overflow-wrap:anywhere}
+.acts{display:flex;flex-wrap:wrap;gap:8px}
+.activity{list-style:none;margin:0 0 14px;padding:0;font-size:13px;max-height:200px;overflow:auto}
+.activity li{padding:4px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.activity time{color:var(--muted);margin-right:8px}
+.toast{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;max-width:calc(100% - 32px)}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <h1 class="brand">labhq 사무실</h1>
+    <span class="conn" id="conn"><i></i><span>연결 중</span></span>
+    <span class="cost" id="cost">사용 비용 $0.00</span>
+  </div>
+  <p class="note" id="note" hidden>가상의 데이터로 움직이는 데모예요. 게이트웨이에 연결하면 실제 팀의 상태가 보여요.</p>
+  <div class="tokenbar" id="tokenbar">
+    <label for="tok">게이트웨이 토큰</label>
+    <input id="tok" type="password" autocomplete="off" placeholder="client_token">
+    <button class="btn primary" id="tok-go" type="button">연결</button>
+    <a href="?demo=1">데모 보기</a>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="office" id="office" aria-label="사무실">
+    <div class="wall">
+      <div class="board" id="board" aria-live="off"></div>
+      <svg class="rack" id="rack" viewBox="0 0 52 104" role="img" aria-label="HPC 서버 랙"></svg>
+      <svg class="door" id="door" viewBox="0 0 52 104" role="img" aria-label="입구">
+        <rect class="door-frame" x="4" y="8" width="44" height="96" rx="2"/>
+        <rect class="door-gap" x="8" y="12" width="36" height="92"/>
+        <g class="door-panel"><rect x="8" y="12" width="36" height="92" fill="currentColor" style="fill:var(--desk-top)"/><circle class="door-knob" cx="38" cy="60" r="2.4"/></g>
+      </svg>
+    </div>
+    <div class="zones" id="zones"></div>
+  </section>
+
+  <aside class="panels">
+    <section class="panel" aria-labelledby="h-ap">
+      <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
+      <div id="approvals"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-req">
+      <h2 id="h-req">진행 중인 요청</h2>
+      <div id="request"></div>
+    </section>
+    <section class="panel" aria-labelledby="h-feed">
+      <h2 id="h-feed">사내 메신저</h2>
+      <ul class="list" id="feed"></ul>
+    </section>
+    <section class="panel" aria-labelledby="h-jobs">
+      <h2 id="h-jobs">HPC 작업</h2>
+      <ul class="list" id="jobs"></ul>
+    </section>
+  </aside>
+</main>
+
+<div class="composer">
+  <div class="composer-in">
+    <span class="memo" id="memo" title="끌어다 직원 책상에 놓으면 그 직원에게 바로 맡겨요">메모</span>
+    <label class="sr" for="ask">요청 내용</label>
+    <input id="ask" type="text" enterkeyhint="send" placeholder="무엇을 알아볼까요?">
+    <label class="sr" for="target">받는 사람</label>
+    <select id="target"></select>
+    <label class="sr" for="project">프로젝트</label>
+    <select id="project" hidden></select>
+    <button class="btn primary" id="send" type="button">보내기</button>
+  </div>
+</div>
+
+<dialog class="sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+(() => {
+'use strict';
+const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
+const QS = new URLSearchParams(location.search);
+const MODE = (QS.has('demo') || BOOT.mode !== 'live') ? 'demo' : 'live';
+const SPEED = Math.max(0.25, Math.min(40, parseFloat(QS.get('speed') || '1') || 1));
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const now = () => Date.now() / 1000;
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+};
+const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
+const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
+
+/* ---------------- staff art: original chibi animals ---------------- */
+const FUR = {
+  owl: ['#8C735E', '#EFE3D3'], penguin: ['#2F3A48', '#F4F6F8'], bear: ['#A8764F', '#E2C29F'],
+  squirrel: ['#C9793A', '#F1D9B8'], fox: ['#E27B36', '#FBEBDD'], raccoon: ['#8F969C', '#E6E8EA'],
+  octopus: ['#B46AB8', '#D3A0D6'], hedgehog: ['#7C5D47', '#E9D5B7'], turtle: ['#9CC27F', '#C9DFB6'],
+  beaver: ['#8C5A3B', '#C99A77'], otter: ['#7E5C4B', '#D8BFA9'], chick: ['#F2C84B', '#F7DC86'],
+};
+const CHAR_OF = { cso: 'owl', chief_of_staff: 'penguin', biologist: 'bear', data_steward: 'squirrel', lit_scout: 'fox',
+  analyst: 'raccoon', engineer: 'octopus', qc_reviewer: 'hedgehog', sci_reviewer: 'turtle', recruiter: 'beaver',
+  'bioinfo-agent': 'otter' };
+const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
+function kindOf(a) {
+  if (!a) return 'chick';
+  if (CHAR_OF[a.id]) return CHAR_OF[a.id];
+  const c = a.character === 'paper-hat-chick' ? 'chick' : a.character;
+  if (FUR[c]) return c;
+  return isContract(a) ? 'chick' : 'otter';
+}
+const SPIKES = (() => {
+  const pts = [];
+  for (let i = 0, deg = 150; deg <= 390; deg += 12, i++) {
+    const r = i % 2 ? 17 : 23.5, t = deg * Math.PI / 180;
+    pts.push(`${(50 + r * Math.cos(t)).toFixed(1)},${(40 - r * Math.sin(t)).toFixed(1)}`);
+  }
+  return `<polygon points="${pts.join(' ')}" fill="#6E5240"/><ellipse cx="50" cy="63" rx="19" ry="15" fill="#6E5240"/>`;
+})();
+const NOSE = '#3B2A20', EYE = '#2A2F35';
+const PARTS = {
+  owl: { ears: '<path d="M36 27 33 12 44 21Z M64 27 67 12 56 21Z" fill="FUR"/>', feat: '<path d="M47.6 43h4.8L50 47.8Z" fill="#E3A23B"/>' },
+  penguin: { patch: '<ellipse cx="50" cy="41" rx="12.5" ry="11.5" fill="PALE"/>', feat: '<path d="M47.4 43.2h5.2L50 47Z" fill="#F0A53A"/>' },
+  bear: { ears: '<circle cx="36.5" cy="24.5" r="6" fill="FUR"/><circle cx="63.5" cy="24.5" r="6" fill="FUR"/><circle cx="36.5" cy="24.5" r="3" fill="PALE"/><circle cx="63.5" cy="24.5" r="3" fill="PALE"/>',
+    feat: `<ellipse cx="50" cy="44.5" rx="7.5" ry="5.5" fill="PALE"/><ellipse cx="50" cy="42.6" rx="2.6" ry="1.8" fill="${NOSE}"/><path d="M48 46.2q2 1.4 4 0" fill="none" stroke="${NOSE}" stroke-width="1" stroke-linecap="round"/>` },
+  squirrel: { back: '<path d="M36 74C16 72 12 48 23 37c6-6 13-1 10 6-3 8 1 14 6 17Z" fill="#B8692E"/>',
+    ears: '<path d="M38 26 36 15 45 22Z M62 26 64 15 55 22Z" fill="FUR"/>', patch: '<ellipse cx="50" cy="44" rx="10" ry="7.5" fill="PALE"/>',
+    feat: `<circle cx="50" cy="42.5" r="1.6" fill="${NOSE}"/>` },
+  fox: { back: '<path d="M63 74c22 1 31-15 23-28-4 11-12 16-21 16Z" fill="FUR"/><path d="M86 46c3 5 3 10 1 14-4-3-4-9-1-14Z" fill="PALE"/>',
+    ears: `<path d="M35 29 33 11 46 22Z M65 29 67 11 54 22Z" fill="FUR"/><path d="M33 11l2.4 6 3-2.5Z M67 11l-2.4 6-3-2.5Z" fill="${NOSE}"/>`,
+    patch: '<path d="M37 42q13 12 26 0q-2 9-13 10q-11-1-13-10Z" fill="PALE"/>', feat: `<circle cx="50" cy="42.6" r="1.8" fill="${NOSE}"/>` },
+  raccoon: { back: '<path d="M63 72c16 3 26-5 26-15-5 5-12 8-24 6Z" fill="FUR"/><path d="M79 66l3-7M85 62l2-6" stroke="#3E4449" stroke-width="3"/>',
+    ears: '<circle cx="37" cy="25" r="5.2" fill="FUR"/><circle cx="63" cy="25" r="5.2" fill="FUR"/><circle cx="37" cy="25" r="2.4" fill="#3E4449"/><circle cx="63" cy="25" r="2.4" fill="#3E4449"/>',
+    patch: '<path d="M34 37q16-8 32 0q1 7-7 7q-9-4-18 0q-8 0-7-7Z" fill="#3E4449"/><ellipse cx="50" cy="46" rx="6" ry="4" fill="PALE"/>',
+    feat: '<ellipse cx="50" cy="44" rx="2.2" ry="1.6" fill="#2A2F35"/>' },
+  octopus: { noBelly: true, back: '<path d="M34 60c-8 4-10 12-5 16M66 60c8 4 10 12 5 16" fill="none" stroke="FUR" stroke-width="5" stroke-linecap="round"/>',
+    extra: '<circle cx="43" cy="27" r="2.2" fill="PALE"/><circle cx="57" cy="25" r="1.6" fill="PALE"/><circle cx="61" cy="31" r="1.3" fill="PALE"/>',
+    feat: '<path d="M47.5 45q2.5 2 5 0" fill="none" stroke="#5B2E5E" stroke-width="1.2" stroke-linecap="round"/>' },
+  hedgehog: { back: SPIKES, headPale: true, noBelly: true, feat: `<ellipse cx="50" cy="44" rx="3" ry="2.2" fill="${NOSE}"/>` },
+  turtle: { noBelly: true, shell: true,
+    extra: '<g fill="none" stroke="#2A2F35" stroke-width="1.2"><circle cx="44" cy="38" r="4.3"/><circle cx="56" cy="38" r="4.3"/><path d="M48.3 38h3.4"/></g>',
+    feat: '<path d="M47.5 45q2.5 1.8 5 0" fill="none" stroke="#3E5A2E" stroke-width="1.1" stroke-linecap="round"/>' },
+  beaver: { ears: '<circle cx="38" cy="25" r="4.2" fill="FUR"/><circle cx="62" cy="25" r="4.2" fill="FUR"/><circle cx="38" cy="25" r="2" fill="PALE"/><circle cx="62" cy="25" r="2" fill="PALE"/>',
+    patch: '<ellipse cx="50" cy="44.5" rx="8" ry="6" fill="PALE"/>',
+    feat: `<ellipse cx="50" cy="42" rx="2.6" ry="1.8" fill="${NOSE}"/><rect x="47.8" y="46" width="4.4" height="4.2" rx=".8" fill="#fff" stroke="#D9CFC4" stroke-width=".5"/><path d="M50 46v4.2" stroke="#D9CFC4" stroke-width=".5"/>` },
+  otter: { ears: '<circle cx="38" cy="26" r="3.6" fill="FUR"/><circle cx="62" cy="26" r="3.6" fill="FUR"/>',
+    patch: '<ellipse cx="50" cy="44.5" rx="10.5" ry="7" fill="PALE"/>',
+    feat: `<ellipse cx="50" cy="41.8" rx="2.4" ry="1.7" fill="${NOSE}"/><path d="M44 44.5 35 43.5M44 46.5 35 47.5M56 44.5l9-1M56 46.5l9 1" stroke="#5A4235" stroke-width=".8" stroke-linecap="round"/>`,
+    desk: '<ellipse cx="50" cy="66" rx="4" ry="2.4" fill="#A7B0B8"/>' },
+  chick: { noBelly: true, feat: '<path d="M47 41.5h6L50 46Z" fill="#EE8E2E"/>',
+    extra: '<path d="M36 27 50 6 64 27Z" fill="#FFFFFF" stroke="#C9D3DC" stroke-width=".8"/><path d="M50 6 45 27" stroke="#C9D3DC" stroke-width=".8"/><path d="M52 16h5M53 20h6" stroke="#9AA7B3" stroke-width=".9" stroke-linecap="round"/>' },
+};
+function eyes(kind) {
+  const open = kind === 'raccoon'
+    ? `<circle cx="44" cy="38" r="2.6" fill="#fff"/><circle cx="56" cy="38" r="2.6" fill="#fff"/><circle cx="44.4" cy="38.4" r="1.4" fill="${EYE}"/><circle cx="56.4" cy="38.4" r="1.4" fill="${EYE}"/>`
+    : kind === 'owl'
+      ? `<circle cx="43.5" cy="38" r="6" fill="#F7F1E6"/><circle cx="56.5" cy="38" r="6" fill="#F7F1E6"/><circle cx="43.5" cy="38.4" r="2.7" fill="${EYE}"/><circle cx="56.5" cy="38.4" r="2.7" fill="${EYE}"/>`
+      : `<circle cx="44" cy="38" r="2.2" fill="${EYE}"/><circle cx="56" cy="38" r="2.2" fill="${EYE}"/><circle cx="44.7" cy="37.3" r=".7" fill="#fff"/><circle cx="56.7" cy="37.3" r=".7" fill="#fff"/>`;
+  const lid = kind === 'raccoon' ? '#fff' : EYE;
+  return `<g class="eyes-open">${open}</g><g class="eyes-closed"><path d="M41 38.5q3 2.4 6 0M53 38.5q3 2.4 6 0" fill="none" stroke="${lid}" stroke-width="1.5" stroke-linecap="round"/></g>`;
+}
+function charArt(kind) {
+  const [fur, pale] = FUR[kind] || FUR.otter, p = PARTS[kind] || {};
+  const fill = s => (s || '').replace(/FUR/g, fur).replace(/PALE/g, pale);
+  const body = p.shell
+    ? '<ellipse cx="50" cy="63" rx="21" ry="16.5" fill="#5E8C4A"/><path d="M50 51l7 5v8l-7 5-7-5v-8Z M43 56l-9-2 M57 56l9-2 M43 64l-8 5 M57 64l8 5" fill="none" stroke="#46703A" stroke-width="1.3"/>'
+    : `<ellipse cx="50" cy="63" rx="16" ry="14" fill="${fur}"/>` + (p.noBelly ? '' : `<ellipse cx="50" cy="66" rx="10" ry="8" fill="${pale}"/>`);
+  return fill(p.back) + fill(p.ears) + body +
+    `<circle cx="50" cy="38" r="${kind === 'octopus' ? 18.5 : 17}" fill="${p.headPale ? pale : fur}"/>` +
+    fill(p.patch) + eyes(kind) + fill(p.feat) +
+    '<ellipse cx="39.5" cy="44" rx="3" ry="1.9" fill="#F29BA0" opacity=".5"/><ellipse cx="60.5" cy="44" rx="3" ry="1.9" fill="#F29BA0" opacity=".5"/>' +
+    fill(p.extra);
+}
+function seatSVG(a) {
+  const k = kindOf(a), fur = (FUR[k] || FUR.otter)[0], p = PARTS[k] || {};
+  return `<svg viewBox="0 0 100 104" aria-hidden="true" focusable="false">
+<ellipse class="spot" cx="50" cy="95" rx="42" ry="6.5"/><rect class="chair" x="33" y="45" width="34" height="24" rx="8"/>
+<g class="char">${charArt(k)}</g>
+<path class="desk-top" d="M10 72h80l-8-10H18Z"/><rect class="desk-front" x="10" y="72" width="80" height="15" rx="1.5"/>
+<rect class="desk-front" x="78.5" y="55" width="3" height="8"/><path class="screen" d="M68 57 92 53V36L68 40Z"/><path class="glow" d="M70 55.3 90 52V38L70 41.5Z"/>
+<g class="code"><rect x="72" y="43.5" width="10" height="1.6" rx=".8"/><rect x="72" y="47" width="14" height="1.6" rx=".8"/><rect x="72" y="50.5" width="7" height="1.6" rx=".8"/></g>
+${p.desk || ''}
+<ellipse class="paw paw-l" cx="41" cy="66.5" rx="5" ry="3.4" fill="${fur}"/><ellipse class="paw paw-r" cx="59" cy="66.5" rx="5" ry="3.4" fill="${fur}"/>
+<ellipse class="paw-up" cx="30" cy="36" rx="4.4" ry="6" fill="${fur}"/>
+<g class="m-dots"><text x="50" y="14" text-anchor="middle">···</text></g>
+<g class="m-bang"><circle cx="68" cy="13" r="7.5"/><text x="68" y="17" text-anchor="middle">!</text></g>
+<g class="m-check"><circle cx="68" cy="13" r="7.5"/><path d="M64.6 13.2l2.4 2.4 4.4-4.8" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g class="m-z"><text x="64" y="17">z</text><text x="71" y="10">z</text><text x="79" y="3">Z</text></g>
+<path class="m-sweat" d="M72 24c2.5 3.2 3 5 1.6 6.6a2.3 2.3 0 0 1-3.3 0C69 29 69.5 27.2 72 24Z" fill="#7FB6F0"/>
+</svg>`;
+}
+const EMPTY_SEAT = `<svg viewBox="0 0 100 104" aria-hidden="true" focusable="false"><ellipse class="spot" cx="50" cy="95" rx="42" ry="6.5"/><rect class="chair-empty" x="33" y="45" width="34" height="24" rx="8"/><path class="desk-top" d="M10 72h80l-8-10H18Z"/><rect class="desk-front" x="10" y="72" width="80" height="15" rx="1.5"/><rect class="desk-front" x="78.5" y="55" width="3" height="8"/><path class="screen" d="M68 57 92 53V36L68 40Z"/></svg>`;
+const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable="false">${charArt(kind)}</svg>`;
+
+/* ---------------- state ---------------- */
+const S = {
+  agents: new Map(), approvals: new Map(), suggestions: [], requests: new Map(), current: null,
+  jobs: new Map(), feed: [], cost: 0, conn: MODE === 'demo' ? 'demo' : 'connecting', projects: [],
+  lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
+};
+const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
+  hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
+const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드' };
+const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
+  cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
+const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
+  report: '보고서를 저장소에 커밋했어요', final: '이슈에 최종 보고를 올리고 닫았어요', recruit: '이슈에 파견직 합류를 기록했어요',
+  pr: 'PR을 열었어요', codex_review: 'PR에 "@codex review" 코멘트를 남겼어요' };
+const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실행'], ['review', '리뷰'], ['report', '보고']];
+
+const ag = id => S.agents.get(id);
+const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
+function upsertAgent(a) {
+  const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
+  S.agents.set(a.id, { ...prev, ...a });
+}
+function req(rid) {
+  if (!S.requests.has(rid)) S.requests.set(rid, { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, phase: 'briefing', status: 'running', created_at: now() });
+  return S.requests.get(rid);
+}
+function setPlan(q, plan) {
+  q.plan = (plan.steps || []).map(s => ({ ...s, depends_on: s.depends_on || [] }));
+  for (const s of q.plan) if (!q.steps[s.id]) q.steps[s.id] = 'pending';
+}
+function logTo(a, text, ts) { a.log.push({ ts, text: short(text, 240) }); if (a.log.length > 40) a.log.shift(); }
+function feed(item, ts, rid) { S.feed.unshift({ ...item, ts: ts || now(), rid }); if (S.feed.length > 120) S.feed.length = 120; }
+function stripPrompt(p) {
+  const m = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(p || '');
+  return m ? `${m[1]}: ${m[2]}` : (p || '');
+}
+function pickCurrent() {
+  const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  S.current = (all.find(r => r.status === 'running') || all[0] || {}).id || null;
+}
+function syncRoster(list, replay) {
+  const ids = new Set(list.map(a => a.id));
+  for (const a of list) {
+    const isNew = !S.agents.has(a.id);
+    upsertAgent(a);
+    if (isNew && !replay && S.agents.size > 1) { S.agents.get(a.id).arriving = now(); S.doorUntil = now() + 2.2; }
+  }
+  for (const id of [...S.agents.keys()]) if (!ids.has(id)) S.agents.delete(id);
+}
+function onDispatch(ev) {
+  const d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, q = rid ? req(rid) : null, a = ag(id);
+  if (a) a.task = d.title || short(stripPrompt(d.prompt), 60);
+  if (d.step_id) S.taskStep.set(ev.task_id, d.step_id);
+  if (q) {
+    const ph = { briefing: 'briefing', plan: 'plan', review: 'review', synthesis: 'report', direct: 'execute' }[d.kind];
+    if (ph) q.phase = ph;
+    if (d.step_id) q.steps[d.step_id] = 'working';
+  }
+  const wake = /HPC 결과/.test(d.title || '');
+  let m = null;
+  if (d.kind === 'briefing') m = { who: 'cso', to: id, text: '착수 브리핑 부탁해요' };
+  else if (d.kind === 'review') m = { who: 'cso', to: id, text: '결과 검토 부탁해요' };
+  else if (d.kind === 'direct') m = { who: 'pi', to: id, text: short(d.title || d.prompt, 110) };
+  else if (wake) m = { who: 'hpc', to: id, text: '작업이 끝났어요. 이어서 해 주세요' };
+  else if (d.kind === 'step' || !d.kind) m = { who: 'cso', to: id, text: short(d.title || stripPrompt(d.prompt), 110) };
+  if (m) feed(m, ev.ts, rid);
+}
+function apply(ev, replay = false) {
+  const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
+  switch (t) {
+    case 'snapshot': {
+      S.agents.clear();
+      (d.agents || []).forEach(upsertAgent);
+      S.projects = d.projects || [];
+      for (const r of d.requests || []) {
+        const q = req(r.id);
+        Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0 });
+        if (r.plan) setPlan(q, r.plan);
+        if (r.status !== 'running') q.phase = 'done';
+      }
+      (d.recent_events || []).forEach(e => apply(e, true));
+      S.approvals.clear();
+      (d.approvals || []).forEach(x => S.approvals.set(x.id, x));
+      for (const a of S.agents.values()) if (a.state === 'done' || a.state === 'error' || a.state === 'queued') a.state = 'idle';
+      pickCurrent();
+      break;
+    }
+    case 'roster.updated': syncRoster(d.agents || [], replay); break;
+    case 'runner.online': feed({ who: 'system', text: `러너 연결됨 (${d.runner_id})` }, ts); break;
+    case 'runner.offline': feed({ who: 'system', text: `러너 연결 끊김 (${d.runner_id})`, cls: 'alert' }, ts); break;
+    case 'agent.status': {
+      const a = ag(id); if (!a) break;
+      a.state = d.state || a.state; a.stateAt = ts;
+      if (d.task) a.task = d.task;
+      if (d.state === 'done' || d.state === 'idle') a.tool = '';
+      if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }
+      if (d.state === 'done' && !replay) setTimeout(schedule, 3200);
+      break;
+    }
+    case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
+    case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
+    case 'agent.log': {
+      if (d.level === 'debug' || d.level === 'thinking') break;
+      const a = ag(id); if (!a || !d.text) break;
+      a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
+      if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
+      break;
+    }
+    case 'agent.usage': { const c = Number(d.cost_usd) || 0; if (c > 0) { S.cost += c; if (rid) req(rid).cost += c; } break; }
+    case 'task.dispatched': onDispatch(ev); break;
+    case 'task.result': {
+      const sid = S.taskStep.get(ev.task_id);
+      if (sid && rid && d.ok === false) req(rid).steps[sid] = 'error';
+      break;
+    }
+    case 'approval.requested': {
+      S.approvals.set(d.id, { ...d, agent_id: d.agent_id || id, request_id: d.request_id || rid });
+      feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
+      if (!replay) toast(`승인 요청이 왔어요: ${short(d.summary, 50)}`);
+      break;
+    }
+    case 'approval.resolved': S.approvals.delete(d.id); feed({ who: 'pi', text: d.approved ? '승인했어요' : `거절했어요${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
+    case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
+    case 'job.state': {
+      const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
+      Object.assign(j, { state: d.state, exit: d.exit_status, ts }); S.jobs.set(j.id, j);
+      break;
+    }
+    case 'jobs.finished': feed({ who: 'hpc', text: `작업이 끝나서 ${nick(id)}를 깨웠어요` }, ts, rid); break;
+    case 'request.created': {
+      const q = req(rid);
+      Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: 'running', phase: d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
+      S.current = rid;
+      feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}` }, ts, rid);
+      break;
+    }
+    case 'request.plan': {
+      const q = req(rid); setPlan(q, d); q.phase = 'execute';
+      feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
+      break;
+    }
+    case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
+    case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; break; }
+    case 'request.review': {
+      const q = req(rid), sc = d.scores || {};
+      q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
+      if (d.verdict === 'revise') (d.issues || []).forEach(i => { if (i.step_id in q.steps) q.steps[i.step_id] = 'revise'; });
+      feed({ who: 'sci_reviewer', text: d.verdict === 'revise'
+        ? `수정 요청: ${short(((d.issues || [])[0] || {}).problem || '', 90)}`
+        : `통과. 질문 부합 ${sc.addresses_question}/5, 근거 ${sc.evidence}/5, 철저성 ${sc.thoroughness}/5` }, ts, rid);
+      break;
+    }
+    case 'recruit.suggested': {
+      const key = d.repo || d.paper;
+      const hired = [...S.agents.values()].some(a => isContract(a) && key && String(key).toLowerCase().includes(String(a.id).slice(2)));
+      if (!hired && !S.suggestions.some(s => (s.repo || s.paper) === key)) S.suggestions.push({ ...d, request_id: rid, id: `sug_${++S.seq}` });
+      feed({ who: 'cso', text: `파견직 채용을 제안해요: ${short(key, 70)}` }, ts, rid);
+      break;
+    }
+    case 'recruit.status': {
+      const a = ag('recruiter');
+      if (a && d.slug) a.task = `${d.slug} ${d.stage === 'converting' ? '변환 중' : d.stage === 'probation' ? '수습 평가 중' : d.stage || ''}`;
+      feed({ who: 'recruiter', text: d.stage === 'converting' ? `${d.slug} 논문을 에이전트로 바꾸는 중이에요` : `${d.slug} 수습 평가 중이에요` }, ts, rid);
+      break;
+    }
+    case 'recruit.done': {
+      const na = d.agent || {};
+      if (na.id) { const isNew = !S.agents.has(na.id); upsertAgent(na); if (isNew && !replay) { ag(na.id).arriving = now(); S.doorUntil = now() + 2.2; } }
+      S.suggestions = S.suggestions.filter(s => !String(s.repo || s.paper || '').toLowerCase().includes(String(na.id || '').slice(2)));
+      feed({ who: 'recruiter', text: `${na.name || na.id} 입사했어요 (수습 ${d.passed_probation ? '통과' : '진행 중'})` }, ts, rid);
+      break;
+    }
+    case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
+    case 'request.completed': case 'request.failed': {
+      const q = req(rid);
+      q.status = t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      if (d.report) q.report = d.report;
+      if (d.error) q.error = d.error;
+      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
+      break;
+    }
+    case 'github.posted': { const q = req(rid); q.github.push({ kind: d.kind, url: d.url, number: d.number }); feed({ who: 'github', text: GH_KO[d.kind] || 'GitHub에 업데이트했어요', url: d.url }, ts, rid); break; }
+    case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, cls: 'alert' }, ts, rid); break;
+    default: break;
+  }
+  if (!replay) schedule();
+}
+function toolLabel(name) {
+  const n = String(name || '').split('__').pop();
+  return ({ hpc_submit: 'HPC 제출', hpc_status: 'HPC 확인', WebSearch: '웹 검색', WebFetch: '문헌 읽기', google_web_search: '웹 검색',
+    Read: '파일 읽기', Glob: '파일 찾기', Grep: '코드 검색', Bash: '명령 실행', shell: '명령 실행', Edit: '파일 수정', Write: '파일 작성',
+    Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
+}
+/* ---------------- rendering ---------------- */
+let pending = false;
+function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
+function render() {
+  renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets();
+}
+function ago(ts) {
+  const s = Math.max(0, now() - (ts || now()));
+  if (s < 45) return '방금';
+  if (s < 3600) return `${Math.round(s / 60)}분 전`;
+  if (s < 86400) return `${Math.round(s / 3600)}시간 전`;
+  return `${Math.round(s / 86400)}일 전`;
+}
+function contractLeft(a) {
+  if (!a.expires_at) return '파견직';
+  const days = Math.ceil((a.expires_at - now()) / 86400);
+  return days > 0 ? `계약 ${days}일 남음` : '계약 만료';
+}
+function visual(a) {
+  if (a.state === 'done' && now() - (a.stateAt || 0) > 3) return 'idle';
+  return STATE_KO[a.state] ? a.state : 'idle';
+}
+function bubble(a, vs) {
+  if (vs === 'working') {
+    if (a.say && now() - (a.sayAt || 0) < 5) return short(a.say, 22);
+    if (a.tool && now() - (a.toolAt || 0) < 20) return toolLabel(a.tool);
+    return '작업 중';
+  }
+  return { queued: '순서 기다림', waiting: '승인 기다려요', hibernating: 'HPC 기다리는 중', done: '완료!', error: '문제가 생겼어요' }[vs] || '';
+}
+function renderHeader() {
+  const c = $('#conn');
+  const txt = { live: '실시간', demo: '데모', connecting: '연결 중', offline: '연결 끊김, 다시 시도하는 중', auth: '토큰을 확인해 주세요' }[S.conn];
+  c.className = `conn ${S.conn}`;
+  if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
+  $('#cost').textContent = `사용 비용 $${S.cost.toFixed(2)}`;
+  $('#note').hidden = MODE !== 'demo';
+  $('#office').classList.toggle('offline', S.conn === 'offline');
+  const n = S.approvals.size;
+  const title = `${n ? `(${n}) ` : ''}labhq 사무실`;
+  if (document.title !== title) document.title = title;
+}
+
+const ZONES = [
+  ['lead', '지휘부', ['chief_of_staff', 'cso', 'sci_reviewer']],
+  ['research', '연구', ['biologist', 'lit_scout', 'bioinfo-agent']],
+  ['data', '데이터와 분석', ['data_steward', 'analyst', 'engineer', 'qc_reviewer']],
+  ['hr', '인사팀과 파견직 자리', ['recruiter']],
+];
+const HOT_DESKS = 2;
+let officeKey = '', seatEls = new Map();
+function seatHTML(a) {
+  const [first, ...rest] = String(a.name || a.id).split(' ');
+  const sub = isContract(a) ? contractLeft(a) : (rest.join(' ') || a.role || '');
+  return `<button type="button" class="seat st-idle" data-agent="${esc(a.id)}"><span class="bubble"></span>${seatSVG(a)}<span class="nm">${esc(first)}</span><span class="sub">${esc(sub)}</span></button>`;
+}
+function renderOffice() {
+  const list = [...S.agents.values()];
+  const key = list.map(a => `${a.id}:${a.name}:${a.expires_at || ''}`).join('|');
+  if (key !== officeKey) {
+    officeKey = key;
+    const zones = { lead: [], research: [], data: [], hr: [] }, placed = new Set();
+    for (const [z, , ids] of ZONES) for (const id of ids) { const a = ag(id); if (a) { zones[z].push(a); placed.add(id); } }
+    for (const a of list) if (!placed.has(a.id)) (isContract(a) ? zones.hr : zones.research).push(a);
+    const hired = zones.hr.filter(isContract).length;
+    $('#zones').innerHTML = ZONES.map(([z, label]) => {
+      const empties = z === 'hr' ? Array(Math.max(0, HOT_DESKS - hired)).fill(
+        `<div class="seat empty" aria-hidden="true"><span class="bubble"></span>${EMPTY_SEAT}<span class="nm">빈 자리</span><span class="sub">파견직이 앉을 곳</span></div>`).join('') : '';
+      return zones[z].length || empties ? `<section class="zone" aria-label="${label}"><h3>${label}</h3><div class="seats">${zones[z].map(seatHTML).join('')}${empties}</div></section>` : '';
+    }).join('');
+    seatEls = new Map([...document.querySelectorAll('.seat[data-agent]')].map(el => [el.dataset.agent, el]));
+  }
+  for (const [id, el] of seatEls) {
+    const a = ag(id); if (!a) continue;
+    const vs = visual(a);
+    const cls = `seat st-${vs}${a.arriving && now() - a.arriving < 2 ? ' arriving' : ''}`;
+    if (el.className !== cls) el.className = cls;
+    const b = bubble(a, vs), bub = el.firstElementChild;
+    if (bub.textContent !== b) bub.textContent = b;
+    el.setAttribute('aria-label', `${a.name}, ${STATE_KO[vs]}${a.task && vs !== 'idle' ? `, ${a.task}` : ''}`);
+  }
+}
+function phaseList(q) {
+  if (q.mode === 'direct') return `<ul class="phases"><li class="${q.phase === 'done' ? 'on' : 'now'}">직접 맡긴 일</li></ul>`;
+  const idx = q.phase === 'done' ? PHASES.length : PHASES.findIndex(p => p[0] === q.phase);
+  return `<ul class="phases">${PHASES.map(([, label], i) => `<li class="${i < idx ? 'on' : i === idx ? 'now' : ''}">${label}</li>`).join('')}</ul>`;
+}
+function renderBoard() {
+  const q = S.requests.get(S.current), el = $('#board');
+  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text]) : 'none';
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  if (!q) { el.innerHTML = '<p class="board-empty">오늘의 할 일을 기다리는 중</p>'; return; }
+  const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
+  el.innerHTML = `<p class="board-title">${esc(short(q.text, 70))}</p>${phaseList(q)}<div class="chips">${chips}</div>`;
+}
+function renderRack() {
+  const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
+  const key = jobs.map(j => j.id + j.state).join();
+  const el = $('#rack');
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  let s = '<rect class="rack-body" x="6" y="4" width="40" height="100" rx="3"/>';
+  for (let i = 0; i < 8; i++) {
+    const j = jobs[i], y = 10 + i * 11.5;
+    s += `<rect class="rack-slot" x="10" y="${y}" width="32" height="8" rx="1.5"/><circle class="led ${j ? esc(j.state) : ''}" cx="36" cy="${y + 4}" r="2.2"/>`;
+  }
+  el.innerHTML = s;
+  el.setAttribute('aria-label', `HPC 서버 랙, 실행 중 ${jobs.filter(j => j.state === 'running').length}건`);
+}
+function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
+
+let apKey = '';
+function renderApprovals() {
+  const items = [...S.approvals.values()], sugs = S.suggestions;
+  const key = items.map(a => a.id).concat(sugs.map(s => s.id)).join();
+  const total = items.length + sugs.length;
+  $('#ap-count').textContent = total ? `${total}건` : '';
+  if (key === apKey) return;
+  apKey = key;
+  const el = $('#approvals');
+  if (!total) { el.innerHTML = '<p class="empty-note">지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.</p>'; return; }
+  el.innerHTML = '<ul class="list">' + items.map(a => `
+<li class="ap" data-id="${esc(a.id)}"><span class="who">${headSVG(kindOf(ag(a.agent_id)))}</span><div>
+<div class="kind">${esc(KIND_KO[a.kind] || a.kind)}<span>${esc(nick(a.agent_id) || 'CSO')}</span></div>
+<p class="sum">${esc(a.summary)}</p>${(a.detail && a.detail.reason) ? `<p class="why">${esc(short(a.detail.reason, 220))}</p>` : ''}
+<div class="acts"><button type="button" class="btn go" data-act="approve">승인</button><button type="button" class="btn" data-act="deny">거절</button></div></div></li>`).join('') +
+  sugs.map(s => `
+<li class="ap sug" data-sug="${esc(s.id)}"><span class="who">${headSVG('owl')}</span><div>
+<div class="kind">파견직 채용 제안<span>CSO</span></div>
+<p class="sum">${esc(short(s.repo || s.paper, 90))}</p><p class="why">${esc(short(s.reason, 200))}</p>
+<div class="acts"><button type="button" class="btn go" data-act="hire">채용하기</button><button type="button" class="btn" data-act="later">나중에</button></div></div></li>`).join('') + '</ul>';
+}
+
+function dagSVG(q) {
+  const steps = q.plan, by = Object.fromEntries(steps.map(s => [s.id, s])), lvl = {};
+  const depth = (id, seen = new Set()) => {
+    if (id in lvl) return lvl[id];
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const ds = (by[id].depends_on || []).filter(d => by[d]);
+    return (lvl[id] = ds.length ? Math.max(...ds.map(d => depth(d, seen))) + 1 : 0);
+  };
+  steps.forEach(s => depth(s.id));
+  const cols = [];
+  steps.forEach(s => (cols[lvl[s.id]] = cols[lvl[s.id]] || []).push(s));
+  const W = 132, H = 42, GX = 34, GY = 10, P = 6, pos = {};
+  cols.forEach((c, i) => c.forEach((s, j) => { pos[s.id] = { x: P + i * (W + GX), y: P + j * (H + GY) }; }));
+  const width = P * 2 + cols.length * (W + GX) - GX, height = P * 2 + Math.max(...cols.map(c => c.length)) * (H + GY) - GY;
+  let edges = '', nodes = '';
+  for (const s of steps) {
+    for (const d of s.depends_on || []) {
+      if (!pos[d]) continue;
+      const a = pos[d], b = pos[s.id], x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2, mx = (x1 + x2) / 2;
+      edges += `<path class="dag-edge" d="M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2 - 2} ${y2}"/>`;
+    }
+    const p = pos[s.id], st = q.steps[s.id] || 'pending';
+    const label = { pending: '대기', working: '진행 중', done: '완료', revise: '수정 요청', error: '실패' }[st] || st;
+    nodes += `<g class="dag-node st-${st}"><title>${esc(s.instruction)}</title><rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="9"/>
+<text x="${p.x + 10}" y="${p.y + 17}">${esc(s.id)} ${esc(nick(s.agent_id))}</text><text class="s" x="${p.x + 10}" y="${p.y + 33}">${label}</text></g>`;
+  }
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="작업 순서도">${edges}${nodes}</svg>`;
+}
+let reqKey = '';
+function renderRequest() {
+  const el = $('#request'), q = S.requests.get(S.current);
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100)]) : 'none';
+  if (key === reqKey) return;
+  reqKey = key;
+  if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
+  const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
+    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : ''}</option>`).join('')}</select></p>` : '';
+  const proj = S.projects.find(p => p.id === q.project_id);
+  const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
+  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${phaseList(q)}${q.plan.length ? `<div class="dag">${dagSVG(q)}</div>` : ''}
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 $${q.cost.toFixed(2)}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
+${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}`;
+}
+let feedKey = '';
+function avatar(who) {
+  const a = ag(who);
+  if (a) return headSVG(kindOf(a));
+  return `<span class="glyph">${esc({ pi: '나', hpc: 'HPC', github: 'GH', system: 'SYS' }[who] || '?')}</span>`;
+}
+function renderFeed() {
+  const items = S.feed.slice(0, 40);
+  const key = items.length + ':' + (items[0] ? items[0].ts + items[0].text : '') + ':' + Math.floor(now() / 30);
+  if (key === feedKey) return;
+  feedKey = key;
+  $('#feed').innerHTML = items.length ? items.map(m => `<li class="msg ${m.cls || ''}"><span class="av">${avatar(m.who)}</span>
+<div><b>${esc(nick(m.who))}${m.to ? ` <i>→ ${esc(nick(m.to))}</i>` : ''}</b><p>${esc(m.text)}${safeUrl(m.url) ? ` <a href="${esc(m.url)}" target="_blank" rel="noopener">열기</a>` : ''}</p></div>
+<time>${ago(m.ts)}</time></li>`).join('') : '<li class="empty-note">팀이 주고받는 말이 여기에 쌓여요.</li>';
+}
+let jobsKey = '';
+function renderJobs() {
+  const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 10);
+  const key = jobs.map(j => j.id + j.state).join();
+  if (key === jobsKey) return;
+  jobsKey = key;
+  $('#jobs').innerHTML = jobs.length ? jobs.map(j => `<li class="job"><span>${esc(j.name || j.id)} <small>${esc(j.id)} ${esc(nick(j.agent))}</small></span><span class="state ${esc(j.state)}">${esc(JOB_KO[j.state] || j.state)}</span></li>`).join('')
+    : '<li class="empty-note">제출된 작업이 없어요.</li>';
+}
+let targetsKey = '';
+function renderTargets() {
+  const list = [...S.agents.values()];
+  const key = list.map(a => a.id).join() + '|' + S.projects.map(p => p.id).join();
+  if (key === targetsKey) return;
+  targetsKey = key;
+  const sel = $('#target'), cur = sel.value;
+  sel.innerHTML = '<option value="">CSO에게 (팀 전체)</option>' + list.map(a => `<option value="${esc(a.id)}">${esc(nick(a.id))}에게 직접</option>`).join('');
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+  const ps = $('#project'), pcur = ps.value;
+  ps.hidden = !S.projects.length;
+  ps.innerHTML = '<option value="">프로젝트 없음</option>' + S.projects.map(p => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('');
+  if ([...ps.options].some(o => o.value === pcur)) ps.value = pcur;
+}
+
+/* ---------------- interactions ---------------- */
+let api = null;
+let toastTimer = 0;
+function toast(text) {
+  const t = $('#toast');
+  t.textContent = text; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+async function send() {
+  const input = $('#ask'), text = input.value.trim(), target = $('#target').value, project = $('#project').value;
+  if (!text) { toast('무엇을 맡길지 먼저 적어 주세요'); input.focus(); return; }
+  const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null };
+  try {
+    await api.request(body);
+    input.value = '';
+    toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
+  } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
+}
+$('#send').addEventListener('click', send);
+$('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); } });
+$('#approvals').addEventListener('click', async e => {
+  const btn = e.target.closest('button[data-act]'); if (!btn) return;
+  const li = btn.closest('li'), act = btn.dataset.act;
+  btn.disabled = true;
+  try {
+    if (li.dataset.id) { await api.approve(li.dataset.id, act === 'approve'); toast(act === 'approve' ? '승인했어요' : '거절했어요'); }
+    else {
+      const s = S.suggestions.find(x => x.id === li.dataset.sug);
+      S.suggestions = S.suggestions.filter(x => x.id !== li.dataset.sug); schedule();
+      if (s && act === 'hire') { await api.recruit(s); toast('인사팀에 채용을 맡겼어요'); }
+    }
+  } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
+});
+$('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
+$('#zones').addEventListener('click', e => { const s = e.target.closest('.seat[data-agent]'); if (s) openSheet(s.dataset.agent); });
+
+function openSheet(id) {
+  const a = ag(id); if (!a) return;
+  const dlg = $('#sheet'), vs = visual(a);
+  const facts = [
+    ['상태', STATE_KO[vs]], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
+    ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
+    ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
+  ];
+  if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
+  const acts = ['<button type="button" class="btn primary" data-act="assign">이 직원에게 맡기기</button>'];
+  if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
+  acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
+  $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
+<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+<ul class="activity">${a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>'}</ul>
+<div class="acts">${acts.join('')}</div>`;
+  dlg.dataset.agent = id;
+  if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
+}
+function closeSheet() { const d = $('#sheet'); if (typeof d.close === 'function' && d.open) d.close(); else d.removeAttribute('open'); }
+$('#sheet').addEventListener('click', async e => {
+  const d = $('#sheet');
+  if (e.target === d) { closeSheet(); return; }
+  const btn = e.target.closest('button[data-act]'); if (!btn) return;
+  const id = d.dataset.agent, act = btn.dataset.act;
+  if (act === 'close') return closeSheet();
+  if (act === 'assign') { closeSheet(); $('#target').value = id; $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
+  try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
+  catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
+});
+
+(function dragMemo() {
+  const memo = $('#memo'); let ghost = null, over = null;
+  const seatAt = (x, y) => { const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null; return el ? el.closest('.seat[data-agent]') : null; };
+  memo.addEventListener('pointerdown', e => {
+    e.preventDefault(); ghost = memo.cloneNode(true); ghost.classList.add('ghost'); ghost.removeAttribute('id');
+    document.body.appendChild(ghost); move(e);
+    if (memo.setPointerCapture) memo.setPointerCapture(e.pointerId);
+  });
+  const move = e => {
+    if (!ghost) return;
+    ghost.style.left = `${e.clientX}px`; ghost.style.top = `${e.clientY}px`;
+    const s = seatAt(e.clientX, e.clientY);
+    if (s !== over) { if (over) over.classList.remove('drop'); over = s; if (over) over.classList.add('drop'); }
+  };
+  memo.addEventListener('pointermove', move);
+  const end = () => {
+    if (!ghost) return;
+    ghost.remove(); ghost = null;
+    if (over) {
+      over.classList.remove('drop');
+      const id = over.dataset.agent; over = null;
+      $('#target').value = id;
+      if ($('#ask').value.trim()) send(); else { $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); }
+    }
+  };
+  memo.addEventListener('pointerup', end);
+  memo.addEventListener('pointercancel', () => { if (ghost) { ghost.remove(); ghost = null; } if (over) { over.classList.remove('drop'); over = null; } });
+})();
+setInterval(schedule, 15000);  // keeps "n분 전" labels and contract countdowns fresh
+/* ---------------- live: gateway WebSocket + REST ---------------- */
+function startLive() {
+  let token = QS.get('token') || store.get('labhq_token') || '';
+  if (QS.get('token')) { store.set('labhq_token', token); history.replaceState(null, '', location.pathname); }
+  const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
+  link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
+  const bar = $('#tokenbar');
+  const post = async (path, body) => {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
+    return r.json();
+  };
+  let ws = null, backoff = 1000;
+  api = {
+    request: body => post('/api/requests', body),
+    approve: async (id, ok) => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, approved: ok, note: '' }));
+      else await post(`/api/approvals/${encodeURIComponent(id)}`, { approved: ok, note: '' });
+    },
+    recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
+    contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
+  };
+  const open = () => {
+    if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
+    bar.classList.remove('show');
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}`);
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; schedule(); };
+    ws.onmessage = e => { try { apply(JSON.parse(e.data)); } catch (err) { console.warn('bad event', err); } };
+    ws.onclose = e => {
+      if (e.code === 1008) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
+      S.conn = 'offline'; schedule();
+      setTimeout(open, backoff); backoff = Math.min(backoff * 2, 15000);
+    };
+  };
+  $('#tok-go').addEventListener('click', () => { token = $('#tok').value.trim(); store.set('labhq_token', token); open(); });
+  open();
+}
+
+/* ---------------- demo: a scripted lab day (same event shapes as the gateway) ---------------- */
+const Demo = (() => {
+  let n = 0, jobSeq = 4100, hiring = false;
+  const waiters = new Map(), queue = [];
+  const sleep = ms => new Promise(r => setTimeout(r, ms / SPEED));
+  const E = (type, o = {}) => apply({ type, ts: now(), ...o });
+  const say = (a, text, rid) => E('agent.log', { agent_id: a, request_id: rid, data: { text } });
+  const tool = (a, name, input, rid) => E('agent.tool', { agent_id: a, request_id: rid, data: { name, input } });
+  const gh = (rid, kind, number = 12) => E('github.posted', { request_id: rid, data: { kind, number, url: `https://github.com/lab/demo-project/${kind === 'pr' || kind === 'codex_review' ? 'pull' : 'issues'}/${number}` } });
+  const ROSTER = [
+    ['chief_of_staff', '펭귄 비서실장', '착수 브리핑', 'claude_code', 'sonnet'], ['cso', '부엉이 CSO', '질문 설계·배분·통합', 'claude_code', 'opus'],
+    ['sci_reviewer', '거북이 과학 리뷰어', '3기준 과학 리뷰', 'codex', null], ['biologist', '곰 Biology 만물박사', '가설·메커니즘', 'claude_code', 'opus'],
+    ['lit_scout', '여우 문헌·헤드헌터', '문헌 검색, 파견직 후보 발굴', 'gemini', 'pro'], ['bioinfo-agent', '수달 bioinfo-agent', '반복·정형 분석 전담', 'cli', null],
+    ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
+    ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
+    ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
+  ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core' }));
+
+  async function work(agent, rid, meta, fn) {
+    const task_id = `task_demo${++n}`;
+    E('task.dispatched', { task_id, agent_id: agent, request_id: rid, data: { kind: meta.kind, step_id: meta.step_id || null, title: meta.title, prompt: meta.title } });
+    E('agent.status', { task_id, agent_id: agent, request_id: rid, data: { state: 'working', task: meta.title } });
+    await fn(task_id);
+    E('agent.usage', { task_id, agent_id: agent, request_id: rid, data: { cost_usd: Number((0.04 + Math.random() * 0.3).toFixed(3)) } });
+    E('agent.status', { task_id, agent_id: agent, request_id: rid, data: { state: 'done' } });
+    if (meta.step_id) E('request.step_done', { request_id: rid, data: { step_id: meta.step_id, ok: true, agent_id: agent } });
+  }
+  const step = (rid, sid, agent, instruction, fn, extra = '') => work(agent, rid, { kind: 'step', step_id: sid, title: `${sid}: ${instruction}${extra}` }, fn);
+  function ask(agent, kind, summary, rid, reason) {
+    const id = `appr_demo${++n}`;
+    E('approval.requested', { agent_id: agent, request_id: rid, data: { id, kind, summary, agent_id: agent, detail: { reason } } });
+    E('agent.status', { agent_id: agent, request_id: rid, data: { state: 'waiting' } });
+    return new Promise(res => {
+      const done = (ok, note) => {
+        clearTimeout(timer); waiters.delete(id);
+        E('approval.resolved', { agent_id: agent, request_id: rid, data: { id, approved: ok, note } });
+        E('agent.status', { agent_id: agent, request_id: rid, data: { state: 'working' } });
+        res(ok);
+      };
+      const timer = setTimeout(() => done(true, '데모라서 15초 뒤 자동 승인'), 15000 / Math.min(SPEED, 3));
+      waiters.set(id, done);
+    });
+  }
+  async function hpc(agent, rid, name, ms) {
+    const job_id = String(++jobSeq);
+    E('job.submitted', { agent_id: agent, request_id: rid, data: { job_id, name } });
+    E('agent.status', { agent_id: agent, request_id: rid, data: { state: 'hibernating', jobs: [job_id] } });
+    await sleep(800);
+    E('job.state', { agent_id: agent, request_id: rid, data: { job_id, name, state: 'running' } });
+    await sleep(ms);
+    E('job.state', { agent_id: agent, request_id: rid, data: { job_id, name, state: 'completed', exit_status: 0 } });
+    E('jobs.finished', { agent_id: agent, request_id: rid, data: { jobs: [{ job_id, name, state: 'completed', exit_status: 0 }] } });
+    await sleep(500);
+    E('task.dispatched', { task_id: `task_demo${++n}`, agent_id: agent, request_id: rid, data: { kind: 'step', title: 'HPC 결과 확인 후 이어서 작업' } });
+    E('agent.status', { agent_id: agent, request_id: rid, data: { state: 'working', task: 'HPC 결과 확인 후 이어서 작업' } });
+  }
+
+  async function scenarioTarget() {
+    const rid = `req_demo${++n}`, text = '공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지';
+    E('request.created', { request_id: rid, data: { text, mode: 'orchestrate', project_id: 'demo' } });
+    await sleep(500); gh(rid, 'issue');
+    await work('chief_of_staff', rid, { kind: 'briefing', title: 'CSO용 브리핑 준비' }, async () => {
+      tool('chief_of_staff', 'WebSearch', 'CD276 lung scRNA atlas 2026', rid); await sleep(1600);
+      say('chief_of_staff', '공개 LUAD·SCLC 아틀라스 3건, 모두 공개 접근이에요. 공간전사체 1건도 있어요.', rid); await sleep(900);
+    });
+    await work('cso', rid, { kind: 'plan', title: '업무 분해·배정 계획 수립' }, () => sleep(1700));
+    const steps = [
+      { id: 's1', agent_id: 'biologist', instruction: 'B7-H3 생물학과 가설 정리', depends_on: [] },
+      { id: 's2', agent_id: 'data_steward', instruction: 'LUAD 아틀라스 확보·체크섬', depends_on: [] },
+      { id: 's3', agent_id: 'bioinfo-agent', instruction: '표준 scRNA QC 파이프라인 실행', depends_on: ['s2'] },
+      { id: 's4', agent_id: 'analyst', instruction: '세포유형별 pseudobulk DE', depends_on: ['s1', 's3'] },
+      { id: 's5', agent_id: 'qc_reviewer', instruction: '분석 결과 QC', depends_on: ['s4'] },
+    ];
+    const hired = !!ag('c_scanpy');
+    E('request.plan', { request_id: rid, data: { steps, warnings: [], recruit: hired ? [] : [{ paper: 'https://doi.org/10.1186/s13059-017-1382-0', repo: 'https://github.com/scverse/scanpy', focus: 'Preprocessing and clustering', reason: '단일세포 전처리를 논문 튜토리얼 그대로 재현할 전문가가 팀에 없어요' }] } });
+    gh(rid, 'plan');
+    if (!hired) E('recruit.suggested', { request_id: rid, data: { paper: 'https://doi.org/10.1186/s13059-017-1382-0', repo: 'https://github.com/scverse/scanpy', focus: 'Preprocessing and clustering', reason: '단일세포 전처리를 논문 튜토리얼 그대로 재현할 전문가가 팀에 없어요' } });
+    await Promise.all([
+      step(rid, 's1', 'biologist', steps[0].instruction, async () => {
+        tool('biologist', 'WebFetch', 'B7-H3 cancer-associated fibroblast', rid); await sleep(2600);
+        say('biologist', 'CAF에서 CD276 과발현 보고가 2건 있어요. 가설: 섬유아세포가 면역 배제를 만든다.', rid);
+      }),
+      step(rid, 's2', 'data_steward', steps[1].instruction, async () => {
+        tool('data_steward', 'cellxgene_census', 'LUAD atlas', rid); await sleep(900);
+        const ok = await ask('data_steward', 'hpc_submit', 'HPC 제출: fetch_atlas, 4 cores, 32G, 06:00:00 (약 24 core-h)', rid, '337k cells h5ad를 클러스터로 받아 체크섬을 기록해요');
+        if (ok) { await hpc('data_steward', rid, 'fetch_atlas', 4200); say('data_steward', '337,002 cells 받았고 체크섬을 매니페스트에 적었어요', rid); await sleep(700); }
+      }),
+    ]);
+    await step(rid, 's3', 'bioinfo-agent', steps[2].instruction, async () => {
+      tool('bioinfo-agent', 'scrna-qc-standard', '12 samples', rid); await sleep(2100);
+      say('bioinfo-agent', '표준 QC 12/12 통과, doublet 3.1% 제거했어요', rid); await sleep(600);
+    });
+    await step(rid, 's4', 'analyst', steps[3].instruction, async () => {
+      tool('analyst', 'mcp__labhq_hpc__hpc_submit', 'pseudobulk_de', rid); await sleep(600);
+      await hpc('analyst', rid, 'pseudobulk_de', 5200);
+      say('analyst', 'fibroblast에서 CD276 log2FC 1.9 (FDR 3e-6), T세포에서는 감소', rid); await sleep(800);
+    });
+    await step(rid, 's5', 'qc_reviewer', steps[4].instruction, async () => {
+      tool('qc_reviewer', 'Read', 'outputs/qc_report.md', rid); await sleep(1500);
+      say('qc_reviewer', 'PASS 10, WARN 2 (mito 비율이 높은 샘플 2개)', rid);
+    });
+    await work('sci_reviewer', rid, { kind: 'review', title: '과학 리뷰 #0' }, () => sleep(1700));
+    E('request.review', { request_id: rid, data: { revision: 0, verdict: 'revise', scores: { addresses_question: 4, evidence: 3, thoroughness: 4 }, issues: [{ step_id: 's4', problem: '해리된 세포 데이터만으로 공간 맥락을 주장해요', request: 'Visium으로 면역 배제를 확인해 주세요' }] } });
+    gh(rid, 'review');
+    await step(rid, 's4', 'analyst', steps[3].instruction, async () => {
+      tool('analyst', 'Read', 'visium_luad/*.h5ad', rid); await sleep(2300);
+      say('analyst', 'Visium 12개 샘플: CD276-high spot 주변에서 T세포가 줄어요', rid);
+    }, ' (리뷰 반영 수정)');
+    await work('sci_reviewer', rid, { kind: 'review', title: '과학 리뷰 #1' }, () => sleep(1300));
+    E('request.review', { request_id: rid, data: { revision: 1, verdict: 'accept', scores: { addresses_question: 5, evidence: 4, thoroughness: 4 }, issues: [] } });
+    gh(rid, 'review');
+    await work('cso', rid, { kind: 'synthesis', title: '최종 보고서 작성' }, () => sleep(1800));
+    E('request.completed', { request_id: rid, data: { ok: true, report: '[데모 보고서 — 실제 분석 결과가 아닙니다]\n\n1) 답: CD276은 암세포보다 암연관 섬유아세포(CAF)에서 더 높게 발현돼요.\n2) 근거: s3 표준 QC 통과 데이터로 s4 pseudobulk DE, 리뷰 후 Visium 이웃 분석을 추가했어요.\n3) 리뷰: 1차에서 공간 맥락 부족을 지적받아 보완했고 2차에서 통과했어요.\n4) 결론이 바뀔 수 있는 조건: 단백질 수준 검증, 코호트 간 배치 효과.\n5) 다음 단계: 공개 IHC 이미지 확인, 파견직으로 Scanpy 튜토리얼 방식 재현.' } });
+    gh(rid, 'report'); gh(rid, 'final');
+    if (!ag('c_scanpy')) {
+      await sleep(7000);
+      const s = S.suggestions.find(x => (x.repo || '').includes('scanpy'));
+      if (s && !hiring) { S.suggestions = S.suggestions.filter(x => x !== s); await hire(s); }
+    }
+  }
+  async function scenarioRoutine() {
+    const rid = `req_demo${++n}`, text = '새로 받은 WGS 30샘플 표준 QC 돌리고 이상 샘플 알려줘';
+    E('request.created', { request_id: rid, data: { text, mode: 'orchestrate', project_id: 'demo' } });
+    await sleep(500); gh(rid, 'issue', 13);
+    await work('cso', rid, { kind: 'plan', title: '업무 분해·배정 계획 수립' }, () => sleep(1400));
+    const steps = [
+      { id: 's1', agent_id: 'engineer', instruction: '샘플시트 검증 스크립트 버그 수정', depends_on: [] },
+      { id: 's2', agent_id: 'bioinfo-agent', instruction: 'WGS 표준 QC 배치 실행', depends_on: ['s1'] },
+      { id: 's3', agent_id: 'qc_reviewer', instruction: 'PASS/WARN/FAIL 판정', depends_on: ['s2'] },
+    ];
+    E('request.plan', { request_id: rid, data: { steps, warnings: [], recruit: [] } }); gh(rid, 'plan', 13);
+    await step(rid, 's1', 'engineer', steps[0].instruction, async () => {
+      tool('engineer', 'shell', 'pytest -q tests/test_samplesheet.py', rid); await sleep(2000);
+      say('engineer', '경로 공백 처리 버그를 고치고 PR을 열었어요', rid); gh(rid, 'pr', 31); await sleep(600); gh(rid, 'codex_review', 31);
+    });
+    await step(rid, 's2', 'bioinfo-agent', steps[1].instruction, async () => {
+      const ok = await ask('bioinfo-agent', 'hpc_submit', 'HPC 제출: wgs_qc_batch, 16 cores, 64G, 12:00:00 (약 192 core-h)', rid, 'fastp, mosdepth, VerifyBamID2, somalier를 30샘플에 표준 설정으로 돌려요');
+      if (ok) { await hpc('bioinfo-agent', rid, 'wgs_qc_batch', 6000); say('bioinfo-agent', '30샘플 완료. 로그와 요약표를 outputs/에 저장했어요', rid); await sleep(600); }
+    });
+    await step(rid, 's3', 'qc_reviewer', steps[2].instruction, async () => {
+      tool('qc_reviewer', 'Read', 'outputs/qc_summary.tsv', rid); await sleep(1600);
+      say('qc_reviewer', 'PASS 28, WARN 2 (오염 추정 2.8%, 평균 커버리지 24x)', rid);
+    });
+    await work('sci_reviewer', rid, { kind: 'review', title: '과학 리뷰 #0' }, () => sleep(1200));
+    E('request.review', { request_id: rid, data: { revision: 0, verdict: 'accept', scores: { addresses_question: 5, evidence: 4, thoroughness: 4 }, issues: [] } });
+    await work('cso', rid, { kind: 'synthesis', title: '최종 보고서 작성' }, () => sleep(1300));
+    E('request.completed', { request_id: rid, data: { ok: true, report: '[데모 보고서 — 실제 분석 결과가 아닙니다]\n\n30샘플 중 28 PASS, 2 WARN.\n- WARN 1: 오염 추정 2.8% (기준 2%)\n- WARN 2: 평균 커버리지 24x (기준 30x)\n다음 단계: WARN 2건 재시퀀싱 여부를 PI가 결정.' } });
+    gh(rid, 'report', 13); gh(rid, 'final', 13);
+  }
+  async function hire(s) {
+    if (hiring || ag('c_scanpy')) return;
+    hiring = true;
+    const rid = s.request_id;
+    await work('recruiter', rid, { kind: 'recruit', title: '파견직 채용 변환: scanpy' }, async () => {
+      E('recruit.status', { request_id: rid, agent_id: 'recruiter', data: { slug: 'scanpy', stage: 'converting' } });
+      tool('recruiter', 'Skill', 'paper2agent', rid); await sleep(2800);
+      E('recruit.status', { request_id: rid, agent_id: 'recruiter', data: { slug: 'scanpy', stage: 'probation' } }); await sleep(1100);
+    });
+    const agent = { id: 'c_scanpy', name: 'scanpy 파견연구원', role: '[파견] 단일세포 전처리·클러스터링 (Scanpy 논문 방법)', engine: 'claude_code', model: 'sonnet', employment: 'contract', character: 'paper-hat-chick', expires_at: now() + 14 * 86400, mcp: ['paper_scanpy'] };
+    E('recruit.done', { request_id: rid, agent_id: 'recruiter', data: { slug: 'scanpy', agent, passed_probation: true } });
+    if (rid) gh(rid, 'recruit');
+    await sleep(2400);
+    const rid2 = `req_demo${++n}`;
+    E('request.created', { request_id: rid2, data: { text: 'Scanpy 튜토리얼 방식으로 PBMC 전처리·클러스터링 재현', mode: 'direct', agent_id: 'c_scanpy' } });
+    await work('c_scanpy', rid2, { kind: 'direct', title: 'PBMC 전처리·클러스터링 재현' }, async () => {
+      tool('c_scanpy', 'mcp__paper_scanpy__preprocess_and_cluster', 'pbmc_all.h5ad', rid2); await sleep(2400);
+      say('c_scanpy', 'Leiden 해상도 0.8에서 클러스터 11개. 논문 튜토리얼 수치와 일치해요', rid2);
+    });
+    E('request.completed', { request_id: rid2, data: { ok: true, report: '[데모] 논문 튜토리얼과 같은 파라미터로 재현했어요. 검증된 범위(인간 PBMC 10x) 밖의 데이터는 CSO에게 돌려보낼게요.' } });
+    hiring = false;
+  }
+  async function userRequest(body) {
+    const rid = `req_demo${++n}`;
+    E('request.created', { request_id: rid, data: { text: body.text, mode: body.mode, agent_id: body.agent_id, project_id: body.project_id } });
+    if (body.mode === 'direct') {
+      await work(body.agent_id, rid, { kind: 'direct', title: short(body.text, 40) }, async () => {
+        tool(body.agent_id, 'Read', 'TASK.md', rid); await sleep(1500);
+        say(body.agent_id, '요청을 확인했어요. 데모라서 여기까지만 할게요.', rid); await sleep(1000);
+      });
+    } else {
+      await work('cso', rid, { kind: 'plan', title: '업무 분해·배정 계획 수립' }, () => sleep(1400));
+      const steps = [{ id: 's1', agent_id: 'lit_scout', instruction: '관련 문헌·데이터 조사', depends_on: [] },
+        { id: 's2', agent_id: 'biologist', instruction: '검증 가능한 가설로 정리', depends_on: ['s1'] }];
+      E('request.plan', { request_id: rid, data: { steps, warnings: [], recruit: [] } });
+      await step(rid, 's1', 'lit_scout', steps[0].instruction, async () => { tool('lit_scout', 'google_web_search', short(body.text, 40), rid); await sleep(2000); say('lit_scout', '관련 논문 5편, 공개 데이터 2건을 찾았어요', rid); });
+      await step(rid, 's2', 'biologist', steps[1].instruction, async () => { await sleep(1800); say('biologist', '검증할 수 있는 가설 두 개로 정리했어요', rid); });
+      await work('cso', rid, { kind: 'synthesis', title: '최종 보고서 작성' }, () => sleep(1200));
+    }
+    E('request.completed', { request_id: rid, data: { ok: true, report: `[데모] ${body.text}\n\n게이트웨이에 연결하면 이 자리에 담당자의 실제 보고가 와요.` } });
+  }
+  async function start() {
+    E('snapshot', { data: { agents: ROSTER, approvals: [], requests: [], recent_events: [], projects: [{ id: 'demo', name: '데모 프로젝트', repo: 'lab/demo-project', visibility: 'private' }] } });
+    E('runner.online', { data: { runner_id: 'lab-workstation' } });
+    await sleep(900);
+    for (let i = 0; ; i++) {
+      while (queue.length) await userRequest(queue.shift());
+      await (i % 2 === 0 ? scenarioTarget() : scenarioRoutine());
+      await sleep(6000);
+    }
+  }
+  return {
+    start,
+    api: {
+      request: async body => { queue.push(body); toast('데모: 지금 진행 중인 일이 끝나면 시작해요'); return { request_id: 'queued' }; },
+      approve: async (id, ok) => { const w = waiters.get(id); if (w) w(ok, ok ? '' : '데모에서 거절'); },
+      recruit: async s => { hire(s); },
+      contract: async (id, action, days) => {
+        const a = ag(id); if (!a) return;
+        if (action === 'extend') { a.expires_at = Math.max(a.expires_at || now(), now()) + days * 86400; officeKey = ''; }
+        if (action === 'release') { S.agents.delete(id); feed({ who: 'recruiter', text: `${a.name} 계약을 종료하고 인재풀에 보관했어요` }, now()); }
+        schedule();
+      },
+    },
+  };
+})();
+
+/* ---------------- boot ---------------- */
+if (MODE === 'live') startLive();
+else { api = Demo.api; Demo.start(); }
+schedule();
+window.__labhq = { S, apply, mode: MODE };
+})();
+</script>
+</body>
+</html>

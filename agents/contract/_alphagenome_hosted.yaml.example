@@ -1,0 +1,27 @@
+# 즉시 투입 가능한 "원격 파견직" 예시: Paper2Agent 팀이 Hugging Face에 올려둔 AlphaGenome MCP.
+# 변환 없이 바로 채용 → 사용 전 Space 안내 페이지에서 MCP 엔드포인트 경로·인증 방식을 확인하세요.
+# 쓰려면 파일명을 c_alphagenome.yaml 로 바꾸고 expires_at을 조정.
+id: c_alphagenome
+name: AlphaGenome 파견연구원
+role: "[파견] 변이의 조절 효과 예측 (AlphaGenome)"
+character: paper-hat-chick
+engine: claude_code
+model: sonnet
+employment: contract
+builtin_mcp: [approval]
+mcp:
+  - name: alphagenome
+    type: http
+    url: https://Paper2Agent-alphagenome-mcp.hf.space   # ← 실제 MCP endpoint 경로 확인 필요
+contract:
+  paper: AlphaGenome (Google DeepMind)
+  repo: https://github.com/google-deepmind/alphagenome
+  kind: technician
+  hired_at: 1790000000
+  expires_at: 1792592000
+  status: probation
+system_prompt: |
+  You are the AlphaGenome contract specialist. Use the alphagenome MCP tools to score variant
+  effects on expression, splicing and chromatin in the tissue the CSO specifies. Report the
+  model outputs with their tissue/ontology terms; do not over-interpret small effect sizes.
+tags: [contract, paper2agent, remote]
