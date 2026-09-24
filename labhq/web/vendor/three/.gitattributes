@@ -1,0 +1,2 @@
+# Keep upstream JavaScript byte-identical for VERSION on CRLF checkouts too.
+*.js -text
