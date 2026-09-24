@@ -7,3 +7,7 @@ config/labhq.yaml
 *.local.yaml
 runs/
 talent/
+.pr-drafts/
+# local-only notes
+HARVEST.md
+CLAUDE.local.md
