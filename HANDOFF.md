@@ -25,13 +25,12 @@ PI는 웹 사무실(폰 포함)에서 실시간 상태를 보고 승인한다. �
 2. python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
 3. pytest -q  → 26 passed 여야 한다
 4. labhq demo --web → 출력된 http://127.0.0.1:8787/?token=change-me-client 에서 사무실이 움직이는지 본다
-5. handoff-docs 브랜치에서 인수인계서 부록 A의 파일 5개(HANDOFF.md, STATUS.md, AGENTS.md, CLAUDE.md,
-   .github/pull_request_template.md)를 추가하고 버전을 0.2.1로 올린 뒤 PR을 연다. ⛔ 병합은 PI가 한다.
+5. (완료, #1) 인수인계 문서 5개와 v0.2.1은 이미 main에 있다. 다시 만들지 말고 STATUS.md 맨 위 항목부터 읽는다.
 
 [2] 작업 방식
 - 단계마다 새 브랜치(예: p1-real-cli)에서 작업하고 PR을 연다. main에 직접 push하지 않는다.
 - PR 본문에는 템플릿대로 한 일, 테스트 결과, 바꾼 파일, 막힌 점, 질문을 적고, 같은 내용을 STATUS.md 맨 위에 추가한다.
-- ⛔에서는 멈추고 PI 확인을 받는다. 병합은 PI가 한다.
+- ⛔에서는 멈추고 PI 확인을 받는다. 병합은 PI가 한다. PI 위임(2026-09-25): Codex 리뷰 봇과 합의된 PR은 Claude가 병합한다.
 
 [3] 작업 순서
 P0 완료: public 저장소 ehojune/bioinfo-team-3d
