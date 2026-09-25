@@ -14,11 +14,13 @@
 
 | 항목 | 규칙 |
 |---|---|
-| 앵커 | `anchor_head`, `anchor_hand_l`, `anchor_hand_r`; 없으면 변환 후 바운딩박스로 추정 |
-| 손 움직임 | 손 앵커를 손/팔 메시 또는 뼈의 부모로 두면 클립 없는 상태에서도 손 올리기 적용 |
+| 앵커 | `anchor_head`, `anchor_hand_l`, `anchor_hand_r` → 손 이름 추정 → 바운딩박스 위치 추정. 반환 앵커는 scale 없는 proxy |
+| 손 움직임 | 명시한 손 앵커 우선, 없으면 L/R/Left/Right + Hand/Wrist/Forearm/Arm 이름 추정(대소문자 무시). 메시를 움직이는 노드·bone만 사용 |
 | 표지·이름표 | head에 공용 승인 깃발·zZ·체크·땀방울. label은 좌석 앞 공용 이름표 위치 |
 | 표지 크기 | 상태 표지는 스킨 scale과 무관하게 같은 크기로 보인다. |
-| 애니메이션 | clips는 상태→클립 이름. 매핑 누락은 같은 상태 이름을 찾고, 클립이 없으면 몸 흔들기·기울기·손 포즈로 대체 |
+| 애니메이션 | clips는 상태→클립 이름. 매핑 누락은 같은 상태 이름을 찾고, 클립이 없으면 손/몸 포즈로 대체 |
+| 몸 전체 fallback | 클립이 없고 한쪽 손이라도 못 찾으면 working 앞뒤 흔들기, waiting 기울기·들기, done 튀기. hibernating 숙이기·error 떨기도 클립이 없을 때 적용 |
+| 진단 | `skin.motion`의 route(clip/hands/body), hands의 route(anchor/inferred/body)·node 이름으로 적용 경로 확인 |
 | 해제 | 공용 표지 dispose 후 스킨 dispose. glTF mixer·geometry·material·texture·skeleton을 해제 |
 | 모델 예산 | 권장 ≤5,000 triangles · ≤4 draw calls/명 · 파일당 ≤2MB. 기본 사무실은 한 자릿수 draw calls 목표 |
 | 파일 상한 | `check_public.sh`는 5MB 초과를 막는다. 내장 placeholder는 50KB 이하 |
