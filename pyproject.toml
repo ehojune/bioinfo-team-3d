@@ -33,3 +33,4 @@ labhq = ["web/*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]   # tests import scripts/* (redact_stream) the same way under `pytest` and `python -m pytest`

@@ -4,10 +4,9 @@ Role instructions go to AGENTS.md in the workspace (Codex reads it as project gu
 Prompts use compact XML blocks (task / output contract / action safety / verification / grounding),
 which Codex follows more reliably than long prose.
 
-Caveat: depending on the Codex version, MCP tool calls inside `codex exec` can be auto-cancelled
-waiting for an approval nobody can give (openai/codex#24135). If hpc_* calls get cancelled, add
-the approval override your version supports to engines.codex.extra_args (e.g. an
-approval_policy/-c setting) rather than bypassing the sandbox.
+Observed in codex-cli 0.155.0-alpha.16 (openai/codex#24135): exec defaults to approval
+policy never, so MCP calls fail unless the server's default_tools_approval_mode is approve.
+labhq's own MCP tools enforce phone approval inside the broker.
 """
 
 from __future__ import annotations
@@ -60,6 +59,9 @@ class CodexAdapter(AgentAdapter):
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
         for s in ctx.mcp_servers:
             key = f"mcp_servers.{s.name}"
+            if s.name in ("labhq_hpc", "labhq_approval"):
+                # The labhq broker enforces phone approval inside these tools.
+                flags += ["-c", f'{key}.default_tools_approval_mode="approve"']
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
                 flags += ["-c", f"{key}.command={_toml(command)}", "-c", f"{key}.args={_toml(args)}"]
@@ -94,11 +96,20 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool_error", {"text": short(item.get("aggregated_output"), 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
+            elif it == "mcp_tool_call" and typ == "item.completed" and item.get("status") == "failed":
+                err = item.get("error")
+                message = str((err.get("message") if isinstance(err, dict) else err) or "MCP tool failed")
+                # The agent may recover from an ordinary tool failure; an approval-policy refusal means
+                # labhq wired the server wrong (openai/codex#24135), so that one fails the task loudly.
+                if "approval policy" in message:
+                    st.error = message
+                await ctx.emit("agent.tool_error", {"text": short(message, 400)})
             elif it == "file_change" and typ == "item.completed":
                 await ctx.emit("agent.tool", {"name": "edit", "input": short(item.get("changes"), 300)})
             elif it == "web_search" and typ == "item.started":
                 await ctx.emit("agent.tool", {"name": "web_search", "input": short(item.get("query"), 200)})
         elif typ == "turn.completed":
+            st.result_seen = True
             st.usage = ev.get("usage") or {}
             await ctx.emit("agent.usage", {"tokens": st.usage})
         elif typ in ("turn.failed", "error"):

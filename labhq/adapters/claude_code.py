@@ -83,13 +83,16 @@ class ClaudeCodeAdapter(AgentAdapter):
                 if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
                     await ctx.emit("agent.tool_error", {"text": short(block.get("content"), 400)})
         elif typ == "result":
+            st.result_seen = True
             st.final_text = ev.get("result")
             st.session_id = ev.get("session_id") or st.session_id
             st.cost_usd = ev.get("total_cost_usd")
             st.usage = ev.get("usage") or {}
             if ev.get("structured_output") is not None:
                 st.structured = ev["structured_output"]
-            if ev.get("is_error") or ev.get("subtype") not in (None, "success"):
+            if ev.get("is_error"):
+                st.error = str(ev.get("result") or ev.get("subtype") or "Claude Code error")
+            elif ev.get("subtype") not in (None, "success"):
                 st.error = ev.get("subtype") or "error"
             await ctx.emit("agent.usage", {"cost_usd": st.cost_usd, "num_turns": ev.get("num_turns"),
                                            "duration_ms": ev.get("duration_ms")})

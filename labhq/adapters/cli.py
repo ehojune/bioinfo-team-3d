@@ -95,6 +95,7 @@ class CliAdapter(AgentAdapter):
             st.cost_usd = ev.get("cost_usd", st.cost_usd)
             await ctx.emit("agent.usage", {"cost_usd": ev.get("cost_usd"), "tokens": ev.get("tokens")})
         elif typ == "result":
+            st.result_seen = True
             st.final_text = str(ev.get("text", ""))
             st.structured = ev.get("structured")
             st.session_id = ev.get("session_id") or st.session_id

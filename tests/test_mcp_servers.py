@@ -29,6 +29,9 @@ async def test_approval_prompt_contract(tmp_path):
         async with ClientSession(streams[0], streams[1]) as session:
             await session.initialize()
             ok = await session.call_tool("approval_prompt", {"tool_name": "Read", "input": {"file_path": "README.md"}})
+            # Claude Code rejects anything but a single text block (P1 real-CLI finding)
+            assert len(ok.content) == 1 and ok.content[0].type == "text"
+            assert (getattr(ok, "structured_content", None) or getattr(ok, "structuredContent", None)) is None
             payload = json.loads(ok.content[0].text)
             assert payload == {"behavior": "allow", "updatedInput": {"file_path": "README.md"}}
             # "ask" with an unreachable broker must fail closed

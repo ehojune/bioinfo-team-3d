@@ -57,6 +57,7 @@ class RunState:
     structured: Any = None
     error: str | None = None
     usage: dict = field(default_factory=dict)
+    result_seen: bool = False
 
 
 def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
@@ -88,6 +89,9 @@ class AgentAdapter(ABC):
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
         return None
 
+    def stderr_error(self, stderr: str) -> str | None:
+        return None
+
     @abstractmethod
     def build_command(self, ctx: RunContext) -> list[str]: ...
 
@@ -100,6 +104,9 @@ class AgentAdapter(ABC):
         if structured is None and ctx.task.output_schema:
             structured = extract_json(text)
         ok = returncode == 0 and st.error is None
+        if returncode == 0 and not st.error and not st.result_seen and not text.strip():
+            st.error = "empty CLI stream: no result event or text"
+            ok = False
         return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=ok, text=text or "",
                           structured=structured, session_id=st.session_id, cost_usd=st.cost_usd,
                           error=st.error)
@@ -156,7 +163,11 @@ class AgentAdapter(ABC):
             await self._kill(proc)
             raise
         (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail))
+        stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
+        st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)
+        if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
+            res.error = f"{res.error}: {short(stderr, 500)}"
         if proc.returncode not in (0, None) and not res.error:
             res.error = f"exit {proc.returncode}: " + " | ".join(list(stderr_tail)[-5:])
         return res

@@ -39,7 +39,18 @@ def _deny(message: str) -> str:
     return json.dumps({"behavior": "deny", "message": message})
 
 
-@server.tool()
+
+def _text_only_tool():
+    # Claude Code's --permission-prompt-tool contract: exactly one text block, no structuredContent.
+    # mcp>=1.10 wraps `-> str` results in structuredContent {"result": ...} unless told not to, and
+    # Claude 2.1.282 then rejects the answer ("Expected a single text block"). Older mcp has no flag.
+    try:
+        return server.tool(structured_output=False)
+    except TypeError:
+        return server.tool()
+
+
+@_text_only_tool()
 async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""

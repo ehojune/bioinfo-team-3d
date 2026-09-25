@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..models import Engine
 from ..settings import Settings
 from .base import AgentAdapter, RunContext
+from .antigravity import AntigravityAdapter
 from .claude_code import ClaudeCodeAdapter
 from .cli import CliAdapter
 from .codex import CodexAdapter
@@ -13,6 +14,7 @@ _ADAPTERS: dict[Engine, type[AgentAdapter]] = {
     Engine.claude_code: ClaudeCodeAdapter,
     Engine.codex: CodexAdapter,
     Engine.gemini: GeminiAdapter,
+    Engine.antigravity: AntigravityAdapter,
     Engine.cli: CliAdapter,
     Engine.mock: MockAdapter,
 }

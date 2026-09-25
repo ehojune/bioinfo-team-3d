@@ -92,7 +92,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🐻 곰 Biology 만물박사 | `biologist` | 가설·메커니즘·교란요인 | Claude Code / opus | 웹 |
 | 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 (검증된 파이프라인을 표준대로 반복) | 자체 에이전트 (`engine: cli`) | HPC |
 | 🐿️ 다람쥐 데이터 담당 | `data_steward` | 공개/통제접근 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | HPC |
-| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Gemini CLI / pro | Google 검색 |
+| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Antigravity / gemini-3.8-flash-high | Google 검색 |
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 (nf-core·Snakemake 우선) | Claude Code / opus | HPC |
 | 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트·컨테이너 | Codex | HPC |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC 보고서 | Claude Code / sonnet | HPC |
@@ -100,7 +100,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증·오퍼레터 | Claude Code / opus | Skill·Agent |
 | 🐥 파견직 (논문 종이모자 병아리) | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | 논문 MCP + 논문 스킬 |
 
-엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: gemini`, `model: flash`)
+엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: antigravity`, `model: gemini-3.8-flash-high`)
 
 ### bioinfo-agent 연결하기
 직접 만든 에이전트는 `engine: cli`로 붙습니다. `agents/core/bioinfo-agent.yaml`의 `cli.command`를 실제 실행 방식으로
@@ -233,7 +233,7 @@ flowchart LR
   D & M & C <-->|/ws/client · REST| G[Gateway<br/>FastAPI]
   G --- O[CSO 오케스트레이터<br/>DAG · 리뷰 · 예산]
   R[Runner 데몬<br/>워크스테이션 / HPC 로그인 노드] -->|outbound /ws/runner| G
-  R --> E1[claude -p] & E2[codex exec] & E3[gemini -p]
+  R --> E1[claude -p] & E2[codex exec] & E3[gemini -p] & E4[agy -p]
   E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · 파견직 논문 MCP]
   T --> B[로컬 브로커 127.0.0.1] --> R
   T --> H[(SGE / PBS)]
@@ -267,6 +267,8 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 - **승인·예산** (`policy.approvals`, `policy.budget`): `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음.
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
   `permission_mode`, `project_dirs`.
+- **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`과 `extra_args`.
+  Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.
 
 ## 9. 폰 연결
 
@@ -276,13 +278,14 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 
 ## 10. 알려진 한계 · 첫 실행 때 확인할 것
 
-- CLI 플래그는 버전마다 바뀝니다. 2026-09 기준 문서로 작성했으니 `claude --help`, `codex exec --help`, `gemini --help`로 확인하세요.
-  실제 CLI 연동은 이벤트 스트림을 재생하는 fake-CLI 테스트까지 검증했고, 실계정 실행은 아직입니다.
-- Codex `exec`에서 MCP 툴 호출이 승인 대기로 자동 취소되는 사례가 보고되어 있습니다 (openai/codex#24135).
-  엔지니어의 `hpc_*` 호출이 취소되면 해당 버전의 승인 설정을 `engines.codex.extra_args`로 넘기세요.
-- Gemini CLI 헤드리스의 stream-json 이벤트 이름과 승인 모드 동작은 버전별 차이가 있어 파서를 방어적으로 짰고,
-  세션 resume은 쓰지 않습니다 (기상 시 이전 결과를 맥락으로 재주입).
-- Claude Code 권한 규칙의 절대경로 문법(`Read(//data/x/**)`)과 `permission_mode: auto` 사용 가능 여부를 확인하세요.
+- Windows 11 실측 스트림은 `tests/fixtures/real/`에 있습니다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact`.
+- Codex 0.155.0-alpha.16의 `exec` 기본 승인 정책 `never`는 MCP 호출을 실패시켰습니다 (#24135). labhq 내장 MCP에만 `default_tools_approval_mode="approve"`를 설정하고 도구 안에서 폰 승인을 받습니다.
+- Gemini CLI 0.57.0 개인 계정은 `IneligibleTierError`와 빈 stdout, 종료 코드 0을 냈습니다. 이 계정은 Antigravity를 쓰며 Gemini 어댑터는 Workspace 계정용으로 남깁니다.
+- Antigravity 1.2.11은 호출 단위 승인 훅이 없습니다. 헤드리스 도구 거부는 `denied_actions`에만 남을 수 있습니다. 통제 데이터 접근 직원에게 지정하지 마세요.
+- Claude Code 2.1.282는 로그아웃 상태에서 `is_error: true`와 `subtype: success`를 함께 냅니다.
+- `--permission-prompt-tool` 응답은 텍스트 블록 하나여야 합니다. mcp 2.x가 붙이는 구조화 결과가 있으면 Claude가 거부해서, 승인 도구는 구조화 출력을 끕니다.
+- Claude는 권한 규칙을 POSIX로 정규화한 경로와 대조합니다. Windows에서는 `Read(//c/Users/...)`만 막히므로 labhq가 드라이브 경로를 그 형태로 바꿉니다.
+- 헤드리스 Claude는 사용자 hook·개인 서브에이전트를, Codex는 사용자 config.toml·전역 AGENTS.md를 불러왔습니다. 안전·복구 최소선 단계에서 전용 계정/격리로 해결합니다.
 - 승인 대기가 길면 Claude의 MCP 툴 타임아웃에 걸릴 수 있어 러너가 `MCP_TOOL_TIMEOUT`을 늘려 줍니다.
 - **데이터 구역은 사고 방지용 가드레일이지 샌드박스가 아닙니다.** 확실한 격리는 전용 계정·파일 권한·컨테이너로 하세요.
 
@@ -308,7 +311,7 @@ labhq/
   settings.py  models.py  policy.py  registry.py  util.py  cli.py
   web/          index.html (사무실 UI, 의존성 없음) · manifest · icon
   integrations/ github (프로젝트 이슈·보고서 커밋·공개 가드·@codex 리뷰)
-  adapters/     base · claude_code · codex · gemini · cli (자체 에이전트) · mock
+  adapters/     base · claude_code · codex · gemini · antigravity · cli (자체 에이전트) · mock
   runner/       daemon (게이트웨이 연결·실행·잡 감시) · approvals (로컬 브로커) · workspace (실험노트)
   tools/        scheduler (SGE/PBS) · hpc_mcp · approval_mcp · _mcpcompat (mcp 1.x/2.x 호환)
   gateway/      server (FastAPI · WS · REST)
