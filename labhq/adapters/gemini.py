@@ -20,6 +20,11 @@ class GeminiAdapter(AgentAdapter):
     engine = "gemini"
     supports_resume = False
 
+    def stderr_error(self, stderr: str) -> str | None:
+        if "IneligibleTierError" in stderr:
+            return "Gemini CLI 개인 계정은 지원 종료, engine: antigravity를 쓰라"
+        return None
+
     def engine_env(self) -> dict[str, str]:
         return {"GEMINI_CLI_TRUST_WORKSPACE": "true", "NO_COLOR": "1"}
 
@@ -68,6 +73,7 @@ class GeminiAdapter(AgentAdapter):
         elif typ == "error":
             st.error = ev.get("message") or "gemini error"
         elif typ == "result":
+            st.result_seen = True
             st.usage = ev.get("stats") or {}
             if ev.get("status") not in (None, "success"):
                 st.error = st.error or str(ev.get("error") or ev.get("status"))

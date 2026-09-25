@@ -2,8 +2,8 @@ id: lit_scout
 name: 여우 문헌·헤드헌터
 role: 문헌·웹 검색 + 파견직 후보(논문+코드) 발굴
 character: fox
-engine: gemini
-model: pro
+engine: antigravity
+model: gemini-3.8-flash-high
 permission_mode: acceptEdits
 builtin_mcp: []
 system_prompt: |

@@ -52,16 +52,29 @@ def touches(obj: Any, paths: Iterable[str]) -> str | None:
     return None
 
 
+def claude_rule_path(p: str) -> str:
+    """Path as Claude Code matches it in permission rules.
+
+    Claude normalises Windows paths to POSIX form before matching (`C:\\Users\\x` → `/c/Users/x`).
+    Verified on Claude 2.1.282 / Windows 11: only `Read(//c/Users/x/**)` blocked the read;
+    `Read(/C:\\Users\\x/**)` and `Read(//C:/Users/x/**)` did not (tests/fixtures/real/claude_code).
+    """
+    s = p.replace("\\", "/").rstrip("/")
+    m = re.match(r"^([A-Za-z]):(?:/(.*))?$", s)
+    if m:
+        return f"/{m.group(1).lower()}" + (f"/{m.group(2)}" if m.group(2) else "")
+    return s
+
+
 def claude_settings(policy: PolicySettings) -> dict:
     """Claude Code settings: deny file tools on restricted zones.
 
-    Absolute paths in permission rules use a leading `//` (e.g. `Read(//data/cohort/**)`).
-    Verify against your Claude Code version's permission-rule docs.
+    Absolute paths in permission rules take a leading `//` (e.g. `Read(//data/cohort/**)`).
     """
     deny: list[str] = []
     for p in restricted_paths(policy):
         for tool in ("Read", "Edit", "Write"):
-            deny.append(f"{tool}(/{p}/**)")
+            deny.append(f"{tool}(/{claude_rule_path(p)}/**)")
     return {"permissions": {"deny": deny}} if deny else {}
 
 

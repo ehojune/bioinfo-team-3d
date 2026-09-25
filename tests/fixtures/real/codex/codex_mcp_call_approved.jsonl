@@ -1,0 +1,7 @@
+{"type": "thread.started", "thread_id": "<ID_1>"}
+{"type": "turn.started"}
+{"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "I’ll call the echo tool and return its response verbatim."}}
+{"type": "item.started", "item": {"id": "item_1", "type": "mcp_tool_call", "server": "labhq_echo", "tool": "echo", "arguments": {"text": "p1"}, "result": null, "error": null, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "item_1", "type": "mcp_tool_call", "server": "labhq_echo", "tool": "echo", "arguments": {"text": "p1"}, "result": {"content": [{"type": "text", "text": "ECHO:p1"}], "structured_content": {"result": "ECHO:p1"}}, "error": null, "status": "completed"}}
+{"type": "item.completed", "item": {"id": "item_2", "type": "agent_message", "text": "ECHO:p1"}}
+{"type": "turn.completed", "usage": {"input_tokens": 73095, "cached_input_tokens": 61056, "cache_write_input_tokens": 0, "output_tokens": 114, "reasoning_output_tokens": 8}}

@@ -20,6 +20,7 @@ engines:
   claude_code: {bin: claude}
   codex: {bin: codex, extra_args: []}
   gemini: {bin: gemini}
+  antigravity: {bin: agy}
 
 hpc:
   scheduler: sge              # sge | pbs | mock | none

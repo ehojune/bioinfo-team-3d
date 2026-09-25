@@ -39,6 +39,7 @@ class EnginesSettings(BaseModel):
     claude_code: EngineBin = EngineBin(bin="claude")
     codex: EngineBin = EngineBin(bin="codex")
     gemini: EngineBin = EngineBin(bin="gemini")
+    antigravity: EngineBin = EngineBin(bin="agy")
 
 
 class SgeSettings(BaseModel):

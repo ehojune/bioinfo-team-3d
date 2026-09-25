@@ -1,0 +1,5 @@
+{"event": "init", "conversation_id": "<ID_1>", "init": {"model": "gemini-3.8-flash-high", "cwd": "<TMP>\\tmp.CSbWcyuk3x", "tools": "<57 items>"}}
+{"event": "step_update", "step_update": {"conversation_id": "<ID_1>", "step_index": 0, "state": "DONE", "step_type": "user_input"}}
+{"event": "step_update", "step_update": {"conversation_id": "<ID_1>", "step_index": 1, "state": "ACTIVE", "step_type": "agent_response", "text_delta": "LABHQ_P1_OK"}}
+{"event": "step_update", "step_update": {"conversation_id": "<ID_1>", "step_index": 1, "state": "DONE", "step_type": "agent_response", "text_delta": "\n", "duration_seconds": 3.5381451, "usage": {"input_tokens": 18644, "output_tokens": 37, "thinking_tokens": 30, "cache_read_tokens": 0, "total_tokens": 18681}}}
+{"event": "result", "result": {"conversation_id": "<ID_1>", "status": "SUCCESS", "response": "LABHQ_P1_OK\n", "duration_seconds": 5.3691726, "num_turns": 1, "usage": {"input_tokens": 18644, "output_tokens": 37, "thinking_tokens": 30, "cache_read_tokens": 0, "total_tokens": 18681}}}

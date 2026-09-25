@@ -5,7 +5,7 @@ import uuid
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def new_id(prefix: str) -> str:
@@ -16,6 +16,7 @@ class Engine(str, Enum):
     claude_code = "claude_code"
     codex = "codex"
     gemini = "gemini"
+    antigravity = "antigravity"
     cli = "cli"  # any other agent program (e.g. the lab's own bioinfo-agent) behind a command template
     mock = "mock"
 
@@ -87,6 +88,12 @@ class AgentSpec(BaseModel):
     contract: ContractInfo | None = None
     can_orchestrate: bool = False
     tags: list[str] = []
+
+    @model_validator(mode="after")
+    def antigravity_has_no_mcp(self) -> "AgentSpec":
+        if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
+            raise ValueError("antigravity does not support builtin_mcp or MCP servers")
+        return self
 
     def summary(self) -> dict[str, Any]:
         return {
