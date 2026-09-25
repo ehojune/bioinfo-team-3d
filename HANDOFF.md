@@ -39,11 +39,17 @@ P1 실제 CLI 연동: claude/codex/gemini --version 기록 → ⛔ 실제 계정
    실제 stream 출력을 tests/fixtures/에 저장하고 파서 테스트를 추가한다. 반드시 확인: Claude --permission-prompt-tool과
    --settings deny 규칙, Codex exec의 MCP 호출 자동 취소 이슈(openai/codex#24135), Gemini stream-json 이벤트 이름과 승인 모드.
    fixture에는 토큰, 계정 이름, 내부 경로가 남지 않게 가린다.
+P1+ 안전·복구 최소선 (PI 결정 2026-09-26, P2·P3 전에): ① 게이트웨이의 요청·승인과 러너의 HPC 잡을 디스크에 남기고
+   재시작 때 복구한다 ② CSO는 선행 단계가 실패하면 하위 단계를 멈추고, 리뷰 파싱 실패를 통과로 치지 않으며, 재시도 규칙을 둔다
+   ③ LLM·MCP 실행 계정은 통제 원본에 닿지 못하게 한다(전용 계정·파일 권한). 데이터 구역 가드가 동작하지 않는 OS(현재 Windows)에서는
+   러너가 시작을 거부한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
+   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
 P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Claude Code 스킬)을 묻고 agents/core/bioinfo-agent.yaml의
    cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
    hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
-P4 웹 사무실 실사용 점검: iPhone Safari와 데스크톱 스크린샷으로 레이아웃을 확인하고 고친다 (labhq/web/index.html 한 파일, 빌드 없음).
+P4 웹 사무실 실사용 점검 + 3D 도입: iPhone Safari와 데스크톱에서 확인하고 고친다. 3D 사무실(labhq/web/lab3d, #3)을 `/3d`로 연결해
+   2.5D와 함께 둔다. 먼저 index.html의 이벤트 처리를 상태 reducer로 떼어 두 렌더러가 같이 쓰게 한다. 승인 UI는 DOM에 둔다.
 P5 프로젝트 GitHub 보고: private 테스트 저장소로 --project 요청 → 이슈, 코멘트, 보고서 커밋, 가림 처리를 확인한다.
 P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 scanpy 채용 → 수습 통과, 비용과 시간을 기록한다.
 보류(PI 확인 전에는 만들지 않음): iOS 네이티브 앱, 거버넌스(정부) 층.
