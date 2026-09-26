@@ -8,6 +8,8 @@ raw records are only touched inside HPC jobs whose outputs are aggregates.
 from __future__ import annotations
 
 import os
+import ntpath
+import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
@@ -25,7 +27,29 @@ class Decision:
 
 
 def _norm(p: str) -> str:
-    return os.path.normpath(os.path.expanduser(p))
+    """Lexically normalize both POSIX and Windows paths, regardless of the host OS."""
+    p = os.path.expandvars(os.path.expanduser(p))
+    if re.match(r"^[A-Za-z]:[/\\]", p) or p.startswith(("\\\\", "//")):
+        return ntpath.normpath(p).replace("\\", "/").casefold()
+    normalized = posixpath.normpath(p.replace("\\", "/"))
+    return normalized.casefold() if os.name == "nt" else normalized
+
+
+def _inside(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip("/") + "/")
+
+
+def _absolute(p: str) -> bool:
+    return p.startswith("/") or bool(re.match(r"^[A-Za-z]:[/\\]", p)) or p.startswith("\\\\")
+
+
+def _candidate_paths(s: str) -> Iterator[str]:
+    # Split shell punctuation, but keep quoted paths and backslashes intact.
+    for match in re.finditer(r'''"([^"]*)"|'([^']*)'|([^\s'"`|;&<>]+)''', s):
+        token = next((v for v in match.groups() if v is not None), "")
+        token = token.rsplit("=", 1)[-1].strip("()[]{},")
+        if token:
+            yield token
 
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
@@ -43,12 +67,22 @@ def _strings(obj: Any) -> Iterator[str]:
             yield from _strings(v)
 
 
-def touches(obj: Any, paths: Iterable[str]) -> str | None:
-    paths = list(paths)
+def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
+    """Find lexical path references in tool input, including quotes, ``=`` and ``../``.
+
+    This is a guardrail, not a shell parser: variables, globs, command substitution,
+    symlinks and paths assembled at runtime cannot be reliably detected.
+    """
+    paths = [(p, _norm(p)) for p in paths if p]
     for s in _strings(obj):
-        for p in paths:
-            if p and p in s:
-                return p
+        for token in _candidate_paths(s):
+            if not _absolute(token) and workdir:
+                token = _norm(posixpath.join(_norm(workdir), token))
+            else:
+                token = _norm(token)
+            for original, zone in paths:
+                if _inside(token, zone):
+                    return original
     return None
 
 
@@ -59,6 +93,8 @@ def claude_rule_path(p: str) -> str:
     Verified on Claude 2.1.282 / Windows 11: only `Read(//c/Users/x/**)` blocked the read;
     `Read(/C:\\Users\\x/**)` and `Read(//C:/Users/x/**)` did not (tests/fixtures/real/claude_code).
     """
+    if p.startswith(("\\\\", "//")):
+        raise ValueError("Claude UNC deny syntax is unverified; runner must reject this zone")
     s = p.replace("\\", "/").rstrip("/")
     m = re.match(r"^([A-Za-z]):(?:/(.*))?$", s)
     if m:
@@ -83,9 +119,10 @@ def evaluate_tool(
     tool_input: dict[str, Any],
     policy: PolicySettings,
     allowed_roots: Iterable[str] = (),
+    workdir: str | None = None,
 ) -> Decision:
     rp = restricted_paths(policy)
-    hit = touches(tool_input, rp)
+    hit = touches(tool_input, rp, workdir=workdir)
 
     if hit and tool_name in READ_LIKE | WRITE_LIKE:
         return Decision(
@@ -109,10 +146,15 @@ def evaluate_tool(
         return Decision("allow")
 
     roots = [_norm(r) for r in allowed_roots if r]
-    if tool_name in WRITE_LIKE and roots:
+    if tool_name in WRITE_LIKE:
         fp = tool_input.get("file_path") or tool_input.get("notebook_path")
-        if fp and os.path.isabs(fp) and not any(_norm(fp).startswith(r) for r in roots):
-            return Decision("ask", f"write outside workspace/project dirs: {fp}")
+        if fp:
+            if not _absolute(fp):
+                if not workdir:
+                    return Decision("ask", f"write path has no known workdir: {fp}")
+                fp = posixpath.join(_norm(workdir), fp)
+            if roots and not any(_inside(_norm(fp), r) for r in roots):
+                return Decision("ask", f"write outside workspace/project dirs: {fp}")
 
     return Decision("allow")
 

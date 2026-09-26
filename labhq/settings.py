@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import ntpath
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class GatewaySettings(BaseModel):
@@ -62,12 +63,21 @@ class HpcSettings(BaseModel):
     sge: SgeSettings = SgeSettings()
     pbs: PbsSettings = PbsSettings()
     command_timeout_s: int = 60
+    submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub; status commands stay unchanged
 
 
 class DataZone(BaseModel):
     path: str
     level: Literal["restricted", "internal", "public"] = "restricted"
     note: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value: str) -> str:
+        expanded = os.path.expandvars(os.path.expanduser(value))
+        if not (expanded.startswith("/") or ntpath.isabs(expanded) and bool(ntpath.splitdrive(expanded)[0])):
+            raise ValueError("data zone path must be absolute (POSIX, Windows drive, or UNC)")
+        return expanded
 
 
 def _default_bash_ask() -> list[str]:
@@ -102,6 +112,7 @@ class BudgetSettings(BaseModel):
 
 class PolicySettings(BaseModel):
     data_zones: list[DataZone] = []
+    allow_runner_read_restricted: bool = False
     approvals: ApprovalRules = ApprovalRules()
     budget: BudgetSettings = BudgetSettings()
 

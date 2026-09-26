@@ -55,7 +55,7 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
     tool_input = input or {}
-    d = evaluate_tool(tool_name, tool_input, S.policy, allowed_roots=[WORKDIR, *EXTRA_ROOTS])
+    d = evaluate_tool(tool_name, tool_input, S.policy, allowed_roots=[WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR)
     if d.action == "allow":
         return _allow(tool_input)
     if d.action == "deny":

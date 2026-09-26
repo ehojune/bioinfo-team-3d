@@ -69,6 +69,24 @@ def test_submit_args_pbs():
     assert "nodes=1:ppn=4,mem=16gb,walltime=24:00:00" in args
 
 
+def test_submit_prefix_only_on_qsub(monkeypatch):
+    from subprocess import CompletedProcess
+
+    s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
+                              submit_prefix=["sudo", "-n", "-u", "data-account"]))
+    args = s.submit_args("/w/j.sh", "align", 1, "4G", "01:00:00", None, "/w/o", "/w/e")
+    assert args[:5] == ["sudo", "-n", "-u", "data-account", "qsub"]
+    seen = []
+
+    def fake_run(argv):
+        seen.append(argv)
+        return CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(s, "_run", fake_run)
+    s.queue()
+    assert seen == [["qstat", "-u", "data-account"]]
+
+
 def test_helpers():
     assert normalize_walltime("90:00") == "90:00:00"  # HH:MM
     assert normalize_walltime("1-02:00:00") == "26:00:00"
