@@ -3,17 +3,31 @@
 Flags used (see https://code.claude.com/docs/en/cli-reference): -p, --output-format stream-json
 --verbose, --model, --permission-mode, --permission-prompt-tool, --mcp-config + --strict-mcp-config,
 --append-system-prompt-file, --max-turns, --max-budget-usd, --json-schema, --resume, --settings,
---add-dir, --tools, --allowedTools, --disallowedTools.
+--add-dir, --tools, --allowedTools, --disallowedTools, --setting-sources, --disable-slash-commands.
 """
 
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dir, expand_env, wrap_cwd
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
+ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
+
+
+def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
+    """Settings that keep the PI's own Claude setup out of a staff session.
+
+    Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
+    user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
+    """
+    home = child_config_dir(env, cwd, "CLAUDE_CONFIG_DIR", ".claude")
+    return {"autoMemoryEnabled": False,
+            "claudeMdExcludes": [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]}
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -27,8 +41,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 servers[s.name] = {"type": "stdio", "command": command, "args": args, "env": expand_env(s.env)}
             else:
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
-        (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
-        (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
+        (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code
@@ -47,8 +61,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--max-budget-usd", f"{budget:.2f}"]
         if t.output_schema:
             cmd += ["--json-schema", json.dumps(t.output_schema)]
-        if ctx.claude_settings:
-            cmd += ["--settings", json.dumps(ctx.claude_settings)]
+        settings = dict(ctx.claude_settings)
+        if b.isolate_user_config:
+            cmd += ISOLATION_FLAGS
+            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+        if settings:
+            cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:
             cmd += ["--tools", a.builtin_tools]
         if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):

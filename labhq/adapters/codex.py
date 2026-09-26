@@ -12,9 +12,11 @@ labhq's own MCP tools enforce phone approval inside the broker.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, child_config_dir, RunContext, RunState, expand_env, wrap_cwd
 
 
 def _toml(v: object) -> str:
@@ -23,13 +25,17 @@ def _toml(v: object) -> str:
     return json.dumps(v)  # JSON strings/arrays/bools/numbers are valid TOML here
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 class CodexAdapter(AgentAdapter):
     engine = "codex"
 
     def prepare(self, ctx: RunContext) -> None:
-        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
         if ctx.task.output_schema:
-            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema))
+            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
 
     def compose_prompt(self, ctx: RunContext) -> str:
         t = ctx.task
@@ -47,10 +53,28 @@ class CodexAdapter(AgentAdapter):
                       "hypotheses as hypotheses.\n</grounding_rules>")
         return "\n\n".join(blocks)
 
+    def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        b = self.settings.engines.codex
+        if not b.isolate_user_config or b.allow_global_agents_md:
+            return None
+        home = child_config_dir(env, ctx.workdir, "CODEX_HOME", ".codex")
+        found = [n for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
+        if not found:
+            return None
+        return (f"Codex staff session refused: $CODEX_HOME/{found[0]} (global instructions) would load and no flag "
+                "turns it off. Run the runner under a dedicated account, point engines.codex.env.CODEX_HOME at a "
+                "separate staff login, or set engines.codex.allow_global_agents_md: true.")
+
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
         flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), "-s", a.sandbox,
                  "-o", str(ctx.meta_dir / "last_message.txt")]
+        if b.isolate_user_config:
+            # config.toml carries the PI's plugins, notify hook and MCP servers. The global AGENTS.md in
+            # CODEX_HOME still loads; set engines.codex.env.CODEX_HOME to a separate staff login to drop it.
+            flags += ["--ignore-user-config", "--ignore-rules"]
+            if _is_windows() and b.windows_sandbox:
+                flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
         if a.model:
             flags += ["-m", a.model]
         for d in ctx.extra_dirs:
@@ -118,6 +142,6 @@ class CodexAdapter(AgentAdapter):
 
     def finalize(self, st: RunState, ctx: RunContext, returncode: int | None):
         last = ctx.meta_dir / "last_message.txt"
-        if last.exists() and last.read_text().strip():
-            st.final_text = last.read_text()
+        if last.exists() and last.read_text(encoding="utf-8").strip():
+            st.final_text = last.read_text(encoding="utf-8")
         return super().finalize(st, ctx, returncode)
