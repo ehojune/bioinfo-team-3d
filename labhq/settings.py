@@ -194,7 +194,7 @@ class Settings(BaseModel):
         path = path or os.environ.get("LABHQ_CONFIG")
         data: dict = {}
         if path and Path(path).exists():
-            data = yaml.safe_load(Path(path).read_text()) or {}
+            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path and Path(path).exists():
             s.config_path = str(Path(path).resolve())

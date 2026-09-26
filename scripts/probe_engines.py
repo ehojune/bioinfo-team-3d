@@ -33,7 +33,7 @@ def main() -> None:
     p.add_argument("--prompt", default="Reply with exactly LABHQ_P1_OK", help="Task prompt")
     p.add_argument("--name", help="Output file stem (default: engine)")
     args = p.parse_args()
-    settings = Settings()
+    settings = Settings.load()  # LABHQ_CONFIG, same as the runner
     settings.runner.task_timeout_s = args.timeout
     agent = AgentSpec(id="probe", name="Probe", role="CLI verification", engine=Engine(args.engine),
                       model=args.model, builtin_mcp=[], system_prompt="Answer the small test exactly.")

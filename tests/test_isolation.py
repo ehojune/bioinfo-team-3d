@@ -211,3 +211,27 @@ def test_claude_md_exclude_follows_the_childs_home(tmp_path):
     home = tmp_path / "staff-home"
     s = _settings_arg(_command("claude_code", tmp_path, env={"HOME": str(home), "USERPROFILE": str(home)}))
     assert (home / ".claude" / "CLAUDE.md").as_posix() in s["claudeMdExcludes"]
+
+
+def test_probe_script_reads_labhq_config(tmp_path, monkeypatch):
+    """engines.codex.env from LABHQ_CONFIG must reach the probe's preflight, as it does for the runner."""
+    import scripts.probe_engines as probe
+
+    clean, polluted = tmp_path / "clean", tmp_path / "polluted"
+    clean.mkdir()
+    polluted.mkdir()
+    (polluted / "AGENTS.md").write_text("PI global instructions")
+    cfg = tmp_path / "labhq.yaml"
+    cfg.write_text(f"engines:\n  codex:\n    bin: codex\n    env: {{CODEX_HOME: '{polluted.as_posix()}'}}\n",
+                   encoding="utf-8")
+    monkeypatch.setenv("LABHQ_CONFIG", str(cfg))
+    monkeypatch.setenv("CODEX_HOME", str(clean))  # without the config the probe would pass and spawn
+
+    def no_spawn(*a, **k):
+        raise AssertionError("probe ignored LABHQ_CONFIG")
+
+    monkeypatch.setattr(probe.subprocess, "run", no_spawn)
+    monkeypatch.setattr("sys.argv", ["probe_engines.py", "codex", "--output-dir", str(tmp_path / "out")])
+    with pytest.raises(SystemExit) as exc:
+        probe.main()
+    assert exc.value.code == 2
