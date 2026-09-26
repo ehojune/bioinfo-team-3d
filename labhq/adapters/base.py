@@ -72,6 +72,16 @@ def expand_env(env: dict[str, str]) -> dict[str, str]:
     return {k: os.path.expandvars(v) for k, v in env.items()}
 
 
+def child_config_dir(env: dict[str, str], cwd: Path, var: str, default_name: str) -> Path:
+    """Config dir the child CLI will use: `var` from its env (relative → its cwd), else <its HOME>/default_name."""
+    raw = env.get(var)
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        return p if p.is_absolute() else cwd / p
+    home = (env.get("USERPROFILE") or env.get("HOME")) if os.name == "nt" else env.get("HOME")
+    return (Path(home) if home else Path.home()) / default_name
+
+
 class AgentAdapter(ABC):
     engine = "base"
     supports_resume = True

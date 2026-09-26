@@ -13,19 +13,19 @@ import os
 from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dir, expand_env, wrap_cwd
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
 
 
-def user_config_isolation(env: dict[str, str]) -> dict:
+def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     """Settings that keep the PI's own Claude setup out of a staff session.
 
     Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
     user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
     """
-    home = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    home = child_config_dir(env, cwd, "CLAUDE_CONFIG_DIR", ".claude")
     return {"autoMemoryEnabled": False,
             "claudeMdExcludes": [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]}
 
@@ -64,7 +64,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         settings = dict(ctx.claude_settings)
         if b.isolate_user_config:
             cmd += ISOLATION_FLAGS
-            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}))
+            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
         if settings:
             cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:
