@@ -28,3 +28,12 @@ def test_demo_page_without_gateway_boot_marker():
     from labhq.gateway import server
     html = (server.WEB / "index.html").read_text(encoding="utf-8")
     assert "<!--LABHQ_BOOT-->" in html  # published/static copies fall back to demo mode
+
+
+def test_live_reconnect_seq_lives_only_in_page_memory():
+    from labhq.gateway import server
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    live = html.split("function startLive() {", 1)[1].split("/* ----------------", 1)[0]
+    assert "let lastSeq = 0;" in live  # a newly opened page asks for a snapshot
+    assert "labhq_last_seq" not in html  # ignore any key left by older versions
+    assert "${lastSeq ? `&since=${lastSeq}` : ''}" in live  # only reconnections send since
