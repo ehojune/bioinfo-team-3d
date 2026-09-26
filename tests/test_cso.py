@@ -21,6 +21,9 @@ class FakeHub:
         self.calls = []
         self.approvals = []
         self.approve_budget = False
+        self.runner_online = asyncio.Event()
+        self.runner_online.set()
+        self.waiting_for_runner = asyncio.Event()
         self.reply = dispatch
 
     async def dispatch(self, task):
@@ -36,6 +39,11 @@ class FakeHub:
 
     def supports_resume(self, agent_id):
         return False
+
+    async def wait_agent_online(self, agent_id, timeout_s):
+        self.waiting_for_runner.set()
+        await self.runner_online.wait()
+        return True
 
 
 def result(task, ok=True, **kwargs):
@@ -128,10 +136,29 @@ async def test_runner_offline_retries_once_then_succeeds():
         return result(task, text="done")
 
     hub = FakeHub(dispatch)
+    hub.runner_online.clear()
     hub.requests["r"].update(mode="direct", agent_id="worker")
-    await Orchestrator(hub).run_request("r")
+    running = asyncio.create_task(Orchestrator(hub).run_request("r"))
+    await asyncio.wait_for(hub.waiting_for_runner.wait(), 1)
+    assert calls == 1 and not running.done()
+    hub.runner_online.set()  # reconnection signal; no clock-based sleep
+    await running
     assert hub.requests["r"]["status"] == "done" and calls == 2
     assert sum(e["type"] == "request.step_retry" for e in hub.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_hub_online_wait_uses_registration_signal():
+    hub = Hub(Settings())
+    hub.set_roster("r", [{"id": "worker"}])  # roster remains while its runner is offline
+    waiting = asyncio.create_task(hub.wait_agent_online("worker", 30))
+    await asyncio.sleep(0)
+    assert not waiting.done()
+    ws = object()
+    hub.register_runner("r", ws, [{"id": "worker"}])
+    assert await asyncio.wait_for(waiting, 1)
+    hub.unregister_runner("r", ws)
+    assert not await hub.wait_agent_online("worker", 0)
 
 
 @pytest.mark.asyncio

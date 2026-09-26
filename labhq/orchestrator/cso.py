@@ -12,7 +12,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
-from ..models import Task, TaskResult, new_id
+from ..models import RunnerUnavailable, Task, TaskResult, new_id
 from ..util import clip, extract_json, short
 
 if TYPE_CHECKING:
@@ -248,6 +248,7 @@ class Orchestrator:
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
                                                   "meta": {**current.meta, "attempt": attempt}})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
+                offline = False
                 try:
                     res = await self.hub.dispatch(attempt_task)
                 except asyncio.CancelledError:
@@ -255,6 +256,7 @@ class Orchestrator:
                 except Exception as exc:
                     res = TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False, error=str(exc))
                     kind = failure_kind(exc)
+                    offline = isinstance(exc, RunnerUnavailable)
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
                     kind = failure_kind(res)
@@ -269,10 +271,16 @@ class Orchestrator:
                     if res.ok:
                         res = res.model_copy(update={"ok": False, "error": "empty result"})
                     return res
+                if offline:
+                    await self._emit(rid, "request.step_wait", {"step_id": key, "agent_id": current.agent_id,
+                                                                 "reason": "runner offline"})
+                    if not await self.hub.wait_agent_online(current.agent_id, self.cfg.runner_reconnect_timeout_s):
+                        return res.model_copy(update={"error": "runner reconnect timeout"})
+                else:
+                    await asyncio.sleep(self.cfg.step_retry_backoff_s * 2 ** (attempt - 1))
                 await self._emit(rid, "request.step_retry", {"step_id": key, "attempt": attempt,
                                                                "next_attempt": attempt + 1,
                                                                "reason": res.error or "empty result"})
-                await asyncio.sleep(self.cfg.step_retry_backoff_s * 2 ** (attempt - 1))
             raise AssertionError("unreachable")
 
         res = await dispatch_with_retry(task)

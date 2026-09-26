@@ -27,3 +27,15 @@ def test_demo_page_without_gateway_boot_marker():
     from labhq.gateway import server
     html = (server.WEB / "index.html").read_text(encoding="utf-8")
     assert "<!--LABHQ_BOOT-->" in html  # published/static copies fall back to demo mode
+
+
+def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
+    from labhq.gateway import server
+
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    assert "case 'request.step_skipped':" in html
+    assert "q.steps[d.step_id] = 'skipped'" in html
+    assert ".chip.st-skipped" in html and ".dag-node.st-skipped" in html
+    assert "skipped: '건너뜀'" in html
+    assert "d.status === 'review_unparsed'" in html
+    assert "리뷰 판정 실패. PI 확인이 필요해요" in html
