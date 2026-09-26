@@ -303,7 +303,7 @@ class Orchestrator:
                 self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
                 return
 
-            results: dict[str, TaskResult] = {}
+            results: dict[str, TaskResult] = self.hub.result_map(rid)
             await self.run_dag(rid, text, steps, results)
 
             review: dict = {}
@@ -343,5 +343,6 @@ class Orchestrator:
         req = self.hub.requests[rid]
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
+        self.hub.save_request(rid)
         asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", {
             "ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}))

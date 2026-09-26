@@ -15,6 +15,7 @@ class GatewaySettings(BaseModel):
     runner_token: str = "change-me-runner"
     client_token: str = "change-me-client"
     event_buffer: int = 2000
+    state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
 
 
 class RunnerSettings(BaseModel):
@@ -26,6 +27,8 @@ class RunnerSettings(BaseModel):
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
     job_poll_s: int = 60
+    state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
+    outbox_limit: int = 20000
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)
 
 

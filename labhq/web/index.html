@@ -938,6 +938,7 @@ setInterval(schedule, 15000);  // keeps "n분 전" labels and contract countdown
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
+  let lastSeq = 0;
   if (QS.get('token')) { store.set('labhq_token', token); history.replaceState(null, '', location.pathname); }
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
@@ -960,9 +961,15 @@ function startLive() {
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
-    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}`);
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
     ws.onopen = () => { S.conn = 'live'; backoff = 1000; schedule(); };
-    ws.onmessage = e => { try { apply(JSON.parse(e.data)); } catch (err) { console.warn('bad event', err); } };
+    ws.onmessage = e => { try {
+      const ev = JSON.parse(e.data);
+      if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
+      apply(ev);
+      if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; return; }
+      if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
+    } catch (err) { console.warn('bad event', err); } };
     ws.onclose = e => {
       if (e.code === 1008) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
       S.conn = 'offline'; schedule();
