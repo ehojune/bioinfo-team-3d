@@ -44,12 +44,16 @@ def _absolute(p: str) -> bool:
 
 
 def _candidate_paths(s: str) -> Iterator[str]:
-    # Split shell punctuation, but keep quoted paths and backslashes intact.
+    # Keep quoted paths intact; also inspect paths embedded in shell arguments and URLs.
     for match in re.finditer(r'''"([^"]*)"|'([^']*)'|([^\s'"`|;&<>]+)''', s):
         token = next((v for v in match.groups() if v is not None), "")
-        token = token.rsplit("=", 1)[-1].strip("()[]{},")
-        if token:
-            yield token
+        for part in (token, *re.split(r"[=:<>() ,]", token)):
+            part = part.strip("[]{}")
+            if part:
+                yield part
+            for i, char in enumerate(part):
+                if char == "/" or re.match(r"[A-Za-z]:[/\\]", part[i:]):
+                    yield part[i:]
 
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
@@ -70,8 +74,8 @@ def _strings(obj: Any) -> Iterator[str]:
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
     """Find lexical path references in tool input, including quotes, ``=`` and ``../``.
 
-    This is a guardrail, not a shell parser: variables, globs, command substitution,
-    symlinks and paths assembled at runtime cannot be reliably detected.
+    This is a guardrail, not a shell parser: paths produced by variables,
+    globs, substitutions, symlinks or other runtime expansion may be missed.
     """
     paths = [(p, _norm(p)) for p in paths if p]
     for s in _strings(obj):

@@ -31,11 +31,37 @@ def test_write_outside_roots_asks():
 def test_path_normalization_boundary_and_shell_forms():
     zone = r"C:\Data\Cohort"
     assert touches({"command": r'cat --in="c:/data/cohort/A.vcf"'}, [zone]) == zone
+    assert touches({"command": r"copy host:C:\Data\Cohort\A.vcf"}, [zone]) == zone
     assert evaluate_tool("Read", {"file_path": "c:/DATA/cohort/A.vcf"},
                          PolicySettings(data_zones=[DataZone(path=zone)])).action == "deny"
     assert touches({"file_path": r"c:/DATA/cohort2/A.vcf"}, [zone]) is None
     assert touches({"command": "cat ../cohort/a.vcf"}, ["/data/cohort"], workdir="/data/task")
     assert touches({"command": "cat /data/cohort2/a.vcf"}, ["/data/cohort"]) is None
+
+
+@pytest.mark.parametrize("command", [
+    "docker run -v /data/cohort:/mnt img",
+    "scp host:/data/cohort/a.vcf .",
+    "rsync src:/data/cohort/ dst/",
+    "cat file:///data/cohort/a.vcf",
+    "cat --input=s3like:/data/cohort",
+    "cat</data/cohort/a",
+    "$(cat /data/cohort/a)",
+])
+def test_embedded_absolute_restricted_path_asks(command):
+    assert touches({"command": command}, ["/data/cohort"]) == "/data/cohort"
+    assert evaluate_tool("Bash", {"command": command}, _policy()).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "docker run -v /data/cohort2:/mnt img",
+    "scp host:/data/cohort2/a.vcf .",
+    "cat file:///data/cohort2/a.vcf",
+    "cat --input=s3like:/data/cohort2",
+])
+def test_embedded_neighbor_path_does_not_match(command):
+    assert touches({"command": command}, ["/data/cohort"]) is None
+    assert evaluate_tool("Bash", {"command": command}, _policy()).action == "allow"
 
 
 def test_unc_paths_are_compared_but_not_exported_as_unverified_claude_rules():
