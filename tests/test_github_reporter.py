@@ -48,6 +48,7 @@ async def _until(pred, timeout=30.0):
 async def test_request_updates_land_in_project_repo(tmp_path):
     shutil.copytree(REPO / "agents", tmp_path / "agents")
     s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
     gport = free_port()
     s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
     s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
@@ -61,8 +62,8 @@ async def test_request_updates_land_in_project_repo(tmp_path):
     hub = app.state.hub
     publish = hub.publish
 
-    async def tap(ev):
-        await publish(ev)
+    async def tap(ev, **kwargs):
+        await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
             asyncio.get_running_loop().create_task(hub.resolve_approval(ev["data"]["id"], True, "ok"))
 

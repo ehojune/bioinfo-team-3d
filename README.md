@@ -32,7 +32,7 @@ pytest -q          # 26 passed
 cp config/labhq.example.yaml config/labhq.yaml      # 토큰, HPC, 데이터 구역, 예산 수정
 export LABHQ_CONFIG=$PWD/config/labhq.yaml
 
-labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 데이터 없이 이벤트만 중계
+labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 요청·승인·이벤트를 로컬 SQLite에 저장
 labhq runner                 # 워크스테이션 또는 HPC 로그인 노드. 게이트웨이로 outbound 접속
 labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1회)
 
@@ -256,10 +256,13 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
+모든 게이트웨이 이벤트에는 `schema_version: 1`과 재시작 후에도 이어지는 `seq`가 붙습니다. `/ws/client?since=<seq>`와 `/api/events?since=<seq>`는 이후 이벤트를 재전송합니다. 보관 상한을 지난 `since`에는 `replay_gap`이 붙은 스냅샷을 보냅니다.
+
 ---
 
 ## 8. 설정 포인트
 
+- **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. 각 프로세스가 SQLite WAL 파일을 사용합니다. 실행 중 요청은 재시작 후 `interrupted`로 남고 PI가 재개를 승인하면 완료된 DAG 단계는 건너뜁니다. 러너는 추적 중인 HPC 잡을 다시 감시합니다.
 - **HPC** (`hpc:`): `scheduler: sge | pbs`. SGE는 PE 이름(`smp`/`threads`…), 메모리 리소스(`h_vmem`는 보통 슬롯당이라
   총 메모리를 코어 수로 나눔), `h_rt`. PBS는 Torque(`nodes=1:ppn=…`)와 PBS Pro(`select=1:ncpus=…`, `pro: true`)를 템플릿으로.
   로그인 노드에서만 qsub이 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.
@@ -272,7 +275,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 
 ## 9. 폰 연결
 
-게이트웨이는 데이터 없이 이벤트만 중계하므로 가장 작은 VM이나 집 PC로 충분하고, 안 쓸 땐 꺼도 됩니다
+게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
 (러너는 재접속 루프로 대기). 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
 공개 인터넷에 열어야 한다면 TLS 프록시(Caddy 등) 뒤에 두고 토큰을 반드시 교체하세요.
 

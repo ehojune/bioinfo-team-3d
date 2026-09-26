@@ -23,6 +23,7 @@ async def _until(pred, timeout=30.0):
 async def test_full_lab_flow_with_mock_agents(tmp_path):
     shutil.copytree(REPO / "agents", tmp_path / "agents")
     s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
     gport = free_port()
     s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
     s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
@@ -36,9 +37,9 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
     seen: list[dict] = []
     publish = hub.publish
 
-    async def tap(ev):
+    async def tap(ev, **kwargs):
         seen.append(ev)
-        await publish(ev)
+        await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
             async def approve():
                 await asyncio.sleep(0.05)

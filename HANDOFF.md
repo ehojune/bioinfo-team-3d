@@ -43,7 +43,7 @@ P1+ 안전·복구 최소선 (PI 결정 2026-09-26, P2·P3 전에): ① 게이�
    재시작 때 복구한다 ② CSO는 선행 단계가 실패하면 하위 단계를 멈추고, 리뷰 파싱 실패를 통과로 치지 않으며, 재시도 규칙을 둔다
    ③ LLM·MCP 실행 계정은 통제 원본에 닿지 못하게 한다(전용 계정·파일 권한). 데이터 구역 가드가 동작하지 않는 OS(현재 Windows)에서는
    러너가 시작을 거부한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
-   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
+   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. ①·⑤는 `p1plus-state`에서 구현. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
 P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Claude Code 스킬)을 묻고 agents/core/bioinfo-agent.yaml의
    cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →

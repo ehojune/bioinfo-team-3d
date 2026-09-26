@@ -8,8 +8,9 @@ from labhq.gateway.server import create_app
 from labhq.settings import Settings
 
 
-def test_office_page_manifest_and_stale_approval():
+def test_office_page_manifest_and_stale_approval(tmp_path):
     s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
     client = TestClient(create_app(s))
     page = client.get("/")
     assert page.status_code == 200 and 'window.LABHQ_BOOT={"mode":"live"}' in page.text
