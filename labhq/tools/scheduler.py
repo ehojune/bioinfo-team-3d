@@ -184,7 +184,7 @@ class Scheduler:
             raise RuntimeError(f"submit not supported for scheduler={self.cfg.scheduler}")
         if queue:
             args += ["-q", queue]
-        return [*args, script]
+        return [*self.cfg.submit_prefix, *args, script]
 
     def submit(self, script: str, name: str, cores: int = 1, mem: str = "4G", walltime: str = "04:00:00",
                queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null") -> str:
