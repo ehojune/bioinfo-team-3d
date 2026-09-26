@@ -93,6 +93,10 @@ class AgentAdapter(ABC):
     def stderr_error(self, stderr: str) -> str | None:
         return None
 
+    def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        """Reason to refuse the run before anything is written or spawned."""
+        return None
+
     @abstractmethod
     def build_command(self, ctx: RunContext) -> list[str]: ...
 
@@ -113,10 +117,13 @@ class AgentAdapter(ABC):
                           error=st.error)
 
     async def run(self, ctx: RunContext) -> TaskResult:
+        env = {**os.environ, **self.engine_env(), **ctx.env}
+        refused = self.preflight_error(ctx, env)
+        if refused:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         self.prepare(ctx)
         cmd = self.build_command(ctx)
-        env = {**os.environ, **self.engine_env(), **ctx.env}
-        (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
+        (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd), encoding="utf-8")
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
@@ -163,7 +170,7 @@ class AgentAdapter(ABC):
         except asyncio.CancelledError:
             await self._kill(proc)
             raise
-        (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail))
+        (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)

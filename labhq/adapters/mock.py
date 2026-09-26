@@ -79,7 +79,7 @@ class MockAdapter(AgentAdapter):
             slug = t.meta.get("slug", "paper")
             skill = ctx.workdir / "dist" / f"{slug}-agent" / "skill" / f"{slug}-paper"
             skill.mkdir(parents=True, exist_ok=True)
-            (skill / "SKILL.md").write_text(f"---\nname: {slug}-paper\ndescription: mock paper skill\n---\n# {slug}\n")
+            (skill / "SKILL.md").write_text(f"---\nname: {slug}-paper\ndescription: mock paper skill\n---\n# {slug}\n", encoding="utf-8")
             structured = {"agent_name": f"{slug} 파견연구원", "role_summary": f"{slug} 방법론 자문 (mock)",
                           "kind": "consultant", "mcp_zip": None, "mcp_dir": None, "mcp_command": None,
                           "mcp_args": [], "mcp_env_required": [], "skill_dir": str(skill), "tools": [],

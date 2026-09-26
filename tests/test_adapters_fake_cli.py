@@ -50,6 +50,9 @@ def _fake_cli(tmp: Path, name: str) -> Path:
 async def _run(tmp: Path, engine: Engine, name: str, schema: dict | None = None):
     s = Settings()
     getattr(s.engines, engine.value).bin = str(_fake_cli(tmp, name))
+    if engine == Engine.codex:  # hermetic: the host's ~/.codex/AGENTS.md would refuse the staff session
+        (tmp / "codex-home").mkdir()
+        s.engines.codex.env = {"CODEX_HOME": str(tmp / "codex-home")}
     agent = AgentSpec(id="a1", name="A", role="r", engine=engine, model="m", tools=["Read", "Bash(ls *)"],
                       system_prompt="ROLE")
     task = Task(agent_id="a1", prompt="do it", output_schema=schema)

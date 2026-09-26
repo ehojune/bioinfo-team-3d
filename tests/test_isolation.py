@@ -75,3 +75,32 @@ def test_engine_env_passes_through(tmp_path):
     assert adapter.engine_env() == {"CODEX_HOME": "/srv/labhq/codex-home"}
     gem = get_adapter(Engine("gemini"), settings).engine_env()
     assert gem["GEMINI_CLI_TRUST_WORKSPACE"] == "true"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("files,allow,refused", [
+    (["AGENTS.md"], False, True),
+    (["AGENTS.override.md"], False, True),
+    (["AGENTS.md"], True, False),
+    ([], False, False),
+])
+async def test_codex_refuses_when_global_agents_md_would_load(tmp_path, files, allow, refused):
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    for name in files:
+        (home / name).write_text("PI global instructions")
+    settings = Settings()
+    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
+    settings.engines.codex.env = {"CODEX_HOME": str(home)}
+    settings.engines.codex.allow_global_agents_md = allow
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine("codex"), builtin_mcp=[])
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
+                     mcp_servers=[], env={}, emit=_emit, prompt="x")
+    res = await get_adapter(agent.engine, settings).run(ctx)
+    assert not res.ok
+    # Refusal happens before spawning; otherwise the missing binary is what fails.
+    assert ("refused" in res.error) is refused and ("executable not found" in res.error) is (not refused)
+    if refused:
+        assert str(home) not in res.error and not any(wd.iterdir())

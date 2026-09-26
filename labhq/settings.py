@@ -40,6 +40,8 @@ class EngineBin(BaseModel):
 class CodexBin(EngineBin):
     # --ignore-user-config also drops `[windows] sandbox`; without it Codex refuses workspace writes on Windows.
     windows_sandbox: str = "elevated"
+    # $CODEX_HOME/AGENTS.md (the PI's global instructions) cannot be switched off by flags; refuse unless allowed.
+    allow_global_agents_md: bool = False
 
 
 class EnginesSettings(BaseModel):

@@ -41,8 +41,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 servers[s.name] = {"type": "stdio", "command": command, "args": args, "env": expand_env(s.env)}
             else:
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
-        (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
-        (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
+        (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code

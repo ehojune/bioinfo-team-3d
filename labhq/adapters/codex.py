@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from ..util import short
 from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
@@ -32,9 +33,9 @@ class CodexAdapter(AgentAdapter):
     engine = "codex"
 
     def prepare(self, ctx: RunContext) -> None:
-        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
         if ctx.task.output_schema:
-            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema))
+            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
 
     def compose_prompt(self, ctx: RunContext) -> str:
         t = ctx.task
@@ -51,6 +52,18 @@ class CodexAdapter(AgentAdapter):
         blocks.append("<grounding_rules>\nTie every claim to a file, command output or cited source. Label "
                       "hypotheses as hypotheses.\n</grounding_rules>")
         return "\n\n".join(blocks)
+
+    def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        b = self.settings.engines.codex
+        if not b.isolate_user_config or b.allow_global_agents_md:
+            return None
+        home = Path(env.get("CODEX_HOME") or Path.home() / ".codex")
+        found = [n for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
+        if not found:
+            return None
+        return (f"Codex staff session refused: $CODEX_HOME/{found[0]} (global instructions) would load and no flag "
+                "turns it off. Run the runner under a dedicated account, point engines.codex.env.CODEX_HOME at a "
+                "separate staff login, or set engines.codex.allow_global_agents_md: true.")
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
@@ -129,6 +142,6 @@ class CodexAdapter(AgentAdapter):
 
     def finalize(self, st: RunState, ctx: RunContext, returncode: int | None):
         last = ctx.meta_dir / "last_message.txt"
-        if last.exists() and last.read_text().strip():
-            st.final_text = last.read_text()
+        if last.exists() and last.read_text(encoding="utf-8").strip():
+            st.final_text = last.read_text(encoding="utf-8")
         return super().finalize(st, ctx, returncode)
