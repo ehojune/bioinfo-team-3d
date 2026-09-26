@@ -11,7 +11,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
-from ..models import Task, TaskResult
+from ..models import Task, TaskResult, new_id
 from ..util import clip, extract_json, short
 
 if TYPE_CHECKING:
@@ -158,11 +158,40 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+def failure_kind(outcome: TaskResult | BaseException) -> str | None:
+    """Classify dispatch failures once; only transient failures may be retried."""
+    if isinstance(outcome, asyncio.CancelledError):
+        return "terminal"
+    if isinstance(outcome, BudgetExceeded):
+        return "terminal"
+    if isinstance(outcome, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return "transient"
+    if isinstance(outcome, BaseException):
+        return "terminal"
+    if outcome.ok and (outcome.text.strip() or outcome.structured is not None or outcome.pending_jobs):
+        return None
+    error = (outcome.error or "").lower()
+    if any(word in error for word in ("policy", "permission", "denied", "refused", "approval",
+                                      "budget", "cancel", "validat", "invalid", "not found",
+                                      "ineligibletier", "unauthorized", "401")):
+        return "terminal"
+    if outcome.ok or (not outcome.text.strip() and
+                      (not error or error.startswith("exit ") or "empty cli stream" in error or
+                       "no result" in error)):
+        return "transient"
+    if any(word in error for word in ("timeout", "timed out", "rate limit", "429", "overload",
+                                      "capacity", "temporar", "502", "503", "connection",
+                                      "resource exhausted", "too many requests")):
+        return "transient"
+    return "terminal"
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
         self.cfg = hub.s.orchestrator
         self.cost: dict[str, float] = {}
+        self.attempts: dict[str, dict[str, int]] = {}
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
@@ -170,11 +199,40 @@ class Orchestrator:
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task) -> TaskResult:
         rid = task.request_id or ""
-        await self._check_budget(rid)
-        res = await self.hub.dispatch(task)
-        self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+        async def dispatch_with_retry(current: Task) -> TaskResult:
+            key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+            for attempt in range(1, self.cfg.step_max_attempts + 1):
+                await self._check_budget(rid)
+                self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
+                attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
+                                                  "meta": {**current.meta, "attempt": attempt}})
+                await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
+                try:
+                    res = await self.hub.dispatch(attempt_task)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    res = TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False, error=str(exc))
+                    kind = failure_kind(exc)
+                else:
+                    self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+                    kind = failure_kind(res)
+                await self._check_budget(rid)
+                if kind is None:
+                    return res
+                if kind != "transient" or attempt == self.cfg.step_max_attempts:
+                    if res.ok:
+                        res = res.model_copy(update={"ok": False, "error": "empty result"})
+                    return res
+                await self._emit(rid, "request.step_retry", {"step_id": key, "attempt": attempt,
+                                                               "next_attempt": attempt + 1,
+                                                               "reason": res.error or "empty result"})
+                await asyncio.sleep(self.cfg.step_retry_backoff_s * 2 ** (attempt - 1))
+            raise AssertionError("unreachable")
+
+        res = await dispatch_with_retry(task)
         cycles = 0
-        while res.pending_jobs and cycles < self.cfg.max_wake_cycles:
+        while res.ok and res.pending_jobs and cycles < self.cfg.max_wake_cycles:
             cycles += 1
             info = await self.hub.wait_jobs(res.task_id)
             jobs = "\n".join(f"- {j['job_id']} ({j.get('name') or ''}): {j['state']} exit={j.get('exit_status')}"
@@ -185,9 +243,7 @@ class Orchestrator:
                         prompt=WAKE_PROMPT.format(jobs=jobs, workdir=res.workdir), meta=meta,
                         resume_session_id=res.session_id if self.hub.supports_resume(task.agent_id) else None,
                         context="" if self.hub.supports_resume(task.agent_id) else clip(res.text, self.cfg.context_chars_per_step))
-            await self._check_budget(rid)
-            res = await self.hub.dispatch(wake)
-            self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+            res = await dispatch_with_retry(wake)
         return res
 
     async def _check_budget(self, rid: str) -> None:
@@ -236,8 +292,18 @@ class Orchestrator:
             ready = [sid for sid in todo if not any(d in todo or d in running for d in by_id[sid]["depends_on"])]
             for sid in ready:
                 todo.discard(sid)
+                blocked = [d for d in by_id[sid]["depends_on"] if d not in results or not results[d].ok]
+                if blocked:
+                    reason = ", ".join(f"{d}: {results[d].error if d in results else 'not run'}" for d in blocked)
+                    results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
+                                              error=f"skipped: upstream {reason}")
+                    await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
+                                                                    "upstream": blocked, "reason": reason})
+                    continue
                 running[sid] = asyncio.create_task(run_one(by_id[sid]))
             if not running:
+                if ready:
+                    continue
                 for sid in todo:
                     results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="unmet dependencies")
                 break
@@ -247,17 +313,22 @@ class Orchestrator:
                     running.pop(sid)
                     try:
                         results[sid] = t.result()
+                    except asyncio.CancelledError:
+                        results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
                         results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
-                                                                "agent_id": by_id[sid]["agent_id"]})
+                                                                "agent_id": by_id[sid]["agent_id"],
+                                                                "attempts": self.attempts.get(rid, {}).get(sid, 0),
+                                                                "reason": results[sid].error})
 
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
         out = []
         for s in steps:
             r = results.get(s["id"])
-            status = "ok" if r and r.ok else f"FAILED: {short(r.error if r else 'not run', 200)}"
+            status = "ok" if r and r.ok else ("SKIPPED" if r and (r.error or "").startswith("skipped:")
+                                               else "FAILED") + f": {short(r.error if r else 'not run', 200)}"
             out.append(f"### {s['id']} · {s['agent_id']} ({status})\nInstruction: {s['instruction']}\n"
                        f"{clip(r.text if r else '', n)}")
         return "\n\n".join(out)
@@ -283,6 +354,9 @@ class Orchestrator:
             if cos and cos in known:
                 b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
                                              meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
+                if not b.ok:
+                    self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
+                    return
                 briefing = b.text
 
             plan_res = await self.run_step(Task(
@@ -290,6 +364,9 @@ class Orchestrator:
                 prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
                                           max_steps=self.cfg.max_steps),
                 meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
+            if not plan_res.ok:
+                self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                return
             plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
             steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
             req["plan"] = {**plan, "steps": steps, "warnings": warnings}
@@ -305,17 +382,44 @@ class Orchestrator:
 
             results: dict[str, TaskResult] = {}
             await self.run_dag(rid, text, steps, results)
+            def serialized_results() -> dict[str, dict]:
+                return {k: {**v.model_dump(mode="json"),
+                            "status": "skipped" if (v.error or "").startswith("skipped:") else
+                                      ("done" if v.ok else "failed"),
+                            "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
+
+            if any(not r.ok for r in results.values()):
+                self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
+                return
 
             review: dict = {}
             reviewer = self.cfg.reviewer_agent
             for rev in range(self.cfg.max_revisions + 1):
                 if not reviewer or reviewer not in known:
                     break
-                r = await self.run_step(Task(
-                    agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
-                    prompt=REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n)),
-                    meta={"kind": "review", "revision": rev, "request": text, "title": f"과학 리뷰 #{rev}"}))
-                review = r.structured if isinstance(r.structured, dict) else extract_json(r.text) or {"verdict": "accept"}
+                prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
+                review = {}
+                for parse_attempt in (1, 2):
+                    r = await self.run_step(Task(
+                        agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
+                        prompt=prompt if parse_attempt == 1 else prompt +
+                        '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
+                        'Do not omit verdict or add prose.',
+                        meta={"kind": "review", "revision": rev, "parse_attempt": parse_attempt,
+                              "request": text, "title": f"과학 리뷰 #{rev}"}))
+                    parsed = r.structured if isinstance(r.structured, dict) else None
+                    if not parsed or parsed.get("verdict") not in ("accept", "revise"):
+                        parsed = extract_json(r.text)
+                    if r.ok and isinstance(parsed, dict) and parsed.get("verdict") in ("accept", "revise"):
+                        review = parsed
+                        break
+                if not review:
+                    review = {"status": "review_unparsed", "reason": r.error or "missing or invalid verdict"}
+                    await self._emit(rid, "request.review", {"revision": rev, **review})
+                    self._finish(rid, self.format_results(steps, results, n) +
+                                 f"\n\nReview: review_unparsed ({review['reason']})",
+                                 serialized_results(), ok=False, review=review)
+                    return
                 await self._emit(rid, "request.review", {"revision": rev, **review})
                 if review.get("verdict") != "revise" or rev >= self.cfg.max_revisions:
                     break
@@ -327,14 +431,23 @@ class Orchestrator:
                 if not feedback:
                     break
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
+                if any(not r.ok for r in results.values()):
+                    self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                                 review=review)
+                    return
+
+            if review.get("verdict") == "revise":
+                self._finish(rid, self.format_results(steps, results, n) + "\n\nReview: revisions unresolved.",
+                             serialized_results(), ok=False, review=review)
+                return
 
             final = await self.run_step(Task(
                 agent_id=self.cfg.cso_agent, request_id=rid,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)),
                 meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성"}))
-            self._finish(rid, final.text, {k: v.model_dump(mode="json") for k, v in results.items()},
-                         ok=final.ok, review=review)
+            self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
+                         f"\n\nSynthesis failed: {final.error}", serialized_results(), ok=final.ok, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             await self._emit(rid, "request.failed", {"error": req["error"]})
