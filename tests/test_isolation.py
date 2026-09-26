@@ -104,3 +104,47 @@ async def test_codex_refuses_when_global_agents_md_would_load(tmp_path, files, a
     assert ("refused" in res.error) is refused and ("executable not found" in res.error) is (not refused)
     if refused:
         assert str(home) not in res.error and not any(wd.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_runtime_codex_home_override_is_what_preflight_checks(tmp_path):
+    """ctx.env wins over engines.codex.env for the subprocess, so preflight must check that one."""
+    clean, polluted = tmp_path / "clean", tmp_path / "polluted"
+    clean.mkdir()
+    polluted.mkdir()
+    (polluted / "AGENTS.md").write_text("PI global instructions")
+    settings = Settings()
+    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
+    settings.engines.codex.env = {"CODEX_HOME": str(clean)}
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine("codex"), builtin_mcp=[])
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
+                     mcp_servers=[], env={"CODEX_HOME": str(polluted)}, emit=_emit, prompt="x")
+    res = await get_adapter(agent.engine, settings).run(ctx)
+    assert not res.ok and "refused" in res.error
+
+
+@pytest.mark.asyncio
+async def test_env_added_in_prepare_reaches_subprocess(tmp_path, monkeypatch):
+    """engine: cli adds CliSpec.env to ctx.env in prepare(); the subprocess env must be built after it."""
+    import asyncio
+
+    from labhq.models import CliSpec
+
+    seen = {}
+
+    async def fake_exec(*cmd, env=None, **kw):
+        seen.update(env or {})
+        raise FileNotFoundError(cmd[0])
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    settings = Settings()
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine("cli"), builtin_mcp=[],
+                      cli=CliSpec(command=["agent"], output="jsonl", env={"BIOINFO_AGENT_KEY": "from-cli-spec"}))
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
+                     mcp_servers=[], env={}, emit=_emit, prompt="x")
+    await get_adapter(agent.engine, settings).run(ctx)
+    assert seen.get("BIOINFO_AGENT_KEY") == "from-cli-spec"

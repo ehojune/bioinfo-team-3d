@@ -117,12 +117,12 @@ class AgentAdapter(ABC):
                           error=st.error)
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        env = {**os.environ, **self.engine_env(), **ctx.env}
-        refused = self.preflight_error(ctx, env)
+        refused = self.preflight_error(ctx, {**os.environ, **self.engine_env(), **ctx.env})
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
-        self.prepare(ctx)
+        self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
+        env = {**os.environ, **self.engine_env(), **ctx.env}
         (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd), encoding="utf-8")
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
