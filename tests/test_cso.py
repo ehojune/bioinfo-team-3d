@@ -3,8 +3,9 @@ from collections import Counter
 
 import pytest
 
-from labhq.models import Task, TaskResult
-from labhq.orchestrator.cso import BudgetExceeded, Orchestrator, failure_kind
+from labhq.gateway.server import Hub
+from labhq.models import RunnerUnavailable, Task, TaskResult
+from labhq.orchestrator.cso import BudgetExceeded, Orchestrator, failure_kind, valid_review
 from labhq.settings import Settings
 
 
@@ -66,7 +67,7 @@ async def test_failed_branch_skips_transitive_dependents_and_preserves_independe
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("review_reply", ["garbage", "missing", "unknown", "engine_error"])
+@pytest.mark.parametrize("review_reply", ["garbage", "missing", "unknown", "engine_error", "verdict_only"])
 async def test_review_unparsed_twice_cannot_pass(review_reply):
     async def dispatch(task):
         kind = task.meta["kind"]
@@ -77,6 +78,8 @@ async def test_review_unparsed_twice_cannot_pass(review_reply):
                 return result(task, text="not JSON")
             if review_reply == "engine_error":
                 return result(task, ok=False, error="approval denied")
+            if review_reply == "verdict_only":
+                return result(task, structured={"verdict": "accept"})
             return result(task, structured={} if review_reply == "missing" else {"verdict": "maybe"})
         if kind == "step":
             return result(task, text="done")
@@ -111,9 +114,56 @@ async def test_timeout_retries_once_then_succeeds_with_two_attempts():
 
 
 @pytest.mark.asyncio
+async def test_runner_offline_retries_once_then_succeeds():
+    calls = 0
+
+    async def dispatch(task):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RunnerUnavailable("runner disconnected")
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"].update(mode="direct", agent_id="worker")
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done" and calls == 2
+    assert sum(e["type"] == "request.step_retry" for e in hub.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_hub_wraps_websocket_send_failure_and_clears_pending_task():
+    class BrokenSocket:
+        async def send_text(self, payload):
+            raise RuntimeError("socket closed")
+
+    hub = Hub(Settings())
+    ws = BrokenSocket()
+    hub.register_runner("r", ws, [{"id": "worker"}])
+    task = Task(agent_id="worker", prompt="work")
+    with pytest.raises(RunnerUnavailable):
+        await hub.dispatch(task)
+    assert "r" not in hub.runners
+    assert task.id not in hub.futures and task.id not in hub.task_runner
+    with pytest.raises(RunnerUnavailable):
+        await hub.send_runner("r", {"type": "task.dispatch"})
+
+
+@pytest.mark.asyncio
 async def test_policy_refusal_is_terminal():
     async def dispatch(task):
         return result(task, ok=False, error="approval policy denied")
+
+    hub = FakeHub(dispatch)
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert not res.ok and len(hub.calls) == 1
+    assert not any(e["type"] == "request.step_retry" for e in hub.events)
+
+
+@pytest.mark.asyncio
+async def test_nonzero_exit_without_transient_signal_is_terminal():
+    async def dispatch(task):
+        return result(task, ok=False, error="exit 1: analysis script failed")
 
     hub = FakeHub(dispatch)
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
@@ -143,13 +193,26 @@ async def test_retry_cost_is_in_request_budget():
 @pytest.mark.parametrize("outcome,kind", [
     (TaskResult(task_id="t", agent_id="a", ok=False, error="input validation failed"), "terminal"),
     (TaskResult(task_id="t", agent_id="a", ok=False, error="cancelled"), "terminal"),
-    (TaskResult(task_id="t", agent_id="a", ok=False, error="exit 1: crashed"), "transient"),
+    (TaskResult(task_id="t", agent_id="a", ok=False, error="exit 1: crashed"), "terminal"),
+    (TaskResult(task_id="t", agent_id="a", ok=False, error="exit 1: HTTP 503 overloaded"), "transient"),
+    (TaskResult(task_id="t", agent_id="a", ok=False, error="exit 1: connection refused"), "transient"),
     (TaskResult(task_id="t", agent_id="a", ok=False, error="empty CLI stream: no result event"), "transient"),
     (TaskResult(task_id="t", agent_id="a", ok=True), "transient"),
     (asyncio.TimeoutError(), "transient"),
 ])
 def test_failure_classification(outcome, kind):
     assert failure_kind(outcome) == kind
+
+
+def test_review_schema_requires_complete_typed_fields():
+    valid = {"verdict": "accept", "scores": {"addresses_question": 4, "evidence": 3,
+                                               "thoroughness": 5}, "issues": []}
+    assert valid_review(valid)
+    assert not valid_review({"verdict": "accept"})
+    assert not valid_review({**valid, "scores": {**valid["scores"], "evidence": "3"}})
+    assert not valid_review({**valid, "scores": {**valid["scores"], "evidence": 6}})
+    assert not valid_review({**valid, "issues": [{"step_id": "A", "problem": "missing"}]})
+    assert not valid_review({**valid, "extra": "unexpected"})
 
 
 @pytest.mark.asyncio

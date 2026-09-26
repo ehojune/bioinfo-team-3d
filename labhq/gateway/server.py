@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
-from ..models import ApprovalRequest, Task, TaskResult, new_id
+from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 
@@ -99,9 +99,14 @@ class Hub:
     async def send_runner(self, runner_id: str, msg: dict) -> None:
         ws = self.runners.get(runner_id)
         if ws is None:
-            raise RuntimeError(f"runner {runner_id} is offline")
+            raise RunnerUnavailable(f"runner {runner_id} is offline")
+        payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
-            await ws.send_text(json.dumps(msg, ensure_ascii=False, default=str))
+            try:
+                await ws.send_text(payload)
+            except Exception as exc:
+                self.unregister_runner(runner_id, ws)
+                raise RunnerUnavailable(f"runner {runner_id} WebSocket send failed") from exc
 
     def supports_resume(self, agent_id: str) -> bool:
         return self.agents.get(agent_id, {}).get("engine") != "gemini"
@@ -155,7 +160,12 @@ class Hub:
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
-        await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        try:
+            await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        except Exception:
+            self.futures.pop(task.id, None)
+            self.task_runner.pop(task.id, None)
+            raise
         return await fut
 
     async def wait_jobs(self, task_id: str) -> dict:

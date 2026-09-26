@@ -8,6 +8,7 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -42,8 +43,9 @@ REVIEW_SCHEMA: dict[str, Any] = {
     "properties": {
         "verdict": {"type": "string", "enum": ["accept", "revise"]},
         "scores": {"type": "object", "additionalProperties": False,
-                   "properties": {"addresses_question": {"type": "integer"}, "evidence": {"type": "integer"},
-                                  "thoroughness": {"type": "integer"}},
+                   "properties": {"addresses_question": {"type": "integer", "minimum": 1, "maximum": 5},
+                                  "evidence": {"type": "integer", "minimum": 1, "maximum": 5},
+                                  "thoroughness": {"type": "integer", "minimum": 1, "maximum": 5}},
                    "required": ["addresses_question", "evidence", "thoroughness"]},
         "issues": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
@@ -158,8 +160,42 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
+def valid_review(value: Any) -> bool:
+    """Check every required REVIEW_SCHEMA field without a new JSON Schema dependency."""
+    def matches(item: Any, schema: dict) -> bool:
+        typ = schema.get("type")
+        if typ == "object":
+            if not isinstance(item, dict):
+                return False
+            props = schema["properties"]
+            if not set(schema.get("required", [])).issubset(item):
+                return False
+            if schema.get("additionalProperties") is False and set(item) - set(props):
+                return False
+            return all(matches(v, props[k]) for k, v in item.items())
+        if typ == "array":
+            return isinstance(item, list) and all(matches(v, schema["items"]) for v in item)
+        if typ == "integer":
+            return (type(item) is int and schema.get("minimum", item) <= item <= schema.get("maximum", item))
+        if typ == "string":
+            return isinstance(item, str) and item in schema.get("enum", [item])
+        return False
+
+    return matches(value, REVIEW_SCHEMA)
+
+
 def failure_kind(outcome: TaskResult | BaseException) -> str | None:
-    """Classify dispatch failures once; only transient failures may be retried."""
+    """Classify dispatch outcomes with this retry table.
+
+    Outcome                                      Kind
+    Successful result                            None
+    Offline, timeout, empty result/CLI stream,   transient
+      explicit rate-limit/overload/5xx/network signal
+    Policy/approval/budget/cancel/invalid input, terminal
+      ordinary nonzero exit, other error
+
+    An exit code alone is never evidence that another run is safe.
+    """
     if isinstance(outcome, asyncio.CancelledError):
         return "terminal"
     if isinstance(outcome, BudgetExceeded):
@@ -171,17 +207,19 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or outcome.pending_jobs):
         return None
     error = (outcome.error or "").lower()
-    if any(word in error for word in ("policy", "permission", "denied", "refused", "approval",
+    if any(word in error for word in ("policy", "permission", "denied", "approval",
                                       "budget", "cancel", "validat", "invalid", "not found",
                                       "ineligibletier", "unauthorized", "401")):
         return "terminal"
     if outcome.ok or (not outcome.text.strip() and
-                      (not error or error.startswith("exit ") or "empty cli stream" in error or
-                       "no result" in error)):
+                      (not error or "empty cli stream" in error or "no result event" in error)):
         return "transient"
-    if any(word in error for word in ("timeout", "timed out", "rate limit", "429", "overload",
-                                      "capacity", "temporar", "502", "503", "connection",
-                                      "resource exhausted", "too many requests")):
+    if any(word in error for word in ("timeout", "timed out", "rate limit", "rate-limit", "429",
+                                      "overload", "capacity", "temporar", "resource exhausted",
+                                      "too many requests", "connection reset", "connection refused",
+                                      "connection aborted", "broken pipe", "network unreachable")):
+        return "transient"
+    if re.search(r"\b5\d{2}\b|\b5xx\b", error):
         return "transient"
     return "terminal"
 
@@ -407,10 +445,10 @@ class Orchestrator:
                         'Do not omit verdict or add prose.',
                         meta={"kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
-                    parsed = r.structured if isinstance(r.structured, dict) else None
-                    if not parsed or parsed.get("verdict") not in ("accept", "revise"):
+                    parsed = r.structured if valid_review(r.structured) else None
+                    if parsed is None:
                         parsed = extract_json(r.text)
-                    if r.ok and isinstance(parsed, dict) and parsed.get("verdict") in ("accept", "revise"):
+                    if r.ok and valid_review(parsed):
                         review = parsed
                         break
                 if not review:
