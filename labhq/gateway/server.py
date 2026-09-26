@@ -19,10 +19,9 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..models import ApprovalRequest, Task, TaskResult, new_id
-from ..orchestrator.cso import Orchestrator, SYNTH_PROMPT
+from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 from ..store import StateStore
-from ..util import short
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 
@@ -91,20 +90,25 @@ class Hub:
         self.requests: dict[str, dict] = self.store.all("request")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
+        for aid, entry in list(self.approvals.items()):
+            if entry.get("origin") is None and entry["approval"].get("kind") != "resume":
+                self.approvals.pop(aid)
+                self.store.delete("approval", aid)
+                self.store.put("approval_decision", aid, {"approval": entry["approval"],
+                                                         "approved": False, "note": "gateway restarted",
+                                                         "state": "expired", "decided_at": time.time()})
+                self.events.append(self.store.append_event({"type": "approval.expired", "ts": time.time(),
+                    "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
+                    settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if req.get("status") == "running":
+            if req.get("status") in {"running", "waiting_for_runner"}:
                 req["status"] = "interrupted"
                 self.save_request(rid)
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
                 for a in self.approvals.values()
             ):
-                done = set(req.get("results") or {})
-                steps = [s["id"] for s in req.get("plan", {}).get("steps", []) if s["id"] not in done]
-                approval = ApprovalRequest(kind="resume", request_id=rid,
-                                           summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?")
-                self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
-                self.save_approval(approval.id)
+                approval = self.new_resume_approval(rid)
                 self.events.append(self.store.append_event({"type": "approval.requested", "ts": time.time(),
                                                              "request_id": rid, "data": approval.model_dump(mode="json")},
                                                             settings.gateway.event_buffer))
@@ -117,41 +121,69 @@ class Hub:
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
 
-    async def resume_request(self, rid: str) -> None:
+    def new_resume_approval(self, rid: str) -> ApprovalRequest:
         req = self.requests[rid]
-        if req.get("mode") == "direct" or not req.get("plan", {}).get("steps"):
-            await self.orchestrator.run_request(rid)
-            return
-        try:
-            steps = req["plan"]["steps"]
-            results = self.result_map(rid)
-            self.orchestrator.cost[rid] = float(req.get("cost_usd") or 0)
-            remaining = {s["id"] for s in steps} - set(results)
-            if remaining:
-                await self.orchestrator.run_dag(rid, req["text"], steps, results, only=remaining)
-            final = await self.orchestrator.run_step(Task(
-                agent_id=self.s.orchestrator.cso_agent, request_id=rid,
-                prompt=SYNTH_PROMPT.format(
-                    request=req["text"],
-                    results=self.orchestrator.format_results(
-                        steps, results, self.s.orchestrator.context_chars_per_step),
-                    review=short(req.get("review") or {}, 3000)),
-                meta={"kind": "synthesis", "request": req["text"], "title": "최종 보고서 작성"}))
-            self.orchestrator._finish(rid, final.text,
-                                      {k: v.model_dump(mode="json") for k, v in results.items()},
-                                      ok=final.ok, review=req.get("review"))
-        except Exception as e:
-            req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
-            self.save_request(rid)
-            await self.publish({"type": "request.failed", "ts": time.time(), "request_id": rid,
-                                "data": {"error": req["error"]}})
+        done = set(req.get("results") or {})
+        steps = [s["id"] for s in req.get("plan", {}).get("steps", []) if s["id"] not in done]
+        approval = ApprovalRequest(kind="resume", request_id=rid,
+                                   summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?")
+        self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
+        self.save_approval(approval.id)
+        return approval
+
+    def resume_agents(self, rid: str) -> set[str]:
+        req = self.requests[rid]
+        if req.get("mode") == "direct":
+            return {req["agent_id"]}
+        steps = req.get("plan", {}).get("steps") or []
+        needed = {s["agent_id"] for s in steps}
+        needed.add(self.s.orchestrator.cso_agent)
+        if self.s.orchestrator.reviewer_agent:
+            needed.add(self.s.orchestrator.reviewer_agent)
+        if not steps and self.s.orchestrator.chief_of_staff_agent:
+            needed.add(self.s.orchestrator.chief_of_staff_agent)
+        return needed
+
+    async def resume_when_ready(self, rid: str) -> None:
+        req = self.requests[rid]
+        req["status"] = "waiting_for_runner"
+        self.save_request(rid)
+        deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
+        previous: set[str] | None = None
+        while True:
+            missing = {aid for aid in self.resume_agents(rid)
+                       if self.agent_runner.get(aid) not in self.runners}
+            if not missing:
+                req["status"] = "running"
+                self.save_request(rid)
+                await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
+                                    "data": {"agents": sorted(self.resume_agents(rid))}})
+                await self.orchestrator.run_request(rid, resume=True)
+                return
+            if missing != previous:
+                await self.publish({"type": "request.resume_waiting", "ts": time.time(), "request_id": rid,
+                                    "data": {"missing_agents": sorted(missing)}})
+                previous = missing
+            if asyncio.get_running_loop().time() >= deadline:
+                req["status"] = "interrupted"
+                self.save_request(rid)
+                await self.publish({"type": "request.resume_timeout", "ts": time.time(), "request_id": rid,
+                                    "data": {"missing_agents": sorted(missing)}})
+                approval = self.new_resume_approval(rid)
+                await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
+                                    "data": approval.model_dump(mode="json")})
+                return
+            await asyncio.sleep(min(0.1, max(0, deadline - asyncio.get_running_loop().time())))
 
     def save_approval(self, aid: str) -> None:
         entry = self.approvals[aid]
         self.store.put("approval", aid, {k: v for k, v in entry.items() if k != "future"})
 
     # ----- runners -----
-    def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict]) -> None:
+    def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
+                        incarnation: str | None = None) -> None:
+        if incarnation:
+            self.store.runner_incarnation(runner_id, incarnation)
         self.runners[runner_id] = ws
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents)
@@ -217,6 +249,16 @@ class Hub:
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
         if typ == "task.result":
+            rid = msg.get("request_id")
+            tid = msg.get("task_id") or ""
+            if rid in self.requests and tid:
+                req = self.requests[rid]
+                costs = req.setdefault("cost_by_task", {})
+                if tid not in costs:
+                    amount = float((msg.get("data") or {}).get("cost_usd") or 0)
+                    costs[tid] = amount
+                    req["cost_usd"] = round(float(req.get("cost_usd") or 0) + amount, 4)
+                    self.save_request(rid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(TaskResult.model_validate(msg["data"]))
@@ -292,9 +334,9 @@ class Hub:
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
             if approved:
-                self.requests[rid]["status"] = "running"
+                self.requests[rid]["status"] = "waiting_for_runner"
                 self.save_request(rid)
-                asyncio.get_running_loop().create_task(self.resume_request(rid))
+                asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
             else:
                 self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
                 self.save_request(rid)
@@ -357,11 +399,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
-            hub.register_runner(runner_id, ws, hello.get("agents", []))
+            hub.register_runner(runner_id, ws, hello.get("agents", []), hello.get("incarnation"))
             await hub.flush_decisions(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:
+                if hub.runners.get(runner_id) is not ws:
+                    break
                 await hub.on_runner_message(runner_id, json.loads(await ws.receive_text()))
         except WebSocketDisconnect:
             pass

@@ -99,7 +99,8 @@ class ProjectReporter:
         self.hub, self.s, self.transport = hub, settings, transport
         self.queue: asyncio.Queue | None = None
         self.worker: asyncio.Task | None = None
-        self.issues: dict[str, int] = {}
+        self.issues: dict[str, int] = {rid: int(body["number"])
+                                       for rid, body in hub.store.all("github_issue").items()}
         self._client: GitHubClient | None = None
         self._warned: set[str] = set()
 
@@ -174,6 +175,7 @@ class ProjectReporter:
             issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
                                           self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
+            self.hub.store.put("github_issue", rid, {"number": issue["number"]})
             await self._posted(rid, "issue", issue.get("html_url"), issue["number"])
             return
 

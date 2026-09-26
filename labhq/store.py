@@ -14,12 +14,12 @@ class StateStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
-        self.db.execute("PRAGMA journal_mode=WAL")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, SCHEMA_VERSION):
             self.db.close()
             raise ValueError(f"unsupported state schema: {version}")
         if version == 0:
+            self.db.execute("PRAGMA journal_mode=WAL")
             with self.db:
                 self.db.executescript("""
                     CREATE TABLE state (kind TEXT NOT NULL, key TEXT NOT NULL,
@@ -29,6 +29,9 @@ class StateStore:
                     CREATE TABLE runner_cursor (runner_id TEXT PRIMARY KEY, seq INTEGER NOT NULL);
                 """)
                 self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+    def close(self) -> None:
+        self.db.close()
 
     def put(self, kind: str, key: str, body: dict) -> None:
         with self.db:
@@ -89,6 +92,16 @@ class StateStore:
     def runner_seen(self, runner_id: str) -> int:
         row = self.db.execute("SELECT seq FROM runner_cursor WHERE runner_id=?", (runner_id,)).fetchone()
         return row[0] if row else 0
+
+    def runner_incarnation(self, runner_id: str, incarnation: str) -> None:
+        """A replacement runner may reuse its name but starts a fresh outbox sequence."""
+        with self.db:
+            previous = self.db.execute("SELECT body FROM state WHERE kind='runner_incarnation' AND key=?",
+                                       (runner_id,)).fetchone()
+            if previous is None or json.loads(previous[0])["id"] != incarnation:
+                self.db.execute("DELETE FROM runner_cursor WHERE runner_id=?", (runner_id,))
+                self.db.execute("INSERT OR REPLACE INTO state VALUES ('runner_incarnation', ?, ?)",
+                                (runner_id, json.dumps({"id": incarnation})))
 
     def mark_runner(self, runner_id: str, seq: int) -> None:
         with self.db:

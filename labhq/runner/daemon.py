@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import websockets
@@ -36,6 +37,10 @@ class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
         self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
+        saved_incarnation = self.store.all("runner_meta").get("incarnation")
+        self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
+        if not saved_incarnation:
+            self.store.put("runner_meta", "incarnation", {"id": self.incarnation})
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir))
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
@@ -93,8 +98,7 @@ class Runner:
             try:
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
-                    await ws.send(json.dumps({"type": "runner.hello", "runner_id": self.s.runner.id,
-                                              "agents": self.registry.roster()}))
+                    await ws.send(json.dumps(self.hello()))
                     self.reload_outbox()
                     self.connected.set()
                     sender = asyncio.create_task(self._sender(ws))
@@ -125,6 +129,10 @@ class Runner:
 
     def _send_roster(self) -> None:
         self.send({"type": "runner.roster", "runner_id": self.s.runner.id, "agents": self.registry.roster()})
+
+    def hello(self) -> dict:
+        return {"type": "runner.hello", "runner_id": self.s.runner.id,
+                "incarnation": self.incarnation, "agents": self.registry.roster()}
 
     # ---------------- gateway → runner ----------------
     async def _on_message(self, msg: dict) -> None:

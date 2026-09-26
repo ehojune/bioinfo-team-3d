@@ -263,9 +263,10 @@ class Orchestrator:
         return "\n\n".join(out)
 
     # ---------- request entry point ----------
-    async def run_request(self, rid: str) -> None:
+    async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
         text = req["text"]
+        self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             if req["mode"] == "direct":
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
@@ -278,33 +279,42 @@ class Orchestrator:
             roster = list(self.hub.agents.values())
             known = {a["id"] for a in roster}
             n = self.cfg.context_chars_per_step
-            briefing = ""
-            cos = self.cfg.chief_of_staff_agent
-            if cos and cos in known:
-                b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
-                                             meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
-                briefing = b.text
+            if resume and req.get("plan", {}).get("steps"):
+                steps = req["plan"]["steps"]
+                results: dict[str, TaskResult] = self.hub.result_map(rid)
+                remaining = {s["id"] for s in steps} - set(results)
+            else:
+                briefing = ""
+                cos = self.cfg.chief_of_staff_agent
+                if cos and cos in known:
+                    b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
+                                                 meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
+                    briefing = b.text
 
-            plan_res = await self.run_step(Task(
-                agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
-                prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
-                                          max_steps=self.cfg.max_steps),
-                meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
-            plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-            steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
-            req["plan"] = {**plan, "steps": steps, "warnings": warnings}
-            await self._emit(rid, "request.plan", req["plan"])
-            if plan.get("clarifying_questions"):
-                await self._emit(rid, "request.questions", {"questions": plan["clarifying_questions"]})
-            for rec in plan.get("recruit") or []:
-                if rec.get("repo") or rec.get("paper"):
-                    await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
-            if not steps:
-                self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
-                return
+                plan_res = await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
+                    prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
+                                              max_steps=self.cfg.max_steps),
+                    meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
+                plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
+                req["plan"] = {**plan, "steps": steps, "warnings": warnings}
+                await self._emit(rid, "request.plan", req["plan"])
+                if plan.get("clarifying_questions"):
+                    await self._emit(rid, "request.questions", {"questions": plan["clarifying_questions"]})
+                for rec in plan.get("recruit") or []:
+                    if rec.get("repo") or rec.get("paper"):
+                        await self._emit(rid, "recruit.suggested", rec)
+                if not steps:
+                    self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
+                    return
+                results = self.hub.result_map(rid)
+                remaining = None
 
-            results: dict[str, TaskResult] = self.hub.result_map(rid)
-            await self.run_dag(rid, text, steps, results)
+            if remaining is None:
+                await self.run_dag(rid, text, steps, results)
+            elif remaining:
+                await self.run_dag(rid, text, steps, results, only=remaining)
 
             review: dict = {}
             reviewer = self.cfg.reviewer_agent

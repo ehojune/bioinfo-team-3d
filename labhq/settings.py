@@ -15,6 +15,7 @@ class GatewaySettings(BaseModel):
     runner_token: str = "change-me-runner"
     client_token: str = "change-me-client"
     event_buffer: int = 2000
+    resume_wait_s: int = 300
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
 
 
