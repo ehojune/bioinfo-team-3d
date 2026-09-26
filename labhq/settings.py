@@ -70,6 +70,8 @@ class HpcSettings(BaseModel):
     def require_job_group_for_submit_prefix(self) -> "HpcSettings":
         if self.submit_prefix and not (self.job_group and self.job_group.strip()):
             raise ValueError("hpc.job_group is required when hpc.submit_prefix is set")
+        if self.submit_prefix and not (self.user and self.user.strip()):
+            raise ValueError("hpc.user is required when hpc.submit_prefix is set")
         return self
 
 

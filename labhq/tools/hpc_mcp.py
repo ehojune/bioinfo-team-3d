@@ -55,12 +55,16 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
         import grp
 
         gid = grp.getgrnam(job_group).gr_gid
-        for directory in (workdir, script_path.parent, logs):
+        output_dir = workdir / "hpc_out"
+        output_dir.mkdir(exist_ok=True)
+        for directory in (workdir, script_path.parent, logs, output_dir):
             os.chown(directory, -1, gid)
-        # The data account must traverse the task directory to reach jobs/.
-        os.chmod(workdir, stat.S_IMODE(workdir.stat().st_mode) | stat.S_IXGRP)
+        # Allow traversal without making task inputs group-listable or writable.
+        mode = stat.S_IMODE(workdir.stat().st_mode)
+        os.chmod(workdir, (mode | stat.S_IXGRP) & ~(stat.S_IRGRP | stat.S_IWGRP))
         os.chmod(script_path.parent, 0o2750)
         os.chmod(logs, 0o2770)
+        os.chmod(output_dir, 0o2770)
     script_path.write_text(body)
     if job_group:
         os.chown(script_path, -1, gid)
@@ -72,16 +76,19 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                      walltime: str = "04:00:00", queue: str | None = None, reason: str = "") -> str:
     """Submit a bash script as a batch job.
 
-    script: the script body (commands; scheduler directives optional). It runs from your workspace.
+    script: the script body (commands; scheduler directives optional). With account switching,
+    relative outputs go to hpc_out/; otherwise it runs from your workspace.
     cores / mem (total, e.g. "32G") / walltime ("HH:MM:SS"). reason: why this job is needed.
     Returns JSON: {"submitted": true, "job_id": ...} or {"submitted": false, "reason": ...}.
     """
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
+    output_dir = WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR
     stamp = time.strftime("%Y%m%d-%H%M%S")
     spath = WORKDIR / "jobs" / f"{name}_{stamp}.sh"
     try:
-        _prepare_job_files(WORKDIR, spath, logs, build_script(script, str(WORKDIR)),
+        _prepare_job_files(WORKDIR, spath, logs,
+                           build_script(script, str(output_dir), umask="007" if S.hpc.submit_prefix else None),
                            S.hpc.job_group if S.hpc.submit_prefix else None)
     except (OSError, KeyError, RuntimeError) as e:
         return json.dumps({"submitted": False, "reason": f"job file permissions: {e}"})
@@ -116,7 +123,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         pass
     return json.dumps({
         "submitted": True, "job_id": job_id, "script": str(spath), "logs": str(logs),
-        "note": "Do not poll in a loop. Summarize what you are waiting for and end your turn; "
+        "output_dir": str(output_dir),
+        "note": "Relative job outputs are in output_dir. Do not poll in a loop; "
+                "summarize what you are waiting for and end your turn; "
                 "you will be resumed when the job finishes.",
     })
 

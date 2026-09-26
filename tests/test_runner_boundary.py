@@ -49,6 +49,39 @@ def test_posix_runner_account_must_not_read_zone(tmp_path, caplog):
     runner._check_data_boundary()  # absent on this host
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX execute-only directory permissions required")
+def test_execute_only_zone_is_rejected_even_when_listing_fails(tmp_path, monkeypatch):
+    zone = tmp_path / "restricted"
+    zone.mkdir()
+    known = zone / "known.vcf"
+    known.write_text("record")
+    zone.chmod(0o111)
+    try:
+        assert known.read_text() == "record"  # traversal can reveal a known file
+        real_access = os.access
+        real_listdir = os.listdir
+
+        def access(path, mode):
+            if os.fspath(path) == str(zone) and mode == os.R_OK:
+                return False
+            return real_access(path, mode)
+
+        def listdir(path):
+            if os.fspath(path) == str(zone):
+                raise PermissionError("execute-only zone")
+            return real_listdir(path)
+
+        s = Settings()
+        s.policy.data_zones = [DataZone(path=str(zone))]
+        with monkeypatch.context() as m:
+            m.setattr(os, "access", access)
+            m.setattr(os, "listdir", listdir)
+            with pytest.raises(RuntimeError, match="runner account can read"):
+                Runner(s)._check_data_boundary()
+    finally:
+        zone.chmod(0o700)
+
+
 def test_unc_zone_refused_even_without_posix_path(monkeypatch):
     s = Settings()
     s.policy.data_zones = [DataZone(path=r"\\server\share\cohort")]
@@ -62,17 +95,32 @@ def test_unc_zone_refused_even_without_posix_path(monkeypatch):
 @pytest.mark.skipif(os.name == "nt", reason="POSIX groups and runner membership required")
 def test_runner_checks_job_group_membership(monkeypatch):
     import grp
+    import pwd
     from types import SimpleNamespace
 
     group = grp.getgrgid(os.getgid()).gr_name
-    s = Settings(hpc=HpcSettings(submit_prefix=["sudo"], job_group=group))
+    user = pwd.getpwuid(os.getuid()).pw_name
+    s = Settings(hpc=HpcSettings(submit_prefix=["sudo"], job_group=group, user=user))
     runner = Runner(s)
     runner._check_job_group()
+    with monkeypatch.context() as m:
+        m.setattr(os, "getgroups", lambda: [])
+        runner._check_job_group()  # primary group alone is sufficient
     s.hpc.job_group = "missing-group"
     with pytest.raises(RuntimeError, match="does not exist"):
         runner._check_job_group()
     s.hpc.job_group = "other-group"
-    other_gid = max(os.getgid(), *os.getgroups()) + 1
-    monkeypatch.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=other_gid))
-    with pytest.raises(RuntimeError, match="not a member"):
+    other_gid = max([os.getgid(), *os.getgroups()]) + 1
+    with monkeypatch.context() as m:
+        m.setattr(grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=other_gid))
+        with pytest.raises(RuntimeError, match="runner account is not a member"):
+            runner._check_job_group()
+    s.hpc.job_group = group
+    s.hpc.user = "missing-account"
+    with pytest.raises(RuntimeError, match="hpc.user does not exist"):
         runner._check_job_group()
+    s.hpc.user = user
+    with monkeypatch.context() as m:
+        m.setattr(os, "getgrouplist", lambda name, primary_gid: [])
+        with pytest.raises(RuntimeError, match="hpc.user is not a member"):
+            runner._check_job_group()

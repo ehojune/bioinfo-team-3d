@@ -94,6 +94,9 @@ def test_submit_prefix_requires_job_group_at_config_load(tmp_path):
     config.write_text("hpc:\n  submit_prefix: [sudo, -n, -u, data-account]\n")
     with pytest.raises(ValueError, match="hpc.job_group is required"):
         Settings.load(str(config))
+    config.write_text("hpc:\n  submit_prefix: [sudo, -n, -u, data-account]\n  job_group: lab-jobs\n")
+    with pytest.raises(ValueError, match="hpc.user is required"):
+        Settings.load(str(config))
 
 
 def test_helpers():
@@ -103,3 +106,4 @@ def test_helpers():
     script = build_script("#!/bin/bash\n#$ -V\necho hi", "/w")
     lines = script.splitlines()
     assert lines[0] == "#!/bin/bash" and lines[1] == "#$ -V" and "set -euo pipefail" in lines and lines[-1] == "echo hi"
+    assert "umask 007" in build_script("echo hi", "/w/hpc_out", umask="007")

@@ -72,7 +72,7 @@ def sanitize_job_name(name: str) -> str:
     return n if n[0].isalpha() else f"j_{n}"
 
 
-def build_script(body: str, workdir: str) -> str:
+def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
     """Wrap an agent-written script: shebang, scheduler directives, strict mode, cd, exit trace."""
     lines = body.strip("\n").splitlines()
     shebang = lines.pop(0) if lines and lines[0].startswith("#!") else "#!/bin/bash"
@@ -81,6 +81,7 @@ def build_script(body: str, workdir: str) -> str:
         directives.append(lines.pop(0))
     pre = [
         "set -euo pipefail",
+        *([f"umask {umask}"] if umask else []),
         f"cd {shlex.quote(workdir)}",
         "trap 'echo \"[labhq] exit=$? end=$(date -Is)\"' EXIT",
         'echo "[labhq] host=$(hostname) start=$(date -Is)"',
