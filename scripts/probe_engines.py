@@ -47,10 +47,13 @@ def main() -> None:
         ctx = RunContext(task=task, agent=agent, workdir=workdir, settings=settings,
                          mcp_servers=[], env={}, emit=_emit, prompt=task.prompt)
         adapter = get_adapter(agent.engine, settings)
+        refused = adapter.preflight_error(ctx, {**os.environ, **adapter.engine_env(), **ctx.env})
+        if refused:  # same gate as AgentAdapter.run(): never capture a stream with the PI's global instructions
+            p.error(refused)
         adapter.prepare(ctx)
         cmd = adapter.build_command(ctx)
         payload = adapter.stdin_payload(ctx)
-        proc = subprocess.run(cmd, cwd=workdir, env={**os.environ, **adapter.engine_env()},
+        proc = subprocess.run(cmd, cwd=workdir, env={**os.environ, **adapter.engine_env(), **ctx.env},
                               input=payload, stdin=subprocess.DEVNULL if payload is None else None,
                               capture_output=True, timeout=args.timeout + 5, check=False)
         stem = args.name or args.engine

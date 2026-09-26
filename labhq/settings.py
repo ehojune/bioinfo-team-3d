@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GatewaySettings(BaseModel):
@@ -30,14 +30,20 @@ class RunnerSettings(BaseModel):
 
 
 class EngineBin(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # a misspelled or unsupported option must not pass silently
+
     bin: str
     extra_args: list[str] = []
     env: dict[str, str] = {}
+
+
+class IsolatedEngineBin(EngineBin):
     # Staff sessions must not inherit the PI's own CLI setup (hooks, skills, plugins, global instructions).
+    # Only engines whose adapter implements it; gemini/antigravity have no flag for it (README §10).
     isolate_user_config: bool = True
 
 
-class CodexBin(EngineBin):
+class CodexBin(IsolatedEngineBin):
     # --ignore-user-config also drops `[windows] sandbox`; without it Codex refuses workspace writes on Windows.
     windows_sandbox: str = "elevated"
     # $CODEX_HOME/AGENTS.md (the PI's global instructions) cannot be switched off by flags; refuse unless allowed.
@@ -45,7 +51,7 @@ class CodexBin(EngineBin):
 
 
 class EnginesSettings(BaseModel):
-    claude_code: EngineBin = EngineBin(bin="claude")
+    claude_code: IsolatedEngineBin = IsolatedEngineBin(bin="claude")
     codex: CodexBin = CodexBin(bin="codex")
     gemini: EngineBin = EngineBin(bin="gemini")
     antigravity: EngineBin = EngineBin(bin="agy")

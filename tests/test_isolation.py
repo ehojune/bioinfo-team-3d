@@ -148,3 +148,35 @@ async def test_env_added_in_prepare_reaches_subprocess(tmp_path, monkeypatch):
                      mcp_servers=[], env={}, emit=_emit, prompt="x")
     await get_adapter(agent.engine, settings).run(ctx)
     assert seen.get("BIOINFO_AGENT_KEY") == "from-cli-spec"
+
+
+def test_isolation_option_exists_only_where_implemented():
+    """gemini/antigravity cannot drop user settings; the option must not appear to work there."""
+    from pydantic import ValidationError
+
+    from labhq.settings import EnginesSettings
+
+    s = Settings()
+    assert s.engines.claude_code.isolate_user_config and s.engines.codex.isolate_user_config
+    assert not hasattr(s.engines.antigravity, "isolate_user_config")
+    assert not hasattr(s.engines.gemini, "isolate_user_config")
+    with pytest.raises(ValidationError):
+        EnginesSettings.model_validate({"antigravity": {"bin": "agy", "isolate_user_config": True}})
+
+
+def test_probe_script_applies_the_same_preflight(tmp_path, monkeypatch):
+    import scripts.probe_engines as probe
+
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "AGENTS.md").write_text("PI global instructions")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+
+    def no_spawn(*a, **k):
+        raise AssertionError("probe spawned the CLI despite the preflight refusal")
+
+    monkeypatch.setattr(probe.subprocess, "run", no_spawn)
+    monkeypatch.setattr("sys.argv", ["probe_engines.py", "codex", "--output-dir", str(tmp_path / "out")])
+    with pytest.raises(SystemExit) as exc:
+        probe.main()
+    assert exc.value.code == 2
