@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class GatewaySettings(BaseModel):
@@ -64,6 +64,13 @@ class HpcSettings(BaseModel):
     pbs: PbsSettings = PbsSettings()
     command_timeout_s: int = 60
     submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub; status commands stay unchanged
+    job_group: str | None = None  # shared POSIX group for scripts and scheduler logs
+
+    @model_validator(mode="after")
+    def require_job_group_for_submit_prefix(self) -> "HpcSettings":
+        if self.submit_prefix and not (self.job_group and self.job_group.strip()):
+            raise ValueError("hpc.job_group is required when hpc.submit_prefix is set")
+        return self
 
 
 class DataZone(BaseModel):

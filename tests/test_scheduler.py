@@ -1,4 +1,6 @@
-from labhq.settings import HpcSettings
+import pytest
+
+from labhq.settings import HpcSettings, Settings
 from labhq.tools.scheduler import (
     Scheduler, build_script, normalize_walltime, parse_pbs_qstat_full, parse_pbs_qstat_table,
     parse_sge_qacct, parse_sge_qstat, sanitize_job_name,
@@ -73,7 +75,7 @@ def test_submit_prefix_only_on_qsub(monkeypatch):
     from subprocess import CompletedProcess
 
     s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
-                              submit_prefix=["sudo", "-n", "-u", "data-account"]))
+                              submit_prefix=["sudo", "-n", "-u", "data-account"], job_group="lab-jobs"))
     args = s.submit_args("/w/j.sh", "align", 1, "4G", "01:00:00", None, "/w/o", "/w/e")
     assert args[:5] == ["sudo", "-n", "-u", "data-account", "qsub"]
     seen = []
@@ -85,6 +87,13 @@ def test_submit_prefix_only_on_qsub(monkeypatch):
     monkeypatch.setattr(s, "_run", fake_run)
     s.queue()
     assert seen == [["qstat", "-u", "data-account"]]
+
+
+def test_submit_prefix_requires_job_group_at_config_load(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("hpc:\n  submit_prefix: [sudo, -n, -u, data-account]\n")
+    with pytest.raises(ValueError, match="hpc.job_group is required"):
+        Settings.load(str(config))
 
 
 def test_helpers():

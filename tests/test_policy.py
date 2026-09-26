@@ -84,6 +84,14 @@ def test_relative_write_resolved_against_workdir():
     assert evaluate_tool("Write", {"file_path": "../cohort/a"}, p, ["/data/task"], workdir="/data/task").action == "deny"
 
 
+def test_drive_rooted_backslash_is_absolute_without_a_drive_letter():
+    path = r"\Windows\System32\drivers\etc\hosts"
+    assert evaluate_tool("Write", {"file_path": path}, _policy(),
+                         allowed_roots=[r"C:\work\task"], workdir=r"C:\work\task").action == "ask"
+    assert touches({"file_path": r"\data\cohort\a.vcf"}, ["/data/cohort"],
+                   workdir=r"C:\work\task") == "/data/cohort"
+
+
 def test_relative_zone_is_rejected_at_config_load(tmp_path):
     from labhq.settings import Settings
 

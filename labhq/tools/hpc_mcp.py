@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -45,6 +46,27 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
         return r.json()
 
 
+def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
+                       job_group: str | None = None) -> None:
+    logs.mkdir(parents=True, exist_ok=True)
+    if job_group:
+        if os.name == "nt":
+            raise RuntimeError("hpc.job_group requires a POSIX runner")
+        import grp
+
+        gid = grp.getgrnam(job_group).gr_gid
+        for directory in (workdir, script_path.parent, logs):
+            os.chown(directory, -1, gid)
+        # The data account must traverse the task directory to reach jobs/.
+        os.chmod(workdir, stat.S_IMODE(workdir.stat().st_mode) | stat.S_IXGRP)
+        os.chmod(script_path.parent, 0o2750)
+        os.chmod(logs, 0o2770)
+    script_path.write_text(body)
+    if job_group:
+        os.chown(script_path, -1, gid)
+    script_path.chmod(0o750)
+
+
 @server.tool()
 async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G",
                      walltime: str = "04:00:00", queue: str | None = None, reason: str = "") -> str:
@@ -56,11 +78,13 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     """
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     spath = WORKDIR / "jobs" / f"{name}_{stamp}.sh"
-    spath.write_text(build_script(script, str(WORKDIR)))
-    spath.chmod(0o750)
+    try:
+        _prepare_job_files(WORKDIR, spath, logs, build_script(script, str(WORKDIR)),
+                           S.hpc.job_group if S.hpc.submit_prefix else None)
+    except (OSError, KeyError, RuntimeError) as e:
+        return json.dumps({"submitted": False, "reason": f"job file permissions: {e}"})
     ch = core_hours(cores, walltime)
 
     if hpc_needs_approval(cores, walltime, S.policy):

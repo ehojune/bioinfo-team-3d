@@ -40,7 +40,7 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _absolute(p: str) -> bool:
-    return p.startswith("/") or bool(re.match(r"^[A-Za-z]:[/\\]", p)) or p.startswith("\\\\")
+    return p.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[/\\]", p))
 
 
 def _candidate_paths(s: str) -> Iterator[str]:

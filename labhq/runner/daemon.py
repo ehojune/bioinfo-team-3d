@@ -50,6 +50,23 @@ class Runner:
         self._stopping = False
 
     # ---------------- lifecycle ----------------
+    def _check_job_group(self) -> None:
+        if not self.s.hpc.submit_prefix:
+            return
+        group = self.s.hpc.job_group
+        if not group:
+            raise RuntimeError("hpc.job_group is required when hpc.submit_prefix is set")
+        if os.name == "nt":
+            return  # POSIX group lookup is unavailable here; restricted zones are refused below.
+        import grp
+
+        try:
+            gid = grp.getgrnam(group).gr_gid
+        except KeyError as e:
+            raise RuntimeError(f"hpc.job_group does not exist: {group}") from e
+        if gid not in {os.getgid(), *os.getgroups()}:
+            raise RuntimeError(f"runner account is not a member of hpc.job_group: {group}")
+
     def _check_data_boundary(self) -> None:
         zones = [z.path for z in self.s.policy.data_zones if z.level == "restricted"]
         if not zones:
@@ -75,6 +92,7 @@ class Runner:
             return False
 
     async def run_forever(self) -> None:
+        self._check_job_group()
         self._check_data_boundary()
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
