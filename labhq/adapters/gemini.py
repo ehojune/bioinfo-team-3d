@@ -26,7 +26,7 @@ class GeminiAdapter(AgentAdapter):
         return None
 
     def engine_env(self) -> dict[str, str]:
-        return {"GEMINI_CLI_TRUST_WORKSPACE": "true", "NO_COLOR": "1"}
+        return {**super().engine_env(), "GEMINI_CLI_TRUST_WORKSPACE": "true", "NO_COLOR": "1"}
 
     def prepare(self, ctx: RunContext) -> None:
         servers: dict[str, dict] = {}

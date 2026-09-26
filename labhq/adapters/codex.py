@@ -12,6 +12,7 @@ labhq's own MCP tools enforce phone approval inside the broker.
 from __future__ import annotations
 
 import json
+import os
 
 from ..util import short
 from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
@@ -21,6 +22,10 @@ def _toml(v: object) -> str:
     if isinstance(v, dict):
         return "{" + ", ".join(f"{k} = {_toml(x)}" for k, x in v.items()) + "}"
     return json.dumps(v)  # JSON strings/arrays/bools/numbers are valid TOML here
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
 
 
 class CodexAdapter(AgentAdapter):
@@ -51,6 +56,12 @@ class CodexAdapter(AgentAdapter):
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
         flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), "-s", a.sandbox,
                  "-o", str(ctx.meta_dir / "last_message.txt")]
+        if b.isolate_user_config:
+            # config.toml carries the PI's plugins, notify hook and MCP servers. The global AGENTS.md in
+            # CODEX_HOME still loads; set engines.codex.env.CODEX_HOME to a separate staff login to drop it.
+            flags += ["--ignore-user-config", "--ignore-rules"]
+            if _is_windows() and b.windows_sandbox:
+                flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
         if a.model:
             flags += ["-m", a.model]
         for d in ctx.extra_dirs:

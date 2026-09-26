@@ -267,7 +267,8 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 - **승인·예산** (`policy.approvals`, `policy.budget`): `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음.
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
   `permission_mode`, `project_dirs`.
-- **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`과 `extra_args`.
+- **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `extra_args`, `env`.
+  `isolate_user_config`(기본 켜짐)는 PI 개인 CLI 설정을 직원 세션에서 뺍니다(§10). Codex의 `windows_sandbox`는 Windows에서 다시 넣는 샌드박스 모드입니다.
   Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.
 
 ## 9. 폰 연결
@@ -285,7 +286,11 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 - Claude Code 2.1.282는 로그아웃 상태에서 `is_error: true`와 `subtype: success`를 함께 냅니다.
 - `--permission-prompt-tool` 응답은 텍스트 블록 하나여야 합니다. mcp 2.x가 붙이는 구조화 결과가 있으면 Claude가 거부해서, 승인 도구는 구조화 출력을 끕니다.
 - Claude는 권한 규칙을 POSIX로 정규화한 경로와 대조합니다. Windows에서는 `Read(//c/Users/...)`만 막히므로 labhq가 드라이브 경로를 그 형태로 바꿉니다.
-- 헤드리스 Claude는 사용자 hook·개인 서브에이전트를, Codex는 사용자 config.toml·전역 AGENTS.md를 불러왔습니다. 안전·복구 최소선 단계에서 전용 계정/격리로 해결합니다.
+- 직원 CLI는 PI 개인 설정 없이 뜹니다(`isolate_user_config`). 가장 확실한 방법은 러너를 전용 계정으로 돌리는 것입니다.
+  - Claude: `--setting-sources project,local --disable-slash-commands`에 사용자 CLAUDE.md 제외를 더하면 hook·skill·plugin·개인 서브에이전트·전역 지침이 모두 빠집니다(실측 `claude_isolated.jsonl`).
+  - Codex: `--ignore-user-config --ignore-rules`로 config.toml(plugin·notify hook·MCP)이 빠집니다. `CODEX_HOME`의 전역 AGENTS.md는 남습니다. 막으려면 직원용 폴더를 `CODEX_HOME`으로 두고 한 번 `codex login`한 뒤 `engines.codex.env.CODEX_HOME`에 지정하세요(미검증).
+  - Codex on Windows: config.toml을 건너뛰면 `[windows] sandbox`도 빠져 쓰기가 막히고, 종료 코드는 0입니다. labhq가 `windows.sandbox="elevated"`를 다시 넣습니다.
+  - agy: 전역 지침을 읽지 않았습니다(실측). 사용자 `settings.json` 권한과 MCP는 끌 옵션이 없습니다.
 - 승인 대기가 길면 Claude의 MCP 툴 타임아웃에 걸릴 수 있어 러너가 `MCP_TOOL_TIMEOUT`을 늘려 줍니다.
 - **데이터 구역은 사고 방지용 가드레일이지 샌드박스가 아닙니다.** 확실한 격리는 전용 계정·파일 권한·컨테이너로 하세요.
 

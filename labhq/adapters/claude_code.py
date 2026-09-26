@@ -3,17 +3,31 @@
 Flags used (see https://code.claude.com/docs/en/cli-reference): -p, --output-format stream-json
 --verbose, --model, --permission-mode, --permission-prompt-tool, --mcp-config + --strict-mcp-config,
 --append-system-prompt-file, --max-turns, --max-budget-usd, --json-schema, --resume, --settings,
---add-dir, --tools, --allowedTools, --disallowedTools.
+--add-dir, --tools, --allowedTools, --disallowedTools, --setting-sources, --disable-slash-commands.
 """
 
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 from ..util import short
 from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
+ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
+
+
+def user_config_isolation(env: dict[str, str]) -> dict:
+    """Settings that keep the PI's own Claude setup out of a staff session.
+
+    Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
+    user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
+    """
+    home = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    return {"autoMemoryEnabled": False,
+            "claudeMdExcludes": [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]}
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -47,8 +61,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--max-budget-usd", f"{budget:.2f}"]
         if t.output_schema:
             cmd += ["--json-schema", json.dumps(t.output_schema)]
-        if ctx.claude_settings:
-            cmd += ["--settings", json.dumps(ctx.claude_settings)]
+        settings = dict(ctx.claude_settings)
+        if b.isolate_user_config:
+            cmd += ISOLATION_FLAGS
+            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}))
+        if settings:
+            cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:
             cmd += ["--tools", a.builtin_tools]
         if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):

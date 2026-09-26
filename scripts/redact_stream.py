@@ -63,6 +63,11 @@ def prune_event(ev):
         return _prune_init(ev)
     if ev.get("type") == "system":
         return _prune_system(ev)
+    if ev.get("type") == "rate_limit_event":
+        # Plan utilisation, reset times and org overage settings describe the capturing account.
+        info = ev.get("rate_limit_info") if isinstance(ev.get("rate_limit_info"), dict) else {}
+        return {**{k: v for k, v in ev.items() if k in {"type", "uuid", "session_id"}},
+                "rate_limit_info": {k: info[k] for k in ("status", "rateLimitType") if k in info}}
     if ev.get("event") == "init" and isinstance(ev.get("init"), dict):
         return {**{k: v for k, v in ev.items() if k != "init"}, "init": _prune_init(ev["init"])}
     return ev

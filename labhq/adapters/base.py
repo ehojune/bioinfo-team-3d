@@ -83,7 +83,8 @@ class AgentAdapter(ABC):
         """Write engine-specific config files into the workspace."""
 
     def engine_env(self) -> dict[str, str]:
-        return {}
+        b = getattr(self.settings.engines, self.engine, None)
+        return expand_env(b.env) if b is not None else {}
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""

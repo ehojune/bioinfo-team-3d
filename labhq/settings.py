@@ -33,11 +33,18 @@ class EngineBin(BaseModel):
     bin: str
     extra_args: list[str] = []
     env: dict[str, str] = {}
+    # Staff sessions must not inherit the PI's own CLI setup (hooks, skills, plugins, global instructions).
+    isolate_user_config: bool = True
+
+
+class CodexBin(EngineBin):
+    # --ignore-user-config also drops `[windows] sandbox`; without it Codex refuses workspace writes on Windows.
+    windows_sandbox: str = "elevated"
 
 
 class EnginesSettings(BaseModel):
     claude_code: EngineBin = EngineBin(bin="claude")
-    codex: EngineBin = EngineBin(bin="codex")
+    codex: CodexBin = CodexBin(bin="codex")
     gemini: EngineBin = EngineBin(bin="gemini")
     antigravity: EngineBin = EngineBin(bin="agy")
 
