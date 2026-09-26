@@ -230,6 +230,9 @@ class Orchestrator:
         self.cfg = hub.s.orchestrator
         self.cost: dict[str, float] = {}
         self.attempts: dict[str, dict[str, int]] = {}
+        self.budget_locks: dict[str, asyncio.Lock] = {}
+        self.budget_denials: dict[str, str] = {}
+        self.budget_outcomes: dict[str, list[dict]] = {}
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
@@ -255,9 +258,13 @@ class Orchestrator:
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
                     kind = failure_kind(res)
-                await self._check_budget(rid)
+                await self._check_budget(rid, block=False)
                 if kind is None:
                     return res
+                if rid in self.budget_denials:
+                    if res.ok:
+                        res = res.model_copy(update={"ok": False, "error": "empty result"})
+                    return res  # this attempt ran; only its not-yet-started retry is blocked
                 if kind != "transient" or attempt == self.cfg.step_max_attempts:
                     if res.ok:
                         res = res.model_copy(update={"ok": False, "error": "empty result"})
@@ -284,15 +291,34 @@ class Orchestrator:
             res = await dispatch_with_retry(wake)
         return res
 
-    async def _check_budget(self, rid: str) -> None:
-        limit = self.hub.requests.get(rid, {}).get("budget_usd") or self.hub.s.policy.budget.per_request_usd
-        spent = self.cost.get(rid, 0.0)
-        if limit and spent > limit:
-            dec = await self.hub.request_approval(kind="budget", request_id=rid,
-                                                  summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?")
-            if not dec.get("approved"):
-                raise BudgetExceeded(f"budget exceeded (${spent:.2f} > ${limit:.2f})")
-            self.hub.requests[rid]["budget_usd"] = limit * 2
+    async def _check_budget(self, rid: str, *, block: bool = True) -> None:
+        # A completed attempt keeps its result; a denied budget only blocks the next attempt.
+        async with self.budget_locks.setdefault(rid, asyncio.Lock()):
+            if rid in self.budget_denials:
+                if block:
+                    raise BudgetExceeded(self.budget_denials[rid])
+                return
+            limit = self.hub.requests.get(rid, {}).get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+            spent = self.cost.get(rid, 0.0)
+            if not limit or spent <= limit:
+                return
+            try:
+                dec = await self.hub.request_approval(kind="budget", request_id=rid,
+                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?")
+            except Exception as exc:
+                dec = {"approved": False, "note": str(exc)}
+            spent = self.cost.get(rid, 0.0)  # include concurrently completed attempts in this decision
+            approved = bool(dec.get("approved"))
+            outcome = {"spent_usd": round(spent, 4), "limit_usd": limit, "approved": approved}
+            self.budget_outcomes.setdefault(rid, []).append(outcome)
+            await self._emit(rid, "request.budget_exceeded", outcome)
+            if approved:
+                self.hub.requests[rid]["budget_usd"] = max(limit * 2, spent)
+            else:
+                reason = f"budget exceeded (${spent:.2f} > ${limit:.2f}); approval denied"
+                self.budget_denials[rid] = reason
+                if block:
+                    raise BudgetExceeded(reason)
 
     # ---------- DAG ----------
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
@@ -301,6 +327,12 @@ class Orchestrator:
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
+
+        async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
+            results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
+                                      error=f"skipped: {reason}")
+            await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
+                                                            "upstream": upstream_ids or [], "reason": reason})
 
         def upstream(step: dict) -> str:
             parts = []
@@ -330,13 +362,13 @@ class Orchestrator:
             ready = [sid for sid in todo if not any(d in todo or d in running for d in by_id[sid]["depends_on"])]
             for sid in ready:
                 todo.discard(sid)
+                if rid in self.budget_denials:
+                    await skip(sid, self.budget_denials[rid])
+                    continue
                 blocked = [d for d in by_id[sid]["depends_on"] if d not in results or not results[d].ok]
                 if blocked:
                     reason = ", ".join(f"{d}: {results[d].error if d in results else 'not run'}" for d in blocked)
-                    results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
-                                              error=f"skipped: upstream {reason}")
-                    await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
-                                                                    "upstream": blocked, "reason": reason})
+                    await skip(sid, f"upstream {reason}", blocked)
                     continue
                 running[sid] = asyncio.create_task(run_one(by_id[sid]))
             if not running:
@@ -351,6 +383,9 @@ class Orchestrator:
                     running.pop(sid)
                     try:
                         results[sid] = t.result()
+                    except BudgetExceeded as e:
+                        await skip(sid, str(e))
+                        continue
                     except asyncio.CancelledError:
                         results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
@@ -381,7 +416,8 @@ class Orchestrator:
                                                budget_usd=req.get("budget_usd"),
                                                meta={"kind": "direct", "title": text[:100],
                                                      "project_dirs": req.get("project_dirs", [])}))
-                self._finish(rid, res.text, {"direct": res.model_dump(mode="json")}, ok=res.ok)
+                self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
+                             ok=res.ok and rid not in self.budget_denials)
                 return
 
             roster = list(self.hub.agents.values())
@@ -395,6 +431,9 @@ class Orchestrator:
                 if not b.ok:
                     self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
                     return
+                if rid in self.budget_denials:
+                    self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
+                    return
                 briefing = b.text
 
             plan_res = await self.run_step(Task(
@@ -404,6 +443,9 @@ class Orchestrator:
                 meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
             if not plan_res.ok:
                 self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                return
+            if rid in self.budget_denials:
+                self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                 return
             plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
             steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
@@ -426,7 +468,7 @@ class Orchestrator:
                                       ("done" if v.ok else "failed"),
                             "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
 
-            if any(not r.ok for r in results.values()):
+            if rid in self.budget_denials or any(not r.ok for r in results.values()):
                 self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
                 return
 
@@ -445,6 +487,10 @@ class Orchestrator:
                         'Do not omit verdict or add prose.',
                         meta={"kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
+                    if rid in self.budget_denials:
+                        self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                                     review={"status": "budget_denied"})
+                        return
                     parsed = r.structured if valid_review(r.structured) else None
                     if parsed is None:
                         parsed = extract_json(r.text)
@@ -469,7 +515,7 @@ class Orchestrator:
                 if not feedback:
                     break
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
-                if any(not r.ok for r in results.values()):
+                if rid in self.budget_denials or any(not r.ok for r in results.values()):
                     self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
                                  review=review)
                     return
@@ -485,13 +531,18 @@ class Orchestrator:
                                            review=short(review, 3000)),
                 meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성"}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
-                         f"\n\nSynthesis failed: {final.error}", serialized_results(), ok=final.ok, review=review)
+                         f"\n\nSynthesis failed: {final.error}", serialized_results(),
+                         ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             await self._emit(rid, "request.failed", {"error": req["error"]})
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]
+        for outcome in self.budget_outcomes.get(rid, []):
+            decision = "approved" if outcome["approved"] else "denied"
+            report += (f"\n\nBudget: ${outcome['spent_usd']:.2f} > "
+                       f"${outcome['limit_usd']:.2f}; {decision}.")
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
         asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", {

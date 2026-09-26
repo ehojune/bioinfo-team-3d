@@ -19,6 +19,8 @@ class FakeHub:
                        for name in ("cso", "sci_reviewer", "worker")}
         self.events = []
         self.calls = []
+        self.approvals = []
+        self.approve_budget = False
         self.reply = dispatch
 
     async def dispatch(self, task):
@@ -29,7 +31,8 @@ class FakeHub:
         self.events.append(event)
 
     async def request_approval(self, **kwargs):
-        return {"approved": False}
+        self.approvals.append(kwargs)
+        return {"approved": self.approve_budget}
 
     def supports_resume(self, agent_id):
         return False
@@ -184,10 +187,26 @@ async def test_retry_cost_is_in_request_budget():
     hub = FakeHub(dispatch)
     hub.requests["r"]["budget_usd"] = 0.5
     orch = Orchestrator(hub)
-    with pytest.raises(BudgetExceeded):
-        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    res = await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert res.ok  # the completed attempt remains successful after budget denial
     assert orch.cost["r"] == pytest.approx(0.8)
     assert len(hub.calls) == 2
+    assert len(hub.approvals) == 1
+    with pytest.raises(BudgetExceeded):
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="next"))
+    assert len(hub.calls) == 2 and len(hub.approvals) == 1
+
+
+@pytest.mark.asyncio
+async def test_budget_denial_preserves_failed_attempt_instead_of_skipping_it():
+    async def dispatch(task):
+        return result(task, ok=False, error="rate limit", cost_usd=0.6)
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"]["budget_usd"] = 0.5
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert not res.ok and res.error == "rate limit"
+    assert len(hub.calls) == 1 and len(hub.approvals) == 1
 
 
 @pytest.mark.parametrize("outcome,kind", [
@@ -216,18 +235,13 @@ def test_review_schema_requires_complete_typed_fields():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["budget", "cancel"])
-async def test_budget_denial_and_cancellation_skip_dependents(mode):
+async def test_cancellation_skips_dependents():
     async def dispatch(task):
         if task.meta["step_id"] == "A":
-            if mode == "cancel":
-                raise asyncio.CancelledError()
-            await asyncio.sleep(0.01)  # independent D finishes before A exceeds the shared budget
-            return result(task, text="spent", cost_usd=0.6)
+            raise asyncio.CancelledError()
         return result(task, text="independent")
 
     hub = FakeHub(dispatch)
-    hub.requests["r"]["budget_usd"] = 0.5 if mode == "budget" else 10
     orch = Orchestrator(hub)
     results = {}
     await orch.run_dag("r", "question", STEPS, results)
@@ -236,3 +250,53 @@ async def test_budget_denial_and_cancellation_skip_dependents(mode):
     assert results["C"].error.startswith("skipped:")
     assert results["D"].ok
     assert sum(e["type"] == "request.step_skipped" for e in hub.events) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [False, True])
+async def test_parallel_budget_decision_preserves_completed_steps_and_controls_new_starts(approved):
+    d_started = asyncio.Event()
+    decision_done = asyncio.Event()
+
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured={"steps": STEPS})
+        if kind == "synthesis":
+            return result(task, text="report")
+        sid = task.meta["step_id"]
+        if sid == "A":
+            await d_started.wait()
+            return result(task, text="A done", cost_usd=0.6)
+        if sid == "D":
+            d_started.set()
+            await decision_done.wait()  # D started before A's decision, but completes afterward
+        return result(task, text=f"{sid} done")
+
+    hub = FakeHub(dispatch)
+    hub.approve_budget = approved
+    hub.requests["r"]["budget_usd"] = 0.5
+    hub.s.orchestrator.reviewer_agent = None
+    decide = hub.request_approval
+
+    async def resolve_budget(**kwargs):
+        answer = await decide(**kwargs)
+        decision_done.set()
+        return answer
+
+    hub.request_approval = resolve_budget
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert len(hub.approvals) == 1
+    assert sum(e["type"] == "request.budget_exceeded" for e in hub.events) == 1
+    assert req["results"]["A"]["status"] == "done"
+    assert req["results"]["D"]["status"] == "done"
+    assert "Budget: $0.60 > $0.50" in req["report"]
+    if approved:
+        assert req["status"] == "done"
+        assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "done"
+    else:
+        assert req["status"] == "failed"
+        assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "skipped"
+        assert "budget" in req["results"]["B"]["error"]
+        assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
