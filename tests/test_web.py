@@ -42,12 +42,13 @@ def test_live_reconnect_seq_lives_only_in_page_memory():
 def test_replay_gap_snapshot_replaces_office_state():
     from labhq.gateway import server
     html = (server.WEB / "index.html").read_text(encoding="utf-8")
-    reset = html.split("function resetSnapshotState() {", 1)[1].split("\n}", 1)[0]
+    state = (server.WEB / "state.js").read_text(encoding="utf-8")
+    reset = state.split("function resetSnapshotState() {", 1)[1].split("\n}", 1)[0]
     for field in ("agents", "approvals", "requests", "jobs", "taskStep"):
         assert f"S.{field}.clear()" in reset
     for field in ("suggestions", "feed", "cost", "lastSay", "seq", "doorUntil", "current", "projects"):
         assert f"S.{field} = " in reset
-    snapshot = html.split("case 'snapshot': {", 1)[1].split("case 'roster.updated':", 1)[0]
+    snapshot = state.split("case 'snapshot': {", 1)[1].split("case 'roster.updated':", 1)[0]
     assert snapshot.index("resetSnapshotState();") < snapshot.index("(d.recent_events || []).forEach")
     assert snapshot.index("(d.recent_events || []).forEach") < snapshot.index("S.cost = (d.requests || [])")
     assert "Object.assign(q.steps, r.step_status || {})" in snapshot
@@ -56,9 +57,10 @@ def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
     from labhq.gateway import server
 
     html = (server.WEB / "index.html").read_text(encoding="utf-8")
-    assert "case 'request.step_skipped':" in html
-    assert "q.steps[d.step_id] = 'skipped'" in html
+    state = (server.WEB / "state.js").read_text(encoding="utf-8")
+    assert "case 'request.step_skipped':" in state
+    assert "q.steps[d.step_id] = 'skipped'" in state
     assert ".chip.st-skipped" in html and ".dag-node.st-skipped" in html
     assert "skipped: '건너뜀'" in html
-    assert "d.status === 'review_unparsed'" in html
-    assert "리뷰 판정 실패. PI 확인이 필요해요" in html
+    assert "d.status === 'review_unparsed'" in state
+    assert "리뷰 판정 실패. PI 확인이 필요해요" in state
