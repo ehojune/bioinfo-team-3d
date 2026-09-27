@@ -1,4 +1,6 @@
-from labhq.settings import HpcSettings
+import pytest
+
+from labhq.settings import HpcSettings, Settings
 from labhq.tools.scheduler import (
     Scheduler, build_script, normalize_walltime, parse_pbs_qstat_full, parse_pbs_qstat_table,
     parse_sge_qacct, parse_sge_qstat, sanitize_job_name,
@@ -69,6 +71,53 @@ def test_submit_args_pbs():
     assert "nodes=1:ppn=4,mem=16gb,walltime=24:00:00" in args
 
 
+def test_submit_prefix_on_qsub_and_qdel_but_not_qstat(monkeypatch):
+    from subprocess import CompletedProcess
+
+    s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
+                              submit_prefix=["sudo", "-n", "-u", "data-account"], job_group="lab-jobs"))
+    args = s.submit_args("/w/j.sh", "align", 1, "4G", "01:00:00", None, "/w/o", "/w/e")
+    assert args[:5] == ["sudo", "-n", "-u", "data-account", "qsub"]
+    seen = []
+
+    def fake_run(argv):
+        seen.append(argv)
+        return CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(s, "_run", fake_run)
+    s.queue()
+    assert s.cancel("12345") == ""
+    assert seen == [["qstat", "-u", "data-account"],
+                    ["sudo", "-n", "-u", "data-account", "qdel", "12345"]]
+
+
+def test_cancel_reports_missing_qdel_sudoers_permission(monkeypatch):
+    from subprocess import CompletedProcess
+
+    s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
+                              submit_prefix=["sudo", "-n", "-u", "data-account"], job_group="lab-jobs"))
+    seen = []
+
+    def fake_run(argv):
+        seen.append(argv)
+        return CompletedProcess(argv, 1, "", "sudo: a password is required")
+
+    monkeypatch.setattr(s, "_run", fake_run)
+    with pytest.raises(RuntimeError, match=r"qdel failed \(1\).*password is required.*allow qdel in sudoers"):
+        s.cancel("12345")
+    assert seen == [["sudo", "-n", "-u", "data-account", "qdel", "12345"]]
+
+
+def test_submit_prefix_requires_job_group_at_config_load(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("hpc:\n  submit_prefix: [sudo, -n, -u, data-account]\n")
+    with pytest.raises(ValueError, match="hpc.job_group is required"):
+        Settings.load(str(config))
+    config.write_text("hpc:\n  submit_prefix: [sudo, -n, -u, data-account]\n  job_group: lab-jobs\n")
+    with pytest.raises(ValueError, match="hpc.user is required"):
+        Settings.load(str(config))
+
+
 def test_helpers():
     assert normalize_walltime("90:00") == "90:00:00"  # HH:MM
     assert normalize_walltime("1-02:00:00") == "26:00:00"
@@ -76,3 +125,4 @@ def test_helpers():
     script = build_script("#!/bin/bash\n#$ -V\necho hi", "/w")
     lines = script.splitlines()
     assert lines[0] == "#!/bin/bash" and lines[1] == "#$ -V" and "set -euo pipefail" in lines and lines[-1] == "echo hi"
+    assert "umask 007" in build_script("echo hi", "/w/hpc_out", umask="007")
