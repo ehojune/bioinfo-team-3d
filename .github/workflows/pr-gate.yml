@@ -1,0 +1,80 @@
+name: PR gate
+
+on:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Open PR number
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.select.outputs.prs }}
+    steps:
+      - name: Select PRs from event data
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PATH: ${{ github.event_path }}
+          INPUT_PR: ${{ inputs.pr }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ['EVENT_PATH'], encoding='utf-8') as source:
+              event = json.load(source)
+          name = os.environ['EVENT_NAME']
+          if name == 'issue_comment':
+              issue = event.get('issue') or {}
+              numbers = [issue['number']] if issue.get('pull_request') else []
+          elif name == 'check_suite':
+              numbers = [pr['number'] for pr in event['check_suite'].get('pull_requests', [])]
+          elif name == 'workflow_dispatch':
+              numbers = [int(os.environ['INPUT_PR'])]
+          else:
+              pr = event.get('pull_request') or {}
+              numbers = [pr['number']] if pr else []
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('prs=' + json.dumps(sorted(set(numbers))) + '\n')
+          PY
+
+  gate:
+    needs: select
+    if: needs.select.outputs.prs != '[]'
+    strategy:
+      matrix:
+        pr: ${{ fromJSON(needs.select.outputs.prs) }}
+    concurrency:
+      group: pr-gate-${{ github.repository }}-${{ matrix.pr }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Decide and apply
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: python3 scripts/pr_gate.py --repo "$REPO" --pr "$PR_NUMBER"

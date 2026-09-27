@@ -3,10 +3,10 @@
 시작 전에 `HANDOFF.md`와 `STATUS.md`를 읽는다.
 
 - 작업 순서와 ⛔ 체크포인트는 HANDOFF.md를 따른다.
-- 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. 병합은 PI가 한다. PI 위임(2026-09-25): Codex 리뷰 봇과 합의된 PR은 Claude가 병합한다.
+- 단계마다 브랜치에서 작업하고 PR을 연다. main에 직접 push하지 않는다. PI 위임(2026-09-28): Codex 리뷰 봇과 합의된 PR은 게이트 또는 Claude가 병합한다.
 - 변경 후 `pytest -q`를 돌린다. 테스트를 지우거나 약하게 만들지 않는다.
 - 단계를 끝내면 PR 본문과 STATUS.md 맨 위에 같은 보고를 남긴다.
 - 이 저장소는 public이다. 커밋 전에 `scripts/check_public.sh`를 돌리고, 비밀값은 환경변수로만 다루며, `config/labhq.yaml`은 커밋하지 않는다.
-- GitHub PR에서 Codex 리뷰 지적에 답할 때 인라인 답글에는 @codex를 쓰지 않는다(댓글마다 봇 세션이 따로 뜬다). 수정을 모두 push한 뒤 PR 상단에 `@codex review`를 한 번만 달고, 봇 리뷰가 Running이면 다시 부르지 않는다.
+- P1은 해당 PR에서 고치고 P2는 후속 issue로 넘긴다. PR 생성 시 자동 리뷰 1회와 신뢰 작성자의 PR 상단 `@codex review` 댓글 1개씩을 센다(최대 10회, 8회부터 경고). push 묶음마다 한 번만 호출하고 인라인 답글에는 `@codex`를 쓰지 않는다. Running 중에는 재호출하지 않는다. 게이트는 현재 head의 리뷰·CI·병합 조건을 확인해 자동 병합하거나, 상한에서 `needs-pi`로 PI를 부른다.
 - `labhq/web/index.html`은 빌드 없는 단일 파일이다.
 - 보고는 한국어로, 기술 용어는 영어 그대로.
