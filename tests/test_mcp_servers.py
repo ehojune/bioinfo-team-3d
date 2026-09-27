@@ -102,10 +102,10 @@ def test_second_job_submission_never_removes_group_traverse(tmp_path, monkeypatc
 
     real_chmod, real_walk = os.chmod, os.walk
 
-    def checked_chmod(path, mode):
+    def checked_chmod(path, mode, *args, **kwargs):
         if Path(path) == workdir:
             assert mode & stat.S_IXGRP
-        real_chmod(path, mode)
+        real_chmod(path, mode, *args, **kwargs)
 
     def checked_walk(*args, **kwargs):
         for entry in real_walk(*args, **kwargs):

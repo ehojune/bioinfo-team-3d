@@ -61,10 +61,10 @@ def test_execute_only_zone_is_rejected_even_when_listing_fails(tmp_path, monkeyp
         real_access = os.access
         real_listdir = os.listdir
 
-        def access(path, mode):
+        def access(path, mode, *args, **kwargs):
             if os.fspath(path) == str(zone) and mode == os.R_OK:
                 return False
-            return real_access(path, mode)
+            return real_access(path, mode, *args, **kwargs)
 
         def listdir(path):
             if os.fspath(path) == str(zone):
