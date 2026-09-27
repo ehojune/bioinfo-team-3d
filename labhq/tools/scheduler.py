@@ -227,5 +227,9 @@ class Scheduler:
     def cancel(self, job_id: str) -> str:
         if self.cfg.scheduler == "mock":
             return "cancelled (mock)"
-        p = self._run(["qdel", job_id])
+        p = self._run([*self.cfg.submit_prefix, "qdel", job_id])
+        if p.returncode != 0:
+            detail = (p.stderr or p.stdout).strip()
+            hint = "; allow qdel in sudoers for hpc.submit_prefix" if self.cfg.submit_prefix else ""
+            raise RuntimeError(f"qdel failed ({p.returncode}): {detail}{hint}")
         return (p.stdout or p.stderr).strip()

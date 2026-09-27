@@ -71,7 +71,7 @@ def test_submit_args_pbs():
     assert "nodes=1:ppn=4,mem=16gb,walltime=24:00:00" in args
 
 
-def test_submit_prefix_only_on_qsub(monkeypatch):
+def test_submit_prefix_on_qsub_and_qdel_but_not_qstat(monkeypatch):
     from subprocess import CompletedProcess
 
     s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
@@ -86,7 +86,26 @@ def test_submit_prefix_only_on_qsub(monkeypatch):
 
     monkeypatch.setattr(s, "_run", fake_run)
     s.queue()
-    assert seen == [["qstat", "-u", "data-account"]]
+    assert s.cancel("12345") == ""
+    assert seen == [["qstat", "-u", "data-account"],
+                    ["sudo", "-n", "-u", "data-account", "qdel", "12345"]]
+
+
+def test_cancel_reports_missing_qdel_sudoers_permission(monkeypatch):
+    from subprocess import CompletedProcess
+
+    s = Scheduler(HpcSettings(scheduler="sge", user="data-account",
+                              submit_prefix=["sudo", "-n", "-u", "data-account"], job_group="lab-jobs"))
+    seen = []
+
+    def fake_run(argv):
+        seen.append(argv)
+        return CompletedProcess(argv, 1, "", "sudo: a password is required")
+
+    monkeypatch.setattr(s, "_run", fake_run)
+    with pytest.raises(RuntimeError, match=r"qdel failed \(1\).*password is required.*allow qdel in sudoers"):
+        s.cancel("12345")
+    assert seen == [["sudo", "-n", "-u", "data-account", "qdel", "12345"]]
 
 
 def test_submit_prefix_requires_job_group_at_config_load(tmp_path):
