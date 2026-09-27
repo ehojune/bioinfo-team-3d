@@ -130,10 +130,17 @@ def test_inaccessible_parent_outside_workspace_root_is_not_modified(tmp_path, mo
     from labhq.tools.hpc_mcp import _prepare_job_files
 
     outer = tmp_path / "private"
-    outer.mkdir(mode=0o700)
     root = outer / "runs"
-    workdir = root / "2026-09-27" / "task"
-    workdir.mkdir(parents=True, mode=0o700)
+    date_dir = root / "2026-09-27"
+    workdir = date_dir / "task"
+    old_umask = os.umask(0o022)
+    try:
+        for directory in (outer, root, date_dir, workdir):
+            directory.mkdir(mode=0o700)
+    finally:
+        os.umask(old_umask)
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o700
+               for path in (outer, root, date_dir, workdir))
     group = grp.getgrgid(os.getgid()).gr_name
     monkeypatch.setattr(pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=os.getuid() + 10000,
                                                                     pw_gid=os.getgid()))
@@ -143,6 +150,7 @@ def test_inaccessible_parent_outside_workspace_root_is_not_modified(tmp_path, mo
                            "echo ok", group, root, "data-account")
     assert stat.S_IMODE(outer.stat().st_mode) == 0o700
     assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(date_dir.stat().st_mode) == 0o700
     assert not (workdir / "jobs").exists()
 
 
