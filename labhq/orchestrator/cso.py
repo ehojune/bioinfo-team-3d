@@ -242,7 +242,8 @@ class Orchestrator:
         rid = task.request_id or ""
         async def dispatch_with_retry(current: Task) -> TaskResult:
             key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
-            for attempt in range(1, self.cfg.step_max_attempts + 1):
+            first_attempt = getattr(self.hub, "recovery_attempt", lambda _task: 1)(current)
+            for attempt in range(first_attempt, self.cfg.step_max_attempts + 1):
                 await self._check_budget(rid)
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
@@ -360,6 +361,8 @@ class Orchestrator:
                 ctx += f"\n\n## Your previous result\n{clip(prev.text if prev else '', self.cfg.context_chars_per_step)}"
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         meta={"kind": "step", "step_id": step["id"], "request": request,
+                              "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
+                              .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", [])})
             async with sem:
@@ -435,7 +438,13 @@ class Orchestrator:
             if resume and req.get("plan", {}).get("steps"):
                 steps = req["plan"]["steps"]
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
-                remaining = {s["id"] for s in steps} - set(results)
+                remaining = {s["id"] for s in steps} - set(req.get("results") or {})
+                pending_revisions = req.get("pending_revisions") or {}
+                for sid, entry in pending_revisions.items():
+                    if sid in remaining and entry.get("previous_result"):
+                        dict.__setitem__(results, sid, TaskResult.model_validate(entry["previous_result"]))
+                resume_feedback = {sid: entry["feedback"] for sid, entry in pending_revisions.items()
+                                   if sid in remaining and entry.get("feedback")}
             else:
                 briefing = ""
                 cos = self.cfg.chief_of_staff_agent
@@ -475,9 +484,11 @@ class Orchestrator:
                     return
                 results = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(results)
+                resume_feedback = {}
 
             if remaining:
-                await self.run_dag(rid, text, steps, results, only=remaining)
+                await self.run_dag(rid, text, steps, results, only=remaining,
+                                   feedback=resume_feedback or None)
             def serialized_results() -> dict[str, dict]:
                 return {k: {**v.model_dump(mode="json"),
                             "status": "skipped" if (v.error or "").startswith("skipped:") else
@@ -530,6 +541,12 @@ class Orchestrator:
                         feedback[issue["step_id"]] += f"- {issue.get('problem')}: {issue.get('request')}\n"
                 if not feedback:
                     break
+                pending = req.setdefault("pending_revisions", {})
+                for sid, note in feedback.items():
+                    pending[sid] = {"revision": rev + 1, "feedback": note,
+                                    "previous_result": results[sid].model_dump(mode="json")}
+                    req.setdefault("results", {}).pop(sid, None)
+                self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
                 if rid in self.budget_denials or any(not r.ok for r in results.values()):
                     self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,

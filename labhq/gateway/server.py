@@ -67,7 +67,9 @@ class SavedResults(dict):
 
     def __setitem__(self, key: str, value: TaskResult) -> None:
         super().__setitem__(key, value)
-        self.hub.requests[self.rid]["results"] = {k: v.model_dump(mode="json") for k, v in self.items()}
+        req = self.hub.requests[self.rid]
+        req.setdefault("results", {})[key] = value.model_dump(mode="json")
+        req.get("pending_revisions", {}).pop(key, None)
         self.hub.save_request(self.rid)
 
 
@@ -124,6 +126,21 @@ class Hub:
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
+
+    def recovery_attempt(self, task: Task) -> int:
+        if task.request_id not in self.recovery_steps:
+            return 1
+        matches = [(tid, entry) for tid, entry in self.store.all("task").items()
+                   if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+        return max((int(entry.get("attempt") or 1) for _, entry in matches), default=1)
+
+    @staticmethod
+    def _matches_recovery(task: Task, entry: dict) -> bool:
+        sid = task.meta.get("step_id") or ("direct" if task.meta.get("kind") == "direct" else None)
+        return bool(sid and entry.get("request_id") == task.request_id and
+                    (entry.get("step_id") or entry.get("kind")) == sid and
+                    int(entry.get("revision") or 0) == int(task.meta.get("revision") or 0) and
+                    entry.get("parent_task") == task.meta.get("parent_task"))
 
     def new_resume_approval(self, rid: str) -> ApprovalRequest:
         req = self.requests[rid]
@@ -307,15 +324,15 @@ class Hub:
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
             if task:
-                self.store.put("task", tid, {**task, "completed": True})
+                self.store.put("task", tid, {**task, "completed": True,
+                                              "result": result.model_dump(mode="json")})
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
                 self.store.put("step_checkpoint", f"{rid}:{sid}",
-                               {"task_id": tid, "result": result.model_dump(mode="json")})
-                if sid != "direct" and not result.pending_jobs:
-                    self.requests[rid].setdefault("results", {})[sid] = result.model_dump(mode="json")
-                    self.save_request(rid)
+                               {"task_id": tid, "attempt": task.get("attempt", 1),
+                                "revision": task.get("revision", 0),
+                                "result": result.model_dump(mode="json")})
             if rid in self.requests and tid:
                 req = self.requests[rid]
                 costs = req.setdefault("cost_by_task", {})
@@ -339,6 +356,11 @@ class Hub:
                 fut.set_result(msg["data"])
             else:
                 self.jobs_done[tid] = msg["data"]  # the waiter may register a moment later
+        elif typ == "task.accepted":
+            tid = msg.get("task_id") or ""
+            task = self.store.get("task", tid)
+            if task:
+                self.store.put("task", tid, {**task, "accepted": True})
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
         if runner_seq is not None:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
@@ -347,28 +369,39 @@ class Hub:
     async def dispatch(self, task: Task) -> TaskResult:
         sid = task.meta.get("step_id") or ("direct" if task.meta.get("kind") == "direct" else None)
         if sid and task.request_id in self.recovery_steps:
-            pending = [(tid, entry) for tid, entry in self.store.all("task").items()
-                       if entry.get("request_id") == task.request_id and
-                       (entry.get("step_id") or entry.get("kind")) == sid and not entry.get("completed")]
-            if pending:
-                tid, _ = max(pending, key=lambda pair: pair[1].get("dispatched_at", 0))
+            matches = [(tid, entry) for tid, entry in self.store.all("task").items()
+                       if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+            if matches:
+                tid, entry = max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1),
+                                                            pair[1].get("dispatched_at", 0)))
+                if entry.get("completed") and entry.get("result"):
+                    self.recovered_tasks.add(tid)
+                    return TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})
+                checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:{sid}")
+                if checkpoint and checkpoint.get("task_id") == tid:
+                    self.recovered_tasks.add(tid)
+                    return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
                 future = asyncio.get_running_loop().create_future()
                 self.futures[tid] = future
                 await self.publish({"type": "request.step_wait", "ts": time.time(),
                                     "request_id": task.request_id,
                                     "data": {"step_id": sid, "reason": "recovering prior task result"}})
                 try:
-                    return await asyncio.wait_for(future, self.s.gateway.resume_wait_s)
+                    if not entry.get("accepted") and entry.get("payload"):
+                        runner_id = self.agent_runner.get(task.agent_id)
+                        if runner_id:
+                            try:
+                                await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
+                            except RunnerUnavailable:
+                                pass  # delivery is uncertain; never retry this work under a new task ID
+                    result = await asyncio.wait_for(future, self.s.gateway.resume_wait_s)
+                    self.recovered_tasks.add(tid)
+                    return result
                 except asyncio.TimeoutError:
                     return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
                                       error="recovery result unavailable; manual restart required")
                 finally:
                     self.futures.pop(tid, None)
-            checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:{sid}")
-            if checkpoint and checkpoint["task_id"] not in self.recovered_tasks:
-                self.recovered_tasks.add(checkpoint["task_id"])
-                result = TaskResult.model_validate(checkpoint["result"])
-                return result.model_copy(update={"cost_usd": 0.0})
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
@@ -378,7 +411,11 @@ class Hub:
         self.task_runner[task.id] = rid
         self.store.put("task", task.id, {"request_id": task.request_id,
                                           "step_id": sid, "kind": task.meta.get("kind"),
-                                          "dispatched_at": time.time()})
+                                          "attempt": task.meta.get("attempt", 1),
+                                          "revision": task.meta.get("revision", 0),
+                                          "parent_task": task.meta.get("parent_task"),
+                                          "payload": task.model_dump(mode="json"),
+                                          "accepted": False, "dispatched_at": time.time()})
         await self.publish({"type": "task.dispatched", "ts": time.time(), "task_id": task.id,
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),

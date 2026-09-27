@@ -93,6 +93,8 @@ class Runner:
         if ws:
             ws.append_event(d)
         self.send(d)
+        if ev.type == "task.result" and ev.task_id:
+            self.store.put("accepted_task", ev.task_id, {"state": "finished"})
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -142,7 +144,22 @@ class Runner:
         typ = msg.get("type")
         if typ == "task.dispatch":
             task = Task.model_validate(msg["task"])
-            self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+            prior = self.store.get("accepted_task", task.id)
+            if prior is None:
+                self.store.put("accepted_task", task.id, {"state": "running"})
+            self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
+            if prior is None:
+                self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+            elif prior.get("state") == "running" and task.id not in self.tasks:
+                has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
+                                 for e in self.store.pending())
+                if not has_result:
+                    self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                               "request_id": task.request_id,
+                               "data": TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                                  error="runner interrupted accepted task; manual restart required")
+                               .model_dump(mode="json")})
+                    self.store.put("accepted_task", task.id, {"state": "finished"})
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
             if t:

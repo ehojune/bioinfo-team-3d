@@ -253,12 +253,16 @@ async def test_late_result_becomes_request_checkpoint_before_resume(tmp_path):
     await restored.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
                                                 "request_id": "r", "task_id": "task-1",
                                                 "data": result.model_dump(mode="json")})
-    assert restored.requests["r"]["results"]["s1"]["text"] == "finished"
+    assert "s1" not in restored.requests["r"].get("results", {})
+    assert restored.store.get("task", "task-1")["result"]["text"] == "finished"
     assert restored.requests["r"]["cost_usd"] == 1.25
     calls = []
+    run_step = restored.orchestrator.run_step
 
     async def fake_step(t):
         calls.append(t.meta["kind"])
+        if t.meta["kind"] == "step":
+            return await run_step(t)
         if t.meta["kind"] == "review":
             return TaskResult(task_id=t.id, agent_id=t.agent_id, ok=True,
                               structured={"verdict": "accept", "scores": {
@@ -273,7 +277,7 @@ async def test_late_result_becomes_request_checkpoint_before_resume(tmp_path):
             break
         await asyncio.sleep(0.01)
     assert restored.requests["r"]["status"] == "done"
-    assert calls == ["review", "synthesis"]
+    assert calls == ["step", "review", "synthesis"]
     assert restored.requests["r"]["cost_usd"] == 1.25
 
 
@@ -312,7 +316,10 @@ async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
     first = Hub(s)
     first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
     first.save_request("r")
+    old_task = Task(id="old-task", agent_id="a", request_id="r", prompt="original",
+                    meta={"kind": "step", "step_id": "s"})
     first.store.put("task", "old-task", {"request_id": "r", "step_id": "s", "kind": "step",
+                                           "accepted": True, "payload": old_task.model_dump(mode="json"),
                                            "dispatched_at": 1.0})
     first.store.close()
     hub = Hub(s)
@@ -329,8 +336,212 @@ async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
                                           "task_id": "old-task", "request_id": "r",
                                           "data": result.model_dump(mode="json")})
     assert (await pending).text == "late"
+    assert "s" not in hub.requests["r"].get("results", {})
+    hub.result_map("r")["s"] = result
     assert hub.requests["r"]["results"]["s"]["text"] == "late"
     assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retry_ok", [True, False])
+async def test_restart_during_retry_adopts_only_final_attempt(tmp_path, retry_ok):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                           "plan": {"steps": [{"id": "s", "agent_id": "a", "instruction": "analyze",
+                                               "depends_on": []}]}}
+    first.save_request("r")
+    first.register_runner("local", CaptureSocket(), [], "inc")
+    for attempt, tid in [(1, "failed-attempt"), (2, "retry-attempt")]:
+        first.store.put("task", tid, {"request_id": "r", "step_id": "s", "kind": "step",
+                                       "attempt": attempt, "revision": 0, "accepted": True,
+                                       "dispatched_at": float(attempt)})
+    failure = TaskResult(task_id="failed-attempt", agent_id="a", ok=False,
+                         error="connection reset", cost_usd=0.3)
+    await first.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                            "task_id": "failed-attempt", "request_id": "r",
+                                            "data": failure.model_dump(mode="json")})
+    assert "s" not in first.requests["r"].get("results", {})
+    assert first.store.get("task", "failed-attempt")["attempt"] == 1
+    first.store.close()
+
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": a} for a in ("a", "cso", "sci_reviewer")], "inc")
+    outcome = TaskResult(task_id="retry-attempt", agent_id="a", ok=retry_ok,
+                         text="final" if retry_ok else "", error=None if retry_ok else "connection reset",
+                         cost_usd=0.2)
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 2,
+                                          "task_id": "retry-attempt", "request_id": "r",
+                                          "data": outcome.model_dump(mode="json")})
+    assert "s" not in hub.requests["r"].get("results", {})
+    run_step = hub.orchestrator.run_step
+
+    async def fake_step(task):
+        if task.meta["kind"] == "step":
+            return await run_step(task)
+        if task.meta["kind"] == "review":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"verdict": "accept", "scores": {
+                                  "addresses_question": 4, "evidence": 4, "thoroughness": 4}, "issues": []})
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="report")
+
+    hub.orchestrator.run_step = fake_step
+    aid = next(iter(hub.approvals))
+    await hub.resolve_approval(aid, True)
+    for _ in range(100):
+        if hub.requests["r"]["status"] in {"done", "failed"}:
+            break
+        await asyncio.sleep(0.01)
+    assert hub.requests["r"]["status"] == ("done" if retry_ok else "failed")
+    assert hub.requests["r"]["results"]["s"]["task_id"] == "retry-attempt"
+    assert hub.requests["r"]["results"]["s"]["ok"] is retry_ok
+    assert hub.requests["r"]["cost_usd"] == 0.5
+    assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_restart_during_revision_preserves_feedback_and_adopts_revision(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    first.register_runner("local", CaptureSocket(), [
+        {"id": a, "name": a, "role": "test", "engine": "mock"}
+        for a in ("a", "cso", "sci_reviewer")])
+    original_run_dag = first.orchestrator.run_dag
+
+    async def stop_before_revision(*args, **kwargs):
+        if kwargs.get("feedback"):
+            assert "s" not in first.requests["r"].get("results", {})
+            assert first.requests["r"]["pending_revisions"]["s"]["revision"] == 1
+            raise asyncio.CancelledError
+        return await original_run_dag(*args, **kwargs)
+
+    async def first_step(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"steps": [{"id": "s", "agent_id": "a", "instruction": "analyze",
+                                                    "depends_on": []}]})
+        if kind == "review":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"verdict": "revise", "scores": {
+                                  "addresses_question": 4, "evidence": 3, "thoroughness": 4},
+                                  "issues": [{"step_id": "s", "problem": "weak", "request": "check again"}]})
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="original")
+
+    first.orchestrator.run_step = first_step
+    first.orchestrator.run_dag = stop_before_revision
+    with pytest.raises(asyncio.CancelledError):
+        await first.orchestrator.run_request("r")
+    assert first.requests["r"]["pending_revisions"]["s"]["previous_result"]["text"] == "original"
+    first.store.put("task", "revision-task", {"request_id": "r", "step_id": "s", "kind": "step",
+                                                 "attempt": 1, "revision": 1, "accepted": True,
+                                                 "dispatched_at": 1.0})
+    revised = TaskResult(task_id="revision-task", agent_id="a", ok=True, text="revised")
+    await first.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                            "task_id": "revision-task", "request_id": "r",
+                                            "data": revised.model_dump(mode="json")})
+    assert "s" not in first.requests["r"].get("results", {})
+    first.store.close()
+
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": a} for a in ("a", "cso", "sci_reviewer")])
+    run_step = hub.orchestrator.run_step
+    prompts = []
+
+    async def resumed_step(task):
+        if task.meta["kind"] == "step":
+            prompts.append((task.prompt, task.context, task.meta["revision"]))
+            return await run_step(task)
+        if task.meta["kind"] == "review":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"verdict": "accept", "scores": {
+                                  "addresses_question": 4, "evidence": 4, "thoroughness": 4}, "issues": []})
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="report")
+
+    hub.orchestrator.run_step = resumed_step
+    await hub.resolve_approval(next(iter(hub.approvals)), True)
+    for _ in range(100):
+        if hub.requests["r"]["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    assert hub.requests["r"]["status"] == "done"
+    assert hub.requests["r"]["results"]["s"]["text"] == "revised"
+    assert hub.requests["r"].get("pending_revisions") == {}
+    assert len(prompts) == 1 and "check again" in prompts[0][0]
+    assert "original" in prompts[0][1] and prompts[0][2] == 1
+    assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_unaccepted_dispatch_is_resent_with_original_task_id(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    original = Task(id="original-id", agent_id="a", request_id="r", prompt="work",
+                    meta={"kind": "step", "step_id": "s", "attempt": 1, "revision": 0})
+    first.store.put("task", original.id, {"request_id": "r", "step_id": "s", "kind": "step",
+                                           "attempt": 1, "revision": 0, "accepted": False,
+                                           "payload": original.model_dump(mode="json"), "dispatched_at": 1.0})
+    first.store.close()
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    hub.recovery_steps.add("r")
+    recovering = asyncio.create_task(hub.dispatch(Task(agent_id="a", request_id="r", prompt="new",
+                                                       meta={"kind": "step", "step_id": "s", "attempt": 1})))
+    for _ in range(50):
+        if any(m.get("type") == "task.dispatch" for m in socket.sent):
+            break
+        await asyncio.sleep(0.01)
+    sends = [m for m in socket.sent if m.get("type") == "task.dispatch"]
+    assert len(sends) == 1 and sends[0]["task"]["id"] == "original-id"
+    await hub.on_runner_message("local", {"type": "task.accepted", "runner_seq": 1,
+                                          "task_id": "original-id", "request_id": "r"})
+    assert hub.store.get("task", "original-id")["accepted"] is True
+    result = TaskResult(task_id="original-id", agent_id="a", ok=True, text="done")
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 2,
+                                          "task_id": "original-id", "request_id": "r",
+                                          "data": result.model_dump(mode="json")})
+    assert (await recovering).task_id == "original-id"
+    assert len([m for m in socket.sent if m.get("type") == "task.dispatch"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_acknowledges_duplicate_task_without_running_twice(tmp_path):
+    s = settings(tmp_path)
+    runner = Runner(s)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = []
+
+    async def fake_run(task):
+        calls.append(task.id)
+        started.set()
+        await release.wait()
+
+    runner._run_guarded = fake_run
+    task = Task(id="one-task", agent_id="a", request_id="r", prompt="work")
+    message = {"type": "task.dispatch", "task": task.model_dump(mode="json")}
+    await runner._on_message(message)
+    await started.wait()
+    await runner._on_message(message)
+    assert calls == ["one-task"]
+    assert runner.store.get("accepted_task", "one-task")["state"] == "running"
+    assert [e["type"] for e in runner.store.pending()] == ["task.accepted", "task.accepted"]
+    release.set()
+    await runner.tasks["one-task"]
+    runner.store.close()
+
+    restored = Runner(s)
+    await restored._on_message(message)
+    assert "one-task" not in restored.tasks
+    assert any(e["type"] == "task.result" and e["task_id"] == "one-task"
+               for e in restored.store.pending())
 
 
 @pytest.mark.asyncio
