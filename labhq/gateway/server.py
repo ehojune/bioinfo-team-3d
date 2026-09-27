@@ -71,6 +71,7 @@ class SavedResults(dict):
         req.setdefault("results", {})[key] = value.model_dump(mode="json")
         req.get("pending_revisions", {}).pop(key, None)
         self.hub.save_request(self.rid)
+        self.hub.clear_step_jobs(self.rid, key)
 
 
 class Hub:
@@ -90,6 +91,7 @@ class Hub:
         self.futures: dict[str, asyncio.Future] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
+        self.terminal_queued: set[int] = set()
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
         self.approvals: dict[str, dict] = self.store.all("approval")
@@ -123,6 +125,57 @@ class Hub:
 
     def save_request(self, rid: str) -> None:
         self.store.put("request", rid, self.requests[rid])
+
+    def clear_step_jobs(self, rid: str, step_id: str) -> None:
+        # A jobs.finished checkpoint remains useful until the resulting step is adopted.
+        for tid, task in self.store.all("task").items():
+            if task.get("request_id") == rid and (task.get("step_id") or task.get("kind")) == step_id:
+                if tid in self.jobs_done:
+                    self.store.delete("jobs_done", tid)
+                    self.jobs_done.pop(tid, None)
+
+    def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
+        event = self.store.commit_terminal(rid, self.requests[rid],
+                                           {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
+                                           self.s.gateway.event_buffer)
+        self.events.append(event)
+        if self.requests[rid].get("mode") == "direct":
+            self.clear_step_jobs(rid, "direct")
+        # A client joining after this checkpoint replays it from SQLite.
+        current_clients = tuple(self.clients)
+        asyncio.get_running_loop().create_task(self._send_committed_event(event, current_clients))
+        self._queue_terminal_delivery(event)
+
+    def _queue_terminal_delivery(self, event: dict) -> None:
+        seq = event["seq"]
+        if seq in self.terminal_queued:
+            return
+        if self.reporter.enabled():
+            self.terminal_queued.add(seq)
+            self.reporter.submit(event)
+        else:
+            self.store.delete("terminal_delivery", str(seq))
+
+    def recover_terminal_deliveries(self) -> None:
+        for event in self.store.all("terminal_delivery").values():
+            self._queue_terminal_delivery(event)
+
+    def ack_terminal_delivery(self, event: dict) -> None:
+        seq = event.get("seq")
+        if seq is not None:
+            self.store.delete("terminal_delivery", str(seq))
+            self.terminal_queued.discard(seq)
+
+    async def _send_committed_event(self, event: dict, clients: tuple[WebSocket, ...]) -> None:
+        async with self.event_lock:
+            dead = []
+            for client in clients:
+                try:
+                    await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                except Exception:
+                    dead.append(client)
+            for client in dead:
+                self.clients.discard(client)
 
     def result_map(self, rid: str) -> SavedResults:
         return SavedResults(self, rid)
@@ -351,11 +404,10 @@ class Hub:
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
             self.store.put("jobs_done", tid, msg["data"])
+            self.jobs_done[tid] = msg["data"]
             fut = self.jobs_waiters.pop(tid, None)
             if fut and not fut.done():
                 fut.set_result(msg["data"])
-            else:
-                self.jobs_done[tid] = msg["data"]  # the waiter may register a moment later
         elif typ == "task.accepted":
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
@@ -431,8 +483,7 @@ class Hub:
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:
-            self.store.delete("jobs_done", task_id)
-            return self.jobs_done.pop(task_id)
+            return self.jobs_done[task_id]
         fut = self.jobs_waiters.setdefault(task_id, asyncio.get_running_loop().create_future())
         return await fut
 
@@ -474,16 +525,14 @@ class Hub:
                 self.requests[rid]["status"] = "waiting_for_runner"
                 self.save_request(rid)
                 asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
-            else:
-                self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
-                self.save_request(rid)
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
                             "data": {"id": approval_id, "approved": approved, "note": note}})
         if a.get("kind") == "resume" and not approved:
-            await self.publish({"type": "request.failed", "ts": time.time(), "request_id": a["request_id"],
-                                "data": {"error": "resume declined"}})
+            rid = a["request_id"]
+            self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
+            self.commit_terminal(rid, "request.failed", {"error": "resume declined"})
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
@@ -524,6 +573,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     hub = Hub(settings, github_transport)
     app = FastAPI(title="labhq gateway", version="0.1.0")
     app.state.hub = hub
+
+    @app.on_event("startup")
+    async def recover_terminal_deliveries() -> None:
+        hub.recover_terminal_deliveries()
 
     def auth(authorization: str = Header(default="")) -> None:
         if authorization.removeprefix("Bearer ").strip() != settings.gateway.client_token:

@@ -53,16 +53,30 @@ class StateStore:
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
                      runner_seq: int | None = None) -> dict:
         with self.db:
-            cursor = self.db.execute("INSERT INTO events(body) VALUES (?)", ("{}",))
-            body = {**body, "schema_version": SCHEMA_VERSION, "seq": cursor.lastrowid}
-            self.db.execute("UPDATE events SET body=? WHERE seq=?",
-                            (json.dumps(body, ensure_ascii=False, default=str), cursor.lastrowid))
-            self.db.execute("DELETE FROM events WHERE seq <= (SELECT COALESCE(MAX(seq), 0) - ? FROM events)",
-                            (max(1, limit),))
+            body = self._insert_event(body, limit)
             if runner_id is not None and runner_seq is not None:
                 self.db.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
                                 (runner_id, runner_seq))
         return body
+
+    def _insert_event(self, body: dict, limit: int) -> dict:
+        cursor = self.db.execute("INSERT INTO events(body) VALUES (?)", ("{}",))
+        body = {**body, "schema_version": SCHEMA_VERSION, "seq": cursor.lastrowid}
+        self.db.execute("UPDATE events SET body=? WHERE seq=?",
+                        (json.dumps(body, ensure_ascii=False, default=str), cursor.lastrowid))
+        self.db.execute("DELETE FROM events WHERE seq <= (SELECT COALESCE(MAX(seq), 0) - ? FROM events)",
+                        (max(1, limit),))
+        return body
+
+    def commit_terminal(self, rid: str, request: dict, event: dict, limit: int) -> dict:
+        """Checkpoint terminal state, event and reporter delivery in one transaction."""
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)",
+                            (rid, json.dumps(request, ensure_ascii=False, default=str)))
+            event = self._insert_event(event, limit)
+            self.db.execute("INSERT OR REPLACE INTO state VALUES ('terminal_delivery', ?, ?)",
+                            (str(event["seq"]), json.dumps(event, ensure_ascii=False, default=str)))
+        return event
 
     def event_bounds(self) -> tuple[int, int]:
         row = self.db.execute("SELECT MIN(seq), MAX(seq) FROM events").fetchone()

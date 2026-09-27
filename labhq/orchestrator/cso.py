@@ -568,7 +568,10 @@ class Orchestrator:
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
-            await self._emit(rid, "request.failed", {"error": req["error"]})
+            if hasattr(self.hub, "commit_terminal"):
+                self.hub.commit_terminal(rid, "request.failed", {"error": req["error"]})
+            else:
+                await self._emit(rid, "request.failed", {"error": req["error"]})
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]
@@ -578,6 +581,9 @@ class Orchestrator:
                        f"${outcome['limit_usd']:.2f}; {decision}.")
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
-        self.hub.save_request(rid)
-        asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", {
-            "ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}))
+        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}
+        if hasattr(self.hub, "commit_terminal"):
+            self.hub.commit_terminal(rid, "request.completed", data)
+        else:  # Lightweight orchestration test doubles do not persist state.
+            self.hub.save_request(rid)
+            asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", data))

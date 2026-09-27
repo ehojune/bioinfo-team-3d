@@ -135,7 +135,9 @@ class ProjectReporter:
         while True:
             ev = await self.queue.get()
             try:
-                await self.handle(ev)
+                delivered = await self.handle(ev)
+                if delivered is not False:
+                    self.hub.ack_terminal_delivery(ev)
             except Exception as e:
                 log.warning("GitHub update failed (%s): %s", ev.get("type"), e)
                 await self.hub.publish({"type": "github.failed", "ts": time.time(), "request_id": ev.get("request_id"),
@@ -153,7 +155,7 @@ class ProjectReporter:
         await self.hub.publish({"type": "github.posted", "ts": time.time(), "request_id": rid,
                                 "data": {"kind": kind, "url": url, "number": number}})
 
-    async def handle(self, ev: dict) -> None:
+    async def handle(self, ev: dict) -> bool | None:
         rid = ev["request_id"]
         proj = self.project_of(rid)
         if not proj or not proj.repo:
@@ -165,7 +167,7 @@ class ProjectReporter:
             return
         gh = self.client()
         if gh is None:
-            return
+            return False  # keep a terminal delivery until credentials are available
         typ, d = ev["type"], ev.get("data") or {}
         req = self.hub.requests.get(rid) or {}
 

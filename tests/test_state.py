@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -308,6 +309,91 @@ async def test_hpc_submission_checkpoint_wakes_without_reissuing_step(tmp_path):
     assert recovered.cost_usd == 0.0 and hub.requests["r"]["cost_usd"] == 0.5
     assert await hub.wait_jobs("submitted") == {"jobs": [{"job_id": "42", "state": "completed"}]}
     assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_hpc_completion_survives_crash_between_wait_and_wake(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    submitted = TaskResult(task_id="submitted", agent_id="a", ok=True, text="submitted",
+                           pending_jobs=["42"], workdir="work")
+    first.store.put("task", "submitted", {"request_id": "r", "step_id": "s", "kind": "step",
+                                            "completed": True, "result": submitted.model_dump(mode="json")})
+    completion = {"jobs": [{"job_id": "42", "state": "completed"}]}
+    first.store.put("jobs_done", "submitted", completion)
+    first.jobs_done["submitted"] = completion
+    assert await first.wait_jobs("submitted") == completion
+    assert first.store.get("jobs_done", "submitted") == completion
+    first.store.close()  # the gateway stops before the wake task is dispatched
+
+    restored = Hub(s)
+    restored.recovery_steps.add("r")
+    real_dispatch = restored.dispatch
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task.meta.get("parent_task"))
+        if task.meta.get("parent_task") == "submitted":
+            return TaskResult(task_id=task.id, agent_id="a", ok=True, text="wake complete")
+        return await real_dispatch(task)
+
+    restored.dispatch = dispatch
+    result = await asyncio.wait_for(restored.orchestrator.run_step(Task(
+        agent_id="a", request_id="r", prompt="analyze", meta={"kind": "step", "step_id": "s"})), 1)
+    assert result.text == "wake complete" and calls == [None, "submitted"]
+    assert restored.store.get("jobs_done", "submitted") == completion
+    restored.result_map("r")["s"] = result
+    assert restored.store.get("jobs_done", "submitted") is None
+
+
+def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
+    s = settings(tmp_path)
+    s.projects = [ProjectSettings(id="p", repo="example/private", commit_reports=False)]
+
+    async def checkpoint_then_stop():
+        first = Hub(s)
+        first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
+                               "project_id": "p"}
+        first._queue_terminal_delivery = lambda event: None  # process exits just after commit
+        first.orchestrator._finish("r", "finished", {}, ok=True)
+        assert first.store.get("request", "r")["status"] == "done"
+        assert [e["type"] for e in first.store.events_since(0)] == ["request.completed"]
+        assert len(first.store.all("terminal_delivery")) == 1
+        first.store.close()
+
+    asyncio.run(checkpoint_then_stop())
+    app = create_app(s)
+    restored = app.state.hub
+    received = []
+
+    async def handle(event):
+        received.append(event)
+
+    restored.reporter.handle = handle
+    with TestClient(app):
+        for _ in range(100):
+            if received:
+                break
+            time.sleep(0.01)
+    assert [e["type"] for e in received] == ["request.completed"]
+    assert restored.store.all("terminal_delivery") == {}
+    assert [e["type"] for e in restored.store.events_since(0)] == ["request.completed"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "direct", "status": "done"}
+    existing, joining = CaptureSocket(), CaptureSocket()
+    hub.clients.add(existing)
+    hub.commit_terminal("r", "request.completed", {"ok": True})
+    hub.clients.add(joining)  # its WebSocket handshake replays from the event store
+    await asyncio.sleep(0)
+    assert [message["seq"] for message in existing.sent] == [1]
+    assert joining.sent == []
+    assert [event["seq"] for event in hub.store.events_since(0)] == [1]
 
 
 @pytest.mark.asyncio
