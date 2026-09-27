@@ -46,17 +46,53 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
         return r.json()
 
 
+def _share_workspace_parents(workdir: Path, workspace_root: Path, gid: int,
+                             job_user: str) -> None:
+    """Open only labhq-managed parents; require preconfigured traversal above them."""
+    import pwd
+
+    root = workspace_root.resolve()
+    if root == Path(root.anchor):
+        raise RuntimeError("runner.workspace_root must be a dedicated directory, not the filesystem root")
+    workdir = workdir.resolve(strict=True)
+    managed = [p for p in workdir.parents if p == root or root in p.parents] if root in workdir.parents else []
+    managed.reverse()
+    try:
+        account = pwd.getpwnam(job_user)
+    except KeyError as e:
+        raise RuntimeError(f"hpc.user does not exist: {job_user}") from e
+    groups = set(os.getgrouplist(job_user, account.pw_gid))
+    for parent in (root.parents if managed else workdir.parents):
+        st = parent.stat()
+        permitted = (bool(st.st_mode & stat.S_IXUSR) if st.st_uid == account.pw_uid else
+                     bool(st.st_mode & stat.S_IXGRP) if st.st_gid in groups else
+                     bool(st.st_mode & stat.S_IXOTH))
+        if not permitted:
+            raise RuntimeError(f"hpc.user cannot traverse outside runner.workspace_root: {parent}; "
+                               "configure parent execute permission")
+    for parent in managed:
+        try:
+            os.chown(parent, -1, gid)
+            os.chmod(parent, (stat.S_IMODE(parent.stat().st_mode) & 0o700) | 0o010)
+        except OSError as e:
+            raise RuntimeError(f"cannot grant hpc.job_group traverse on {parent}: {e}") from e
+
+
 def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
-                       job_group: str | None = None) -> None:
+                       job_group: str | None = None, workspace_root: Path | None = None,
+                       job_user: str | None = None) -> None:
     if job_group:
         if os.name == "nt":
             raise RuntimeError("hpc.job_group requires a POSIX runner")
         import grp
 
         gid = grp.getgrnam(job_group).gr_gid
-        output_dir = workdir / "hpc_out"
         if workdir.is_symlink():
             raise RuntimeError(f"task workdir must not be a symlink: {workdir}")
+        if workspace_root is None or not job_user:
+            raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
+        _share_workspace_parents(workdir, workspace_root, gid, job_user)
+        output_dir = workdir / "hpc_out"
         if stat.S_IMODE(workdir.stat().st_mode) & 0o067:
             os.chmod(workdir, 0o700)
         for shared in (script_path.parent, logs, output_dir):
@@ -109,7 +145,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     try:
         _prepare_job_files(WORKDIR, spath, logs,
                            build_script(script, str(output_dir), umask="007" if S.hpc.submit_prefix else None),
-                           S.hpc.job_group if S.hpc.submit_prefix else None)
+                           S.hpc.job_group if S.hpc.submit_prefix else None,
+                           S.path(S.runner.workspace_root) if S.hpc.submit_prefix else None,
+                           S.hpc.user if S.hpc.submit_prefix else None)
     except (OSError, KeyError, RuntimeError) as e:
         return json.dumps({"submitted": False, "reason": f"job file permissions: {e}"})
     ch = core_hours(cores, walltime)
