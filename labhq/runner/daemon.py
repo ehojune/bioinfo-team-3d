@@ -70,10 +70,19 @@ class Runner:
                 request_id = task.get("request_id") or entry.get("request_id")
                 self.send({"type": "task.result", "task_id": tid, "agent_id": agent_id,
                            "request_id": request_id,
-                           "data": TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                                              error="runner restarted: accepted task interrupted")
-                           .model_dump(mode="json")})
+                           "data": self._interrupted_result(tid, agent_id).model_dump(mode="json")})
             self.store.put("accepted_task", tid, {**entry, "state": "finished"})
+
+    def _interrupted_result(self, tid: str, agent_id: str) -> TaskResult:
+        jobs = [job for job in self.jobs.values() if job.get("task_id") == tid]
+        if jobs:
+            return TaskResult(task_id=tid, agent_id=agent_id, ok=True,
+                              text="Runner restarted after HPC submission; inspect tracked jobs.",
+                              pending_jobs=[job["job_id"] for job in jobs],
+                              workdir=next((job.get("workdir") for job in jobs if job.get("workdir")), None),
+                              session_id=next((job.get("session_id") for job in jobs if job.get("session_id")), None))
+        return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                          error="runner restarted: accepted task interrupted")
 
     # ---------------- lifecycle ----------------
     async def run_forever(self) -> None:
@@ -174,10 +183,8 @@ class Runner:
                                  for e in self.store.pending())
                 if not has_result:
                     self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
-                               "request_id": task.request_id,
-                               "data": TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                                  error="runner restarted: accepted task interrupted")
-                               .model_dump(mode="json")})
+                                "request_id": task.request_id,
+                                "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")})
                     self.store.put("accepted_task", task.id, {"state": "finished"})
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
@@ -323,12 +330,13 @@ class Runner:
 
     async def _on_track(self, body: dict) -> None:
         jid, tid = str(body["job_id"]), body.get("task_id")
-        self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
-                          "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
-                          "exit_status": None, "submitted_at": time.time(),
-                          "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or "")}
-        self.store.put("job", jid, self.jobs[jid])
         ws = self.workspaces.get(tid or "")
+        self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
+                           "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
+                           "exit_status": None, "submitted_at": time.time(),
+                           "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
+                           "workdir": str(ws.dir) if ws else None}
+        self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
         await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),

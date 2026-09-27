@@ -298,6 +298,23 @@ class Hub:
         self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents)
+        hosted_agents = {a["id"] for a in agents}
+        for tid, entry in self.store.all("task").items():
+            if (entry.get("accepted") and not entry.get("completed") and
+                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    (entry.get("runner_id"), entry.get("runner_incarnation")) != (runner_id, incarnation)):
+                self._abandon_previous_generation(tid, entry)
+
+    def _abandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
+        agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
+        result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                            error="runner generation changed; prior accepted task outcome unknown; "
+                                  "manual recovery required")
+        self.store.put("task", tid, {**entry, "completed": True, "result": result.model_dump(mode="json")})
+        future = self.futures.get(tid)
+        if future and not future.done():
+            future.set_result(result)
+        return result
 
     async def flush_decisions(self, runner_id: str) -> None:
         for aid, entry in self.store.all("decision").items():
@@ -436,7 +453,8 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid)
             if task:
-                self.store.put("task", tid, {**task, "accepted": True})
+                self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
+                                               "runner_incarnation": self.runner_incarnations.get(runner_id)})
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
         if runner_seq is not None:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
@@ -457,6 +475,12 @@ class Hub:
                 if checkpoint and checkpoint.get("task_id") == tid:
                     self.recovered_tasks.add(tid)
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
+                current_runner = self.agent_runner.get(task.agent_id)
+                if entry.get("accepted") and (
+                        entry.get("runner_id"), entry.get("runner_incarnation")) != (
+                            current_runner, self.runner_incarnations.get(current_runner)):
+                    self.recovered_tasks.add(tid)
+                    return self._abandon_previous_generation(tid, entry)
                 future = asyncio.get_running_loop().create_future()
                 self.futures[tid] = future
                 await self.publish({"type": "request.step_wait", "ts": time.time(),
@@ -500,6 +524,8 @@ class Hub:
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
         self.store.put("task", task.id, {"request_id": task.request_id,
+                                          "runner_id": rid,
+                                          "runner_incarnation": self.runner_incarnations.get(rid),
                                           "step_id": task.meta.get("step_id"), "kind": task.meta.get("kind"),
                                           "attempt": task.meta.get("attempt", 1),
                                           "revision": task.meta.get("revision", 0),

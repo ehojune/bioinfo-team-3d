@@ -262,7 +262,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 
 ## 8. 설정 포인트
 
-- **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 DAG·제어 단계와 리뷰 수정 횟수를 이어서 실행합니다. 러너의 중단 task와 누락된 GitHub issue도 복구합니다.
+- **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 DAG·제어 단계와 리뷰 수정 횟수를 이어서 실행합니다. 새 runner 세대의 이전 task는 수동 복구로 닫고, 추적 중인 HPC job은 재제출 없이 wake로 잇습니다.
 - **HPC** (`hpc:`): `scheduler: sge | pbs`. SGE는 PE 이름(`smp`/`threads`…), 메모리 리소스(`h_vmem`는 보통 슬롯당이라
   총 메모리를 코어 수로 나눔), `h_rt`. PBS는 Torque(`nodes=1:ppn=…`)와 PBS Pro(`select=1:ncpus=…`, `pro: true`)를 템플릿으로.
   로그인 노드에서만 qsub이 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.

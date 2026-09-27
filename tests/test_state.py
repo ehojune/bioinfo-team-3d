@@ -463,7 +463,8 @@ async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
     old_task = Task(id="old-task", agent_id="a", request_id="r", prompt="original",
                     meta={"kind": "step", "step_id": "s"})
     first.store.put("task", "old-task", {"request_id": "r", "step_id": "s", "kind": "step",
-                                           "accepted": True, "payload": old_task.model_dump(mode="json"),
+                                           "accepted": True, "runner_id": "local", "runner_incarnation": "inc",
+                                           "payload": old_task.model_dump(mode="json"),
                                            "dispatched_at": 1.0})
     first.store.close()
     hub = Hub(s)
@@ -496,7 +497,8 @@ async def test_accepted_recovery_can_finish_after_runner_connection_timeout(tmp_
     original = Task(id="long-task", agent_id="a", request_id="r", prompt="work",
                     meta={"kind": "step", "step_id": "s"})
     first.store.put("task", original.id, {"request_id": "r", "step_id": "s", "kind": "step",
-                                           "accepted": True, "payload": original.model_dump(mode="json")})
+                                           "accepted": True, "runner_id": "local", "runner_incarnation": "inc",
+                                           "payload": original.model_dump(mode="json")})
     first.store.close()
 
     hub = Hub(s)
@@ -513,6 +515,64 @@ async def test_accepted_recovery_can_finish_after_runner_connection_timeout(tmp_
                                           "task_id": original.id, "request_id": "r",
                                           "data": result.model_dump(mode="json")})
     assert (await asyncio.wait_for(pending, 1)).text == "finished"
+
+
+@pytest.mark.asyncio
+async def test_new_runner_generation_ends_recovered_accepted_task_without_retry(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.05
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    original_runner = Runner(s)
+    old = CaptureSocket()
+    first.register_runner("local", old, [{"id": "a"}], original_runner.incarnation)
+    task = Task(id="accepted-old", agent_id="a", request_id="r", prompt="work",
+                meta={"kind": "step", "step_id": "s"})
+    pending = asyncio.create_task(first.dispatch(task))
+    await asyncio.sleep(0)
+    await first.on_runner_message("local", {"type": "task.accepted", "runner_seq": 1,
+                                            "task_id": task.id, "request_id": "r"})
+    assert first.store.get("task", task.id)["runner_incarnation"] == original_runner.incarnation
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    first.store.close()
+    original_runner.store.close()
+
+    s.runner.state_dir = str(tmp_path / "fresh-runner-state")  # previous runner ledger is unavailable
+    replacement = Runner(s)
+    assert replacement.incarnation != original_runner.incarnation
+    restored = Hub(s)
+    newer = CaptureSocket()
+    restored.register_runner("local", newer, [{"id": "a"}], replacement.incarnation)
+    restored.recovery_steps.add("r")
+    result = await asyncio.wait_for(restored.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
+                                                           meta={"kind": "step", "step_id": "s"})), 1)
+    assert result.task_id == task.id and not result.ok
+    assert "generation changed" in result.error and failure_kind(result) == "terminal"
+    assert restored.store.get("task", task.id)["completed"] is True
+    assert not any(msg.get("type") == "task.dispatch" for msg in newer.sent)
+
+
+@pytest.mark.asyncio
+async def test_new_runner_generation_ends_live_accepted_future(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "direct", "status": "running", "agent_id": "a"}
+    old = CaptureSocket()
+    hub.register_runner("local", old, [{"id": "a"}], "old-incarnation")
+    task = Task(id="live-old", agent_id="a", request_id="r", prompt="work", meta={"kind": "direct"})
+    waiting = asyncio.create_task(hub.orchestrator.run_step(task))
+    await asyncio.sleep(0)
+    await hub.on_runner_message("local", {"type": "task.accepted", "runner_seq": 1,
+                                          "task_id": task.id, "request_id": "r"})
+    newer = CaptureSocket()
+    hub.register_runner("local", newer, [{"id": "a"}], "new-incarnation")
+    result = await asyncio.wait_for(waiting, 1)
+    assert not result.ok and failure_kind(result) == "terminal"
+    assert hub.store.get("task", task.id)["completed"] is True
+    assert [msg["task"]["id"] for msg in old.sent if msg.get("type") == "task.dispatch"] == [task.id]
+    assert not any(msg.get("type") == "task.dispatch" for msg in newer.sent)
 
 
 @pytest.mark.asyncio
@@ -664,9 +724,10 @@ async def test_control_phase_recovers_exact_task_identity(tmp_path, meta, comple
     original = Task(id="control-original", agent_id="a", request_id="r", prompt="control", meta=meta)
     result = TaskResult(task_id=original.id, agent_id="a", ok=True, text="saved", cost_usd=0.2)
     first.store.put("task", original.id, {"request_id": "r", "kind": meta["kind"],
-                                          "step_id": None, "revision": meta.get("revision", 0),
-                                          "parse_attempt": meta.get("parse_attempt", 0),
-                                          "accepted": True, "payload": original.model_dump(mode="json"),
+                                           "step_id": None, "revision": meta.get("revision", 0),
+                                           "parse_attempt": meta.get("parse_attempt", 0),
+                                           "accepted": True, "runner_id": "local", "runner_incarnation": "inc",
+                                           "payload": original.model_dump(mode="json"),
                                           "completed": completed,
                                           "result": result.model_dump(mode="json") if completed else None})
     if meta["kind"] == "review":
@@ -850,6 +911,72 @@ async def test_runner_restart_finishes_accepted_task_for_live_gateway(tmp_path):
     assert len([e for e in restored.store.pending() if e["type"] == "task.result"]) == 1
     await hub.on_runner_message("local", results[0])
     assert (await asyncio.wait_for(waiting, 1)).task_id == task.id
+
+
+@pytest.mark.asyncio
+async def test_runner_restart_with_tracked_hpc_job_wakes_without_resubmitting(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    hub.save_request("r")
+    first = Runner(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], first.incarnation)
+    task = Task(id="submitted-once", agent_id="a", request_id="r", prompt="analyze",
+                meta={"kind": "step", "step_id": "s"})
+    running = asyncio.create_task(hub.orchestrator.run_step(task))
+    await asyncio.sleep(0)
+    assert [m["task"]["id"] for m in socket.sent if m.get("type") == "task.dispatch"] == [task.id]
+    await hub.on_runner_message("local", {"type": "task.accepted", "task_id": task.id,
+                                          "request_id": "r"})
+    first.store.put("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+    first.task_req[task.id] = "r"
+
+    class Workspace:
+        dir = tmp_path / "existing-work"
+
+        def append_job(self, body):
+            pass
+
+        def append_event(self, body):
+            pass
+
+    first.workspaces[task.id] = Workspace()
+    await first._on_track({"job_id": "42", "task_id": task.id, "agent_id": "a", "name": "analysis"})
+    first.store.close()
+
+    restored = Runner(s)
+    assert restored.incarnation == first.incarnation
+    assert restored.jobs["42"]["workdir"] == str(Workspace.dir)
+    result_events = [e for e in restored.store.pending() if e["type"] == "task.result"]
+    assert len(result_events) == 1
+    recovered = TaskResult.model_validate(result_events[0]["data"])
+    assert recovered.ok and recovered.pending_jobs == ["42"]
+    assert failure_kind(recovered) is None
+    delivered = 0
+    for event in restored.store.pending():
+        await hub.on_runner_message("local", event)
+        delivered = event["runner_seq"]
+    await restored._poll_jobs()
+    for event in restored.store.pending():
+        if event["runner_seq"] > delivered:
+            await hub.on_runner_message("local", event)
+            delivered = event["runner_seq"]
+    for _ in range(100):
+        dispatches = [m for m in socket.sent if m.get("type") == "task.dispatch"]
+        if len(dispatches) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(dispatches) == 2
+    wake = dispatches[1]["task"]
+    assert wake["meta"]["parent_task"] == task.id and wake["meta"]["workdir"] == str(Workspace.dir)
+    assert [e["type"] for e in restored.store.pending()].count("job.submitted") == 1
+    assert restored.notified == {task.id}
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": delivered + 1,
+                                          "task_id": wake["id"], "request_id": "r",
+                                          "data": TaskResult(task_id=wake["id"], agent_id="a", ok=True,
+                                                             text="existing HPC result checked").model_dump(mode="json")})
+    assert (await asyncio.wait_for(running, 1)).text == "existing HPC result checked"
 
 
 @pytest.mark.asyncio
