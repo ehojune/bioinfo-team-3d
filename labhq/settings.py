@@ -149,7 +149,7 @@ class GitHubSettings(BaseModel):
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments
-    codex_mention: str = "@codex"  # always used when a comment addresses Codex in a PR, even in replies
+    codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
 
 
 class ProjectSettings(BaseModel):

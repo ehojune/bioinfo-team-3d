@@ -38,6 +38,8 @@ def main() -> None:
     agent = AgentSpec(id="probe", name="Probe", role="CLI verification", engine=Engine(args.engine),
                       model=args.model, builtin_mcp=[], system_prompt="Answer the small test exactly.")
     task = Task(agent_id="probe", prompt=args.prompt)
+    if args.name is not None and (Path(args.name).name != args.name or args.name in ("", ".", "..")):
+        p.error("--name must be a plain file stem; raw streams must stay inside --output-dir")
     out = args.output_dir.resolve()
     if out.is_relative_to(Path(__file__).resolve().parents[1]):
         p.error("--output-dir must be outside the public repository")

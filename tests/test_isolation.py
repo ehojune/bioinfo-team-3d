@@ -254,3 +254,18 @@ def test_claude_md_excludes_cover_workspace_ancestors(tmp_path):
     for anc in wd.resolve().parents:
         assert (anc / "CLAUDE.md").as_posix() in ex and (anc / ".claude" / "CLAUDE.md").as_posix() in ex
     assert (wd.resolve() / "CLAUDE.md").as_posix() not in ex  # the workspace itself is not personal config
+
+
+@pytest.mark.parametrize("name", ["../escape", "sub/dir", "..", "C:/Users/x/probe"])
+def test_probe_name_cannot_leave_the_output_dir(tmp_path, monkeypatch, name):
+    """An unredacted raw stream must never land outside --output-dir (e.g. inside the public repository)."""
+    import scripts.probe_engines as probe
+
+    def no_spawn(*a, **k):
+        raise AssertionError("probe spawned the CLI with an unsafe --name")
+
+    monkeypatch.setattr(probe.subprocess, "run", no_spawn)
+    monkeypatch.setattr("sys.argv", ["probe_engines.py", "codex", "--output-dir", str(tmp_path / "out"), "--name", name])
+    with pytest.raises(SystemExit) as exc:
+        probe.main()
+    assert exc.value.code == 2
