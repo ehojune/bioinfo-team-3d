@@ -244,3 +244,13 @@ def test_probe_script_reads_labhq_config(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         probe.main()
     assert exc.value.code == 2
+
+
+def test_claude_md_excludes_cover_workspace_ancestors(tmp_path):
+    """Claude walks up from its cwd loading CLAUDE.md; a canary in an ancestor reached an isolated 2.1.282 session."""
+    wd = tmp_path / "anc" / "runs" / "task"
+    wd.mkdir(parents=True)
+    ex = _settings_arg(_command("claude_code", wd))["claudeMdExcludes"]
+    for anc in wd.resolve().parents:
+        assert (anc / "CLAUDE.md").as_posix() in ex and (anc / ".claude" / "CLAUDE.md").as_posix() in ex
+    assert (wd.resolve() / "CLAUDE.md").as_posix() not in ex  # the workspace itself is not personal config

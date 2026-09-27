@@ -28,6 +28,11 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     excludes = []
     for home in child_config_dirs(env, cwd, "CLAUDE_CONFIG_DIR", ".claude"):
         excludes += [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]
+    # Claude also walks up from its cwd loading project memory, so a CLAUDE.md in any ancestor of the staff
+    # workspace (e.g. ~/CLAUDE.md above ~/.labhq/runs) would load. Verified on 2.1.282 with a canary file.
+    for anc in Path(cwd).resolve().parents:
+        excludes += [(anc / n).as_posix() for n in ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")]
+        excludes.append((anc / ".claude" / "rules").as_posix() + "/**")
     return {"autoMemoryEnabled": False, "claudeMdExcludes": excludes}
 
 
