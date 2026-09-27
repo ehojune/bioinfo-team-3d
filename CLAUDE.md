@@ -7,6 +7,6 @@
 - 변경 후 `pytest -q`를 돌린다. 테스트를 지우거나 약하게 만들지 않는다.
 - 단계를 끝내면 PR 본문과 STATUS.md 맨 위에 같은 보고를 남긴다.
 - 이 저장소는 public이다. 커밋 전에 `scripts/check_public.sh`를 돌리고, 비밀값은 환경변수로만 다루며, `config/labhq.yaml`은 커밋하지 않는다.
-- GitHub PR에서 Codex에게 말할 때는 답글이어도 항상 @codex를 붙인다.
+- GitHub PR에서 Codex 리뷰 지적에 답할 때 인라인 답글에는 @codex를 쓰지 않는다(댓글마다 봇 세션이 따로 뜬다). 수정을 모두 push한 뒤 PR 상단에 `@codex review`를 한 번만 달고, 봇 리뷰가 Running이면 다시 부르지 않는다.
 - `labhq/web/index.html`은 빌드 없는 단일 파일이다.
 - 보고는 한국어로, 기술 용어는 영어 그대로.

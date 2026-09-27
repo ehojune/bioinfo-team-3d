@@ -42,8 +42,9 @@ P1 실제 CLI 연동: claude/codex/gemini --version 기록 → ⛔ 실제 계정
 P1+ 안전·복구 최소선 (PI 결정 2026-09-26, P2·P3 전에): ① 게이트웨이의 요청·승인과 러너의 HPC 잡을 디스크에 남기고
    재시작 때 복구한다 ② CSO는 실패한 단계의 하위 단계만 skip하고, 리뷰 판정 실패는 요청 실패로 기록하며, 일시적 오류는 기본 2회까지 시도한다 (`p1plus-cso`).
    ③ LLM·MCP 실행 계정은 통제 원본에 닿지 못하게 한다(전용 계정·파일 권한). 데이터 구역 가드가 동작하지 않는 OS(현재 Windows)에서는
-   러너가 시작을 거부한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
-   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. ①·⑤는 `p1plus-state`에서 구현하며 direct 요청·runner 세대·HPC job·제어 단계·리뷰 진행도·GitHub 이슈/계획/리뷰/최종 전달·실시간 이벤트 순서·replay-gap 화면도 복구한다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
+     러너가 시작을 거부한다. 권장 구성: Linux 러너 전용 계정, 데이터 계정 소유 `0700` 구역, `hpc.submit_prefix`로 데이터 계정 잡 제출(`hpc.user`·`hpc.job_group` 지정, 두 계정 모두 같은 그룹, `sudoers`는 `qsub`·`qdel`만 허용),
+     상대 출력은 `hpc_out/`에 쓰고 공유 폴더에는 집계 결과만 둔다. `workspace_root` 밖 상위 경로의 통과 권한은 별도 설정한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
+   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. ①·⑤는 direct 요청·runner 세대·HPC job·제어 단계·리뷰 진행도·GitHub 이슈/계획/리뷰/최종 전달·실시간 이벤트 순서·replay-gap 화면도 복구한다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
 P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Claude Code 스킬)을 묻고 agents/core/bioinfo-agent.yaml의
    cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
@@ -60,7 +61,7 @@ P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 s
 - 통제접근(DUA) 데이터의 원본을 클러스터 밖이나 LLM 대화로 가져오지 않는다.
 - 테스트를 지우거나 약하게 만들지 않는다. 바꿀 때마다 pytest -q, UI를 건드렸으면 브라우저로도 확인한다.
 - 구조를 크게 바꾸거나 의존성을 추가할 때는 먼저 PR 설명으로 제안하고 확인받는다.
-- GitHub PR에서 Codex에게 말할 때는 Codex 코멘트에 바로 답글을 달더라도 항상 @codex를 붙인다.
+- GitHub PR에서 Codex 리뷰 지적에 답할 때 인라인 답글에는 @codex를 쓰지 않는다(댓글마다 봇 세션이 따로 뜬다). 수정을 모두 push한 뒤 PR 상단에 `@codex review`를 한 번만 달고, 봇 리뷰가 Running이면 다시 부르지 않는다.
 - 보고는 한국어로, 기술 용어·명령·유전자 이름은 영어 그대로 쓴다.
 
 [5] 감독

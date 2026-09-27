@@ -72,7 +72,7 @@ def sanitize_job_name(name: str) -> str:
     return n if n[0].isalpha() else f"j_{n}"
 
 
-def build_script(body: str, workdir: str) -> str:
+def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
     """Wrap an agent-written script: shebang, scheduler directives, strict mode, cd, exit trace."""
     lines = body.strip("\n").splitlines()
     shebang = lines.pop(0) if lines and lines[0].startswith("#!") else "#!/bin/bash"
@@ -81,6 +81,7 @@ def build_script(body: str, workdir: str) -> str:
         directives.append(lines.pop(0))
     pre = [
         "set -euo pipefail",
+        *([f"umask {umask}"] if umask else []),
         f"cd {shlex.quote(workdir)}",
         "trap 'echo \"[labhq] exit=$? end=$(date -Is)\"' EXIT",
         'echo "[labhq] host=$(hostname) start=$(date -Is)"',
@@ -184,7 +185,7 @@ class Scheduler:
             raise RuntimeError(f"submit not supported for scheduler={self.cfg.scheduler}")
         if queue:
             args += ["-q", queue]
-        return [*args, script]
+        return [*self.cfg.submit_prefix, *args, script]
 
     def submit(self, script: str, name: str, cores: int = 1, mem: str = "4G", walltime: str = "04:00:00",
                queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null") -> str:
@@ -226,5 +227,9 @@ class Scheduler:
     def cancel(self, job_id: str) -> str:
         if self.cfg.scheduler == "mock":
             return "cancelled (mock)"
-        p = self._run(["qdel", job_id])
+        p = self._run([*self.cfg.submit_prefix, "qdel", job_id])
+        if p.returncode != 0:
+            detail = (p.stderr or p.stdout).strip()
+            hint = "; allow qdel in sudoers for hpc.submit_prefix" if self.cfg.submit_prefix else ""
+            raise RuntimeError(f"qdel failed ({p.returncode}): {detail}{hint}")
         return (p.stdout or p.stderr).strip()

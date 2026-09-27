@@ -85,7 +85,63 @@ class Runner:
                           error="runner restarted: accepted task interrupted")
 
     # ---------------- lifecycle ----------------
+    def _check_job_group(self) -> None:
+        if not self.s.hpc.submit_prefix:
+            return
+        group = self.s.hpc.job_group
+        if not group:
+            raise RuntimeError("hpc.job_group is required when hpc.submit_prefix is set")
+        user = self.s.hpc.user
+        if not user:
+            raise RuntimeError("hpc.user is required when hpc.submit_prefix is set")
+        if os.name == "nt":
+            return  # POSIX group lookup is unavailable here; restricted zones are refused below.
+        import grp
+        import pwd
+
+        try:
+            gid = grp.getgrnam(group).gr_gid
+        except KeyError as e:
+            raise RuntimeError(f"hpc.job_group does not exist: {group}") from e
+        if gid not in {os.getgid(), *os.getgroups()}:
+            raise RuntimeError(f"runner account is not a member of hpc.job_group: {group}")
+        try:
+            account = pwd.getpwnam(user)
+        except KeyError as e:
+            raise RuntimeError(f"hpc.user does not exist: {user}") from e
+        if gid not in os.getgrouplist(user, account.pw_gid):
+            raise RuntimeError(f"hpc.user is not a member of hpc.job_group: {user}, {group}")
+
+    def _check_data_boundary(self) -> None:
+        zones = [z.path for z in self.s.policy.data_zones if z.level == "restricted"]
+        if not zones:
+            return
+        if os.name == "nt":
+            raise RuntimeError("restricted data zones have no enforced guard on Windows; run the runner on Linux")
+        if any(p.startswith(("\\\\", "//")) for p in zones):
+            raise RuntimeError("UNC restricted zones have no verified Claude deny rule; run with a Linux path")
+        readable = [p for p in zones if os.path.exists(p) and
+                    (os.access(p, os.R_OK) or self._can_list(p) or
+                     (os.path.isdir(p) and os.access(p, os.X_OK)))]
+        if readable:
+            if not self.s.policy.allow_runner_read_restricted:
+                raise RuntimeError("runner account can read restricted data; use a separate Linux runner account")
+            log.critical("UNSAFE OVERRIDE: runner account can read restricted data (%d zone(s)); "
+                         "policy.allow_runner_read_restricted is enabled", len(readable))
+
+    @staticmethod
+    def _can_list(path: str) -> bool:
+        try:
+            os.listdir(path)
+            return True
+        except OSError:
+            return False
+
     async def run_forever(self) -> None:
+        self._check_job_group()
+        self._check_data_boundary()
+        if self.s.hpc.submit_prefix and os.name != "nt":
+            os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
         await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())

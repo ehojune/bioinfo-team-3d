@@ -50,7 +50,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:
-    """A PR comment addressed to Codex always carries the mention — also when replying under its comment."""
+    """The one top-level comment that asks Codex to review; each @codex comment starts its own Codex session."""
     return body if mention in body else f"{mention} {body}"
 
 

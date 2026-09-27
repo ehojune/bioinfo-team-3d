@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import ntpath
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class GatewaySettings(BaseModel):
@@ -34,14 +35,29 @@ class RunnerSettings(BaseModel):
 
 
 class EngineBin(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # a misspelled or unsupported option must not pass silently
+
     bin: str
     extra_args: list[str] = []
     env: dict[str, str] = {}
 
 
+class IsolatedEngineBin(EngineBin):
+    # Staff sessions must not inherit the PI's own CLI setup (hooks, skills, plugins, global instructions).
+    # Only engines whose adapter implements it; gemini/antigravity have no flag for it (README §10).
+    isolate_user_config: bool = True
+
+
+class CodexBin(IsolatedEngineBin):
+    # --ignore-user-config also drops `[windows] sandbox`; without it Codex refuses workspace writes on Windows.
+    windows_sandbox: str = "elevated"
+    # $CODEX_HOME/AGENTS.md (the PI's global instructions) cannot be switched off by flags; refuse unless allowed.
+    allow_global_agents_md: bool = False
+
+
 class EnginesSettings(BaseModel):
-    claude_code: EngineBin = EngineBin(bin="claude")
-    codex: EngineBin = EngineBin(bin="codex")
+    claude_code: IsolatedEngineBin = IsolatedEngineBin(bin="claude")
+    codex: CodexBin = CodexBin(bin="codex")
     gemini: EngineBin = EngineBin(bin="gemini")
     antigravity: EngineBin = EngineBin(bin="agy")
 
@@ -66,12 +82,30 @@ class HpcSettings(BaseModel):
     sge: SgeSettings = SgeSettings()
     pbs: PbsSettings = PbsSettings()
     command_timeout_s: int = 60
+    submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub; status commands stay unchanged
+    job_group: str | None = None  # shared POSIX group for scripts and scheduler logs
+
+    @model_validator(mode="after")
+    def require_job_group_for_submit_prefix(self) -> "HpcSettings":
+        if self.submit_prefix and not (self.job_group and self.job_group.strip()):
+            raise ValueError("hpc.job_group is required when hpc.submit_prefix is set")
+        if self.submit_prefix and not (self.user and self.user.strip()):
+            raise ValueError("hpc.user is required when hpc.submit_prefix is set")
+        return self
 
 
 class DataZone(BaseModel):
     path: str
     level: Literal["restricted", "internal", "public"] = "restricted"
     note: str = ""
+
+    @field_validator("path")
+    @classmethod
+    def absolute_path(cls, value: str) -> str:
+        expanded = os.path.expandvars(os.path.expanduser(value))
+        if not (expanded.startswith("/") or ntpath.isabs(expanded) and bool(ntpath.splitdrive(expanded)[0])):
+            raise ValueError("data zone path must be absolute (POSIX, Windows drive, or UNC)")
+        return expanded
 
 
 def _default_bash_ask() -> list[str]:
@@ -106,6 +140,7 @@ class BudgetSettings(BaseModel):
 
 class PolicySettings(BaseModel):
     data_zones: list[DataZone] = []
+    allow_runner_read_restricted: bool = False
     approvals: ApprovalRules = ApprovalRules()
     budget: BudgetSettings = BudgetSettings()
 
@@ -138,7 +173,7 @@ class GitHubSettings(BaseModel):
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
     dashboard_url: str | None = None  # link back to the web office in issue comments
-    codex_mention: str = "@codex"  # always used when a comment addresses Codex in a PR, even in replies
+    codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
 
 
 class ProjectSettings(BaseModel):
@@ -186,7 +221,7 @@ class Settings(BaseModel):
         path = path or os.environ.get("LABHQ_CONFIG")
         data: dict = {}
         if path and Path(path).exists():
-            data = yaml.safe_load(Path(path).read_text()) or {}
+            data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
         if path and Path(path).exists():
             s.config_path = str(Path(path).resolve())
