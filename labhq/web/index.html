@@ -79,6 +79,7 @@ a{color:var(--sleep-ink)}
 .chip{font:500 12px/1.5 var(--ui);padding:0 6px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
 .chip.st-working{border-color:var(--working);color:var(--working-ink);background:var(--working-bg)}
 .chip.st-done{color:var(--ink)}
+.chip.st-skipped{color:var(--muted);text-decoration:line-through}
 .chip.st-revise{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
 .chip.st-error{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
 .rack,.door{flex:none;width:52px;height:auto;display:block}
@@ -184,6 +185,8 @@ a{color:var(--sleep-ink)}
 .dag-node rect{fill:var(--panel);stroke:var(--line);stroke-width:1.2}
 .dag-node.st-working rect{stroke:var(--working);fill:var(--working-bg)}
 .dag-node.st-done rect{stroke:var(--done)}
+.dag-node.st-skipped rect{stroke:var(--muted)}
+.dag-node.st-skipped text{fill:var(--muted);text-decoration:line-through}
 .dag-node.st-revise rect{stroke:var(--wait);fill:var(--wait-bg)}
 .dag-node.st-error rect{stroke:var(--error);fill:var(--error-bg)}
 .dag-node text{font:500 12px var(--ui);fill:var(--ink)}.dag-node text.s{font-weight:400;fill:var(--muted)}
@@ -570,13 +573,16 @@ function apply(ev, replay = false) {
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
     case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; break; }
+    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
       q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
       if (d.verdict === 'revise') (d.issues || []).forEach(i => { if (i.step_id in q.steps) q.steps[i.step_id] = 'revise'; });
-      feed({ who: 'sci_reviewer', text: d.verdict === 'revise'
-        ? `수정 요청: ${short(((d.issues || [])[0] || {}).problem || '', 90)}`
-        : `통과. 질문 부합 ${sc.addresses_question}/5, 근거 ${sc.evidence}/5, 철저성 ${sc.thoroughness}/5` }, ts, rid);
+      const unparsed = d.status === 'review_unparsed';
+      feed({ who: 'sci_reviewer', text: unparsed ? '리뷰 판정 실패. PI 확인이 필요해요'
+        : d.verdict === 'revise' ? `수정 요청: ${short(((d.issues || [])[0] || {}).problem || '', 90)}`
+        : d.verdict === 'accept' ? `통과. 질문 부합 ${sc.addresses_question}/5, 근거 ${sc.evidence}/5, 철저성 ${sc.thoroughness}/5`
+        : '리뷰 판정 실패. PI 확인이 필요해요', cls: unparsed ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'recruit.suggested': {
@@ -778,7 +784,7 @@ function dagSVG(q) {
       edges += `<path class="dag-edge" d="M${x1} ${y1}C${mx} ${y1} ${mx} ${y2} ${x2 - 2} ${y2}"/>`;
     }
     const p = pos[s.id], st = q.steps[s.id] || 'pending';
-    const label = { pending: '대기', working: '진행 중', done: '완료', revise: '수정 요청', error: '실패' }[st] || st;
+    const label = { pending: '대기', working: '진행 중', done: '완료', skipped: '건너뜀', revise: '수정 요청', error: '실패' }[st] || st;
     nodes += `<g class="dag-node st-${st}"><title>${esc(s.instruction)}</title><rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="9"/>
 <text x="${p.x + 10}" y="${p.y + 17}">${esc(s.id)} ${esc(nick(s.agent_id))}</text><text class="s" x="${p.x + 10}" y="${p.y + 33}">${label}</text></g>`;
   }

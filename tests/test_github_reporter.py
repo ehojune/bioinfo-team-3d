@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 
-from labhq.gateway.server import RequestIn, create_app
+from labhq.gateway.server import Hub, RequestIn, create_app
 from labhq.integrations.github import codex_comment, sanitize
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, ProjectSettings, Settings
@@ -108,3 +108,18 @@ def test_publish_guard_and_codex_mention():
     assert "/data/cohort" not in out and "ghp_" not in out and "<restricted-zone>" in out
     assert codex_comment("review") == "@codex review"
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
+
+
+async def test_unparsed_review_posts_failure_comment():
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="demo", repo="o/p")])
+    hub = Hub(s, github_transport=fake_github(calls))
+    hub.requests["r"] = {"text": "example", "project_id": "demo"}
+    await hub.reporter.handle({"type": "request.created", "request_id": "r", "data": {}})
+    await hub.reporter.handle({"type": "request.review", "request_id": "r",
+                               "data": {"revision": 0, "status": "review_unparsed",
+                                        "reason": "missing or invalid verdict"}})
+    comments = [body["body"] for method, path, body in calls if path.endswith("/comments")]
+    assert len(comments) == 1
+    assert "리뷰 판정 실패" in comments[0] and "missing or invalid verdict" in comments[0]
+    assert "None/5" not in comments[0] and ": None" not in comments[0]

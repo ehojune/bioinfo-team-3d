@@ -227,6 +227,9 @@ class ProjectReporter:
 
     @staticmethod
     def _review_md(review: dict) -> str:
+        if review.get("status") == "review_unparsed":
+            return (f"🐢 **과학 리뷰 #{review.get('revision', 0)}: 리뷰 판정 실패** — "
+                    f"{short(review.get('reason') or '판정을 읽지 못했습니다', 160)}. PI 확인 필요")
         sc = review.get("scores") or {}
         issues = "".join(f"\n- `{i.get('step_id')}` {i.get('problem')} → {i.get('request')}"
                          for i in review.get("issues") or [])

@@ -129,6 +129,9 @@ class OrchestratorSettings(BaseModel):
     max_parallel_steps: int = 4
     max_wake_cycles: int = 5
     context_chars_per_step: int = 12000
+    step_max_attempts: int = Field(default=2, ge=1)
+    step_retry_backoff_s: float = Field(default=0.2, ge=0)
+    runner_reconnect_timeout_s: float = Field(default=30, ge=0)
 
 
 class GitHubSettings(BaseModel):
