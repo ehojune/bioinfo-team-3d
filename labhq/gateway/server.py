@@ -92,6 +92,7 @@ class Hub:
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
         self.terminal_queued: set[int] = set()
+        self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
         self.approvals: dict[str, dict] = self.store.all("approval")
@@ -142,8 +143,8 @@ class Hub:
         if self.requests[rid].get("mode") == "direct":
             self.clear_step_jobs(rid, "direct")
         # A client joining after this checkpoint replays it from SQLite.
-        current_clients = tuple(self.clients)
-        asyncio.get_running_loop().create_task(self._send_committed_event(event, current_clients))
+        self.pending_committed.append((event, tuple(self.clients)))
+        asyncio.get_running_loop().create_task(self._send_committed_event())
         self._queue_terminal_delivery(event)
 
     def _queue_terminal_delivery(self, event: dict) -> None:
@@ -174,8 +175,14 @@ class Hub:
             self.store.delete("terminal_delivery", str(seq))
             self.terminal_queued.discard(seq)
 
-    async def _send_committed_event(self, event: dict, clients: tuple[WebSocket, ...]) -> None:
+    async def _send_committed_event(self) -> None:
         async with self.event_lock:
+            await self._flush_committed_events()
+
+    async def _flush_committed_events(self) -> None:
+        # Called under event_lock, before allocating any later live event sequence.
+        while self.pending_committed:
+            event, clients = self.pending_committed.popleft()
             dead = []
             for client in clients:
                 try:
@@ -355,6 +362,7 @@ class Hub:
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
         async with self.event_lock:
+            await self._flush_committed_events()
             ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq)
             self.events.append(ev)
             dead = []
@@ -462,12 +470,26 @@ class Hub:
                                 await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
                             except RunnerUnavailable:
                                 pass  # delivery is uncertain; never retry this work under a new task ID
-                    result = await asyncio.wait_for(future, self.s.gateway.resume_wait_s)
+                    # resume_wait_s bounds connection/acceptance, not a running task. The
+                    # runner's own task_timeout governs work after task.accepted.
+                    deadline = None
+                    while not future.done():
+                        accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
+                        online = self.agent_runner.get(task.agent_id) in self.runners
+                        if accepted and online:
+                            deadline = None
+                        elif deadline is None:
+                            deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
+                        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                            return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
+                                              error="recovery runner unavailable; manual restart required")
+                        try:
+                            await asyncio.wait_for(asyncio.shield(future), 0.1)
+                        except asyncio.TimeoutError:
+                            pass
+                    result = future.result()
                     self.recovered_tasks.add(tid)
                     return result
-                except asyncio.TimeoutError:
-                    return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
-                                      error="recovery result unavailable; manual restart required")
                 finally:
                     self.futures.pop(tid, None)
         rid = self.agent_runner.get(task.agent_id)

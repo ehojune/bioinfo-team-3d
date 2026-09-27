@@ -27,6 +27,8 @@ def fake_github(calls: list):
         path = req.url.path
         if req.method == "POST" and path.endswith("/issues"):
             return httpx.Response(201, json={"number": 7, "html_url": "https://github.com/o/p/issues/7"})
+        if req.method == "GET" and path.endswith("/issues"):
+            return httpx.Response(200, json=[])
         if req.method == "POST" and path.endswith("/comments"):
             return httpx.Response(201, json={"html_url": f"https://github.com/o/p/issues/7#c{len(calls)}"})
         if req.method == "GET" and "/contents/" in path:
@@ -82,7 +84,7 @@ async def test_request_updates_land_in_project_repo(tmp_path):
         await asyncio.sleep(0.2)
         await hub.reporter.drain()
         kinds = [(m, p.rsplit("/", 1)[-1] if "/contents/" not in p else "contents") for m, p, _ in calls]
-        assert kinds[0] == ("POST", "issues")
+        assert kinds[:2] == [("GET", "issues"), ("POST", "issues")]
         comments = [b["body"] for m, p, b in calls if p.endswith("/comments")]
         assert comments[0].startswith("📋 **CSO 계획**") and "bioinfo-agent" in comments[0]
         assert sum("과학 리뷰" in c for c in comments) == 2 and comments[-1].startswith("🏁 완료")
@@ -109,6 +111,47 @@ def test_publish_guard_and_codex_mention():
     assert "/data/cohort" not in out and "ghp_" not in out and "<restricted-zone>" in out
     assert codex_comment("review") == "@codex review"
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
+
+
+@pytest.mark.asyncio
+async def test_issue_creation_replay_finds_remote_issue_before_reposting(tmp_path):
+    remote = {"issues": [], "posts": 0}
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/issues") and request.method == "GET":
+            return httpx.Response(200, json=remote["issues"])
+        if request.url.path.endswith("/issues") and request.method == "POST":
+            remote["posts"] += 1
+            issue = {"number": 7, "body": json.loads(request.content)["body"],
+                     "html_url": "https://example.test/7"}
+            remote["issues"].append(issue)
+            return httpx.Response(201, json=issue)
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.gateway.state_dir = str(tmp_path / "state")
+    transport = httpx.MockTransport(api)
+    first = Hub(s, github_transport=transport)
+    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.save_request("r")
+    event = {"type": "request.created", "request_id": "r", "data": {}}
+    original_put = first.store.put
+
+    def crash_before_issue_checkpoint(kind, key, body):
+        if kind == "github_issue":
+            raise RuntimeError("simulated restart before checkpoint")
+        original_put(kind, key, body)
+
+    first.store.put = crash_before_issue_checkpoint
+    with pytest.raises(RuntimeError, match="simulated restart"):
+        await first.reporter.handle(event)
+    assert "<!-- labhq request r -->" in remote["issues"][0]["body"]
+    first.store.close()
+
+    restored = Hub(s, github_transport=transport)
+    await restored.reporter.handle(event)
+    assert remote["posts"] == 1
+    assert restored.store.get("github_issue", "r") == {"number": 7}
 
 
 @pytest.mark.asyncio

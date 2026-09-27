@@ -70,6 +70,19 @@ class GitHubClient:
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels})
 
+    async def find_request_issue(self, repo: str, rid: str) -> dict | None:
+        marker = f"<!-- labhq request {rid} -->"
+        legacy = f"request id: `{rid}`"
+        page = 1
+        while True:
+            issues = await self._req("GET", f"/repos/{repo}/issues",
+                                     params={"state": "all", "per_page": 100, "page": page})
+            match = next((issue for issue in issues if not issue.get("pull_request") and
+                          (marker in (issue.get("body") or "") or legacy in (issue.get("body") or ""))), None)
+            if match or len(issues) < 100:
+                return match
+            page += 1
+
     async def comment(self, repo: str, number: int, body: str) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
 
@@ -205,8 +218,11 @@ class ProjectReporter:
                 return
             if rid in self.issues:
                 return
-            issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
-                                          self._clean(self._issue_body(rid, req)), proj.labels)
+            find_issue = getattr(gh, "find_request_issue", None)
+            issue = await find_issue(proj.repo, rid) if find_issue else None
+            if issue is None:
+                issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
+                                              self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
             self.hub.store.put("github_issue", rid, {"number": issue["number"]})
             await self._posted(rid, "issue", issue.get("html_url"), issue["number"])
@@ -275,7 +291,8 @@ class ProjectReporter:
     def _issue_body(self, rid: str, req: dict) -> str:
         dash = f"\n\n실시간 사무실: {self.s.github.dashboard_url}" if self.s.github.dashboard_url else ""
         return (f"**요청** ({req.get('mode', 'orchestrate')})\n\n> {req.get('text', '')}\n\n"
-                f"request id: `{rid}` · 이 이슈에 계획, 리뷰, 최종 보고가 차례로 올라옵니다.{dash}")
+                f"request id: `{rid}` · 이 이슈에 계획, 리뷰, 최종 보고가 차례로 올라옵니다.{dash}"
+                f"\n\n<!-- labhq request {rid} -->")
 
     @staticmethod
     def _plan_md(plan: dict) -> str:

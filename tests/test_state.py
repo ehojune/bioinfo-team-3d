@@ -442,6 +442,19 @@ async def test_terminal_event_is_not_sent_twice_to_client_joining_after_commit(t
 
 
 @pytest.mark.asyncio
+async def test_terminal_live_event_precedes_later_sequence(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "direct", "status": "done"}
+    client = CaptureSocket()
+    hub.clients.add(client)
+    hub.commit_terminal("r", "request.completed", {"ok": True})
+    await hub.publish({"type": "github.posted", "request_id": "r", "data": {}})
+    await asyncio.sleep(0)
+    assert [(event["seq"], event["type"]) for event in client.sent] == [
+        (1, "request.completed"), (2, "github.posted")]
+
+
+@pytest.mark.asyncio
 async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
     s = settings(tmp_path)
     first = Hub(s)
@@ -471,6 +484,35 @@ async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
     hub.result_map("r")["s"] = result
     assert hub.requests["r"]["results"]["s"]["text"] == "late"
     assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_accepted_recovery_can_finish_after_runner_connection_timeout(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.05
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    original = Task(id="long-task", agent_id="a", request_id="r", prompt="work",
+                    meta={"kind": "step", "step_id": "s"})
+    first.store.put("task", original.id, {"request_id": "r", "step_id": "s", "kind": "step",
+                                           "accepted": True, "payload": original.model_dump(mode="json")})
+    first.store.close()
+
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    hub.recovery_steps.add("r")
+    pending = asyncio.create_task(hub.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
+                                                    meta={"kind": "step", "step_id": "s"})))
+    await asyncio.sleep(0.12)
+    assert not pending.done()
+    assert not any(msg.get("type") == "task.dispatch" for msg in socket.sent)
+    result = TaskResult(task_id=original.id, agent_id="a", ok=True, text="finished")
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                          "task_id": original.id, "request_id": "r",
+                                          "data": result.model_dump(mode="json")})
+    assert (await asyncio.wait_for(pending, 1)).text == "finished"
 
 
 @pytest.mark.asyncio
