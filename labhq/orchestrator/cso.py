@@ -500,9 +500,16 @@ class Orchestrator:
                 self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
                 return
 
-            review: dict = {}
+            progress = req.get("review_progress") or {}
+            if progress.get("phase") == "revision":
+                progress.update(phase="review", last_completed_revision=progress["next_revision"])
+                req["review_progress"] = progress
+                self.hub.save_request(rid)
+            review: dict = progress.get("review") or {}
             reviewer = self.cfg.reviewer_agent
-            for rev in range(self.cfg.max_revisions + 1):
+            start_rev = (self.cfg.max_revisions + 1 if progress.get("phase") in {"synthesis", "unresolved"}
+                         else int(progress.get("next_revision") or 0))
+            for rev in range(start_rev, self.cfg.max_revisions + 1):
                 if not reviewer or reviewer not in known:
                     break
                 prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
@@ -533,7 +540,18 @@ class Orchestrator:
                                  serialized_results(), ok=False, review=review)
                     return
                 await self._emit(rid, "request.review", {"revision": rev, **review})
-                if review.get("verdict") != "revise" or rev >= self.cfg.max_revisions:
+                progress = {"phase": "review", "next_revision": rev + 1, "review": review,
+                            "last_completed_review": rev,
+                            "last_completed_revision": progress.get("last_completed_revision", 0)}
+                if review.get("verdict") != "revise":
+                    progress["phase"] = "synthesis"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
+                    break
+                if rev >= self.cfg.max_revisions:
+                    progress["phase"] = "unresolved"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
                     break
                 feedback: dict[str, str] = {}
                 for issue in review.get("issues") or []:
@@ -541,7 +559,12 @@ class Orchestrator:
                         feedback.setdefault(issue["step_id"], "")
                         feedback[issue["step_id"]] += f"- {issue.get('problem')}: {issue.get('request')}\n"
                 if not feedback:
+                    progress["phase"] = "unresolved"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
                     break
+                progress["phase"] = "revision"
+                req["review_progress"] = progress
                 pending = req.setdefault("pending_revisions", {})
                 for sid, note in feedback.items():
                     pending[sid] = {"revision": rev + 1, "feedback": note,
@@ -553,6 +576,8 @@ class Orchestrator:
                     self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
                                  review=review)
                     return
+                progress.update(phase="review", last_completed_revision=rev + 1)
+                self.hub.save_request(rid)
 
             if review.get("verdict") == "revise":
                 self._finish(rid, self.format_results(steps, results, n) + "\n\nReview: revisions unresolved.",

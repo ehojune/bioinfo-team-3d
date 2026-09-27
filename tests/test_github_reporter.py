@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 import uvicorn
 
 from labhq.gateway.server import Hub, RequestIn, create_app
@@ -108,6 +109,70 @@ def test_publish_guard_and_codex_mention():
     assert "/data/cohort" not in out and "ghp_" not in out and "<restricted-zone>" in out
     assert codex_comment("review") == "@codex review"
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_action", ["report", "comment", "close"])
+async def test_terminal_report_replay_skips_completed_external_actions(tmp_path, crash_action):
+    remote = {"content": None, "comments": [], "state": "open", "puts": 0, "posts": 0, "patches": 0}
+
+    def api(request: httpx.Request) -> httpx.Response:
+        path, method = request.url.path, request.method
+        if "/contents/" in path and method == "GET":
+            if remote["content"] is None:
+                return httpx.Response(404, json={"message": "Not Found"})
+            return httpx.Response(200, json={"encoding": "base64", "sha": "file-sha",
+                                              "content": base64.b64encode(remote["content"].encode()).decode(),
+                                              "html_url": "https://example.test/report"})
+        if "/contents/" in path and method == "PUT":
+            remote["puts"] += 1
+            remote["content"] = base64.b64decode(json.loads(request.content)["content"]).decode()
+            return httpx.Response(201, json={"content": {"html_url": "https://example.test/report"}})
+        if path.endswith("/comments") and method == "GET":
+            return httpx.Response(200, json=remote["comments"])
+        if path.endswith("/comments") and method == "POST":
+            remote["posts"] += 1
+            comment = {"body": json.loads(request.content)["body"],
+                       "html_url": "https://example.test/comment"}
+            remote["comments"].append(comment)
+            return httpx.Response(201, json=comment)
+        if path.endswith("/issues/7") and method == "GET":
+            return httpx.Response(200, json={"state": remote["state"]})
+        if path.endswith("/issues/7") and method == "PATCH":
+            remote["patches"] += 1
+            remote["state"] = "closed"
+            return httpx.Response(200, json={"state": "closed"})
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p", commit_reports=True)])
+    s.gateway.state_dir = str(tmp_path / "state")
+    transport = httpx.MockTransport(api)
+    first = Hub(s, github_transport=transport)
+    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done",
+                           "finished_at": 1_700_000_000, "cost_usd": 1.0}
+    first.save_request("r")
+    first.reporter.issues["r"] = 7
+    first.store.put("github_issue", "r", {"number": 7})
+    event = {"type": "request.completed", "request_id": "r", "seq": 9,
+             "data": {"ok": True, "report": "final report", "cost_usd": 1.0}}
+    original_put = first.store.put
+
+    def crash_after_external_call(kind, key, body):
+        if kind == "github_action" and key.endswith(f":{crash_action}") and body.get("done"):
+            raise RuntimeError("simulated restart before checkpoint")
+        original_put(kind, key, body)
+
+    first.store.put = crash_after_external_call
+    with pytest.raises(RuntimeError, match="simulated restart"):
+        await first.reporter.handle(event)
+    first.store.close()
+
+    restored = Hub(s, github_transport=transport)
+    await restored.reporter.handle(event)
+    assert (remote["puts"], remote["posts"], remote["patches"]) == (1, 1, 1)
+    assert "<!-- labhq terminal r 9 -->" in remote["comments"][0]["body"]
+    assert all(restored.store.get("github_action", f"r:9:{action}")["done"]
+               for action in ("report", "comment", "close"))
 
 
 async def test_unparsed_review_posts_failure_comment(tmp_path):

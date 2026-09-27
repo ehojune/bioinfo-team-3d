@@ -608,6 +608,115 @@ async def test_restart_during_revision_preserves_feedback_and_adopts_revision(tm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [
+    {"kind": "briefing"}, {"kind": "plan"},
+    {"kind": "review", "revision": 1, "parse_attempt": 2}, {"kind": "synthesis"},
+])
+@pytest.mark.parametrize("completed", [False, True])
+async def test_control_phase_recovers_exact_task_identity(tmp_path, meta, completed):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                           "cost_usd": 0.2 if completed else 0.0}
+    first.save_request("r")
+    original = Task(id="control-original", agent_id="a", request_id="r", prompt="control", meta=meta)
+    result = TaskResult(task_id=original.id, agent_id="a", ok=True, text="saved", cost_usd=0.2)
+    first.store.put("task", original.id, {"request_id": "r", "kind": meta["kind"],
+                                          "step_id": None, "revision": meta.get("revision", 0),
+                                          "parse_attempt": meta.get("parse_attempt", 0),
+                                          "accepted": True, "payload": original.model_dump(mode="json"),
+                                          "completed": completed,
+                                          "result": result.model_dump(mode="json") if completed else None})
+    if meta["kind"] == "review":
+        first.store.put("task", "other-parse", {"request_id": "r", "kind": "review", "step_id": None,
+                                                 "revision": 1, "parse_attempt": 1, "accepted": True,
+                                                 "completed": True, "result": result.model_dump(mode="json")})
+    first.store.close()
+
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    hub.recovery_steps.add("r")
+    recovering = asyncio.create_task(hub.dispatch(Task(agent_id="a", request_id="r", prompt="new", meta=meta)))
+    await asyncio.sleep(0)
+    if not completed:
+        assert not recovering.done()
+        await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                              "request_id": "r", "task_id": original.id,
+                                              "data": result.model_dump(mode="json")})
+    recovered = await asyncio.wait_for(recovering, 1)
+    assert recovered.task_id == original.id and recovered.text == "saved"
+    if completed:
+        assert recovered.cost_usd == 0 and hub.requests["r"]["cost_usd"] == 0.2
+    assert not any(msg.get("type") == "task.dispatch" for msg in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_review_revision_budget_survives_restart(tmp_path):
+    s = settings(tmp_path)
+    s.orchestrator.max_revisions = 2
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                           "plan": {"steps": [{"id": "s", "agent_id": "a", "instruction": "analyze",
+                                               "depends_on": []}]},
+                           "results": {"s": TaskResult(task_id="initial", agent_id="a", ok=True,
+                                                       text="initial").model_dump(mode="json")}}
+    first.save_request("r")
+    first.register_runner("local", CaptureSocket(), [{"id": a} for a in ("a", "cso", "sci_reviewer")])
+
+    def revise(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured={"verdict": "revise", "scores": {
+                              "addresses_question": 4, "evidence": 3, "thoroughness": 4},
+                              "issues": [{"step_id": "s", "problem": "weak", "request": "revise"}]})
+
+    async def before_restart(task):
+        if task.meta["kind"] == "review":
+            if task.meta["revision"] == 1:
+                raise asyncio.CancelledError
+            return revise(task)
+        if task.meta["kind"] == "step":
+            return TaskResult(task_id=task.id, agent_id="a", ok=True, text="revision one")
+        raise AssertionError(task.meta["kind"])
+
+    first.orchestrator.run_step = before_restart
+    with pytest.raises(asyncio.CancelledError):
+        await first.orchestrator.run_request("r", resume=True)
+    assert first.store.get("request", "r")["review_progress"]["next_revision"] == 1
+    assert first.store.get("request", "r")["review_progress"]["last_completed_revision"] == 1
+    first.store.close()
+
+    restored = Hub(s)
+    restored.register_runner("local", CaptureSocket(), [{"id": a} for a in ("a", "cso", "sci_reviewer")])
+    reviews, revisions = [], []
+
+    async def after_restart(task):
+        if task.meta["kind"] == "review":
+            reviews.append(task.meta["revision"])
+            return revise(task)
+        if task.meta["kind"] == "step":
+            revisions.append(task.meta["revision"])
+            return TaskResult(task_id=task.id, agent_id="a", ok=True, text="revision two")
+        raise AssertionError(task.meta["kind"])
+
+    restored.orchestrator.run_step = after_restart
+    await restored.orchestrator.run_request("r", resume=True)
+    assert reviews == [1, 2] and revisions == [2]
+    assert restored.requests["r"]["status"] == "failed"
+    assert restored.requests["r"]["review_progress"]["last_completed_review"] == 2
+    assert restored.requests["r"]["review_progress"]["last_completed_revision"] == 2
+
+
+def test_resume_synthesis_does_not_wait_for_finished_reviewer(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "status": "interrupted",
+                         "plan": {"steps": [{"id": "s", "agent_id": "retired", "depends_on": []}]},
+                         "results": {"s": {"ok": True}},
+                         "review_progress": {"phase": "synthesis", "next_revision": 1}}
+    assert hub.resume_agents("r") == {"cso"}
+
+
+@pytest.mark.asyncio
 async def test_unaccepted_dispatch_is_resent_with_original_task_id(tmp_path):
     s = settings(tmp_path)
     first = Hub(s)

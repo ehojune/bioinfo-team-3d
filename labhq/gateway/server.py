@@ -197,10 +197,16 @@ class Hub:
 
     @staticmethod
     def _matches_recovery(task: Task, entry: dict) -> bool:
-        sid = task.meta.get("step_id") or ("direct" if task.meta.get("kind") == "direct" else None)
-        return bool(sid and entry.get("request_id") == task.request_id and
-                    (entry.get("step_id") or entry.get("kind")) == sid and
+        kind = task.meta.get("kind")
+        prior_meta = (entry.get("payload") or {}).get("meta") or {}
+        entry_step = entry.get("step_id")
+        if kind == "direct" and entry_step == "direct":  # records written before control-phase recovery
+            entry_step = None
+        return bool(kind and entry.get("request_id") == task.request_id and
+                    entry.get("kind") == kind and entry_step == task.meta.get("step_id") and
                     int(entry.get("revision") or 0) == int(task.meta.get("revision") or 0) and
+                    int(entry.get("parse_attempt", prior_meta.get("parse_attempt")) or 0) ==
+                    int(task.meta.get("parse_attempt") or 0) and
                     entry.get("parent_task") == task.meta.get("parent_task"))
 
     def new_resume_approval(self, rid: str) -> ApprovalRequest:
@@ -220,8 +226,10 @@ class Hub:
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
-        needed.add(self.s.orchestrator.cso_agent)
-        if self.s.orchestrator.reviewer_agent:
+        phase = (req.get("review_progress") or {}).get("phase")
+        if phase != "unresolved":
+            needed.add(self.s.orchestrator.cso_agent)
+        if self.s.orchestrator.reviewer_agent and phase not in {"synthesis", "unresolved"}:
             needed.add(self.s.orchestrator.reviewer_agent)
         if not steps and self.s.orchestrator.chief_of_staff_agent:
             needed.add(self.s.orchestrator.chief_of_staff_agent)
@@ -427,7 +435,7 @@ class Hub:
 
     # ----- tasks -----
     async def dispatch(self, task: Task) -> TaskResult:
-        sid = task.meta.get("step_id") or ("direct" if task.meta.get("kind") == "direct" else None)
+        sid = task.meta.get("step_id") or task.meta.get("kind")
         if sid and task.request_id in self.recovery_steps:
             matches = [(tid, entry) for tid, entry in self.store.all("task").items()
                        if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
@@ -470,9 +478,10 @@ class Hub:
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
         self.store.put("task", task.id, {"request_id": task.request_id,
-                                          "step_id": sid, "kind": task.meta.get("kind"),
+                                          "step_id": task.meta.get("step_id"), "kind": task.meta.get("kind"),
                                           "attempt": task.meta.get("attempt", 1),
                                           "revision": task.meta.get("revision", 0),
+                                          "parse_attempt": task.meta.get("parse_attempt", 0),
                                           "parent_task": task.meta.get("parent_task"),
                                           "payload": task.model_dump(mode="json"),
                                           "accepted": False, "dispatched_at": time.time()})

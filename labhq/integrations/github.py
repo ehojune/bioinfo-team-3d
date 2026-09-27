@@ -73,15 +73,34 @@ class GitHubClient:
     async def comment(self, repo: str, number: int, body: str) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
 
+    async def find_issue_comment(self, repo: str, number: int, marker: str) -> dict | None:
+        page = 1
+        while True:
+            comments = await self._req("GET", f"/repos/{repo}/issues/{number}/comments",
+                                       params={"per_page": 100, "page": page})
+            match = next((c for c in comments if marker in (c.get("body") or "")), None)
+            if match or len(comments) < 100:
+                return match
+            page += 1
+
     async def close_issue(self, repo: str, number: int) -> dict:
         return await self._req("PATCH", f"/repos/{repo}/issues/{number}",
                                json={"state": "closed", "state_reason": "completed"})
+
+    async def issue_is_closed(self, repo: str, number: int) -> bool:
+        issue = await self._req("GET", f"/repos/{repo}/issues/{number}")
+        return issue.get("state") == "closed"
 
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
-            sha = r.json().get("sha")
+            existing = r.json()
+            sha = existing.get("sha")
+            if existing.get("encoding") == "base64" and base64.b64decode(existing.get("content") or "").decode() == content:
+                return {"content": {"html_url": existing.get("html_url")}, "unchanged": True}
+        elif r.status_code != 404:
+            r.raise_for_status()
         body = {"message": message, "branch": branch, "content": base64.b64encode(content.encode()).decode()}
         if sha:
             body["sha"] = sha
@@ -151,6 +170,16 @@ class ProjectReporter:
     def _clean(self, text: str) -> str:
         return sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
 
+    @staticmethod
+    def _action_key(ev: dict, action: str) -> str:
+        return f"{ev['request_id']}:{ev.get('seq') or ev['type']}:{action}"
+
+    def _action(self, ev: dict, action: str) -> dict | None:
+        return self.hub.store.get("github_action", self._action_key(ev, action))
+
+    def _save_action(self, ev: dict, action: str, body: dict) -> None:
+        self.hub.store.put("github_action", self._action_key(ev, action), body)
+
     async def _posted(self, rid: str, kind: str, url: str | None, number: int | None = None) -> None:
         await self.hub.publish({"type": "github.posted", "ts": time.time(), "request_id": rid,
                                 "data": {"kind": kind, "url": url, "number": number}})
@@ -201,20 +230,46 @@ class ProjectReporter:
             report = d.get("report") or req.get("report") or d.get("error") or ""
             report_url = None
             if typ == "request.completed" and proj.commit_reports:
-                path = f"{proj.reports_dir.strip('/')}/{time.strftime('%Y-%m-%d')}-{rid}.md"
-                res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
-                                        f"labhq: report for {rid}", proj.branch)
-                report_url = (res.get("content") or {}).get("html_url")
-                await self._posted(rid, "report", report_url, None)
+                saved = self._action(ev, "report") or {}
+                path = saved.get("path") or (f"{proj.reports_dir.strip('/')}/"
+                                             f"{time.strftime('%Y-%m-%d', time.localtime(req.get('finished_at') or time.time()))}-{rid}.md")
+                if not saved:
+                    self._save_action(ev, "report", {"path": path, "done": False})
+                if saved.get("done"):
+                    report_url = saved.get("url")
+                else:
+                    res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
+                                            f"labhq: report for {rid}", proj.branch)
+                    report_url = (res.get("content") or {}).get("html_url")
+                    self._save_action(ev, "report", {"path": path, "done": True, "url": report_url})
+                    await self._posted(rid, "report", report_url, None)
             if num:
                 ok = typ == "request.completed" and d.get("ok", True)
                 head = "🏁 완료" if ok else "💥 실패"
                 link = f"\n\n보고서: {report_url}" if report_url else ""
                 cost = f" · 비용 ${d.get('cost_usd')}" if d.get("cost_usd") is not None else ""
-                c = await gh.comment(proj.repo, num, self._clean(f"{head}{cost}{link}\n\n{clip(report, 20000)}"))
-                await self._posted(rid, "final", c.get("html_url"), num)
+                marker = f"<!-- labhq terminal {rid} {ev.get('seq') or typ} -->"
+                saved = self._action(ev, "comment") or {}
+                if not saved:
+                    self._save_action(ev, "comment", {"done": False, "marker": marker})
+                if not saved.get("done"):
+                    find_comment = getattr(gh, "find_issue_comment", None)
+                    c = await find_comment(proj.repo, num, marker) if saved and find_comment else None
+                    if c is None:
+                        c = await gh.comment(proj.repo, num, self._clean(
+                            f"{head}{cost}{link}\n\n{clip(report, 20000)}\n\n{marker}"))
+                    self._save_action(ev, "comment", {"done": True, "marker": marker,
+                                                      "url": c.get("html_url")})
+                    await self._posted(rid, "final", c.get("html_url"), num)
                 if ok:
-                    await gh.close_issue(proj.repo, num)
+                    saved = self._action(ev, "close") or {}
+                    if not saved:
+                        self._save_action(ev, "close", {"done": False})
+                    if not saved.get("done"):
+                        is_closed = getattr(gh, "issue_is_closed", None)
+                        if not (saved and is_closed and await is_closed(proj.repo, num)):
+                            await gh.close_issue(proj.repo, num)
+                        self._save_action(ev, "close", {"done": True})
 
     # ---------- markdown ----------
     def _issue_body(self, rid: str, req: dict) -> str:
