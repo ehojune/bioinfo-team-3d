@@ -122,3 +122,12 @@ async def test_unparsed_review_posts_failure_comment():
     assert len(comments) == 1
     assert "리뷰 판정 실패" in comments[0] and "missing or invalid verdict" in comments[0]
     assert "None/5" not in comments[0] and ": None" not in comments[0]
+
+
+def test_staff_prompt_asks_for_one_codex_review_per_push():
+    """Each @codex comment starts its own Codex session; staff must not mention it in inline replies."""
+    from labhq.adapters.base import ROLE_FOOTER
+
+    assert "Codex review findings without @codex" in ROLE_FOOTER
+    assert "`@codex review` once" in ROLE_FOOTER
+    assert "always mention @codex" not in ROLE_FOOTER
