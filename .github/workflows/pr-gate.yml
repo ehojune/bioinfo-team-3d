@@ -1,0 +1,87 @@
+name: PR gate
+
+on:
+  issue_comment:
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  # GitHub Actions check suites do not trigger check_suite workflows; watch the test run.
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Open PR number
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.select.outputs.prs }}
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Select PRs from event data
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PATH: ${{ github.event_path }}
+          PYTHONPATH: .
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from scripts.pr_gate import GitHub, select_pr_numbers
+
+          with open(os.environ['EVENT_PATH'], encoding='utf-8') as source:
+              event = json.load(source)
+          name = os.environ['EVENT_NAME']
+          open_prs = []
+          if name == 'schedule':
+              api = GitHub(os.environ['REPO'], os.environ['GITHUB_TOKEN'])
+              open_prs = [pr['number'] for pr in api.pages('/pulls?state=open')]
+          numbers = select_pr_numbers(name, event, open_pr_numbers=open_prs)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write('prs=' + json.dumps(numbers) + '\n')
+          PY
+
+  gate:
+    needs: select
+    if: needs.select.outputs.prs != '[]'
+    strategy:
+      matrix:
+        pr: ${{ fromJSON(needs.select.outputs.prs) }}
+    concurrency:
+      group: pr-gate-${{ github.repository }}-${{ matrix.pr }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Decide and apply
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: python3 scripts/pr_gate.py --repo "$REPO" --pr "$PR_NUMBER"

@@ -2,6 +2,48 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · PR 게이트 실운영 점검
+
+- 무엇을: select 잡의 `PYTHONPATH`를 고정하고 쓰기 권한 부족은 경고로 끝낸다. `select`·`gate` check를 판정에서 제외하되 다른 check가 없으면 보류한다.
+- 테스트: Windows 기준선 8 failed/255 passed/14 skipped → 8 failed/259 passed/14 skipped(새 실패 0). 게이트 테스트 29 passed, YAML 파싱·공개 검사 통과.
+- 막힌 점: 현재 `origin/main`에는 `scripts/pr_gate.py`가 없어 기본 브랜치 배포 전 select import는 여전히 실패한다.
+- 다음: Claude가 기본 브랜치 배포 후 PR 이벤트로 select·gate 재실행을 확인한다.
+
+## 2026-09-28 · PR #10 실제 봇 형식 대응
+
+- 무엇을: 이미지형 P1/P2 배지를 읽고, 현재 head에서 작성된 지적만 `original_commit_id`로 고른다. 요약이 없거나 파싱되지 않아도 10회면 PI를 호출하며 Running은 기다린다.
+- 테스트: 원본 `a7e4350`의 Windows pytest 8 failed/251 passed/14 skipped → 8 failed/255 passed/14 skipped(새 실패 0). 실제 봇 fixture를 포함한 게이트 테스트 25 passed, 공개 검사 통과.
+- 막힌 점: 실제 GitHub 쓰기 동작은 push 전이라 미검증.
+- 다음: Claude가 새 커밋을 push해 PR #10의 판정 결과를 확인한다.
+
+## 2026-09-28 · PR 게이트 상한 정체 해소
+
+- 무엇을: 10회 뒤 새 head를 아직 보지 않은 Completed 리뷰도 `needs-pi`로 보내고, 같은 head의 중복 호출을 막는다. Running은 기다린다.
+- 테스트: fast-forward 기준 `bef633e`의 Windows pytest 8 failed/247 passed/14 skipped → 8 failed/251 passed/14 skipped(새 실패 0). 게이트 테스트 21 passed, 공개 검사 통과.
+- 막힌 점: 실제 GitHub 이벤트는 push 전이라 미검증.
+- 다음: Claude가 새 커밋을 push해 PR #10의 PI 호출 경로를 확인한다.
+
+## 2026-09-28 · PR #10 후속 issue 보존
+
+- 무엇을: P2 후속 issue를 모두 확보한 뒤에만 squash merge한다. 지적 ID marker와 기존 issue의 원문 링크로 재시도 중복을 막는다.
+- 테스트: Windows 8 failed/219 passed/13 skipped → 8 failed/223 passed/13 skipped(새 실패 0). 게이트 테스트 17 passed, 공개 검사 통과.
+- 막힌 점: 실제 GitHub API 쓰기는 push 전이라 미검증.
+- 다음: Claude가 새 커밋을 push해 PR #10에서 동작을 확인한다.
+
+## 2026-09-28 · PR 게이트 후속 수정
+
+- 무엇을: P2만 남은 PR은 👍 없이 병합한다. 배지가 없는 지적은 P1처럼 막는다. CI 완료는 `workflow_run`으로 받고, 30분마다 열린 PR을 재판정한다.
+- 테스트: Windows 8 failed/217 passed/13 skipped → 8 failed/219 passed/13 skipped(새 실패 0). 게이트 테스트 13 passed, YAML 파싱·공개 검사 통과.
+- 막힌 점: 실제 GitHub 이벤트와 Linux CI는 push 전이라 미검증.
+- 다음: Claude가 후속 커밋을 push해 PR에서 트리거를 확인한다.
+
+## 2026-09-28 · PR 리뷰 게이트
+
+- 무엇을: 현재 head의 Codex 리뷰·P1/P2·CI·병합 가능 상태를 판정한다. 합의 시 squash merge와 P2 후속 issue, 8회 경고, 10회 `needs-pi` 호출을 구현했다.
+- 테스트: Windows 기준선 8 failed/206 passed/13 skipped → 8 failed/217 passed/13 skipped(새 실패 0). 새 판정 테스트 11 passed. 공개 검사 통과.
+- 막힌 점: GitHub 실이벤트·Linux CI는 push 전이라 미검증.
+- 다음: Claude가 브랜치를 push해 PR을 열고 Linux CI와 실제 Codex 요약 형식을 확인한다.
+
 ## 2026-09-28 · P4 1단계 — 공유 reducer와 실시간 3D
 - 무엇을: `state.js`로 상태 처리를 분리하고 `/3d`에 실제 roster·포즈·요청 보드·DOM 승인/거절·since 재연결을 연결했다. 2.5D 전환과 데모 유지. 정적 경로 제한과 배포 에셋 포함.
 - 테스트: Windows 기준선 11 failed/203 passed/13 skipped → 11 failed/227 passed/14 skipped(새 실패 0). Node에서 원본 43개 이벤트 상태·재연결·승인 검사, 공개 검사 통과.
