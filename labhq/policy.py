@@ -49,10 +49,13 @@ def _drive_relative(p: str) -> bool:
 
 
 def _candidate_paths(s: str) -> Iterator[str]:
-    # Keep quoted paths intact; start embedded paths only after explicit separators.
-    for match in re.finditer(r'''"([^"]*)"|'([^']*)'|([^\s'"`|;&<>]+)''', s):
+    # Keep quoted and backslash-escaped whitespace intact; start embedded paths
+    # only after explicit separators.
+    for match in re.finditer(r'''"([^"]*)"|'([^']*)'|((?:\\[ \t]|[^\s'"`|;&<>])+)''', s):
         token = next((v for v in match.groups() if v is not None), "")
-        separator_pattern = r"[=<>() ,]" if match.group(3) is not None else r"[=<>(),]"
+        if match.group(3) is not None:
+            token = re.sub(r"\\([ \t])", r"\1", token)
+        separator_pattern = r"[=<>(),]"
         for chunk in re.split(separator_pattern, token):
             while chunk:
                 chunk = chunk.strip("[]{}")
@@ -96,7 +99,9 @@ def _raw_spaced_zone(s: str, zone: str) -> bool:
     """Conservatively find a spaced absolute zone in shell text at explicit boundaries."""
     if " " not in zone:
         return False
-    raw = s.replace("\\", "/")
+    raw = re.sub(r"\\([ \t])", r"\1", s)
+    if re.match(r"^[A-Za-z]:/|^//", zone):
+        raw = raw.replace("\\", "/")
     if os.name == "nt" or re.match(r"^[A-Za-z]:/|^//", zone):
         raw = raw.casefold()
     start = 0
@@ -111,7 +116,7 @@ def _raw_spaced_zone(s: str, zone: str) -> bool:
 
 
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
-    """Find lexical path references, preserving structured and quoted paths with spaces.
+    """Find lexical path references, preserving structured, quoted and escaped spaces.
 
     Drive-relative paths on a restricted zone's drive are treated as touching it,
     since that drive's current directory is unknown. Unquoted shell text also

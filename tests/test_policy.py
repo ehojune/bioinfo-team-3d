@@ -85,18 +85,25 @@ def test_restricted_zone_with_spaces_in_structured_and_shell_paths():
     for command in (f'cat "{path}"', f"cat '{path}'", f"cat {path}"):
         assert touches({"command": command}, [zone]) == zone
         assert evaluate_tool("Bash", {"command": command}, policy).action == "ask"
+    escaped = r"cat /data/controlled\ cohort/a.vcf"
+    assert touches({"command": escaped}, [zone]) == zone
+    assert evaluate_tool("Bash", {"command": escaped}, policy).action == "ask"
 
     neighbor = "/data/controlled cohorts/x"
     assert touches({"file_path": neighbor}, [zone]) is None
     assert evaluate_tool("Read", {"file_path": neighbor}, policy).action == "allow"
     assert touches({"command": f"cat {neighbor}"}, [zone]) is None
     assert evaluate_tool("Bash", {"command": f"cat {neighbor}"}, policy).action == "allow"
+    escaped_neighbor = r"cat /data/controlled\ cohorts/x"
+    assert touches({"command": escaped_neighbor}, [zone]) is None
+    assert evaluate_tool("Bash", {"command": escaped_neighbor}, policy).action == "allow"
     outside = "/scratch/data/controlled cohort/x"
     assert touches({"command": f"cat {outside}"}, [zone]) is None
     assert evaluate_tool("Bash", {"command": f"cat {outside}"}, policy).action == "allow"
     windows_zone = r"C:\Data\Controlled Cohort"
     assert touches({"command": "type c:/DATA/controlled cohort/x"}, [windows_zone]) == windows_zone
     assert touches({"command": "type c:/DATA/controlled cohorts/x"}, [windows_zone]) is None
+    assert touches({"command": r"type C:\data\x"}, [r"C:\data"]) == r"C:\data"
 
 
 def test_unc_paths_are_compared_but_not_exported_as_unverified_claude_rules():

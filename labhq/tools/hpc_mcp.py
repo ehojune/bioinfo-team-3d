@@ -106,8 +106,7 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             raise error
 
         for root, dirs, files in os.walk(workdir, onerror=fail_on_walk_error, followlinks=False):
-            if Path(root) == workdir:
-                dirs[:] = [name for name in dirs if name not in {script_path.parent.name, output_dir.name}]
+            dirs[:] = [name for name in dirs if Path(root) / name not in {logs, output_dir}]
             for name in [*dirs, *files]:
                 path = Path(root) / name
                 if path.is_symlink():
@@ -115,7 +114,14 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                 st = path.stat()
                 if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
                     raise RuntimeError(f"task input is a hard link; copy it before HPC submit: {path}")
-                os.chmod(path, stat.S_IMODE(st.st_mode) & ~0o077)
+                if path == script_path or (path.parent == script_path.parent and path.suffix == ".sh"
+                                           and st.st_gid == gid and stat.S_IMODE(st.st_mode) == 0o750):
+                    # A previously submitted script may still be queued.
+                    continue
+                mode = stat.S_IMODE(st.st_mode) & ~0o077
+                if path == script_path.parent:
+                    mode |= stat.S_IXGRP  # keep earlier jobs traversable during cleanup
+                os.chmod(path, mode)
         output_dir.mkdir(mode=0o700, exist_ok=True)
     logs.mkdir(mode=0o700, parents=True, exist_ok=True)
     if job_group:
