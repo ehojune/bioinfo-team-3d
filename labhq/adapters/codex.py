@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, child_config_dir, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env, wrap_cwd
 
 
 def _toml(v: object) -> str:
@@ -57,8 +57,8 @@ class CodexAdapter(AgentAdapter):
         b = self.settings.engines.codex
         if not b.isolate_user_config or b.allow_global_agents_md:
             return None
-        home = child_config_dir(env, ctx.workdir, "CODEX_HOME", ".codex")
-        found = [n for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
+        found = [n for home in child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")
+                 for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
         if not found:
             return None
         return (f"Codex staff session refused: $CODEX_HOME/{found[0]} (global instructions) would load and no flag "

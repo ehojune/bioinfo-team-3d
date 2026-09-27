@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dir, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env, wrap_cwd
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
@@ -25,9 +25,10 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
     user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
     """
-    home = child_config_dir(env, cwd, "CLAUDE_CONFIG_DIR", ".claude")
-    return {"autoMemoryEnabled": False,
-            "claudeMdExcludes": [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]}
+    excludes = []
+    for home in child_config_dirs(env, cwd, "CLAUDE_CONFIG_DIR", ".claude"):
+        excludes += [(home / "CLAUDE.md").as_posix(), (home / "rules").as_posix() + "/**"]
+    return {"autoMemoryEnabled": False, "claudeMdExcludes": excludes}
 
 
 class ClaudeCodeAdapter(AgentAdapter):

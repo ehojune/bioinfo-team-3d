@@ -72,14 +72,18 @@ def expand_env(env: dict[str, str]) -> dict[str, str]:
     return {k: os.path.expandvars(v) for k, v in env.items()}
 
 
-def child_config_dir(env: dict[str, str], cwd: Path, var: str, default_name: str) -> Path:
-    """Config dir the child CLI will use: `var` from its env (relative → its cwd), else <its HOME>/default_name."""
+def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:
+    """Every config dir the child CLI might use, so checks and excludes fail closed.
+
+    `var` in the child's env (relative → its cwd) is authoritative. Otherwise the home is resolved
+    differently per CLI and OS (HOME vs USERPROFILE), so every candidate from the merged env counts.
+    """
     raw = env.get(var)
     if raw:
         p = Path(os.path.expanduser(raw))
-        return p if p.is_absolute() else cwd / p
-    home = (env.get("USERPROFILE") or env.get("HOME")) if os.name == "nt" else env.get("HOME")
-    return (Path(home) if home else Path.home()) / default_name
+        return [p if p.is_absolute() else cwd / p]
+    homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
+    return list(dict.fromkeys(h / default_name for h in homes))
 
 
 class AgentAdapter(ABC):

@@ -183,34 +183,43 @@ def test_probe_script_applies_the_same_preflight(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("how", ["home_override", "relative_codex_home"])
-async def test_codex_preflight_checks_the_childs_codex_home(tmp_path, how):
-    """The child resolves CODEX_HOME against its own cwd and ~ against its merged HOME; so must preflight."""
+@pytest.mark.parametrize("polluted_var,refused", [
+    ("HOME", True),          # HOME-only override; USERPROFILE still points elsewhere (Windows case)
+    ("USERPROFILE", True),   # the reverse
+    (None, False),           # both candidates clean
+    ("relative_codex_home", True),
+])
+async def test_codex_preflight_checks_every_home_the_child_might_use(tmp_path, polluted_var, refused):
+    """CLIs resolve ~ from HOME or USERPROFILE depending on CLI and OS; preflight fails closed on any candidate."""
     wd = tmp_path / "wd"
     wd.mkdir()
-    settings = Settings()
-    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
-    if how == "home_override":
-        home = tmp_path / "staff-home"
-        (home / ".codex").mkdir(parents=True)
-        (home / ".codex" / "AGENTS.md").write_text("instructions")
-        env = {"HOME": str(home), "USERPROFILE": str(home), "CODEX_HOME": ""}
-    else:
+    clean, polluted = tmp_path / "clean-home", tmp_path / "polluted-home"
+    for h in (clean, polluted):
+        (h / ".codex").mkdir(parents=True)
+    (polluted / ".codex" / "AGENTS.md").write_text("instructions")
+    env = {"HOME": str(clean), "USERPROFILE": str(clean), "CODEX_HOME": ""}
+    if polluted_var in ("HOME", "USERPROFILE"):
+        env[polluted_var] = str(polluted)
+    elif polluted_var == "relative_codex_home":
         (wd / "chome").mkdir()
         (wd / "chome" / "AGENTS.md").write_text("instructions")
-        env = {"CODEX_HOME": "chome"}
+        env["CODEX_HOME"] = "chome"
+    settings = Settings()
+    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
     settings.engines.codex.env = env
     agent = AgentSpec(id="a", name="A", role="test", engine=Engine("codex"), builtin_mcp=[])
     ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
                      mcp_servers=[], env={}, emit=_emit, prompt="x")
     res = await get_adapter(agent.engine, settings).run(ctx)
-    assert not res.ok and "refused" in res.error
+    assert not res.ok
+    assert ("refused" in res.error) is refused and ("executable not found" in res.error) is (not refused)
 
 
-def test_claude_md_exclude_follows_the_childs_home(tmp_path):
-    home = tmp_path / "staff-home"
-    s = _settings_arg(_command("claude_code", tmp_path, env={"HOME": str(home), "USERPROFILE": str(home)}))
-    assert (home / ".claude" / "CLAUDE.md").as_posix() in s["claudeMdExcludes"]
+def test_claude_md_excludes_cover_every_home_candidate(tmp_path):
+    a, b = tmp_path / "home-a", tmp_path / "home-b"
+    s = _settings_arg(_command("claude_code", tmp_path, env={"HOME": str(a), "USERPROFILE": str(b)}))
+    for h in (a, b):
+        assert (h / ".claude" / "CLAUDE.md").as_posix() in s["claudeMdExcludes"]
 
 
 def test_probe_script_reads_labhq_config(tmp_path, monkeypatch):
