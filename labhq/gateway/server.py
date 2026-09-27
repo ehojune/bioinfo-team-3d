@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
-from ..models import ApprovalRequest, Task, TaskResult, new_id
+from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 
@@ -66,6 +66,7 @@ class Hub:
         self.runner_agents: dict[str, list[dict]] = {}
         self.agents: dict[str, dict] = {}
         self.agent_runner: dict[str, str] = {}
+        self.agent_online: dict[str, asyncio.Event] = {}
         self.task_runner: dict[str, str] = {}
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
@@ -87,21 +88,47 @@ class Hub:
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
             self.agent_runner.pop(aid, None)
             self.agents.pop(aid, None)
+            self.agent_online.setdefault(aid, asyncio.Event()).clear()
         self.runner_agents[runner_id] = agents
         for a in agents:
             self.agents[a["id"]] = {**a, "runner_id": runner_id}
             self.agent_runner[a["id"]] = runner_id
+            if runner_id in self.runners:
+                self.agent_online.setdefault(a["id"], asyncio.Event()).set()
 
     def unregister_runner(self, runner_id: str, ws: WebSocket) -> None:
         if self.runners.get(runner_id) is ws:
             self.runners.pop(runner_id, None)  # keep roster + pending futures: the runner will reconnect
+            for aid, host in self.agent_runner.items():
+                if host == runner_id:
+                    self.agent_online.setdefault(aid, asyncio.Event()).clear()
+
+    async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
+        signal = self.agent_online.setdefault(agent_id, asyncio.Event())
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while True:
+            if self.agent_runner.get(agent_id) in self.runners:
+                return True
+            signal.clear()
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(signal.wait(), remaining)
+            except asyncio.TimeoutError:
+                return False
 
     async def send_runner(self, runner_id: str, msg: dict) -> None:
         ws = self.runners.get(runner_id)
         if ws is None:
-            raise RuntimeError(f"runner {runner_id} is offline")
+            raise RunnerUnavailable(f"runner {runner_id} is offline")
+        payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
-            await ws.send_text(json.dumps(msg, ensure_ascii=False, default=str))
+            try:
+                await ws.send_text(payload)
+            except Exception as exc:
+                self.unregister_runner(runner_id, ws)
+                raise RunnerUnavailable(f"runner {runner_id} WebSocket send failed") from exc
 
     def supports_resume(self, agent_id: str) -> bool:
         return self.agents.get(agent_id, {}).get("engine") != "gemini"
@@ -155,7 +182,12 @@ class Hub:
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
-        await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        try:
+            await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        except Exception:
+            self.futures.pop(task.id, None)
+            self.task_runner.pop(task.id, None)
+            raise
         return await fut
 
     async def wait_jobs(self, task_id: str) -> dict:

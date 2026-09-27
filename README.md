@@ -58,7 +58,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 - **가상 CSO** — 직접 분석하지 않음. 무엇을 물을지, 누구에게 물을지, 여러 층위의 증거를 어떻게 통합할지를 앎.
   비싼 분석 전에 사용자에게 의도를 되물음.
 - **비서실장(chief of staff)** — CSO가 사용자와 대화하는 동안 병렬로 분야 동향·데이터 현황·최근 발표를 웹 검색으로 브리핑.
-- **과학 리뷰어** — ①질문에 답했는가 ②근거가 충분한가 ③철저한가, 세 기준으로 평가 → CSO가 해당 과학자에게 재위임.
+- **과학 리뷰어** — 질문·근거·철저함을 평가해 수정 요청. 판정을 두 번 읽지 못하면 요청은 실패한다.
 
 **사업부**: 타깃 발굴·우선순위 / 타깃 안전성 / 모달리티 선정 / 임상 담당(Clinical Officers)
 
@@ -248,7 +248,7 @@ flowchart LR
 | `task.dispatched` · `task.result` | 업무 배정·완료 | 서류가 책상 사이를 이동 |
 | `approval.requested` · `approval.resolved` | 승인 요청·결과 | 폰 푸시, 책상 위 빨간 깃발 |
 | `job.submitted` · `job.state` · `jobs.finished` | HPC 작업 | 서버실 랙 불빛, 기상 알람 |
-| `request.plan` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 화이트보드 DAG, 리뷰 도장 |
+| `request.plan` · `request.step_attempt` · `request.step_retry` · `request.step_skipped` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 실패한 가지는 skip, 일시적 실패는 최대 2회 시도 |
 | `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` | 파견직 | 입구에 새 병아리, 명패에 만료일 |
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 

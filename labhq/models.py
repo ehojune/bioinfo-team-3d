@@ -12,6 +12,10 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+class RunnerUnavailable(ConnectionError):
+    """A runner is offline or its WebSocket could not send a message."""
+
+
 class Engine(str, Enum):
     claude_code = "claude_code"
     codex = "codex"
