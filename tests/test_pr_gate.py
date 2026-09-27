@@ -1,10 +1,13 @@
 """Pure decisions for the PR gate; no GitHub access."""
 
+from io import BytesIO
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
+from scripts import pr_gate as gate_module
 from scripts.pr_gate import GATE_MARKER, apply, decide, select_pr_numbers
 
 
@@ -266,6 +269,58 @@ def test_failed_or_pending_check_blocks_merge():
     snap = snapshot()
     snap["check_runs"] = []
     assert decide(snap).kind == "none"
+
+
+def test_gate_jobs_do_not_block_passing_tests():
+    snap = snapshot()
+    snap["check_runs"] = [
+        {"name": "select", "conclusion": "failure"},
+        {"name": "gate", "conclusion": None},
+        {"name": "gate (42)", "conclusion": "cancelled"},
+        {"name": "test", "conclusion": "success"},
+    ]
+    assert decide(snap).kind == "merge"
+
+
+def test_failed_test_still_blocks_after_gate_jobs_are_excluded():
+    snap = snapshot()
+    snap["check_runs"] = [
+        {"name": "select", "conclusion": "failure"},
+        {"name": "gate (42)", "conclusion": None},
+        {"name": "test", "conclusion": "failure"},
+    ]
+    action = decide(snap)
+    assert action.kind == "none"
+    assert "미통과 check: test" in action.reasons
+    snap["check_runs"] = snap["check_runs"][:2]
+    assert "현재 head의 check run이 없습니다." in decide(snap).reasons
+
+
+def test_write_permission_error_is_distinct_from_other_http_errors(monkeypatch):
+    def denied(request, timeout):
+        response = BytesIO(b'{"message":"Resource not accessible by integration"}')
+        raise HTTPError(request.full_url, 403, "Forbidden", {}, response)
+
+    monkeypatch.setattr(gate_module, "urlopen", denied)
+    api = gate_module.GitHub("team/repo", "dummy")
+    with pytest.raises(gate_module.GitHubPermissionError):
+        api.request("POST", "/issues", {"title": "follow-up"})
+    with pytest.raises(RuntimeError) as caught:
+        api.request("GET", "/issues")
+    assert not isinstance(caught.value, gate_module.GitHubPermissionError)
+
+
+def test_cli_warns_and_succeeds_on_apply_permission_error(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", "dummy")
+    monkeypatch.setattr(gate_module.sys, "argv", ["pr_gate.py", "--repo", "team/repo", "--pr", "42"])
+    monkeypatch.setattr(gate_module, "snapshot_for", lambda api, number: snapshot())
+
+    def denied(api, snap, action):
+        raise gate_module.GitHubPermissionError("write permission denied")
+
+    monkeypatch.setattr(gate_module, "apply", denied)
+    assert gate_module.main() == 0
+    assert "warning: write permission denied" in capsys.readouterr().err
 
 
 def test_warn_once_with_trusted_top_level_mentions_only():

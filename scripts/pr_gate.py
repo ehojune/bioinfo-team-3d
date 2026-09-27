@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import json
 import os
 import re
+import sys
 from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -24,6 +25,11 @@ BADGE = re.compile(
 )
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 FOLLOWUP_MARKER = re.compile(r"<!-- labhq-pr-gate followup pr=\d+ comment=(\d+) -->")
+GATE_CHECK = re.compile(r"(?:select|gate(?: \(\d+\))?)\Z")
+
+
+class GitHubPermissionError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -112,7 +118,7 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     ]
     p1 = [f[1] for f in findings if f[0] == "1"]
     p2 = [f[2] for f in findings if f[0] == "2"]
-    checks = snapshot.get("check_runs", [])
+    checks = [c for c in snapshot.get("check_runs", []) if not GATE_CHECK.fullmatch(c.get("name") or "")]
     bad_checks = [c.get("name") or "unnamed" for c in checks if c.get("conclusion") not in {"success", "neutral", "skipped"}]
     reasons = []
     if p1:
@@ -177,6 +183,12 @@ class GitHub:
             with urlopen(req, timeout=30) as response:
                 return json.load(response)
         except HTTPError as error:
+            try:
+                message = json.load(error).get("message", "")
+            except (ValueError, AttributeError):
+                message = ""
+            if method != "GET" and error.code == 403 and "Resource not accessible by integration" in message:
+                raise GitHubPermissionError(f"GitHub API write permission denied: {method} {path}") from error
             raise RuntimeError(f"GitHub API {method} {path}: HTTP {error.code}") from error
 
     def pages(self, path: str) -> list[dict]:
@@ -275,7 +287,10 @@ def main() -> int:
     action = decide(snap)
     print(json.dumps({"action": action.kind, "reasons": action.reasons, "followups": action.followups}, ensure_ascii=False))
     if not args.dry_run:
-        apply(api, snap, action)
+        try:
+            apply(api, snap, action)
+        except GitHubPermissionError as error:
+            print(f"warning: {error}", file=sys.stderr)
     return 0
 
 
