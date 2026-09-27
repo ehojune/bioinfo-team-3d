@@ -56,6 +56,24 @@ class Runner:
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
+        self._finish_interrupted_tasks()
+
+    def _finish_interrupted_tasks(self) -> None:
+        """A new process cannot finish work accepted by its predecessor."""
+        pending_results = {e.get("task_id") for e in self.store.pending() if e.get("type") == "task.result"}
+        for tid, entry in self.store.all("accepted_task").items():
+            if entry.get("state") != "running":
+                continue
+            if tid not in pending_results:
+                task = entry.get("task") or {}
+                agent_id = task.get("agent_id") or entry.get("agent_id") or "unknown"
+                request_id = task.get("request_id") or entry.get("request_id")
+                self.send({"type": "task.result", "task_id": tid, "agent_id": agent_id,
+                           "request_id": request_id,
+                           "data": TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                                              error="runner restarted: accepted task interrupted")
+                           .model_dump(mode="json")})
+            self.store.put("accepted_task", tid, {**entry, "state": "finished"})
 
     # ---------------- lifecycle ----------------
     async def run_forever(self) -> None:
@@ -146,7 +164,8 @@ class Runner:
             task = Task.model_validate(msg["task"])
             prior = self.store.get("accepted_task", task.id)
             if prior is None:
-                self.store.put("accepted_task", task.id, {"state": "running"})
+                self.store.put("accepted_task", task.id,
+                               {"state": "running", "task": task.model_dump(mode="json")})
             self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
             if prior is None:
                 self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
@@ -157,7 +176,7 @@ class Runner:
                     self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
                                "request_id": task.request_id,
                                "data": TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                                  error="runner interrupted accepted task; manual restart required")
+                                                  error="runner restarted: accepted task interrupted")
                                .model_dump(mode="json")})
                     self.store.put("accepted_task", task.id, {"state": "finished"})
         elif typ == "task.cancel":

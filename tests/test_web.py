@@ -38,6 +38,20 @@ def test_live_reconnect_seq_lives_only_in_page_memory():
     assert "labhq_last_seq" not in html  # ignore any key left by older versions
     assert "${lastSeq ? `&since=${lastSeq}` : ''}" in live  # only reconnections send since
 
+
+def test_replay_gap_snapshot_replaces_office_state():
+    from labhq.gateway import server
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    reset = html.split("function resetSnapshotState() {", 1)[1].split("\n}", 1)[0]
+    for field in ("agents", "approvals", "requests", "jobs", "taskStep"):
+        assert f"S.{field}.clear()" in reset
+    for field in ("suggestions", "feed", "cost", "lastSay", "seq", "doorUntil", "current", "projects"):
+        assert f"S.{field} = " in reset
+    snapshot = html.split("case 'snapshot': {", 1)[1].split("case 'roster.updated':", 1)[0]
+    assert snapshot.index("resetSnapshotState();") < snapshot.index("(d.recent_events || []).forEach")
+    assert snapshot.index("(d.recent_events || []).forEach") < snapshot.index("S.cost = (d.requests || [])")
+    assert "Object.assign(q.steps, r.step_status || {})" in snapshot
+
 def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
     from labhq.gateway import server
 

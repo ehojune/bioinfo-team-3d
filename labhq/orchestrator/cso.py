@@ -217,7 +217,8 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
     if any(word in error for word in ("timeout", "timed out", "rate limit", "rate-limit", "429",
                                       "overload", "capacity", "temporar", "resource exhausted",
                                       "too many requests", "connection reset", "connection refused",
-                                      "connection aborted", "broken pipe", "network unreachable")):
+                                      "connection aborted", "broken pipe", "network unreachable",
+                                      "runner restarted")):
         return "transient"
     if re.search(r"\b5\d{2}\b|\b5xx\b", error):
         return "transient"

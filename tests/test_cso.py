@@ -170,21 +170,24 @@ async def test_hub_online_wait_uses_registration_signal(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_hub_wraps_websocket_send_failure_and_clears_pending_task(tmp_path):
+async def test_hub_preserves_uncertain_task_after_websocket_send_failure(tmp_path):
     class BrokenSocket:
         async def send_text(self, payload):
             raise RuntimeError("socket closed")
 
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path)
+    settings.orchestrator.runner_reconnect_timeout_s = 0.01
     hub = Hub(settings)
     ws = BrokenSocket()
     hub.register_runner("r", ws, [{"id": "worker"}])
     task = Task(agent_id="worker", prompt="work")
-    with pytest.raises(RunnerUnavailable):
-        await hub.dispatch(task)
+    outcome = await hub.dispatch(task)
+    assert not outcome.ok and "delivery uncertain" in outcome.error
     assert "r" not in hub.runners
     assert task.id not in hub.futures and task.id not in hub.task_runner
+    assert hub.store.get("task", task.id)["payload"]["id"] == task.id
+    assert hub.store.get("task", task.id)["accepted"] is False
     with pytest.raises(RunnerUnavailable):
         await hub.send_runner("r", {"type": "task.dispatch"})
 

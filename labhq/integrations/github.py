@@ -174,6 +174,8 @@ class ProjectReporter:
         if typ == "request.created":
             if not proj.issues:
                 return
+            if rid in self.issues:
+                return
             issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
                                           self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
@@ -182,6 +184,8 @@ class ProjectReporter:
             return
 
         num = self.issues.get(rid)
+        if typ in ("request.completed", "request.failed") and proj.issues and num is None:
+            return False  # retry the terminal report after the missing issue is opened
         if typ == "request.plan" and num:
             c = await gh.comment(proj.repo, num, self._clean(self._plan_md(d)))
             await self._posted(rid, "plan", c.get("html_url"), num)

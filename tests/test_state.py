@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from labhq.gateway.server import Hub, create_app
 from labhq.models import ApprovalRequest, Task, TaskResult
+from labhq.orchestrator.cso import failure_kind
 from labhq.runner.daemon import Runner
 from labhq.settings import ProjectSettings, Settings
 from labhq.store import StateStore
@@ -377,9 +378,53 @@ def test_terminal_checkpoint_replays_once_to_reporter_after_restart(tmp_path):
             if received:
                 break
             time.sleep(0.01)
-    assert [e["type"] for e in received] == ["request.completed"]
+    assert [e["type"] for e in received] == ["request.created", "request.completed"]
     assert restored.store.all("terminal_delivery") == {}
     assert [e["type"] for e in restored.store.events_since(0)] == ["request.completed"]
+
+
+def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
+    s = settings(tmp_path)
+    s.projects = [ProjectSettings(id="p", repo="example/private", commit_reports=False)]
+
+    async def checkpoint_then_stop():
+        first = Hub(s)
+        first.requests["r"] = {"id": "r", "mode": "direct", "text": "study", "status": "running",
+                               "project_id": "p", "created_at": time.time()}
+        first.save_request("r")
+        first.reporter.submit = lambda event: None  # event persisted, issue not yet opened
+        await first.publish({"type": "request.created", "request_id": "r", "data": {"text": "study"}})
+        first.orchestrator._finish("r", "finished", {}, ok=True)
+        first.store.close()
+
+    asyncio.run(checkpoint_then_stop())
+    calls = []
+
+    class GitHub:
+        async def create_issue(self, *args):
+            calls.append("create")
+            return {"number": 7, "html_url": "https://example.test/7"}
+
+        async def comment(self, *args):
+            calls.append("comment")
+            return {"html_url": "https://example.test/7#comment"}
+
+        async def close_issue(self, *args):
+            calls.append("close")
+
+    app = create_app(s)
+    hub = app.state.hub
+    hub.reporter.client = lambda: GitHub()
+    with TestClient(app):
+        for _ in range(100):
+            if "close" in calls:
+                break
+            time.sleep(0.01)
+    assert calls == ["create", "comment", "close"]
+    assert hub.store.get("github_issue", "r") == {"number": 7}
+    assert hub.store.all("terminal_delivery") == {}
+    assert [e["type"] for e in hub.store.events_since(0) if e["type"].startswith("request.")] == [
+        "request.created", "request.completed"]
 
 
 @pytest.mark.asyncio
@@ -628,6 +673,76 @@ async def test_runner_acknowledges_duplicate_task_without_running_twice(tmp_path
     assert "one-task" not in restored.tasks
     assert any(e["type"] == "task.result" and e["task_id"] == "one-task"
                for e in restored.store.pending())
+
+
+@pytest.mark.asyncio
+async def test_runner_restart_finishes_accepted_task_for_live_gateway(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "direct", "status": "running", "agent_id": "a"}
+    hub.save_request("r")
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    task = Task(id="accepted", agent_id="a", request_id="r", prompt="work", meta={"kind": "direct"})
+    waiting = asyncio.create_task(hub.dispatch(task))
+    await asyncio.sleep(0)
+    first = Runner(s)
+    first.store.put("accepted_task", task.id, {"state": "running", "task": task.model_dump(mode="json")})
+    first.store.close()
+
+    restored = Runner(s)
+    results = [e for e in restored.store.pending() if e["type"] == "task.result"]
+    assert len(results) == 1 and results[0]["task_id"] == task.id
+    assert "runner restarted" in results[0]["data"]["error"]
+    assert failure_kind(TaskResult.model_validate(results[0]["data"])) == "transient"
+    await restored._on_message({"type": "task.dispatch", "task": task.model_dump(mode="json")})
+    assert len([e for e in restored.store.pending() if e["type"] == "task.result"]) == 1
+    await hub.on_runner_message("local", results[0])
+    assert (await asyncio.wait_for(waiting, 1)).task_id == task.id
+
+
+@pytest.mark.asyncio
+async def test_uncertain_send_reconnects_with_same_task_id(tmp_path):
+    s = settings(tmp_path)
+    s.orchestrator.runner_reconnect_timeout_s = 1
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "status": "running", "text": "study"}
+    hub.save_request("r")
+
+    class FailedAfterFrame(CaptureSocket):
+        async def send_text(self, body):
+            message = json.loads(body)
+            self.sent.append(message)
+            if message.get("type") == "task.dispatch":
+                raise OSError("connection lost after frame")
+
+    old = FailedAfterFrame()
+    hub.register_runner("local", old, [{"id": "a"}], "inc")
+    task = Task(id="original-id", agent_id="a", request_id="r", prompt="work",
+                meta={"kind": "step", "step_id": "s"})
+    pending = asyncio.create_task(hub.orchestrator.run_step(task))
+    for _ in range(50):
+        if any(m.get("type") == "task.dispatch" for m in old.sent):
+            break
+        await asyncio.sleep(0.01)
+    assert not pending.done()
+    assert hub.store.get("task", task.id)["accepted"] is False
+    assert list(hub.store.all("task")) == [task.id]
+
+    new = CaptureSocket()
+    hub.register_runner("local", new, [{"id": "a"}], "inc")
+    for _ in range(50):
+        if any(m.get("type") == "task.dispatch" for m in new.sent):
+            break
+        await asyncio.sleep(0.01)
+    resent = [m for m in new.sent if m.get("type") == "task.dispatch"]
+    assert len(resent) == 1 and resent[0]["task"]["id"] == task.id
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                          "task_id": task.id, "request_id": "r",
+                                          "data": TaskResult(task_id=task.id, agent_id="a", ok=True,
+                                                             text="done").model_dump(mode="json")})
+    assert (await asyncio.wait_for(pending, 1)).text == "done"
+    assert list(hub.store.all("task")) == [task.id]
 
 
 @pytest.mark.asyncio

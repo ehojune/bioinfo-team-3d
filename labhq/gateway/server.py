@@ -157,6 +157,14 @@ class Hub:
             self.store.delete("terminal_delivery", str(seq))
 
     def recover_terminal_deliveries(self) -> None:
+        # The request row itself is the durable source for an issue that was not opened
+        # before a crash. Queue it ahead of any terminal report for the same request.
+        for rid, request in self.requests.items():
+            project = self.s.project(request.get("project_id"))
+            if (project and project.repo and project.issues and rid not in self.reporter.issues
+                    and (project.visibility != "public" or project.allow_public_reports)):
+                self.reporter.submit({"type": "request.created", "ts": request.get("created_at"),
+                                      "request_id": rid, "data": {}})
         for event in self.store.all("terminal_delivery").values():
             self._queue_terminal_delivery(event)
 
@@ -474,6 +482,31 @@ class Hub:
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        except RunnerUnavailable:
+            # The frame may already have reached the runner. Keep its identity and let
+            # the runner's accepted-task ledger deduplicate the resend.
+            await self.publish({"type": "request.step_wait", "ts": time.time(),
+                                "request_id": task.request_id,
+                                "data": {"step_id": sid, "reason": "runner reconnect before task delivery"}})
+            deadline = asyncio.get_running_loop().time() + self.s.orchestrator.runner_reconnect_timeout_s
+            while not fut.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining):
+                    if fut.done():
+                        break
+                    self.futures.pop(task.id, None)
+                    self.task_runner.pop(task.id, None)
+                    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                      error="task delivery uncertain; manual recovery required")
+                if fut.done():
+                    break
+                target = self.agent_runner[task.agent_id]
+                try:
+                    await self.send_runner(target, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+                except RunnerUnavailable:
+                    continue
+                self.task_runner[task.id] = target
+                break
         except Exception:
             self.futures.pop(task.id, None)
             self.task_runner.pop(task.id, None)
@@ -560,8 +593,10 @@ class Hub:
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
-            "requests": [{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
-                                                              "project_id", "plan", "cost_usd", "agent_id")}
+            "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
+                                                                  "project_id", "plan", "cost_usd", "agent_id")},
+                          "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
+                                          for sid, outcome in (r.get("results") or {}).items()}}
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
