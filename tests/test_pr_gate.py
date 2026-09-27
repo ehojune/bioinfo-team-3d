@@ -1,5 +1,8 @@
 """Pure decisions for the PR gate; no GitHub access."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from scripts.pr_gate import GATE_MARKER, apply, decide, select_pr_numbers
@@ -8,6 +11,11 @@ from scripts.pr_gate import GATE_MARKER, apply, decide, select_pr_numbers
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
 NEW_HEAD = "1234567890123456789012345678901234567890"
 BOT = "chatgpt-codex-connector[bot]"
+FIXTURES = Path(__file__).parent / "fixtures" / "pr_gate"
+
+
+def real_sample(name):
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def comment(body, login="maintainer", association="OWNER", **extra):
@@ -34,7 +42,7 @@ def snapshot():
 def finding(badge="P1", body="Fix the parser", **extra):
     comment_id = extra.pop("id", 1)
     url = extra.pop("html_url", f"https://github.com/team/repo/pull/42#discussion_r{comment_id}")
-    return comment(f"[{badge}] {body}", BOT, "NONE", commit_id=HEAD,
+    return comment(f"[{badge}] {body}", BOT, "NONE", commit_id=HEAD, original_commit_id=HEAD,
                    id=comment_id, html_url=url, **extra)
 
 
@@ -146,11 +154,36 @@ def test_running_stale_review_at_cap_still_waits():
     assert decide(snap).kind == "none"
 
 
-def test_missing_review_at_cap_still_waits():
+def test_running_review_without_commit_sha_at_cap_still_waits():
+    snap = snapshot()
+    snap["issue_comments"][0]["body"] = (
+        "<!-- codex-pull-request-review-summary -->\n"
+        "| Review | Status | Commit |\n| --- | --- | --- |\n"
+        "| Code Review | Running | — |"
+    )
+    snap["issue_comments"] += [comment("@codex review") for _ in range(9)]
+    assert decide(snap).kind == "none"
+
+
+def test_missing_review_at_cap_calls_pi_once():
     snap = snapshot()
     snap["pr"]["head"]["sha"] = NEW_HEAD
     snap["issue_comments"] = [comment("@codex review") for _ in range(9)]
+    action = decide(snap)
+    assert action.kind == "needs_pi"
+    assert "봇 리뷰 요약이 없음" in " ".join(action.reasons)
+    snap["issue_comments"].append(comment(
+        f"{GATE_MARKER}\nneeds_pi head={NEW_HEAD}", "github-actions[bot]", "NONE"))
     assert decide(snap).kind == "none"
+
+
+def test_unparsed_review_at_cap_calls_pi_but_before_cap_waits():
+    snap = snapshot()
+    snap["issue_comments"][0]["body"] = "<!-- codex-pull-request-review-summary -->\nNo table yet"
+    snap["issue_comments"] += [comment("@codex review") for _ in range(8)]
+    assert decide(snap).kind == "none"
+    snap["issue_comments"].append(comment("@codex review"))
+    assert decide(snap).kind == "needs_pi"
 
 
 def test_p2_only_merges_and_creates_linked_followup():
@@ -216,7 +249,8 @@ def test_untrusted_issue_cannot_suppress_followup():
 
 def test_unbadged_bot_finding_blocks_merge_and_calls_pi_at_cap():
     snap = snapshot()
-    snap["review_comments"] = [comment("Investigate edge case", BOT, "NONE", commit_id=HEAD)]
+    snap["review_comments"] = [comment("Investigate edge case", BOT, "NONE",
+                                       commit_id=HEAD, original_commit_id=HEAD)]
     assert decide(snap).kind == "none"
     snap["issue_comments"] += [comment("@codex review") for _ in range(9)]
     action = decide(snap)
@@ -254,9 +288,38 @@ def test_stale_review_and_old_findings_do_not_merge_wrong_head():
     assert decide(snap).kind == "none"
     snap = snapshot()
     old = finding()
-    old["commit_id"] = "1234567890123456789012345678901234567890"
+    old["original_commit_id"] = "1234567890123456789012345678901234567890"
     snap["review_comments"] = [old]
     assert decide(snap).kind == "merge"
+
+
+def test_real_pr11_p2_badge_merges_and_creates_followup():
+    findings = real_sample("real_bot_comments_pr11.json")
+    snap = snapshot()
+    snap["pr"]["number"] = 11
+    snap["pr"]["head"]["sha"] = findings[0]["original_commit_id"]
+    snap["issue_comments"] = real_sample("real_bot_summary_pr11.json")
+    snap["review_comments"] = findings
+    action = decide(snap)
+    assert action.kind == "merge"
+    assert len(action.followups) == 1
+    assert action.followups[0]["title"].startswith("PR #11 follow-up: Honor transi")
+    assert "followup pr=11 comment=4116885580" in action.followups[0]["body"]
+
+
+def test_real_pr10_old_p1_is_excluded_but_two_current_p1_remain():
+    findings = real_sample("real_bot_comments_pr10.json")
+    snap = snapshot()
+    snap["pr"]["number"] = 10
+    snap["pr"]["head"]["sha"] = findings[1]["original_commit_id"]
+    snap["issue_comments"][0]["body"] = snap["issue_comments"][0]["body"].replace("abcdef0", "a7e4350")
+    snap["review_comments"] = findings
+    action = decide(snap)
+    assert action.kind == "none"
+    reasons = " ".join(action.reasons)
+    assert "상한 판정을 stale review 조기 반환보다 먼저 수행하세요" not in reasons
+    assert "Codex의 실제 P2 badge 형식을 인식하세요" in reasons
+    assert "Review가 없더라도 상한에서 PI를 호출하세요" in reasons
 
 
 def test_spoofed_summary_does_not_count_and_reaction_does_not_gate():

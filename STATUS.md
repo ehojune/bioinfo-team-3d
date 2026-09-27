@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · PR #10 실제 봇 형식 대응
+
+- 무엇을: 이미지형 P1/P2 배지를 읽고, 현재 head에서 작성된 지적만 `original_commit_id`로 고른다. 요약이 없거나 파싱되지 않아도 10회면 PI를 호출하며 Running은 기다린다.
+- 테스트: 원본 `a7e4350`의 Windows pytest 8 failed/251 passed/14 skipped → 8 failed/255 passed/14 skipped(새 실패 0). 실제 봇 fixture를 포함한 게이트 테스트 25 passed, 공개 검사 통과.
+- 막힌 점: 실제 GitHub 쓰기 동작은 push 전이라 미검증.
+- 다음: Claude가 새 커밋을 push해 PR #10의 판정 결과를 확인한다.
+
 ## 2026-09-28 · PR 게이트 상한 정체 해소
 
 - 무엇을: 10회 뒤 새 head를 아직 보지 않은 Completed 리뷰도 `needs-pi`로 보내고, 같은 head의 중복 호출을 막는다. Running은 기다린다.

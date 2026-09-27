@@ -18,7 +18,10 @@ GATE_MARKER = "<!-- labhq-pr-gate -->"
 SUMMARY_MARKER = "codex-pull-request-review-summary"
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 MENTION = re.compile(r"(?<![\w])@codex\s+review\b", re.I)
-BADGE = re.compile(r"\[P([12])\]", re.I)
+BADGE = re.compile(
+    r"!\[P(?P<image>[12]) Badge\]\(https://img\.shields\.io/badge/P(?P=image)-[^)\s]+\)"
+    r"|\[P(?P<plain>[12])\]", re.I,
+)
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
 FOLLOWUP_MARKER = re.compile(r"<!-- labhq-pr-gate followup pr=\d+ comment=(\d+) -->")
 
@@ -48,18 +51,19 @@ def _latest_review(comments: list[dict]) -> tuple[str, str] | None:
         if "|" not in line or not re.search(r"\b(Completed|Running)\b", line, re.I):
             continue
         match = SHA.search(line)
+        if re.search(r"\bRunning\b", line, re.I):
+            return "running", match.group().lower() if match else ""
         if match:
-            status = "running" if re.search(r"\bRunning\b", line, re.I) else "completed"
-            return status, match.group().lower()
+            return "completed", match.group().lower()
     return None
 
 
 def _finding(comment: dict, number: int) -> tuple[str, str, dict[str, str]]:
     body = (comment.get("body") or "").strip()
     badge = BADGE.search(body)
-    severity = badge.group(1) if badge else "1"  # Unknown severity is unsafe to waive.
+    severity = (badge.group("image") or badge.group("plain")) if badge else "1"  # Unknown severity is unsafe to waive.
     title = next((line.strip(" #*` ") for line in body.splitlines() if line.strip()), "Codex finding")
-    title = BADGE.sub("", title).strip(" #*` :")[:100] or "Codex finding"
+    title = re.sub(r"</?sub>", "", BADGE.sub("", title), flags=re.I).strip(" #*` :")[:100] or "Codex finding"
     issue_body = f"원본 지적:\n\n{body}\n\n링크: {comment.get('html_url') or ''}"
     if severity == "2":
         issue_body += f"\n\n<!-- labhq-pr-gate followup pr={number} comment={comment['id']} -->"
@@ -80,13 +84,19 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
         if _trusted(c) and _login(c) != BOT and GATE_MARKER not in (c.get("body") or "")
     )
     review = _latest_review(comments)
-    if not review or review[0] == "running":
+    if review and review[0] == "running":
         return Action("none", ["봇 리뷰가 아직 완료되지 않았습니다."])
     gate_comments = [
         c.get("body") or "" for c in comments
         if (_login(c) == GATE_BOT or _trusted(c)) and GATE_MARKER in (c.get("body") or "")
     ]
     pi_called_for_head = any(f"needs_pi head={head}" in body for body in gate_comments)
+    if not review:
+        if rounds >= cap:
+            if pi_called_for_head:
+                return Action("none", ["현재 head의 PI 호출을 이미 남겼습니다."])
+            return Action("needs_pi", ["상한 도달 뒤 봇 리뷰 요약이 없음"])
+        return Action("none", ["봇 리뷰가 아직 완료되지 않았습니다."])
     reviewed_head = head.lower().startswith(review[1])
     if not reviewed_head:
         if rounds >= cap:
@@ -98,7 +108,7 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     findings = [
         _finding(c, pr["number"])
         for c in snapshot.get("review_comments", [])
-        if _login(c) == BOT and c.get("commit_id") == head and not c.get("in_reply_to_id")
+        if _login(c) == BOT and c.get("original_commit_id") == head and not c.get("in_reply_to_id")
     ]
     p1 = [f[1] for f in findings if f[0] == "1"]
     p2 = [f[2] for f in findings if f[0] == "2"]
