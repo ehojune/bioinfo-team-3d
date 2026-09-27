@@ -28,7 +28,8 @@ build-backend = "setuptools.build_meta"
 include = ["labhq*"]
 
 [tool.setuptools.package-data]
-labhq = ["web/*"]
+labhq = ["web/*", "web/lab3d/*", "web/lab3d/src/*", "web/lab3d/assets/*",
+         "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

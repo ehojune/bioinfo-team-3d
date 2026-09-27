@@ -49,8 +49,8 @@ P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Clau
    cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
    hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
-P4 웹 사무실 실사용 점검 + 3D 도입: iPhone Safari와 데스크톱에서 확인하고 고친다. 3D 사무실(labhq/web/lab3d, #3)을 `/3d`로 연결해
-   2.5D와 함께 둔다. 먼저 index.html의 이벤트 처리를 상태 reducer로 떼어 두 렌더러가 같이 쓰게 한다. 승인 UI는 DOM에 둔다.
+P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer를 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
+   Chrome headless의 폰/데스크톱 검증 완료. 다음: Claude 내장 브라우저 확인과 iPhone Safari 실사용·발열 점검.
 P5 프로젝트 GitHub 보고: private 테스트 저장소로 --project 요청 → 이슈, 코멘트, 보고서 커밋, 가림 처리를 확인한다.
 P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 scanpy 채용 → 수습 통과, 비용과 시간을 기록한다.
 보류(PI 확인 전에는 만들지 않음): iOS 네이티브 앱, 거버넌스(정부) 층.
@@ -81,7 +81,7 @@ PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정�
 | 도구 | `labhq/tools/*.py` | SGE/PBS 스케줄러, hpc_mcp, approval_mcp(권한 프롬프트) |
 | 파견직 | `labhq/recruit/paper2agent.py` | 채용 → 오퍼레터 → 수습 → 계약 → 인재풀 |
 | GitHub | `labhq/integrations/github.py` | 요청별 이슈, 코멘트, 보고서 커밋, 공개 가드, @codex 리뷰 |
-| 웹 | `labhq/web/index.html` | 2.5D 사무실(데모/라이브), 승인, DAG, 메신저, HPC 랙 |
+| 웹 | `labhq/web/index.html`, `state.js`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, DOM 승인 |
 | 직원 | `agents/core/*.yaml` | 정규직 11명 (엔진·모델·도구·프롬프트) |
 
 이벤트 프로토콜과 설정은 `README.md` §7–8, 알려진 한계는 §10을 보세요.

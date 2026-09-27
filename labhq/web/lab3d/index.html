@@ -7,6 +7,8 @@
   <meta name="theme-color" content="#f1ede3">
   <link rel="icon" href="data:,">
   <title>labhq · 종이숲 연구소</title>
+  <!--LABHQ_BOOT-->
+  <script src="../state.js"></script>
   <script type="importmap">{"imports":{"three":"../vendor/three/build/three.module.js","three/addons/":"../vendor/three/examples/jsm/"}}</script>
   <style>
     :root{--paper:#f1ede3;--ink:#354d47;--muted:#77847a;--line:#d3d5c6;--sage:#718c73;--orange:#c88651;--red:#c25445;font-family:"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;color:var(--ink);background:var(--paper);font-synthesis:none}
@@ -26,9 +28,22 @@
     #approval-chip{position:absolute;z-index:6;right:32px;top:206px;background:#fff5e5;border-color:var(--red);color:var(--red);font-size:11px}#approval-chip[hidden]{display:none}
     @media(max-width:760px){#approval-chip{right:18px;top:165px;font-size:10px;min-height:32px;padding:5px 10px}.tag{max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis}body.gallery-mode #approval-chip{top:123px}body.gallery-mode .gallery-caption{top:125px;max-width:calc(100% - 155px);line-height:1.5}}
     @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+    #demo-2d{position:absolute;z-index:8;top:70px;left:32px;font-size:12px}
+    #live-panel{position:absolute;right:24px;top:250px;bottom:140px;width:300px;z-index:8;padding:12px;background:#faf8f1f5;border:1px solid var(--line);border-radius:12px;overflow:auto;font-size:12px;overflow-wrap:anywhere}
+    #live-panel[hidden],#token-form[hidden]{display:none}.live-top{display:flex;justify-content:space-between;gap:12px}#live-panel a{color:var(--ink)}#live-panel summary{cursor:pointer;padding:8px 0;font-weight:600}#live-panel p{margin:6px 0}#live-panel article{border-top:1px solid var(--line);padding:8px 0}#live-panel button{min-height:40px;margin:4px 6px 0 0;font-size:12px}#token-form input{width:100%;min-height:36px}#live-notice{color:var(--red)}
+    body.live-mode .demo{font-size:9px}body.live-mode .legend{display:none}
+    @media(max-width:760px){body.live-mode{height:100dvh;display:flex;flex-direction:column;overflow:auto}body.live-mode header{position:relative;left:auto;right:auto;top:auto;margin:12px 16px;padding-bottom:8px;flex:none}body.live-mode .intro,body.live-mode .scene-note,body.live-mode .hint,body.live-mode .gallery-caption{display:none}body.live-mode .view-tools{position:relative;top:auto;right:auto;justify-content:center;flex:none}body.live-mode #stage,body.live-mode.gallery-mode #stage{position:relative;inset:auto;height:260px;min-height:200px;flex:1 0 200px}body.live-mode #panel,body.live-mode.gallery-mode #panel{position:relative;inset:auto;width:auto;margin:6px 16px;flex:none}body.live-mode #live-panel{position:relative;inset:auto;width:auto;margin:6px 16px;max-height:260px;flex:none;order:5}body.live-mode footer{position:relative;inset:auto;margin:0 16px;flex:none;order:6}body.live-mode #approval-chip{position:relative;inset:auto;align-self:center;flex:none}body.live-mode #skin-notice{position:relative;inset:auto;margin:4px 16px}#demo-2d{left:18px;top:66px}}
   </style>
 </head>
 <body>
+  <section id="live-panel" aria-label="실시간 요청과 승인" hidden>
+    <div class="live-top"><a id="view-2d" href="/">2.5D 사무실</a><span id="connection" role="status">연결 중</span></div>
+    <form id="token-form" hidden><label for="token">게이트웨이 토큰</label><input id="token" type="password" autocomplete="off"><button>연결</button></form>
+    <p id="live-notice" role="status"></p>
+    <details open><summary>결정할 일 <span id="approval-count">0</span></summary><div id="approvals"></div></details>
+    <details open><summary>진행 중인 요청</summary><div id="requests"></div></details>
+  </section>
+  <a id="demo-2d" href="../?demo=1">2.5D 데모</a>
   <header><div class="brand"><div class="mark">l</div><strong>labhq</strong><small>PAPERWOOD LAB</small></div><div class="edition">ART DIRECTION · CODEX<span>한 층, 열두 동료</span></div></header>
   <section class="intro"><p class="eyebrow">A LITTLE ROOM FOR BIG QUESTIONS</p><h1>생각이 자라는<br>작은 연구소.<span class="en">The Paperwood Office</span></h1><p>종이처럼 가볍게, 나무처럼 따뜻하게.<br>오늘의 연구는 이 작은 책상에서 시작됩니다.</p></section>
   <main id="stage" aria-label="12종 동물 직원이 책상에 앉아 있는 3D 연구소"></main>

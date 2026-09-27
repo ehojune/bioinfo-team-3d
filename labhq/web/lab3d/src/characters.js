@@ -121,7 +121,7 @@ export function makeCharacter(s,parent,def,index){
       s.box(hat,def.badge.color,[.35,.07,.282],[.23,.18,.025]);
       // A-D use batched strokes: readable initials without another texture/pass.
       const strokes={A:[[-1,-1,0,1],[0,1,1,-1],[-.6,0,.6,0]],B:[[-1,-1,-1,1],[-1,1,.6,1],[.6,1,.6,-1],[-1,0,.6,0],[-1,-1,.6,-1]],C:[[.7,1,-.7,1],[-.7,1,-.7,-1],[-.7,-1,.7,-1]],D:[[-1,-1,-1,1],[-1,1,.5,.7],[.5,.7,.5,-.7],[.5,-.7,-1,-1]]};
-      for(const [x1,y1,x2,y2] of strokes[def.badge.letter])s.bar(hat,C.white,[.35+x1*.055,.07+y1*.06,.303],[.35+x2*.055,.07+y2*.06,.303],.012);
+      for(const [x1,y1,x2,y2] of (strokes[def.badge.letter]||[]))s.bar(hat,C.white,[.35+x1*.055,.07+y1*.06,.303],[.35+x2*.055,.07+y2*.06,.303],.012);
     }
     for(let j=0;j<4;j++)s.box(hat,C.sage,[-.22+j*.055,.12+j*.07,.215-j*.035],[.30-j*.04,.015,.012]);
   }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { C, Signage, canvasTexture } from './primitives.js';
 
-export function buildOffice(s,scene,roster){
+export function buildOffice(s,scene,roster,{demo=true}={}){
   const room=s.group(scene);room.name='office';const signs=new Signage();
   s.box(room,'#B6BEA6',[0,-.26,0],[17.7,.50,13.25]);
   s.box(room,'#DADCC8',[0,-.04,0],[17.45,.14,13.0]);
@@ -69,7 +69,7 @@ export function buildOffice(s,scene,roster){
     for(let k=0;k<4;k++)s.box(rack,'#30473F',[-.24+k*.12,y,.45],[.065,.09,.012]);
     const led=s.ball(rack,C.gold,[.43,y,.47],[.041,.041,.02]);leds.push(led);
   }
-  signs.add('HPC / JOB RUNNING',[-6.83,2.63,-5.11],1.13,.21,{bg:'#354D47',fg:'#DFCA84',font:29});
+  signs.add(demo?'HPC / JOB RUNNING':'HPC',[-6.83,2.63,-5.11],1.13,.21,{bg:'#354D47',fg:'#DFCA84',font:29});
   // DAG board as a generated CanvasTexture, not an imported image.
   s.box(room,C.wood,[-1.38,2.15,-6.08],[5.50,2.04,.15]);
   const dag=canvasTexture(1024,384,(ctx,w,h)=>{
@@ -105,5 +105,19 @@ export function buildOffice(s,scene,roster){
   const shadowTex=canvasTexture(64,64,(ctx)=>{const g=ctx.createRadialGradient(32,32,2,32,32,30);g.addColorStop(0,'rgba(56,67,42,.27)');g.addColorStop(.6,'rgba(56,67,42,.13)');g.addColorStop(1,'rgba(56,67,42,0)');ctx.fillStyle=g;ctx.fillRect(0,0,64,64);});
   const shadow=new THREE.InstancedMesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({map:shadowTex,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1}),roster.length);
   const d=new THREE.Object3D();roster.forEach((c,i)=>{d.position.set(c.seat[0],.112,c.seat[1]+.45);d.rotation.x=-Math.PI/2;d.scale.set(3.55,2.72,1);d.updateMatrix();shadow.setMatrixAt(i,d.matrix);});shadow.frustumCulled=false;room.add(shadow);
-  return {room,leds};
+  function updateBoard(request){
+    const canvas=dag.image,ctx=canvas.getContext('2d');
+    ctx.fillStyle='#FAF7E9';ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.textAlign='left';ctx.fillStyle='#466052';ctx.font='600 30px sans-serif';
+    ctx.fillText(request?.text||'요청 없음',34,48,950);
+    if(request){
+      ctx.font='22px sans-serif';ctx.fillText(`${request.status} · ${request.phase}`,34,88,950);
+      const plan=request.plan||[],states=request.steps||{};
+      plan.slice(0,6).forEach((step,i)=>{ctx.fillStyle=states[step.id]==='done'?'#718C73':states[step.id]==='error'?'#C25445':'#466052';ctx.fillText(`${step.id} · ${states[step.id]||'pending'} · ${step.instruction||''}`,34,132+i*36,950);});
+      if(plan.length>6){ctx.fillStyle='#466052';ctx.fillText(`+ ${plan.length-6} 단계 · 전체 목록은 요청 패널`,34,365,950);}
+    }
+    dag.needsUpdate=true;
+  }
+  if(!demo){updateBoard(null);leds.forEach(led=>{led.visible=false;});}
+  return {room,leds,updateBoard};
 }
