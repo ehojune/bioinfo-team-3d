@@ -70,18 +70,50 @@ class GitHubClient:
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels})
 
+    async def find_request_issue(self, repo: str, rid: str) -> dict | None:
+        marker = f"<!-- labhq request {rid} -->"
+        legacy = f"request id: `{rid}`"
+        page = 1
+        while True:
+            issues = await self._req("GET", f"/repos/{repo}/issues",
+                                     params={"state": "all", "per_page": 100, "page": page})
+            match = next((issue for issue in issues if not issue.get("pull_request") and
+                          (marker in (issue.get("body") or "") or legacy in (issue.get("body") or ""))), None)
+            if match or len(issues) < 100:
+                return match
+            page += 1
+
     async def comment(self, repo: str, number: int, body: str) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues/{number}/comments", json={"body": body})
+
+    async def find_issue_comment(self, repo: str, number: int, marker: str) -> dict | None:
+        page = 1
+        while True:
+            comments = await self._req("GET", f"/repos/{repo}/issues/{number}/comments",
+                                       params={"per_page": 100, "page": page})
+            match = next((c for c in comments if marker in (c.get("body") or "")), None)
+            if match or len(comments) < 100:
+                return match
+            page += 1
 
     async def close_issue(self, repo: str, number: int) -> dict:
         return await self._req("PATCH", f"/repos/{repo}/issues/{number}",
                                json={"state": "closed", "state_reason": "completed"})
 
+    async def issue_is_closed(self, repo: str, number: int) -> bool:
+        issue = await self._req("GET", f"/repos/{repo}/issues/{number}")
+        return issue.get("state") == "closed"
+
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
-            sha = r.json().get("sha")
+            existing = r.json()
+            sha = existing.get("sha")
+            if existing.get("encoding") == "base64" and base64.b64decode(existing.get("content") or "").decode() == content:
+                return {"content": {"html_url": existing.get("html_url")}, "unchanged": True}
+        elif r.status_code != 404:
+            r.raise_for_status()
         body = {"message": message, "branch": branch, "content": base64.b64encode(content.encode()).decode()}
         if sha:
             body["sha"] = sha
@@ -99,7 +131,8 @@ class ProjectReporter:
         self.hub, self.s, self.transport = hub, settings, transport
         self.queue: asyncio.Queue | None = None
         self.worker: asyncio.Task | None = None
-        self.issues: dict[str, int] = {}
+        self.issues: dict[str, int] = {rid: int(body["number"])
+                                       for rid, body in hub.store.all("github_issue").items()}
         self._client: GitHubClient | None = None
         self._warned: set[str] = set()
 
@@ -134,7 +167,9 @@ class ProjectReporter:
         while True:
             ev = await self.queue.get()
             try:
-                await self.handle(ev)
+                delivered = await self.handle(ev)
+                if delivered is not False:
+                    self.hub.ack_reporter_delivery(ev)
             except Exception as e:
                 log.warning("GitHub update failed (%s): %s", ev.get("type"), e)
                 await self.hub.publish({"type": "github.failed", "ts": time.time(), "request_id": ev.get("request_id"),
@@ -148,11 +183,39 @@ class ProjectReporter:
     def _clean(self, text: str) -> str:
         return sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
 
+    @staticmethod
+    def _action_key(ev: dict, action: str) -> str:
+        return f"{ev['request_id']}:{ev.get('seq') or ev['type']}:{action}"
+
+    def _action(self, ev: dict, action: str) -> dict | None:
+        return self.hub.store.get("github_action", self._action_key(ev, action))
+
+    def _save_action(self, ev: dict, action: str, body: dict) -> None:
+        self.hub.store.put("github_action", self._action_key(ev, action), body)
+
+    async def _comment_once(self, ev: dict, gh: GitHubClient, repo: str, number: int,
+                            body: str, kind: str) -> None:
+        rid = ev["request_id"]
+        marker = f"<!-- labhq {ev['type']} {rid} {ev.get('seq') or ev['type']} -->"
+        saved = self._action(ev, "comment") or {}
+        if saved.get("done"):
+            return
+        if not saved:
+            self._save_action(ev, "comment", {"done": False, "marker": marker})
+        find_comment = getattr(gh, "find_issue_comment", None)
+        comment = await find_comment(repo, number, marker) if saved and find_comment else None
+        if comment is None:
+            comment = await gh.comment(repo, number,
+                                       f"{clip(self._clean(body), MAX_BODY - len(marker) - 2)}\n\n{marker}")
+        self._save_action(ev, "comment", {"done": True, "marker": marker,
+                                          "url": comment.get("html_url")})
+        await self._posted(rid, kind, comment.get("html_url"), number)
+
     async def _posted(self, rid: str, kind: str, url: str | None, number: int | None = None) -> None:
         await self.hub.publish({"type": "github.posted", "ts": time.time(), "request_id": rid,
                                 "data": {"kind": kind, "url": url, "number": number}})
 
-    async def handle(self, ev: dict) -> None:
+    async def handle(self, ev: dict) -> bool | None:
         rid = ev["request_id"]
         proj = self.project_of(rid)
         if not proj or not proj.repo:
@@ -164,55 +227,88 @@ class ProjectReporter:
             return
         gh = self.client()
         if gh is None:
-            return
+            return False  # keep a terminal delivery until credentials are available
         typ, d = ev["type"], ev.get("data") or {}
         req = self.hub.requests.get(rid) or {}
 
         if typ == "request.created":
             if not proj.issues:
                 return
-            issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
-                                          self._clean(self._issue_body(rid, req)), proj.labels)
+            if rid in self.issues:
+                return
+            find_issue = getattr(gh, "find_request_issue", None)
+            issue = await find_issue(proj.repo, rid) if find_issue else None
+            if issue is None:
+                issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
+                                              self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
+            self.hub.store.put("github_issue", rid, {"number": issue["number"]})
             await self._posted(rid, "issue", issue.get("html_url"), issue["number"])
             return
 
         num = self.issues.get(rid)
+        if typ in ("request.plan", "request.review", "recruit.done", "request.completed", "request.failed") and proj.issues and num is None:
+            return False  # keep delivery until the request issue can be opened
         if typ == "request.plan" and num:
-            c = await gh.comment(proj.repo, num, self._clean(self._plan_md(d)))
-            await self._posted(rid, "plan", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num, self._plan_md(d), "plan")
         elif typ == "request.review" and num:
-            c = await gh.comment(proj.repo, num, self._clean(self._review_md(d)))
-            await self._posted(rid, "review", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num, self._review_md(d), "review")
         elif typ == "recruit.done" and num:
             a = d.get("agent") or {}
-            c = await gh.comment(proj.repo, num, self._clean(
-                f"🐥 파견직 합류: **{a.get('name')}** (`{a.get('id')}`) — 수습 통과={d.get('passed_probation')}"))
-            await self._posted(rid, "recruit", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num,
+                                     f"🐥 파견직 합류: **{a.get('name')}** (`{a.get('id')}`) — "
+                                     f"수습 통과={d.get('passed_probation')}", "recruit")
         elif typ in ("request.completed", "request.failed"):
             report = d.get("report") or req.get("report") or d.get("error") or ""
             report_url = None
             if typ == "request.completed" and proj.commit_reports:
-                path = f"{proj.reports_dir.strip('/')}/{time.strftime('%Y-%m-%d')}-{rid}.md"
-                res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
-                                        f"labhq: report for {rid}", proj.branch)
-                report_url = (res.get("content") or {}).get("html_url")
-                await self._posted(rid, "report", report_url, None)
+                saved = self._action(ev, "report") or {}
+                path = saved.get("path") or (f"{proj.reports_dir.strip('/')}/"
+                                             f"{time.strftime('%Y-%m-%d', time.localtime(req.get('finished_at') or time.time()))}-{rid}.md")
+                if not saved:
+                    self._save_action(ev, "report", {"path": path, "done": False})
+                if saved.get("done"):
+                    report_url = saved.get("url")
+                else:
+                    res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
+                                            f"labhq: report for {rid}", proj.branch)
+                    report_url = (res.get("content") or {}).get("html_url")
+                    self._save_action(ev, "report", {"path": path, "done": True, "url": report_url})
+                    await self._posted(rid, "report", report_url, None)
             if num:
                 ok = typ == "request.completed" and d.get("ok", True)
                 head = "🏁 완료" if ok else "💥 실패"
                 link = f"\n\n보고서: {report_url}" if report_url else ""
                 cost = f" · 비용 ${d.get('cost_usd')}" if d.get("cost_usd") is not None else ""
-                c = await gh.comment(proj.repo, num, self._clean(f"{head}{cost}{link}\n\n{clip(report, 20000)}"))
-                await self._posted(rid, "final", c.get("html_url"), num)
+                marker = f"<!-- labhq terminal {rid} {ev.get('seq') or typ} -->"
+                saved = self._action(ev, "comment") or {}
+                if not saved:
+                    self._save_action(ev, "comment", {"done": False, "marker": marker})
+                if not saved.get("done"):
+                    find_comment = getattr(gh, "find_issue_comment", None)
+                    c = await find_comment(proj.repo, num, marker) if saved and find_comment else None
+                    if c is None:
+                        c = await gh.comment(proj.repo, num, self._clean(
+                            f"{head}{cost}{link}\n\n{clip(report, 20000)}\n\n{marker}"))
+                    self._save_action(ev, "comment", {"done": True, "marker": marker,
+                                                      "url": c.get("html_url")})
+                    await self._posted(rid, "final", c.get("html_url"), num)
                 if ok:
-                    await gh.close_issue(proj.repo, num)
+                    saved = self._action(ev, "close") or {}
+                    if not saved:
+                        self._save_action(ev, "close", {"done": False})
+                    if not saved.get("done"):
+                        is_closed = getattr(gh, "issue_is_closed", None)
+                        if not (saved and is_closed and await is_closed(proj.repo, num)):
+                            await gh.close_issue(proj.repo, num)
+                        self._save_action(ev, "close", {"done": True})
 
     # ---------- markdown ----------
     def _issue_body(self, rid: str, req: dict) -> str:
         dash = f"\n\n실시간 사무실: {self.s.github.dashboard_url}" if self.s.github.dashboard_url else ""
         return (f"**요청** ({req.get('mode', 'orchestrate')})\n\n> {req.get('text', '')}\n\n"
-                f"request id: `{rid}` · 이 이슈에 계획, 리뷰, 최종 보고가 차례로 올라옵니다.{dash}")
+                f"request id: `{rid}` · 이 이슈에 계획, 리뷰, 최종 보고가 차례로 올라옵니다.{dash}"
+                f"\n\n<!-- labhq request {rid} -->")
 
     @staticmethod
     def _plan_md(plan: dict) -> str:

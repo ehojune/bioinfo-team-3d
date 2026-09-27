@@ -40,6 +40,12 @@ class FakeHub:
     def supports_resume(self, agent_id):
         return False
 
+    def result_map(self, rid):
+        return {}
+
+    def save_request(self, rid):
+        pass
+
     async def wait_agent_online(self, agent_id, timeout_s):
         self.waiting_for_runner.set()
         await self.runner_online.wait()
@@ -148,8 +154,10 @@ async def test_runner_offline_retries_once_then_succeeds():
 
 
 @pytest.mark.asyncio
-async def test_hub_online_wait_uses_registration_signal():
-    hub = Hub(Settings())
+async def test_hub_online_wait_uses_registration_signal(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = Hub(settings)
     hub.set_roster("r", [{"id": "worker"}])  # roster remains while its runner is offline
     waiting = asyncio.create_task(hub.wait_agent_online("worker", 30))
     await asyncio.sleep(0)
@@ -162,19 +170,24 @@ async def test_hub_online_wait_uses_registration_signal():
 
 
 @pytest.mark.asyncio
-async def test_hub_wraps_websocket_send_failure_and_clears_pending_task():
+async def test_hub_preserves_uncertain_task_after_websocket_send_failure(tmp_path):
     class BrokenSocket:
         async def send_text(self, payload):
             raise RuntimeError("socket closed")
 
-    hub = Hub(Settings())
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    settings.orchestrator.runner_reconnect_timeout_s = 0.01
+    hub = Hub(settings)
     ws = BrokenSocket()
     hub.register_runner("r", ws, [{"id": "worker"}])
     task = Task(agent_id="worker", prompt="work")
-    with pytest.raises(RunnerUnavailable):
-        await hub.dispatch(task)
+    outcome = await hub.dispatch(task)
+    assert not outcome.ok and "delivery uncertain" in outcome.error
     assert "r" not in hub.runners
     assert task.id not in hub.futures and task.id not in hub.task_runner
+    assert hub.store.get("task", task.id)["payload"]["id"] == task.id
+    assert hub.store.get("task", task.id)["accepted"] is False
     with pytest.raises(RunnerUnavailable):
         await hub.send_runner("r", {"type": "task.dispatch"})
 

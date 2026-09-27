@@ -217,7 +217,8 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
     if any(word in error for word in ("timeout", "timed out", "rate limit", "rate-limit", "429",
                                       "overload", "capacity", "temporar", "resource exhausted",
                                       "too many requests", "connection reset", "connection refused",
-                                      "connection aborted", "broken pipe", "network unreachable")):
+                                      "connection aborted", "broken pipe", "network unreachable",
+                                      "runner restarted")):
         return "transient"
     if re.search(r"\b5\d{2}\b|\b5xx\b", error):
         return "transient"
@@ -242,7 +243,8 @@ class Orchestrator:
         rid = task.request_id or ""
         async def dispatch_with_retry(current: Task) -> TaskResult:
             key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
-            for attempt in range(1, self.cfg.step_max_attempts + 1):
+            first_attempt = getattr(self.hub, "recovery_attempt", lambda _task: 1)(current)
+            for attempt in range(first_attempt, self.cfg.step_max_attempts + 1):
                 await self._check_budget(rid)
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
@@ -360,6 +362,8 @@ class Orchestrator:
                 ctx += f"\n\n## Your previous result\n{clip(prev.text if prev else '', self.cfg.context_chars_per_step)}"
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         meta={"kind": "step", "step_id": step["id"], "request": request,
+                              "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
+                              .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", [])})
             async with sem:
@@ -415,9 +419,10 @@ class Orchestrator:
         return "\n\n".join(out)
 
     # ---------- request entry point ----------
-    async def run_request(self, rid: str) -> None:
+    async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
         text = req["text"]
+        self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             if req["mode"] == "direct":
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
@@ -431,45 +436,60 @@ class Orchestrator:
             roster = list(self.hub.agents.values())
             known = {a["id"] for a in roster}
             n = self.cfg.context_chars_per_step
-            briefing = ""
-            cos = self.cfg.chief_of_staff_agent
-            if cos and cos in known:
-                b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
-                                             meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
-                if not b.ok:
-                    self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
+            if resume and req.get("plan", {}).get("steps"):
+                steps = req["plan"]["steps"]
+                results: dict[str, TaskResult] = self.hub.result_map(rid)
+                remaining = {s["id"] for s in steps} - set(req.get("results") or {})
+                pending_revisions = req.get("pending_revisions") or {}
+                for sid, entry in pending_revisions.items():
+                    if sid in remaining and entry.get("previous_result"):
+                        dict.__setitem__(results, sid, TaskResult.model_validate(entry["previous_result"]))
+                resume_feedback = {sid: entry["feedback"] for sid, entry in pending_revisions.items()
+                                   if sid in remaining and entry.get("feedback")}
+            else:
+                briefing = ""
+                cos = self.cfg.chief_of_staff_agent
+                if cos and cos in known:
+                    b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
+                                                 meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
+                    if not b.ok:
+                        self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
+                        return
+                    if rid in self.budget_denials:
+                        self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
+                        return
+                    briefing = b.text
+
+                plan_res = await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
+                    prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
+                                              max_steps=self.cfg.max_steps),
+                    meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
+                if not plan_res.ok:
+                    self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 if rid in self.budget_denials:
-                    self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
+                    self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
-                briefing = b.text
+                plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
+                req["plan"] = {**plan, "steps": steps, "warnings": warnings}
+                await self._emit(rid, "request.plan", req["plan"])
+                if plan.get("clarifying_questions"):
+                    await self._emit(rid, "request.questions", {"questions": plan["clarifying_questions"]})
+                for rec in plan.get("recruit") or []:
+                    if rec.get("repo") or rec.get("paper"):
+                        await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
+                if not steps:
+                    self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
+                    return
+                results = self.hub.result_map(rid)
+                remaining = {s["id"] for s in steps} - set(results)
+                resume_feedback = {}
 
-            plan_res = await self.run_step(Task(
-                agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
-                prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
-                                          max_steps=self.cfg.max_steps),
-                meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
-            if not plan_res.ok:
-                self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
-                return
-            if rid in self.budget_denials:
-                self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
-                return
-            plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-            steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
-            req["plan"] = {**plan, "steps": steps, "warnings": warnings}
-            await self._emit(rid, "request.plan", req["plan"])
-            if plan.get("clarifying_questions"):
-                await self._emit(rid, "request.questions", {"questions": plan["clarifying_questions"]})
-            for rec in plan.get("recruit") or []:
-                if rec.get("repo") or rec.get("paper"):
-                    await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
-            if not steps:
-                self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
-                return
-
-            results: dict[str, TaskResult] = {}
-            await self.run_dag(rid, text, steps, results)
+            if remaining:
+                await self.run_dag(rid, text, steps, results, only=remaining,
+                                   feedback=resume_feedback or None)
             def serialized_results() -> dict[str, dict]:
                 return {k: {**v.model_dump(mode="json"),
                             "status": "skipped" if (v.error or "").startswith("skipped:") else
@@ -480,9 +500,16 @@ class Orchestrator:
                 self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
                 return
 
-            review: dict = {}
+            progress = req.get("review_progress") or {}
+            if progress.get("phase") == "revision":
+                progress.update(phase="review", last_completed_revision=progress["next_revision"])
+                req["review_progress"] = progress
+                self.hub.save_request(rid)
+            review: dict = progress.get("review") or {}
             reviewer = self.cfg.reviewer_agent
-            for rev in range(self.cfg.max_revisions + 1):
+            start_rev = (self.cfg.max_revisions + 1 if progress.get("phase") in {"synthesis", "unresolved"}
+                         else int(progress.get("next_revision") or 0))
+            for rev in range(start_rev, self.cfg.max_revisions + 1):
                 if not reviewer or reviewer not in known:
                     break
                 prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
@@ -513,7 +540,18 @@ class Orchestrator:
                                  serialized_results(), ok=False, review=review)
                     return
                 await self._emit(rid, "request.review", {"revision": rev, **review})
-                if review.get("verdict") != "revise" or rev >= self.cfg.max_revisions:
+                progress = {"phase": "review", "next_revision": rev + 1, "review": review,
+                            "last_completed_review": rev,
+                            "last_completed_revision": progress.get("last_completed_revision", 0)}
+                if review.get("verdict") != "revise":
+                    progress["phase"] = "synthesis"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
+                    break
+                if rev >= self.cfg.max_revisions:
+                    progress["phase"] = "unresolved"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
                     break
                 feedback: dict[str, str] = {}
                 for issue in review.get("issues") or []:
@@ -521,12 +559,25 @@ class Orchestrator:
                         feedback.setdefault(issue["step_id"], "")
                         feedback[issue["step_id"]] += f"- {issue.get('problem')}: {issue.get('request')}\n"
                 if not feedback:
+                    progress["phase"] = "unresolved"
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
                     break
+                progress["phase"] = "revision"
+                req["review_progress"] = progress
+                pending = req.setdefault("pending_revisions", {})
+                for sid, note in feedback.items():
+                    pending[sid] = {"revision": rev + 1, "feedback": note,
+                                    "previous_result": results[sid].model_dump(mode="json")}
+                    req.setdefault("results", {}).pop(sid, None)
+                self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
                 if rid in self.budget_denials or any(not r.ok for r in results.values()):
                     self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
                                  review=review)
                     return
+                progress.update(phase="review", last_completed_revision=rev + 1)
+                self.hub.save_request(rid)
 
             if review.get("verdict") == "revise":
                 self._finish(rid, self.format_results(steps, results, n) + "\n\nReview: revisions unresolved.",
@@ -543,7 +594,10 @@ class Orchestrator:
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
-            await self._emit(rid, "request.failed", {"error": req["error"]})
+            if hasattr(self.hub, "commit_terminal"):
+                self.hub.commit_terminal(rid, "request.failed", {"error": req["error"]})
+            else:
+                await self._emit(rid, "request.failed", {"error": req["error"]})
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]
@@ -553,5 +607,9 @@ class Orchestrator:
                        f"${outcome['limit_usd']:.2f}; {decision}.")
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
-        asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", {
-            "ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}))
+        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}
+        if hasattr(self.hub, "commit_terminal"):
+            self.hub.commit_terminal(rid, "request.completed", data)
+        else:  # Lightweight orchestration test doubles do not persist state.
+            self.hub.save_request(rid)
+            asyncio.get_running_loop().create_task(self._emit(rid, "request.completed", data))

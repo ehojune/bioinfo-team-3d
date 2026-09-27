@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import websockets
@@ -22,6 +23,7 @@ from ..models import AgentSpec, ApprovalRequest, Engine, Event, McpServerSpec, T
 from ..policy import claude_settings
 from ..registry import Registry
 from ..settings import Settings
+from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler
 from ..util import short
 from .approvals import Broker
@@ -34,20 +36,53 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
+        self.store = StateStore(settings.path(settings.runner.state_dir) / f"runner-{settings.runner.id}.sqlite3")
+        saved_incarnation = self.store.all("runner_meta").get("incarnation")
+        self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
+        if not saved_incarnation:
+            self.store.put("runner_meta", "incarnation", {"id": self.incarnation})
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir))
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
-        self.outbox: asyncio.Queue[str] = asyncio.Queue(maxsize=20000)
+        self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
-        self.jobs: dict[str, dict] = {}
-        self.notified: set[str] = set()
+        self.jobs: dict[str, dict] = self.store.all("job")
+        self.notified: set[str] = set(self.store.all("notified"))
+        self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event, self._on_track)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
+        self._finish_interrupted_tasks()
+
+    def _finish_interrupted_tasks(self) -> None:
+        """A new process cannot finish work accepted by its predecessor."""
+        pending_results = {e.get("task_id") for e in self.store.pending() if e.get("type") == "task.result"}
+        for tid, entry in self.store.all("accepted_task").items():
+            if entry.get("state") != "running":
+                continue
+            if tid not in pending_results:
+                task = entry.get("task") or {}
+                agent_id = task.get("agent_id") or entry.get("agent_id") or "unknown"
+                request_id = task.get("request_id") or entry.get("request_id")
+                self.send({"type": "task.result", "task_id": tid, "agent_id": agent_id,
+                           "request_id": request_id,
+                           "data": self._interrupted_result(tid, agent_id).model_dump(mode="json")})
+            self.store.put("accepted_task", tid, {**entry, "state": "finished"})
+
+    def _interrupted_result(self, tid: str, agent_id: str) -> TaskResult:
+        jobs = [job for job in self.jobs.values() if job.get("task_id") == tid]
+        if jobs:
+            return TaskResult(task_id=tid, agent_id=agent_id, ok=True,
+                              text="Runner restarted after HPC submission; inspect tracked jobs.",
+                              pending_jobs=[job["job_id"] for job in jobs],
+                              workdir=next((job.get("workdir") for job in jobs if job.get("workdir")), None),
+                              session_id=next((job.get("session_id") for job in jobs if job.get("session_id")), None))
+        return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                          error="runner restarted: accepted task interrupted")
 
     # ---------------- lifecycle ----------------
     def _check_job_group(self) -> None:
@@ -118,12 +153,22 @@ class Runner:
             t.cancel()
 
     def send(self, obj: dict) -> None:
-        msg = json.dumps(obj, ensure_ascii=False, default=str)
-        try:
-            self.outbox.put_nowait(msg)
-        except asyncio.QueueFull:  # drop the oldest event rather than block agents
-            self.outbox.get_nowait()
-            self.outbox.put_nowait(msg)
+        if obj.get("type") not in {"runner.roster"}:
+            self.store.enqueue(obj, self.s.runner.outbox_limit)
+            self.reload_outbox()
+        else:
+            self.outbox.put_nowait(json.dumps(obj, ensure_ascii=False, default=str))
+
+    def reload_outbox(self, preserve_roster: bool = True) -> None:
+        roster = []
+        while not self.outbox.empty():
+            raw = self.outbox.get_nowait()
+            if preserve_roster and json.loads(raw).get("type") == "runner.roster":
+                roster.append(raw)
+        for raw in roster:
+            self.outbox.put_nowait(raw)
+        for item in self.store.pending():
+            self.outbox.put_nowait(json.dumps(item, ensure_ascii=False, default=str))
 
     async def emit(self, ev: Event) -> None:
         d = ev.model_dump(mode="json")
@@ -131,6 +176,8 @@ class Runner:
         if ws:
             ws.append_event(d)
         self.send(d)
+        if ev.type == "task.result" and ev.task_id:
+            self.store.put("accepted_task", ev.task_id, {"state": "finished"})
 
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
@@ -139,8 +186,8 @@ class Runner:
             try:
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
-                    await ws.send(json.dumps({"type": "runner.hello", "runner_id": self.s.runner.id,
-                                              "agents": self.registry.roster()}))
+                    await ws.send(json.dumps(self.hello()))
+                    self.reload_outbox(preserve_roster=False)
                     self.connected.set()
                     sender = asyncio.create_task(self._sender(ws))
                     try:
@@ -171,12 +218,30 @@ class Runner:
     def _send_roster(self) -> None:
         self.send({"type": "runner.roster", "runner_id": self.s.runner.id, "agents": self.registry.roster()})
 
+    def hello(self) -> dict:
+        return {"type": "runner.hello", "runner_id": self.s.runner.id,
+                "incarnation": self.incarnation, "agents": self.registry.roster()}
+
     # ---------------- gateway → runner ----------------
     async def _on_message(self, msg: dict) -> None:
         typ = msg.get("type")
         if typ == "task.dispatch":
             task = Task.model_validate(msg["task"])
-            self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+            prior = self.store.get("accepted_task", task.id)
+            if prior is None:
+                self.store.put("accepted_task", task.id,
+                               {"state": "running", "task": task.model_dump(mode="json")})
+            self.send({"type": "task.accepted", "task_id": task.id, "request_id": task.request_id})
+            if prior is None:
+                self.tasks[task.id] = asyncio.create_task(self._run_guarded(task))
+            elif prior.get("state") == "running" and task.id not in self.tasks:
+                has_result = any(e.get("type") == "task.result" and e.get("task_id") == task.id
+                                 for e in self.store.pending())
+                if not has_result:
+                    self.send({"type": "task.result", "task_id": task.id, "agent_id": task.agent_id,
+                                "request_id": task.request_id,
+                                "data": self._interrupted_result(task.id, task.agent_id).model_dump(mode="json")})
+                    self.store.put("accepted_task", task.id, {"state": "finished"})
         elif typ == "task.cancel":
             t = self.tasks.get(msg.get("task_id", ""))
             if t:
@@ -187,6 +252,9 @@ class Runner:
                 if task_id:
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
+            self.send({"type": "approval.ack", "id": msg["id"]})
+        elif typ == "runner.ack":
+            self.store.ack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
             self.registry.load()
             self._send_roster()
@@ -290,6 +358,7 @@ class Runner:
         pending = [jid for jid, j in self.jobs.items() if j["task_id"] == task.id and not j["terminal"]]
         for jid in pending:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
+            self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
         (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "")
         (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "")
@@ -317,10 +386,13 @@ class Runner:
 
     async def _on_track(self, body: dict) -> None:
         jid, tid = str(body["job_id"]), body.get("task_id")
-        self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
-                          "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
-                          "exit_status": None, "submitted_at": time.time()}
         ws = self.workspaces.get(tid or "")
+        self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
+                           "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
+                           "exit_status": None, "submitted_at": time.time(),
+                           "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
+                           "workdir": str(ws.dir) if ws else None}
+        self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
         await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
@@ -344,6 +416,7 @@ class Runner:
             state = info.state
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
+                self.store.put("job", jid, j)
                 if j["missing"] < 3:
                     continue
                 state = "unknown_finished"
@@ -354,6 +427,7 @@ class Runner:
                                       data={"job_id": jid, "name": j["name"], "state": state,
                                             "exit_status": info.exit_status}))
             j["terminal"] = state in TERMINAL
+            self.store.put("job", jid, j)
 
         by_task: dict[str, list[dict]] = {}
         for j in self.jobs.values():
@@ -364,9 +438,10 @@ class Runner:
             t = self.tasks.get(tid)
             if t is not None and not t.done():  # the agent is still talking; wake it after it ends
                 continue
-            self.notified.add(tid)
             await self.emit(Event(
                 type="jobs.finished", task_id=tid, agent_id=js[0]["agent_id"], request_id=self.task_req.get(tid),
                 data={"jobs": [{k: x.get(k) for k in ("job_id", "name", "state", "exit_status")} for x in js],
                       "session_id": js[0].get("session_id"), "workdir": js[0].get("workdir")},
             ))
+            self.notified.add(tid)
+            self.store.put("notified", tid, {"done": True})

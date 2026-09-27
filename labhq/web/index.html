@@ -436,6 +436,11 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: MODE === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+function resetSnapshotState() {
+  S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
+  S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
+  S.lastSay = {}; S.taskStep.clear(); S.seq = 0; S.doorUntil = 0;
+}
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
 const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드' };
@@ -501,16 +506,18 @@ function apply(ev, replay = false) {
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   switch (t) {
     case 'snapshot': {
-      S.agents.clear();
+      resetSnapshotState();
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
+      (d.recent_events || []).forEach(e => apply(e, true));
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0 });
         if (r.plan) setPlan(q, r.plan);
+        Object.assign(q.steps, r.step_status || {});
         if (r.status !== 'running') q.phase = 'done';
       }
-      (d.recent_events || []).forEach(e => apply(e, true));
+      S.cost = (d.requests || []).reduce((total, r) => total + (Number(r.cost_usd) || 0), 0);
       S.approvals.clear();
       (d.approvals || []).forEach(x => S.approvals.set(x.id, x));
       for (const a of S.agents.values()) if (a.state === 'done' || a.state === 'error' || a.state === 'queued') a.state = 'idle';
@@ -944,6 +951,7 @@ setInterval(schedule, 15000);  // keeps "n분 전" labels and contract countdown
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
+  let lastSeq = 0;
   if (QS.get('token')) { store.set('labhq_token', token); history.replaceState(null, '', location.pathname); }
   const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
   link('manifest', '/manifest.webmanifest'); link('icon', '/icon.svg'); link('apple-touch-icon', '/icon.svg');
@@ -966,9 +974,15 @@ function startLive() {
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
-    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}`);
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
     ws.onopen = () => { S.conn = 'live'; backoff = 1000; schedule(); };
-    ws.onmessage = e => { try { apply(JSON.parse(e.data)); } catch (err) { console.warn('bad event', err); } };
+    ws.onmessage = e => { try {
+      const ev = JSON.parse(e.data);
+      if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
+      apply(ev);
+      if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; return; }
+      if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
+    } catch (err) { console.warn('bad event', err); } };
     ws.onclose = e => {
       if (e.code === 1008) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
       S.conn = 'offline'; schedule();

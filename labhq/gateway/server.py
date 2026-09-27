@@ -1,6 +1,6 @@
 """Gateway: the one reachable endpoint. Runners dial in; desktop/phone clients connect here.
 
-Run it on a tiny VM or at home behind Tailscale. It holds no data, only events and routing.
+Run it on a tiny VM or at home behind Tailscale. State stays on the gateway host.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from ..integrations.github import ProjectReporter
 from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
+from ..store import StateStore
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 
@@ -58,10 +59,28 @@ class ContractIn(BaseModel):
     slug: str | None = None
 
 
+class SavedResults(dict):
+    def __init__(self, hub: "Hub", rid: str):
+        self.hub, self.rid = hub, rid
+        super().__init__({k: TaskResult.model_validate(v)
+                          for k, v in (hub.requests[rid].get("results") or {}).items()})
+
+    def __setitem__(self, key: str, value: TaskResult) -> None:
+        super().__setitem__(key, value)
+        req = self.hub.requests[self.rid]
+        req.setdefault("results", {})[key] = value.model_dump(mode="json")
+        req.get("pending_revisions", {}).pop(key, None)
+        self.hub.save_request(self.rid)
+        self.hub.clear_step_jobs(self.rid, key)
+
+
 class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
         self.s = settings
+        self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
+        self.event_lock = asyncio.Lock()
         self.runners: dict[str, WebSocket] = {}
+        self.runner_incarnations: dict[str, str | None] = {}
         self.runner_locks: dict[str, asyncio.Lock] = {}
         self.runner_agents: dict[str, list[dict]] = {}
         self.agents: dict[str, dict] = {}
@@ -71,18 +90,262 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
-        self.jobs_done: dict[str, dict] = {}
-        self.approvals: dict[str, dict] = {}
-        self.requests: dict[str, dict] = {}
+        self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
+        self.terminal_queued: set[int] = set()
+        self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
+        self.recovery_steps: set[str] = set()
+        self.recovered_tasks: set[str] = set()
+        self.approvals: dict[str, dict] = self.store.all("approval")
+        self.requests: dict[str, dict] = self.store.all("request")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
+        self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
+        for aid, entry in list(self.approvals.items()):
+            if entry.get("origin") is None and entry["approval"].get("kind") != "resume":
+                self.approvals.pop(aid)
+                self.store.delete("approval", aid)
+                self.store.put("approval_decision", aid, {"approval": entry["approval"],
+                                                         "approved": False, "note": "gateway restarted",
+                                                         "state": "expired", "decided_at": time.time()})
+                self.events.append(self.store.append_event({"type": "approval.expired", "ts": time.time(),
+                    "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
+                    settings.gateway.event_buffer))
+        for rid, req in self.requests.items():
+            if req.get("status") in {"running", "waiting_for_runner"}:
+                req["status"] = "interrupted"
+                self.save_request(rid)
+            if req.get("status") == "interrupted" and not any(
+                a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
+                for a in self.approvals.values()
+            ):
+                approval = self.new_resume_approval(rid)
+                self.events.append(self.store.append_event({"type": "approval.requested", "ts": time.time(),
+                                                             "request_id": rid, "data": approval.model_dump(mode="json")},
+                                                            settings.gateway.event_buffer))
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
 
+    def save_request(self, rid: str) -> None:
+        self.store.put("request", rid, self.requests[rid])
+
+    def clear_step_jobs(self, rid: str, step_id: str) -> None:
+        # A jobs.finished checkpoint remains useful until the resulting step is adopted.
+        for tid, task in self.store.all("task").items():
+            if task.get("request_id") == rid and (task.get("step_id") or task.get("kind")) == step_id:
+                if tid in self.jobs_done:
+                    self.store.delete("jobs_done", tid)
+                    self.jobs_done.pop(tid, None)
+
+    def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
+        event = self.store.commit_terminal(rid, self.requests[rid],
+                                           {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
+                                           self.s.gateway.event_buffer)
+        self.events.append(event)
+        if self.requests[rid].get("mode") == "direct":
+            self.clear_step_jobs(rid, "direct")
+        # A client joining after this checkpoint replays it from SQLite.
+        self.pending_committed.append((event, tuple(self.clients)))
+        asyncio.get_running_loop().create_task(self._send_committed_event())
+        self._queue_terminal_delivery(event)
+
+    def _queue_terminal_delivery(self, event: dict) -> None:
+        seq = event["seq"]
+        if seq in self.terminal_queued:
+            return
+        if self.reporter.enabled():
+            self.terminal_queued.add(seq)
+            self.reporter.submit(event)
+        else:
+            self.store.delete("terminal_delivery", str(seq))
+
+    def recover_terminal_deliveries(self) -> None:
+        # The request row itself is the durable source for an issue that was not opened
+        # before a crash. Queue it ahead of any terminal report for the same request.
+        pending = sorted(self.store.all("reporter_delivery").values(), key=lambda event: event["seq"])
+        pending_created = {event["request_id"] for event in pending if event["type"] == "request.created"}
+        for rid, request in self.requests.items():
+            project = self.s.project(request.get("project_id"))
+            if (project and project.repo and project.issues and rid not in self.reporter.issues
+                    and rid not in pending_created and
+                    (project.visibility != "public" or project.allow_public_reports)):
+                self.reporter.submit({"type": "request.created", "ts": request.get("created_at"),
+                                       "request_id": rid, "data": {}})
+        for event in pending:
+            self.reporter.submit(event)
+        for event in sorted(self.store.all("terminal_delivery").values(), key=lambda ev: ev["seq"]):
+            self._queue_terminal_delivery(event)
+
+    def ack_reporter_delivery(self, event: dict) -> None:
+        seq = event.get("seq")
+        if seq is not None:
+            self.store.delete("terminal_delivery", str(seq))
+            self.store.delete("reporter_delivery", str(seq))
+            self.terminal_queued.discard(seq)
+
+    async def _send_committed_event(self) -> None:
+        async with self.event_lock:
+            await self._flush_committed_events()
+
+    async def _flush_committed_events(self) -> None:
+        # Called under event_lock, before allocating any later live event sequence.
+        while self.pending_committed:
+            event, clients = self.pending_committed.popleft()
+            dead = []
+            for client in clients:
+                try:
+                    await client.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                except Exception:
+                    dead.append(client)
+            for client in dead:
+                self.clients.discard(client)
+
+    def result_map(self, rid: str) -> SavedResults:
+        return SavedResults(self, rid)
+
+    def recovery_attempt(self, task: Task) -> int:
+        if task.request_id not in self.recovery_steps:
+            return 1
+        matches = [(tid, entry) for tid, entry in self.store.all("task").items()
+                   if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+        return max((int(entry.get("attempt") or 1) for _, entry in matches), default=1)
+
+    @staticmethod
+    def _matches_recovery(task: Task, entry: dict) -> bool:
+        kind = task.meta.get("kind")
+        prior_meta = (entry.get("payload") or {}).get("meta") or {}
+        entry_step = entry.get("step_id")
+        if kind == "direct" and entry_step == "direct":  # records written before control-phase recovery
+            entry_step = None
+        return bool(kind and entry.get("request_id") == task.request_id and
+                    entry.get("kind") == kind and entry_step == task.meta.get("step_id") and
+                    int(entry.get("revision") or 0) == int(task.meta.get("revision") or 0) and
+                    int(entry.get("parse_attempt", prior_meta.get("parse_attempt")) or 0) ==
+                    int(task.meta.get("parse_attempt") or 0) and
+                    entry.get("parent_task") == task.meta.get("parent_task"))
+
+    @staticmethod
+    def _same_runner_generation(entry: dict, runner_id: str | None, incarnation: str | None) -> bool:
+        return bool(runner_id and incarnation and entry.get("runner_id") == runner_id and
+                    entry.get("runner_incarnation") == incarnation)
+
+    def new_resume_approval(self, rid: str) -> ApprovalRequest:
+        req = self.requests[rid]
+        done = set(req.get("results") or {})
+        steps = [s["id"] for s in req.get("plan", {}).get("steps", []) if s["id"] not in done]
+        approval = ApprovalRequest(kind="resume", request_id=rid,
+                                   summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?")
+        self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
+        self.save_approval(approval.id)
+        return approval
+
+    def resume_agents(self, rid: str) -> set[str]:
+        req = self.requests[rid]
+        if req.get("mode") == "direct":
+            return set() if self.completed_direct_result(rid) else {req["agent_id"]}
+        steps = req.get("plan", {}).get("steps") or []
+        done = set(req.get("results") or {})
+        needed = {s["agent_id"] for s in steps if s["id"] not in done}
+        phase = (req.get("review_progress") or {}).get("phase")
+        if phase != "unresolved":
+            needed.add(self.s.orchestrator.cso_agent)
+        if self.s.orchestrator.reviewer_agent and phase not in {"synthesis", "unresolved"}:
+            needed.add(self.s.orchestrator.reviewer_agent)
+        if not steps and self.s.orchestrator.chief_of_staff_agent:
+            needed.add(self.s.orchestrator.chief_of_staff_agent)
+        return needed
+
+    def completed_direct_result(self, rid: str) -> TaskResult | None:
+        checkpoint = self.store.get("step_checkpoint", f"{rid}:direct")
+        candidates = [entry.get("result") for entry in self.store.all("task").values()
+                      if entry.get("request_id") == rid and entry.get("kind") == "direct" and
+                      entry.get("completed")]
+        if checkpoint:
+            candidates.insert(0, checkpoint.get("result"))
+        for body in candidates:
+            if body:
+                result = TaskResult.model_validate(body)
+                if result.ok and not result.pending_jobs:
+                    return result
+        return None
+
+    async def resume_when_ready(self, rid: str) -> None:
+        req = self.requests[rid]
+        req["status"] = "waiting_for_runner"
+        self.save_request(rid)
+        deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
+        previous: set[str] | None = None
+        while True:
+            missing = {aid for aid in self.resume_agents(rid)
+                       if self.agent_runner.get(aid) not in self.runners}
+            if not missing:
+                req["status"] = "running"
+                self.save_request(rid)
+                await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
+                                    "data": {"agents": sorted(self.resume_agents(rid))}})
+                self.recovery_steps.add(rid)
+                try:
+                    await self.orchestrator.run_request(rid, resume=True)
+                finally:
+                    self.recovery_steps.discard(rid)
+                return
+            if missing != previous:
+                await self.publish({"type": "request.resume_waiting", "ts": time.time(), "request_id": rid,
+                                    "data": {"missing_agents": sorted(missing)}})
+                previous = missing
+            if asyncio.get_running_loop().time() >= deadline:
+                req["status"] = "interrupted"
+                self.save_request(rid)
+                await self.publish({"type": "request.resume_timeout", "ts": time.time(), "request_id": rid,
+                                    "data": {"missing_agents": sorted(missing)}})
+                approval = self.new_resume_approval(rid)
+                await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
+                                    "data": approval.model_dump(mode="json")})
+                return
+            await asyncio.sleep(min(0.1, max(0, deadline - asyncio.get_running_loop().time())))
+
+    def save_approval(self, aid: str) -> None:
+        entry = self.approvals[aid]
+        self.store.put("approval", aid, {k: v for k, v in entry.items() if k != "future"})
+
     # ----- runners -----
-    def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict]) -> None:
+    def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
+                        incarnation: str | None = None) -> None:
+        old = self.runners.get(runner_id)
+        if old is not None and old is not ws and hasattr(old, "close"):
+            async def close_old() -> None:
+                try:
+                    await old.close(code=1000)
+                except RuntimeError:  # it may already be closed while the replacement connects
+                    pass
+            asyncio.get_running_loop().create_task(close_old())
+        if incarnation:
+            self.store.runner_incarnation(runner_id, incarnation)
         self.runners[runner_id] = ws
+        self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents)
+        hosted_agents = {a["id"] for a in agents}
+        for tid, entry in self.store.all("task").items():
+            if (not entry.get("completed") and
+                    (entry.get("payload") or {}).get("agent_id") in hosted_agents and
+                    not self._same_runner_generation(entry, runner_id, incarnation)):
+                self._abandon_previous_generation(tid, entry)
+
+    def _abandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
+        agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
+        result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                            error="runner generation changed; prior task delivery or outcome unknown; "
+                                  "manual recovery required")
+        self.store.put("task", tid, {**entry, "completed": True, "result": result.model_dump(mode="json")})
+        future = self.futures.get(tid)
+        if future and not future.done():
+            future.set_result(result)
+        return result
+
+    async def flush_decisions(self, runner_id: str) -> None:
+        for aid, entry in self.store.all("decision").items():
+            if entry["origin"] == runner_id:
+                await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
+                                                   "approved": entry["approved"], "note": entry["note"]})
 
     def set_roster(self, runner_id: str, agents: list[dict]) -> None:
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
@@ -96,12 +359,15 @@ class Hub:
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
 
-    def unregister_runner(self, runner_id: str, ws: WebSocket) -> None:
+    def unregister_runner(self, runner_id: str, ws: WebSocket) -> bool:
         if self.runners.get(runner_id) is ws:
             self.runners.pop(runner_id, None)  # keep roster + pending futures: the runner will reconnect
+            self.runner_incarnations.pop(runner_id, None)
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            return True
+        return False
 
     async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
@@ -124,6 +390,8 @@ class Hub:
             raise RunnerUnavailable(f"runner {runner_id} is offline")
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
+            if self.runners.get(runner_id) is not ws:
+                raise RunnerUnavailable(f"runner {runner_id} connection was replaced")
             try:
                 await ws.send_text(payload)
             except Exception as exc:
@@ -134,43 +402,151 @@ class Hub:
         return self.agents.get(agent_id, {}).get("engine") != "gemini"
 
     # ----- events -----
-    async def publish(self, ev: dict) -> None:
-        self.events.append(ev)
-        dead = []
-        for c in list(self.clients):
-            try:
-                await c.send_text(json.dumps(ev, ensure_ascii=False, default=str))
-            except Exception:
-                dead.append(c)
-        for c in dead:
-            self.clients.discard(c)
+    async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
+        async with self.event_lock:
+            await self._flush_committed_events()
+            durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
+                              ev.get("type") in ProjectReporter.HANDLED)
+            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                         reporter_delivery=durable_report)
+            self.events.append(ev)
+            dead = []
+            for c in list(self.clients):
+                try:
+                    await c.send_text(json.dumps(ev, ensure_ascii=False, default=str))
+                except Exception:
+                    dead.append(c)
+            for c in dead:
+                self.clients.discard(c)
+            rid = ev.get("request_id")
+            if rid in self.requests:
+                self.save_request(rid)
         if self.reporter.enabled():
             self.reporter.submit(ev)
 
-    async def on_runner_message(self, runner_id: str, msg: dict) -> None:
+    async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
+                                incarnation: str | None = None) -> None:
+        if ws is not None and (self.runners.get(runner_id) is not ws or
+                               self.runner_incarnations.get(runner_id) != incarnation):
+            return
+        runner_seq = msg.get("runner_seq")
+        if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
+            await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
+            return
         typ = msg.get("type")
         if typ == "runner.roster":
             self.set_roster(runner_id, msg.get("agents", []))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
             return
+        if typ == "approval.ack":
+            self.store.delete("decision", str(msg["id"]))
         if typ == "task.result":
+            rid = msg.get("request_id")
+            tid = msg.get("task_id") or ""
+            task = self.store.get("task", tid) if tid else None
+            result = TaskResult.model_validate(msg["data"])
+            if task:
+                self.store.put("task", tid, {**task, "completed": True,
+                                              "result": result.model_dump(mode="json")})
+            if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
+                rid = task["request_id"]
+                sid = task.get("step_id") or "direct"
+                self.store.put("step_checkpoint", f"{rid}:{sid}",
+                               {"task_id": tid, "attempt": task.get("attempt", 1),
+                                "revision": task.get("revision", 0),
+                                "result": result.model_dump(mode="json")})
+            if rid in self.requests and tid:
+                req = self.requests[rid]
+                costs = req.setdefault("cost_by_task", {})
+                if tid not in costs:
+                    amount = float((msg.get("data") or {}).get("cost_usd") or 0)
+                    costs[tid] = amount
+                    req["cost_usd"] = round(float(req.get("cost_usd") or 0) + amount, 4)
+                    self.save_request(rid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
-                fut.set_result(TaskResult.model_validate(msg["data"]))
+                fut.set_result(result)
         elif typ == "approval.requested":
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
+            self.save_approval(a["id"])
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
+            self.store.put("jobs_done", tid, msg["data"])
+            self.jobs_done[tid] = msg["data"]
             fut = self.jobs_waiters.pop(tid, None)
             if fut and not fut.done():
                 fut.set_result(msg["data"])
-            else:
-                self.jobs_done[tid] = msg["data"]  # the waiter may register a moment later
-        await self.publish(msg)
+        elif typ == "task.accepted":
+            tid = msg.get("task_id") or ""
+            task = self.store.get("task", tid)
+            if task:
+                self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
+                                               "runner_incarnation": self.runner_incarnations.get(runner_id)})
+        await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+        if runner_seq is not None:
+            await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
 
     # ----- tasks -----
     async def dispatch(self, task: Task) -> TaskResult:
+        sid = task.meta.get("step_id") or task.meta.get("kind")
+        if sid and task.request_id in self.recovery_steps:
+            matches = [(tid, entry) for tid, entry in self.store.all("task").items()
+                       if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+            if not matches and task.meta.get("kind") == "direct":
+                checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
+                if checkpoint and checkpoint.get("result"):
+                    return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
+            if matches:
+                tid, entry = max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1),
+                                                            pair[1].get("dispatched_at", 0)))
+                if entry.get("completed") and entry.get("result"):
+                    self.recovered_tasks.add(tid)
+                    return TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})
+                checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:{sid}")
+                if checkpoint and checkpoint.get("task_id") == tid:
+                    self.recovered_tasks.add(tid)
+                    return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
+                current_runner = self.agent_runner.get(task.agent_id)
+                if not self._same_runner_generation(entry, current_runner,
+                                                    self.runner_incarnations.get(current_runner)):
+                    self.recovered_tasks.add(tid)
+                    return self._abandon_previous_generation(tid, entry)
+                future = asyncio.get_running_loop().create_future()
+                self.futures[tid] = future
+                await self.publish({"type": "request.step_wait", "ts": time.time(),
+                                    "request_id": task.request_id,
+                                    "data": {"step_id": sid, "reason": "recovering prior task result"}})
+                try:
+                    if not entry.get("accepted") and entry.get("payload"):
+                        runner_id = self.agent_runner.get(task.agent_id)
+                        if runner_id:
+                            try:
+                                await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
+                            except RunnerUnavailable:
+                                pass  # delivery is uncertain; never retry this work under a new task ID
+                    # resume_wait_s bounds connection/acceptance, not a running task. The
+                    # runner's own task_timeout governs work after task.accepted.
+                    deadline = None
+                    while not future.done():
+                        accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
+                        online = self.agent_runner.get(task.agent_id) in self.runners
+                        if accepted and online:
+                            deadline = None
+                        elif deadline is None:
+                            deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
+                        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                            return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
+                                              error="recovery runner unavailable; manual restart required")
+                        try:
+                            await asyncio.wait_for(asyncio.shield(future), 0.1)
+                        except asyncio.TimeoutError:
+                            pass
+                    result = future.result()
+                    self.recovered_tasks.add(tid)
+                    return result
+                finally:
+                    self.futures.pop(tid, None)
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
@@ -178,21 +554,57 @@ class Hub:
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
+        self.store.put("task", task.id, {"request_id": task.request_id,
+                                          "runner_id": rid,
+                                          "runner_incarnation": self.runner_incarnations.get(rid),
+                                          "step_id": task.meta.get("step_id"), "kind": task.meta.get("kind"),
+                                          "attempt": task.meta.get("attempt", 1),
+                                          "revision": task.meta.get("revision", 0),
+                                          "parse_attempt": task.meta.get("parse_attempt", 0),
+                                          "parent_task": task.meta.get("parent_task"),
+                                          "payload": task.model_dump(mode="json"),
+                                          "accepted": False, "dispatched_at": time.time()})
         await self.publish({"type": "task.dispatched", "ts": time.time(), "task_id": task.id,
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+        except RunnerUnavailable:
+            # The frame may already have reached the runner. Keep its identity and let
+            # the runner's accepted-task ledger deduplicate the resend.
+            await self.publish({"type": "request.step_wait", "ts": time.time(),
+                                "request_id": task.request_id,
+                                "data": {"step_id": sid, "reason": "runner reconnect before task delivery"}})
+            deadline = asyncio.get_running_loop().time() + self.s.orchestrator.runner_reconnect_timeout_s
+            while not fut.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0 or not await self.wait_agent_online(task.agent_id, remaining):
+                    if fut.done():
+                        break
+                    self.futures.pop(task.id, None)
+                    self.task_runner.pop(task.id, None)
+                    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                      error="task delivery uncertain; manual recovery required")
+                if fut.done():
+                    break
+                target = self.agent_runner[task.agent_id]
+                try:
+                    await self.send_runner(target, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
+                except RunnerUnavailable:
+                    continue
+                self.task_runner[task.id] = target
+                break
         except Exception:
             self.futures.pop(task.id, None)
             self.task_runner.pop(task.id, None)
+            self.store.delete("task", task.id)
             raise
         return await fut
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:
-            return self.jobs_done.pop(task_id)
+            return self.jobs_done[task_id]
         fut = self.jobs_waiters.setdefault(task_id, asyncio.get_running_loop().create_future())
         return await fut
 
@@ -203,27 +615,45 @@ class Hub:
                               timeout_s=timeout_s or self.s.policy.approvals.timeout_s)
         fut = asyncio.get_running_loop().create_future()
         self.approvals[req.id] = {"approval": req.model_dump(mode="json"), "origin": None, "future": fut}
+        self.save_approval(req.id)
         await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": request_id,
                             "data": req.model_dump(mode="json")})
         try:
             return await asyncio.wait_for(fut, req.timeout_s)
         except asyncio.TimeoutError:
             self.approvals.pop(req.id, None)
+            self.store.delete("approval", req.id)
             return {"approved": False, "note": "timed out"}
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
         entry = self.approvals.pop(approval_id, None)
         if entry is None:
             raise KeyError(approval_id)
+        self.store.delete("approval", approval_id)
+        self.store.put("approval_decision", approval_id,
+                       {"approval": entry["approval"], "approved": approved,
+                        "note": note, "decided_at": time.time()})
         if entry["origin"]:
-            await self.send_runner(entry["origin"], {"type": "approval.resolved", "id": approval_id,
-                                                     "approved": approved, "note": note})
+            self.store.put("decision", approval_id, {"origin": entry["origin"],
+                                                      "approved": approved, "note": note})
+            if entry["origin"] in self.runners:
+                await self.flush_decisions(entry["origin"])
         elif entry.get("future") and not entry["future"].done():
             entry["future"].set_result({"approved": approved, "note": note})
+        elif entry["approval"].get("kind") == "resume":
+            rid = entry["approval"]["request_id"]
+            if approved:
+                self.requests[rid]["status"] = "waiting_for_runner"
+                self.save_request(rid)
+                asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
                             "data": {"id": approval_id, "approved": approved, "note": note}})
+        if a.get("kind") == "resume" and not approved:
+            rid = a["request_id"]
+            self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
+            self.commit_terminal(rid, "request.failed", {"error": "resume declined"})
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
@@ -235,6 +665,7 @@ class Hub:
         if proj and proj.local_dir and proj.local_dir not in req["project_dirs"]:
             req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
         self.requests[rid] = req
+        self.save_request(rid)
         asyncio.get_running_loop().create_task(self._start_request(rid))
         return rid
 
@@ -245,12 +676,15 @@ class Hub:
         await self.orchestrator.run_request(rid)
 
     def snapshot(self) -> dict[str, Any]:
-        return {"type": "snapshot", "ts": time.time(), "data": {
+        return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
+                "ts": time.time(), "data": {
             "agents": list(self.agents.values()),
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
-            "requests": [{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
-                                                              "project_id", "plan", "cost_usd", "agent_id")}
+            "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
+                                                                  "project_id", "plan", "cost_usd", "agent_id")},
+                          "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
+                                          for sid, outcome in (r.get("results") or {}).items()}}
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
@@ -262,6 +696,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     hub = Hub(settings, github_transport)
     app = FastAPI(title="labhq gateway", version="0.1.0")
     app.state.hub = hub
+
+    @app.on_event("startup")
+    async def recover_terminal_deliveries() -> None:
+        hub.recover_terminal_deliveries()
 
     def auth(authorization: str = Header(default="")) -> None:
         if authorization.removeprefix("Bearer ").strip() != settings.gateway.client_token:
@@ -277,26 +715,39 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
-            hub.register_runner(runner_id, ws, hello.get("agents", []))
+            incarnation = hello.get("incarnation")
+            hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation)
+            await hub.flush_decisions(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:
-                await hub.on_runner_message(runner_id, json.loads(await ws.receive_text()))
+                if hub.runners.get(runner_id) is not ws:
+                    break
+                await hub.on_runner_message(runner_id, json.loads(await ws.receive_text()), ws, incarnation)
         except WebSocketDisconnect:
             pass
         finally:
             if runner_id:
-                hub.unregister_runner(runner_id, ws)
-                await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
+                if hub.unregister_runner(runner_id, ws):
+                    await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")
-    async def ws_client(ws: WebSocket, token: str = "") -> None:
+    async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:
         if token != settings.gateway.client_token:
             await ws.close(code=1008)
             return
         await ws.accept()
-        await ws.send_text(json.dumps(hub.snapshot(), ensure_ascii=False, default=str))
-        hub.clients.add(ws)
+        async with hub.event_lock:
+            oldest, latest = hub.store.event_bounds()
+            if since is None or since < oldest - 1 or since > latest:
+                snap = hub.snapshot()
+                if since is not None:
+                    snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
+                await ws.send_text(json.dumps(snap, ensure_ascii=False, default=str))
+            else:
+                for ev in hub.store.events_since(since):
+                    await ws.send_text(json.dumps(ev, ensure_ascii=False, default=str))
+            hub.clients.add(ws)
         try:
             while True:
                 try:
@@ -307,8 +758,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
-                        await ws.send_text(json.dumps({"type": "approval.stale", "ts": time.time(),
-                                                       "data": {"id": msg.get("id")}}))
+                        await hub.publish({"type": "approval.stale", "ts": time.time(),
+                                           "data": {"id": msg.get("id")}})
         except WebSocketDisconnect:
             pass
         finally:
@@ -385,8 +836,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         return {"ok": True}
 
     @app.get("/api/events", dependencies=[Depends(auth)])
-    async def events(limit: int = 200) -> list[dict]:
-        return list(hub.events)[-limit:]
+    async def events(limit: int = 200, since: int | None = None) -> list[dict]:
+        if since is None:
+            return list(hub.events)[-limit:]
+        oldest, latest = hub.store.event_bounds()
+        if since < oldest - 1 or since > latest:
+            snap = hub.snapshot()
+            snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
+            return [snap]
+        return hub.store.events_since(since, max(1, limit))
 
     @app.get("/api/health")
     async def health() -> dict:
