@@ -93,11 +93,13 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
         _share_workspace_parents(workdir, workspace_root, gid, job_user)
         output_dir = workdir / "hpc_out"
-        if stat.S_IMODE(workdir.stat().st_mode) & 0o067:
-            os.chmod(workdir, 0o700)
         for shared in (script_path.parent, logs, output_dir):
             if shared.is_symlink():
                 raise RuntimeError(f"shared job path must not be a symlink: {shared}")
+        if script_path.is_symlink():
+            raise RuntimeError(f"job script must not be a symlink: {script_path}")
+        if script_path.exists() and script_path.stat().st_nlink > 1:
+            raise RuntimeError(f"job script must not be a hard link: {script_path}")
         # Old workspaces or explicit workdir overrides may predate the runner's
         # private umask. Remove group/other access before granting group traversal.
         def fail_on_walk_error(error: OSError) -> None:
@@ -110,7 +112,10 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                 path = Path(root) / name
                 if path.is_symlink():
                     raise RuntimeError(f"task input must not be a symlink: {path}")
-                os.chmod(path, stat.S_IMODE(path.stat().st_mode) & ~0o077)
+                st = path.stat()
+                if stat.S_ISREG(st.st_mode) and st.st_nlink > 1:
+                    raise RuntimeError(f"task input is a hard link; copy it before HPC submit: {path}")
+                os.chmod(path, stat.S_IMODE(st.st_mode) & ~0o077)
         output_dir.mkdir(mode=0o700, exist_ok=True)
     logs.mkdir(mode=0o700, parents=True, exist_ok=True)
     if job_group:

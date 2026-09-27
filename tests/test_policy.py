@@ -44,6 +44,7 @@ def test_path_normalization_boundary_and_shell_forms():
     "scp host:/data/cohort/a.vcf .",
     "rsync src:/data/cohort/ dst/",
     "cat file:///data/cohort/a.vcf",
+    "cat --input=host:file:///data/cohort/a.vcf",
     "cat --input=s3like:/data/cohort",
     "cat</data/cohort/a",
     "$(cat /data/cohort/a)",
@@ -62,6 +63,14 @@ def test_embedded_absolute_restricted_path_asks(command):
 def test_embedded_neighbor_path_does_not_match(command):
     assert touches({"command": command}, ["/data/cohort"]) is None
     assert evaluate_tool("Bash", {"command": command}, _policy()).action == "allow"
+
+
+def test_absolute_path_containing_zone_as_middle_suffix_does_not_match():
+    path = "/scratch/data/cohort/report.txt"
+    assert touches({"file_path": path}, ["/data/cohort"]) is None
+    assert touches({"command": f"cat --input={path}"}, ["/data/cohort"]) is None
+    assert evaluate_tool("Read", {"file_path": path}, _policy()).action == "allow"
+    assert evaluate_tool("Bash", {"command": f"cat {path}"}, _policy()).action == "allow"
 
 
 def test_unc_paths_are_compared_but_not_exported_as_unverified_claude_rules():

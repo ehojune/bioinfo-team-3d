@@ -49,18 +49,29 @@ def _drive_relative(p: str) -> bool:
 
 
 def _candidate_paths(s: str) -> Iterator[str]:
-    # Keep quoted paths intact; also inspect paths embedded in shell arguments and URLs.
+    # Keep quoted paths intact; start embedded paths only after explicit separators.
     for match in re.finditer(r'''"([^"]*)"|'([^']*)'|([^\s'"`|;&<>]+)''', s):
         token = next((v for v in match.groups() if v is not None), "")
-        for part in (token, *re.split(r"[=:<>() ,]", token)):
-            part = part.strip("[]{}")
-            if part:
-                yield part
-            for drive_path in re.finditer(r"[A-Za-z]:(?![/\\])[^=:<>() ,]*", part):
-                yield drive_path.group()
-            for i, char in enumerate(part):
-                if char == "/" or re.match(r"[A-Za-z]:[/\\]", part[i:]):
-                    yield part[i:]
+        for chunk in re.split(r"[=<>() ,]", token):
+            while chunk:
+                chunk = chunk.strip("[]{}")
+                if not chunk:
+                    break
+                uri = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", chunk)
+                if uri and len(uri.group(1)) > 1:
+                    if uri.group(1).casefold() == "file":
+                        path = chunk[uri.end():]
+                        if path:
+                            yield path if path.startswith("/") or re.match(r"^[A-Za-z]:", path) else "//" + path
+                    break
+                separator = next((i for i, char in enumerate(chunk)
+                                  if char == ":" and not (i == 1 and chunk[0].isalpha())), None)
+                if separator is None:
+                    yield chunk
+                    break
+                if separator:
+                    yield chunk[:separator]
+                chunk = chunk[separator + 1:]
 
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
@@ -83,8 +94,9 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
 
     Drive-relative paths on a restricted zone's drive are treated as touching it,
     since that drive's current directory is unknown. This is a guardrail, not a
-    shell parser: paths produced by variables, globs, substitutions, symlinks or
-    other runtime expansion may be missed.
+    shell parser: paths concatenated without a recognized separator, or produced
+    by variables, globs, substitutions, symlinks or other runtime expansion may
+    be missed.
     """
     paths = [(p, _norm(p)) for p in paths if p]
     for s in _strings(obj):

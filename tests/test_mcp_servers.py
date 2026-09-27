@@ -83,6 +83,74 @@ def test_hpc_job_files_are_shared_with_job_group(tmp_path):
     assert stat.S_IMODE((workdir / "outputs" / "input.txt").stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX group traversal and chmod required")
+def test_second_job_submission_never_removes_group_traverse(tmp_path, monkeypatch):
+    import grp
+    import pwd
+    import labhq.tools.hpc_mcp as hpc
+
+    group = grp.getgrgid(os.getgid()).gr_name
+    user = pwd.getpwuid(os.getuid()).pw_name
+    root = tmp_path / "runs"
+    root.mkdir(mode=0o700)
+    workdir = root / "task"
+    workdir.mkdir(mode=0o700)
+    jobs = workdir / "jobs"
+    logs = jobs / "logs"
+    hpc._prepare_job_files(workdir, jobs / "first.sh", logs, "echo first", group, root, user)
+    assert stat.S_IMODE(workdir.stat().st_mode) == 0o710
+
+    real_chmod, real_walk = os.chmod, os.walk
+
+    def checked_chmod(path, mode):
+        if Path(path) == workdir:
+            assert mode & stat.S_IXGRP
+        real_chmod(path, mode)
+
+    def checked_walk(*args, **kwargs):
+        for entry in real_walk(*args, **kwargs):
+            assert workdir.stat().st_mode & stat.S_IXGRP
+            yield entry
+
+    with monkeypatch.context() as m:
+        m.setattr(os, "chmod", checked_chmod)
+        m.setattr(os, "walk", checked_walk)
+        hpc._prepare_job_files(workdir, jobs / "second.sh", logs, "echo second", group, root, user)
+    assert stat.S_IMODE(workdir.stat().st_mode) == 0o710
+    assert (jobs / "first.sh").read_text() == "echo first"
+    assert (jobs / "second.sh").read_text() == "echo second"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX hard links, symlinks and chmod required")
+@pytest.mark.parametrize("link_kind", ["hard", "symlink"])
+def test_linked_task_input_is_rejected_without_changing_source(tmp_path, link_kind):
+    import grp
+    import pwd
+
+    from labhq.tools.hpc_mcp import _prepare_job_files
+
+    source = tmp_path / "shared.txt"
+    source.write_text("shared input")
+    source.chmod(0o644)
+    root = tmp_path / "runs"
+    root.mkdir(mode=0o700)
+    workdir = root / "task"
+    workdir.mkdir(mode=0o700)
+    linked = workdir / "TASK.md"
+    if link_kind == "hard":
+        os.link(source, linked)
+    else:
+        os.symlink(source, linked)
+    group = grp.getgrgid(os.getgid()).gr_name
+    user = pwd.getpwuid(os.getuid()).pw_name
+    with pytest.raises(RuntimeError, match="hard link" if link_kind == "hard" else "symlink"):
+        _prepare_job_files(workdir, workdir / "jobs" / "job.sh", workdir / "jobs" / "logs",
+                           "echo ok", group, root, user)
+    assert source.read_text() == "shared input"
+    assert stat.S_IMODE(source.stat().st_mode) == 0o644
+    assert not (workdir / "jobs" / "job.sh").exists()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX chgrp and directory traverse permissions required")
 def test_first_task_on_new_date_opens_only_managed_workspace_parents(tmp_path):
     import grp
