@@ -73,6 +73,32 @@ def test_absolute_path_containing_zone_as_middle_suffix_does_not_match():
     assert evaluate_tool("Bash", {"command": f"cat {path}"}, _policy()).action == "allow"
 
 
+def test_restricted_zone_with_spaces_in_structured_and_shell_paths():
+    zone = "/data/controlled cohort"
+    policy = PolicySettings(data_zones=[DataZone(path=zone)])
+    path = f"{zone}/a.vcf"
+    for key in ("file_path", "notebook_path", "path"):
+        assert touches({key: path}, [zone]) == zone
+    assert evaluate_tool("Read", {"file_path": path}, policy).action == "deny"
+    assert evaluate_tool("NotebookRead", {"notebook_path": path}, policy).action == "deny"
+    assert evaluate_tool("Read", {"path": path}, policy).action == "deny"
+    for command in (f'cat "{path}"', f"cat '{path}'", f"cat {path}"):
+        assert touches({"command": command}, [zone]) == zone
+        assert evaluate_tool("Bash", {"command": command}, policy).action == "ask"
+
+    neighbor = "/data/controlled cohorts/x"
+    assert touches({"file_path": neighbor}, [zone]) is None
+    assert evaluate_tool("Read", {"file_path": neighbor}, policy).action == "allow"
+    assert touches({"command": f"cat {neighbor}"}, [zone]) is None
+    assert evaluate_tool("Bash", {"command": f"cat {neighbor}"}, policy).action == "allow"
+    outside = "/scratch/data/controlled cohort/x"
+    assert touches({"command": f"cat {outside}"}, [zone]) is None
+    assert evaluate_tool("Bash", {"command": f"cat {outside}"}, policy).action == "allow"
+    windows_zone = r"C:\Data\Controlled Cohort"
+    assert touches({"command": "type c:/DATA/controlled cohort/x"}, [windows_zone]) == windows_zone
+    assert touches({"command": "type c:/DATA/controlled cohorts/x"}, [windows_zone]) is None
+
+
 def test_unc_paths_are_compared_but_not_exported_as_unverified_claude_rules():
     zone = r"\\server\share\cohort"
     assert touches({"file_path": "//SERVER/share/cohort/a.vcf"}, [zone]) == zone

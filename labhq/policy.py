@@ -52,7 +52,8 @@ def _candidate_paths(s: str) -> Iterator[str]:
     # Keep quoted paths intact; start embedded paths only after explicit separators.
     for match in re.finditer(r'''"([^"]*)"|'([^']*)'|([^\s'"`|;&<>]+)''', s):
         token = next((v for v in match.groups() if v is not None), "")
-        for chunk in re.split(r"[=<>() ,]", token):
+        separator_pattern = r"[=<>() ,]" if match.group(3) is not None else r"[=<>(),]"
+        for chunk in re.split(separator_pattern, token):
             while chunk:
                 chunk = chunk.strip("[]{}")
                 if not chunk:
@@ -78,29 +79,49 @@ def restricted_paths(policy: PolicySettings) -> list[str]:
     return [_norm(z.path) for z in policy.data_zones if z.level == "restricted"]
 
 
-def _strings(obj: Any) -> Iterator[str]:
+def _strings(obj: Any, path_field: bool = False) -> Iterator[tuple[str, bool]]:
     if isinstance(obj, str):
-        yield obj
+        yield obj, path_field
     elif isinstance(obj, dict):
-        for v in obj.values():
-            yield from _strings(v)
+        for key, v in obj.items():
+            is_path = isinstance(key, str) and (key in {"path", "paths", "directory", "cwd", "workdir"}
+                                                or key.endswith("_path"))
+            yield from _strings(v, path_field or is_path)
     elif isinstance(obj, (list, tuple)):
         for v in obj:
-            yield from _strings(v)
+            yield from _strings(v, path_field)
+
+
+def _raw_spaced_zone(s: str, zone: str) -> bool:
+    """Conservatively find a spaced absolute zone in shell text at explicit boundaries."""
+    if " " not in zone:
+        return False
+    raw = s.replace("\\", "/")
+    if os.name == "nt" or re.match(r"^[A-Za-z]:/|^//", zone):
+        raw = raw.casefold()
+    start = 0
+    while (start := raw.find(zone, start)) != -1:
+        end = start + len(zone)
+        before = start == 0 or raw[start - 1] in " \t\r\n'\"=:<>(),;|&" or raw[:start].endswith("file://")
+        after = end == len(raw) or raw[end] in "/ \t\r\n'\"=:<>(),;|&"
+        if before and after:
+            return True
+        start += 1
+    return False
 
 
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
-    """Find lexical path references in tool input, including quotes, ``=`` and ``../``.
+    """Find lexical path references, preserving structured and quoted paths with spaces.
 
     Drive-relative paths on a restricted zone's drive are treated as touching it,
-    since that drive's current directory is unknown. This is a guardrail, not a
-    shell parser: paths concatenated without a recognized separator, or produced
-    by variables, globs, substitutions, symlinks or other runtime expansion may
-    be missed.
+    since that drive's current directory is unknown. Unquoted shell text also
+    gets a boundary check for zones with spaces. This is not a shell parser:
+    paths concatenated without a recognized separator, or produced by variables,
+    globs, substitutions, symlinks or other runtime expansion may be missed.
     """
     paths = [(p, _norm(p)) for p in paths if p]
-    for s in _strings(obj):
-        for token in _candidate_paths(s):
+    for s, path_field in _strings(obj):
+        for token in (s,) if path_field else _candidate_paths(s):
             if _drive_relative(token):
                 for original, zone in paths:
                     if re.match(r"^[A-Za-z]:/", zone) and token[0].casefold() == zone[0].casefold():
@@ -112,6 +133,10 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
                 token = _norm(token)
             for original, zone in paths:
                 if _inside(token, zone):
+                    return original
+        if not path_field:
+            for original, zone in paths:
+                if _raw_spaced_zone(s, zone):
                     return original
     return None
 
