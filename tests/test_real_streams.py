@@ -302,3 +302,42 @@ def test_redactor_prunes_other_system_events():
     hook = json.loads(r.line(json.dumps({"type": "system", "subtype": "hook_response", "hook_name": "SessionStart:startup",
                                          "stdout": "secret project list", "output": "", "exit_code": 0})))
     assert hook["stdout"] == "<19 chars>" and hook["output"] == "" and hook["exit_code"] == 0
+
+
+def test_rate_limit_events_keep_no_account_metadata():
+    """Claude rate_limit_event carried plan utilisation and org overage settings of the capturing account."""
+    seen = 0
+    for fixture in ROOT.rglob("*.jsonl"):
+        for line in fixture.read_text(encoding="utf-8").splitlines():
+            ev = json.loads(line)
+            if ev.get("type") == "rate_limit_event":
+                seen += 1
+                assert set(ev) <= {"type", "uuid", "session_id", "rate_limit_info"}, fixture.name
+                assert set(ev["rate_limit_info"]) <= {"status", "rateLimitType"}, fixture.name
+    assert seen >= 7
+
+
+@pytest.mark.asyncio
+async def test_claude_isolated_session_loads_no_personal_config(tmp_path):
+    """Adapter-built command on Claude 2.1.282 with the PI's hooks, skills, plugins and CLAUDE.md present."""
+    lines = (ROOT / "claude_code" / "claude_isolated.jsonl").read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+    init = next(e for e in events if e.get("subtype") == "init")
+    assert init["skills"] == "<0 items>" and init["slash_commands"] == "<0 items>"
+    assert init["plugins"] == "<2 items>"  # built-in agents-md and telemetry only
+    assert init["mcp_servers"] == []
+    assert not [e for e in events if "hook" in str(e.get("subtype"))]
+    settings = Settings()
+    agent = AgentSpec(id="fixture", name="Fixture", role="test", engine=Engine("claude_code"), builtin_mcp=[])
+
+    async def emit(kind, data):
+        pass
+
+    ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[], env={}, emit=emit, prompt="x")
+    adapter, state = get_adapter(agent.engine, settings), RunState()
+    for line in lines:
+        await adapter.handle_line(line, state, ctx)
+    result = adapter.finalize(state, ctx, 0)
+    # The probe asked whether any loaded instruction text mentions the PI's global CLAUDE.md markers.
+    assert result.ok and (result.text or "").strip() == "NO"

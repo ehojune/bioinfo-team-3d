@@ -26,7 +26,7 @@ class GeminiAdapter(AgentAdapter):
         return None
 
     def engine_env(self) -> dict[str, str]:
-        return {"GEMINI_CLI_TRUST_WORKSPACE": "true", "NO_COLOR": "1"}
+        return {**super().engine_env(), "GEMINI_CLI_TRUST_WORKSPACE": "true", "NO_COLOR": "1"}
 
     def prepare(self, ctx: RunContext) -> None:
         servers: dict[str, dict] = {}
@@ -38,8 +38,8 @@ class GeminiAdapter(AgentAdapter):
                 servers[s.name] = {"httpUrl": s.url, "headers": expand_env(s.headers)}
         gdir = ctx.workdir / ".gemini"
         gdir.mkdir(exist_ok=True)
-        (gdir / "settings.json").write_text(json.dumps({"mcpServers": servers}, indent=2))
-        (ctx.workdir / "GEMINI.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        (gdir / "settings.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
+        (ctx.workdir / "GEMINI.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.gemini

@@ -22,8 +22,9 @@ ROLE_FOOTER = """
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - Report in Korean; keep technical terms, gene names and commands in English.
-- When a GitHub PR comment addresses Codex, always mention @codex — even when replying directly
-  under Codex's own comment.
+- On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
+  Codex review findings without @codex; after pushing all fixes, post `@codex review` once at the top
+  of the PR, and not again while a review is still running.
 """
 
 
@@ -72,6 +73,20 @@ def expand_env(env: dict[str, str]) -> dict[str, str]:
     return {k: os.path.expandvars(v) for k, v in env.items()}
 
 
+def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:
+    """Every config dir the child CLI might use, so checks and excludes fail closed.
+
+    `var` in the child's env (relative → its cwd) is authoritative. Otherwise the home is resolved
+    differently per CLI and OS (HOME vs USERPROFILE), so every candidate from the merged env counts.
+    """
+    raw = env.get(var)
+    if raw:
+        p = Path(os.path.expanduser(raw))
+        return [p if p.is_absolute() else cwd / p]
+    homes = [Path(h) for h in (env.get("HOME"), env.get("USERPROFILE")) if h] or [Path.home()]
+    return list(dict.fromkeys(h / default_name for h in homes))
+
+
 class AgentAdapter(ABC):
     engine = "base"
     supports_resume = True
@@ -83,13 +98,18 @@ class AgentAdapter(ABC):
         """Write engine-specific config files into the workspace."""
 
     def engine_env(self) -> dict[str, str]:
-        return {}
+        b = getattr(self.settings.engines, self.engine, None)
+        return expand_env(b.env) if b is not None else {}
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
         return None
 
     def stderr_error(self, stderr: str) -> str | None:
+        return None
+
+    def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        """Reason to refuse the run before anything is written or spawned."""
         return None
 
     @abstractmethod
@@ -112,10 +132,13 @@ class AgentAdapter(ABC):
                           error=st.error)
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        self.prepare(ctx)
+        refused = self.preflight_error(ctx, {**os.environ, **self.engine_env(), **ctx.env})
+        if refused:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+        self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
         env = {**os.environ, **self.engine_env(), **ctx.env}
-        (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
+        (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd), encoding="utf-8")
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
@@ -162,7 +185,7 @@ class AgentAdapter(ABC):
         except asyncio.CancelledError:
             await self._kill(proc)
             raise
-        (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail))
+        (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)
