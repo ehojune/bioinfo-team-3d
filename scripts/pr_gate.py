@@ -20,6 +20,7 @@ TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 MENTION = re.compile(r"(?<![\w])@codex\s+review\b", re.I)
 BADGE = re.compile(r"\[P([12])\]", re.I)
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b", re.I)
+FOLLOWUP_MARKER = re.compile(r"<!-- labhq-pr-gate followup pr=\d+ comment=(\d+) -->")
 
 
 @dataclass(frozen=True)
@@ -59,9 +60,12 @@ def _finding(comment: dict, number: int) -> tuple[str, str, dict[str, str]]:
     severity = badge.group(1) if badge else "1"  # Unknown severity is unsafe to waive.
     title = next((line.strip(" #*` ") for line in body.splitlines() if line.strip()), "Codex finding")
     title = BADGE.sub("", title).strip(" #*` :")[:100] or "Codex finding"
+    issue_body = f"원본 지적:\n\n{body}\n\n링크: {comment.get('html_url') or ''}"
+    if severity == "2":
+        issue_body += f"\n\n<!-- labhq-pr-gate followup pr={number} comment={comment['id']} -->"
     return severity, title, {
         "title": f"PR #{number} follow-up: {title}",
-        "body": f"원본 지적:\n\n{body}\n\n링크: {comment.get('html_url') or ''}",
+        "body": issue_body,
     }
 
 
@@ -214,13 +218,26 @@ def apply(api: GitHub, snapshot: dict, action: Action) -> None:
         body = f"{GATE_MARKER}\nneeds_pi head={head}\nPI 확인 필요: " + "\n".join(safe_reasons)
         api.request("POST", f"/issues/{number}/comments", {"body": body})
     elif action.kind == "merge":
+        if action.followups:
+            existing = api.pages("/issues?state=all")
+            bodies = [
+                item.get("body") or "" for item in existing
+                if "pull_request" not in item and (_trusted(item) or _login(item) == GATE_BOT)
+            ]
+            for issue in action.followups:
+                marker = FOLLOWUP_MARKER.search(issue["body"])
+                if marker is None:
+                    raise ValueError("P2 follow-up is missing its review comment marker")
+                fragment = re.compile(rf"#discussion_r{marker.group(1)}(?!\d)")
+                if any(marker.group() in body or fragment.search(body) for body in bodies):
+                    continue
+                api.request("POST", "/issues", issue)
+                bodies.append(issue["body"])
         merged = api.request("PUT", f"/pulls/{number}/merge", {
             "commit_title": f"{pr['title']} (#{number})", "sha": head, "merge_method": "squash",
         })
         if not merged.get("merged"):
             raise RuntimeError("GitHub did not confirm the squash merge")
-        for issue in action.followups:
-            api.request("POST", "/issues", issue)
 
 
 def main() -> int:

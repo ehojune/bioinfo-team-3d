@@ -1,6 +1,8 @@
 """Pure decisions for the PR gate; no GitHub access."""
 
-from scripts.pr_gate import GATE_MARKER, decide, select_pr_numbers
+import pytest
+
+from scripts.pr_gate import GATE_MARKER, apply, decide, select_pr_numbers
 
 
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
@@ -29,8 +31,36 @@ def snapshot():
 
 
 def finding(badge="P1", body="Fix the parser", **extra):
+    comment_id = extra.pop("id", 1)
+    url = extra.pop("html_url", f"https://github.com/team/repo/pull/42#discussion_r{comment_id}")
     return comment(f"[{badge}] {body}", BOT, "NONE", commit_id=HEAD,
-                   html_url="https://github.com/team/repo/pull/42#discussion_r1", **extra)
+                   id=comment_id, html_url=url, **extra)
+
+
+class FakeGitHub:
+    def __init__(self, issues=(), fail_issue_number=None):
+        self.issues = list(issues)
+        self.fail_issue_number = fail_issue_number
+        self.issue_posts = 0
+        self.calls = []
+
+    def pages(self, path):
+        assert path == "/issues?state=all"
+        self.calls.append(("GET", path))
+        return self.issues
+
+    def request(self, method, path, payload=None):
+        self.calls.append((method, path))
+        if (method, path) == ("POST", "/issues"):
+            self.issue_posts += 1
+            if self.issue_posts == self.fail_issue_number:
+                raise RuntimeError("issue creation failed")
+            self.issues.append({"body": payload["body"], "state": "open",
+                                "user": {"login": "github-actions[bot]"}})
+            return self.issues[-1]
+        if (method, path) == ("PUT", "/pulls/42/merge"):
+            return {"merged": True}
+        raise AssertionError((method, path))
 
 
 def test_external_comments_cannot_raise_round_count_or_merge():
@@ -95,8 +125,58 @@ def test_p2_only_merges_and_creates_linked_followup():
     assert action.kind == "merge"
     assert action.followups == [{
         "title": "PR #42 follow-up: Improve errors",
-        "body": "원본 지적:\n\n[P2] Improve errors\n\n링크: https://github.com/team/repo/pull/42#discussion_r1",
+        "body": "원본 지적:\n\n[P2] Improve errors\n\n링크: https://github.com/team/repo/pull/42#discussion_r1"
+                "\n\n<!-- labhq-pr-gate followup pr=42 comment=1 -->",
     }]
+
+
+def test_followup_is_created_before_merge_and_retry_creates_only_one():
+    snap = snapshot()
+    snap["review_comments"] = [finding("P2")]
+    action = decide(snap)
+    api = FakeGitHub()
+    apply(api, snap, action)
+    assert api.calls == [("GET", "/issues?state=all"), ("POST", "/issues"),
+                         ("PUT", "/pulls/42/merge")]
+    apply(api, snap, action)
+    assert api.issue_posts == 1
+    assert len(api.issues) == 1
+
+
+def test_issue_creation_failure_prevents_merge_and_retry_finishes_remaining_issue():
+    snap = snapshot()
+    snap["review_comments"] = [finding("P2", "First", id=1), finding("P2", "Second", id=2)]
+    action = decide(snap)
+    api = FakeGitHub(fail_issue_number=2)
+    with pytest.raises(RuntimeError, match="issue creation failed"):
+        apply(api, snap, action)
+    assert ("PUT", "/pulls/42/merge") not in api.calls
+    assert len(api.issues) == 1
+    apply(api, snap, action)
+    assert len(api.issues) == 2
+    assert api.issue_posts == 3  # First retry finds the first issue by marker.
+    assert api.calls[-1] == ("PUT", "/pulls/42/merge")
+
+
+def test_manual_closed_issue_with_original_link_prevents_duplicate():
+    snap = snapshot()
+    snap["review_comments"] = [finding("P2")]
+    manual = {"state": "closed", "body": "Tracked at https://github.com/team/repo/pull/42#discussion_r1",
+              "user": {"login": "maintainer"}, "author_association": "OWNER"}
+    api = FakeGitHub(issues=[manual])
+    apply(api, snap, decide(snap))
+    assert api.issue_posts == 0
+    assert api.calls[-1] == ("PUT", "/pulls/42/merge")
+
+
+def test_untrusted_issue_cannot_suppress_followup():
+    snap = snapshot()
+    snap["review_comments"] = [finding("P2")]
+    forged = {"state": "closed", "body": "<!-- labhq-pr-gate followup pr=42 comment=1 -->",
+              "user": {"login": "outsider"}, "author_association": "NONE"}
+    api = FakeGitHub(issues=[forged])
+    apply(api, snap, decide(snap))
+    assert api.issue_posts == 1
 
 
 def test_unbadged_bot_finding_blocks_merge_and_calls_pi_at_cap():
