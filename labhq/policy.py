@@ -40,7 +40,12 @@ def _inside(path: str, root: str) -> bool:
 
 
 def _absolute(p: str) -> bool:
-    return p.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:[/\\]", p))
+    return p.startswith(("/", "\\")) or bool(re.match(r"^[A-Za-z]:", p))
+
+
+def _drive_relative(p: str) -> bool:
+    """A drive-qualified path without a slash uses that drive's unknown current directory."""
+    return bool(re.match(r"^[A-Za-z]:(?![/\\])", p))
 
 
 def _candidate_paths(s: str) -> Iterator[str]:
@@ -51,6 +56,8 @@ def _candidate_paths(s: str) -> Iterator[str]:
             part = part.strip("[]{}")
             if part:
                 yield part
+            for drive_path in re.finditer(r"[A-Za-z]:(?![/\\])[^=:<>() ,]*", part):
+                yield drive_path.group()
             for i, char in enumerate(part):
                 if char == "/" or re.match(r"[A-Za-z]:[/\\]", part[i:]):
                     yield part[i:]
@@ -74,12 +81,19 @@ def _strings(obj: Any) -> Iterator[str]:
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
     """Find lexical path references in tool input, including quotes, ``=`` and ``../``.
 
-    This is a guardrail, not a shell parser: paths produced by variables,
-    globs, substitutions, symlinks or other runtime expansion may be missed.
+    Drive-relative paths on a restricted zone's drive are treated as touching it,
+    since that drive's current directory is unknown. This is a guardrail, not a
+    shell parser: paths produced by variables, globs, substitutions, symlinks or
+    other runtime expansion may be missed.
     """
     paths = [(p, _norm(p)) for p in paths if p]
     for s in _strings(obj):
         for token in _candidate_paths(s):
+            if _drive_relative(token):
+                for original, zone in paths:
+                    if re.match(r"^[A-Za-z]:/", zone) and token[0].casefold() == zone[0].casefold():
+                        return original
+                continue
             if not _absolute(token) and workdir:
                 token = _norm(posixpath.join(_norm(workdir), token))
             else:
@@ -125,6 +139,10 @@ def evaluate_tool(
     allowed_roots: Iterable[str] = (),
     workdir: str | None = None,
 ) -> Decision:
+    if tool_name in WRITE_LIKE:
+        write_path = tool_input.get("file_path") or tool_input.get("notebook_path")
+        if write_path and _drive_relative(write_path):
+            return Decision("ask", f"drive-relative write path has no known base: {write_path}")
     rp = restricted_paths(policy)
     hit = touches(tool_input, rp, workdir=workdir)
 

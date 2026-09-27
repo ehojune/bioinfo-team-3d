@@ -124,3 +124,21 @@ def test_runner_checks_job_group_membership(monkeypatch):
         m.setattr(os, "getgrouplist", lambda name, primary_gid: [])
         with pytest.raises(RuntimeError, match="hpc.user is not a member"):
             runner._check_job_group()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask controls task input modes")
+def test_account_switch_sets_private_runner_umask_before_workspace_use(monkeypatch):
+    s = Settings(hpc=HpcSettings(submit_prefix=["sudo"], job_group="lab-jobs", user="data-account"))
+    runner = Runner(s)
+    modes = []
+
+    class StopAfterChecks(Exception):
+        pass
+
+    monkeypatch.setattr(runner, "_check_job_group", lambda: None)
+    monkeypatch.setattr(runner, "_check_data_boundary", lambda: None)
+    monkeypatch.setattr(os, "umask", lambda mode: modes.append(mode))
+    monkeypatch.setattr(runner.registry, "load", lambda: (_ for _ in ()).throw(StopAfterChecks))
+    with pytest.raises(StopAfterChecks):
+        asyncio.run(runner.run_forever())
+    assert modes == [0o077]

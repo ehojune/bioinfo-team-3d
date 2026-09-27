@@ -92,6 +92,21 @@ def test_drive_rooted_backslash_is_absolute_without_a_drive_letter():
                    workdir=r"C:\work\task") == "/data/cohort"
 
 
+def test_drive_relative_path_never_uses_workdir_as_its_base():
+    zone = r"C:\data\cohort"
+    p = PolicySettings(data_zones=[DataZone(path=zone)])
+    roots = [r"C:\work\task"]
+    for path in (r"C:outside.txt", r"c:..\data\cohort\a.vcf"):
+        assert evaluate_tool("Write", {"file_path": path}, p, roots,
+                             workdir=r"C:\work\task").action == "ask"
+        assert touches({"file_path": path}, [zone], workdir=r"C:\work\task") == zone
+        assert evaluate_tool("Read", {"file_path": path}, p, roots,
+                             workdir=r"C:\work\task").action == "deny"
+    assert evaluate_tool("Bash", {"command": "cat --input=C:outside.txt"}, p,
+                         workdir=r"C:\work\task").action == "ask"
+    assert touches({"command": "cat D:outside.txt"}, [zone], workdir=r"C:\work\task") is None
+
+
 def test_relative_zone_is_rejected_at_config_load(tmp_path):
     from labhq.settings import Settings
 

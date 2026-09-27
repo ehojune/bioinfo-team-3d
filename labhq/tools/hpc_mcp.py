@@ -48,7 +48,6 @@ async def _broker(path: str, payload: dict, timeout: float) -> dict:
 
 def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                        job_group: str | None = None) -> None:
-    logs.mkdir(parents=True, exist_ok=True)
     if job_group:
         if os.name == "nt":
             raise RuntimeError("hpc.job_group requires a POSIX runner")
@@ -56,12 +55,33 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
 
         gid = grp.getgrnam(job_group).gr_gid
         output_dir = workdir / "hpc_out"
-        output_dir.mkdir(exist_ok=True)
+        if workdir.is_symlink():
+            raise RuntimeError(f"task workdir must not be a symlink: {workdir}")
+        if stat.S_IMODE(workdir.stat().st_mode) & 0o067:
+            os.chmod(workdir, 0o700)
+        for shared in (script_path.parent, logs, output_dir):
+            if shared.is_symlink():
+                raise RuntimeError(f"shared job path must not be a symlink: {shared}")
+        # Old workspaces or explicit workdir overrides may predate the runner's
+        # private umask. Remove group/other access before granting group traversal.
+        def fail_on_walk_error(error: OSError) -> None:
+            raise error
+
+        for root, dirs, files in os.walk(workdir, onerror=fail_on_walk_error, followlinks=False):
+            if Path(root) == workdir:
+                dirs[:] = [name for name in dirs if name not in {script_path.parent.name, output_dir.name}]
+            for name in [*dirs, *files]:
+                path = Path(root) / name
+                if path.is_symlink():
+                    raise RuntimeError(f"task input must not be a symlink: {path}")
+                os.chmod(path, stat.S_IMODE(path.stat().st_mode) & ~0o077)
+        output_dir.mkdir(mode=0o700, exist_ok=True)
+    logs.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if job_group:
         for directory in (workdir, script_path.parent, logs, output_dir):
             os.chown(directory, -1, gid)
         # Allow traversal without making task inputs group-listable or writable.
-        mode = stat.S_IMODE(workdir.stat().st_mode)
-        os.chmod(workdir, (mode | stat.S_IXGRP) & ~(stat.S_IRGRP | stat.S_IWGRP))
+        os.chmod(workdir, 0o710)
         os.chmod(script_path.parent, 0o2750)
         os.chmod(logs, 0o2770)
         os.chmod(output_dir, 0o2770)

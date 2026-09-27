@@ -105,6 +105,8 @@ class Runner:
     async def run_forever(self) -> None:
         self._check_job_group()
         self._check_data_boundary()
+        if self.s.hpc.submit_prefix and os.name != "nt":
+            os.umask(0o077)  # task inputs created by this runner and its agents stay private
         self.registry.load()
         log.info("runner %s: %d agents", self.s.runner.id, len(self.registry.agents))
         await asyncio.gather(self.broker.serve(), self._connection_loop(), self._job_watch_loop())

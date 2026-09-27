@@ -54,7 +54,16 @@ def test_hpc_job_files_are_shared_with_job_group(tmp_path):
 
     group = grp.getgrgid(os.getgid()).gr_name
     workdir = tmp_path / "task"
-    workdir.mkdir(mode=0o700)
+    old_umask = os.umask(0o022)
+    try:
+        workdir.mkdir()
+        (workdir / "TASK.md").write_text("private task input")
+        (workdir / "outputs").mkdir()
+        (workdir / "outputs" / "input.txt").write_text("private input")
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(workdir.stat().st_mode) == 0o755
+    assert stat.S_IMODE((workdir / "TASK.md").stat().st_mode) == 0o644
     script = workdir / "jobs" / "job.sh"
     logs = workdir / "jobs" / "logs"
     output_dir = workdir / "hpc_out"
@@ -66,8 +75,10 @@ def test_hpc_job_files_are_shared_with_job_group(tmp_path):
     assert stat.S_IMODE(logs.stat().st_mode) == 0o2770
     assert stat.S_IMODE(output_dir.stat().st_mode) == 0o2770
     assert stat.S_IMODE(script.parent.stat().st_mode) == 0o2750
-    assert workdir.stat().st_gid == gid and workdir.stat().st_mode & stat.S_IXGRP
-    assert not workdir.stat().st_mode & (stat.S_IRGRP | stat.S_IWGRP)
+    assert workdir.stat().st_gid == gid and stat.S_IMODE(workdir.stat().st_mode) == 0o710
+    assert stat.S_IMODE((workdir / "TASK.md").stat().st_mode) == 0o600
+    assert stat.S_IMODE((workdir / "outputs").stat().st_mode) == 0o700
+    assert stat.S_IMODE((workdir / "outputs" / "input.txt").stat().st_mode) == 0o600
 
 
 async def test_hpc_submit_reports_switched_output_dir(tmp_path, monkeypatch):
