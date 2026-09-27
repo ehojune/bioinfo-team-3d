@@ -1,6 +1,6 @@
 """Pure decisions for the PR gate; no GitHub access."""
 
-from scripts.pr_gate import GATE_MARKER, decide
+from scripts.pr_gate import GATE_MARKER, decide, select_pr_numbers
 
 
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
@@ -18,7 +18,6 @@ def snapshot():
             "head": {"sha": HEAD, "repo": {"full_name": "team/repo"}},
             "base": {"repo": {"full_name": "team/repo"}}, "labels": [],
         },
-        "head_committed_at": "2026-09-28T09:00:00Z",
         "issue_comments": [comment(
             "<!-- codex-pull-request-review-summary -->\n| Review | Status | Commit | Review trigger |\n"
             "| --- | --- | --- | --- |\n| Code Review | Completed | `abcdef0` | PR opened |",
@@ -69,12 +68,11 @@ def test_running_latest_review_waits_even_at_cap():
     assert decide(snap).kind == "none"
 
 
-def test_old_thumb_is_invalid_and_head_thumb_allows_p2():
+def test_reaction_age_does_not_gate_p2():
     snap = snapshot()
     snap["review_comments"] = [finding("P2")]
+    assert decide(snap).kind == "merge"
     snap["reactions"] = [comment("", BOT, "NONE", content="+1", created_at="2026-09-28T08:59:59Z")]
-    assert decide(snap).kind == "none"
-    snap["reactions"][0]["created_at"] = "2026-09-28T09:00:01Z"
     assert decide(snap).kind == "merge"
 
 
@@ -93,13 +91,22 @@ def test_p1_at_cap_calls_pi_with_title_and_same_head_is_idempotent():
 def test_p2_only_merges_and_creates_linked_followup():
     snap = snapshot()
     snap["review_comments"] = [finding("P2", "Improve errors")]
-    snap["reactions"] = [comment("", BOT, "NONE", content="+1", created_at="2026-09-28T09:01:00Z")]
     action = decide(snap)
     assert action.kind == "merge"
     assert action.followups == [{
         "title": "PR #42 follow-up: Improve errors",
         "body": "원본 지적:\n\n[P2] Improve errors\n\n링크: https://github.com/team/repo/pull/42#discussion_r1",
     }]
+
+
+def test_unbadged_bot_finding_blocks_merge_and_calls_pi_at_cap():
+    snap = snapshot()
+    snap["review_comments"] = [comment("Investigate edge case", BOT, "NONE", commit_id=HEAD)]
+    assert decide(snap).kind == "none"
+    snap["issue_comments"] += [comment("@codex review") for _ in range(9)]
+    action = decide(snap)
+    assert action.kind == "needs_pi"
+    assert "Investigate edge case" in " ".join(action.reasons)
 
 
 def test_failed_or_pending_check_blocks_merge():
@@ -137,11 +144,23 @@ def test_stale_review_and_old_findings_do_not_merge_wrong_head():
     assert decide(snap).kind == "merge"
 
 
-def test_spoofed_summary_and_reaction_do_not_count():
+def test_spoofed_summary_does_not_count_and_reaction_does_not_gate():
     snap = snapshot()
     snap["issue_comments"][0]["user"]["login"] = "outsider"
     assert decide(snap).kind == "none"
     snap = snapshot()
     snap["review_comments"] = [finding("P2")]
     snap["reactions"] = [comment("", "outsider", "NONE", content="+1", created_at="2026-09-28T10:00:00Z")]
-    assert decide(snap).kind == "none"
+    assert decide(snap).kind == "merge"
+
+
+def test_event_selection_covers_ci_completion_schedule_and_existing_triggers():
+    event = {"workflow_run": {"pull_requests": [{"number": 7}, {"number": 3}, {"number": 7}]}}
+    assert select_pr_numbers("workflow_run", event) == [3, 7]
+    assert select_pr_numbers("schedule", {}, open_pr_numbers=[5, 2, 5]) == [2, 5]
+    assert select_pr_numbers("issue_comment", {"issue": {"number": 4}}) == []
+    assert select_pr_numbers("issue_comment", {"issue": {"number": 4, "pull_request": {}}}) == [4]
+    assert select_pr_numbers("issue_comment", {"issue": {"number": 4, "pull_request": {"url": "pr"}}}) == [4]
+    for name in ("pull_request_review", "pull_request_review_comment"):
+        assert select_pr_numbers(name, {"pull_request": {"number": 6}}) == [6]
+    assert select_pr_numbers("workflow_dispatch", {"inputs": {"pr": "9"}}) == [9]

@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · PR 게이트 후속 수정
+
+- 무엇을: P2만 남은 PR은 👍 없이 병합한다. 배지가 없는 지적은 P1처럼 막는다. CI 완료는 `workflow_run`으로 받고, 30분마다 열린 PR을 재판정한다.
+- 테스트: Windows 8 failed/217 passed/13 skipped → 8 failed/219 passed/13 skipped(새 실패 0). 게이트 테스트 13 passed, YAML 파싱·공개 검사 통과.
+- 막힌 점: 실제 GitHub 이벤트와 Linux CI는 push 전이라 미검증.
+- 다음: Claude가 후속 커밋을 push해 PR에서 트리거를 확인한다.
+
 ## 2026-09-28 · PR 리뷰 게이트
 
 - 무엇을: 현재 head의 Codex 리뷰·P1/P2·CI·병합 가능 상태를 판정한다. 합의 시 squash merge와 P2 후속 issue, 8회 경고, 10회 `needs-pi` 호출을 구현했다.

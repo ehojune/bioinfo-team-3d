@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field
-from datetime import datetime
 import json
 import os
 import re
@@ -36,15 +35,6 @@ def _login(item: dict) -> str:
 
 def _trusted(item: dict) -> bool:
     return _login(item) == BOT or item.get("author_association") in TRUSTED
-
-
-def _time(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _latest_review(comments: list[dict]) -> tuple[str, str] | None:
@@ -99,19 +89,11 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     ]
     p1 = [f[1] for f in findings if f[0] == "1"]
     p2 = [f[2] for f in findings if f[0] == "2"]
-    head_time = _time(snapshot.get("head_committed_at"))
-    thumbs_up = bool(head_time) and any(
-        r.get("content") == "+1" and _login(r) == BOT
-        and (created := _time(r.get("created_at"))) is not None and created > head_time
-        for r in snapshot.get("reactions", [])
-    )
     checks = snapshot.get("check_runs", [])
     bad_checks = [c.get("name") or "unnamed" for c in checks if c.get("conclusion") not in {"success", "neutral", "skipped"}]
     reasons = []
     if p1:
         reasons.append("남은 P1: " + ", ".join(p1))
-    if findings and not thumbs_up:
-        reasons.append("현재 head 커밋 이후 봇 👍가 없습니다.")
     if bad_checks:
         reasons.append("미통과 check: " + ", ".join(bad_checks))
     if not checks:
@@ -138,6 +120,25 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     if rounds >= warn_at and not any("warn cap=" in body for body in gate_comments):
         return Action("warn", [f"봇 리뷰 {rounds}/{cap}회. 남은 횟수를 확인하세요."] + reasons)
     return Action("none", reasons)
+
+
+def select_pr_numbers(event_name: str, event: dict, *, open_pr_numbers=()) -> list[int]:
+    """Select PRs from a trusted Actions event or the scheduled open-PR list."""
+    if event_name == "issue_comment":
+        issue = event.get("issue") or {}
+        numbers = [issue["number"]] if "pull_request" in issue else []
+    elif event_name == "workflow_run":
+        numbers = [pr["number"] for pr in (event.get("workflow_run") or {}).get("pull_requests", [])]
+    elif event_name in {"pull_request_review_comment", "pull_request_review"}:
+        pr = event.get("pull_request") or {}
+        numbers = [pr["number"]] if pr else []
+    elif event_name == "workflow_dispatch":
+        numbers = [(event.get("inputs") or {})["pr"]]
+    elif event_name == "schedule":
+        numbers = open_pr_numbers
+    else:
+        numbers = []
+    return sorted({int(number) for number in numbers if int(number) > 0})
 
 
 class GitHub:
@@ -180,10 +181,8 @@ def snapshot_for(api: GitHub, number: int) -> dict:
     sha = pr["head"]["sha"]
     same_repo = ((pr["head"].get("repo") or {}).get("full_name") ==
                  (pr["base"].get("repo") or {}).get("full_name"))
-    commit = api.request("GET", f"/commits/{quote(sha)}") if same_repo else None
     return {
         "pr": pr,
-        "head_committed_at": commit["commit"]["committer"]["date"] if commit else None,
         "issue_comments": api.pages(f"/issues/{number}/comments"),
         "review_comments": api.pages(f"/pulls/{number}/comments"),
         "reactions": api.pages(f"/issues/{number}/reactions"),

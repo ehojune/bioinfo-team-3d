@@ -62,7 +62,7 @@ P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 s
 - 테스트를 지우거나 약하게 만들지 않는다. 바꿀 때마다 pytest -q, UI를 건드렸으면 브라우저로도 확인한다.
 - 구조를 크게 바꾸거나 의존성을 추가할 때는 먼저 PR 설명으로 제안하고 확인받는다.
 - P1 지적은 해당 PR에서 고친다. P2는 병합을 막지 않고 후속 issue로 넘긴다. 봇 리뷰 1회는 PR 생성 시 자동 리뷰 1번 또는 신뢰 작성자의 PR 상단 `@codex review` 댓글 1개다. push 묶음마다 한 번만 호출한다. 인라인 답글에는 `@codex`를 쓰지 않고, Running 중에는 다시 부르지 않는다.
-- 최대 10회다. 8회부터 경고하고, 10회에 합의하지 못하면 `needs-pi` 라벨과 막힌 이유를 남긴다. 게이트는 현재 head의 봇 Completed 리뷰·P1 없음·봇 동의·CI 통과·mergeable·비 draft·동일 저장소를 확인한 뒤 squash merge하고 P2 issue를 만든다. 포크 PR은 자동 병합하지 않는다.
+- 최대 10회다. 8회부터 경고하고, 10회에 합의하지 못하면 `needs-pi` 라벨과 막힌 이유를 남긴다. 게이트는 현재 head의 봇 Completed 리뷰·P1 없음·CI 통과·mergeable·비 draft·동일 저장소를 확인한 뒤 squash merge하고 P2 issue를 만든다. 👍는 병합 조건이 아니다. 포크 PR은 자동 병합하지 않는다.
 - 보고는 한국어로, 기술 용어·명령·유전자 이름은 영어 그대로 쓴다.
 
 [5] 감독

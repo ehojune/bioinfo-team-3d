@@ -7,8 +7,12 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
-  check_suite:
+  # GitHub Actions check suites do not trigger check_suite workflows; watch the test run.
+  workflow_run:
+    workflows: [test]
     types: [completed]
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       pr:
@@ -28,32 +32,34 @@ jobs:
     outputs:
       prs: ${{ steps.select.outputs.prs }}
     steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - name: Select PRs from event data
         id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_PATH: ${{ github.event_path }}
-          INPUT_PR: ${{ inputs.pr }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          from scripts.pr_gate import GitHub, select_pr_numbers
 
           with open(os.environ['EVENT_PATH'], encoding='utf-8') as source:
               event = json.load(source)
           name = os.environ['EVENT_NAME']
-          if name == 'issue_comment':
-              issue = event.get('issue') or {}
-              numbers = [issue['number']] if issue.get('pull_request') else []
-          elif name == 'check_suite':
-              numbers = [pr['number'] for pr in event['check_suite'].get('pull_requests', [])]
-          elif name == 'workflow_dispatch':
-              numbers = [int(os.environ['INPUT_PR'])]
-          else:
-              pr = event.get('pull_request') or {}
-              numbers = [pr['number']] if pr else []
+          open_prs = []
+          if name == 'schedule':
+              api = GitHub(os.environ['REPO'], os.environ['GITHUB_TOKEN'])
+              open_prs = [pr['number'] for pr in api.pages('/pulls?state=open')]
+          numbers = select_pr_numbers(name, event, open_pr_numbers=open_prs)
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write('prs=' + json.dumps(sorted(set(numbers))) + '\n')
+              output.write('prs=' + json.dumps(numbers) + '\n')
           PY
 
   gate:
