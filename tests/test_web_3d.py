@@ -1,0 +1,122 @@
+"""Shared office state and bounded static routes; no new runtime dependencies."""
+import json
+import ast
+from pathlib import Path
+import re
+import shutil
+import subprocess
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
+from labhq.gateway.server import WEB, create_app
+from labhq.settings import Settings
+
+
+@pytest.fixture
+def client(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / 'state')
+    return TestClient(create_app(settings)), settings
+
+
+@pytest.mark.parametrize('path,mime', [
+    ('/3d', 'text/html'), ('/3d/', 'text/html'),
+    ('/state.js', 'text/javascript'), ('/3d/src/main.js', 'text/javascript'),
+    ('/3d/src/live.js', 'text/javascript'),
+    ('/vendor/three/build/three.module.js', 'text/javascript'),
+    ('/vendor/three/build/three.core.js', 'text/javascript'),
+    ('/vendor/three/examples/jsm/loaders/GLTFLoader.js', 'text/javascript'),
+    ('/3d/assets/placeholder.gltf', 'model/gltf+json'),
+])
+def test_static_routes(client, path, mime):
+    http, _ = client
+    response = http.get(path)
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith(mime)
+    if mime == 'text/html':
+        assert 'window.LABHQ_BOOT={"mode":"live"}' in response.text
+        assert '<!--LABHQ_BOOT-->' not in response.text
+
+
+def test_same_shell_and_data_auth_as_2d(client):
+    http, settings = client
+    for path in ('/', '/3d'):
+        assert http.get(path).status_code == 200  # public login shell, no data
+    redirect = http.get('/3d?token=test-client&demo=1', follow_redirects=False)
+    assert redirect.headers['location'] == '/3d/?token=test-client&demo=1'
+    for query in ('', '?token=wrong'):
+        with pytest.raises(WebSocketDisconnect) as error:
+            with http.websocket_connect('/ws/client' + query):
+                pass
+        assert error.value.code == 1008
+    with http.websocket_connect('/ws/client?token=' + settings.gateway.client_token) as ws:
+        assert json.loads(ws.receive_text())['type'] == 'snapshot'
+    assert http.get('/api/approvals').status_code == 401
+
+
+@pytest.mark.parametrize('path', [
+    '/3d/src/%2e%2e/%2e%2e/index.html',
+    '/3d/assets/%2e%2e/%2e%2e/%2e%2e/gateway/server.py',
+    '/3d/src/..%5c..%5cindex.html', '/3d/src/C:%5cWindows%5cwin.ini',
+    '/vendor/three/%2e%2e/%2e%2e/index.html',
+    '/vendor/three/%2fetc/passwd', '/vendor/three/..%5c..%5cindex.html',
+    '/3d/assets/generate_placeholder.py', '/3d/README.md', '/3d/src/missing.js',
+])
+def test_static_paths_cannot_escape_or_expose_sources(client, path):
+    assert client[0].get(path).status_code in (403, 404)
+
+
+def test_symlink_escape(client, tmp_path, monkeypatch):
+    from labhq.gateway import server
+    web = tmp_path / 'web'
+    assets = web / 'lab3d' / 'assets'
+    assets.mkdir(parents=True)
+    outside = tmp_path / 'outside.js'
+    outside.write_text('private', encoding='utf-8')
+    try:
+        (assets / 'link.js').symlink_to(outside)
+    except OSError:
+        pytest.skip('symlink creation unavailable')
+    monkeypatch.setattr(server, 'WEB', web)
+    assert client[0].get('/3d/assets/link.js').status_code == 404
+
+
+def test_both_pages_load_same_reducer_and_keep_dom_approvals():
+    for path in (WEB / 'index.html', WEB / 'lab3d/index.html'):
+        html = path.read_text(encoding='utf-8')
+        scripts = re.findall(r'<script src="([^"]*state\.js)"></script>', html)
+        assert len(scripts) == 1
+        assert (path.parent / scripts[0]).resolve() == (WEB / 'state.js').resolve()
+        assert 'id="approvals"' in html
+    assert 'href="/3d/"' in (WEB / 'index.html').read_text(encoding='utf-8')
+    assert 'href="/"' in (WEB / 'lab3d/index.html').read_text(encoding='utf-8')
+    source = (WEB / 'state.js').read_text(encoding='utf-8')
+    for forbidden in ('document.', 'window.', 'setTimeout(', 'WebSocket(', 'fetch('):
+        assert forbidden not in source
+
+
+def test_package_data_includes_office_assets():
+    package = WEB.parent
+    config = (package.parent / 'pyproject.toml').read_text(encoding='utf-8')
+    patterns = ast.literal_eval(re.search(r'labhq = (\[[\s\S]*?\])', config)[1])
+    included = {p for pattern in patterns for p in package.glob(pattern) if p.is_file()}
+    needed = {WEB / 'state.js', WEB / 'lab3d/index.html'}
+    for folder in (WEB / 'lab3d/src', WEB / 'lab3d/assets', WEB / 'vendor/three'):
+        needed.update(p for p in folder.rglob('*') if p.suffix in {'.js', '.gltf', '.glb', '.bin'})
+    assert needed <= included
+
+
+@pytest.mark.parametrize('filename,marker', [
+    ('web_state.cjs', 'isolation and bounds: OK'),
+    ('web_live.cjs', 'reconnect and replay gap: OK'),
+])
+def test_office_in_node(filename, marker):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node is optional')
+    script = Path(__file__).with_name(filename)
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert marker in result.stdout, result.stdout + result.stderr

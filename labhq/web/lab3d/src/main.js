@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Shapes,C } from './primitives.js';
-import { STATES,STATE_LABELS,STATE_COLORS } from './characters.js';
+import { ROSTER,STATES,STATE_LABELS,STATE_COLORS } from './characters.js';
 import { buildOffice } from './office.js';
 import { rosterFor,selectionsFor,buildSkin,buildProcedural } from './skins.js';
 import { buildStatusLayer } from './status-layer.js';
+
+import { startLiveOffice } from './live.js';
 
 const $=id=>document.getElementById(id),stage=$('stage');
 const reducedQuery=matchMedia('(prefers-reduced-motion: reduce)');
@@ -24,8 +26,10 @@ controls.enablePan=false;controls.enableDamping=false;controls.minPolarAngle=.57
 controls.minAzimuthAngle=.08;controls.maxAzimuthAngle=.73;controls.rotateSpeed=.40;controls.zoomSpeed=.55;controls.minZoom=.83;controls.maxZoom=1.65;
 const s=new Shapes(scene),charactersRoot=s.group(scene);
 const params=new URLSearchParams(location.search);
+const demo=params.get('demo')==='1'||window.LABHQ_BOOT?.mode!=='live';
+let liveApprovalCount=0;
 let roster,skinSelections;
-try {roster=rosterFor(params);skinSelections=selectionsFor(roster,params);}
+try {roster=demo?rosterFor(params):[];skinSelections=selectionsFor(roster,params);}
 catch(error){$('skin-notice').textContent=error.message;$('skin-notice').hidden=false;roster=rosterFor(new URLSearchParams());skinSelections=selectionsFor(roster,new URLSearchParams());}
 const chars=[];
 for(const [index,def] of roster.entries()){
@@ -40,7 +44,7 @@ $('stage').setAttribute('aria-label',`${chars.length}명 직원이 있는 3D 연
 document.querySelector('.scene-note b').textContent=`${chars.length} COLLEAGUES · 01 FLOOR`;
 document.querySelector('.edition span').textContent=`한 층, ${chars.length}명의 동료`;
 const byId=new Map(chars.map(c=>[c.id,c]));chars.forEach(c=>c.root.userData.agentId=c.id);
-const {room,leds}=buildOffice(s,scene,roster);
+let {room,leds,updateBoard}=buildOffice(s,scene,roster,{demo});
 const selection=s.group(scene);s.ring(selection,C.gold,[0,.13,0],[.89,.89,.89],[-Math.PI/2,0,0]);
 s.build();
 
@@ -49,8 +53,8 @@ const labels=new Map();
 chars.forEach(c=>{const label=document.createElement('div');label.className='tag';label.dataset.agent=c.id;stage.appendChild(label);labels.set(c.id,label);const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;$('character').appendChild(opt);});
 STATES.forEach(state=>{const opt=document.createElement('option');opt.value=state;opt.textContent=STATE_LABELS[state];$('state').appendChild(opt);});
 const detail={queued:'자기 차례를 기다리며 천천히 숨을 쉽니다.',working:'손을 움직이며 맡은 업무를 진행합니다.',waiting:'<b>빨간 깃발 = PI 승인 대기.</b> 손을 들고 기다립니다.',hibernating:'HPC 작업을 기다리는 중입니다. 세션은 쉬고 있습니다.',done:'일을 마치고 작은 박수를 보냅니다.',error:'땀방울 = 문제가 생겼습니다. 확인이 필요합니다.'};
-function updatePanel(){const c=byId.get(selected);document.body.classList.toggle('focused-mode',focused);$('character').value=selected;$('state').value=c.state;$('agent-name').textContent=c.name;$('agent-role').textContent=c.role;$('agent-number').textContent=String(c.index+1).padStart(2,'0');$('state-detail').innerHTML=detail[c.state];$('focus').textContent=focused?'전체 보기':'가까이 보기';
-  const waiting=chars.filter(ch=>ch.state==='waiting');$('approval-chip').hidden=!waiting.length;$('approval-chip').textContent=`승인 대기 ${waiting.length}`;
+function updatePanel(){const c=byId.get(selected);if(!c){$('agent-name').textContent='직원 없음';$('agent-role').textContent='roster를 기다립니다';$('agent-number').textContent='—';$('state-detail').textContent='';$('approval-chip').hidden=true;$('focus').disabled=true;return;}$('focus').disabled=false;document.body.classList.toggle('focused-mode',focused);$('character').value=selected;$('state').value=c.state;$('agent-name').textContent=c.name;$('agent-role').textContent=c.role;$('agent-number').textContent=String(c.index+1).padStart(2,'0');$('state-detail').innerHTML=detail[c.state]||'';if(!demo)$('state-detail').textContent=c.task||STATE_LABELS[c.state]||'상태 미확인';$('focus').textContent=focused?'전체 보기':'가까이 보기';
+  const count=demo?chars.filter(ch=>ch.state==='waiting').length:liveApprovalCount;$('approval-chip').hidden=!count;$('approval-chip').textContent=`승인 대기 ${count}`;
   for(const ch of chars){const label=labels.get(ch.id);label.className=`tag${ch.id===selected?' selected':''}${view==='gallery'?' gallery':''}`;label.innerHTML=view==='gallery'?`<strong>${String(ch.index+1).padStart(2,'0')} · ${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</strong><small class="gallery-role">${ch.prop}</small>`:`<span><i class="state-dot" style="background:${STATE_COLORS[ch.state]}"></i>${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</span><small>${STATE_LABELS[ch.state]}</small>`;}
 }
 function setState(id,state){if(!byId.has(id))throw new RangeError(`Unknown character: ${id}`);if(!STATES.includes(state))throw new RangeError(`Unknown agent.status: ${state}`);byId.get(id).state=state;byId.get(id).skin.setState(state);updatePanel();requestRender();return state;}
@@ -60,6 +64,7 @@ $('randomize').addEventListener('click',()=>{chars.forEach(c=>{c.state=STATES[Ma
 $('focus').addEventListener('click',()=>{if(view==='gallery')setView('office');focused=!focused;frameCamera();updatePanel();requestRender();});
 let lastApproval=null;
 $('approval-chip').addEventListener('click',()=>{
+  if(!demo){$('approvals').parentElement.open=true;$('live-panel').scrollTop=0;$('live-panel').scrollIntoView({block:'nearest'});return;}
   const waiting=chars.filter(c=>c.state==='waiting');if(!waiting.length)return;
   const next=waiting[(waiting.findIndex(c=>c.id===lastApproval)+1)%waiting.length];
   if(view!=='office')setView('office');focused=true;lastApproval=next.id;select(next.id);
@@ -70,10 +75,10 @@ $('reset-view').addEventListener('click',()=>{focused=false;frameCamera();update
 function setView(next){view=next;focused=false;silhouette=false;s.silhouette(false);$('silhouette').hidden=view!=='gallery';$('silhouette').setAttribute('aria-pressed','false');document.body.classList.toggle('gallery-mode',view==='gallery');$('office-view').setAttribute('aria-pressed',String(view==='office'));$('gallery-view').setAttribute('aria-pressed',String(view==='gallery'));$('hint').textContent=view==='gallery'?'같은 3D 모델 · 윤곽 버튼으로 색 없이 비교 · 몸체 높이 기준':'직원을 누르면 선택 · 드래그로 회전 · 스크롤 / 두 손가락으로 줌';room.visible=view==='office';selection.visible=view==='office';resize();updatePanel();requestRender();}
 let width=1,height=1,ppu=40;
 function frameCamera(){
-  const aspect=width/height;camera.zoom=1;
+  const aspect=width/height;camera.zoom=1;if(!byId.has(selected))focused=false;
   if(view==='gallery'){
     controls.enabled=false;
-    const cols=width<700?3:6,rows=Math.ceil(chars.length/cols),rowPitch=width<700?3.17:4.2;
+    const cols=width<700?3:6,rows=Math.max(1,Math.ceil(chars.length/cols)),rowPitch=width<700?3.17:4.2;
     ppu=Math.min(43,width/(cols*2.82),height/(rows*rowPitch));
     const bodyPixels=Math.min(80,height/rows-36,width/cols-25);
     camera.left=-width/(2*ppu);camera.right=-camera.left;camera.top=height/(2*ppu);camera.bottom=-camera.top;
@@ -93,7 +98,7 @@ function resize(){const box=stage.getBoundingClientRect();width=Math.max(1,box.w
 new ResizeObserver(resize).observe(stage);
 const projection=new THREE.Vector3();
 function placeLabels(){
-  const c=byId.get(selected);selection.position.set(c.seat[0],0,c.seat[1]);
+  const c=byId.get(selected);selection.visible=view==='office'&&!!c;if(c)selection.position.set(c.seat[0],0,c.seat[1]);
   chars.forEach(ch=>{
     if(view==='gallery')projection.set(0,ch.bodyBottom-.17,0).applyMatrix4(ch.root.matrixWorld);
     else ch.skin.anchors.label.getWorldPosition(projection);
@@ -132,7 +137,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){if(raf)can
 reducedQuery.addEventListener('change',e=>{reduced=e.matches;lastTime=0;frames=0;sampleTime=0;fps=0;requestRender();});
 renderer.domElement.addEventListener('webglcontextlost',e=>{e.preventDefault();contextLost=true;if(raf)cancelAnimationFrame(raf);raf=0;$('error').textContent='그래픽 연결이 잠시 끊겼습니다. 복구를 기다립니다.';$('error').classList.add('visible');});
 renderer.domElement.addEventListener('webglcontextrestored',()=>{contextLost=false;$('error').classList.remove('visible');lastTime=0;requestRender();});
-window.__labhq3d={characters:chars.map(c=>c.id),setState,getState(id){if(!byId.has(id))throw new RangeError(`Unknown character: ${id}`);return byId.get(id).state;},stats:getStats,
+window.__labhq3d={get characters(){return chars.map(c=>c.id);},setState,getState(id){if(!byId.has(id))throw new RangeError(`Unknown character: ${id}`);return byId.get(id).state;},stats:getStats,
   snapshot(){return {selected,focused,view,frames:totalFrames,primitives:s.parts.length,
     characters:chars.map(c=>({id:c.id,state:c.state,skin:c.skin.kind,budget:c.skin.budget,seat:[...c.seat],badge:c.badge||null,
       markers:c.status.visible(),clip:c.skin.clip||null,head:c.skin.anchors.head.getWorldPosition(new THREE.Vector3()).toArray(),
@@ -144,3 +149,49 @@ window.__labhq3d={characters:chars.map(c=>c.id),setState,getState(id){if(!byId.h
 // Local verification can inspect counts without a renderer or scene escape hatch.
 renderer.domElement.dataset.primitives=String(s.parts.length);
 updatePanel();resize();requestRender();
+
+// Roster changes rebuild shared batches; status events only update poses/textures.
+let rosterKey='', boardKey='';
+function syncLive(S) {
+  const agents=[...S.agents.values()];
+  const key=JSON.stringify(agents.map(a=>[a.id,a.name,a.role,a.employment]));
+  if(key!==rosterKey){
+    rosterKey=key;
+    for(const c of chars){c.status.dispose();c.skin.dispose();}
+    chars.length=0;byId.clear();labels.forEach(label=>label.remove());labels.clear();$('character').replaceChildren();
+    room.traverse(node=>{if(node.isMesh){node.geometry.dispose();const materials=Array.isArray(node.material)?node.material:[node.material];for(const m of materials){m.map?.dispose();m.dispose();}node.dispose?.();}});
+    s.remove(room);
+    let extras=0;
+    roster=agents.map(a=>{
+      const known=ROSTER.find(def=>def.id===a.id&&def.id!=='contract');
+      const base=known||ROSTER.find(def=>def.id==='contract');
+      const extra=known?null:extras++;
+      return {...base,id:a.id,name:a.name||a.id,role:a.role||'',task:a.task||'',archetype:base.id,
+        state:pose(a.state),seat:known?base.seat:extra===0?base.seat:[7.75,-3.8+(extra-1)*2.2],
+        extraContract:extra!==null&&extra>0,badge:extra===null?null:{letter:String.fromCharCode(65+extra),color:C.sage}};
+    });
+    for(const [index,def] of roster.entries()){
+      const skin=buildProcedural({shapes:s,parent:charactersRoot,def,index});skin.setState(def.state);
+      const status=buildStatusLayer(s,skin.anchors.head,index*.81);
+      const c={...def,index,skin,status,root:skin.root,bodyHeight:skin.bodyHeight,bodyCenterY:skin.bodyCenterY,bodyBottom:skin.bodyBottom};
+      chars.push(c);byId.set(c.id,c);c.root.userData.agentId=c.id;
+      const label=document.createElement('div');label.className='tag';label.dataset.agent=c.id;stage.append(label);labels.set(c.id,label);
+      const option=document.createElement('option');option.value=c.id;option.textContent=c.name;$('character').append(option);
+    }
+    ({room,leds,updateBoard}=buildOffice(s,scene,roster,{demo:false}));s.build();boardKey='';
+    if(!byId.has(selected))selected=chars[0]?.id||null;
+    document.querySelector('.scene-note b').textContent=`${chars.length} COLLEAGUES · 01 FLOOR`;
+    document.querySelector('.edition span').textContent=`한 층, ${chars.length}명의 동료`;
+    stage.setAttribute('aria-label',`${chars.length}명 직원이 있는 3D 연구소`);
+    frameCamera();
+  }
+  for(const a of agents){const c=byId.get(a.id);c.state=pose(a.state);c.task=a.task||'';c.skin.setState(c.state);}
+  const q=S.requests.get(S.current);
+  const nextBoard=JSON.stringify(q||null);
+  if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}
+  const running=[...S.jobs.values()].filter(j=>j.state==='running').length;
+  leds.forEach((led,i)=>{led.visible=i<running;});
+  liveApprovalCount=S.approvals.size;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인 대기 ${liveApprovalCount}`;requestRender();
+}
+function pose(state){return ({sleep:'hibernating',sleeping:'hibernating',idle:'queued'})[state]|| (STATES.includes(state)?state:'queued');}
+if(!demo)startLiveOffice(syncLive);

@@ -7,14 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import time
 from collections import deque
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, Response
+from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
@@ -855,6 +856,46 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         html = (WEB / "index.html").read_text(encoding="utf-8")
         boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
         return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
+
+    # Like /, static shells are public; data and decisions require the client token.
+    @app.get("/3d")
+    async def office3d_redirect(request: Request) -> RedirectResponse:
+        query = str(request.url.query)
+        return RedirectResponse("/3d/" + ("?" + query if query else ""))
+
+    @app.get("/3d/", response_class=HTMLResponse)
+    async def office3d() -> HTMLResponse:
+        html = (WEB / "lab3d" / "index.html").read_text(encoding="utf-8")
+        boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
+        return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
+
+    def static_file(root: Path, path: str) -> FileResponse:
+        # Reject decoded dot segments, Windows separators/drives and symlink escapes.
+        if "\\" in path or ":" in path or ".." in path.split("/"):
+            raise HTTPException(404)
+        target = (root / path).resolve()
+        if not target.is_relative_to(root.resolve()) or not target.is_file():
+            raise HTTPException(404)
+        mime = {".js": "text/javascript", ".gltf": "model/gltf+json",
+                ".glb": "model/gltf-binary", ".bin": "application/octet-stream"}.get(target.suffix)
+        mime = mime or mimetypes.guess_type(target.name)[0]
+        if target.suffix not in {".js", ".css", ".gltf", ".glb", ".bin", ".png", ".jpg", ".jpeg", ".webp", ".svg"}:
+            raise HTTPException(404)
+        return FileResponse(target, media_type=mime, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/state.js")
+    async def office_state() -> FileResponse:
+        return static_file(WEB, "state.js")
+
+    @app.get("/3d/{path:path}")
+    async def office3d_asset(path: str) -> FileResponse:
+        if not path.startswith(("src/", "assets/")):
+            raise HTTPException(404)
+        return static_file(WEB / "lab3d", path)
+
+    @app.get("/vendor/three/{path:path}")
+    async def three_asset(path: str) -> FileResponse:
+        return static_file(WEB / "vendor" / "three", path)
 
     @app.get("/manifest.webmanifest")
     async def manifest() -> Response:
