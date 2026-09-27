@@ -154,6 +154,109 @@ async def test_issue_creation_replay_finds_remote_issue_before_reposting(tmp_pat
     assert restored.store.get("github_issue", "r") == {"number": 7}
 
 
+def reporter_comments_transport(remote):
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/issues/7/comments") and request.method == "GET":
+            return httpx.Response(200, json=remote)
+        if request.url.path.endswith("/issues/7/comments") and request.method == "POST":
+            comment = {"body": json.loads(request.content)["body"],
+                       "html_url": f"https://example.test/comment/{len(remote) + 1}"}
+            remote.append(comment)
+            return httpx.Response(201, json=comment)
+        return httpx.Response(404, json={"message": "Not Found"})
+    return httpx.MockTransport(api)
+
+
+@pytest.mark.asyncio
+async def test_saved_plan_and_review_replay_in_order_after_restart(tmp_path):
+    remote = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.gateway.state_dir = str(tmp_path / "state")
+    transport = reporter_comments_transport(remote)
+    first = Hub(s, github_transport=transport)
+    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.save_request("r")
+    first.store.put("github_issue", "r", {"number": 7})
+    first.reporter.issues["r"] = 7
+    first.reporter.submit = lambda event: None  # process exits after durable append, before enqueue
+    await first.publish({"type": "request.plan", "request_id": "r", "data": {"steps": []}})
+    await first.publish({"type": "request.review", "request_id": "r",
+                         "data": {"revision": 0, "status": "review_unparsed", "reason": "invalid verdict"}})
+    assert [event["type"] for event in first.store.all("reporter_delivery").values()] == [
+        "request.plan", "request.review"]
+    first.store.close()
+
+    restored = Hub(s, github_transport=transport)
+    restored.recover_terminal_deliveries()
+    await restored.reporter.drain()
+    assert len(remote) == 2
+    assert remote[0]["body"].startswith("📋 **CSO 계획**")
+    assert remote[1]["body"].startswith("🐢 **과학 리뷰")
+    assert restored.store.all("reporter_delivery") == {}
+
+
+@pytest.mark.asyncio
+async def test_plan_delivery_waits_for_missing_request_issue(tmp_path):
+    remote = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.gateway.state_dir = str(tmp_path / "state")
+    transport = reporter_comments_transport(remote)
+    first = Hub(s, github_transport=transport)
+    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.save_request("r")
+    await first.publish({"type": "request.plan", "request_id": "r", "data": {"steps": []}})
+    await first.reporter.drain()
+    assert len(first.store.all("reporter_delivery")) == 1 and remote == []
+    first.store.put("github_issue", "r", {"number": 7})
+    first.store.close()
+
+    restored = Hub(s, github_transport=transport)
+    restored.recover_terminal_deliveries()
+    await restored.reporter.drain()
+    assert len(remote) == 1 and remote[0]["body"].startswith("📋 **CSO 계획**")
+    assert restored.store.all("reporter_delivery") == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,data", [
+    ("request.plan", {"steps": []}),
+    ("request.review", {"revision": 0, "status": "review_unparsed", "reason": "invalid verdict"}),
+    ("recruit.done", {"agent": {"id": "new", "name": "new"}, "passed_probation": True}),
+])
+async def test_reporter_comment_replay_finds_posted_marker(tmp_path, kind, data):
+    remote = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.gateway.state_dir = str(tmp_path / "state")
+    transport = reporter_comments_transport(remote)
+    first = Hub(s, github_transport=transport)
+    first.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    first.save_request("r")
+    first.store.put("github_issue", "r", {"number": 7})
+    first.reporter.issues["r"] = 7
+    first.reporter.submit = lambda event: None
+    await first.publish({"type": kind, "request_id": "r", "data": data})
+    event = next(iter(first.store.all("reporter_delivery").values()))
+    original_put = first.store.put
+
+    def crash_before_comment_checkpoint(state_kind, key, body):
+        if state_kind == "github_action" and key.endswith(":comment") and body.get("done"):
+            raise RuntimeError("simulated restart before checkpoint")
+        original_put(state_kind, key, body)
+
+    first.store.put = crash_before_comment_checkpoint
+    with pytest.raises(RuntimeError, match="simulated restart"):
+        await first.reporter.handle(event)
+    assert len(remote) == 1
+    first.store.close()
+
+    restored = Hub(s, github_transport=transport)
+    restored.recover_terminal_deliveries()
+    await restored.reporter.drain()
+    assert len(remote) == 1
+    assert restored.store.all("reporter_delivery") == {}
+    assert restored.store.get("github_action", f"r:{event['seq']}:comment")["done"] is True
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("crash_action", ["report", "comment", "close"])
 async def test_terminal_report_replay_skips_completed_external_actions(tmp_path, crash_action):

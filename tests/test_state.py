@@ -394,6 +394,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
         first.save_request("r")
         first.reporter.submit = lambda event: None  # event persisted, issue not yet opened
         await first.publish({"type": "request.created", "request_id": "r", "data": {"text": "study"}})
+        assert [event["type"] for event in first.store.all("reporter_delivery").values()] == ["request.created"]
         first.orchestrator._finish("r", "finished", {}, ok=True)
         first.store.close()
 
@@ -423,6 +424,7 @@ def test_restart_creates_missing_issue_before_terminal_report(tmp_path):
     assert calls == ["create", "comment", "close"]
     assert hub.store.get("github_issue", "r") == {"number": 7}
     assert hub.store.all("terminal_delivery") == {}
+    assert hub.store.all("reporter_delivery") == {}
     assert [e["type"] for e in hub.store.events_since(0) if e["type"].startswith("request.")] == [
         "request.created", "request.completed"]
 
@@ -828,8 +830,9 @@ async def test_unaccepted_dispatch_is_resent_with_original_task_id(tmp_path):
     original = Task(id="original-id", agent_id="a", request_id="r", prompt="work",
                     meta={"kind": "step", "step_id": "s", "attempt": 1, "revision": 0})
     first.store.put("task", original.id, {"request_id": "r", "step_id": "s", "kind": "step",
-                                           "attempt": 1, "revision": 0, "accepted": False,
-                                           "payload": original.model_dump(mode="json"), "dispatched_at": 1.0})
+                                            "attempt": 1, "revision": 0, "accepted": False,
+                                            "runner_id": "local", "runner_incarnation": "inc",
+                                            "payload": original.model_dump(mode="json"), "dispatched_at": 1.0})
     first.store.close()
     hub = Hub(s)
     socket = CaptureSocket()
@@ -1021,6 +1024,101 @@ async def test_uncertain_send_reconnects_with_same_task_id(tmp_path):
                                                              text="done").model_dump(mode="json")})
     assert (await asyncio.wait_for(pending, 1)).text == "done"
     assert list(hub.store.all("task")) == [task.id]
+
+
+@pytest.mark.asyncio
+async def test_uncertain_send_to_new_incarnation_requires_manual_recovery(tmp_path):
+    s = settings(tmp_path)
+    s.orchestrator.runner_reconnect_timeout_s = 1
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "status": "running", "text": "study"}
+
+    class FailedAfterFrame(CaptureSocket):
+        async def send_text(self, body):
+            message = json.loads(body)
+            self.sent.append(message)
+            if message.get("type") == "task.dispatch":
+                raise OSError("connection lost after frame")
+
+    old = FailedAfterFrame()
+    hub.register_runner("local", old, [{"id": "a"}], "old-incarnation")
+    task = Task(id="uncertain-id", agent_id="a", request_id="r", prompt="work",
+                meta={"kind": "step", "step_id": "s"})
+    running = asyncio.create_task(hub.orchestrator.run_step(task))
+    for _ in range(50):
+        if any(msg.get("type") == "task.dispatch" for msg in old.sent):
+            break
+        await asyncio.sleep(0.01)
+    entry = hub.store.get("task", task.id)
+    assert not entry["accepted"] and entry["runner_incarnation"] == "old-incarnation"
+    replacement = CaptureSocket()
+    hub.register_runner("local", replacement, [{"id": "a"}], "new-incarnation")
+    result = await asyncio.wait_for(running, 1)
+    assert not result.ok and failure_kind(result) == "terminal"
+    assert hub.store.get("task", task.id)["completed"] is True
+    assert [msg["task"]["id"] for msg in old.sent if msg.get("type") == "task.dispatch"] == [task.id]
+    assert not any(msg.get("type") == "task.dispatch" for msg in replacement.sent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_incarnation", ["old-incarnation", None])
+async def test_unaccepted_recovery_never_resends_to_different_incarnation(tmp_path, previous_incarnation):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    task = Task(id="uncertain-id", agent_id="a", request_id="r", prompt="work",
+                meta={"kind": "step", "step_id": "s"})
+    first.store.put("task", task.id, {"request_id": "r", "kind": "step", "step_id": "s",
+                                      "payload": task.model_dump(mode="json"), "accepted": False,
+                                      "runner_id": "local", "runner_incarnation": previous_incarnation})
+    first.store.close()
+    restored = Hub(s)
+    replacement = CaptureSocket()
+    restored.register_runner("local", replacement, [{"id": "a"}], "new-incarnation")
+    restored.recovery_steps.add("r")
+    result = await restored.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
+                                          meta={"kind": "step", "step_id": "s"}))
+    assert not result.ok and failure_kind(result) == "terminal"
+    assert result.task_id == task.id
+    assert not any(msg.get("type") == "task.dispatch" for msg in replacement.sent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkpoint_only", [False, True])
+async def test_completed_direct_result_finishes_without_original_agent(tmp_path, checkpoint_only):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "direct", "agent_id": "retired", "text": "work",
+                           "status": "running"}
+    first.save_request("r")
+    first.register_runner("local", CaptureSocket(), [{"id": "retired"}], "inc")
+    task = Task(id="direct-done", agent_id="retired", request_id="r", prompt="work",
+                meta={"kind": "direct"})
+    waiting = asyncio.create_task(first.dispatch(task))
+    await asyncio.sleep(0)
+    result = TaskResult(task_id=task.id, agent_id="retired", ok=True, text="finished", cost_usd=0.3)
+    await first.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                            "task_id": task.id, "request_id": "r",
+                                            "data": result.model_dump(mode="json")})
+    assert (await waiting).ok
+    if checkpoint_only:
+        first.store.delete("task", task.id)
+    first.store.close()
+
+    restored = Hub(s)
+    assert restored.resume_agents("r") == set()
+    approval = next(aid for aid, entry in restored.approvals.items()
+                    if entry["approval"]["kind"] == "resume")
+    await restored.resolve_approval(approval, True)
+    for _ in range(100):
+        if restored.requests["r"]["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    assert restored.requests["r"]["status"] == "done"
+    assert restored.requests["r"]["report"] == "finished"
+    assert restored.requests["r"]["cost_usd"] == 0.3
+    assert not any(event["type"] == "request.resume_waiting" for event in restored.events)
 
 
 @pytest.mark.asyncio

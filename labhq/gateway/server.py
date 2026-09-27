@@ -160,19 +160,25 @@ class Hub:
     def recover_terminal_deliveries(self) -> None:
         # The request row itself is the durable source for an issue that was not opened
         # before a crash. Queue it ahead of any terminal report for the same request.
+        pending = sorted(self.store.all("reporter_delivery").values(), key=lambda event: event["seq"])
+        pending_created = {event["request_id"] for event in pending if event["type"] == "request.created"}
         for rid, request in self.requests.items():
             project = self.s.project(request.get("project_id"))
             if (project and project.repo and project.issues and rid not in self.reporter.issues
-                    and (project.visibility != "public" or project.allow_public_reports)):
+                    and rid not in pending_created and
+                    (project.visibility != "public" or project.allow_public_reports)):
                 self.reporter.submit({"type": "request.created", "ts": request.get("created_at"),
-                                      "request_id": rid, "data": {}})
-        for event in self.store.all("terminal_delivery").values():
+                                       "request_id": rid, "data": {}})
+        for event in pending:
+            self.reporter.submit(event)
+        for event in sorted(self.store.all("terminal_delivery").values(), key=lambda ev: ev["seq"]):
             self._queue_terminal_delivery(event)
 
-    def ack_terminal_delivery(self, event: dict) -> None:
+    def ack_reporter_delivery(self, event: dict) -> None:
         seq = event.get("seq")
         if seq is not None:
             self.store.delete("terminal_delivery", str(seq))
+            self.store.delete("reporter_delivery", str(seq))
             self.terminal_queued.discard(seq)
 
     async def _send_committed_event(self) -> None:
@@ -216,6 +222,11 @@ class Hub:
                     int(task.meta.get("parse_attempt") or 0) and
                     entry.get("parent_task") == task.meta.get("parent_task"))
 
+    @staticmethod
+    def _same_runner_generation(entry: dict, runner_id: str | None, incarnation: str | None) -> bool:
+        return bool(runner_id and incarnation and entry.get("runner_id") == runner_id and
+                    entry.get("runner_incarnation") == incarnation)
+
     def new_resume_approval(self, rid: str) -> ApprovalRequest:
         req = self.requests[rid]
         done = set(req.get("results") or {})
@@ -229,7 +240,7 @@ class Hub:
     def resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]
         if req.get("mode") == "direct":
-            return {req["agent_id"]}
+            return set() if self.completed_direct_result(rid) else {req["agent_id"]}
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
@@ -241,6 +252,20 @@ class Hub:
         if not steps and self.s.orchestrator.chief_of_staff_agent:
             needed.add(self.s.orchestrator.chief_of_staff_agent)
         return needed
+
+    def completed_direct_result(self, rid: str) -> TaskResult | None:
+        checkpoint = self.store.get("step_checkpoint", f"{rid}:direct")
+        candidates = [entry.get("result") for entry in self.store.all("task").values()
+                      if entry.get("request_id") == rid and entry.get("kind") == "direct" and
+                      entry.get("completed")]
+        if checkpoint:
+            candidates.insert(0, checkpoint.get("result"))
+        for body in candidates:
+            if body:
+                result = TaskResult.model_validate(body)
+                if result.ok and not result.pending_jobs:
+                    return result
+        return None
 
     async def resume_when_ready(self, rid: str) -> None:
         req = self.requests[rid]
@@ -300,15 +325,15 @@ class Hub:
         self.set_roster(runner_id, agents)
         hosted_agents = {a["id"] for a in agents}
         for tid, entry in self.store.all("task").items():
-            if (entry.get("accepted") and not entry.get("completed") and
+            if (not entry.get("completed") and
                     (entry.get("payload") or {}).get("agent_id") in hosted_agents and
-                    (entry.get("runner_id"), entry.get("runner_incarnation")) != (runner_id, incarnation)):
+                    not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
 
     def _abandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
         agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
         result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                            error="runner generation changed; prior accepted task outcome unknown; "
+                            error="runner generation changed; prior task delivery or outcome unknown; "
                                   "manual recovery required")
         self.store.put("task", tid, {**entry, "completed": True, "result": result.model_dump(mode="json")})
         future = self.futures.get(tid)
@@ -380,7 +405,10 @@ class Hub:
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
         async with self.event_lock:
             await self._flush_committed_events()
-            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq)
+            durable_report = (self.reporter.enabled() and bool(ev.get("request_id")) and
+                              ev.get("type") in ProjectReporter.HANDLED)
+            ev = self.store.append_event(ev, self.s.gateway.event_buffer, runner_id, runner_seq,
+                                         reporter_delivery=durable_report)
             self.events.append(ev)
             dead = []
             for c in list(self.clients):
@@ -465,6 +493,10 @@ class Hub:
         if sid and task.request_id in self.recovery_steps:
             matches = [(tid, entry) for tid, entry in self.store.all("task").items()
                        if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+            if not matches and task.meta.get("kind") == "direct":
+                checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
+                if checkpoint and checkpoint.get("result"):
+                    return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
             if matches:
                 tid, entry = max(matches, key=lambda pair: (int(pair[1].get("attempt") or 1),
                                                             pair[1].get("dispatched_at", 0)))
@@ -476,9 +508,8 @@ class Hub:
                     self.recovered_tasks.add(tid)
                     return TaskResult.model_validate(checkpoint["result"]).model_copy(update={"cost_usd": 0.0})
                 current_runner = self.agent_runner.get(task.agent_id)
-                if entry.get("accepted") and (
-                        entry.get("runner_id"), entry.get("runner_incarnation")) != (
-                            current_runner, self.runner_incarnations.get(current_runner)):
+                if not self._same_runner_generation(entry, current_runner,
+                                                    self.runner_incarnations.get(current_runner)):
                     self.recovered_tasks.add(tid)
                     return self._abandon_previous_generation(tid, entry)
                 future = asyncio.get_running_loop().create_future()

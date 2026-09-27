@@ -169,7 +169,7 @@ class ProjectReporter:
             try:
                 delivered = await self.handle(ev)
                 if delivered is not False:
-                    self.hub.ack_terminal_delivery(ev)
+                    self.hub.ack_reporter_delivery(ev)
             except Exception as e:
                 log.warning("GitHub update failed (%s): %s", ev.get("type"), e)
                 await self.hub.publish({"type": "github.failed", "ts": time.time(), "request_id": ev.get("request_id"),
@@ -192,6 +192,24 @@ class ProjectReporter:
 
     def _save_action(self, ev: dict, action: str, body: dict) -> None:
         self.hub.store.put("github_action", self._action_key(ev, action), body)
+
+    async def _comment_once(self, ev: dict, gh: GitHubClient, repo: str, number: int,
+                            body: str, kind: str) -> None:
+        rid = ev["request_id"]
+        marker = f"<!-- labhq {ev['type']} {rid} {ev.get('seq') or ev['type']} -->"
+        saved = self._action(ev, "comment") or {}
+        if saved.get("done"):
+            return
+        if not saved:
+            self._save_action(ev, "comment", {"done": False, "marker": marker})
+        find_comment = getattr(gh, "find_issue_comment", None)
+        comment = await find_comment(repo, number, marker) if saved and find_comment else None
+        if comment is None:
+            comment = await gh.comment(repo, number,
+                                       f"{clip(self._clean(body), MAX_BODY - len(marker) - 2)}\n\n{marker}")
+        self._save_action(ev, "comment", {"done": True, "marker": marker,
+                                          "url": comment.get("html_url")})
+        await self._posted(rid, kind, comment.get("html_url"), number)
 
     async def _posted(self, rid: str, kind: str, url: str | None, number: int | None = None) -> None:
         await self.hub.publish({"type": "github.posted", "ts": time.time(), "request_id": rid,
@@ -229,19 +247,17 @@ class ProjectReporter:
             return
 
         num = self.issues.get(rid)
-        if typ in ("request.completed", "request.failed") and proj.issues and num is None:
-            return False  # retry the terminal report after the missing issue is opened
+        if typ in ("request.plan", "request.review", "recruit.done", "request.completed", "request.failed") and proj.issues and num is None:
+            return False  # keep delivery until the request issue can be opened
         if typ == "request.plan" and num:
-            c = await gh.comment(proj.repo, num, self._clean(self._plan_md(d)))
-            await self._posted(rid, "plan", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num, self._plan_md(d), "plan")
         elif typ == "request.review" and num:
-            c = await gh.comment(proj.repo, num, self._clean(self._review_md(d)))
-            await self._posted(rid, "review", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num, self._review_md(d), "review")
         elif typ == "recruit.done" and num:
             a = d.get("agent") or {}
-            c = await gh.comment(proj.repo, num, self._clean(
-                f"🐥 파견직 합류: **{a.get('name')}** (`{a.get('id')}`) — 수습 통과={d.get('passed_probation')}"))
-            await self._posted(rid, "recruit", c.get("html_url"), num)
+            await self._comment_once(ev, gh, proj.repo, num,
+                                     f"🐥 파견직 합류: **{a.get('name')}** (`{a.get('id')}`) — "
+                                     f"수습 통과={d.get('passed_probation')}", "recruit")
         elif typ in ("request.completed", "request.failed"):
             report = d.get("report") or req.get("report") or d.get("error") or ""
             report_url = None

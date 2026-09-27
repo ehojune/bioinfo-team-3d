@@ -51,9 +51,12 @@ class StateStore:
         return json.loads(row[0]) if row else None
 
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
-                     runner_seq: int | None = None) -> dict:
+                     runner_seq: int | None = None, reporter_delivery: bool = False) -> dict:
         with self.db:
             body = self._insert_event(body, limit)
+            if reporter_delivery:
+                self.db.execute("INSERT OR REPLACE INTO state VALUES ('reporter_delivery', ?, ?)",
+                                (str(body["seq"]), json.dumps(body, ensure_ascii=False, default=str)))
             if runner_id is not None and runner_seq is not None:
                 self.db.execute("INSERT INTO runner_cursor VALUES (?, ?) ON CONFLICT(runner_id) DO UPDATE SET seq=excluded.seq",
                                 (runner_id, runner_seq))
