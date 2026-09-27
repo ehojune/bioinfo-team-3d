@@ -22,8 +22,9 @@ ROLE_FOOTER = """
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - Report in Korean; keep technical terms, gene names and commands in English.
-- When a GitHub PR comment addresses Codex, always mention @codex — even when replying directly
-  under Codex's own comment.
+- On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
+  Codex review findings without @codex; after pushing all fixes, post `@codex review` once at the top
+  of the PR, and not again while a review is still running.
 """
 
 

@@ -177,8 +177,8 @@ flowchart LR
 (fine-grained PAT, 해당 저장소의 Issues·Contents 읽기/쓰기). **공개 가드**: 통제접근 경로와 비밀값으로 보이는 문자열은 가리고,
 `visibility: public` 저장소에는 `allow_public_reports: true`가 없으면 아무것도 올리지 않습니다.
 
-**Codex와 PR에서 대화할 때 규칙**: Codex에게 하는 PR 코멘트에는, Codex 코멘트 바로 아래 답글이라도 항상 `@codex`를 붙입니다.
-`labhq codex-review <project> <PR번호>`는 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.
+**Codex와 PR에서 대화할 때 규칙**: `@codex`가 든 댓글마다 Codex 세션이 따로 뜹니다. 리뷰 지적에 답하는 인라인 댓글에는 `@codex`를 쓰지 않고, 수정을 모두 push한 뒤 PR 상단에 `@codex review`를 한 번만 남깁니다. 리뷰가 진행 중이면 다시 부르지 않습니다.
+`labhq codex-review <project> <PR번호>`가 그 한 번의 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.
 
 ## 5. 요청하진 않았지만 필요한 것들
 
