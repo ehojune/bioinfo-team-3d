@@ -110,9 +110,10 @@ def test_publish_guard_and_codex_mention():
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
 
 
-async def test_unparsed_review_posts_failure_comment():
+async def test_unparsed_review_posts_failure_comment(tmp_path):
     calls = []
     s = Settings(projects=[ProjectSettings(id="demo", repo="o/p")])
+    s.gateway.state_dir = str(tmp_path)
     hub = Hub(s, github_transport=fake_github(calls))
     hub.requests["r"] = {"text": "example", "project_id": "demo"}
     await hub.reporter.handle({"type": "request.created", "request_id": "r", "data": {}})

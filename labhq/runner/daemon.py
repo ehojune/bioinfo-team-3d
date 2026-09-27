@@ -44,7 +44,7 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir))
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
-        self.outbox: asyncio.Queue[str] = asyncio.Queue(maxsize=settings.runner.outbox_limit)
+        self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
         self.task_req: dict[str, str | None] = {}
@@ -71,16 +71,19 @@ class Runner:
 
     def send(self, obj: dict) -> None:
         if obj.get("type") not in {"runner.roster"}:
-            obj = self.store.enqueue(obj, self.s.runner.outbox_limit)
-        msg = json.dumps(obj, ensure_ascii=False, default=str)
-        try:
-            self.outbox.put_nowait(msg)
-        except asyncio.QueueFull:  # drop the oldest event rather than block agents
-            self.outbox.get_nowait()
-            self.outbox.put_nowait(msg)
+            self.store.enqueue(obj, self.s.runner.outbox_limit)
+            self.reload_outbox()
+        else:
+            self.outbox.put_nowait(json.dumps(obj, ensure_ascii=False, default=str))
 
-    def reload_outbox(self) -> None:
-        self.outbox = asyncio.Queue(maxsize=self.s.runner.outbox_limit)
+    def reload_outbox(self, preserve_roster: bool = True) -> None:
+        roster = []
+        while not self.outbox.empty():
+            raw = self.outbox.get_nowait()
+            if preserve_roster and json.loads(raw).get("type") == "runner.roster":
+                roster.append(raw)
+        for raw in roster:
+            self.outbox.put_nowait(raw)
         for item in self.store.pending():
             self.outbox.put_nowait(json.dumps(item, ensure_ascii=False, default=str))
 
@@ -99,7 +102,7 @@ class Runner:
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
                     backoff = 1.0
                     await ws.send(json.dumps(self.hello()))
-                    self.reload_outbox()
+                    self.reload_outbox(preserve_roster=False)
                     self.connected.set()
                     sender = asyncio.create_task(self._sender(ws))
                     try:

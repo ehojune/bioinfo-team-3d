@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import Hub, create_app
-from labhq.models import ApprovalRequest, TaskResult
+from labhq.models import ApprovalRequest, Task, TaskResult
 from labhq.runner.daemon import Runner
 from labhq.settings import ProjectSettings, Settings
 from labhq.store import StateStore
@@ -60,7 +60,8 @@ async def test_restart_keeps_approval_and_resumes_only_remaining_steps(tmp_path)
         if task.meta["kind"] == "review":
             revise = task.meta["revision"] == 0
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
-                              structured={"verdict": "revise" if revise else "accept", "scores": {},
+                structured={"verdict": "revise" if revise else "accept",
+                            "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
                                           "issues": [{"step_id": "s2", "problem": "check", "request": "revise"}]
                                           if revise else []})
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="new")
@@ -192,12 +193,199 @@ def test_runner_outbox_is_bounded(tmp_path):
     assert [e["data"]["n"] for e in runner.store.pending()] == [1, 2]
 
 
+def test_runner_outbox_preserves_terminal_and_control_events(tmp_path):
+    s = settings(tmp_path)
+    s.runner.outbox_limit = 2
+    runner = Runner(s)
+    runner.send({"type": "task.result", "task_id": "t", "data": {"ok": True}})
+    runner.send({"type": "agent.log", "data": {"n": 1}})
+    runner.send({"type": "approval.requested", "data": {"id": "a"}})
+    runner.send({"type": "agent.log", "data": {"n": 2}})
+    runner.send({"type": "jobs.finished", "task_id": "t", "data": {"jobs": []}})
+    assert [e["type"] for e in runner.store.pending()] == [
+        "task.result", "approval.requested", "jobs.finished"]
+    runner.reload_outbox()
+    assert [json.loads(runner.outbox.get_nowait())["type"] for _ in range(runner.outbox.qsize())] == [
+        "task.result", "approval.requested", "jobs.finished"]
+
+
+def test_roster_update_is_not_lost_when_another_event_is_queued(tmp_path):
+    runner = Runner(settings(tmp_path))
+    runner.send({"type": "runner.roster", "agents": [{"id": "new"}]})
+    runner.send({"type": "agent.log", "data": {"message": "ready"}})
+    assert [json.loads(runner.outbox.get_nowait())["type"] for _ in range(runner.outbox.qsize())] == [
+        "runner.roster", "agent.log"]
+
+
 class CaptureSocket:
     def __init__(self):
         self.sent = []
 
     async def send_text(self, body):
         self.sent.append(json.loads(body))
+
+
+@pytest.mark.asyncio
+async def test_late_result_becomes_request_checkpoint_before_resume(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "text": "study", "mode": "orchestrate", "status": "running",
+                           "plan": {"steps": [{"id": "s1", "agent_id": "worker", "instruction": "analyze",
+                                               "depends_on": []}]}}
+    first.save_request("r")
+    socket = CaptureSocket()
+    first.register_runner("local", socket, [{"id": "worker"}], "inc-1")
+    task = Task(id="task-1", agent_id="worker", request_id="r", prompt="analyze",
+                meta={"kind": "step", "step_id": "s1"})
+    pending = asyncio.create_task(first.dispatch(task))
+    await asyncio.sleep(0)
+    assert first.store.get("task", "task-1")["step_id"] == "s1"
+    pending.cancel()
+    try:
+        await pending
+    except asyncio.CancelledError:
+        pass
+    first.store.close()
+
+    restored = Hub(s)
+    restored.register_runner("local", socket, [{"id": a} for a in ("worker", "cso", "sci_reviewer")], "inc-1")
+    result = TaskResult(task_id="task-1", agent_id="worker", ok=True, text="finished", cost_usd=1.25)
+    await restored.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                                "request_id": "r", "task_id": "task-1",
+                                                "data": result.model_dump(mode="json")})
+    assert restored.requests["r"]["results"]["s1"]["text"] == "finished"
+    assert restored.requests["r"]["cost_usd"] == 1.25
+    calls = []
+
+    async def fake_step(t):
+        calls.append(t.meta["kind"])
+        if t.meta["kind"] == "review":
+            return TaskResult(task_id=t.id, agent_id=t.agent_id, ok=True,
+                              structured={"verdict": "accept", "scores": {
+                                  "addresses_question": 4, "evidence": 4, "thoroughness": 4}, "issues": []})
+        return TaskResult(task_id=t.id, agent_id=t.agent_id, ok=True, text="report")
+
+    restored.orchestrator.run_step = fake_step
+    aid = next(aid for aid, entry in restored.approvals.items() if entry["approval"]["kind"] == "resume")
+    await restored.resolve_approval(aid, True)
+    for _ in range(100):
+        if restored.requests["r"]["status"] == "done":
+            break
+        await asyncio.sleep(0.01)
+    assert restored.requests["r"]["status"] == "done"
+    assert calls == ["review", "synthesis"]
+    assert restored.requests["r"]["cost_usd"] == 1.25
+
+
+@pytest.mark.asyncio
+async def test_hpc_submission_checkpoint_wakes_without_reissuing_step(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                           "plan": {"steps": [{"id": "s", "agent_id": "a", "depends_on": []}]}}
+    first.save_request("r")
+    first.store.put("task", "submitted", {"request_id": "r", "step_id": "s", "kind": "step"})
+    first.store.close()
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    submitted = TaskResult(task_id="submitted", agent_id="a", ok=True, text="submitted",
+                           pending_jobs=["42"], workdir="work", cost_usd=0.5)
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                          "request_id": "r", "task_id": "submitted",
+                                          "data": submitted.model_dump(mode="json")})
+    await hub.on_runner_message("local", {"type": "jobs.finished", "runner_seq": 2,
+                                          "request_id": "r", "task_id": "submitted",
+                                          "data": {"jobs": [{"job_id": "42", "state": "completed"}]}})
+    hub.recovery_steps.add("r")
+    recovered = await hub.dispatch(Task(agent_id="a", request_id="r", prompt="analyze",
+                                        meta={"kind": "step", "step_id": "s"}))
+    assert recovered.task_id == "submitted" and recovered.pending_jobs == ["42"]
+    assert recovered.cost_usd == 0.0 and hub.requests["r"]["cost_usd"] == 0.5
+    assert await hub.wait_jobs("submitted") == {"jobs": [{"job_id": "42", "state": "completed"}]}
+    assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_resume_waits_for_inflight_task_result_before_dispatch(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    first.store.put("task", "old-task", {"request_id": "r", "step_id": "s", "kind": "step",
+                                           "dispatched_at": 1.0})
+    first.store.close()
+    hub = Hub(s)
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": "a"}], "inc")
+    hub.recovery_steps.add("r")
+    pending = asyncio.create_task(hub.dispatch(Task(agent_id="a", request_id="r", prompt="again",
+                                                    meta={"kind": "step", "step_id": "s"})))
+    await asyncio.sleep(0)
+    assert not pending.done()
+    assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+    result = TaskResult(task_id="old-task", agent_id="a", ok=True, text="late")
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                          "task_id": "old-task", "request_id": "r",
+                                          "data": result.model_dump(mode="json")})
+    assert (await pending).text == "late"
+    assert hub.requests["r"]["results"]["s"]["text"] == "late"
+    assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_completed_step_agent_is_not_required_for_resume(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "interrupted",
+                         "plan": {"steps": [
+                             {"id": "done", "agent_id": "retired", "depends_on": []},
+                             {"id": "todo", "agent_id": "worker", "depends_on": ["done"]}]},
+                         "results": {"done": TaskResult(task_id="t", agent_id="retired", ok=True).model_dump(mode="json")}}
+    assert hub.resume_agents("r") == {"worker", "cso", "sci_reviewer"}
+
+
+@pytest.mark.asyncio
+async def test_replaced_runner_socket_cannot_advance_new_incarnation_cursor(tmp_path):
+    hub = Hub(settings(tmp_path))
+
+    class Socket(CaptureSocket):
+        def __init__(self):
+            super().__init__()
+            self.closed = False
+        async def close(self, code=1000):
+            self.closed = True
+
+    old, new = Socket(), Socket()
+    hub.register_runner("local", old, [], "old")
+    await hub.on_runner_message("local", {"type": "agent.log", "runner_seq": 9}, old, "old")
+    hub.register_runner("local", new, [], "new")
+    await asyncio.sleep(0)
+    assert old.closed and hub.store.runner_seen("local") == 0
+    await hub.on_runner_message("local", {"type": "agent.log", "runner_seq": 10}, old, "old")
+    assert hub.store.runner_seen("local") == 0
+    future = asyncio.get_running_loop().create_future()
+    hub.futures["t"] = future
+    await hub.on_runner_message("local", {"type": "task.result", "runner_seq": 1,
+                                           "task_id": "t", "data": TaskResult(task_id="t", agent_id="a",
+                                                                                 ok=True).model_dump(mode="json")},
+                                new, "new")
+    assert future.done() and hub.store.runner_seen("local") == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_denial_publishes_request_failed(tmp_path):
+    s = settings(tmp_path)
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "direct", "agent_id": "a", "text": "work", "status": "running"}
+    first.save_request("r")
+    first.store.close()
+    restored = Hub(s)
+    aid = next(iter(restored.approvals))
+    await restored.resolve_approval(aid, False)
+    assert restored.requests["r"]["status"] == "failed"
+    assert [e["type"] for e in restored.events if e.get("request_id") == "r"][-2:] == [
+        "approval.resolved", "request.failed"]
 
 
 @pytest.mark.asyncio

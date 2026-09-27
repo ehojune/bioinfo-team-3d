@@ -77,6 +77,7 @@ class Hub:
         self.store = StateStore(settings.path(settings.gateway.state_dir) / "gateway.sqlite3")
         self.event_lock = asyncio.Lock()
         self.runners: dict[str, WebSocket] = {}
+        self.runner_incarnations: dict[str, str | None] = {}
         self.runner_locks: dict[str, asyncio.Lock] = {}
         self.runner_agents: dict[str, list[dict]] = {}
         self.agents: dict[str, dict] = {}
@@ -86,7 +87,9 @@ class Hub:
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
-        self.jobs_done: dict[str, dict] = {}
+        self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
+        self.recovery_steps: set[str] = set()
+        self.recovered_tasks: set[str] = set()
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
@@ -137,7 +140,8 @@ class Hub:
         if req.get("mode") == "direct":
             return {req["agent_id"]}
         steps = req.get("plan", {}).get("steps") or []
-        needed = {s["agent_id"] for s in steps}
+        done = set(req.get("results") or {})
+        needed = {s["agent_id"] for s in steps if s["id"] not in done}
         needed.add(self.s.orchestrator.cso_agent)
         if self.s.orchestrator.reviewer_agent:
             needed.add(self.s.orchestrator.reviewer_agent)
@@ -159,7 +163,11 @@ class Hub:
                 self.save_request(rid)
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
                                     "data": {"agents": sorted(self.resume_agents(rid))}})
-                await self.orchestrator.run_request(rid, resume=True)
+                self.recovery_steps.add(rid)
+                try:
+                    await self.orchestrator.run_request(rid, resume=True)
+                finally:
+                    self.recovery_steps.discard(rid)
                 return
             if missing != previous:
                 await self.publish({"type": "request.resume_waiting", "ts": time.time(), "request_id": rid,
@@ -183,9 +191,18 @@ class Hub:
     # ----- runners -----
     def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
                         incarnation: str | None = None) -> None:
+        old = self.runners.get(runner_id)
+        if old is not None and old is not ws and hasattr(old, "close"):
+            async def close_old() -> None:
+                try:
+                    await old.close(code=1000)
+                except RuntimeError:  # it may already be closed while the replacement connects
+                    pass
+            asyncio.get_running_loop().create_task(close_old())
         if incarnation:
             self.store.runner_incarnation(runner_id, incarnation)
         self.runners[runner_id] = ws
+        self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents)
 
@@ -207,12 +224,15 @@ class Hub:
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
 
-    def unregister_runner(self, runner_id: str, ws: WebSocket) -> None:
+    def unregister_runner(self, runner_id: str, ws: WebSocket) -> bool:
         if self.runners.get(runner_id) is ws:
             self.runners.pop(runner_id, None)  # keep roster + pending futures: the runner will reconnect
+            self.runner_incarnations.pop(runner_id, None)
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            return True
+        return False
 
     async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
@@ -235,6 +255,8 @@ class Hub:
             raise RunnerUnavailable(f"runner {runner_id} is offline")
         payload = json.dumps(msg, ensure_ascii=False, default=str)
         async with self.runner_locks[runner_id]:
+            if self.runners.get(runner_id) is not ws:
+                raise RunnerUnavailable(f"runner {runner_id} connection was replaced")
             try:
                 await ws.send_text(payload)
             except Exception as exc:
@@ -263,7 +285,11 @@ class Hub:
         if self.reporter.enabled():
             self.reporter.submit(ev)
 
-    async def on_runner_message(self, runner_id: str, msg: dict) -> None:
+    async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
+                                incarnation: str | None = None) -> None:
+        if ws is not None and (self.runners.get(runner_id) is not ws or
+                               self.runner_incarnations.get(runner_id) != incarnation):
+            return
         runner_seq = msg.get("runner_seq")
         if runner_seq is not None and runner_seq <= self.store.runner_seen(runner_id):
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
@@ -278,6 +304,18 @@ class Hub:
         if typ == "task.result":
             rid = msg.get("request_id")
             tid = msg.get("task_id") or ""
+            task = self.store.get("task", tid) if tid else None
+            result = TaskResult.model_validate(msg["data"])
+            if task:
+                self.store.put("task", tid, {**task, "completed": True})
+            if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
+                rid = task["request_id"]
+                sid = task.get("step_id") or "direct"
+                self.store.put("step_checkpoint", f"{rid}:{sid}",
+                               {"task_id": tid, "result": result.model_dump(mode="json")})
+                if sid != "direct" and not result.pending_jobs:
+                    self.requests[rid].setdefault("results", {})[sid] = result.model_dump(mode="json")
+                    self.save_request(rid)
             if rid in self.requests and tid:
                 req = self.requests[rid]
                 costs = req.setdefault("cost_by_task", {})
@@ -288,13 +326,14 @@ class Hub:
                     self.save_request(rid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
-                fut.set_result(TaskResult.model_validate(msg["data"]))
+                fut.set_result(result)
         elif typ == "approval.requested":
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
+            self.store.put("jobs_done", tid, msg["data"])
             fut = self.jobs_waiters.pop(tid, None)
             if fut and not fut.done():
                 fut.set_result(msg["data"])
@@ -306,6 +345,30 @@ class Hub:
 
     # ----- tasks -----
     async def dispatch(self, task: Task) -> TaskResult:
+        sid = task.meta.get("step_id") or ("direct" if task.meta.get("kind") == "direct" else None)
+        if sid and task.request_id in self.recovery_steps:
+            pending = [(tid, entry) for tid, entry in self.store.all("task").items()
+                       if entry.get("request_id") == task.request_id and
+                       (entry.get("step_id") or entry.get("kind")) == sid and not entry.get("completed")]
+            if pending:
+                tid, _ = max(pending, key=lambda pair: pair[1].get("dispatched_at", 0))
+                future = asyncio.get_running_loop().create_future()
+                self.futures[tid] = future
+                await self.publish({"type": "request.step_wait", "ts": time.time(),
+                                    "request_id": task.request_id,
+                                    "data": {"step_id": sid, "reason": "recovering prior task result"}})
+                try:
+                    return await asyncio.wait_for(future, self.s.gateway.resume_wait_s)
+                except asyncio.TimeoutError:
+                    return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
+                                      error="recovery result unavailable; manual restart required")
+                finally:
+                    self.futures.pop(tid, None)
+            checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:{sid}")
+            if checkpoint and checkpoint["task_id"] not in self.recovered_tasks:
+                self.recovered_tasks.add(checkpoint["task_id"])
+                result = TaskResult.model_validate(checkpoint["result"])
+                return result.model_copy(update={"cost_usd": 0.0})
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
@@ -313,6 +376,9 @@ class Hub:
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
+        self.store.put("task", task.id, {"request_id": task.request_id,
+                                          "step_id": sid, "kind": task.meta.get("kind"),
+                                          "dispatched_at": time.time()})
         await self.publish({"type": "task.dispatched", "ts": time.time(), "task_id": task.id,
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
@@ -322,11 +388,13 @@ class Hub:
         except Exception:
             self.futures.pop(task.id, None)
             self.task_runner.pop(task.id, None)
+            self.store.delete("task", task.id)
             raise
         return await fut
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:
+            self.store.delete("jobs_done", task_id)
             return self.jobs_done.pop(task_id)
         fut = self.jobs_waiters.setdefault(task_id, asyncio.get_running_loop().create_future())
         return await fut
@@ -376,6 +444,9 @@ class Hub:
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
                             "data": {"id": approval_id, "approved": approved, "note": note}})
+        if a.get("kind") == "resume" and not approved:
+            await self.publish({"type": "request.failed", "ts": time.time(), "request_id": a["request_id"],
+                                "data": {"error": "resume declined"}})
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
@@ -431,20 +502,21 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
-            hub.register_runner(runner_id, ws, hello.get("agents", []), hello.get("incarnation"))
+            incarnation = hello.get("incarnation")
+            hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation)
             await hub.flush_decisions(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:
                 if hub.runners.get(runner_id) is not ws:
                     break
-                await hub.on_runner_message(runner_id, json.loads(await ws.receive_text()))
+                await hub.on_runner_message(runner_id, json.loads(await ws.receive_text()), ws, incarnation)
         except WebSocketDisconnect:
             pass
         finally:
             if runner_id:
-                hub.unregister_runner(runner_id, ws)
-                await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
+                if hub.unregister_runner(runner_id, ws):
+                    await hub.publish({"type": "runner.offline", "ts": time.time(), "data": {"runner_id": runner_id}})
 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:

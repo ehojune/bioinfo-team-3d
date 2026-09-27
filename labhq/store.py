@@ -46,6 +46,10 @@ class StateStore:
         return {key: json.loads(body) for key, body in
                 self.db.execute("SELECT key, body FROM state WHERE kind=?", (kind,))}
 
+    def get(self, kind: str, key: str) -> dict | None:
+        row = self.db.execute("SELECT body FROM state WHERE kind=? AND key=?", (kind, key)).fetchone()
+        return json.loads(row[0]) if row else None
+
     def append_event(self, body: dict, limit: int, runner_id: str | None = None,
                      runner_seq: int | None = None) -> dict:
         with self.db:
@@ -78,8 +82,14 @@ class StateStore:
             body = {**body, "runner_seq": cursor.lastrowid}
             self.db.execute("UPDATE outbox SET body=? WHERE seq=?",
                             (json.dumps(body, ensure_ascii=False, default=str), cursor.lastrowid))
-            self.db.execute("DELETE FROM outbox WHERE seq <= (SELECT COALESCE(MAX(seq), 0) - ? FROM outbox)",
-                            (max(1, limit),))
+            excess = self.db.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] - max(1, limit)
+            if excess > 0:
+                for seq, raw in self.db.execute("SELECT seq, body FROM outbox ORDER BY seq"):
+                    if json.loads(raw).get("type") in {"agent.log", "agent.output", "agent.thinking"}:
+                        self.db.execute("DELETE FROM outbox WHERE seq=?", (seq,))
+                        excess -= 1
+                        if not excess:
+                            break
         return body
 
     def pending(self) -> list[dict]:
