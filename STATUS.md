@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · PR 게이트 상한 정체 해소
+
+- 무엇을: 10회 뒤 새 head를 아직 보지 않은 Completed 리뷰도 `needs-pi`로 보내고, 같은 head의 중복 호출을 막는다. Running은 기다린다.
+- 테스트: fast-forward 기준 `bef633e`의 Windows pytest 8 failed/247 passed/14 skipped → 8 failed/251 passed/14 skipped(새 실패 0). 게이트 테스트 21 passed, 공개 검사 통과.
+- 막힌 점: 실제 GitHub 이벤트는 push 전이라 미검증.
+- 다음: Claude가 새 커밋을 push해 PR #10의 PI 호출 경로를 확인한다.
+
 ## 2026-09-28 · PR #10 후속 issue 보존
 
 - 무엇을: P2 후속 issue를 모두 확보한 뒤에만 squash merge한다. 지적 ID marker와 기존 issue의 원문 링크로 재시도 중복을 막는다.

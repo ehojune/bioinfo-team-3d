@@ -82,8 +82,17 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     review = _latest_review(comments)
     if not review or review[0] == "running":
         return Action("none", ["봇 리뷰가 아직 완료되지 않았습니다."])
+    gate_comments = [
+        c.get("body") or "" for c in comments
+        if (_login(c) == GATE_BOT or _trusted(c)) and GATE_MARKER in (c.get("body") or "")
+    ]
+    pi_called_for_head = any(f"needs_pi head={head}" in body for body in gate_comments)
     reviewed_head = head.lower().startswith(review[1])
     if not reviewed_head:
+        if rounds >= cap:
+            if pi_called_for_head:
+                return Action("none", ["현재 head의 PI 호출을 이미 남겼습니다."])
+            return Action("needs_pi", ["상한 도달 뒤 새 커밋을 봇이 보지 않았음"])
         return Action("none", ["최신 봇 리뷰가 현재 head를 보지 않았습니다."])
 
     findings = [
@@ -113,12 +122,8 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     if not reasons:
         return Action("merge", [], p2)
 
-    gate_comments = [
-        c.get("body") or "" for c in comments
-        if (_login(c) == GATE_BOT or _trusted(c)) and GATE_MARKER in (c.get("body") or "")
-    ]
     if rounds >= cap:
-        if any(f"needs_pi head={head}" in body for body in gate_comments):
+        if pi_called_for_head:
             return Action("none", ["현재 head의 PI 호출을 이미 남겼습니다."])
         return Action("needs_pi", reasons)
     if rounds >= warn_at and not any("warn cap=" in body for body in gate_comments):

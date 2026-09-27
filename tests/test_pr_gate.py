@@ -6,6 +6,7 @@ from scripts.pr_gate import GATE_MARKER, apply, decide, select_pr_numbers
 
 
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
+NEW_HEAD = "1234567890123456789012345678901234567890"
 BOT = "chatgpt-codex-connector[bot]"
 
 
@@ -115,6 +116,40 @@ def test_p1_at_cap_calls_pi_with_title_and_same_head_is_idempotent():
     assert "Prevent data loss" in " ".join(action.reasons)
     snap["issue_comments"].append(comment(
         f"{GATE_MARKER}\nneeds_pi head={HEAD}", "github-actions[bot]", "NONE"))
+    assert decide(snap).kind == "none"
+
+
+def test_stale_completed_review_at_cap_calls_pi_once_for_new_head():
+    snap = snapshot()
+    snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"] += [comment("@codex review") for _ in range(9)]
+    action = decide(snap)
+    assert action.kind == "needs_pi"
+    assert "상한 도달 뒤 새 커밋을 봇이 보지 않았음" in action.reasons
+    snap["issue_comments"].append(comment(
+        f"{GATE_MARKER}\nneeds_pi head={NEW_HEAD}", "github-actions[bot]", "NONE"))
+    assert decide(snap).kind == "none"
+
+
+def test_stale_review_before_cap_still_waits():
+    snap = snapshot()
+    snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"] += [comment("@codex review") for _ in range(8)]
+    assert decide(snap).kind == "none"
+
+
+def test_running_stale_review_at_cap_still_waits():
+    snap = snapshot()
+    snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"][0]["body"] = snap["issue_comments"][0]["body"].replace("Completed", "Running")
+    snap["issue_comments"] += [comment("@codex review") for _ in range(9)]
+    assert decide(snap).kind == "none"
+
+
+def test_missing_review_at_cap_still_waits():
+    snap = snapshot()
+    snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"] = [comment("@codex review") for _ in range(9)]
     assert decide(snap).kind == "none"
 
 
