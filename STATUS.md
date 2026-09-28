@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · demo phone mode
+
+- 한 일: `labhq demo --web --phone`이 LAN 주소의 `/3d` URL과 새 client token을 출력하고 폰 승인을 기다린다. 기본 120초 뒤에만 자동 승인한다.
+- 테스트: phone mode 8 passed, 전체 `pytest -q` 268 passed/14 skipped/7 failed(Windows shebang 4, 긴 임시 경로 2, 기존 공개 가드 1). `bash scripts/check_public.sh` 통과.
+- 바꾼 파일: `labhq/cli.py`, `tests/test_demo_phone.py`, `README.md`, `STATUS.md`.
+- 막힌 점: 전체 test 7건은 현재 Windows 환경·기존 코드에서 실패한다. iPhone Safari 실기와 Windows firewall 동작은 미검증.
+- 질문: 없음.
+
 ## 2026-09-28 · PR 게이트 실운영 점검
 
 - 무엇을: select 잡의 `PYTHONPATH`를 고정하고 쓰기 권한 부족은 경고로 끝낸다. `select`·`gate` check를 판정에서 제외하되 다른 check가 없으면 보류한다.

@@ -22,6 +22,7 @@ labhq demo --web   # mock 팀이 계속 일하는 사무실을 브라우저로: 
 labhq demo         # 같은 흐름을 터미널 로그로
 pytest -q          # 26 passed
 ```
+폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
 게이트웨이 없이 UI만 보려면 `labhq/web/index.html`을 브라우저로 열면 됩니다 (자동으로 데모 모드).
 
 ## 0-1. 실제 실행
@@ -202,6 +203,7 @@ flowchart LR
 
 ## 6. 웹 사무실과 폰
 
+같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
 `/`는 2.5D, `/3d`는 3D 사무실입니다. 화면의 전환 링크로 오갑니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
 - 3D: 실제 roster·상태 표지·요청 보드·DOM 승인/거절. 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
 - 데모: `/3d?demo=1`. 데이터가 없으면 빈 사무실과 빈 요청 목록을 표시합니다.
@@ -280,6 +282,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `POST /api/requests`, `GET /api
 
 ## 9. 폰 연결
 
+오프라인 데모는 `labhq demo --web --phone` 뒤 출력된 `/3d` URL을 폰에서 여세요. PC와 폰은 같은 Wi-Fi에 있어야 합니다.
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
 (러너는 재접속 루프로 대기). 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
 공개 인터넷에 열어야 한다면 TLS 프록시(Caddy 등) 뒤에 두고 토큰을 반드시 교체하세요.
