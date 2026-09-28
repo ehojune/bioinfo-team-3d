@@ -51,6 +51,10 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     out = text or ""
     # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
     normalized = restricted_paths(policy)
+    if any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in normalized):
+        # A filesystem root (`/`, `E:/`) is restricted: every path on that root is controlled, and no text
+        # boundary reliably separates one from prose or URLs. Publish nothing (fail closed).
+        return "<restricted-zone>" if out else ""
     # 1) A line the access policy would treat as touching a zone is withheld whole. This reuses the policy's
     #    candidate extraction and lexical normalization (`/data/tmp/../cohort`, `file:///data/./cohort`,
     #    quoted or spaced names), and like the policy it ignores network URLs.
@@ -61,16 +65,6 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     #    is unknowable: fail closed to the end of the line.
     tail = r"[^\r\n]*"
     for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
-        if not zone:
-            # The zone is the POSIX root: every absolute path and file: URI is restricted; network URLs stay.
-            out = re.sub(r"\bfile:" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
-            out = re.sub(r"(?<![\w.:/\\-])/" + tail, "<restricted-zone>", out)
-            continue
-        if re.fullmatch(r"[a-z]:", zone, flags=re.IGNORECASE):
-            # A bare drive root: require a separator so "ID: 5" or "passed: 3" are left alone.
-            out = re.sub(r"(?<![A-Za-z0-9])" + re.escape(zone) + r"(?=[/\\])" + tail, "<restricted-zone>", out,
-                         flags=re.IGNORECASE)
-            continue
         pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
         # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
         out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)

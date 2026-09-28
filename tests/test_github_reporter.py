@@ -126,13 +126,13 @@ def test_restricted_zones_match_separators_case_and_directory_boundary():
     assert sanitize("/data/cohort2/file.cram", policy) == "/data/cohort2/file.cram"
 
 
-def test_root_restricted_zone_fails_closed():
-    policy = PolicySettings(data_zones=[DataZone(path="/", level="restricted")])
-    out = sanitize("raw at /private/subject 123.cram\nuri file:///private/x.cram\n"
-                   "see https://github.com/o/p/issues/1", policy)
-    assert "/private" not in out and "123.cram" not in out and "x.cram" not in out
-    assert out.splitlines()[:2] == ["<restricted-zone>", "<restricted-zone>"]
-    assert "https://github.com/o/p/issues/1" in out
+@pytest.mark.parametrize("root", ["/", "E:/", "e:\\"])
+def test_filesystem_root_zone_publishes_nothing(root):
+    policy = PolicySettings(data_zones=[DataZone(path=root, level="restricted")])
+    for text in ("raw at /private/subject 123.cram", "경로/private/subject.cram", "uri file:///private/x.cram",
+                 "https://example.org/guide?next=/docs/start", "passed: 12"):
+        assert sanitize(text, policy) == "<restricted-zone>"
+    assert sanitize("", policy) == ""
 
 
 def test_candidate_paths_are_normalized_like_the_access_policy():
@@ -164,12 +164,10 @@ def test_zone_path_fails_closed_to_the_end_of_the_line():
 
 def test_zones_are_normalized_like_the_access_policy():
     policy = PolicySettings(data_zones=[DataZone(path="/data/./cohort", level="restricted"),
-                                        DataZone(path="/data/cohort/../secret", level="restricted"),
-                                        DataZone(path="E:/", level="restricted")])
+                                        DataZone(path="/data/cohort/../secret", level="restricted")])
     assert sanitize("/data/cohort/sample.cram", policy) == "<restricted-zone>"
     assert sanitize("/data/secret/sample.cram", policy) == "<restricted-zone>"
-    assert sanitize(r"E:\any\file.cram", policy) == "<restricted-zone>"
-    assert sanitize("passed: 12 · ID: 5", policy) == "passed: 12 · ID: 5"  # drive root needs a name boundary
+    assert sanitize("passed: 12 · ID: 5", policy) == "passed: 12 · ID: 5"
 
 
 @pytest.mark.asyncio
