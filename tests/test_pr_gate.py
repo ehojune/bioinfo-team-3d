@@ -431,3 +431,24 @@ def test_event_selection_covers_ci_completion_schedule_and_existing_triggers():
     for name in ("pull_request_review", "pull_request_review_comment"):
         assert select_pr_numbers(name, {"pull_request": {"number": 6}}) == [6]
     assert select_pr_numbers("workflow_dispatch", {"inputs": {"pr": "9"}}) == [9]
+
+
+def test_advice_has_no_round_cap_and_no_merge_verdict():
+    snap = snapshot()
+    snap["issue_comments"] += [comment("@codex review") for _ in range(14)]  # far past the old cap of 10
+    out = gate_module.advice(snap)
+    assert out["advisory"] is True and "action" not in out
+    assert out["merge_conditions_met"] is True
+    assert not any("/10" in r or "상한" in r for r in out["reasons"])
+    snap["review_comments"] = [finding("P1")]
+    assert gate_module.advice(snap)["merge_conditions_met"] is False
+
+
+def test_dry_run_prints_advice_and_never_applies(monkeypatch, capsys):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(gate_module, "snapshot_for", lambda api, pr: snapshot())
+    monkeypatch.setattr(gate_module, "apply", lambda *a, **k: pytest.fail("dry-run must not apply"))
+    monkeypatch.setattr("sys.argv", ["pr_gate.py", "--repo", "team/repo", "--pr", "42", "--dry-run"])
+    assert gate_module.main() == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True and out["merge_conditions_met"] is True
