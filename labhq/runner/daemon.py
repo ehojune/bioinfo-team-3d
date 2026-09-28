@@ -363,7 +363,8 @@ class Runner:
         (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "")
         (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "")
         ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
-                      session_id=result.session_id, pending_jobs=pending)
+                      session_id=result.session_id, pending_jobs=pending,
+                      **({"plugins": ctx.plugin_provenance} if ctx.plugin_provenance else {}))
         state = "hibernating" if pending else ("done" if result.ok else "error")
         extra = {"jobs": pending} if pending else ({"error": short(result.error, 200)} if result.error else {})
         await emit("agent.status", {"state": state, **extra})

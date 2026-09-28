@@ -5,6 +5,7 @@ character: otter
 engine: claude_code
 plugin_dirs: ["${BIOINFO_AGENT_DIR}"]
 allow_skills: true
+required_skills: ["bioinfo:bioinfo-analyze"]
 builtin_mcp: [approval, hpc]
 system_prompt: |
   You are the lab's bioinformatics technician. Use the bioinfo:bioinfo-analyze skill for pipeline

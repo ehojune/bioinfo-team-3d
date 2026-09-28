@@ -42,6 +42,7 @@ class RunContext:
     extra_dirs: list[str] = field(default_factory=list)
     claude_settings: dict = field(default_factory=dict)
     use_permission_tool: bool = False
+    plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
 
     @property
     def meta_dir(self) -> Path:

@@ -9,6 +9,7 @@ Flags used (see https://code.claude.com/docs/en/cli-reference): -p, --output-for
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,29 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     return {"autoMemoryEnabled": False, "claudeMdExcludes": excludes}
 
 
+PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands")  # what Claude Code loads
+
+
+def read_plugin_manifest(path: Path) -> dict | None:
+    try:
+        data = json.loads((path / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def plugin_provenance(name: str, path: Path) -> dict:
+    """Name, declared version and a content hash of the parts Claude Code loads (no local path)."""
+    h = hashlib.sha256()
+    for part in PLUGIN_PARTS:
+        base = path / part
+        files = sorted(p for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
+        for f in files:
+            h.update(f.relative_to(path).as_posix().encode("utf-8") + b"\0")
+            h.update(hashlib.sha256(f.read_bytes()).digest())
+    return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "sha256": h.hexdigest()}
+
+
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
 
@@ -47,6 +71,9 @@ class ClaudeCodeAdapter(AgentAdapter):
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
 
     def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        # Errors name the configured entry (e.g. ${BIOINFO_AGENT_DIR}), never the resolved path: they reach
+        # task results, the final report and project GitHub updates.
+        found: dict[str, Path] = {}
         for raw, directory in zip(ctx.agent.plugin_dirs, self._plugin_dirs(ctx, env)):
             for var in PLUGIN_VAR.findall(raw):
                 if not env.get(var):
@@ -55,9 +82,19 @@ class ClaudeCodeAdapter(AgentAdapter):
             if not path.is_absolute():
                 path = ctx.workdir / path
             if not path.is_dir():
-                return f"plugin directory does not exist: {directory}"
-            if not (path / ".claude-plugin" / "plugin.json").is_file():
-                return f"plugin manifest is missing: {directory}/.claude-plugin/plugin.json"
+                return f"plugin directory for {raw} does not exist"
+            manifest = read_plugin_manifest(path)
+            if manifest is None:
+                return f"plugin manifest for {raw} is missing or unreadable (.claude-plugin/plugin.json)"
+            found[str(manifest.get("name") or "")] = path
+        for skill in ctx.agent.required_skills:
+            plugin, name = skill.split(":")
+            if plugin not in found:
+                return f"required plugin '{plugin}' is not among plugin_dirs"
+            if not (found[plugin] / "skills" / name / "SKILL.md").is_file():
+                return f"required skill '{skill}' is missing from the plugin"
+        if found:
+            ctx.plugin_provenance = [plugin_provenance(name, path) for name, path in found.items()]
         return None
 
     def prepare(self, ctx: RunContext) -> None:

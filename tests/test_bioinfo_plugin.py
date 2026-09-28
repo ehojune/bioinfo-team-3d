@@ -67,24 +67,79 @@ def test_plugin_dir_expands_task_environment_and_repeats_flag(tmp_path, monkeypa
     assert [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--plugin-dir"] == [str(first), str(second)]
 
 
+def _plugin(root, name="bioinfo", skill="bioinfo-analyze", version="0.4.9"):
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": name, "version": version}))
+    if skill:
+        (root / "skills" / skill).mkdir(parents=True)
+        (root / "skills" / skill / "SKILL.md").write_text("---\nname: x\n---\n")
+    return root
+
+
+def _bioinfo_agent():
+    return AgentSpec(id="bioinfo-agent", name="Bioinfo", role="test", engine=Engine.claude_code,
+                     plugin_dirs=["${BIOINFO_AGENT_DIR}"], allow_skills=True,
+                     required_skills=["bioinfo:bioinfo-analyze"])
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case,expected", [
     ("unset", "BIOINFO_AGENT_DIR is not set"),
-    ("missing_dir", "plugin directory does not exist"),
-    ("missing_manifest", "plugin manifest is missing"),
+    ("missing_dir", "plugin directory for ${BIOINFO_AGENT_DIR} does not exist"),
+    ("missing_manifest", "plugin manifest for ${BIOINFO_AGENT_DIR} is missing"),
+    ("other_plugin", "required plugin 'bioinfo' is not among plugin_dirs"),
+    ("skill_removed", "required skill 'bioinfo:bioinfo-analyze' is missing"),
 ])
 async def test_plugin_preflight_refuses_before_workspace_write(tmp_path, monkeypatch, case, expected):
     monkeypatch.delenv("BIOINFO_AGENT_DIR", raising=False)
     plugin = tmp_path / "plugin"
     if case == "missing_manifest":
         plugin.mkdir()
+    elif case == "other_plugin":
+        _plugin(plugin, name="other")
+    elif case == "skill_removed":
+        _plugin(plugin, skill=None)
     env = {} if case == "unset" else {"BIOINFO_AGENT_DIR": str(plugin)}
-    agent = AgentSpec(id="bioinfo-agent", name="Bioinfo", role="test", engine=Engine.claude_code,
-                      plugin_dirs=["${BIOINFO_AGENT_DIR}"], allow_skills=True)
-    ctx = _ctx(tmp_path, agent, env)
-    result = await get_adapter(agent.engine, ctx.settings).run(ctx)
+    ctx = _ctx(tmp_path, _bioinfo_agent(), env)
+    result = await get_adapter(Engine.claude_code, ctx.settings).run(ctx)
     assert not result.ok and expected in result.error
+    assert str(plugin) not in result.error and str(tmp_path) not in result.error
     assert not any(ctx.workdir.iterdir())
+
+
+def test_plugin_provenance_pins_version_and_content_without_paths(tmp_path):
+    plugin = _plugin(tmp_path / "plugin")
+    ctx = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(plugin)})
+    adapter = get_adapter(Engine.claude_code, ctx.settings)
+    assert adapter.preflight_error(ctx, ctx.env) is None
+    [first] = ctx.plugin_provenance
+    assert first["name"] == "bioinfo" and first["version"] == "0.4.9" and len(first["sha256"]) == 64
+    assert str(tmp_path) not in json.dumps(first)
+    (plugin / "skills" / "bioinfo-analyze" / "SKILL.md").write_text("changed gate\n")
+    ctx2 = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(plugin)})
+    assert adapter.preflight_error(ctx2, ctx2.env) is None
+    assert ctx2.plugin_provenance[0]["sha256"] != first["sha256"]
+
+
+@pytest.mark.parametrize("skills,message", [
+    (["bioinfo-analyze"], "'plugin:skill'"),
+    (["bioinfo:"], "'plugin:skill'"),
+])
+def test_required_skills_format(skills, message):
+    with pytest.raises(ValidationError, match=message):
+        AgentSpec(id="a", name="A", role="t", engine=Engine.claude_code, plugin_dirs=["x"], allow_skills=True,
+                  required_skills=skills)
+
+
+def test_required_skills_need_plugin_and_skill_exception():
+    with pytest.raises(ValidationError, match="needs plugin_dirs and allow_skills"):
+        AgentSpec(id="a", name="A", role="t", engine=Engine.claude_code, required_skills=["p:s"])
+
+
+def test_core_bioinfo_agent_requires_its_skill():
+    registry = Registry(ROOT / "agents", ROOT / "talent-unused")
+    registry.load()
+    assert registry.get("bioinfo-agent").required_skills == ["bioinfo:bioinfo-analyze"]
 
 
 @pytest.mark.parametrize("field", ["plugin_dirs", "allow_skills"])

@@ -85,6 +85,7 @@ class AgentSpec(BaseModel):
     project_dirs: list[str] = []
     plugin_dirs: list[str] = []  # Claude Code --plugin-dir; ${VAR} expands at run time
     allow_skills: bool = False  # per-agent exception to --disable-slash-commands
+    required_skills: list[str] = []  # "plugin:skill" that must exist in plugin_dirs before spawn
     permission_mode: str = "default"
     sandbox: str = "workspace-write"  # Codex sandbox
     cli: CliSpec | None = None  # engine: cli
@@ -97,8 +98,13 @@ class AgentSpec(BaseModel):
 
     @model_validator(mode="after")
     def antigravity_has_no_mcp(self) -> "AgentSpec":
-        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills):
-            raise ValueError("plugin_dirs and allow_skills require engine: claude_code")
+        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or self.required_skills):
+            raise ValueError("plugin_dirs, allow_skills and required_skills require engine: claude_code")
+        for skill in self.required_skills:
+            if skill.count(":") != 1 or not all(skill.split(":")):
+                raise ValueError(f"required_skills entries are 'plugin:skill', got {skill!r}")
+        if self.required_skills and not (self.plugin_dirs and self.allow_skills):
+            raise ValueError("required_skills needs plugin_dirs and allow_skills: true")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")
         return self
