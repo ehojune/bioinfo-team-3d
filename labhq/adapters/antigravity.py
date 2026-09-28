@@ -67,7 +67,9 @@ class AntigravityAdapter(AgentAdapter):
             st.result_seen = True
             st.session_id = data.get("conversation_id") or st.session_id
             st.final_text = data.get("response") or ""
-            st.usage = data.get("usage") or {}
+            from .base import token_counts
+            st.usage = token_counts(data.get("usage"), ("input_tokens", "output_tokens",
+                "thinking_tokens", "cache_read_tokens", "total_tokens"))
             if data.get("status") != "SUCCESS":
                 st.error = str(data.get("error") or data.get("status") or "agy error")
             elif data.get("denied_actions"):
@@ -75,4 +77,4 @@ class AntigravityAdapter(AgentAdapter):
                 names = [str(x.get("display_name") or x.get("action")) if isinstance(x, dict) else str(x)
                          for x in actions]
                 st.error = "권한이 필요한 도구가 헤드리스에서 거부됨: " + ", ".join(names)
-            await ctx.emit("agent.usage", {"tokens": st.usage})
+            await ctx.emit("agent.usage", {"tokens": st.usage, "cost_known": False})

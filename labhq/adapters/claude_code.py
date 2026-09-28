@@ -250,12 +250,15 @@ class ClaudeCodeAdapter(AgentAdapter):
             st.final_text = ev.get("result")
             st.session_id = ev.get("session_id") or st.session_id
             st.cost_usd = ev.get("total_cost_usd")
-            st.usage = ev.get("usage") or {}
+            from .base import token_counts
+            st.usage = token_counts(ev.get("usage"), ("input_tokens", "output_tokens",
+                "cache_creation_input_tokens", "cache_read_input_tokens"))
             if ev.get("structured_output") is not None:
                 st.structured = ev["structured_output"]
             if ev.get("is_error"):
                 st.error = str(ev.get("result") or ev.get("subtype") or "Claude Code error")
             elif ev.get("subtype") not in (None, "success"):
                 st.error = ev.get("subtype") or "error"
-            await ctx.emit("agent.usage", {"cost_usd": st.cost_usd, "num_turns": ev.get("num_turns"),
+            await ctx.emit("agent.usage", {"cost_usd": st.cost_usd, "cost_known": st.cost_usd is not None,
+                                           "tokens": st.usage, "num_turns": ev.get("num_turns"),
                                            "duration_ms": ev.get("duration_ms")})

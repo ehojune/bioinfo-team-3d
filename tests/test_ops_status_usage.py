@@ -1,0 +1,142 @@
+"""Operational summaries and accounting contracts."""
+
+import asyncio
+import json
+import logging
+import signal
+
+import pytest
+from fastapi.testclient import TestClient
+
+from labhq.cli import _run_runner_with_interrupts, main
+from labhq.gateway.server import create_app
+from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.runner.daemon import Runner
+from labhq.settings import Settings
+
+
+def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r1"] = {"id": "r1", "text": "한글 요청 " * 30, "mode": "orchestrate",
+                          "status": "running", "created_at": 1.0, "updated_at": 2.0,
+                          "report": "private report", "plan": {"steps": [{"id": "s1"}, {"id": "s2"}]},
+                          "results": {"s1": {"ok": True}}}
+    hub.requests["r2"] = {"id": "r2", "text": "finished", "status": "done", "created_at": 2.0}
+    hub.store.put("task", "t2", {"request_id": "r1", "step_id": "s2", "accepted": True, "completed": False,
+                                  "payload": {"agent_id": "worker"}})
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert client.get("/api/requests").status_code == 401
+        headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+        response = client.get("/api/requests?status=running&limit=1", headers=headers)
+        assert response.headers["content-type"] == "application/json; charset=utf-8"
+        item = response.json()[0]
+        assert item["id"] == "r1" and item["text"].startswith("한글")
+        assert item["step_progress"] == {"done": 1, "total": 2,
+                                         "steps": {"s1": "done", "s2": "running"}}
+        assert "report" not in item and len(item["text"]) <= 120
+        assert [r["id"] for r in client.get("/api/requests?status=done", headers=headers).json()] == ["r2"]
+        assert len(client.get("/api/requests?status=all&limit=1", headers=headers).json()) == 1
+        assert client.get("/api/requests?status=bad", headers=headers).status_code == 422
+        assert client.get("/api/health").json()["active_requests"] == 1
+        assert client.get("/api/health").json()["running_tasks"] == 1
+    assert "gateway shutdown with running requests: r1" in caplog.text
+
+
+def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
+    def api(_settings, _method, path):
+        if path == "/api/health":
+            return {"runners": ["runner-1"]}
+        if path.startswith("/api/requests?"):
+            return [{"id": "r1", "text": "분석", "step_progress":
+                     {"done": 1, "total": 2, "steps": {"s1": "done", "s2": "running"}}}]
+        return [{"id": "a1", "kind": "tool_permission", "summary": "검토"}]
+
+    monkeypatch.setattr("labhq.cli._api", api)
+    main(["status"])
+    output = capsys.readouterr().out
+    assert "runner-1" in output and "r1 1/2 분석" in output
+    assert "s2: running" in output and "a1 [tool_permission] 검토" in output
+
+
+@pytest.mark.asyncio
+async def test_usage_sum_and_unknown_cost_are_idempotent(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
+                         "cost_known": True, "usage": {}}
+    hub.save_request("r")
+    for tid, cost, usage in (("t1", 0.3, {"input_tokens": 2}),
+                             ("t2", None, {"input_tokens": 3, "output_tokens": 4})):
+        result = TaskResult(task_id=tid, agent_id="a", ok=True, cost_usd=cost,
+                            cost_known=cost is not None, usage=usage)
+        message = {"type": "task.result", "task_id": tid, "request_id": "r", "data": result.model_dump()}
+        await hub.on_runner_message("runner", message)
+        await hub.on_runner_message("runner", message)
+    req = hub.requests["r"]
+    assert req["cost_usd"] == 0.3 and req["cost_known"] is False
+    assert req["usage"] == {"input_tokens": 5, "output_tokens": 4}
+    assert hub.request_summary(req)["cost_known"] is False
+
+
+@pytest.mark.asyncio
+async def test_runner_manifest_records_token_counts(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    class Adapter:
+        async def run(self, ctx):
+            await ctx.emit("agent.usage", {"tokens": {"input_tokens": 7}, "cost_known": False})
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done",
+                              usage={"input_tokens": 7}, cost_known=False)
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    task = Task(id="task-1", request_id="r1", agent_id=agent.id, prompt="test")
+    result = await runner.run_task(task)
+    manifest = json.loads((runner.workspaces[task.id].dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.usage == manifest["runs"][task.id]["usage"] == {"input_tokens": 7}
+    assert manifest["runs"][task.id]["cost_known"] is False
+    assert any(event["type"] == "agent.usage" for event in runner.store.pending())
+
+
+@pytest.mark.asyncio
+async def test_runner_first_interrupt_warns_second_exits(monkeypatch, capsys):
+    handlers = {}
+
+    def install(_sig, handler):
+        previous = handlers.get("current", signal.default_int_handler)
+        handlers["current"] = handler
+        return previous
+
+    monkeypatch.setattr(signal, "signal", install)
+
+    class FakeTask:
+        def done(self):
+            return False
+
+    class FakeRunner:
+        tasks = {"task-1": FakeTask()}
+        stopped = False
+
+        async def run_forever(self):
+            handlers["current"](signal.SIGINT, None)
+            assert not self.stopped
+            handlers["current"](signal.SIGINT, None)
+
+        def stop(self):
+            self.stopped = True
+
+    runner = FakeRunner()
+    with pytest.raises(KeyboardInterrupt):
+        await _run_runner_with_interrupts(runner)
+    assert runner.stopped
+    assert "task-1" in capsys.readouterr().err

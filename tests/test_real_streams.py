@@ -59,8 +59,42 @@ async def test_captured_stream(tmp_path, engine, case, exit_code, ok, text, erro
     assert (error is None) or (error in (result.error or ""))
     assert result.session_id == session_id
     assert sum(kind == "agent.tool" for kind, _ in events) == tool_count
+    if case == "claude_simple":
+        assert result.usage["cache_creation_input_tokens"] == 65133
+    if case == "codex_simple":
+        assert result.usage["input_tokens"] == 24285
+        assert result.usage["cached_input_tokens"] == 12800
+        assert result.cost_known is False
+    if case == "agy_simple":
+        assert result.usage["total_tokens"] == 18681
+        assert result.cost_known is False
+    if engine in ("codex", "antigravity"):
+        assert any(kind == "agent.usage" and "tokens" in data for kind, data in events)
     if case in ("codex_mcp_call", "agy_tool_denied", "agy_tool_allowed"):
         assert any(kind == "agent.tool_error" for kind, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_claude_usage_from_result_fixture(tmp_path):
+    settings = Settings()
+    agent = AgentSpec(id="fixture", name="Fixture", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    task = Task(agent_id=agent.id, prompt="test")
+    events = []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+
+    ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[], env={}, emit=emit, prompt="test")
+    adapter = get_adapter(agent.engine, settings)
+    state = RunState()
+    for line in (ROOT / "claude_code" / "claude_simple.jsonl").read_text(encoding="utf-8").splitlines():
+        await adapter.handle_line(line, state, ctx)
+    result = adapter.finalize(state, ctx, 0)
+    assert result.usage == {"input_tokens": 2, "output_tokens": 13,
+                            "cache_creation_input_tokens": 65133, "cache_read_input_tokens": 0}
+    assert result.cost_known is True
+    assert any(kind == "agent.usage" and data["tokens"] == result.usage for kind, data in events)
 
 
 def test_fixture_privacy_and_valid_json():

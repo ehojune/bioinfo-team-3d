@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · #26 운영 상태·사용량
+
+- 결론: 실행 중인 요청·단계·승인을 확인하고 비용 미집계를 구분한다.
+- 바뀐 것: 상태 API/CLI, UTF-8 JSON, 엔진별 token 집계·manifest, 종료 경고, 웹 비용 표시.
+- 실행한 것: 대상 96 passed, 전체 335 passed/19 skipped/11 failed(기준 커밋도 같은 11 failed), 공개 검사·Node 상태 검사·Chrome 폰 화면 확인.
+- 미해결: 이 환경의 기존 Windows/sandbox 실패 11건. 실제 엔진 과금·중단 시그널의 수동 운영 확인은 남았다.
+- 근거: `tests/test_ops_status_usage.py`, `tests/test_real_streams.py`, `labhq/gateway/server.py`.
+
 ## 2026-09-28 · 후속 P2 #19·#21·#22
 
 - 무엇을: `labhq demo --host ::`가 IPv6 주소로 폰 URL을 출력한다(#19). plugin provenance 해시에 git index mode(실행 비트)를 넣었다(#21). `pr_gate.py --dry-run` advice가 병합이 막혀도 현재 head의 P2 목록을 담는다(#22). HANDOFF에 P5 완료와 P3 러너 계정 결정 대기를 적었다.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import time
 from collections import deque
@@ -15,7 +16,7 @@ from typing import Any
 
 import httpx
 from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
@@ -23,6 +24,13 @@ from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_i
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 from ..store import StateStore
+from ..util import short
+
+log = logging.getLogger(__name__)
+
+
+class UTF8JSONResponse(JSONResponse):
+    media_type = "application/json; charset=utf-8"
 
 WEB = Path(__file__).resolve().parents[1] / "web"
 
@@ -126,7 +134,36 @@ class Hub:
         self.reporter = ProjectReporter(self, settings, github_transport)
 
     def save_request(self, rid: str) -> None:
+        self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
+
+    def running_tasks(self) -> list[dict]:
+        return [{"id": tid, "request_id": entry.get("request_id"),
+                 "agent_id": (entry.get("payload") or {}).get("agent_id")}
+                for tid, entry in self.store.all("task").items()
+                if entry.get("accepted") and not entry.get("completed") and
+                self.requests.get(entry.get("request_id"), {}).get("status") == "running"]
+
+    def request_summary(self, req: dict) -> dict:
+        rid = req["id"]
+        steps = (req.get("plan") or {}).get("steps") or []
+        states = {step["id"]: "pending" for step in steps}
+        if req.get("mode") == "direct":
+            states["direct"] = "pending"
+        states.update({sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
+                       for sid, outcome in (req.get("results") or {}).items()})
+        for task in self.running_tasks():
+            if task["request_id"] == rid:
+                entry = self.store.get("task", task["id"]) or {}
+                sid = entry.get("step_id") or entry.get("kind")
+                if sid and states.get(sid, "pending") == "pending":
+                    states[sid] = "running"
+        return {"id": rid, "status": req.get("status"), "text": short(req.get("text"), 120),
+                "created_at": req.get("created_at"), "updated_at": req.get("updated_at", req.get("created_at")),
+                "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),
+                                  "total": len(steps) if steps else (1 if req.get("mode") == "direct" else 0),
+                                  "steps": states}, "cost_usd": req.get("cost_usd", 0),
+                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {})}
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -463,6 +500,14 @@ class Hub:
                     amount = float((msg.get("data") or {}).get("cost_usd") or 0)
                     costs[tid] = amount
                     req["cost_usd"] = round(float(req.get("cost_usd") or 0) + amount, 4)
+                    known = result.cost_known if result.cost_known is not None else result.cost_usd is not None
+                    req["cost_known"] = req.get("cost_known", True) and known
+                    req.setdefault("usage_by_task", {})[tid] = result.usage
+                    totals: dict[str, int] = {}
+                    for usage in req["usage_by_task"].values():
+                        for key, count in usage.items():
+                            totals[key] = totals.get(key, 0) + count
+                    req["usage"] = totals
                     self.save_request(rid)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
@@ -659,7 +704,8 @@ class Hub:
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
         rid = new_id("req")
-        req = {"id": rid, "status": "running", "created_at": time.time(), **body.model_dump()}
+        req = {"id": rid, "status": "running", "created_at": time.time(),
+               "cost_known": True, "usage": {}, **body.model_dump()}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")
@@ -683,7 +729,8 @@ class Hub:
             "runners": list(self.runners),
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
-                                                                  "project_id", "plan", "cost_usd", "agent_id")},
+                                                                  "project_id", "plan", "cost_usd", "cost_known",
+                                                                  "usage", "agent_id")},
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()}}
                          for r in self.requests.values()],
@@ -695,12 +742,18 @@ class Hub:
 
 def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
     hub = Hub(settings, github_transport)
-    app = FastAPI(title="labhq gateway", version="0.1.0")
+    app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
+
+    @app.on_event("shutdown")
+    async def warn_running_on_shutdown() -> None:
+        running = [r["id"] for r in hub.requests.values() if r.get("status") == "running"]
+        if running:
+            log.warning("gateway shutdown with running requests: %s", ", ".join(running))
 
     def auth(authorization: str = Header(default="")) -> None:
         if authorization.removeprefix("Bearer ").strip() != settings.gateway.client_token:
@@ -779,6 +832,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except KeyError as e:
             raise HTTPException(404, str(e))
 
+    @app.get("/api/requests", dependencies=[Depends(auth)])
+    async def list_requests(status: str = "running", limit: int = 20) -> list[dict]:
+        if status not in {"running", "done", "failed", "all"}:
+            raise HTTPException(422, "invalid status")
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be 1..200")
+        requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
+        return [hub.request_summary(r) for r in requests if status == "all" or r.get("status") == status][:limit]
+
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:
         return [p.model_dump(exclude={"local_dir"}) for p in settings.projects]
@@ -849,7 +911,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/health")
     async def health() -> dict:
-        return {"service": "labhq gateway", "runners": list(hub.runners), "agents": len(hub.agents)}
+        return {"service": "labhq gateway", "runners": list(hub.runners), "agents": len(hub.agents),
+                "active_requests": sum(r.get("status") == "running" for r in hub.requests.values()),
+                "running_tasks": len(hub.running_tasks())}
 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:

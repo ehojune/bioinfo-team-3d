@@ -134,8 +134,12 @@ class CodexAdapter(AgentAdapter):
                 await ctx.emit("agent.tool", {"name": "web_search", "input": short(item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True
-            st.usage = ev.get("usage") or {}
-            await ctx.emit("agent.usage", {"tokens": st.usage})
+            from .base import token_counts
+            usage = token_counts(ev.get("usage"), ("input_tokens", "cached_input_tokens",
+                "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"))
+            for key, value in usage.items():
+                st.usage[key] = st.usage.get(key, 0) + value
+            await ctx.emit("agent.usage", {"tokens": usage, "cost_known": False})
         elif typ in ("turn.failed", "error"):
             err = ev.get("error")
             st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"

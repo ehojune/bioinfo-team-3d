@@ -74,7 +74,8 @@ class GeminiAdapter(AgentAdapter):
             st.error = ev.get("message") or "gemini error"
         elif typ == "result":
             st.result_seen = True
-            st.usage = ev.get("stats") or {}
+            from .base import token_counts
+            st.usage = token_counts(ev.get("stats"), ("input_tokens", "output_tokens", "total_tokens"))
             if ev.get("status") not in (None, "success"):
                 st.error = st.error or str(ev.get("error") or ev.get("status"))
-            await ctx.emit("agent.usage", {"tokens": st.usage})
+            await ctx.emit("agent.usage", {"tokens": st.usage, "cost_known": False})

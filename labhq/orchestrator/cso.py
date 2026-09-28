@@ -601,13 +601,17 @@ class Orchestrator:
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]
+        if req.get("cost_known") is False:
+            known = float(req.get("cost_usd") or 0)
+            report += f"\n\n비용: {f'${known:.2f} + ' if known else ''}비용 미집계"
         for outcome in self.budget_outcomes.get(rid, []):
             decision = "approved" if outcome["approved"] else "denied"
             report += (f"\n\nBudget: ${outcome['spent_usd']:.2f} > "
                        f"${outcome['limit_usd']:.2f}; {decision}.")
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
-        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"]}
+        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
+                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {})}
         if hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.
