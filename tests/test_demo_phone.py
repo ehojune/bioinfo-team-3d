@@ -24,11 +24,46 @@ def test_demo_arguments(monkeypatch, args, web, phone, host):
     demo.assert_awaited_once_with(web, 8787, phone, host, 120)
 
 
-def test_phone_client_token_is_fresh():
-    default = Settings().gateway.client_token
-    token = cli._demo_client_token(True, default)
+@pytest.mark.parametrize("field", ["client_token", "runner_token"])
+def test_exposed_demo_tokens_are_fresh(field):
+    default = getattr(Settings().gateway, field)
+    token = cli._demo_token(True, default)
     assert token != default and len(token) >= 16
-    assert cli._demo_client_token(False, default) == default
+    assert cli._demo_token(False, default) == default
+
+
+def test_demo_url_hosts(monkeypatch):
+    monkeypatch.setattr(cli, "_lan_ipv4_addresses", lambda: ["192.168.0.10"])
+    assert cli._demo_url_hosts("127.0.0.1") == ["127.0.0.1"]
+    assert cli._demo_url_hosts("0.0.0.0") == ["192.168.0.10"]
+    assert cli._demo_url_hosts("192.168.1.4") == ["192.168.1.4"]
+    assert cli._demo_url_hosts("fe80::1") == ["[fe80::1]"]
+
+
+def test_mock_approval_timeout_follows_policy(monkeypatch, tmp_path):
+    from labhq.adapters.base import RunContext
+    from labhq.adapters.mock import MockAdapter
+    from labhq.models import AgentSpec, Engine, Task
+
+    s = Settings()
+    s.policy.approvals.timeout_s = 150  # what phone mode sets for a 120 s tap fallback
+    sent = []
+
+    async def fake_broker(self, ctx, path, payload):
+        sent.append((path, payload))
+        return {"approved": True}
+
+    async def emit(*_):
+        pass
+
+    monkeypatch.setattr(MockAdapter, "_broker", fake_broker)
+    agent = AgentSpec(id="data_steward", name="D", role="test", engine=Engine("mock"), builtin_mcp=[])
+    task = Task(agent_id=agent.id, prompt="x [needs-approval]", meta={"kind": "direct"})
+    ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=s, mcp_servers=[], env={},
+                     emit=emit, prompt=task.prompt)
+    asyncio.run(MockAdapter(s).run(ctx))
+    approvals = [p for path, p in sent if path == "/approval"]
+    assert approvals and approvals[0]["timeout_s"] == 150
 
 
 def test_custom_approval_timeout(monkeypatch):

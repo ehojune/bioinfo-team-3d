@@ -127,8 +127,21 @@ def _approval_delay(phone: bool, approve_timeout: float) -> float:
     return approve_timeout if phone else 0.3
 
 
-def _demo_client_token(exposed: bool, current: str) -> str:
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+WILDCARD_HOSTS = ("0.0.0.0", "::", "")
+
+
+def _demo_token(exposed: bool, current: str) -> str:
     return secrets.token_urlsafe(16) if exposed else current
+
+
+def _demo_url_hosts(host: str) -> list[str]:
+    """Addresses a browser can use for the bind host (wildcard → this machine's LAN IPv4s)."""
+    if host in LOOPBACK_HOSTS:
+        return ["127.0.0.1"]
+    if host in WILDCARD_HOSTS:
+        return _lan_ipv4_addresses()
+    return [f"[{host}]" if ":" in host else host]
 
 
 def _lan_ipv4_addresses() -> list[str]:
@@ -177,11 +190,14 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = Settings.load(None)
     gport = port if web else free_port()
-    s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
-    s.gateway.client_token = _demo_client_token(phone or host not in ("127.0.0.1", "localhost", "::1"),
-                                                s.gateway.client_token)
-    if phone:
-        s.policy.approvals.timeout_s = max(s.policy.approvals.timeout_s, int(approve_timeout) + 2)
+    dial = "127.0.0.1" if host in LOOPBACK_HOSTS + WILDCARD_HOSTS else _demo_url_hosts(host)[0]
+    s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
+    exposed = phone or host not in LOOPBACK_HOSTS
+    # Both default tokens are public; on the LAN anyone could otherwise join as a client or replace the runner.
+    s.gateway.client_token = _demo_token(exposed, s.gateway.client_token)
+    s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
+    # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
+    s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
     s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
     s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = str(tmp / "runs"), str(tmp / "talent"), str(tmp / "agents")
     s.hpc.scheduler = "mock"
@@ -216,7 +232,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         await until(lambda: len(hub.agents) >= 5, 15)
         if web:
             if phone:
-                addresses = _lan_ipv4_addresses()
+                addresses = _demo_url_hosts(host)
                 if not addresses:
                     print("LAN IPv4 주소를 찾지 못했습니다. PC에서 열 수 있는 주소:")
                 for line in _phone_url_lines(addresses, gport, s.gateway.client_token):
@@ -224,7 +240,8 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 print("폰과 PC를 같은 Wi-Fi에 연결하세요.")
                 print("Windows 방화벽 알림에서는 Python의 private network 접근을 허용하세요.")
             else:
-                print(f"\n=== 웹 사무실: http://127.0.0.1:{gport}/?token={s.gateway.client_token} (Ctrl+C로 종료) ===\n")
+                for ip in _demo_url_hosts(host) or ["127.0.0.1"]:
+                    print(f"\n=== 웹 사무실: http://{ip}:{gport}/?token={s.gateway.client_token} (Ctrl+C로 종료) ===\n")
             texts = ["공개 폐선암 scRNA-seq에서 CD276 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]",
                      "새로 받은 WGS 배치 표준 QC [hpc] [needs-approval]"]
             for i in range(10**6):
