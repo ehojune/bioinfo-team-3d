@@ -172,6 +172,8 @@ flowchart LR
 설정은 `config/labhq.example.yaml`의 `github:`·`projects:`. 토큰은 게이트웨이 호스트의 `GITHUB_TOKEN` 환경변수에서만 읽습니다
 (fine-grained PAT, 해당 저장소의 Issues·Contents 읽기/쓰기). **공개 가드**: 통제접근 경로와 비밀값으로 보이는 문자열은 가리고,
 `visibility: public` 저장소에는 `allow_public_reports: true`가 없으면 아무것도 올리지 않습니다.
+통제접근 경로 판정은 접근 정책과 같습니다(구분자·대소문자·`.`/`..` 정규화). 그런 경로가 있는 줄은 통째로 가리고,
+이슈 제목·본문·코멘트·보고서·커밋 메시지를 모두 검사합니다. `/`나 `E:/` 같은 루트를 통제 구역으로 두면 아무것도 게시하지 않습니다.
 
 **Codex PR 규칙**: P1은 해당 PR에서 고치고 P2는 후속 issue로 넘깁니다. PR 생성 시 자동 리뷰 1회와 신뢰 작성자의 PR 상단 `@codex review` 댓글 1개씩을 셉니다(최대 10회). push 묶음마다 한 번만 호출하고 인라인 답글에는 `@codex`를 쓰지 않습니다. Running 중에는 재호출하지 않습니다. 게이트는 8회부터 경고하며 요약이 없거나 파싱되지 않거나 현재 head보다 오래된 경우에도 한 번 알립니다. 현재 head의 리뷰·CI·병합 조건이 맞으면 squash merge하고, 10회에 막히면 `needs-pi`로 PI를 부릅니다. 포크 PR은 자동 병합하지 않습니다.
 `labhq codex-review <project> <PR번호>`가 그 한 번의 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.

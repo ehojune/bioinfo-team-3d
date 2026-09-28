@@ -32,7 +32,7 @@ class Registry:
             for p in sorted((self.agents_dir / sub).glob("*.yaml")):
                 if p.name.startswith("_"):
                     continue
-                spec = AgentSpec.model_validate(yaml.safe_load(p.read_text()) or {})
+                spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")) or {})
                 if spec.employment == Employment.contract and not self._still_employed(spec, p):
                     continue
                 self.agents[spec.id] = spec
@@ -59,7 +59,7 @@ class Registry:
                                       "archived_at": time.time()}
         dst = self.talent_dir / self._slug(spec)
         dst.mkdir(parents=True, exist_ok=True)
-        (dst / "contract.yaml").write_text(_dump(spec))
+        (dst / "contract.yaml").write_text(_dump(spec), encoding="utf-8")
         if path and path.exists():
             path.unlink()
         self.agents.pop(spec.id, None)
@@ -77,7 +77,7 @@ class Registry:
     def talent_pool(self) -> list[AgentSpec]:
         out = []
         for p in sorted(self.talent_dir.glob("*/contract.yaml")):
-            out.append(AgentSpec.model_validate(yaml.safe_load(p.read_text())))
+            out.append(AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8"))))
         return out
 
     # ----- contract lifecycle -----
@@ -85,10 +85,10 @@ class Registry:
         assert spec.employment == Employment.contract and spec.contract
         p = self.agents_dir / "contract" / f"{spec.id}.yaml"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(_dump(spec))
+        p.write_text(_dump(spec), encoding="utf-8")
         tdir = self.talent_dir / self._slug(spec)
         tdir.mkdir(parents=True, exist_ok=True)
-        (tdir / "contract.yaml").write_text(_dump(spec))
+        (tdir / "contract.yaml").write_text(_dump(spec), encoding="utf-8")
         self.agents[spec.id] = spec
         self.paths[spec.id] = p
         return p
@@ -113,7 +113,7 @@ class Registry:
 
     def rehire(self, slug: str, days: float) -> AgentSpec:
         p = self.talent_dir / slug / "contract.yaml"
-        spec = AgentSpec.model_validate(yaml.safe_load(p.read_text()))
+        spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")))
         assert spec.contract
         now = time.time()
         spec.contract.status = "active"

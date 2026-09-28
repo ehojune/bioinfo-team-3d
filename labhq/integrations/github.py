@@ -16,10 +16,11 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
+from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -36,11 +37,42 @@ SECRET_PATTERNS = [
 ]
 
 
+NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
+
+
+def _outside_network_url(m: re.Match) -> str:
+    """Redact a zone match unless it is the path part of a network URL (https://host/data/…)."""
+    line_start = max(m.string.rfind(c, 0, m.start()) for c in " \t\r\n") + 1
+    url = NETWORK_URL_PREFIX.search(m.string[line_start:m.start()])
+    return m.group(0) if url and url.group(1).casefold() != "file" else "<restricted-zone>"
+
+
+def root_zone_restricted(policy: PolicySettings) -> bool:
+    """`/` or a drive root (`E:/`) is a restricted zone: nothing about the lab can be published safely."""
+    return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
+
+
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
     out = text or ""
-    for z in policy.data_zones:
-        if z.level == "restricted":
-            out = out.replace(os.path.normpath(os.path.expanduser(z.path)), "<restricted-zone>")
+    # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
+    normalized = restricted_paths(policy)
+    if root_zone_restricted(policy):
+        # A filesystem root (`/`, `E:/`) is restricted: every path on that root is controlled, and no text
+        # boundary reliably separates one from prose or URLs. Publish nothing (fail closed).
+        return "<restricted-zone>" if out else ""
+    # 1) A line the access policy would treat as touching a zone is withheld whole. This reuses the policy's
+    #    candidate extraction and lexical normalization (`/data/tmp/../cohort`, `file:///data/./cohort`,
+    #    quoted or spaced names), and like the policy it ignores network URLs.
+    if normalized:
+        out = "\n".join("<restricted-zone>" if mentions_zone(line, normalized) else line for line in out.split("\n"))
+    # 2) Literal zone text glued to other words (e.g. Korean "경로/data/…") is not a path candidate for the
+    #    policy, so it is matched here. Names below a zone may contain spaces or quotes, so where the path ends
+    #    is unknowable: fail closed to the end of the line.
+    tail = r"[^\r\n]*"
+    for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
+        pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
+        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
+        out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     for secret in extra_secrets:
@@ -55,17 +87,42 @@ def codex_comment(body: str, mention: str = "@codex") -> str:
 
 
 class GitHubClient:
-    def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None,
+                 clean: Callable[[str], str] | None = None):
+        self.clean = clean or (lambda value: value)
         self.http = httpx.AsyncClient(base_url=api_url.rstrip("/"), transport=transport, timeout=30, headers={
             "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "labhq",
         })
 
     async def _req(self, method: str, path: str, **kw: Any) -> Any:
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            if "json" in kw:
+                if method == "PUT" and "/contents/" in path:
+                    payload = dict(kw["json"])
+                    content = base64.b64decode(payload["content"]).decode("utf-8")
+                    guarded = base64.b64encode(self.clean(content).encode("utf-8")).decode("ascii")
+                    kw["json"] = self._clean_value({k: v for k, v in payload.items() if k != "content"})
+                    kw["json"]["content"] = guarded
+                else:
+                    kw["json"] = self._clean_value(kw["json"])
         r = await self.http.request(method, path, **kw)
         if r.status_code >= 400:
             raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:300]}")
         return r.json() if r.content else {}
+
+    CONTROL_KEYS = frozenset({"branch", "sha", "ref"})  # GitHub control values, not published text
+
+    def _clean_value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self.clean(value)
+        if isinstance(value, dict):
+            return {self.clean(k) if isinstance(k, str) else k:
+                    v if k in self.CONTROL_KEYS and isinstance(v, str) else self._clean_value(v)
+                    for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._clean_value(v) for v in value]
+        return value
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels})
@@ -105,6 +162,7 @@ class GitHubClient:
         return issue.get("state") == "closed"
 
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
+        path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
@@ -137,6 +195,13 @@ class ProjectReporter:
         self._warned: set[str] = set()
 
     def enabled(self) -> bool:
+        if root_zone_restricted(self.s.policy):
+            # Publishing is off entirely: redacting every string would also corrupt protocol values
+            # (issue state, refs) and leave the reporter retrying forever.
+            if "root-zone" not in self._warned:
+                self._warned.add("root-zone")
+                log.warning("GitHub updates are off: a filesystem root is a restricted data zone")
+            return False
         return any(p.repo for p in self.s.projects)
 
     def client(self) -> GitHubClient | None:
@@ -147,7 +212,7 @@ class ProjectReporter:
                     self._warned.add("token")
                     log.warning("GitHub updates are off: set %s on the gateway host", self.s.github.token_env)
                 return None
-            self._client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport)
+            self._client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport, self._clean)
         return self._client
 
     def submit(self, ev: dict) -> None:
@@ -218,7 +283,7 @@ class ProjectReporter:
     async def handle(self, ev: dict) -> bool | None:
         rid = ev["request_id"]
         proj = self.project_of(rid)
-        if not proj or not proj.repo:
+        if not proj or not proj.repo or root_zone_restricted(self.s.policy):
             return
         if proj.visibility == "public" and not proj.allow_public_reports:
             if proj.id not in self._warned:
@@ -239,7 +304,7 @@ class ProjectReporter:
             find_issue = getattr(gh, "find_request_issue", None)
             issue = await find_issue(proj.repo, rid) if find_issue else None
             if issue is None:
-                issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
+                issue = await gh.create_issue(proj.repo, f"[labhq] {short(self._clean(req.get('text', '')), 70)}",
                                               self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
             self.hub.store.put("github_issue", rid, {"number": issue["number"]})
@@ -330,7 +395,6 @@ class ProjectReporter:
         return (f"🐢 **과학 리뷰 #{review.get('revision', 0)}: {review.get('verdict')}** — 질문 부합 "
                 f"{sc.get('addresses_question')}/5 · 근거 {sc.get('evidence')}/5 · 철저성 {sc.get('thoroughness')}/5{issues}")
 
-    @staticmethod
-    def _report_md(rid: str, req: dict, report: str) -> str:
-        return (f"# {short(req.get('text', ''), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
+    def _report_md(self, rid: str, req: dict, report: str) -> str:
+        return (f"# {short(self._clean(req.get('text', '')), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
                 f"- 비용: ${req.get('cost_usd', 0)}\n\n{report}\n")
