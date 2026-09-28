@@ -136,3 +136,16 @@ def test_approval_delay_and_resolved_fallback(capsys):
         assert "자동 승인" in capsys.readouterr().out
 
     asyncio.run(exercise())
+
+
+def test_tap_publish_forwards_runner_sequence():
+    calls, seen = [], []
+
+    async def publish(ev, runner_id=None, runner_seq=None):
+        calls.append((ev["type"], runner_id, runner_seq))
+
+    tap = cli._tap_publish(publish, lambda ev: seen.append(ev["type"]))
+    asyncio.run(tap({"type": "agent.status"}, runner_id="local", runner_seq=7))
+    asyncio.run(tap({"type": "runner.online"}))
+    assert calls == [("agent.status", "local", 7), ("runner.online", None, None)]
+    assert seen == ["agent.status", "runner.online"]

@@ -179,6 +179,14 @@ async def _demo_auto_approve(hub, aid: str, delay: float, phone: bool) -> None:
     print("   (demo) 승인 대기 시간 만료 → 자동 승인" if phone else "   (demo) 📱 폰에서 '승인' 탭했다고 가정")
 
 
+def _tap_publish(publish, after):
+    """Wrap Hub.publish; sequenced runner events also pass runner_id/runner_seq, so forward everything."""
+    async def tap(ev: dict, *args, **kwargs) -> None:
+        await publish(ev, *args, **kwargs)
+        after(ev)
+    return tap
+
+
 async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 host: str = "127.0.0.1", approve_timeout: float = 120) -> None:
     import uvicorn
@@ -206,14 +214,13 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     hub = app.state.hub
     publish = hub.publish
 
-    async def tap(ev: dict) -> None:
-        await publish(ev)
+    def after(ev: dict) -> None:
         render(ev)
         if ev.get("type") == "approval.requested":
             asyncio.get_running_loop().create_task(_demo_auto_approve(
                 hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
 
-    hub.publish = tap
+    hub.publish = _tap_publish(publish, after)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning"))
     tasks = [asyncio.create_task(server.serve())]
     while not server.started:
