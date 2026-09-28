@@ -115,6 +115,22 @@ def _raw_spaced_zone(s: str, zone: str) -> bool:
     return False
 
 
+def mentions_zone(text: str, zones: Iterable[str]) -> bool:
+    """The publish guard's view of `touches`: same candidates and lexical normalization, case-folded.
+
+    Over-matching is safe when deciding what not to publish, so case is ignored on every host.
+    """
+    folded = [z.casefold().rstrip("/") or "/" for z in zones if z]
+    for token in _candidate_paths(text):
+        if _drive_relative(token):
+            if any(re.match(r"^[a-z]:/", z) and token[0].casefold() == z[0] for z in folded):
+                return True
+            continue
+        if _absolute(token) and any(_inside(_norm(token).casefold(), z) for z in folded):
+            return True
+    return any(_raw_spaced_zone(text.casefold(), z) for z in folded)
+
+
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
     """Find lexical path references, preserving structured, quoted and escaped spaces.
 

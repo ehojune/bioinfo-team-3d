@@ -131,8 +131,23 @@ def test_root_restricted_zone_fails_closed():
     out = sanitize("raw at /private/subject 123.cram\nuri file:///private/x.cram\n"
                    "see https://github.com/o/p/issues/1", policy)
     assert "/private" not in out and "123.cram" not in out and "x.cram" not in out
-    assert out.splitlines()[:2] == ["raw at <restricted-zone>", "uri <restricted-zone>"]
+    assert out.splitlines()[:2] == ["<restricted-zone>", "<restricted-zone>"]
     assert "https://github.com/o/p/issues/1" in out
+
+
+def test_candidate_paths_are_normalized_like_the_access_policy():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
+    for line in ("see /data/./cohort/sample.cram", "see /data/tmp/../cohort/sample.cram",
+                 "uri file:///data/./cohort/sample.cram", 'cmd --in="/data/cohort/a b.cram"'):
+        out = sanitize(line + "\nkeep", policy)
+        assert out == "<restricted-zone>\nkeep", out
+
+
+def test_network_urls_that_share_a_zone_path_stay_intact():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
+    text = "guide https://example.org/data/cohort/guide and (https://x.org/docs/data/cohort)"
+    assert sanitize(text, policy) == text
+    assert sanitize("https://x.org/a then /data/cohort/s.cram", policy) == "<restricted-zone>"
 
 
 def test_zone_path_fails_closed_to_the_end_of_the_line():

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
-from ..policy import restricted_paths
+from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -37,14 +37,30 @@ SECRET_PATTERNS = [
 ]
 
 
+NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
+
+
+def _outside_network_url(m: re.Match) -> str:
+    """Redact a zone match unless it is the path part of a network URL (https://host/data/…)."""
+    line_start = max(m.string.rfind(c, 0, m.start()) for c in " \t\r\n") + 1
+    url = NETWORK_URL_PREFIX.search(m.string[line_start:m.start()])
+    return m.group(0) if url and url.group(1).casefold() != "file" else "<restricted-zone>"
+
+
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
     out = text or ""
     # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
-    zones = sorted({p.rstrip("/") for p in restricted_paths(policy)}, key=len, reverse=True)
-    # Names below a zone may contain spaces, quotes, backticks or brackets, so where a path ends is
-    # unknowable. Fail closed: redact from the zone to the end of the line.
+    normalized = restricted_paths(policy)
+    # 1) A line the access policy would treat as touching a zone is withheld whole. This reuses the policy's
+    #    candidate extraction and lexical normalization (`/data/tmp/../cohort`, `file:///data/./cohort`,
+    #    quoted or spaced names), and like the policy it ignores network URLs.
+    if normalized:
+        out = "\n".join("<restricted-zone>" if mentions_zone(line, normalized) else line for line in out.split("\n"))
+    # 2) Literal zone text glued to other words (e.g. Korean "경로/data/…") is not a path candidate for the
+    #    policy, so it is matched here. Names below a zone may contain spaces or quotes, so where the path ends
+    #    is unknowable: fail closed to the end of the line.
     tail = r"[^\r\n]*"
-    for zone in zones:
+    for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
         if not zone:
             # The zone is the POSIX root: every absolute path and file: URI is restricted; network URLs stay.
             out = re.sub(r"\bfile:" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
@@ -56,9 +72,8 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
                          flags=re.IGNORECASE)
             continue
         pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
-        # No lookbehind: a path glued to text (e.g. Korean "경로/data/…") must still match. The lookahead keeps
-        # the directory boundary: /data/cohort2 is not inside /data/cohort.
-        out = re.sub(pattern + r"(?![\w.-])" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
+        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
+        out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     for secret in extra_secrets:
