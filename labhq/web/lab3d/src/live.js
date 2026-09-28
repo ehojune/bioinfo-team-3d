@@ -34,7 +34,12 @@ export function startLiveOffice(onState) {
         button.disabled = S.conn !== 'live' || pending.has(a.id);
         button.addEventListener('click', () => {
           if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
-          ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note:''}));
+          let note = '';
+          if (a.kind === 'clarify' && approved) {  // a PI question needs a typed answer
+            note = (globalThis.prompt('답을 적어 주세요', '') || '').trim();
+            if (!note) return;
+          }
+          ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
           pending.add(a.id); render();
         });
       }

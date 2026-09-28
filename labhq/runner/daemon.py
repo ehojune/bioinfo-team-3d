@@ -216,11 +216,28 @@ class Runner:
                 raise
 
     def _send_roster(self) -> None:
-        self.send({"type": "runner.roster", "runner_id": self.s.runner.id, "agents": self.registry.roster()})
+        self.send({"type": "runner.roster", "runner_id": self.s.runner.id,
+                   "agents": self.roster(), "capabilities": self.capabilities()})
+
+    def roster(self) -> list[dict]:
+        agents = self.registry.roster()
+        if self.s.runner.force_engine:
+            agents = [{**a, "engine": self.s.runner.force_engine} for a in agents]
+        return [{**a, "hpc_tools": ("hpc" in a.get("builtin_mcp", []) and
+                                     self.s.hpc.scheduler != "none") or "labhq_hpc" in a.get("mcp", [])}
+                for a in agents]
+
+    def capabilities(self) -> dict:
+        external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
+        return {"scheduler": self.s.hpc.scheduler,
+                "compute_backends": ["local CLI"] + ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
+                                    (["external labhq_hpc MCP"] if external_hpc else []),
+                "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc}
 
     def hello(self) -> dict:
         return {"type": "runner.hello", "runner_id": self.s.runner.id,
-                "incarnation": self.incarnation, "agents": self.registry.roster()}
+                "incarnation": self.incarnation, "agents": self.roster(),
+                "capabilities": self.capabilities()}
 
     # ---------------- gateway → runner ----------------
     async def _on_message(self, msg: dict) -> None:

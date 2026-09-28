@@ -171,6 +171,8 @@ a{color:var(--sleep-ink)}
 .ap .sum{margin:0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
 .ap .why{margin:2px 0 0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
 .ap .acts{display:flex;gap:8px;margin-top:8px}
+.ap .sum.pre{white-space:pre-wrap}
+.ap .ans{width:100%;box-sizing:border-box;margin-top:6px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--panel);color:var(--ink);resize:vertical}
 .ap.sug{border-color:var(--line);background:var(--panel)}.ap.sug .kind{color:var(--sleep-ink)}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
@@ -566,8 +568,9 @@ function renderApprovals() {
   el.innerHTML = '<ul class="list">' + items.map(a => `
 <li class="ap" data-id="${esc(a.id)}"><span class="who">${headSVG(kindOf(ag(a.agent_id)))}</span><div>
 <div class="kind">${esc(KIND_KO[a.kind] || a.kind)}<span>${esc(nick(a.agent_id) || 'CSO')}</span></div>
-<p class="sum">${esc(a.summary)}</p>${(a.detail && a.detail.reason) ? `<p class="why">${esc(short(a.detail.reason, 220))}</p>` : ''}
-<div class="acts"><button type="button" class="btn go" data-act="approve">승인</button><button type="button" class="btn" data-act="deny">거절</button></div></div></li>`).join('') +
+<p class="sum${a.kind === 'clarify' ? ' pre' : ''}">${esc(a.summary)}</p>${(a.detail && a.detail.reason) ? `<p class="why">${esc(short(a.detail.reason, 220))}</p>` : ''}
+${a.kind === 'clarify' ? '<textarea class="ans" rows="3" placeholder="답을 적어 주세요. 거절하면 요청을 멈춥니다."></textarea>' : ''}
+<div class="acts"><button type="button" class="btn go" data-act="approve">${a.kind === 'clarify' ? '답하고 진행' : '승인'}</button><button type="button" class="btn" data-act="deny">거절</button></div></div></li>`).join('') +
   sugs.map(s => `
 <li class="ap sug" data-sug="${esc(s.id)}"><span class="who">${headSVG('owl')}</span><div>
 <div class="kind">파견직 채용 제안<span>CSO</span></div>
@@ -684,7 +687,12 @@ $('#approvals').addEventListener('click', async e => {
   const li = btn.closest('li'), act = btn.dataset.act;
   btn.disabled = true;
   try {
-    if (li.dataset.id) { await api.approve(li.dataset.id, act === 'approve'); toast(act === 'approve' ? '승인했어요' : '거절했어요'); }
+    if (li.dataset.id) {
+      const ans = li.querySelector('textarea.ans'), note = ans ? ans.value.trim() : '';
+      // A PI question needs an answer; an empty approval would be read as "unanswered" and stop the request.
+      if (ans && act === 'approve' && !note) { toast('답을 적어 주세요'); ans.focus(); btn.disabled = false; return; }
+      await api.approve(li.dataset.id, act === 'approve', note); toast(act === 'approve' ? (ans ? '답을 보냈어요' : '승인했어요') : '거절했어요');
+    }
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
       S.suggestions = S.suggestions.filter(x => x.id !== li.dataset.sug); schedule();
@@ -771,9 +779,9 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     request: body => post('/api/requests', body),
-    approve: async (id, ok) => {
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, approved: ok, note: '' }));
-      else await post(`/api/approvals/${encodeURIComponent(id)}`, { approved: ok, note: '' });
+    approve: async (id, ok, note = '') => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, approved: ok, note }));
+      else await post(`/api/approvals/${encodeURIComponent(id)}`, { approved: ok, note });
     },
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),

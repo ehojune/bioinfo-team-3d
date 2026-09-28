@@ -26,6 +26,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
                            "instruction": {"type": "string"},
+                           "outputs": {"type": "array", "items": {"type": "string"}},
                            "depends_on": {"type": "array", "items": {"type": "string"}}},
             "required": ["id", "agent_id", "instruction", "depends_on"]}},
         "recruit": {"type": "array", "items": {
@@ -66,12 +67,18 @@ PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not
 Team roster (use these agent ids exactly):
 {roster}
 
+Runner compute capabilities:
+{capabilities}
+
 Chief of staff briefing:
 {briefing}
 
 Rules:
 - At most {max_steps} steps. Express order with depends_on; independent steps run in parallel.
-- Heavy compute runs as HPC jobs (agents with HPC tools). Put a QC step after any data generation.
+- Declare each step's expected output names in outputs so dependencies can be checked.
+- Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
+  Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
+  clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - Ask clarifying_questions only if the ambiguity would change the plan.
@@ -83,7 +90,8 @@ STEP_PROMPT = """Overall request (context only): {request}
 Your step ({step_id}): {instruction}
 
 Teammates' upstream results are in the context section. Deliver: what you did, key results with file
-paths, caveats and open questions."""
+paths, caveats and open questions. If you cannot proceed without a PI decision, return JSON with
+"blocking_decision": "the specific question and choices". Do not proceed with the blocked work."""
 
 REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
@@ -117,25 +125,88 @@ def format_roster(agents: list[dict]) -> str:
     for a in agents:
         tag = " [파견직]" if a.get("employment") == "contract" else ""
         tools = f" · tools: {', '.join(a['mcp'])}" if a.get("mcp") else ""
-        lines.append(f"- {a['id']}{tag}: {a['name']} — {a['role']} ({a['engine']}/{a.get('model') or 'default'}){tools}")
+        allowed = a.get("tools") or []
+        builtin = a.get("builtin_tools")
+        access = "read-only" if a.get("sandbox") == "read-only" or a.get("permission_mode") == "plan" or (
+            builtin and not any(x in builtin for x in ("Write", "Edit", "Bash"))) or (
+            allowed and not any(x.startswith(("Write", "Edit", "Bash")) for x in allowed)) else "write-capable"
+        lines.append(f"- {a['id']}{tag}: {a['name']} – {a['role']} "
+                     f"({a['engine']}/{a.get('model') or 'default'}); {access}; "
+                     f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
+                     f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
+                     f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 
 
-def validate_steps(raw: list[dict], known: set[str], max_steps: int) -> tuple[list[dict], list[str]]:
+def _reaches(steps: list[dict], start: str, target: str) -> bool:
+    """True when `start` already depends on `target`, directly or through other steps."""
+    deps = {s["id"]: s["depends_on"] for s in steps}
+    seen, stack = set(), [start]
+    while stack:
+        sid = stack.pop()
+        if sid == target:
+            return True
+        if sid not in seen:
+            seen.add(sid)
+            stack.extend(deps.get(sid, []))
+    return False
+
+
+ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer"})
+
+
+def qa_text(entry: Any) -> str:
+    """A PI answer together with what it answers (older records stored the answer alone)."""
+    if isinstance(entry, dict):
+        qs = entry.get("questions") or ([entry["question"]] if entry.get("question") else [])
+        asked = "\n".join(f"Q{i}. {q}" for i, q in enumerate(qs, 1))
+        return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
+    return f"PI answer: {entry}"
+
+
+def validate_steps(raw: list[dict], known: set[str], max_steps: int,
+                   excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES) -> tuple[list[dict], list[str]]:
     warnings, steps, seen = [], [], set()
     for i, s in enumerate(raw[:max_steps]):
+        if s.get("agent_id") in excluded:
+            warnings.append(f"step {s.get('id') or i + 1}: orchestration role removed")
+            continue
         sid = str(s.get("id") or f"s{i + 1}")
         if sid in seen:
             sid = f"{sid}_{i}"
         seen.add(sid)
         steps.append({"id": sid, "agent_id": s.get("agent_id", ""), "instruction": s.get("instruction", ""),
-                      "depends_on": [str(d) for d in s.get("depends_on") or []]})
+                      "depends_on": [str(d) for d in s.get("depends_on") or []],
+                      "outputs": [str(o) for o in s.get("outputs") or []]})
     ids = {s["id"] for s in steps}
+    producers: dict[str, list[str]] = {}
     for s in steps:
-        s["depends_on"] = [d for d in s["depends_on"] if d in ids and d != s["id"]]
+        for o in s["outputs"]:
+            producers.setdefault(o, []).append(s["id"])
+    for s in steps:
+        invalid = [d for d in s["depends_on"] if d not in ids or d == s["id"]]
+        if invalid:
+            raise ValueError(f"step {s['id']}: invalid dependencies {invalid}")
+    # Infer a dependency only from an unambiguous reference: another step's id, or an output name that exactly
+    # one other step produces and this step does not produce itself. Never infer one that would close a cycle.
+    for s in steps:
+        for other in steps:
+            if other["id"] == s["id"] or other["id"] in s["depends_on"]:
+                continue
+            names = [other["id"]] + [o for o in other["outputs"]
+                                     if producers.get(o) == [other["id"]] and o not in s["outputs"]]
+            if not any(name and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", s["instruction"])
+                       for name in names):
+                continue
+            if _reaches(steps, other["id"], s["id"]):
+                warnings.append(f"step {s['id']}: reference to {other['id']} not added (would create a cycle)")
+                continue
+            s["depends_on"].append(other["id"])
+            warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
+    for s in steps:
         if s["agent_id"] not in known:
             warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
-    # cycle check (Kahn); on a cycle fall back to the listed order
+    # Reject cycles before dispatch.
     indeg = {s["id"]: len(s["depends_on"]) for s in steps}
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
     for s in steps:
@@ -150,9 +221,7 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int) -> tuple[li
             if indeg[c] == 0:
                 queue.append(c)
     if visited != len(steps):
-        warnings.append("plan had a dependency cycle; running steps in listed order")
-        for i, s in enumerate(steps):
-            s["depends_on"] = [steps[i - 1]["id"]] if i else []
+        raise ValueError("plan has a dependency cycle")
     return steps, warnings
 
 
@@ -336,6 +405,9 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
+        req_state = self.hub.requests.get(rid)
+        # PI answers to blocking questions survive a gateway restart (the re-run step still needs them).
+        decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
 
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
@@ -355,6 +427,8 @@ class Orchestrator:
 
         async def run_one(step: dict) -> TaskResult:
             prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
+            if step["id"] in decisions:
+                prompt += "\n\nYour earlier blocking question and the PI's answer:\n" + qa_text(decisions[step["id"]])
             ctx = upstream(step)
             if feedback and step["id"] in feedback:
                 prev = results.get(step["id"])
@@ -406,6 +480,31 @@ class Orchestrator:
                                                                 "agent_id": by_id[sid]["agent_id"],
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
                                                                 "reason": results[sid].error})
+                    res = results[sid]
+                    structured = res.structured if isinstance(res.structured, dict) else extract_json(res.text)
+                    question = res.blocking_decision or (structured.get("blocking_decision")
+                                                         if isinstance(structured, dict) else None)
+                    if res.ok and isinstance(question, str) and question.strip():
+                        if sid in decisions:
+                            raise RuntimeError(f"step {sid} still requires a PI decision after its answer")
+                        # Forget the question-only result before waiting (durably): a restart during the wait must
+                        # re-run the step, not treat it as done and feed dependents a question.
+                        results.pop(sid, None)
+                        dec = await self.hub.request_approval(
+                            kind="clarify", request_id=rid,
+                            summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
+                        if not dec.get("approved") or not str(dec.get("note") or "").strip():
+                            for pending in running.values():
+                                pending.cancel()
+                            if running:
+                                await asyncio.gather(*running.values(), return_exceptions=True)
+                            raise RuntimeError(f"step {sid} PI decision denied or unanswered")
+                        # Keep the question with the answer: "b" or "the second option" means nothing alone.
+                        decisions[sid] = {"question": question.strip(), "answer": str(dec["note"]).strip()}
+                        if req_state is not None:
+                            req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
+                            self.hub.save_request(rid)
+                        todo.add(sid)
 
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
@@ -421,7 +520,8 @@ class Orchestrator:
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
-        text = req["text"]
+        text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
+                                     for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             if req["mode"] == "direct":
@@ -433,8 +533,12 @@ class Orchestrator:
                              ok=res.ok and rid not in self.budget_denials)
                 return
 
-            roster = list(self.hub.agents.values())
-            known = {a["id"] for a in roster}
+            all_agents = list(self.hub.agents.values())
+            known = {a["id"] for a in all_agents}
+            # The configured orchestration agents, not only the default ids, stay out of the worker roster.
+            orchestration = set(ORCHESTRATION_ROLES) | {x for x in (self.cfg.cso_agent, self.cfg.chief_of_staff_agent,
+                                                                   self.cfg.reviewer_agent) if x}
+            roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
             if resume and req.get("plan", {}).get("steps"):
                 steps = req["plan"]["steps"]
@@ -460,11 +564,23 @@ class Orchestrator:
                         return
                     briefing = b.text
 
-                plan_res = await self.run_step(Task(
-                    agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
-                    prompt=PLAN_PROMPT.format(request=text, roster=format_roster(roster), briefing=clip(briefing, 4000) or "(none)",
-                                              max_steps=self.cfg.max_steps),
-                    meta={"kind": "plan", "roster": roster, "request": text, "title": "업무 분해·배정 계획 수립"}))
+                capabilities = "\n".join(
+                    f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
+                    f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
+                    f"other compute={', '.join(a.get('compute_backends') or ['local CLI'])}"
+                    for a in roster)
+
+                async def make_plan(plan_request: str) -> TaskResult:
+                    return await self.run_step(Task(
+                        agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
+                        prompt=PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
+                                                  capabilities=capabilities or "No workers available",
+                                                  briefing=clip(briefing, 4000) or "(none)",
+                                                  max_steps=self.cfg.max_steps),
+                        meta={"kind": "plan", "roster": roster, "request": plan_request,
+                              "title": "업무 분해·배정 계획 수립"}))
+
+                plan_res = await make_plan(text)
                 if not plan_res.ok:
                     self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
@@ -472,11 +588,31 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
+                questions = [q for q in plan.get("clarifying_questions") or [] if isinstance(q, str) and q.strip()]
+                if questions:
+                    await self._emit(rid, "request.questions", {"questions": questions})
+                    if self.cfg.wait_for_clarification:
+                        dec = await self.hub.request_approval(kind="clarify", request_id=rid,
+                            summary="Please answer before work begins:\n" +
+                                    "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1)))
+                        if not dec.get("approved") or not str(dec.get("note") or "").strip():
+                            self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
+                            return
+                        entry = {"questions": questions, "answer": str(dec["note"]).strip()}
+                        req.setdefault("clarifications", []).append(entry)
+                        self.hub.save_request(rid)  # a restart must not lose the PI's answer
+                        text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
+                        plan_res = await make_plan(text)
+                        if not plan_res.ok:
+                            self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
+                            return
+                        plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                        if plan.get("clarifying_questions"):
+                            self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
+                            return
+                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
                 req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                 await self._emit(rid, "request.plan", req["plan"])
-                if plan.get("clarifying_questions"):
-                    await self._emit(rid, "request.questions", {"questions": plan["clarifying_questions"]})
                 for rec in plan.get("recruit") or []:
                     if rec.get("repo") or rec.get("paper"):
                         await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit

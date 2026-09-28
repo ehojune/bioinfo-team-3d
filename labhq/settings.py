@@ -157,6 +157,7 @@ class RecruitSettings(BaseModel):
 
 
 class OrchestratorSettings(BaseModel):
+    wait_for_clarification: bool = True
     cso_agent: str = "cso"
     chief_of_staff_agent: str | None = "chief_of_staff"
     reviewer_agent: str | None = "sci_reviewer"

@@ -5,7 +5,9 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import BudgetExceeded, Orchestrator, failure_kind, valid_review
+from labhq.orchestrator.cso import (BudgetExceeded, Orchestrator, failure_kind, valid_review,
+                                    format_roster, validate_steps)
+from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
 
@@ -58,6 +60,154 @@ def result(task, ok=True, **kwargs):
 
 STEPS = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": deps}
          for sid, deps in (("A", []), ("B", ["A"]), ("C", ["B"]), ("D", []))]
+
+
+def test_roster_and_dependencies():
+    roster = format_roster([{"id": "reader", "name": "Reader", "role": "inspect",
+                             "engine": "codex", "model": "small", "sandbox": "read-only",
+                             "tools": ["Read"], "hpc_tools": False, "max_turns": 8}])
+    assert "read-only" in roster and "labhq_hpc=no" in roster and "max_turns=8" in roster
+    raw = [{"id": "A", "agent_id": "worker", "instruction": "produce", "outputs": ["table.tsv"], "depends_on": []},
+           {"id": "B", "agent_id": "worker", "instruction": "Use table.tsv from A", "depends_on": []},
+           {"id": "R", "agent_id": "sci_reviewer", "instruction": "review", "depends_on": []}]
+    steps, warnings = validate_steps(raw, {"worker", "sci_reviewer"}, 10)
+    assert [s["id"] for s in steps] == ["A", "B"]
+    assert steps[1]["depends_on"] == ["A"]
+    assert len(warnings) == 2
+    with pytest.raises(ValueError, match="invalid dependencies"):
+        validate_steps([{**raw[0], "depends_on": ["missing"]}], {"worker"}, 10)
+    with pytest.raises(ValueError, match="cycle"):
+        validate_steps([{**raw[0], "depends_on": ["B"]},
+                        {**raw[1], "depends_on": ["A"]}], {"worker"}, 10)
+
+
+@pytest.mark.asyncio
+async def test_plan_waits_for_answer_and_replans_before_dispatch():
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if task.meta["kind"] == "plan":
+            assert "scheduler=none" in task.prompt and "labhq_hpc=no" in task.prompt
+            questions = [] if "PI clarification (questions and answer):" in task.prompt else ["Which cohort?"]
+            return result(task, structured={"steps": [STEPS[0]], "clarifying_questions": questions})
+        if task.meta["kind"] == "step":
+            assert len([t for t in calls if t.meta["kind"] == "plan"]) == 2
+            return result(task, text="done")
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.agents["worker"].update(scheduler="none", hpc_tools=False)
+    hub.s.orchestrator.reviewer_agent = None
+    async def answer(**kwargs):
+        hub.approvals.append(kwargs)
+        return {"approved": True, "note": "cases"}
+    hub.request_approval = answer
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"]
+    assert [t.meta["kind"] for t in calls[:3]] == ["plan", "plan", "step"]
+    assert hub.approvals[0]["kind"] == "clarify"
+    entry = hub.requests["r"]["clarifications"][0]  # durable for a resume after restart
+    assert entry == {"questions": ["Which cohort?"], "answer": "cases"}
+    assert "Q1. Which cohort?\nPI answer: cases" in calls[1].prompt  # the re-plan sees what was answered
+
+
+@pytest.mark.asyncio
+async def test_blocking_step_waits_then_reruns_before_dependent():
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured={"steps": STEPS[:2]})
+        if kind == "step" and task.meta["step_id"] == "A":
+            if "Your earlier blocking question and the PI's answer:" not in task.prompt:
+                return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"})
+            assert not any(t.meta.get("step_id") == "B" for t in calls)
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    shared: dict = {}
+    hub.result_map = lambda rid: shared
+    async def answer(**kwargs):
+        hub.approvals.append(kwargs)
+        assert "A" not in shared  # the question-only result is gone before the wait (restart-safe)
+        return {"approved": True, "note": "cases"}
+    hub.request_approval = answer
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"]
+    assert [t.meta.get("step_id") for t in calls if t.meta["kind"] == "step"] == ["A", "A", "B"]
+    assert hub.approvals[0]["kind"] == "clarify"
+    rerun = [t for t in calls if t.meta.get("step_id") == "A"][1]
+    assert "Q1. Cases or controls?\nPI answer: cases" in rerun.prompt  # the answer arrives with its question
+    assert hub.requests["r"]["step_decisions"]["A"] == {"question": "Cases or controls?", "answer": "cases"}
+
+
+def test_configured_orchestration_agents_are_not_workers():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "s1", "agent_id": "boss", "instruction": "plan more", "outputs": []},
+           {"id": "s2", "agent_id": "worker", "instruction": "work", "outputs": []}]
+    steps, warnings = validate_steps(raw, {"boss", "worker"}, 10, {"boss"})
+    assert [s["id"] for s in steps] == ["s2"] and any("orchestration role removed" in w for w in warnings)
+
+
+@pytest.mark.asyncio
+async def test_blocking_decision_denial_cancels_dispatch():
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": STEPS[:2]})
+        assert task.meta.get("step_id") != "B"
+        return result(task, structured={"blocking_decision": "Choose a cohort"})
+    hub = FakeHub(dispatch)
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "failed"
+    assert not any(t.meta.get("step_id") == "B" for t in hub.calls)
+
+
+def test_resume_uses_adapter_flag(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path)
+    hub = Hub(settings)
+    hub.agents = {e: {"engine": e} for e in ("claude_code", "codex", "gemini", "antigravity", "mock")}
+    assert hub.supports_resume("claude_code")
+    assert hub.supports_resume("codex")
+    assert not hub.supports_resume("gemini")
+    assert not hub.supports_resume("antigravity")
+    assert not hub.supports_resume("missing")
+
+
+def test_runner_reports_effective_compute_capabilities():
+    from types import SimpleNamespace
+    runner = object.__new__(Runner)
+    runner.s = Settings()
+    runner.s.hpc.scheduler = "none"
+    runner.s.runner.force_engine = "mock"
+    runner.registry = SimpleNamespace(roster=lambda: [{"id": "analyst", "engine": "claude_code"}])
+    runner.incarnation = "test"
+    hello = runner.hello()
+    assert hello["capabilities"] == {"scheduler": "none", "compute_backends": ["local CLI"],
+                                      "hpc_tools": False}
+    assert hello["agents"][0]["engine"] == "mock"
+
+
+@pytest.mark.asyncio
+async def test_clarification_can_be_disabled():
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": [STEPS[0]],
+                                            "clarifying_questions": ["Which cohort?"]})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.wait_for_clarification = False
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done"
+    assert hub.approvals == []
+    assert any(e["type"] == "request.questions" for e in hub.events)
 
 
 @pytest.mark.asyncio
@@ -340,3 +490,41 @@ async def test_parallel_budget_decision_preserves_completed_steps_and_controls_n
         assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "skipped"
         assert "budget" in req["results"]["B"]["error"]
         assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
+
+
+def test_shared_output_labels_do_not_create_inferred_cycles():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "a", "agent_id": "analyst", "instruction": "write summary", "outputs": ["summary"]},
+           {"id": "b", "agent_id": "analyst", "instruction": "write summary", "outputs": ["summary"]},
+           {"id": "c", "agent_id": "analyst", "instruction": "use counts.tsv", "outputs": []},
+           {"id": "d", "agent_id": "analyst", "instruction": "make counts.tsv", "outputs": ["counts.tsv"]}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    by = {s["id"]: s for s in steps}
+    assert by["a"]["depends_on"] == [] and by["b"]["depends_on"] == []  # ambiguous label: no inference
+    assert by["c"]["depends_on"] == ["d"]  # unique producer: inferred
+
+
+def test_inferred_dependency_that_would_close_a_cycle_is_skipped():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "s1", "agent_id": "analyst", "instruction": "then hand to s2", "outputs": []},
+           {"id": "s2", "agent_id": "analyst", "instruction": "read s1 output", "depends_on": ["s1"], "outputs": []}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    assert [s["depends_on"] for s in steps] == [[], ["s1"]]
+    assert any("would create a cycle" in w for w in warnings)
+
+
+def test_saved_results_pop_is_durable(tmp_path):
+    from labhq.gateway.server import Hub, SavedResults
+
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "text": "t", "status": "running", "results": {}}
+    results = SavedResults(hub, "r")
+    results["s1"] = TaskResult(task_id="t1", agent_id="a", ok=True, text="question only")
+    assert "s1" in hub.requests["r"]["results"]
+    results.pop("s1", None)
+    assert "s1" not in hub.requests["r"]["results"] and "s1" not in results
+    assert "s1" not in (Hub(s).requests["r"].get("results") or {})  # survives a restart

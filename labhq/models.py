@@ -121,6 +121,13 @@ class AgentSpec(BaseModel):
             "expires_at": self.contract.expires_at if self.contract else None,
             "contract_status": self.contract.status if self.contract else None,
             "mcp": [m.name for m in self.mcp],
+            "builtin_mcp": self.builtin_mcp,
+            "sandbox": self.sandbox,
+            "tools": self.tools,
+            "disallowed_tools": self.disallowed_tools,
+            "builtin_tools": self.builtin_tools,
+            "permission_mode": self.permission_mode,
+            "max_turns": self.max_turns,
             "tags": self.tags,
         }
 
@@ -144,6 +151,7 @@ class TaskResult(BaseModel):
     ok: bool
     text: str = ""
     structured: Any = None
+    blocking_decision: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
     cost_known: bool | None = None

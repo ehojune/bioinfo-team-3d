@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
+from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 from ..store import StateStore
@@ -82,6 +83,16 @@ class SavedResults(dict):
         self.hub.save_request(self.rid)
         self.hub.clear_step_jobs(self.rid, key)
 
+    def pop(self, key: str, *default):
+        """Forget a result durably too (a blocked step re-runs after a restart instead of counting as done)."""
+        value = super().pop(key, *default)
+        if (self.hub.requests[self.rid].get("results") or {}).pop(key, None) is not None:
+            self.hub.save_request(self.rid)
+        return value
+
+    def __delitem__(self, key: str) -> None:
+        self.pop(key)
+
 
 class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):
@@ -92,6 +103,7 @@ class Hub:
         self.runner_incarnations: dict[str, str | None] = {}
         self.runner_locks: dict[str, asyncio.Lock] = {}
         self.runner_agents: dict[str, list[dict]] = {}
+        self.runner_capabilities: dict[str, dict] = {}
         self.agents: dict[str, dict] = {}
         self.agent_runner: dict[str, str] = {}
         self.agent_online: dict[str, asyncio.Event] = {}
@@ -357,7 +369,7 @@ class Hub:
 
     # ----- runners -----
     def register_runner(self, runner_id: str, ws: WebSocket, agents: list[dict],
-                        incarnation: str | None = None) -> None:
+                        incarnation: str | None = None, capabilities: dict | None = None) -> None:
         old = self.runners.get(runner_id)
         if old is not None and old is not ws and hasattr(old, "close"):
             async def close_old() -> None:
@@ -371,7 +383,7 @@ class Hub:
         self.runners[runner_id] = ws
         self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
-        self.set_roster(runner_id, agents)
+        self.set_roster(runner_id, agents, capabilities)
         hosted_agents = {a["id"] for a in agents}
         for tid, entry in self.store.all("task").items():
             if (not entry.get("completed") and
@@ -396,14 +408,24 @@ class Hub:
                 await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
                                                    "approved": entry["approved"], "note": entry["note"]})
 
-    def set_roster(self, runner_id: str, agents: list[dict]) -> None:
+    def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
+        if capabilities is not None:
+            self.runner_capabilities[runner_id] = capabilities
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
             self.agent_runner.pop(aid, None)
             self.agents.pop(aid, None)
             self.agent_online.setdefault(aid, asyncio.Event()).clear()
         self.runner_agents[runner_id] = agents
         for a in agents:
-            self.agents[a["id"]] = {**a, "runner_id": runner_id}
+            caps = self.runner_capabilities.get(runner_id, {})
+            hpc_tools = bool(a.get("hpc_tools", caps.get("hpc_tools") and
+                                                 "hpc" in a.get("builtin_mcp", [])))
+            self.agents[a["id"]] = {**a, "runner_id": runner_id,
+                                    "scheduler": caps.get("scheduler", "none"),
+                                    "compute_backends": (["local CLI"] +
+                                                         [b for b in caps.get("compute_backends", [])
+                                                          if b != "local CLI" and hpc_tools]),
+                                    "hpc_tools": hpc_tools}
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
@@ -448,7 +470,13 @@ class Hub:
                 raise RunnerUnavailable(f"runner {runner_id} WebSocket send failed") from exc
 
     def supports_resume(self, agent_id: str) -> bool:
-        return self.agents.get(agent_id, {}).get("engine") != "gemini"
+        engine = self.agents.get(agent_id, {}).get("engine")
+        if not engine:
+            return False
+        try:
+            return get_adapter(engine, self.s).supports_resume
+        except ValueError:
+            return False
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
@@ -484,7 +512,7 @@ class Hub:
             return
         typ = msg.get("type")
         if typ == "runner.roster":
-            self.set_roster(runner_id, msg.get("agents", []))
+            self.set_roster(runner_id, msg.get("agents", []), msg.get("capabilities"))
             await self.publish({"type": "roster.updated", "ts": time.time(), "data": {"agents": list(self.agents.values())}})
             return
         if typ == "approval.ack":
@@ -781,7 +809,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             hello = json.loads(await ws.receive_text())
             runner_id = hello["runner_id"]
             incarnation = hello.get("incarnation")
-            hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation)
+            hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
+                                hello.get("capabilities"))
             await hub.flush_decisions(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})

@@ -64,3 +64,16 @@ def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
     assert "skipped: '건너뜀'" in html
     assert "d.status === 'review_unparsed'" in state
     assert "리뷰 판정 실패. PI 확인이 필요해요" in state
+
+
+def test_clarify_approval_takes_a_typed_answer():
+    """A PI question is answered in the approval note; an empty note would stop the request."""
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[1] / "labhq" / "web"
+    html = (web / "index.html").read_text(encoding="utf-8")
+    assert 'textarea class="ans"' in html and "approved: ok, note }" in html
+    assert "if (ans && act === 'approve' && !note)" in html
+    live = (web / "lab3d" / "src" / "live.js").read_text(encoding="utf-8")
+    assert "a.kind === 'clarify' && approved" in live and "approved, note}" in live
+    assert "clarify: 'PI 질문'" in (web / "state.js").read_text(encoding="utf-8")
