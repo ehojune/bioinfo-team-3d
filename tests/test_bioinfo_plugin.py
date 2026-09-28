@@ -213,3 +213,37 @@ def test_plugin_link_outside_the_plugin_is_refused_without_paths(tmp_path):
     ctx = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(plugin)})
     err = get_adapter(Engine.claude_code, ctx.settings).preflight_error(ctx, ctx.env)
     assert err and "outside the plugin" in err and str(tmp_path) not in err
+
+
+def test_git_plugin_provenance_covers_scripts_but_not_ignored_output(tmp_path):
+    import subprocess
+
+    from labhq.adapters.claude_code import plugin_provenance
+
+    plugin = _plugin(tmp_path / "plugin")
+    (plugin / "scripts").mkdir()
+    (plugin / "scripts" / "start.sh").write_text("echo 1\n")
+    (plugin / ".gitignore").write_text("runs/\n")
+    (plugin / "runs").mkdir()
+    (plugin / "runs" / "big.bam").write_text("x")
+    try:
+        for args in (["init", "-q"], ["add", "."], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"]):
+            subprocess.run(["git", "-C", str(plugin), *args], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("git is not available")
+    first = plugin_provenance("bioinfo", plugin)
+    assert first["commit"] and len(first["commit"]) == 40
+    (plugin / "runs" / "big.bam").write_text("changed run output")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] == first["sha256"]
+    (plugin / "scripts" / "start.sh").write_text("echo 2\n")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] != first["sha256"]
+
+
+def test_skill_member_ignores_workspace_memory_files(tmp_path):
+    ctx = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(_plugin(tmp_path / "plugin"))})
+    cmd = get_adapter(Engine.claude_code, ctx.settings).build_command(ctx)
+    ex = json.loads(cmd[cmd.index("--settings") + 1])["claudeMdExcludes"]
+    wd = ctx.workdir.resolve()
+    for name in ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"):
+        assert (wd / name).as_posix() in ex
+    assert (wd / ".claude" / "rules").as_posix() + "/**" in ex

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from ..util import short
@@ -23,6 +24,7 @@ ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-comman
 # Skill-enabled staff drop the project source too: with project,local a stray `.claude/skills/*` left in a reused
 # workspace loads next to the plugin skill; with local only the plugin skill loads (probe 2026-09-28, Claude 2.1.282).
 SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
+WORKSPACE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -68,28 +70,53 @@ def _manifest_paths(value) -> list[str]:
     return []
 
 
-def plugin_provenance(name: str, path: Path) -> dict:
-    """Name, declared version and a content hash of every part Claude Code loads (no local path)."""
-    manifest = read_plugin_manifest(path) or {}
+def _git(path: Path, *args: str) -> bytes | None:
+    try:
+        return subprocess.run(["git", "-C", str(path), *args], capture_output=True, timeout=30, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
+    """Files whose content defines the plugin's behaviour, and the git commit when there is one.
+
+    In a git checkout that is every tracked or untracked-but-not-ignored file, so hooks, MCP/LSP configs and the
+    scripts they run are all covered while ignored run output (a plugin may keep GBs of runs/) is not.
+    Without git, fall back to the reference's component locations plus paths the manifest declares.
+    """
+    listed = _git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    if listed is not None:
+        commit = (_git(path, "rev-parse", "HEAD") or b"").decode().strip() or None
+        names = [n for n in listed.decode("utf-8", "surrogateescape").split("\0") if n]
+        return {(path / n) for n in names if (path / n).is_file()}, commit
     root = path.resolve()
     targets = [path / part for part in PLUGIN_PARTS + PLUGIN_ROOT_FILES]
-    for rel in _manifest_paths(manifest):
+    for rel in _manifest_paths(read_plugin_manifest(path) or {}):
         target = (path / rel).resolve()
         if target == root or root in target.parents:  # a manifest path outside the plugin is not ours to hash
             targets.append(target)
     files: set[Path] = set()
     for t in targets:
         if t.is_file():
-            files.add(t.resolve())
+            files.add(t)
         elif t.is_dir():
-            files.update(f.resolve() for f in t.rglob("*") if f.is_file())
-    if any(root not in f.parents for f in files):
+            files.update(f for f in t.rglob("*") if f.is_file())
+    return files, None
+
+
+def plugin_provenance(name: str, path: Path) -> dict:
+    """Name, declared version, git commit and a content hash of the plugin (no local path)."""
+    root = path.resolve()
+    files, commit = _plugin_files(path)
+    resolved = {f.resolve() for f in files}
+    if any(root not in f.parents for f in resolved):
         raise ValueError("plugin file resolves outside the plugin")  # no path: errors reach reports
     h = hashlib.sha256()
-    for f in sorted(files, key=lambda f: f.relative_to(root).as_posix()):
+    for f in sorted(resolved, key=lambda f: f.relative_to(root).as_posix()):
         h.update(f.relative_to(root).as_posix().encode("utf-8") + b"\0")
         h.update(hashlib.sha256(f.read_bytes()).digest())
-    return {"name": name, "version": manifest.get("version"), "sha256": h.hexdigest()}
+    return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "commit": commit,
+            "sha256": h.hexdigest()}
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -162,6 +189,12 @@ class ClaudeCodeAdapter(AgentAdapter):
         if b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
             settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            if a.allow_skills:
+                # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
+                # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
+                wd = Path(ctx.workdir).resolve()
+                settings["claudeMdExcludes"] += [(wd / n).as_posix() for n in WORKSPACE_MEMORY] + \
+                    [(wd / ".claude" / "rules").as_posix() + "/**"]
         if settings:
             cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:
