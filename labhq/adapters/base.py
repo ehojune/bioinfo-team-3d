@@ -43,6 +43,7 @@ class RunContext:
     claude_settings: dict = field(default_factory=dict)
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
+    record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts
 
     @property
     def meta_dir(self) -> Path:

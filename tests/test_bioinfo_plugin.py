@@ -42,7 +42,7 @@ def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
             continue
         ctx = _ctx(tmp_path / agent.id, agent)
         cmd = get_adapter(agent.engine, ctx.settings).build_command(ctx)
-        assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+        assert cmd[cmd.index("--setting-sources") + 1] == ("local" if agent.allow_skills else "project,local")
         if agent.id == "bioinfo-agent":
             assert cmd[cmd.index("--plugin-dir") + 1] == str(plugin)
             assert "--disable-slash-commands" not in cmd
@@ -189,3 +189,27 @@ def test_plugin_provenance_covers_root_config_and_manifest_paths(tmp_path, rel):
     assert after != before
     (plugin / "notes.txt").write_text("not loaded by Claude Code")
     assert plugin_provenance("bioinfo", plugin)["sha256"] == after
+
+
+def test_plugin_provenance_is_recorded_before_spawn(tmp_path):
+    plugin = _plugin(tmp_path / "plugin")
+    recorded = []
+    ctx = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(plugin)})
+    ctx.record_run = lambda **fields: recorded.append(fields)
+    assert get_adapter(Engine.claude_code, ctx.settings).preflight_error(ctx, ctx.env) is None
+    assert recorded == [{"plugins": ctx.plugin_provenance}] and recorded[0]["plugins"][0]["name"] == "bioinfo"
+
+
+def test_plugin_link_outside_the_plugin_is_refused_without_paths(tmp_path):
+    plugin = _plugin(tmp_path / "plugin", skill=None)
+    outside = tmp_path / "outside" / "SKILL.md"
+    outside.parent.mkdir()
+    outside.write_text("---\nname: x\n---\n")
+    (plugin / "skills" / "bioinfo-analyze").mkdir(parents=True)
+    try:
+        (plugin / "skills" / "bioinfo-analyze" / "SKILL.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks need extra privileges on this host")
+    ctx = _ctx(tmp_path, _bioinfo_agent(), {"BIOINFO_AGENT_DIR": str(plugin)})
+    err = get_adapter(Engine.claude_code, ctx.settings).preflight_error(ctx, ctx.env)
+    assert err and "outside the plugin" in err and str(tmp_path) not in err

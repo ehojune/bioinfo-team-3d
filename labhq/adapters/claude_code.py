@@ -20,6 +20,9 @@ from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
+# Skill-enabled staff drop the project source too: with project,local a stray `.claude/skills/*` left in a reused
+# workspace loads next to the plugin skill; with local only the plugin skill loads (probe 2026-09-28, Claude 2.1.282).
+SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -28,7 +31,7 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 
     Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
     user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
-    A staff member may explicitly load a plugin skill while retaining project,local setting sources.
+    A skill-enabled staff member loads its plugin with only the local setting source (SKILL_ISOLATION_FLAGS).
     """
     excludes = []
     for home in child_config_dirs(env, cwd, "CLAUDE_CONFIG_DIR", ".claude"):
@@ -80,6 +83,8 @@ def plugin_provenance(name: str, path: Path) -> dict:
             files.add(t.resolve())
         elif t.is_dir():
             files.update(f.resolve() for f in t.rglob("*") if f.is_file())
+    if any(root not in f.parents for f in files):
+        raise ValueError("plugin file resolves outside the plugin")  # no path: errors reach reports
     h = hashlib.sha256()
     for f in sorted(files, key=lambda f: f.relative_to(root).as_posix()):
         h.update(f.relative_to(root).as_posix().encode("utf-8") + b"\0")
@@ -117,7 +122,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             if not (found[plugin] / "skills" / name / "SKILL.md").is_file():
                 return f"required skill '{skill}' is missing from the plugin"
         if found:
-            ctx.plugin_provenance = [plugin_provenance(name, path) for name, path in found.items()]
+            try:
+                ctx.plugin_provenance = [plugin_provenance(name, path) for name, path in found.items()]
+            except (OSError, ValueError):
+                return "a plugin in plugin_dirs has a file that is unreadable or links outside the plugin"
+            if ctx.record_run:
+                ctx.record_run(plugins=ctx.plugin_provenance)  # persisted before the CLI is spawned
         return None
 
     def prepare(self, ctx: RunContext) -> None:
@@ -150,7 +160,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--json-schema", json.dumps(t.output_schema)]
         settings = dict(ctx.claude_settings)
         if b.isolate_user_config:
-            cmd += ISOLATION_FLAGS[:2] if a.allow_skills else ISOLATION_FLAGS
+            cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
             settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
         if settings:
             cmd += ["--settings", json.dumps(settings)]
