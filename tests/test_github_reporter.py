@@ -126,6 +126,29 @@ def test_restricted_zones_match_separators_case_and_directory_boundary():
     assert sanitize("/data/cohort2/file.cram", policy) == "/data/cohort2/file.cram"
 
 
+def test_root_restricted_zone_fails_closed():
+    policy = PolicySettings(data_zones=[DataZone(path="/", level="restricted")])
+    out = sanitize("raw at /private/subject.cram (see https://github.com/o/p/issues/1)", policy)
+    assert "/private" not in out and "subject.cram" not in out
+    assert "https://github.com/o/p/issues/1" in out
+
+
+@pytest.mark.asyncio
+async def test_api_endpoint_is_not_rewritten_by_the_path_guard():
+    policy = PolicySettings(data_zones=[DataZone(path="/data", level="restricted")])
+    seen: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json={"number": 1})
+
+    client = GitHubClient("test-token", "https://example.test", httpx.MockTransport(api),
+                          lambda value: sanitize(value, policy))
+    await client.create_issue("org/data", "t /data/x.cram", "b", [])
+    assert seen[0].url.path == "/repos/org/data/issues"
+    assert "/data/x.cram" not in json.loads(seen[0].content)["title"]
+
+
 @pytest.mark.asyncio
 async def test_full_reporter_flow_guards_every_outbound_string(tmp_path):
     zone = "D:" + "/restricted/dua_cohort"

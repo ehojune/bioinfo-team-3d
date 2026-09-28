@@ -42,6 +42,8 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
                     if z.level == "restricted"), key=len, reverse=True)
     for zone in zones:
         if not zone:
+            # The zone is the POSIX root, so every absolute path is restricted; fail closed.
+            out = re.sub(r"(?<![\w.:/\-])/[^\s<>\"'`()[\]{};,]+", "<restricted-zone>", out)
             continue
         parts = re.split(r"[/\\]+", zone)
         pattern = r"[/\\]+".join(re.escape(part) for part in parts)
@@ -72,7 +74,6 @@ class GitHubClient:
 
     async def _req(self, method: str, path: str, **kw: Any) -> Any:
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
-            path = self.clean(path)
             if "json" in kw:
                 if method == "PUT" and "/contents/" in path:
                     payload = dict(kw["json"])
