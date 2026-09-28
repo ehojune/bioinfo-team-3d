@@ -54,18 +54,23 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
     tasks.append(asyncio.create_task(runner.run_forever()))
     try:
         await _until(lambda: "cso" in hub.agents and "recruiter" in hub.agents, 15)
+        assert hub.agents["analyst"]["hpc_tools"] is True
+        assert hub.agents["lit_scout"]["hpc_tools"] is False
+        assert hub.agents["analyst"]["engine"] == "mock"
 
-        rid = hub.create_request(RequestIn(text="CD276 세포유형 분석 [hpc] [needs-approval] [revise] [recruit]"))
+        rid = hub.create_request(RequestIn(text="CD276 세포유형 분석 [hpc] [needs-approval] [revise] [recruit] [question] [block]"))
         await _until(lambda: hub.requests[rid]["status"] != "running", 60)
         req = hub.requests[rid]
         assert req["status"] == "done", req.get("error")
         steps = req["plan"]["steps"]
+        assert not {s["agent_id"] for s in steps} & {"cso", "chief_of_staff", "sci_reviewer"}
         assert [st["agent_id"] for st in steps] == ["biologist", "data_steward", "bioinfo-agent", "analyst", "qc_reviewer"]
         analyst_step = next(st["id"] for st in steps if st["agent_id"] == "analyst")
 
         types = [e["type"] for e in seen if e.get("request_id") == rid]
         assert types.count("request.review") == 2  # revise → accept
         assert "recruit.suggested" in types and "job.submitted" in types and "jobs.finished" in types
+        assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 2
         assert any(e["type"] == "approval.resolved" for e in seen)
         assert "깨어나서" in req["results"][analyst_step]["text"]  # analyst hibernated on HPC and was resumed
 
