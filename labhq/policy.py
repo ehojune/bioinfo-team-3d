@@ -13,6 +13,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
+from urllib.parse import unquote
 
 from .settings import PolicySettings
 
@@ -64,7 +65,12 @@ def _candidate_paths(s: str) -> Iterator[str]:
                 uri = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", chunk)
                 if uri and len(uri.group(1)) > 1:
                     if uri.group(1).casefold() == "file":
-                        path = chunk[uri.end():]
+                        # RFC 8089: the path is percent-encoded and "localhost" is the local authority.
+                        path = unquote(chunk[uri.end():])
+                        if path.casefold().startswith("localhost/"):
+                            path = path[len("localhost"):]
+                        if re.match(r"^/[A-Za-z]:[/\\]", path):  # file:///C:/x → C:/x
+                            path = path[1:]
                         if path:
                             yield path if path.startswith("/") or re.match(r"^[A-Za-z]:", path) else "//" + path
                     break

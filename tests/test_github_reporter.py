@@ -540,3 +540,9 @@ def test_staff_prompt_asks_for_one_codex_review_per_push():
     assert "Codex review findings without @codex" in ROLE_FOOTER
     assert "`@codex review` once" in ROLE_FOOTER
     assert "always mention @codex" not in ROLE_FOOTER
+
+
+def test_encoded_file_uris_are_withheld():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
+    for uri in ("file:///data/%2e/cohort/sample.cram", "file://localhost/data/./cohort/sample.cram"):
+        assert sanitize(f"see {uri}\nkeep", policy) == "<restricted-zone>\nkeep"
