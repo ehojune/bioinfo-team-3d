@@ -20,6 +20,41 @@ from .settings import PolicySettings
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
+# Lexical prompts for common PowerShell hazards; this is not a command sandbox.
+POWERSHELL_ASK_PATTERNS = (
+    r"\bRemove-Item\b[^;|\n]*\s-Recurse\b", r"\brm\s+-[a-z]*r\b",
+    r"\b(?:Invoke-Expression|iex)\b[^;\n]*(?:Invoke-WebRequest|iwr|DownloadString|https?://)",
+    r"\b(?:Invoke-WebRequest|iwr)\b[^|\n]*\|\s*(?:Invoke-Expression|iex)\b",
+    r"\bSet-ExecutionPolicy\b", r"\bStart-Process\b[^;\n]*\s-Verb\s+RunAs\b",
+    r"\bFormat-Volume\b", r"\b(?:qsub|qdel|sbatch|sudo)\b",
+    r"\bgit\s+push\b[^;\n]*--force\b",
+)
+
+_SHELL_WORD = re.compile(r'''"[^"]*"|'[^']*'|[^\s|;&<>]+''')
+_REDIRECT = re.compile(r'''>{1,2}\s*("[^"]*"|'[^']*'|[^\s|;&<>]+)''')
+
+
+def _shell_write_targets(command: str) -> Iterator[str]:
+    """Find obvious literal write destinations; expansions and aliases are not parsed."""
+    for match in _REDIRECT.finditer(command):
+        yield match.group(1).strip("\"'")
+    for segment in re.split(r"[|;&\n]", command):
+        words = [m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
+        if not words:
+            continue
+        name = words[0].casefold()
+        if name not in {"set-content", "out-file", "add-content", "new-item",
+                        "copy-item", "move-item", "cp", "mv"}:
+            continue
+        for flag in ("-literalpath", "-path", "-filepath", "-destination"):
+            for i, word in enumerate(words[:-1]):
+                if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
+                    yield words[i + 1]
+        if name in {"copy-item", "move-item", "cp", "mv"}:
+            yield words[-1]
+        elif len(words) > 1 and not words[1].startswith("-"):
+            yield words[1]
+
 
 @dataclass
 class Decision:
@@ -221,13 +256,21 @@ def evaluate_tool(
             "submit an HPC job (hpc_submit) that writes aggregate/QC summaries and read those instead.",
         )
 
-    if tool_name == "Bash":
+    if tool_name in {"Bash", "PowerShell"}:
         cmd = str(tool_input.get("command", ""))
         if hit:
-            return Decision("ask", f"Bash touches restricted zone {hit}: `{cmd[:200]}`")
-        for pat in policy.approvals.bash_ask_patterns:
-            if re.search(pat, cmd):
+            return Decision("ask", f"{tool_name} touches restricted zone {hit}: `{cmd[:200]}`")
+        patterns = (policy.approvals.bash_ask_patterns if tool_name == "Bash"
+                    else POWERSHELL_ASK_PATTERNS)
+        for pat in patterns:
+            if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
+        roots = [_norm(r) for r in allowed_roots if r]
+        for target in _shell_write_targets(cmd):
+            if _drive_relative(target):
+                return Decision("ask", f"drive-relative shell write destination: {target}")
+            if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
+                return Decision("ask", f"shell write outside allowed roots: {target}")
         return Decision("allow")
 
     if tool_name.startswith("mcp__"):
