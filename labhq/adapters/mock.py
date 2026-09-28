@@ -24,7 +24,7 @@ class MockAdapter(AgentAdapter):
         return None
 
     async def _broker(self, ctx: RunContext, path: str, payload: dict) -> dict:
-        async with httpx.AsyncClient(timeout=120) as c:
+        async with httpx.AsyncClient(timeout=self.settings.policy.approvals.timeout_s + 30) as c:
             r = await c.post(f"{ctx.env['LABHQ_BROKER_URL']}{path}", json=payload,
                              headers={"X-Labhq-Token": ctx.env["LABHQ_BROKER_TOKEN"]})
             r.raise_for_status()
@@ -89,7 +89,8 @@ class MockAdapter(AgentAdapter):
         own = t.prompt.split("Your step", 1)[-1] if kind == "step" else t.prompt if kind == "direct" else ""
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",
-                                                        "summary": "Bash: rm -rf tmp/ (mock)", "timeout_s": 60})
+                                                        "summary": "Bash: rm -rf tmp/ (mock)",
+                                                        "timeout_s": self.settings.policy.approvals.timeout_s})
             text += f" · 승인 결과={'허가' if dec.get('approved') else '거절'}"
 
         if "[hpc]" in own and not t.resume_session_id:
