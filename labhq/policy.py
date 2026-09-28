@@ -22,7 +22,8 @@ WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 # Lexical prompts for common PowerShell hazards; this is not a command sandbox.
 POWERSHELL_ASK_PATTERNS = (
-    r"\bRemove-Item\b[^;|\n]*\s-Recurse\b", r"\brm\s+-[a-z]*r\b",
+    # Remove-Item and all its aliases; PowerShell accepts any prefix of -Recurse (-r, -re, …) and unix-style -rf.
+    r"\b(?:Remove-Item|rm|ri|del|erase|rd|rmdir)\b[^;|\n]*\s-(?:r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|rf|fr)\b",
     r"\b(?:Invoke-Expression|iex)\b[^;\n]*(?:Invoke-WebRequest|iwr|DownloadString|https?://)",
     r"\b(?:Invoke-WebRequest|iwr)\b[^|\n]*\|\s*(?:Invoke-Expression|iex)\b",
     r"\bSet-ExecutionPolicy\b", r"\bStart-Process\b[^;\n]*\s-Verb\s+RunAs\b",
@@ -34,10 +35,18 @@ _SHELL_WORD = re.compile(r'''"[^"]*"|'[^']*'|[^\s|;&<>]+''')
 _REDIRECT = re.compile(r'''>{1,2}\s*("[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 
 
+NULL_DEVICES = frozenset({"/dev/null", "nul", "nul:", "$null", "\\\\.\\nul", "//./nul"})
+
+
 def _shell_write_targets(command: str) -> Iterator[str]:
-    """Find obvious literal write destinations; expansions and aliases are not parsed."""
+    """Find obvious literal write destinations; expansions and aliases are not parsed.
+
+    Null devices (`2>/dev/null`, `> $null`, `> NUL`) discard output and are not writes.
+    """
     for match in _REDIRECT.finditer(command):
-        yield match.group(1).strip("\"'")
+        target = match.group(1).strip("\"'")
+        if target.casefold() not in NULL_DEVICES:
+            yield target
     for segment in re.split(r"[|;&\n]", command):
         words = [m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
         if not words:
