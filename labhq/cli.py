@@ -145,7 +145,11 @@ def _demo_dial_host(host: str) -> str:
 
 
 def _demo_url_hosts(host: str) -> list[str]:
-    """Addresses a browser can use for the bind host (wildcard → this machine's LAN IPv4s)."""
+    """Browser addresses for the requested bind family."""
+    if host == "::1":
+        return ["[::1]"]
+    if host == "::":
+        return _lan_ipv6_addresses()
     if host in LOOPBACK_HOSTS:
         return ["127.0.0.1"]
     if host in WILDCARD_HOSTS:
@@ -170,6 +174,31 @@ def _lan_ipv4_addresses() -> list[str]:
         pass
     return sorted(ip for ip in addresses if not (ipaddress.IPv4Address(ip).is_loopback
                                                   or ipaddress.IPv4Address(ip).is_unspecified))
+
+
+def _lan_ipv6_addresses() -> list[str]:
+    preferred: set[str] = set()
+    fallback: set[str] = set()
+    try:
+        for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET6):
+            if family != socket.AF_INET6:
+                continue
+            raw, _, named_scope = sockaddr[0].partition("%")
+            try:
+                address = ipaddress.IPv6Address(raw)
+            except ValueError:
+                continue
+            if address.is_unspecified or address.is_multicast:
+                continue
+            scope = (sockaddr[3] if len(sockaddr) > 3 else 0) or named_scope
+            if address.is_link_local and not scope:
+                continue
+            zone = f"%25{scope}" if address.is_link_local and scope else ""
+            (fallback if address.is_loopback or address.is_link_local else preferred).add(
+                f"[{address.compressed}{zone}]")
+    except OSError:
+        pass
+    return sorted(preferred) or sorted(fallback) or ["[::1]"]
 
 
 def _phone_url_lines(addresses: list[str], port: int, token: str) -> list[str]:

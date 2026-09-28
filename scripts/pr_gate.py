@@ -79,6 +79,16 @@ def _finding(comment: dict, number: int) -> tuple[str, str, dict[str, str]]:
     }
 
 
+def _head_findings(snapshot: dict) -> list[tuple[str, str, dict[str, str]]]:
+    pr = snapshot["pr"]
+    head = pr["head"]["sha"]
+    return [
+        _finding(c, pr["number"])
+        for c in snapshot.get("review_comments", [])
+        if _login(c) == BOT and c.get("original_commit_id") == head and not c.get("in_reply_to_id")
+    ]
+
+
 def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
     """Return a decision without API calls or mutations."""
     pr = snapshot["pr"]
@@ -116,11 +126,7 @@ def decide(snapshot: dict, *, cap: int = 10, warn_at: int = 8) -> Action:
             return Action("needs_pi", ["상한 도달 뒤 새 커밋을 봇이 보지 않았음"])
         return wait_for_review("최신 봇 리뷰가 현재 head를 보지 않았습니다.")
 
-    findings = [
-        _finding(c, pr["number"])
-        for c in snapshot.get("review_comments", [])
-        if _login(c) == BOT and c.get("original_commit_id") == head and not c.get("in_reply_to_id")
-    ]
+    findings = _head_findings(snapshot)
     p1 = [f[1] for f in findings if f[0] == "1"]
     p2 = [f[2] for f in findings if f[0] == "2"]
     checks = [c for c in snapshot.get("check_runs", []) if not GATE_CHECK.fullmatch(c.get("name") or "")]
@@ -275,11 +281,12 @@ def apply(api: GitHub, snapshot: dict, action: Action) -> None:
 def advice(snapshot: dict) -> dict:
     """Facts for Claude's merge judgment under the no-cap policy (PI decision 2026-09-28): no merge/needs_pi verdict."""
     action = decide(snapshot, cap=10**9, warn_at=10**9)
+    followups = [finding[2] for finding in _head_findings(snapshot) if finding[0] == "2"]
     return {"advisory": True,
             "policy": "no fixed round cap; Claude judges review depth and merges",
             "merge_conditions_met": action.kind == "merge",
             "reasons": action.reasons,
-            "p2_followups": action.followups}
+            "p2_followups": followups}
 
 
 def main() -> int:

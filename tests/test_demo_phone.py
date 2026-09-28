@@ -34,10 +34,41 @@ def test_exposed_demo_tokens_are_fresh(field):
 
 def test_demo_url_hosts(monkeypatch):
     monkeypatch.setattr(cli, "_lan_ipv4_addresses", lambda: ["192.168.0.10"])
+    monkeypatch.setattr(cli, "_lan_ipv6_addresses", lambda: ["[2001:db8::10]"])
     assert cli._demo_url_hosts("127.0.0.1") == ["127.0.0.1"]
+    assert cli._demo_url_hosts("::1") == ["[::1]"]
+    assert cli._demo_url_hosts("::") == ["[2001:db8::10]"]
     assert cli._demo_url_hosts("0.0.0.0") == ["192.168.0.10"]
     assert cli._demo_url_hosts("192.168.1.4") == ["192.168.1.4"]
     assert cli._demo_url_hosts("fe80::1") == ["[fe80::1]"]
+
+
+def test_lan_ipv6_addresses_prefer_non_local_and_keep_family(monkeypatch):
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "lab")
+    monkeypatch.setattr(cli.socket, "socket", lambda *_args, **_kw: pytest.fail("address discovery opened a socket"))
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *_args, **_kw: [
+        (cli.socket.AF_INET6, 0, 0, "", ("::1", 0, 0, 0)),
+        (cli.socket.AF_INET6, 0, 0, "", ("fe80::2", 0, 0, 7)),
+        (cli.socket.AF_INET6, 0, 0, "", ("fd00::3", 0, 0, 0)),
+        (cli.socket.AF_INET6, 0, 0, "", ("2001:db8::4", 0, 0, 0)),
+        (cli.socket.AF_INET, 0, 0, "", ("192.168.1.4", 0)),
+    ])
+    addresses = cli._lan_ipv6_addresses()
+    assert addresses == ["[2001:db8::4]", "[fd00::3]"]
+    assert cli._phone_url_lines(addresses, 8787, "demo-token") == [
+        f"http://{ip}:8787/3d?token=demo-token  http://{ip}:8787/?token=demo-token"
+        for ip in addresses
+    ]
+
+
+def test_lan_ipv6_fallback_is_ipv6(monkeypatch):
+    monkeypatch.setattr(cli.socket, "gethostname", lambda: "lab")
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *_args, **_kw: [])
+    assert cli._demo_url_hosts("::") == ["[::1]"]
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *_args, **_kw: [
+        (cli.socket.AF_INET6, 0, 0, "", ("fe80::2", 0, 0, 7)),
+    ])
+    assert cli._demo_url_hosts("::") == ["[fe80::2%257]"]
 
 
 def test_mock_approval_timeout_follows_policy(monkeypatch, tmp_path):
