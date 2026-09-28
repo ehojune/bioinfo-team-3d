@@ -697,3 +697,14 @@ async def test_runner_records_declared_artifact_and_reuses_workspace(tmp_path):
     assert (Path(resumed.workdir) / "outputs" / "artifact.txt").read_text() == "mock artifact\n"
     assert (Path(resumed.workdir) / f"TASK_{second.id}.md").exists()
     assert second.id in (Path(resumed.workdir) / "manifest.json").read_text()
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("table.tsv", "outputs/table.tsv"), ("./table.tsv", "outputs/table.tsv"),
+    (r"outputs\table.tsv", "outputs/table.tsv"), ("outputs/dir/../table.tsv", "outputs/table.tsv"),
+    ("../escape.tsv", None), ("/abs/t.tsv", None), ("C:/x/t.tsv", None),
+])
+def test_declared_outputs_normalize_like_the_runner(name, expected):
+    from labhq.util import output_relpath
+
+    assert output_relpath(name) == expected

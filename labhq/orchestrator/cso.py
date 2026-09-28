@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import RunnerUnavailable, Task, TaskResult, new_id
-from ..util import clip, extract_json, short
+from ..util import clip, extract_json, output_relpath, short
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
@@ -523,8 +523,7 @@ class Orchestrator:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
                     if outcome.ok and by_id[sid].get("outputs"):
                         missing = [name for name in by_id[sid]["outputs"]
-                                   if (name if name.startswith("outputs/") else f"outputs/{name}")
-                                   not in outcome.outputs]
+                                   if output_relpath(name) not in outcome.outputs]
                         if missing:
                             outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
@@ -846,10 +845,12 @@ class Orchestrator:
             if req.get("pending_questions"):
                 req["report"] += "\n\nPending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"])
+            # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
+            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000)}
             if hasattr(self.hub, "commit_terminal"):
-                self.hub.commit_terminal(rid, "request.failed", {"error": req["error"]})
+                self.hub.commit_terminal(rid, "request.failed", failed)
             else:
-                await self._emit(rid, "request.failed", {"error": req["error"]})
+                await self._emit(rid, "request.failed", failed)
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]

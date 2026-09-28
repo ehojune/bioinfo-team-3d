@@ -25,7 +25,7 @@ from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler
-from ..util import short
+from ..util import output_relpath, short
 from .approvals import Broker
 from .workspace import TaskWorkspace
 
@@ -387,13 +387,12 @@ class Runner:
         declared = task.meta.get("outputs", [])
         found = []
         for name in declared:
-            relative = Path(name)
-            if relative.is_absolute() or ".." in relative.parts:
+            relative = output_relpath(name)
+            if relative is None:
                 continue
-            relative = relative if relative.parts and relative.parts[0] == "outputs" else Path("outputs") / relative
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
-                found.append(relative.as_posix())
+                found.append(relative)
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "", encoding="utf-8")
         (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "", encoding="utf-8")
