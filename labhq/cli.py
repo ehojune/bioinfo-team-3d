@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ipaddress
 import json
 import logging
+import math
+import secrets
 import shutil
+import socket
 import sys
 import tempfile
 import time
@@ -119,7 +123,81 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
 
 
 # ---------------- demo (no API keys, no cluster) ----------------
-async def _demo(web: bool = False, port: int = 8787) -> None:
+def _approval_delay(phone: bool, approve_timeout: float) -> float:
+    return approve_timeout if phone else 0.3
+
+
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+WILDCARD_HOSTS = ("0.0.0.0", "::", "")
+
+
+def _demo_token(exposed: bool, current: str) -> str:
+    return secrets.token_urlsafe(16) if exposed else current
+
+
+def _demo_dial_host(host: str) -> str:
+    """Where the in-process runner connects: loopback of the bind family, or the bound address itself."""
+    if host in ("::1", "::"):
+        return "[::1]"
+    if host in LOOPBACK_HOSTS + WILDCARD_HOSTS:
+        return "127.0.0.1"
+    return _demo_url_hosts(host)[0]
+
+
+def _demo_url_hosts(host: str) -> list[str]:
+    """Addresses a browser can use for the bind host (wildcard → this machine's LAN IPv4s)."""
+    if host in LOOPBACK_HOSTS:
+        return ["127.0.0.1"]
+    if host in WILDCARD_HOSTS:
+        return _lan_ipv4_addresses()
+    return [f"[{host}]" if ":" in host else host]
+
+
+def _lan_ipv4_addresses() -> list[str]:
+    addresses: set[str] = set()
+    try:
+        for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET):
+            if family == socket.AF_INET:
+                addresses.add(sockaddr[0])
+    except OSError:
+        pass
+    try:
+        # UDP connect selects a local interface without sending a packet.
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 80))
+            addresses.add(sock.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ip for ip in addresses if not (ipaddress.IPv4Address(ip).is_loopback
+                                                  or ipaddress.IPv4Address(ip).is_unspecified))
+
+
+def _phone_url_lines(addresses: list[str], port: int, token: str) -> list[str]:
+    return [f"http://{ip}:{port}/3d?token={token}  http://{ip}:{port}/?token={token}"
+            for ip in (addresses or ["127.0.0.1"])]
+
+
+async def _demo_auto_approve(hub, aid: str, delay: float, phone: bool) -> None:
+    await asyncio.sleep(delay)
+    if aid not in hub.approvals:
+        return
+    try:
+        await hub.resolve_approval(aid, True, "demo timeout auto-approve" if phone else "demo auto-approve")
+    except KeyError:
+        return  # A phone tap won the race.
+    print("   (demo) 승인 대기 시간 만료 → 자동 승인" if phone else "   (demo) 📱 폰에서 '승인' 탭했다고 가정")
+
+
+def _tap_publish(publish, after):
+    """Wrap Hub.publish; sequenced runner events also pass runner_id/runner_seq, so forward everything."""
+    async def tap(ev: dict, *args, **kwargs) -> None:
+        await publish(ev, *args, **kwargs)
+        after(ev)
+    return tap
+
+
+async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
+                host: str = "127.0.0.1", approve_timeout: float = 120) -> None:
     import uvicorn
 
     from .gateway.server import RequestIn, create_app
@@ -129,7 +207,14 @@ async def _demo(web: bool = False, port: int = 8787) -> None:
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = Settings.load(None)
     gport = port if web else free_port()
-    s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
+    dial = _demo_dial_host(host)
+    s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
+    exposed = phone or host not in LOOPBACK_HOSTS
+    # Both default tokens are public; on the LAN anyone could otherwise join as a client or replace the runner.
+    s.gateway.client_token = _demo_token(exposed, s.gateway.client_token)
+    s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
+    # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
+    s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
     s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
     s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = str(tmp / "runs"), str(tmp / "talent"), str(tmp / "agents")
     s.hpc.scheduler = "mock"
@@ -138,19 +223,14 @@ async def _demo(web: bool = False, port: int = 8787) -> None:
     hub = app.state.hub
     publish = hub.publish
 
-    async def auto_approve(aid: str) -> None:
-        await asyncio.sleep(0.3)
-        print("   (demo) 📱 폰에서 '승인' 탭했다고 가정")
-        await hub.resolve_approval(aid, True, "demo auto-approve")
-
-    async def tap(ev: dict) -> None:
-        await publish(ev)
+    def after(ev: dict) -> None:
         render(ev)
         if ev.get("type") == "approval.requested":
-            asyncio.get_running_loop().create_task(auto_approve(ev["data"]["id"]))
+            asyncio.get_running_loop().create_task(_demo_auto_approve(
+                hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
 
-    hub.publish = tap
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
+    hub.publish = _tap_publish(publish, after)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning"))
     tasks = [asyncio.create_task(server.serve())]
     while not server.started:
         await asyncio.sleep(0.05)
@@ -167,12 +247,23 @@ async def _demo(web: bool = False, port: int = 8787) -> None:
     try:
         await until(lambda: len(hub.agents) >= 5, 15)
         if web:
-            print(f"\n=== 웹 사무실: http://127.0.0.1:{gport}/?token={s.gateway.client_token} (Ctrl+C로 종료) ===\n")
+            if phone:
+                addresses = _demo_url_hosts(host)
+                if not addresses:
+                    print("LAN IPv4 주소를 찾지 못했습니다. PC에서 열 수 있는 주소:")
+                for line in _phone_url_lines(addresses, gport, s.gateway.client_token):
+                    print(line)
+                print("폰과 PC를 같은 Wi-Fi에 연결하세요.")
+                print("Windows 방화벽 알림에서는 Python의 private network 접근을 허용하세요.")
+            else:
+                for ip in _demo_url_hosts(host) or ["127.0.0.1"]:
+                    print(f"\n=== 웹 사무실: http://{ip}:{gport}/?token={s.gateway.client_token} (Ctrl+C로 종료) ===\n")
             texts = ["공개 폐선암 scRNA-seq에서 CD276 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]",
                      "새로 받은 WGS 배치 표준 QC [hpc] [needs-approval]"]
             for i in range(10**6):
                 rid = hub.create_request(RequestIn(text=texts[i % 2]))
-                await until(lambda: hub.requests[rid]["status"] != "running", 120)
+                await until(lambda: hub.requests[rid]["status"] != "running",
+                            max(120, approve_timeout + 60) if phone else 120)
                 if i == 0 and "c_scanpy" not in hub.agents:
                     await asyncio.sleep(3)
                     await hub.send_runner(s.runner.id, {"type": "recruit.start", "repo": "https://github.com/scverse/scanpy",
@@ -246,8 +337,13 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("setup-paper2agent", help="install the paper2agent skill for Claude Code and Codex")
     dp = sub.add_parser("demo", help="offline demo with mock agents (no API keys, no cluster)")
     dp.add_argument("--web", action="store_true", help="keep running and serve the web office")
+    dp.add_argument("--phone", action="store_true", help="serve the web office to phones on the same Wi-Fi")
+    dp.add_argument("--host", help="demo bind address (default: loopback, or 0.0.0.0 with --phone)")
+    dp.add_argument("--approve-timeout", type=float, default=120, help="phone approval fallback in seconds")
     dp.add_argument("--port", type=int, default=8787)
     args = p.parse_args(argv)
+    if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
+        p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     s = Settings.load(args.config)
 
@@ -306,7 +402,8 @@ def main(argv: list[str] | None = None) -> None:
             print(f"installed → {d}")
     elif args.cmd == "demo":
         logging.getLogger().setLevel(logging.WARNING)
-        asyncio.run(_demo(args.web, args.port))
+        asyncio.run(_demo(args.web or args.phone, args.port, args.phone,
+                          args.host or ("0.0.0.0" if args.phone else "127.0.0.1"), args.approve_timeout))
 
 
 if __name__ == "__main__":
