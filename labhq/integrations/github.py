@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
+from ..policy import restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -38,19 +39,25 @@ SECRET_PATTERNS = [
 
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
     out = text or ""
-    zones = sorted((os.path.expanduser(z.path).rstrip("/\\") for z in policy.data_zones
-                    if z.level == "restricted"), key=len, reverse=True)
-    # Names below a zone may contain spaces, commas or brackets, so where a path ends is unknowable.
-    # Fail closed: from the zone to the end of the line, stopping only at quote/markup delimiters.
-    tail = r"[^\r\n\"'`<>|]*"
+    # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
+    zones = sorted({p.rstrip("/") for p in restricted_paths(policy)}, key=len, reverse=True)
+    # Names below a zone may contain spaces, quotes, backticks or brackets, so where a path ends is
+    # unknowable. Fail closed: redact from the zone to the end of the line.
+    tail = r"[^\r\n]*"
     for zone in zones:
         if not zone:
-            # The zone is the POSIX root, so every absolute path is restricted.
+            # The zone is the POSIX root: every absolute path and file: URI is restricted; network URLs stay.
+            out = re.sub(r"\bfile:" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
             out = re.sub(r"(?<![\w.:/\\-])/" + tail, "<restricted-zone>", out)
             continue
-        parts = re.split(r"[/\\]+", zone)
-        pattern = r"[/\\]+".join(re.escape(part) for part in parts)
-        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
+        if re.fullmatch(r"[a-z]:", zone, flags=re.IGNORECASE):
+            # A bare drive root: require a separator so "ID: 5" or "passed: 3" are left alone.
+            out = re.sub(r"(?<![A-Za-z0-9])" + re.escape(zone) + r"(?=[/\\])" + tail, "<restricted-zone>", out,
+                         flags=re.IGNORECASE)
+            continue
+        pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
+        # No lookbehind: a path glued to text (e.g. Korean "경로/data/…") must still match. The lookahead keeps
+        # the directory boundary: /data/cohort2 is not inside /data/cohort.
         out = re.sub(pattern + r"(?![\w.-])" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)

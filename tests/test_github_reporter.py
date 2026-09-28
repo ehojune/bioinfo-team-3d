@@ -128,18 +128,33 @@ def test_restricted_zones_match_separators_case_and_directory_boundary():
 
 def test_root_restricted_zone_fails_closed():
     policy = PolicySettings(data_zones=[DataZone(path="/", level="restricted")])
-    out = sanitize("raw at /private/subject 123.cram\nsee https://github.com/o/p/issues/1", policy)
-    assert "/private" not in out and "123.cram" not in out
+    out = sanitize("raw at /private/subject 123.cram\nuri file:///private/x.cram\n"
+                   "see https://github.com/o/p/issues/1", policy)
+    assert "/private" not in out and "123.cram" not in out and "x.cram" not in out
+    assert out.splitlines()[:2] == ["raw at <restricted-zone>", "uri <restricted-zone>"]
     assert "https://github.com/o/p/issues/1" in out
 
 
-def test_zone_names_with_spaces_and_brackets_fail_closed_to_the_delimiter():
+def test_zone_path_fails_closed_to_the_end_of_the_line():
     policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
-    out = sanitize("| s1 | /data/cohort/subject 123 (v2), part/sample.cram | pass |\nnext line", policy)
-    assert "123" not in out and "sample.cram" not in out and "part" not in out
-    assert out == "| s1 | <restricted-zone>| pass |\nnext line"
-    quoted = sanitize('{"path": "/data/cohort/a b.cram", "n": 1}', policy)
-    assert quoted == '{"path": "<restricted-zone>", "n": 1}'
+    for line in ("| s1 | /data/cohort/subject 123 (v2), part/sample.cram | pass |",
+                 "/data/cohort/O'Brien/sample.cram", "/data/cohort/a`b`/s.cram",
+                 '{"path": "/data/cohort/a b.cram", "n": 1}'):
+        out = sanitize(line + "\nnext line", policy)
+        assert out.endswith("<restricted-zone>\nnext line"), out
+        assert not any(t in out for t in ("123", "Brien", "sample", "s.cram", "a b"))
+    assert sanitize("see /data/cohort2/y", policy) == "see /data/cohort2/y"
+    assert sanitize("경로/data/cohort/s.cram", policy) == "경로<restricted-zone>"
+
+
+def test_zones_are_normalized_like_the_access_policy():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/./cohort", level="restricted"),
+                                        DataZone(path="/data/cohort/../secret", level="restricted"),
+                                        DataZone(path="E:/", level="restricted")])
+    assert sanitize("/data/cohort/sample.cram", policy) == "<restricted-zone>"
+    assert sanitize("/data/secret/sample.cram", policy) == "<restricted-zone>"
+    assert sanitize(r"E:\any\file.cram", policy) == "<restricted-zone>"
+    assert sanitize("passed: 12 · ID: 5", policy) == "passed: 12 · ID: 5"  # drive root needs a name boundary
 
 
 @pytest.mark.asyncio
