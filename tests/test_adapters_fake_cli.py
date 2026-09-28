@@ -1,7 +1,6 @@
 """Run each real adapter against a fake CLI that replays that CLI's JSON event stream."""
 
 import json
-import stat
 import sys
 from pathlib import Path
 
@@ -36,20 +35,22 @@ FAKES = {
 
 def _fake_cli(tmp: Path, name: str) -> Path:
     events = tmp / f"{name}.jsonl"
-    events.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in FAKES[name]) + "\n")
+    events.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in FAKES[name]) + "\n", encoding="utf-8")
     script = tmp / name
     script.write_text(
-        f"#!{sys.executable}\nimport sys, json, pathlib\n"
+        "# coding: utf-8\nimport sys, json, pathlib\n"
+        "sys.stdout.reconfigure(encoding='utf-8')\n"
         f"pathlib.Path({str(tmp / (name + '.argv'))!r}).write_text(json.dumps(sys.argv[1:]))\n"
-        f"sys.stdout.write(open({str(events)!r}).read())\n"
+        f"sys.stdout.write(open({str(events)!r}, encoding='utf-8').read())\n",
+        encoding="utf-8",
     )
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return script
 
 
 async def _run(tmp: Path, engine: Engine, name: str, schema: dict | None = None):
     s = Settings()
-    getattr(s.engines, engine.value).bin = str(_fake_cli(tmp, name))
+    getattr(s.engines, engine.value).bin = sys.executable
+    getattr(s.engines, engine.value).prefix_args = [str(_fake_cli(tmp, name))]
     if engine == Engine.codex:  # hermetic: the host's ~/.codex/AGENTS.md would refuse the staff session
         (tmp / "codex-home").mkdir()
         s.engines.codex.env = {"CODEX_HOME": str(tmp / "codex-home")}

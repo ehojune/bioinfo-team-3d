@@ -1,12 +1,27 @@
 """Phone demo options and approval fallback without a listening server."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 from labhq import cli
 from labhq.settings import Settings
+
+
+def test_demo_settings_keep_every_path_in_tmp(tmp_path, monkeypatch):
+    monkeypatch.setenv("LABHQ_STATE_DIR", str(tmp_path.parent / "real-state"))
+    settings = cli._demo_settings(tmp_path)
+    paths = {f"{section}.{key}": value for section, values in settings.model_dump().items()
+             if isinstance(values, dict) for key, value in values.items()
+             if isinstance(value, str) and key.endswith(("_dir", "_root"))}
+    assert set(paths) == {"gateway.state_dir", "runner.state_dir", "runner.workspace_root",
+                          "runner.talent_dir", "runner.agents_dir"}
+    for path in paths.values():
+        assert Path(path).resolve().is_relative_to(tmp_path.resolve())
+    assert settings.config_path is None and settings.projects == []
+    assert settings.runner.force_engine == "mock" and settings.hpc.scheduler == "mock"
 
 
 @pytest.mark.parametrize(

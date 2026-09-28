@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import shlex
+import shutil
 import signal
 from abc import ABC, abstractmethod
 from collections import deque
@@ -16,6 +17,40 @@ from ..settings import Settings
 from ..util import extract_json, short
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
+
+_NPM_NODE_LINE = re.compile(
+    r'(?P<launcher>"%_prog%"|"%(?:dp0%|~dp0)[\\/]node\.exe"|node(?:\.exe)?)'
+    r'\s+"%(?:dp0%|~dp0)[\\/](?P<script>[^"%\r\n]+?\.(?:js|mjs|cjs))"\s+%\*\s*$',
+    re.IGNORECASE,
+)
+
+
+def _npm_script(shim: Path) -> Path | None:
+    try:
+        lines = shim.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeError):
+        return None
+    if not any("%dp0%" in line.lower() or "%~dp0" in line.lower() for line in lines):
+        return None
+    for line in lines:
+        match = _NPM_NODE_LINE.search(line.strip())
+        if match:
+            script = (shim.parent / match.group("script").replace("\\", "/")).resolve()
+            if script.is_file():
+                return script
+    return None
+
+
+def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[str]:
+    executable = shutil.which(cmd[0], path=env.get("PATH")) or cmd[0]
+    if Path(executable).suffix.lower() not in (".cmd", ".bat"):
+        return [executable, *cmd[1:]]
+    script = _npm_script(Path(executable))
+    node = shutil.which("node.exe", path=env.get("PATH")) or shutil.which("node", path=env.get("PATH"))
+    if script and node and Path(node).suffix.lower() not in (".cmd", ".bat"):
+        return [node, str(script), *cmd[1:]]
+    raise ValueError(f"{engine}: cannot run {executable!r} with agent arguments; "
+                     "set engines.<engine>.bin to a native executable or use bin: node with prefix_args")
 
 ROLE_FOOTER = """
 ## Lab rules (all agents)
@@ -145,6 +180,15 @@ class AgentAdapter(ABC):
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
         env = {**os.environ, **self.engine_env(), **ctx.env}
+        engine_bin = getattr(self.settings.engines, self.engine, None)
+        if engine_bin is not None:
+            cmd = [os.path.expandvars(os.path.expanduser(cmd[0])),
+                   *(os.path.expandvars(os.path.expanduser(arg)) for arg in engine_bin.prefix_args),
+                   *cmd[1:]]
+        try:
+            cmd = _resolve_command(cmd, env, self.engine)
+        except ValueError as exc:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
         (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd), encoding="utf-8")
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
