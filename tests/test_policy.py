@@ -46,6 +46,8 @@ def test_path_normalization_boundary_and_shell_forms():
     "cat file:///data/cohort/a.vcf",
     "cat file:///data/%2e/cohort/a.vcf",
     "cat file://localhost/data/./cohort/a.vcf",
+    "cat file:///data/%63ohort?download=1",
+    "cat file:///data/%63ohort#section",
     "cat file:///data/%63ohort/a.vcf",
     "cat --input=host:file:///data/cohort/a.vcf",
     "cat --input=s3like:/data/cohort",

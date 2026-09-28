@@ -546,3 +546,17 @@ def test_encoded_file_uris_are_withheld():
     policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
     for uri in ("file:///data/%2e/cohort/sample.cram", "file://localhost/data/./cohort/sample.cram"):
         assert sanitize(f"see {uri}\nkeep", policy) == "<restricted-zone>\nkeep"
+
+
+@pytest.mark.asyncio
+async def test_root_zone_turns_github_reporting_off(tmp_path):
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.policy.data_zones = [DataZone(path="/", level="restricted")]
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s, github_transport=fake_github(calls))
+    hub.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done"}
+    assert not hub.reporter.enabled()
+    for typ in ("request.created", "request.completed"):
+        await hub.reporter.handle({"type": typ, "request_id": "r", "data": {"report": "x"}})
+    assert calls == []

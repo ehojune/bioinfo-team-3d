@@ -13,7 +13,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from .settings import PolicySettings
 
@@ -65,14 +65,18 @@ def _candidate_paths(s: str) -> Iterator[str]:
                 uri = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", chunk)
                 if uri and len(uri.group(1)) > 1:
                     if uri.group(1).casefold() == "file":
-                        # RFC 8089: the path is percent-encoded and "localhost" is the local authority.
-                        path = unquote(chunk[uri.end():])
-                        if path.casefold().startswith("localhost/"):
-                            path = path[len("localhost"):]
+                        # RFC 8089: parse the URI, keep only the path component (not ?query or #fragment),
+                        # percent-decode it, and treat "localhost" or an empty authority as this machine.
+                        parts = urlsplit(chunk)
+                        host, path = parts.netloc, unquote(parts.path)
+                        if re.fullmatch(r"[A-Za-z]:", host):  # file://C:/x (non-standard but seen)
+                            host, path = "", host + path
+                        elif host and host.casefold() != "localhost":
+                            path = "//" + host + path  # a remote host is a UNC path
                         if re.match(r"^/[A-Za-z]:[/\\]", path):  # file:///C:/x → C:/x
                             path = path[1:]
                         if path:
-                            yield path if path.startswith("/") or re.match(r"^[A-Za-z]:", path) else "//" + path
+                            yield path
                     break
                 separator = next((i for i, char in enumerate(chunk)
                                   if char == ":" and not (i == 1 and chunk[0].isalpha())), None)

@@ -47,11 +47,16 @@ def _outside_network_url(m: re.Match) -> str:
     return m.group(0) if url and url.group(1).casefold() != "file" else "<restricted-zone>"
 
 
+def root_zone_restricted(policy: PolicySettings) -> bool:
+    """`/` or a drive root (`E:/`) is a restricted zone: nothing about the lab can be published safely."""
+    return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
+
+
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
     out = text or ""
     # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
     normalized = restricted_paths(policy)
-    if any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in normalized):
+    if root_zone_restricted(policy):
         # A filesystem root (`/`, `E:/`) is restricted: every path on that root is controlled, and no text
         # boundary reliably separates one from prose or URLs. Publish nothing (fail closed).
         return "<restricted-zone>" if out else ""
@@ -190,6 +195,13 @@ class ProjectReporter:
         self._warned: set[str] = set()
 
     def enabled(self) -> bool:
+        if root_zone_restricted(self.s.policy):
+            # Publishing is off entirely: redacting every string would also corrupt protocol values
+            # (issue state, refs) and leave the reporter retrying forever.
+            if "root-zone" not in self._warned:
+                self._warned.add("root-zone")
+                log.warning("GitHub updates are off: a filesystem root is a restricted data zone")
+            return False
         return any(p.repo for p in self.s.projects)
 
     def client(self) -> GitHubClient | None:
@@ -271,7 +283,7 @@ class ProjectReporter:
     async def handle(self, ev: dict) -> bool | None:
         rid = ev["request_id"]
         proj = self.project_of(rid)
-        if not proj or not proj.repo:
+        if not proj or not proj.repo or root_zone_restricted(self.s.policy):
             return
         if proj.visibility == "public" and not proj.allow_public_reports:
             if proj.id not in self._warned:
