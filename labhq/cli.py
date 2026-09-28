@@ -298,7 +298,10 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
 
     hub.publish = _tap_publish(publish, after)
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning"))
+    from .security import gateway_log_config
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning",
+                                          log_config=gateway_log_config()))
     tasks = [asyncio.create_task(server.serve())]
     while not server.started:
         await asyncio.sleep(0.05)
@@ -440,7 +443,10 @@ def main(argv: list[str] | None = None) -> None:
 
         from .gateway.server import create_app
 
-        uvicorn.run(create_app(s), host=s.gateway.host, port=s.gateway.port, log_level="info")
+        from .security import gateway_log_config
+
+        uvicorn.run(create_app(s), host=s.gateway.host, port=s.gateway.port, log_level="info",
+                    log_config=gateway_log_config())
     elif args.cmd == "runner":
         from .runner.daemon import Runner
 

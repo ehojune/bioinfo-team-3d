@@ -280,9 +280,13 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or outcome.pending_jobs):
         return None
     error = (outcome.error or "").lower()
-    if any(word in error for word in ("policy", "permission", "denied", "approval",
-                                      "budget", "cancel", "validat", "invalid", "not found",
-                                      "ineligibletier", "unauthorized", "401")):
+    if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
+                                      "budget", "cancel", "ineligibletier", "401")):
+        return "terminal"
+    if (("invalid model selection" in error and "is not recognized" in error)
+            or any(word in error for word in ("model catalog", "model catalogue", "failed to fetch models"))):
+        return "transient"
+    if any(word in error for word in ("validat", "invalid", "not found")):
         return "terminal"
     if outcome.ok or (not outcome.text.strip() and
                       (not error or "empty cli stream" in error or "no result event" in error)):
@@ -291,7 +295,7 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
                                       "overload", "capacity", "temporar", "resource exhausted",
                                       "too many requests", "connection reset", "connection refused",
                                       "connection aborted", "broken pipe", "network unreachable",
-                                      "runner restarted")):
+                                      "runner restarted", "try again")):
         return "transient"
     if re.search(r"\b5\d{2}\b|\b5xx\b", error):
         return "transient"
