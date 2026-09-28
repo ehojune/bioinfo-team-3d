@@ -44,6 +44,7 @@ $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
 ```
 
 Windows 러너는 `policy.data_zones`에 `restricted` 구역이 있으면 시작을 거부합니다. Windows에서 시험할 때는 `data_zones: []`로 설정하세요.
+실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 다음처럼 `bin`과 `prefix_args`를 사용하세요(설치된 package 경로 확인).
 
