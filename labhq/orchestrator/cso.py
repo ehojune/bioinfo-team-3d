@@ -487,6 +487,9 @@ class Orchestrator:
                     if res.ok and isinstance(question, str) and question.strip():
                         if sid in decisions:
                             raise RuntimeError(f"step {sid} still requires a PI decision after its answer")
+                        # Forget the question-only result before waiting (durably): a restart during the wait must
+                        # re-run the step, not treat it as done and feed dependents a question.
+                        results.pop(sid, None)
                         dec = await self.hub.request_approval(
                             kind="clarify", request_id=rid,
                             summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
@@ -501,7 +504,6 @@ class Orchestrator:
                         if req_state is not None:
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
                             self.hub.save_request(rid)
-                        results.pop(sid, None)  # durable too, so a restart re-runs the step with the answer
                         todo.add(sid)
 
     @staticmethod

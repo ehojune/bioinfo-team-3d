@@ -129,8 +129,11 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
 
     hub = FakeHub(dispatch)
     hub.s.orchestrator.reviewer_agent = None
+    shared: dict = {}
+    hub.result_map = lambda rid: shared
     async def answer(**kwargs):
         hub.approvals.append(kwargs)
+        assert "A" not in shared  # the question-only result is gone before the wait (restart-safe)
         return {"approved": True, "note": "cases"}
     hub.request_approval = answer
     await Orchestrator(hub).run_request("r")
