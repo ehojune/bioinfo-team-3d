@@ -1,18 +1,8 @@
-name: PR gate
+name: PR gate (manual dry-run)
 
+# Auto-merge is off (PI decision 2026-09-28): Claude judges review depth and merges. This workflow only reports
+# what scripts/pr_gate.py would decide for one PR, when run by hand.
 on:
-  issue_comment:
-    types: [created, edited]
-  pull_request_review_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
-  # GitHub Actions check suites do not trigger check_suite workflows; watch the test run.
-  workflow_run:
-    workflows: [test]
-    types: [completed]
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       pr:
@@ -21,9 +11,9 @@ on:
         type: number
 
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
+  contents: read
+  pull-requests: read
+  issues: read
   checks: read
 
 jobs:
@@ -84,4 +74,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ matrix.pr }}
-        run: python3 scripts/pr_gate.py --repo "$REPO" --pr "$PR_NUMBER"
+        run: python3 scripts/pr_gate.py --repo "$REPO" --pr "$PR_NUMBER" --dry-run

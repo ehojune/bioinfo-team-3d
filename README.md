@@ -178,7 +178,7 @@ flowchart LR
 (fine-grained PAT, 해당 저장소의 Issues·Contents 읽기/쓰기). **공개 가드**: 통제접근 경로와 비밀값으로 보이는 문자열은 가리고,
 `visibility: public` 저장소에는 `allow_public_reports: true`가 없으면 아무것도 올리지 않습니다.
 
-**Codex PR 규칙**: P1은 해당 PR에서 고치고 P2는 후속 issue로 넘깁니다. PR 생성 시 자동 리뷰 1회와 신뢰 작성자의 PR 상단 `@codex review` 댓글 1개씩을 셉니다(최대 10회). push 묶음마다 한 번만 호출하고 인라인 답글에는 `@codex`를 쓰지 않습니다. Running 중에는 재호출하지 않습니다. 게이트는 8회부터 경고하며 요약이 없거나 파싱되지 않거나 현재 head보다 오래된 경우에도 한 번 알립니다. 현재 head의 리뷰·CI·병합 조건이 맞으면 squash merge하고, 10회에 막히면 `needs-pi`로 PI를 부릅니다. 포크 PR은 자동 병합하지 않습니다.
+**Codex PR 규칙**: P1은 해당 PR에서 고치고 P2는 후속 issue로 넘깁니다. codex 리뷰는 push 묶음마다 PR 상단 요청 댓글 한 번만 부르고, 인라인 답글에는 멘션을 쓰지 않으며, Running 중에는 재호출하지 않습니다. 고정 상한 대신 Claude가 깊이를 판단합니다. 같은 부류의 더 좁은 지적이 이어지면 부류를 닫는 수정 한 번 뒤 병합하고 나머지는 후속 issue로 넘깁니다. 자동 병합 워크플로(`pr-gate.yml`)는 끄고 수동 dry-run 판정만 남겼습니다.
 `labhq codex-review <project> <PR번호>`가 그 한 번의 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.
 
 ## 5. 요청하진 않았지만 필요한 것들
