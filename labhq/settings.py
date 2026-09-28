@@ -38,6 +38,7 @@ class EngineBin(BaseModel):
     model_config = ConfigDict(extra="forbid")  # a misspelled or unsupported option must not pass silently
 
     bin: str
+    prefix_args: list[str] = []
     extra_args: list[str] = []
     env: dict[str, str] = {}
 

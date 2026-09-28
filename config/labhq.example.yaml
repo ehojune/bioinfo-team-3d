@@ -34,7 +34,7 @@ hpc:
     pro: false                # PBS Pro면 true + "select=1:ncpus={cores}:mem={mem}" 템플릿
 
 policy:
-  data_zones:                 # 통제접근 데이터: 원본을 LLM 대화로 읽지 않고 HPC 작업으로만 처리
+  data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: data_zones: []
     - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
   approvals:
     hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인

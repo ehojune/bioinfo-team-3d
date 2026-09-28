@@ -225,6 +225,19 @@ def _tap_publish(publish, after):
     return tap
 
 
+def _demo_settings(tmp: Path) -> Settings:
+    s = Settings()
+    s.gateway.state_dir = str(tmp / "state" / "gateway")
+    s.runner.state_dir = str(tmp / "state" / "runner")
+    s.runner.workspace_root = str(tmp / "runs")
+    s.runner.talent_dir = str(tmp / "talent")
+    s.runner.agents_dir = str(tmp / "agents")
+    s.runner.force_engine = "mock"
+    s.runner.job_poll_s = 1
+    s.hpc.scheduler = "mock"
+    return s
+
+
 async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 host: str = "127.0.0.1", approve_timeout: float = 120) -> None:
     import uvicorn
@@ -234,7 +247,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
 
     tmp = Path(tempfile.mkdtemp(prefix="labhq-demo-"))
     shutil.copytree(REPO / "agents", tmp / "agents")
-    s = Settings.load(None)
+    s = _demo_settings(tmp)
     gport = port if web else free_port()
     dial = _demo_dial_host(host)
     s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
@@ -244,9 +257,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     s.gateway.runner_token = _demo_token(exposed, s.gateway.runner_token)
     # The mock team's approvals expire after this; in phone mode it must outlast the tap fallback.
     s.policy.approvals.timeout_s = math.ceil(approve_timeout) + 30 if phone else 60
-    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
-    s.runner.workspace_root, s.runner.talent_dir, s.runner.agents_dir = str(tmp / "runs"), str(tmp / "talent"), str(tmp / "agents")
-    s.hpc.scheduler = "mock"
+    s.runner.broker_port = free_port()
 
     app = create_app(s)
     hub = app.state.hub
