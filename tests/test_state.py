@@ -7,7 +7,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from labhq.gateway.server import Hub, create_app
+from labhq.gateway.server import Hub, SavedResults, create_app
 from labhq.models import ApprovalRequest, Task, TaskResult
 from labhq.orchestrator.cso import failure_kind
 from labhq.runner.daemon import Runner
@@ -754,6 +754,35 @@ async def test_control_phase_recovers_exact_task_identity(tmp_path, meta, comple
     if completed:
         assert recovered.cost_usd == 0 and hub.requests["r"]["cost_usd"] == 0.2
     assert not any(msg.get("type") == "task.dispatch" for msg in socket.sent)
+
+
+@pytest.mark.asyncio
+async def test_failed_revision_fallback_is_durable(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    step = {"id": "s", "agent_id": "a", "instruction": "analyze", "depends_on": []}
+    original = TaskResult(task_id="first", agent_id="a", ok=True, text="evidence",
+                          workdir="runs/s", workdir_id="s", outputs=["outputs/data.tsv"])
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                         "plan": {"steps": [step]}, "results": {},
+                         "pending_revisions": {"s": {"revision": 1, "feedback": "check again",
+                                                      "previous_result": original.model_dump(mode="json")}}}
+    hub.save_request("r")
+    results = SavedResults(hub, "r")
+    dict.__setitem__(results, "s", original)
+
+    async def fail_revision(task):
+        assert task.meta["workdir"] == "runs/s"
+        return TaskResult(task_id=task.id, agent_id="a", ok=False, error="revision error")
+
+    hub.orchestrator.run_step = fail_revision
+    await hub.orchestrator.run_dag("r", "study", [step], results, only={"s"},
+                                   feedback={"s": "check again"})
+    assert hub.requests["r"]["results"]["s"]["text"] == "evidence"
+    assert hub.requests["r"]["pending_revisions"] == {}
+    hub.store.close()
+    restored = Hub(s)
+    assert "revision error" in restored.requests["r"]["results"]["s"]["revision_failed"]
 
 
 @pytest.mark.asyncio

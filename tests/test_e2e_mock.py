@@ -58,7 +58,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert hub.agents["lit_scout"]["hpc_tools"] is False
         assert hub.agents["analyst"]["engine"] == "mock"
 
-        rid = hub.create_request(RequestIn(text="CD276 세포유형 분석 [hpc] [needs-approval] [revise] [recruit] [question] [block]"))
+        rid = hub.create_request(RequestIn(text="CD276 세포유형 분석 [hpc] [needs-approval] [revise] [revision-fail] [artifact] [recruit] [question] [block]"))
         await _until(lambda: hub.requests[rid]["status"] != "running", 60)
         req = hub.requests[rid]
         assert req["status"] == "done", req.get("error")
@@ -73,6 +73,19 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 2
         assert any(e["type"] == "approval.resolved" for e in seen)
         assert "깨어나서" in req["results"][analyst_step]["text"]  # analyst hibernated on HPC and was resumed
+        assert "revision failed" in req["results"][analyst_step]["revision_failed"]
+        steward = next(st["id"] for st in steps if st["agent_id"] == "data_steward")
+        assert req["results"][steward]["outputs"] == ["outputs/artifact.txt"]
+        assert "outputs/artifact.txt" in req["report"]
+
+        rid_partial = hub.create_request(RequestIn(text="Partial study [max-turns]"))
+        await _until(lambda: hub.requests[rid_partial]["status"] != "running", 30)
+        partial = hub.requests[rid_partial]
+        assert partial["status"] == "failed"
+        biologist = next(st["id"] for st in partial["plan"]["steps"] if st["agent_id"] == "biologist")
+        assert partial["results"][biologist]["partial_results"]
+        assert "outputs/PARTIAL_STATUS.md" in partial["results"][biologist]["outputs"]
+        assert (Path(partial["results"][biologist]["workdir"]) / "outputs" / "PARTIAL_STATUS.md").exists()
 
         # 파견직 채용 → 명단 등록 → 직접 업무 → 스킬이 작업공간에 설치됨
         await hub.send_runner(s.runner.id, {"type": "recruit.start", "repo": "https://github.com/scverse/scanpy",

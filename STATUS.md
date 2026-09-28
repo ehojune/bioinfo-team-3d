@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · #27 결과 보존·연속성
+
+- 결론: 수정 실패 때 첫 성공 결과를 살리고, 단계 산출물과 실패 원인을 최종 보고에 남긴다.
+- 바뀐 것: 재시도·수정 작업 공간 재사용, 의존 단계의 산출물 접근, 최대 턴 종료 후 부분 결과 저장, 누락 산출물 판정, CSO 세션 재개. 리뷰는 매번 새 세션이다.
+- 실행한 것: Windows `pytest -q` 377 passed/17 skipped, 공개 검사 통과, 터미널 `labhq demo` 완료.
+- 미해결: 실제 Claude CLI·HPC 운영 검증과 원본 HARVEST 반영은 남았다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/runner/`, `tests/test_cso.py`, `tests/test_e2e_mock.py`.
+
 ## 2026-09-28 · #27 계획·배정 결함 1·2·3·8·9·15
 
 - 결론: 실행 환경과 직원 권한을 반영해 계획하고, PI 답변이 필요한 지점에서 배정을 멈춘다.
