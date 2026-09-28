@@ -1,7 +1,8 @@
 """Deterministic stand-in for a real CLI agent. Exercises every platform path without API keys:
 planning (DAG), reviewer revise loop, approvals, HPC hibernate/wake, and contract recruitment.
 
-Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block].
+Tokens in the request text steer it: [needs-approval], [hpc], [revise], [recruit], [question], [block],
+[revision-fail], [max-turns], [artifact].
 """
 
 from __future__ import annotations
@@ -59,8 +60,15 @@ class MockAdapter(AgentAdapter):
                     tokens += " [needs-approval]"
                 if aid == "biologist" and "[block]" in request:
                     tokens += " [block]"
+                if aid == "analyst" and "[revision-fail]" in request:
+                    tokens += " [revision-fail]"
+                if aid == "biologist" and "[max-turns]" in request:
+                    tokens += " [max-turns]"
+                if aid == "data_steward" and "[artifact]" in request:
+                    tokens += " [artifact]"
                 steps.append({"id": sid[aid], "agent_id": aid, "depends_on": d,
-                              "instruction": f"{aid} 파트 수행{tokens}"})
+                              "instruction": f"{aid} 파트 수행{tokens}",
+                              "outputs": ["artifact.txt"] if "[artifact]" in tokens else []})
             recruit = []
             if "[recruit]" in request:
                 recruit.append({"paper": "https://doi.org/10.1186/s13059-017-1382-0",
@@ -91,6 +99,17 @@ class MockAdapter(AgentAdapter):
 
         # steer only by this agent's own instruction, not by the overall request quoted in the prompt
         own = t.prompt.split("Your step", 1)[-1] if kind == "step" else t.prompt if kind == "direct" else ""
+        if kind == "wrap_up":
+            (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text(
+                "Partial results saved; main step unfinished.\n", encoding="utf-8")
+        if kind == "step" and "[artifact]" in own:
+            (ctx.workdir / "outputs" / "artifact.txt").write_text("mock artifact\n", encoding="utf-8")
+        if kind == "step" and "[revision-fail]" in own and t.meta.get("revision", 0):
+            return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="revision failed",
+                              session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
+        if kind == "step" and "[max-turns]" in own:
+            return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="error_max_turns",
+                              error_kind="error_max_turns", session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
         if kind == "step" and "[block]" in own and "Your earlier blocking question and the PI's answer:" not in own:
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:

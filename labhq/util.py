@@ -65,3 +65,19 @@ def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def output_relpath(name: str) -> str | None:
+    """A declared step output as `outputs/...` (POSIX, lexically normalized), or None if it leaves outputs/.
+
+    Runner and orchestrator both use this, so `./t.tsv`, `outputs\t.tsv` and `outputs/x/../t.tsv` match.
+    """
+    s = str(name).replace("\\", "/")
+    if s.startswith("/") or re.match(r"^[A-Za-z]:", s):
+        return None
+    import posixpath
+
+    n = posixpath.normpath(s)
+    if n in (".", "..") or n.startswith("../"):
+        return None
+    return n if n == "outputs" or n.startswith("outputs/") else f"outputs/{n}"

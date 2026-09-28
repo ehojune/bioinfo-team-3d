@@ -128,6 +128,7 @@ class AgentSpec(BaseModel):
             "builtin_tools": self.builtin_tools,
             "permission_mode": self.permission_mode,
             "max_turns": self.max_turns,
+            "cli_resume": bool(self.cli and self.cli.resume_args),
             "tags": self.tags,
         }
 
@@ -158,6 +159,12 @@ class TaskResult(BaseModel):
     usage: dict[str, int] = {}
     pending_jobs: list[str] = []
     workdir: str | None = None
+    workdir_id: str | None = None
+    outputs: list[str] = []  # paths relative to workdir
+    missing_outputs: list[str] = []
+    partial_results: bool = False
+    revision_failed: str | None = None
+    error_kind: str | None = None
     error: str | None = None
 
     @model_validator(mode="after")
