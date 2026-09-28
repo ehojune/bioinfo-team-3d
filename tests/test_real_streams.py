@@ -166,6 +166,10 @@ def test_init_events_keep_only_allowlisted_fields():
         extra = set(init) - INIT_KEEP - INIT_COUNT - {"mcp_servers"}
         assert not extra, (fixture, extra)
         for key in INIT_COUNT & set(init):
+            if fixture.name == "claude_plugin_skills.jsonl" and key in {"skills", "plugins"}:
+                assert init["skills"] == ["bioinfo:bioinfo-analyze"]
+                assert init["plugins"] == [{"name": "bioinfo"}]
+                continue
             assert isinstance(init[key], str) and init[key].endswith(" items>"), (fixture, key)
         for server in init.get("mcp_servers", []):
             assert str(server.get("name", "")).startswith("labhq_"), (fixture, server)

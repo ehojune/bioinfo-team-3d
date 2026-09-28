@@ -350,6 +350,7 @@ class Runner:
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs,
                 claude_settings=claude_settings(self.s.policy),
                 use_permission_tool="approval" in agent.builtin_mcp,
+                record_run=lambda **fields: ws.update_run(task.id, **fields),
             )
             ws.update_run(task.id, started_at=time.time(), engine=agent.engine.value, model=agent.model,
                           resume_of=task.resume_session_id, kind=task.meta.get("kind"))
