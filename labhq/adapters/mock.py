@@ -67,7 +67,7 @@ class MockAdapter(AgentAdapter):
                                 "repo": "https://github.com/scverse/scanpy",
                                 "focus": "Preprocessing and clustering", "reason": "mock: 팀에 scRNA 전문가 없음"})
             questions = ["Which sample group should be analyzed?"] if (
-                "[question]" in request and "PI clarification answers:" not in request) else []
+                "[question]" in request and "PI clarification (questions and answer):" not in request) else []
             structured = {"clarifying_questions": questions, "steps": steps, "recruit": recruit, "notes": "mock plan"}
         elif kind == "review":
             revise = "[revise]" in request and t.meta.get("revision", 0) == 0
@@ -91,7 +91,7 @@ class MockAdapter(AgentAdapter):
 
         # steer only by this agent's own instruction, not by the overall request quoted in the prompt
         own = t.prompt.split("Your step", 1)[-1] if kind == "step" else t.prompt if kind == "direct" else ""
-        if kind == "step" and "[block]" in own and "PI answer to your blocking question:" not in own:
+        if kind == "step" and "[block]" in own and "Your earlier blocking question and the PI's answer:" not in own:
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",

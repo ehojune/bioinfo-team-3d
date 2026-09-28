@@ -152,10 +152,23 @@ def _reaches(steps: list[dict], start: str, target: str) -> bool:
     return False
 
 
-def validate_steps(raw: list[dict], known: set[str], max_steps: int) -> tuple[list[dict], list[str]]:
+ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer"})
+
+
+def qa_text(entry: Any) -> str:
+    """A PI answer together with what it answers (older records stored the answer alone)."""
+    if isinstance(entry, dict):
+        qs = entry.get("questions") or ([entry["question"]] if entry.get("question") else [])
+        asked = "\n".join(f"Q{i}. {q}" for i, q in enumerate(qs, 1))
+        return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
+    return f"PI answer: {entry}"
+
+
+def validate_steps(raw: list[dict], known: set[str], max_steps: int,
+                   excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES) -> tuple[list[dict], list[str]]:
     warnings, steps, seen = [], [], set()
     for i, s in enumerate(raw[:max_steps]):
-        if s.get("agent_id") in {"cso", "chief_of_staff", "sci_reviewer"}:
+        if s.get("agent_id") in excluded:
             warnings.append(f"step {s.get('id') or i + 1}: orchestration role removed")
             continue
         sid = str(s.get("id") or f"s{i + 1}")
@@ -394,7 +407,7 @@ class Orchestrator:
         running: dict[str, asyncio.Task] = {}
         req_state = self.hub.requests.get(rid)
         # PI answers to blocking questions survive a gateway restart (the re-run step still needs them).
-        decisions: dict[str, str] = dict((req_state or {}).get("step_decisions") or {})
+        decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
 
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
@@ -415,7 +428,7 @@ class Orchestrator:
         async def run_one(step: dict) -> TaskResult:
             prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
             if step["id"] in decisions:
-                prompt += f"\n\nPI answer to your blocking question: {decisions[step['id']]}"
+                prompt += "\n\nYour earlier blocking question and the PI's answer:\n" + qa_text(decisions[step["id"]])
             ctx = upstream(step)
             if feedback and step["id"] in feedback:
                 prev = results.get(step["id"])
@@ -483,7 +496,8 @@ class Orchestrator:
                             if running:
                                 await asyncio.gather(*running.values(), return_exceptions=True)
                             raise RuntimeError(f"step {sid} PI decision denied or unanswered")
-                        decisions[sid] = str(dec["note"]).strip()
+                        # Keep the question with the answer: "b" or "the second option" means nothing alone.
+                        decisions[sid] = {"question": question.strip(), "answer": str(dec["note"]).strip()}
                         if req_state is not None:
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
                             self.hub.save_request(rid)
@@ -504,7 +518,8 @@ class Orchestrator:
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
-        text = req["text"] + "".join("\n\nPI clarification answers:\n" + a for a in req.get("clarifications") or [])
+        text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
+                                     for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             if req["mode"] == "direct":
@@ -518,8 +533,10 @@ class Orchestrator:
 
             all_agents = list(self.hub.agents.values())
             known = {a["id"] for a in all_agents}
-            roster = [a for a in all_agents if a["id"] not in
-                      {"cso", "chief_of_staff", "sci_reviewer"}]
+            # The configured orchestration agents, not only the default ids, stay out of the worker roster.
+            orchestration = set(ORCHESTRATION_ROLES) | {x for x in (self.cfg.cso_agent, self.cfg.chief_of_staff_agent,
+                                                                   self.cfg.reviewer_agent) if x}
+            roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
             if resume and req.get("plan", {}).get("steps"):
                 steps = req["plan"]["steps"]
@@ -579,10 +596,10 @@ class Orchestrator:
                         if not dec.get("approved") or not str(dec.get("note") or "").strip():
                             self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
                             return
-                        answer = str(dec["note"]).strip()
-                        req.setdefault("clarifications", []).append(answer)
+                        entry = {"questions": questions, "answer": str(dec["note"]).strip()}
+                        req.setdefault("clarifications", []).append(entry)
                         self.hub.save_request(rid)  # a restart must not lose the PI's answer
-                        text += "\n\nPI clarification answers:\n" + answer
+                        text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
                         plan_res = await make_plan(text)
                         if not plan_res.ok:
                             self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
@@ -591,7 +608,7 @@ class Orchestrator:
                         if plan.get("clarifying_questions"):
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
-                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps)
+                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
                 req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                 await self._emit(rid, "request.plan", req["plan"])
                 for rec in plan.get("recruit") or []:

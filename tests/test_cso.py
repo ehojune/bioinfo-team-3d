@@ -89,7 +89,7 @@ async def test_plan_waits_for_answer_and_replans_before_dispatch():
         calls.append(task)
         if task.meta["kind"] == "plan":
             assert "scheduler=none" in task.prompt and "labhq_hpc=no" in task.prompt
-            questions = [] if "PI clarification answers:" in task.prompt else ["Which cohort?"]
+            questions = [] if "PI clarification (questions and answer):" in task.prompt else ["Which cohort?"]
             return result(task, structured={"steps": [STEPS[0]], "clarifying_questions": questions})
         if task.meta["kind"] == "step":
             assert len([t for t in calls if t.meta["kind"] == "plan"]) == 2
@@ -107,8 +107,9 @@ async def test_plan_waits_for_answer_and_replans_before_dispatch():
     assert hub.requests["r"]["status"] == "done", hub.requests["r"]
     assert [t.meta["kind"] for t in calls[:3]] == ["plan", "plan", "step"]
     assert hub.approvals[0]["kind"] == "clarify"
-    assert hub.requests["r"]["clarifications"] == ["cases"]  # durable for a resume after restart
-    assert "PI clarification answers:\ncases" in calls[2].prompt
+    entry = hub.requests["r"]["clarifications"][0]  # durable for a resume after restart
+    assert entry == {"questions": ["Which cohort?"], "answer": "cases"}
+    assert "Q1. Which cohort?\nPI answer: cases" in calls[1].prompt  # the re-plan sees what was answered
 
 
 @pytest.mark.asyncio
@@ -121,7 +122,7 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
         if kind == "plan":
             return result(task, structured={"steps": STEPS[:2]})
         if kind == "step" and task.meta["step_id"] == "A":
-            if "PI answer to your blocking question:" not in task.prompt:
+            if "Your earlier blocking question and the PI's answer:" not in task.prompt:
                 return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"})
             assert not any(t.meta.get("step_id") == "B" for t in calls)
         return result(task, text="done")
@@ -136,6 +137,18 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert hub.requests["r"]["status"] == "done", hub.requests["r"]
     assert [t.meta.get("step_id") for t in calls if t.meta["kind"] == "step"] == ["A", "A", "B"]
     assert hub.approvals[0]["kind"] == "clarify"
+    rerun = [t for t in calls if t.meta.get("step_id") == "A"][1]
+    assert "Q1. Cases or controls?\nPI answer: cases" in rerun.prompt  # the answer arrives with its question
+    assert hub.requests["r"]["step_decisions"]["A"] == {"question": "Cases or controls?", "answer": "cases"}
+
+
+def test_configured_orchestration_agents_are_not_workers():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "s1", "agent_id": "boss", "instruction": "plan more", "outputs": []},
+           {"id": "s2", "agent_id": "worker", "instruction": "work", "outputs": []}]
+    steps, warnings = validate_steps(raw, {"boss", "worker"}, 10, {"boss"})
+    assert [s["id"] for s in steps] == ["s2"] and any("orchestration role removed" in w for w in warnings)
 
 
 @pytest.mark.asyncio
