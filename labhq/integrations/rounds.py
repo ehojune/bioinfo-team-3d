@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -209,7 +210,6 @@ class RoundRecorder:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
         self.client: GitHubClient | None = None
-        self.private_ok: bool | None = None
         if not self.s.dev_log.repo:
             log.warning("dev_log.repo is unset; rounds are recorded locally only")
 
@@ -232,14 +232,18 @@ class RoundRecorder:
         self.queue.put_nowait(rid)
 
     def recover(self) -> None:
-        for rid in self.hub.store.all("round_delivery"):
-            self.submit(rid)
+        """Rebuild every terminal/interrupted record from the DB and re-queue delivery.
+
+        A crash can land between the DB commit, the JSON, the Markdown and the queue, so existing files prove
+        nothing. publish() skips the API when the stored body digest already matches.
+        """
+        pending = set(self.hub.store.all("round_delivery"))
         for rid, req in self.hub.requests.items():
-            if req.get("status") == "interrupted" or req.get("status") in {"done", "failed", "cancelled"}:
-                if not (self.directory / f"{rid}.json").exists():
-                    self.write(rid)
-                if req.get("status") == "interrupted" or not self.hub.store.get("round_issue", rid):
-                    self.submit(rid)
+            if req.get("status") in {"interrupted", "done", "failed", "cancelled"}:
+                self.write(rid)
+                pending.add(rid)
+        for rid in pending:
+            self.submit(rid)
 
     async def drain(self) -> None:
         await self.queue.join()
@@ -268,12 +272,6 @@ class RoundRecorder:
                                        lambda value: sanitize(value, self.s.policy,
                                            [self.s.gateway.client_token, self.s.gateway.runner_token]))
         gh = self.client
-        if self.private_ok is None:
-            meta = await gh._req("GET", f"/repos/{cfg.repo}")
-            self.private_ok = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
-        if not self.private_ok and not cfg.allow_public:
-            log.warning("round issue publication refused: configured repository is public")
-            return False
         record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
         clean = gh.clean
         body = render_record(_clean_tree(record, clean))
@@ -281,6 +279,15 @@ class RoundRecorder:
         body = marker + "\n\n" + body
         if len(body) > MAX_BODY:
             log.warning("round record exceeds GitHub issue size; local record retained")
+            return False
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        if (self.hub.store.get("round_issue", rid) or {}).get("sha256") == digest:
+            return True  # exactly this record is already published
+        # Checked before every write: the repository can be made public while the gateway runs.
+        meta = await gh._req("GET", f"/repos/{cfg.repo}")
+        private = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
+        if not private and not cfg.allow_public:
+            log.warning("round issue publication refused: configured repository is public")
             return False
         existing = await gh.find_marked_issue(cfg.repo, marker)
         if existing:
@@ -291,5 +298,5 @@ class RoundRecorder:
             created = await gh.create_issue(cfg.repo, f"[labhq round] {short(clean(record['request'].get('text') or rid), 70)}",
                                             body, cfg.labels)
             number = created["number"]
-        self.hub.store.put("round_issue", rid, {"number": number})
+        self.hub.store.put("round_issue", rid, {"number": number, "sha256": digest})
         return True

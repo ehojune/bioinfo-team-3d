@@ -144,7 +144,7 @@ async def test_private_issue_redaction_restart_and_update(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_public_repo_refused_and_visibility_cached(tmp_path):
+async def test_public_repo_refused_and_visibility_rechecked_before_each_write(tmp_path):
     cfg = settings(tmp_path)
     cfg.dev_log.repo = "records/private"
     remote = FakeGitHub(public=True)
@@ -153,5 +153,45 @@ async def test_public_repo_refused_and_visibility_cached(tmp_path):
     hub.rounds.write("req-one")
     assert not await hub.rounds.publish("req-one")
     assert not await hub.rounds.publish("req-one")
-    assert sum(method == "GET" for method, _, _ in remote.calls) == 1
+    assert sum(method == "GET" and path == "/repos/records/private" for method, path, _ in remote.calls) == 2
     assert not any(method in {"POST", "PATCH"} for method, _, _ in remote.calls)
+
+
+@pytest.mark.asyncio
+async def test_repo_made_public_after_first_post_stops_later_posts(tmp_path):
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-one", "interrupted")
+    hub.rounds.write("req-one")
+    assert await hub.rounds.publish("req-one")
+    remote.public = True  # someone flips the records repo to public
+    hub.requests["req-one"]["status"] = "done"
+    hub.rounds.write("req-one")
+    writes = sum(method in {"POST", "PATCH"} for method, _, _ in remote.calls)
+    assert not await hub.rounds.publish("req-one")
+    assert sum(method in {"POST", "PATCH"} for method, _, _ in remote.calls) == writes
+
+
+@pytest.mark.asyncio
+async def test_recovery_rebuilds_existing_records_and_skips_unchanged_publish(tmp_path):
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-one", "interrupted")
+    hub.rounds.write("req-one")
+    assert await hub.rounds.publish("req-one")
+    hub.requests["req-one"]["status"] = "done"  # finished, but the process died before the record was rewritten
+    stale = (hub.rounds.directory / "req-one.json").read_text(encoding="utf-8")
+    hub.rounds.recover()
+    await hub.rounds.drain()
+    fresh = (hub.rounds.directory / "req-one.json").read_text(encoding="utf-8")
+    assert fresh != stale and json.loads(fresh)["result"]["status"] == "done"
+    assert (hub.rounds.directory / "req-one.md").exists()
+    before = len(remote.calls)
+    hub.rounds.recover()
+    await hub.rounds.drain()
+    assert len(remote.calls) == before  # same record already published: no API calls
+
