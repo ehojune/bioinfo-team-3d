@@ -2,6 +2,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · P5 공개 가드·Windows 인코딩
+
+- 무엇을: 통제접근 경로의 구분자·대소문자 변형과 하위 경로를 가리고, 모든 GitHub 쓰기 payload와 report content를 검사한다. 파일 I/O는 UTF-8, CLI 콘솔은 기존 인코딩에서 대체 출력한다.
+- 테스트: mock GitHub 전체 흐름·AST 인코딩·cp949 콘솔 검사 통과. Windows 전체 pytest는 기존 11 failed에서 9 failed로 줄었고, 남은 실패 목록은 같다.
+- 다음: 병합 뒤 실제 private 테스트 저장소에서 end-to-end 재검증한다.
+
 ## 2026-09-28 · 후속 issue #12·#13
 
 - 무엇을: 공유 표시 규칙으로 3D 완료 포즈·표지를 3초 뒤 대기로 돌리고, 리뷰 요약 누락·파싱 실패·stale 상태도 8·9회에 한 번 경고한다. Fixes #12, Fixes #13.

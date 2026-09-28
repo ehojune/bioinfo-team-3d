@@ -38,7 +38,7 @@ class TaskWorkspace:
         if t.context:
             body += f"\n## Context from teammates\n{t.context}\n"
         name = "TASK.md" if not t.resume_session_id else f"TASK_wake_{t.id}.md"
-        (self.dir / name).write_text(body)
+        (self.dir / name).write_text(body, encoding="utf-8")
         if len(body) <= INLINE_LIMIT:
             return body
         return (f"Read {name} in the current directory (it is long) and carry out the instruction there.\n\n"
@@ -55,29 +55,29 @@ class TaskWorkspace:
                 shutil.copytree(skill_dir, dst)
 
     def append_event(self, ev: dict[str, Any]) -> None:
-        with open(self.dir / "events.jsonl", "a") as f:
+        with open(self.dir / "events.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(ev, ensure_ascii=False, default=str) + "\n")
 
     def append_job(self, job: dict[str, Any]) -> None:
-        with open(self.dir / "jobs.jsonl", "a") as f:
+        with open(self.dir / "jobs.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(job, ensure_ascii=False) + "\n")
 
     def write_manifest(self, **fields: Any) -> None:
         p = self.dir / "manifest.json"
-        data = json.loads(p.read_text()) if p.exists() else {
+        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {
             "labhq_version": __version__, "host": platform.node(),
             "task": self.task.model_dump(mode="json", exclude={"context"}),
             "agent_id": self.agent.id, "engine": self.agent.engine.value, "model": self.agent.model,
             "agent_spec_sha256": hashlib.sha256(self.agent.model_dump_json().encode()).hexdigest(),
         }
         data.update(fields)
-        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
         p = self.dir / "manifest.json"
         if not p.exists():
             self.write_manifest()
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(encoding="utf-8"))
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
-        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")

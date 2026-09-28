@@ -12,7 +12,7 @@ import pytest
 import uvicorn
 
 from labhq.gateway.server import Hub, RequestIn, create_app
-from labhq.integrations.github import codex_comment, sanitize
+from labhq.integrations.github import GitHubClient, codex_comment, sanitize
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, ProjectSettings, Settings
 from labhq.util import free_port
@@ -111,6 +111,122 @@ def test_publish_guard_and_codex_mention():
     assert "/data/cohort" not in out and "ghp_" not in out and "<restricted-zone>" in out
     assert codex_comment("review") == "@codex review"
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
+
+
+def test_restricted_zones_match_separators_case_and_directory_boundary():
+    policy = PolicySettings(data_zones=[
+        DataZone(path="/data/cohort", level="restricted"),
+        DataZone(path="/data/cohort/deeper", level="restricted"),
+        DataZone(path="D:" + "/restricted/dua_cohort/", level="restricted"),
+    ])
+    for path in ("/DATA/cohort/sub/file.cram", r"\data\COHORT\sub\file.cram",
+                 r"D:\RESTRICTED\dua_cohort\sample.cram", "d:/restricted/DUA_COHORT/",
+                 "/data/cohort/deeper/file.cram"):
+        assert sanitize(path, policy) == "<restricted-zone>"
+    assert sanitize("/data/cohort2/file.cram", policy) == "/data/cohort2/file.cram"
+
+
+@pytest.mark.asyncio
+async def test_full_reporter_flow_guards_every_outbound_string(tmp_path):
+    zone = "D:" + "/restricted/dua_cohort"
+    secret = "ghp_" + "t7ehzlZ1Jxnv4CLHUkwKNzwd7mEd8OGtjWN7"
+    sent: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/issues"):
+            return httpx.Response(200, json=[])
+        if request.method == "POST" and path.endswith("/issues"):
+            return httpx.Response(201, json={"number": 7, "html_url": "https://example.test/7"})
+        if request.method == "POST" and path.endswith("/comments"):
+            return httpx.Response(201, json={"html_url": "https://example.test/comment"})
+        if request.method == "GET" and "/contents/" in path:
+            return httpx.Response(404, json={})
+        if request.method == "PUT" and "/contents/" in path:
+            return httpx.Response(201, json={"content": {"html_url": "https://example.test/report"}})
+        if request.method == "PATCH":
+            return httpx.Response(200, json={"state": "closed"})
+        return httpx.Response(404, json={})
+
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p", labels=[zone + "/label", secret])])
+    s.policy.data_zones = [DataZone(path=zone, level="restricted")]
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s, github_transport=httpx.MockTransport(api))
+    rid = "r"
+    hub.requests[rid] = {"text": f"{zone}/sample.cram {secret}", "project_id": "p", "status": "done"}
+    events = [
+        {"type": "request.created", "data": {}},
+        {"type": "request.plan", "data": {"steps": [{"id": "s", "agent_id": "analyst",
+            "instruction": zone + "/plan.cram " + secret}]}},
+        {"type": "request.review", "data": {"revision": 0, "status": "review_unparsed",
+            "reason": zone.upper().replace("/", "\\") + "\\review.cram " + secret}},
+        {"type": "request.completed", "data": {"ok": True,
+            "report": zone.upper().replace("/", "\\") + "\\report.cram " + secret}},
+    ]
+    for seq, ev in enumerate(events, 1):
+        await hub.reporter.handle({**ev, "request_id": rid, "seq": seq})
+
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from strings(key)
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    payloads = [json.loads(req.content) for req in sent if req.content]
+    assert [req.method for req in sent if req.method in ("POST", "PUT", "PATCH")].count("PUT") == 1
+    report = next(p for p in payloads if "content" in p)
+    outbound = [req.url.path for req in sent] + list(strings(payloads))
+    outbound.append(base64.b64decode(report["content"]).decode("utf-8"))
+    for value in outbound:
+        assert secret not in value
+        assert zone.casefold() not in value.replace("\\", "/").casefold()
+    assert "<restricted-zone>" in str(payloads)
+    assert "<restricted-zone>" in outbound[-1]
+
+
+@pytest.mark.asyncio
+async def test_file_upload_guards_content_before_base64_without_truncating_payload():
+    zone = "D:" + "/restricted/dua_cohort"
+    policy = PolicySettings(data_zones=[DataZone(path=zone, level="restricted")])
+    uploads = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(404, json={})
+        uploads.append(json.loads(request.content))
+        return httpx.Response(201, json={"content": {"html_url": "https://example.test/report"}})
+
+    client = GitHubClient("test-token", "https://example.test", httpx.MockTransport(api),
+                          lambda value: sanitize(value, policy))
+    await client.put_file("o/p", "report.md", "한" * 20_000 + zone + "/file.cram",
+                          zone + "/commit", "main")
+    body = uploads[0]
+    decoded = base64.b64decode(body["content"]).decode("utf-8")
+    assert len(body["content"]) > 60_000
+    assert decoded.endswith("<restricted-zone>")
+    assert body["message"] == "<restricted-zone>"
+
+
+@pytest.mark.asyncio
+async def test_title_and_report_heading_clean_before_shortening(tmp_path):
+    zone = "D:" + "/restricted/dua_cohort"
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p")])
+    s.policy.data_zones = [DataZone(path=zone, level="restricted")]
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s, github_transport=fake_github(calls))
+    hub.requests["r"] = {"text": "x" * 62 + zone + "/sample.cram", "project_id": "p"}
+    await hub.reporter.handle({"type": "request.created", "request_id": "r", "data": {}})
+    title = next(body["title"] for method, _, body in calls if method == "POST")
+    assert "D:/res" not in title
+    heading = hub.reporter._report_md("r", {"text": "x" * 110 + zone + "/sample.cram"}, "")
+    assert "D:/res" not in heading
 
 
 @pytest.mark.asyncio

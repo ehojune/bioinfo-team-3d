@@ -132,7 +132,7 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
         os.chmod(script_path.parent, 0o2750)
         os.chmod(logs, 0o2770)
         os.chmod(output_dir, 0o2770)
-    script_path.write_text(body)
+    script_path.write_text(body, encoding="utf-8")
     if job_group:
         os.chown(script_path, -1, gid)
     script_path.chmod(0o750)
@@ -164,7 +164,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     ch = core_hours(cores, walltime)
 
     if hpc_needs_approval(cores, walltime, S.policy):
-        preview = "\n".join(spath.read_text().splitlines()[:40])
+        preview = "\n".join(spath.read_text(encoding="utf-8").splitlines()[:40])
         try:
             dec = await _broker("/approval", {
                 "task_id": TASK, "agent_id": AGENT, "kind": "hpc_submit",

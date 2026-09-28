@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
@@ -38,9 +38,16 @@ SECRET_PATTERNS = [
 
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
     out = text or ""
-    for z in policy.data_zones:
-        if z.level == "restricted":
-            out = out.replace(os.path.normpath(os.path.expanduser(z.path)), "<restricted-zone>")
+    zones = sorted((os.path.expanduser(z.path).rstrip("/\\") for z in policy.data_zones
+                    if z.level == "restricted"), key=len, reverse=True)
+    for zone in zones:
+        if not zone:
+            continue
+        parts = re.split(r"[/\\]+", zone)
+        pattern = r"[/\\]+".join(re.escape(part) for part in parts)
+        # A zone is a directory boundary; consume descendants so none of the path survives.
+        out = re.sub(pattern + r"(?![\w.-])(?:[/\\]+[^\s/\\<>\"'`()[\]{};,]+)*[/\\]*",
+                     "<restricted-zone>", out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     for secret in extra_secrets:
@@ -55,17 +62,40 @@ def codex_comment(body: str, mention: str = "@codex") -> str:
 
 
 class GitHubClient:
-    def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None,
+                 clean: Callable[[str], str] | None = None):
+        self.clean = clean or (lambda value: value)
         self.http = httpx.AsyncClient(base_url=api_url.rstrip("/"), transport=transport, timeout=30, headers={
             "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "labhq",
         })
 
     async def _req(self, method: str, path: str, **kw: Any) -> Any:
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            path = self.clean(path)
+            if "json" in kw:
+                if method == "PUT" and "/contents/" in path:
+                    payload = dict(kw["json"])
+                    content = base64.b64decode(payload["content"]).decode("utf-8")
+                    guarded = base64.b64encode(self.clean(content).encode("utf-8")).decode("ascii")
+                    kw["json"] = self._clean_value({k: v for k, v in payload.items() if k != "content"})
+                    kw["json"]["content"] = guarded
+                else:
+                    kw["json"] = self._clean_value(kw["json"])
         r = await self.http.request(method, path, **kw)
         if r.status_code >= 400:
             raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:300]}")
         return r.json() if r.content else {}
+
+    def _clean_value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self.clean(value)
+        if isinstance(value, dict):
+            return {self.clean(k) if isinstance(k, str) else k: self._clean_value(v)
+                    for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._clean_value(v) for v in value]
+        return value
 
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels})
@@ -105,6 +135,7 @@ class GitHubClient:
         return issue.get("state") == "closed"
 
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
+        path, content, branch = self.clean(path), self.clean(content), self.clean(branch)
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
@@ -147,7 +178,7 @@ class ProjectReporter:
                     self._warned.add("token")
                     log.warning("GitHub updates are off: set %s on the gateway host", self.s.github.token_env)
                 return None
-            self._client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport)
+            self._client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport, self._clean)
         return self._client
 
     def submit(self, ev: dict) -> None:
@@ -239,7 +270,7 @@ class ProjectReporter:
             find_issue = getattr(gh, "find_request_issue", None)
             issue = await find_issue(proj.repo, rid) if find_issue else None
             if issue is None:
-                issue = await gh.create_issue(proj.repo, f"[labhq] {short(req.get('text', ''), 70)}",
+                issue = await gh.create_issue(proj.repo, f"[labhq] {short(self._clean(req.get('text', '')), 70)}",
                                               self._clean(self._issue_body(rid, req)), proj.labels)
             self.issues[rid] = issue["number"]
             self.hub.store.put("github_issue", rid, {"number": issue["number"]})
@@ -330,7 +361,6 @@ class ProjectReporter:
         return (f"🐢 **과학 리뷰 #{review.get('revision', 0)}: {review.get('verdict')}** — 질문 부합 "
                 f"{sc.get('addresses_question')}/5 · 근거 {sc.get('evidence')}/5 · 철저성 {sc.get('thoroughness')}/5{issues}")
 
-    @staticmethod
-    def _report_md(rid: str, req: dict, report: str) -> str:
-        return (f"# {short(req.get('text', ''), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
+    def _report_md(self, rid: str, req: dict, report: str) -> str:
+        return (f"# {short(self._clean(req.get('text', '')), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
                 f"- 비용: ${req.get('cost_usd', 0)}\n\n{report}\n")
