@@ -17,6 +17,7 @@ runner:
   job_poll_s: 60
 
 engines:
+# bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
   claude_code: {bin: claude}
   codex: {bin: codex, extra_args: []}
   gemini: {bin: gemini}

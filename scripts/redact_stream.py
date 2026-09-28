@@ -24,11 +24,18 @@ INIT_KEEP = {"type", "subtype", "event", "session_id", "thread_id", "conversatio
 INIT_COUNT = {"tools", "skills", "slash_commands", "terminal_slash_commands", "agents", "plugins"}
 
 
-def _prune_init(obj: dict) -> dict:
+def _prune_init(obj: dict, plugin_skill: str = "") -> dict:
     out = {}
     for key, value in obj.items():
-        if key in INIT_KEEP:
+        if key == "cwd" and plugin_skill:
+            out[key] = "<WORKDIR>"
+        elif key in INIT_KEEP:
             out[key] = value
+        elif key == "skills" and plugin_skill and isinstance(value, list):
+            out[key] = [plugin_skill] if plugin_skill in value else []
+        elif key == "plugins" and plugin_skill and isinstance(value, list):
+            name = plugin_skill.split(":", 1)[0]
+            out[key] = [{"name": name}] if any(isinstance(p, dict) and p.get("name") == name for p in value) else []
         elif key in INIT_COUNT and isinstance(value, list):
             out[key] = f"<{len(value)} items>"
         elif key == "mcp_servers" and isinstance(value, list):
@@ -55,12 +62,12 @@ def _prune_system(ev: dict) -> dict:
     return out
 
 
-def prune_event(ev):
+def prune_event(ev, plugin_skill: str = ""):
     """Drop machine inventory from init and other system events (claude system/*, agy init)."""
     if not isinstance(ev, dict):
         return ev
     if ev.get("type") == "system" and ev.get("subtype") == "init":
-        return _prune_init(ev)
+        return _prune_init(ev, plugin_skill)
     if ev.get("type") == "system":
         return _prune_system(ev)
     if ev.get("type") == "rate_limit_event":
@@ -69,14 +76,15 @@ def prune_event(ev):
         return {**{k: v for k, v in ev.items() if k in {"type", "uuid", "session_id"}},
                 "rate_limit_info": {k: info[k] for k in ("status", "rateLimitType") if k in info}}
     if ev.get("event") == "init" and isinstance(ev.get("init"), dict):
-        return {**{k: v for k, v in ev.items() if k != "init"}, "init": _prune_init(ev["init"])}
+        return {**{k: v for k, v in ev.items() if k != "init"}, "init": _prune_init(ev["init"], plugin_skill)}
     return ev
 
 
 class Redactor:
-    def __init__(self, *, home: str, tmp: str, workdir: str, username: str):
+    def __init__(self, *, home: str, tmp: str, workdir: str, username: str, plugin_skill: str = ""):
         self.ids: dict[str, str] = {}
         self.username = username
+        self.plugin_skill = plugin_skill
         self.paths = [(p, label) for p, label in
                       ((workdir, "<WORKDIR>"), (tmp, "<TMP>"), (home, "<HOME>")) if p]
         self.paths.sort(key=lambda pair: len(pair[0]), reverse=True)
@@ -120,7 +128,7 @@ class Redactor:
 
     def line(self, line: str) -> str:
         try:
-            return json.dumps(self.object(prune_event(json.loads(line))), ensure_ascii=False)
+            return json.dumps(self.object(prune_event(json.loads(line), self.plugin_skill)), ensure_ascii=False)
         except json.JSONDecodeError:
             return self.string(line)
 
@@ -139,8 +147,10 @@ def main() -> None:
     p.add_argument("--tmp", default=tempfile.gettempdir())
     p.add_argument("--workdir", default=os.getcwd())
     p.add_argument("--username", default=os.environ.get("USERNAME") or os.environ.get("USER") or "")
+    p.add_argument("--plugin-skill", default="", help="Keep only this named plugin skill and its plugin name in init")
     a = p.parse_args()
-    redact_file(a.input, a.output, Redactor(home=a.home, tmp=a.tmp, workdir=a.workdir, username=a.username))
+    redact_file(a.input, a.output, Redactor(home=a.home, tmp=a.tmp, workdir=a.workdir,
+                                            username=a.username, plugin_skill=a.plugin_skill))
 
 
 if __name__ == "__main__":
