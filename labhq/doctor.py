@@ -221,7 +221,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
 def render(manifest: dict) -> str:
     lines = [f"{'AREA':<9} {'CHECK':<22} {'STATE':<5} DETAIL", "-" * 78]
     for row in manifest["checks"]:
-        lines.append(f"{row['group']:<9} {row['name']:<22} {row['status']:<5} {row['detail']} | fix: {row['hint']}")
+        hint = f" | fix: {row['hint']}" if row["status"] != "ok" and row.get("hint") else ""  # hints only where needed
+        lines.append(f"{row['group']:<9} {row['name']:<22} {row['status']:<5} {row['detail']}{hint}")
     return "\n".join(lines)
 
 
