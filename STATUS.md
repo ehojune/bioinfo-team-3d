@@ -2,6 +2,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · 후속 P2 #19·#21·#22
+
+- 무엇을: `labhq demo --host ::`가 IPv6 주소로 폰 URL을 출력한다(#19). plugin provenance 해시에 git index mode(실행 비트)를 넣었다(#21). `pr_gate.py --dry-run` advice가 병합이 막혀도 현재 head의 P2 목록을 담는다(#22). HANDOFF에 P5 완료와 P3 러너 계정 결정 대기를 적었다.
+- 테스트: Windows `pytest -q` 332 passed → 338 passed, 실패는 기존 shebang 4건 그대로. 공개 검사 통과.
+- 남은 점: 실제 IPv6 LAN 접속은 미검증. P2 두 건은 후속 issue로 넘겼다(작업 트리 mode, hostname에 없는 IPv6 주소).
+
 ## 2026-09-28 · PR 규칙: 자동 병합 게이트 끔
 
 - 무엇을: PI 결정으로 `pr-gate.yml`의 자동 트리거를 없애고 수동 dry-run만 남겼다. dry-run은 상한 없이 병합 조건 충족 여부와 이유만 알린다(`advisory`). 리뷰 깊이와 병합은 Claude가 판단한다: 새 라운드는 직전 수정 확인이나 다른 부류의 결함이 있을 때만, 같은 부류의 좁은 변형은 부류를 닫는 수정 한 번 뒤 병합하고 나머지는 후속 issue.
