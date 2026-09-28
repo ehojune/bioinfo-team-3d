@@ -296,6 +296,9 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
 
 # ---------------- entry point ----------------
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="labhq", description="Bio lab HQ — multi-agent research lab")
     p.add_argument("-c", "--config", default=None, help="config YAML (default: $LABHQ_CONFIG)")
     sub = p.add_subparsers(dest="cmd", required=True)

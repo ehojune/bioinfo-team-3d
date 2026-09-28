@@ -91,7 +91,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🦉 부엉이 CSO | `cso` | 질문 설계·업무 배분·증거 통합 (분석 안 함) | Claude Code / opus | Read·Glob·Grep만 |
 | 🐧 펭귄 비서실장 | `chief_of_staff` | 착수 브리핑: 동향·데이터 접근성·리스크 | Claude Code / sonnet | 웹 |
 | 🐻 곰 Biology 만물박사 | `biologist` | 가설·메커니즘·교란요인 | Claude Code / opus | 웹 |
-| 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 (검증된 파이프라인을 표준대로 반복) | 자체 에이전트 (`engine: cli`) | HPC |
+| 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 (검증된 파이프라인을 표준대로 반복) | Claude Code + bioinfo plugin | HPC |
 | 🐿️ 다람쥐 데이터 담당 | `data_steward` | 공개/통제접근 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | HPC |
 | 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Antigravity / gemini-3.8-flash-high | Google 검색 |
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 (nf-core·Snakemake 우선) | Claude Code / opus | HPC |
@@ -104,19 +104,14 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: antigravity`, `model: gemini-3.8-flash-high`)
 
 ### bioinfo-agent 연결하기
-직접 만든 에이전트는 `engine: cli`로 붙습니다. `agents/core/bioinfo-agent.yaml`의 `cli.command`를 실제 실행 방식으로
-바꾸면 되고, 명령에는 `{prompt_file}`, `{workdir}`, `{outputs}`, `{mcp_config}`, `{session_id}` 같은 자리표시자를 씁니다.
-stdout으로 JSON 줄을 내보내면 사무실 애니메이션까지 살아납니다 (`output: jsonl`):
+러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다. 실행 전에
+plugin 이름(`bioinfo`)과 `required_skills`의 skill이 실제로 있는지 확인하고, 없으면 시작하지 않습니다(오류에는 경로를 싣지 않음).
+CLI를 띄우기 전에 plugin 이름·version·내용 해시를 run manifest의 `plugins`에 남깁니다. 이 직원만 `--plugin-dir`로
+plugin을 읽고 `--disable-slash-commands`를 빼서 `bioinfo:bioinfo-analyze` skill을 씁니다. 이때 setting source는
+`local`만 둡니다(작업공간에 남은 `.claude/skills`가 끼어들지 않게). 다른 직원의 skill 차단과
+`--setting-sources project,local`, 개인 `CLAUDE.md` 제외, auto memory 차단은 그대로입니다.
 
-```json
-{"type": "status", "state": "working", "task": "batch QC"}
-{"type": "tool", "name": "fastqc", "input": {"samples": 12}}
-{"type": "log", "text": "12/12 samples passed"}
-{"type": "result", "ok": true, "text": "…보고…", "structured": {}, "session_id": "…", "cost_usd": 0.05}
-```
-평범한 텍스트만 내보내도 됩니다 (`output: text`). `{mcp_config}`에는 labhq의 승인·HPC MCP 서버가 Claude 형식
-`mcp.json`으로 들어 있어서, Claude Agent SDK 기반이면 그대로 불러 쓸 수 있습니다. CSO는 반복·정형 작업을
-bioinfo-agent에게, 새 분석 설계는 너구리 분석가에게 나눠 맡깁니다.
+다른 자체 CLI 직원은 `engine: cli`와 `cli.command`를 사용할 수 있습니다 (`labhq/adapters/cli.py`).
 
 ---
 
@@ -177,6 +172,8 @@ flowchart LR
 설정은 `config/labhq.example.yaml`의 `github:`·`projects:`. 토큰은 게이트웨이 호스트의 `GITHUB_TOKEN` 환경변수에서만 읽습니다
 (fine-grained PAT, 해당 저장소의 Issues·Contents 읽기/쓰기). **공개 가드**: 통제접근 경로와 비밀값으로 보이는 문자열은 가리고,
 `visibility: public` 저장소에는 `allow_public_reports: true`가 없으면 아무것도 올리지 않습니다.
+통제접근 경로 판정은 접근 정책과 같습니다(구분자·대소문자·`.`/`..` 정규화). 그런 경로가 있는 줄은 통째로 가리고,
+이슈 제목·본문·코멘트·보고서·커밋 메시지를 모두 검사합니다. `/`나 `E:/` 같은 루트를 통제 구역으로 두면 아무것도 게시하지 않습니다.
 
 **Codex PR 규칙**: P1은 해당 PR에서 고치고 P2는 후속 issue로 넘깁니다. codex 리뷰는 push 묶음마다 PR 상단 요청 댓글 한 번만 부르고, 인라인 답글에는 멘션을 쓰지 않으며, Running 중에는 재호출하지 않습니다. 고정 상한 대신 Claude가 깊이를 판단합니다. 같은 부류의 더 좁은 지적이 이어지면 부류를 닫는 수정 한 번 뒤 병합하고 나머지는 후속 issue로 넘깁니다. 자동 병합 워크플로(`pr-gate.yml`)는 끄고 수동 dry-run 판정만 남겼습니다.
 `labhq codex-review <project> <PR번호>`가 그 한 번의 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.

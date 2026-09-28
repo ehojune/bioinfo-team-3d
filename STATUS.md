@@ -2,6 +2,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · P5 공개 가드·Windows 인코딩
+
+- 무엇을: 통제접근 경로의 구분자·대소문자 변형과 하위 경로를 가리고, 모든 GitHub 쓰기 payload와 report content를 검사한다. 파일 I/O는 UTF-8, CLI 콘솔은 기존 인코딩에서 대체 출력한다.
+- 테스트: mock GitHub 전체 흐름·AST 인코딩·cp949 콘솔 검사 통과. Windows 전체 pytest는 기존 11 failed에서 9 failed로 줄었고, 남은 실패 목록은 같다.
+- 다음: 병합 뒤 실제 private 테스트 저장소에서 end-to-end 재검증한다.
+
+## 2026-09-28 · P2 bioinfo-agent plugin 연결
+
+- 무엇을: `bioinfo-agent`에 Claude Code plugin `bioinfo`를 `--plugin-dir`로 연결했다. 이 직원만 skill을 허용하고 나머지 개인 설정 격리는 유지한다. 실행 전 plugin 경로와 manifest를 검사한다.
+- 근거: 두 실제 init probe에서 skill 허용 시 `bioinfo:bioinfo-analyze`만 로드되고 `--disable-slash-commands` 시 skill은 비었다. 공개 fixture에는 해당 이름만 남겼다.
+- 테스트: 대상 71 passed. 전체 Windows `pytest -q`는 기준 커밋과 동일한 7 failed/14 skipped, 260→269 passed(새 실패 0). `bash scripts/check_public.sh` 통과.
+- 남은 점: Windows sandbox의 기준선 실패 7개와 PI 머신의 실제 plugin 분석 task·QC handoff 확인.
+
 ## 2026-09-28 · demo phone mode
 
 - 한 일: `labhq demo --web --phone`이 LAN 주소의 `/3d` URL을 출력하고, client·runner token을 새로 만들고, 폰 승인을 기다린다. 기본 120초 뒤에만 자동 승인한다. 데모 publish 래퍼가 `runner_id`·`runner_seq`를 넘기지 않아 P1+ ⑤ 이후 `--web` 데모가 멈추던 문제도 고쳤다.

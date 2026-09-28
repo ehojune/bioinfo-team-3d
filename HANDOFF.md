@@ -45,8 +45,8 @@ P1+ 안전·복구 최소선 (PI 결정 2026-09-26, P2·P3 전에): ① 게이�
      러너가 시작을 거부한다. 권장 구성: Linux 러너 전용 계정, 데이터 계정 소유 `0700` 구역, `hpc.submit_prefix`로 데이터 계정 잡 제출(`hpc.user`·`hpc.job_group` 지정, 두 계정 모두 같은 그룹, `sudoers`는 `qsub`·`qdel`만 허용),
      상대 출력은 `hpc_out/`에 쓰고 공유 폴더에는 집계 결과만 둔다. `workspace_root` 밖 상위 경로의 통과 권한은 별도 설정한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
    ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. ①·⑤는 direct 요청·runner 세대·HPC job·제어 단계·리뷰 진행도·GitHub 이슈/계획/리뷰/최종 전달·실시간 이벤트 순서·replay-gap 화면도 복구한다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
-P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Claude Code 스킬)을 묻고 agents/core/bioinfo-agent.yaml의
-   cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
+P2 bioinfo-agent 연결 완료: Claude Code plugin을 `BIOINFO_AGENT_DIR`와 `--plugin-dir`로 로드한다.
+   이 직원만 skill을 허용하고 나머지 개인 설정 격리는 유지한다. 실제 작업 실행은 PI 머신에서 확인한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
    hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
 P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer와 완료 후 3초 표시 규칙을 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
@@ -88,6 +88,5 @@ PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정�
 
 ## 결정 대기 (PI)
 
-1. bioinfo-agent 실행 방식
-2. HPC 설정값: scheduler(sge/pbs), PE 이름, 메모리 리소스, 기본 큐, 로그인 노드 ssh 여부
-3. 거버넌스(정부) 층과 Yuan의 구성
+1. HPC 설정값: scheduler(sge/pbs), PE 이름, 메모리 리소스, 기본 큐, 로그인 노드 ssh 여부
+2. 거버넌스(정부) 층과 Yuan의 구성

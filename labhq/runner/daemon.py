@@ -350,6 +350,7 @@ class Runner:
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs,
                 claude_settings=claude_settings(self.s.policy),
                 use_permission_tool="approval" in agent.builtin_mcp,
+                record_run=lambda **fields: ws.update_run(task.id, **fields),
             )
             ws.update_run(task.id, started_at=time.time(), engine=agent.engine.value, model=agent.model,
                           resume_of=task.resume_session_id, kind=task.meta.get("kind"))
@@ -360,8 +361,8 @@ class Runner:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
-        (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "")
-        (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "")
+        (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "", encoding="utf-8")
+        (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "", encoding="utf-8")
         ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
                       session_id=result.session_id, pending_jobs=pending)
         state = "hibernating" if pending else ("done" if result.ok else "error")
