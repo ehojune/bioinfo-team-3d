@@ -49,9 +49,14 @@ P2 bioinfo-agent 연결 완료: Claude Code plugin을 `BIOINFO_AGENT_DIR`와 `--
    이 직원만 skill을 허용하고 나머지 개인 설정 격리는 유지한다. 실제 작업 실행은 PI 머신에서 확인한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
    hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
+   클러스터 값은 조회로 확정했다(SGE, 제출은 로그인 노드, PE `smp`, `h_vmem`·`h_rt`, 로그인 노드의 HTTPS 열림). 러너 계정이 막혀 있다:
+   PI 계정은 통제 원본을 읽을 수 있어 러너가 시작을 거부한다. bwrap만으로 대체하는 안은 세 자문(gpt-6-sol, gpt-6-astra, Gemini)이
+   모두 부족하다고 봤다(샌드박스 안에서 직접 qsub, 승인된 잡의 원본 출력). 권장: 관리자에게 러너 전용 서비스 계정을 받는다.
 P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer와 완료 후 3초 표시 규칙을 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
-   Chrome headless의 폰/데스크톱 검증 완료. 다음: Claude 내장 브라우저 확인과 iPhone Safari 실사용·발열 점검.
-P5 프로젝트 GitHub 보고: private 테스트 저장소로 --project 요청 → 이슈, 코멘트, 보고서 커밋, 가림 처리를 확인한다.
+   Chrome headless의 폰/데스크톱 검증 완료. `labhq demo --web --phone`이 같은 Wi-Fi의 폰용 URL을 출력하고 승인을 기다린다.
+   다음: iPhone Safari 실사용·발열 점검.
+P5 프로젝트 GitHub 보고 완료: private 테스트 저장소에서 이슈·코멘트·보고서 커밋·닫기·재시작 중복 없음을 확인했다. 첫 실행에서 통제 경로가
+   가려지지 않아 공개 가드를 접근 정책의 경로 판정으로 바꿨고(#17), 재검증에서 경로 변형·붙은 글자·file URI·가짜 secret이 모두 가려졌다.
 P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 scanpy 채용 → 수습 통과, 비용과 시간을 기록한다.
 보류(PI 확인 전에는 만들지 않음): iOS 네이티브 앱, 거버넌스(정부) 층.
 
@@ -88,5 +93,5 @@ PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정�
 
 ## 결정 대기 (PI)
 
-1. HPC 설정값: scheduler(sge/pbs), PE 이름, 메모리 리소스, 기본 큐, 로그인 노드 ssh 여부
+1. HPC 러너 계정: 관리자에게 통제 원본을 읽지 못하는 러너 전용 서비스 계정을 받을지(권장), 다른 방식을 쓸지
 2. 거버넌스(정부) 층과 Yuan의 구성

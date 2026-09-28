@@ -1,6 +1,7 @@
 """The one Claude Code staff member allowed to load the approved bioinfo plugin skill."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -216,8 +217,6 @@ def test_plugin_link_outside_the_plugin_is_refused_without_paths(tmp_path):
 
 
 def test_git_plugin_provenance_covers_scripts_but_not_ignored_output(tmp_path):
-    import subprocess
-
     from labhq.adapters.claude_code import plugin_provenance
 
     plugin = _plugin(tmp_path / "plugin")
@@ -237,6 +236,49 @@ def test_git_plugin_provenance_covers_scripts_but_not_ignored_output(tmp_path):
     assert plugin_provenance("bioinfo", plugin)["sha256"] == first["sha256"]
     (plugin / "scripts" / "start.sh").write_text("echo 2\n")
     assert plugin_provenance("bioinfo", plugin)["sha256"] != first["sha256"]
+
+
+def test_git_plugin_provenance_uses_index_executable_mode(tmp_path):
+    from labhq.adapters.claude_code import plugin_provenance
+
+    plugin = _plugin(tmp_path / "plugin")
+    script = plugin / "hooks" / "start.sh"
+    script.parent.mkdir()
+    script.write_text("exit 0\n")
+    try:
+        subprocess.run(["git", "-C", str(plugin), "init", "-q"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(plugin), "add", "."], check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        pytest.skip("git is not available")
+    before = plugin_provenance("bioinfo", plugin)
+    subprocess.run(["git", "-C", str(plugin), "update-index", "--chmod=+x", "hooks/start.sh"],
+                   check=True, capture_output=True)
+    after = plugin_provenance("bioinfo", plugin)
+    assert after["sha256"] != before["sha256"]
+    assert str(tmp_path) not in json.dumps(after)
+
+
+@pytest.mark.parametrize("git_checkout", [False, True])
+def test_untracked_plugin_executable_mode_changes_hash_where_supported(tmp_path, git_checkout):
+    from labhq.adapters.claude_code import plugin_provenance
+
+    plugin = _plugin(tmp_path / "plugin")
+    script = plugin / "hooks" / "start.sh"
+    script.parent.mkdir()
+    script.write_text("exit 0\n")
+    if git_checkout:
+        try:
+            subprocess.run(["git", "-C", str(plugin), "init", "-q"], check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip("git is not available")
+    script.chmod(script.stat().st_mode & ~0o111)
+    if script.stat().st_mode & 0o111:
+        pytest.skip("filesystem cannot clear executable bits")
+    before = plugin_provenance("bioinfo", plugin)["sha256"]
+    script.chmod(script.stat().st_mode | 0o111)
+    if not script.stat().st_mode & 0o111:
+        pytest.skip("filesystem cannot set executable bits")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] != before
 
 
 def test_skill_member_ignores_workspace_memory_files(tmp_path):

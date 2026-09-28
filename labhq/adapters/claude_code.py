@@ -105,15 +105,28 @@ def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
 
 
 def plugin_provenance(name: str, path: Path) -> dict:
-    """Name, declared version, git commit and a content hash of the plugin (no local path)."""
+    """Name, declared version, git commit and a content-and-mode hash (no local path)."""
     root = path.resolve()
     files, commit = _plugin_files(path)
+    staged = _git(path, "ls-files", "--stage", "-z")
+    index_modes = {}
+    if staged is not None:
+        for entry in staged.decode("utf-8", "surrogateescape").split("\0"):
+            if entry:
+                meta, relative = entry.split("\t", 1)
+                mode, _, stage = meta.split(" ")
+                if stage == "0":
+                    index_modes[relative] = mode
     resolved = {f.resolve() for f in files}
     if any(root not in f.parents for f in resolved):
         raise ValueError("plugin file resolves outside the plugin")  # no path: errors reach reports
     h = hashlib.sha256()
     for f in sorted(resolved, key=lambda f: f.relative_to(root).as_posix()):
-        h.update(f.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        relative = f.relative_to(root).as_posix()
+        mode = index_modes.get(relative)
+        if mode is None:
+            mode = "100755" if f.stat().st_mode & 0o111 else "100644"
+        h.update(relative.encode("utf-8") + b"\0" + mode.encode("ascii") + b"\0")
         h.update(hashlib.sha256(f.read_bytes()).digest())
     return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "commit": commit,
             "sha256": h.hexdigest()}

@@ -444,6 +444,25 @@ def test_advice_has_no_round_cap_and_no_merge_verdict():
     assert gate_module.advice(snap)["merge_conditions_met"] is False
 
 
+@pytest.mark.parametrize("block", ["p1", "ci", "draft"])
+def test_advice_keeps_current_head_p2_when_merge_is_blocked(block):
+    snap = snapshot()
+    current = finding("P2", "Keep this follow-up", id=2)
+    old = finding("P2", "Old head", id=3)
+    old["original_commit_id"] = NEW_HEAD
+    reply = finding("P2", "Reply", id=4, in_reply_to_id=2)
+    snap["review_comments"] = [current, old, reply]
+    if block == "p1":
+        snap["review_comments"].append(finding("P1", "Block merge", id=5))
+    elif block == "ci":
+        snap["check_runs"][0]["conclusion"] = "failure"
+    else:
+        snap["pr"]["draft"] = True
+    out = gate_module.advice(snap)
+    assert out["merge_conditions_met"] is False
+    assert out["p2_followups"] == [gate_module._finding(current, 42)[2]]
+
+
 def test_dry_run_prints_advice_and_never_applies(monkeypatch, capsys):
     monkeypatch.setenv("GITHUB_TOKEN", "t")
     monkeypatch.setattr(gate_module, "snapshot_for", lambda api, pr: snapshot())
