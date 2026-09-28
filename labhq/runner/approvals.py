@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 
 from ..models import ApprovalRequest
+from ..security import token_matches
 
 Handler = Callable[[Any], Awaitable[None]]
 
@@ -32,7 +33,7 @@ class Broker:
         return f"http://127.0.0.1:{self.port}"
 
     def _check(self, token: str) -> None:
-        if not secrets.compare_digest(token or "", self.token):
+        if not token_matches(token, self.token):
             raise HTTPException(401, "bad broker token")
 
     def _build_app(self) -> FastAPI:

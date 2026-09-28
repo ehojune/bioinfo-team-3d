@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import math
+import os
 import secrets
 import signal
 import shutil
@@ -297,7 +298,10 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 hub, ev["data"]["id"], _approval_delay(phone, approve_timeout), phone))
 
     hub.publish = _tap_publish(publish, after)
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning"))
+    from .security import gateway_log_config
+
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning",
+                                          log_config=gateway_log_config()))
     tasks = [asyncio.create_task(server.serve())]
     while not server.started:
         await asyncio.sleep(0.05)
@@ -373,6 +377,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("runner")
     sub.add_parser("agents")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
+    doctor = sub.add_parser("doctor", help="check runner capabilities without starting agents")
+    doctor.add_argument("--json", action="store_true", help="write state_dir/capabilities.json")
+    doctor.add_argument("--network", action="store_true", help="check public data source reachability")
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -415,12 +422,31 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     s = Settings.load(args.config)
 
-    if args.cmd == "gateway":
+    if args.cmd == "doctor":
+        from .doctor import collect, render, save
+
+        requested = args.config or os.environ.get("LABHQ_CONFIG")
+        result = collect(s, requested_config=requested, network=args.network)
+        if args.json:
+            try:
+                save(result, s)
+            except OSError:
+                result["checks"].append({"group": "config", "name": "manifest", "status": "fail",
+                                         "detail": "could not write manifest",
+                                         "hint": "Set runner.state_dir to a writable directory outside the repository."})
+                result["summary"]["fail"] += 1
+        print(render(result))
+        if result["summary"]["fail"]:
+            raise SystemExit(1)
+    elif args.cmd == "gateway":
         import uvicorn
 
         from .gateway.server import create_app
 
-        uvicorn.run(create_app(s), host=s.gateway.host, port=s.gateway.port, log_level="info")
+        from .security import gateway_log_config
+
+        uvicorn.run(create_app(s), host=s.gateway.host, port=s.gateway.port, log_level="info",
+                    log_config=gateway_log_config())
     elif args.cmd == "runner":
         from .runner.daemon import Runner
 

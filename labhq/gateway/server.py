@@ -25,6 +25,7 @@ from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_i
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
+from ..security import token_matches
 from ..store import StateStore
 from ..util import short
 
@@ -808,12 +809,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))
 
     def auth(authorization: str = Header(default="")) -> None:
-        if authorization.removeprefix("Bearer ").strip() != settings.gateway.client_token:
+        if not token_matches(authorization.removeprefix("Bearer ").strip(), settings.gateway.client_token):
             raise HTTPException(401, "bad client token")
 
     @app.websocket("/ws/runner")
     async def ws_runner(ws: WebSocket, token: str = "") -> None:
-        if token != settings.gateway.runner_token:
+        if not token_matches(token, settings.gateway.runner_token):
             await ws.close(code=1008)
             return
         await ws.accept()
@@ -840,7 +841,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:
-        if token != settings.gateway.client_token:
+        if not token_matches(token, settings.gateway.client_token):
             await ws.close(code=1008)
             return
         await ws.accept()

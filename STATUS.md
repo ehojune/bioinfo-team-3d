@@ -10,6 +10,20 @@
 - 미해결: 실제 GitHub 발행은 mock 전송만 검증했다. 원본 HARVEST는 이 작업 환경에서 쓰기 권한이 없어 초안만 남겼다.
 - 근거: `labhq/integrations/rounds.py`, `tests/test_round_records.py`, `labhq/gateway/server.py`.
 
+## 2026-09-28 · #37 #38 #35 보안·재시도
+
+- 토큰 비교를 바이트 constant-time으로 통일하고 gateway 로그의 token 값을 가린다.
+- PowerShell 위험 명령과 제한 구역 접근, Bash·PowerShell의 명백한 허용 루트 밖 쓰기를 승인 요청으로 돌린다. 셸 문자열 검사이며 샌드박스는 아니다.
+- agy 모델 카탈로그의 관찰된 일시 오류와 재시도 신호를 transient로 분류한다. 인증·권한·정책 오류는 terminal이다.
+- 검증: Windows 전체 pytest 410 passed/17 skipped; `bash scripts/check_public.sh` 통과. 실제 CLI·네트워크 장애 재현은 포함하지 않았다.
+
+## 2026-09-28 · #35 doctor 사전 점검
+
+- 결론: `labhq doctor`가 실행 전 기능과 누락 사항을 표로 보여 준다.
+- 바뀐 것: 설정·엔진·직원·플러그인·계산 도구 점검, 선택적 네트워크 검사와 상태 디렉터리 manifest.
+- 실행한 것: Windows `pytest -q` 375 passed/17 skipped, 공개 검사 통과, 실제 doctor 표·manifest 확인.
+- 미해결: 로그인·원격 HPC·스킬 가시성은 비대화형 확인 범위까지만 판정한다.
+
 ## 2026-09-28 · #27 결과 보존·연속성
 
 - 결론: 수정 실패 때 첫 성공 결과를 살리고, 단계 산출물과 실패 원인을 최종 보고에 남긴다.
