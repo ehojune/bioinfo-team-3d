@@ -83,6 +83,16 @@ class SavedResults(dict):
         self.hub.save_request(self.rid)
         self.hub.clear_step_jobs(self.rid, key)
 
+    def pop(self, key: str, *default):
+        """Forget a result durably too (a blocked step re-runs after a restart instead of counting as done)."""
+        value = super().pop(key, *default)
+        if (self.hub.requests[self.rid].get("results") or {}).pop(key, None) is not None:
+            self.hub.save_request(self.rid)
+        return value
+
+    def __delitem__(self, key: str) -> None:
+        self.pop(key)
+
 
 class Hub:
     def __init__(self, settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None):

@@ -138,6 +138,20 @@ def format_roster(agents: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _reaches(steps: list[dict], start: str, target: str) -> bool:
+    """True when `start` already depends on `target`, directly or through other steps."""
+    deps = {s["id"]: s["depends_on"] for s in steps}
+    seen, stack = set(), [start]
+    while stack:
+        sid = stack.pop()
+        if sid == target:
+            return True
+        if sid not in seen:
+            seen.add(sid)
+            stack.extend(deps.get(sid, []))
+    return False
+
+
 def validate_steps(raw: list[dict], known: set[str], max_steps: int) -> tuple[list[dict], list[str]]:
     warnings, steps, seen = [], [], set()
     for i, s in enumerate(raw[:max_steps]):
@@ -152,18 +166,31 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int) -> tuple[li
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
                       "outputs": [str(o) for o in s.get("outputs") or []]})
     ids = {s["id"] for s in steps}
+    producers: dict[str, list[str]] = {}
+    for s in steps:
+        for o in s["outputs"]:
+            producers.setdefault(o, []).append(s["id"])
     for s in steps:
         invalid = [d for d in s["depends_on"] if d not in ids or d == s["id"]]
         if invalid:
             raise ValueError(f"step {s['id']}: invalid dependencies {invalid}")
+    # Infer a dependency only from an unambiguous reference: another step's id, or an output name that exactly
+    # one other step produces and this step does not produce itself. Never infer one that would close a cycle.
+    for s in steps:
         for other in steps:
-            if other["id"] == s["id"]:
+            if other["id"] == s["id"] or other["id"] in s["depends_on"]:
                 continue
-            names = [other["id"], *other["outputs"]]
-            if any(name and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", s["instruction"])
-                   for name in names) and other["id"] not in s["depends_on"]:
-                s["depends_on"].append(other["id"])
-                warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
+            names = [other["id"]] + [o for o in other["outputs"]
+                                     if producers.get(o) == [other["id"]] and o not in s["outputs"]]
+            if not any(name and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", s["instruction"])
+                       for name in names):
+                continue
+            if _reaches(steps, other["id"], s["id"]):
+                warnings.append(f"step {s['id']}: reference to {other['id']} not added (would create a cycle)")
+                continue
+            s["depends_on"].append(other["id"])
+            warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
+    for s in steps:
         if s["agent_id"] not in known:
             warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
     # Reject cycles before dispatch.
@@ -365,7 +392,9 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
-        decisions: dict[str, str] = {}
+        req_state = self.hub.requests.get(rid)
+        # PI answers to blocking questions survive a gateway restart (the re-run step still needs them).
+        decisions: dict[str, str] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
 
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
@@ -455,7 +484,10 @@ class Orchestrator:
                                 await asyncio.gather(*running.values(), return_exceptions=True)
                             raise RuntimeError(f"step {sid} PI decision denied or unanswered")
                         decisions[sid] = str(dec["note"]).strip()
-                        results.pop(sid, None)
+                        if req_state is not None:
+                            req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
+                            self.hub.save_request(rid)
+                        results.pop(sid, None)  # durable too, so a restart re-runs the step with the answer
                         todo.add(sid)
 
     @staticmethod
@@ -472,7 +504,7 @@ class Orchestrator:
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
-        text = req["text"]
+        text = req["text"] + "".join("\n\nPI clarification answers:\n" + a for a in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             if req["mode"] == "direct":
@@ -547,7 +579,10 @@ class Orchestrator:
                         if not dec.get("approved") or not str(dec.get("note") or "").strip():
                             self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
                             return
-                        text += "\n\nPI clarification answers:\n" + str(dec["note"]).strip()
+                        answer = str(dec["note"]).strip()
+                        req.setdefault("clarifications", []).append(answer)
+                        self.hub.save_request(rid)  # a restart must not lose the PI's answer
+                        text += "\n\nPI clarification answers:\n" + answer
                         plan_res = await make_plan(text)
                         if not plan_res.ok:
                             self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)

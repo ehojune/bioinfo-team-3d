@@ -107,6 +107,8 @@ async def test_plan_waits_for_answer_and_replans_before_dispatch():
     assert hub.requests["r"]["status"] == "done", hub.requests["r"]
     assert [t.meta["kind"] for t in calls[:3]] == ["plan", "plan", "step"]
     assert hub.approvals[0]["kind"] == "clarify"
+    assert hub.requests["r"]["clarifications"] == ["cases"]  # durable for a resume after restart
+    assert "PI clarification answers:\ncases" in calls[2].prompt
 
 
 @pytest.mark.asyncio
@@ -472,3 +474,41 @@ async def test_parallel_budget_decision_preserves_completed_steps_and_controls_n
         assert req["results"]["B"]["status"] == req["results"]["C"]["status"] == "skipped"
         assert "budget" in req["results"]["B"]["error"]
         assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
+
+
+def test_shared_output_labels_do_not_create_inferred_cycles():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "a", "agent_id": "analyst", "instruction": "write summary", "outputs": ["summary"]},
+           {"id": "b", "agent_id": "analyst", "instruction": "write summary", "outputs": ["summary"]},
+           {"id": "c", "agent_id": "analyst", "instruction": "use counts.tsv", "outputs": []},
+           {"id": "d", "agent_id": "analyst", "instruction": "make counts.tsv", "outputs": ["counts.tsv"]}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    by = {s["id"]: s for s in steps}
+    assert by["a"]["depends_on"] == [] and by["b"]["depends_on"] == []  # ambiguous label: no inference
+    assert by["c"]["depends_on"] == ["d"]  # unique producer: inferred
+
+
+def test_inferred_dependency_that_would_close_a_cycle_is_skipped():
+    from labhq.orchestrator.cso import validate_steps
+
+    raw = [{"id": "s1", "agent_id": "analyst", "instruction": "then hand to s2", "outputs": []},
+           {"id": "s2", "agent_id": "analyst", "instruction": "read s1 output", "depends_on": ["s1"], "outputs": []}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    assert [s["depends_on"] for s in steps] == [[], ["s1"]]
+    assert any("would create a cycle" in w for w in warnings)
+
+
+def test_saved_results_pop_is_durable(tmp_path):
+    from labhq.gateway.server import Hub, SavedResults
+
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "text": "t", "status": "running", "results": {}}
+    results = SavedResults(hub, "r")
+    results["s1"] = TaskResult(task_id="t1", agent_id="a", ok=True, text="question only")
+    assert "s1" in hub.requests["r"]["results"]
+    results.pop("s1", None)
+    assert "s1" not in hub.requests["r"]["results"] and "s1" not in results
+    assert "s1" not in (Hub(s).requests["r"].get("results") or {})  # survives a restart
