@@ -142,11 +142,11 @@ def test_stale_completed_review_at_cap_calls_pi_once_for_new_head():
     assert decide(snap).kind == "none"
 
 
-def test_stale_review_before_cap_still_waits():
+def test_stale_review_before_cap_warns():
     snap = snapshot()
     snap["pr"]["head"]["sha"] = NEW_HEAD
     snap["issue_comments"] += [comment("@codex review") for _ in range(8)]
-    assert decide(snap).kind == "none"
+    assert decide(snap).kind == "warn"
 
 
 def test_running_stale_review_at_cap_still_waits():
@@ -180,13 +180,47 @@ def test_missing_review_at_cap_calls_pi_once():
     assert decide(snap).kind == "none"
 
 
-def test_unparsed_review_at_cap_calls_pi_but_before_cap_waits():
+def test_unparsed_review_at_cap_calls_pi_after_warning():
     snap = snapshot()
     snap["issue_comments"][0]["body"] = "<!-- codex-pull-request-review-summary -->\nNo table yet"
     snap["issue_comments"] += [comment("@codex review") for _ in range(8)]
-    assert decide(snap).kind == "none"
+    assert decide(snap).kind == "warn"
+    snap["issue_comments"].append(comment(
+        f"{GATE_MARKER}\nwarn cap=10", "github-actions[bot]", "NONE"))
     snap["issue_comments"].append(comment("@codex review"))
     assert decide(snap).kind == "needs_pi"
+
+
+@pytest.mark.parametrize("review_kind", ["missing", "unparsed", "stale"])
+@pytest.mark.parametrize("rounds", [8, 9])
+def test_waiting_for_review_warns_once_at_threshold(review_kind, rounds):
+    snap = snapshot()
+    if review_kind == "missing":
+        snap["issue_comments"] = []
+    elif review_kind == "unparsed":
+        snap["issue_comments"][0]["body"] = "<!-- codex-pull-request-review-summary -->\nNo table yet"
+    else:
+        snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"] += [comment("@codex review") for _ in range(rounds - 1)]
+    action = decide(snap)
+    assert action.kind == "warn"
+    assert f"{rounds}/10회" in action.reasons[0]
+    snap["issue_comments"].append(comment(
+        f"{GATE_MARKER}\nwarn cap=10", "github-actions[bot]", "NONE"))
+    assert decide(snap).kind == "none"
+
+
+@pytest.mark.parametrize("review_kind", ["missing", "unparsed", "stale"])
+def test_waiting_for_review_does_not_warn_before_threshold(review_kind):
+    snap = snapshot()
+    if review_kind == "missing":
+        snap["issue_comments"] = []
+    elif review_kind == "unparsed":
+        snap["issue_comments"][0]["body"] = "<!-- codex-pull-request-review-summary -->\nNo table yet"
+    else:
+        snap["pr"]["head"]["sha"] = NEW_HEAD
+    snap["issue_comments"] += [comment("@codex review") for _ in range(6)]
+    assert decide(snap).kind == "none"
 
 
 def test_p2_only_merges_and_creates_linked_followup():

@@ -1,6 +1,6 @@
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, KIND_KO} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
@@ -49,7 +49,7 @@ export function startLiveOffice(onState) {
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
     }
-    onState(S);
+    onState(S, visual);
   }
   function open() {
     clearTimeout(retry);
@@ -68,6 +68,7 @@ export function startLiveOffice(onState) {
         }
         for (const effect of apply(ev)) {
           if (effect.type === 'toast') $('live-notice').textContent = effect.text;
+          if (effect.type === 'renderAfter') setTimeout(render, effect.ms);
         }
         if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; pending.clear(); }
         else if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;

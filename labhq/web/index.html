@@ -435,7 +435,7 @@ const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable=
 
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now});
-const { S, ag, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
     if (effect.type === 'toast') toast(effect.text);
@@ -461,10 +461,6 @@ function contractLeft(a) {
   if (!a.expires_at) return '파견직';
   const days = Math.ceil((a.expires_at - now()) / 86400);
   return days > 0 ? `계약 ${days}일 남음` : '계약 만료';
-}
-function visual(a) {
-  if (a.state === 'done' && now() - (a.stateAt || 0) > 3) return 'idle';
-  return STATE_KO[a.state] ? a.state : 'idle';
 }
 function bubble(a, vs) {
   if (vs === 'working') {
