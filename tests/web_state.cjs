@@ -47,7 +47,8 @@ const events = [
 ].map(([type,data], i) => ({type, data, agent_id:'analyst', request_id:'r1', task_id:'t1', ts:1000+i, seq:i+1,
   ...(i===40?{replay_gap:{requested_since:1,oldest_seq:40}}:{})}));
 function digest(state) {
-  const json = JSON.stringify(state, (_, value) => Object.prototype.toString.call(value)==='[object Map]' ? [...value] : value);
+  const json = JSON.stringify(state, (key, value) => key === 'costKnown' ? undefined
+    : Object.prototype.toString.call(value)==='[object Map]' ? [...value] : value);
   return createHash('sha256').update(json).digest('hex');
 }
 // Golden hashes come from b953d13's original index.html reducer, with time fixed.
@@ -66,4 +67,6 @@ assert.equal(fresh.apply({type:'agent.status',agent_id:'analyst',data:{state:'do
 assert.equal(fresh.apply({type:'approval.requested',data:{id:'a2',summary:'Please review'}}, true).length, 0);
 for(let i=0;i<150;i++)fresh.apply({type:'agent.log',agent_id:'analyst',ts:1000+i*10,data:{text:'Progress'}});
 assert.equal(fresh.S.feed.length,120); assert.equal(fresh.S.agents.get('analyst').log.length,40);
+fresh.apply({type:'agent.usage',request_id:'r2',data:{tokens:{input_tokens:9},cost_known:false}});
+assert.equal(fresh.S.requests.get('r2').costKnown,false);
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

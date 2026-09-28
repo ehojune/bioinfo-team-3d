@@ -99,6 +99,13 @@ class RunState:
     result_seen: bool = False
 
 
+def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
+    """Keep only numeric counters observed in an engine's stream."""
+    source = raw if isinstance(raw, dict) else {}
+    return {key: value for key in fields if isinstance((value := source.get(key)), int)
+            and not isinstance(value, bool) and value >= 0}
+
+
 def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
     """Not every CLI supports a per-server cwd; wrap with `bash -lc 'cd … && exec …'`."""
     if not spec.cwd:
@@ -171,6 +178,7 @@ class AgentAdapter(ABC):
             ok = False
         return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=ok, text=text or "",
                           structured=structured, session_id=st.session_id, cost_usd=st.cost_usd,
+                          cost_known=st.cost_usd is not None, usage=st.usage,
                           error=st.error)
 
     async def run(self, ctx: RunContext) -> TaskResult:

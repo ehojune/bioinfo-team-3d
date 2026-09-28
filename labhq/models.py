@@ -146,9 +146,17 @@ class TaskResult(BaseModel):
     structured: Any = None
     session_id: str | None = None
     cost_usd: float | None = None
+    cost_known: bool | None = None
+    usage: dict[str, int] = {}
     pending_jobs: list[str] = []
     workdir: str | None = None
     error: str | None = None
+
+    @model_validator(mode="after")
+    def infer_cost_known(self) -> "TaskResult":
+        if self.cost_known is None:
+            self.cost_known = self.cost_usd is not None
+        return self
 
 
 class Event(BaseModel):

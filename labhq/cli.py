@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import secrets
+import signal
 import shutil
 import socket
 import sys
@@ -64,7 +65,9 @@ def render(ev: dict) -> None:
     elif t == "recruit.failed":
         line = f"🦫 채용 실패: {d.get('error')}"
     elif t == "request.completed":
-        line = f"🏁 요청 완료 (ok={d.get('ok')}, cost=${d.get('cost_usd')})"
+        known = float(d.get("cost_usd") or 0)
+        cost = (f"${known} + " if known else "") + "비용 미집계" if d.get("cost_known") is False else f"${known}"
+        line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost})"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
     elif t in ("runner.online", "runner.offline"):
@@ -120,6 +123,30 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
             if ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + (ev["data"].get("report") or ev["data"].get("error") or ""))
                 return
+
+
+async def _run_runner_with_interrupts(runner) -> None:
+    previous = signal.getsignal(signal.SIGINT)
+    last_warning = 0.0
+
+    def on_interrupt(_signum, _frame) -> None:
+        nonlocal last_warning
+        active = [tid for tid, task in runner.tasks.items() if not task.done()]
+        # A step asleep on HPC has no live task, but the runner still watches its jobs and wakes the agent.
+        jobs = [jid for jid, job in getattr(runner, "jobs", {}).items() if not job.get("terminal")]
+        now = time.monotonic()
+        if not (active or jobs) or (last_warning and now - last_warning <= 10):
+            raise KeyboardInterrupt
+        last_warning = now
+        print(f"진행 중인 task {len(active)}개, 감시 중인 HPC job {len(jobs)}개: {', '.join(active + jobs)}. "
+              "10초 안에 Ctrl+C를 다시 누르면 종료합니다.", file=sys.stderr, flush=True)
+
+    signal.signal(signal.SIGINT, on_interrupt)
+    try:
+        await runner.run_forever()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        runner.stop()
 
 
 # ---------------- demo (no API keys, no cluster) ----------------
@@ -345,6 +372,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("gateway")
     sub.add_parser("runner")
     sub.add_parser("agents")
+    sub.add_parser("status", help="show runners, running requests and pending approvals")
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
@@ -396,7 +424,21 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "runner":
         from .runner.daemon import Runner
 
-        asyncio.run(Runner(s).run_forever())
+        asyncio.run(_run_runner_with_interrupts(Runner(s)))
+    elif args.cmd == "status":
+        health = _api(s, "GET", "/api/health")
+        print("러너: " + (", ".join(health["runners"]) or "없음"))
+        running = _api(s, "GET", "/api/requests?status=running&limit=200")
+        print(f"진행 중 요청: {len(running)}")
+        for req in running:
+            progress = req["step_progress"]
+            print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}")
+            for sid, state in progress["steps"].items():
+                print(f"    {sid}: {state}")
+        approvals = _api(s, "GET", "/api/approvals")
+        print(f"승인 대기: {len(approvals)}")
+        for approval in approvals:
+            print(f"  {approval['id']} [{approval['kind']}] {approval['summary']}")
     elif args.cmd == "agents":
         for a in _api(s, "GET", "/api/agents"):
             kind = f"파견 ~{datetime.fromtimestamp(a['expires_at']):%m-%d}" if a.get("expires_at") else "정규"

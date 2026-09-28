@@ -475,7 +475,8 @@ function renderHeader() {
   const txt = { live: '실시간', demo: '데모', connecting: '연결 중', offline: '연결 끊김, 다시 시도하는 중', auth: '토큰을 확인해 주세요' }[S.conn];
   c.className = `conn ${S.conn}`;
   if (c.lastChild.textContent !== txt) c.lastChild.textContent = txt;
-  $('#cost').textContent = `사용 비용 $${S.cost.toFixed(2)}`;
+  $('#cost').textContent = [...S.requests.values()].some(q => q.costKnown === false)
+    ? `사용 비용 $${S.cost.toFixed(2)} + 비용 미집계` : `사용 비용 $${S.cost.toFixed(2)}`;
   $('#note').hidden = MODE !== 'demo';
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
@@ -606,7 +607,7 @@ function dagSVG(q) {
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100)]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -616,7 +617,7 @@ function renderRequest() {
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${phaseList(q)}${q.plan.length ? `<div class="dag">${dagSVG(q)}</div>` : ''}
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 $${q.cost.toFixed(2)}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>${q.costKnown ? `비용 $${q.cost.toFixed(2)}` : `비용 $${q.cost.toFixed(2)} + 비용 미집계`}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
 ${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}`;
 }
 let feedKey = '';

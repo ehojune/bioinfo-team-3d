@@ -33,7 +33,7 @@ function upsertAgent(a) {
   S.agents.set(a.id, { ...prev, ...a });
 }
 function req(rid) {
-  if (!S.requests.has(rid)) S.requests.set(rid, { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, phase: 'briefing', status: 'running', created_at: now() });
+  if (!S.requests.has(rid)) S.requests.set(rid, { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() });
   return S.requests.get(rid);
 }
 function setPlan(q, plan) {
@@ -88,7 +88,7 @@ function apply(ev, replay = false) {
       (d.recent_events || []).forEach(e => apply(e, true));
       for (const r of d.requests || []) {
         const q = req(r.id);
-        Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0 });
+        Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         if (r.plan) setPlan(q, r.plan);
         Object.assign(q.steps, r.step_status || {});
         if (r.status !== 'running') q.phase = 'done';
@@ -121,7 +121,12 @@ function apply(ev, replay = false) {
       if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
       break;
     }
-    case 'agent.usage': { const c = Number(d.cost_usd) || 0; if (c > 0) { S.cost += c; if (rid) req(rid).cost += c; } break; }
+    case 'agent.usage': {
+      const c = Number(d.cost_usd) || 0;
+      if (c > 0) { S.cost += c; if (rid) req(rid).cost += c; }
+      if (rid && d.cost_known === false) req(rid).costKnown = false;
+      break;
+    }
     case 'task.dispatched': onDispatch(ev); break;
     case 'task.result': {
       const sid = S.taskStep.get(ev.task_id);
@@ -192,6 +197,7 @@ function apply(ev, replay = false) {
     case 'request.completed': case 'request.failed': {
       const q = req(rid);
       q.status = t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      if (d.cost_known === false) q.costKnown = false;
       if (d.report) q.report = d.report;
       if (d.error) q.error = d.error;
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);

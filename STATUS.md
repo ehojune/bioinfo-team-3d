@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · #26 운영 상태·사용량
+
+- 결론: 실행 중인 요청·단계·승인을 확인하고 비용 미집계를 구분한다.
+- 바뀐 것: 상태 API/CLI, UTF-8 JSON, 엔진별 token 집계·manifest, 종료 경고, 웹 비용 표시.
+- 실행한 것: 대상 96 passed, 전체 335 passed/19 skipped/11 failed(기준 커밋도 같은 11 failed), 공개 검사·Node 상태 검사·Chrome 폰 화면 확인.
+- 미해결: 이 환경의 기존 Windows/sandbox 실패 11건. 실제 엔진 과금·중단 시그널의 수동 운영 확인은 남았다.
+- 근거: `tests/test_ops_status_usage.py`, `tests/test_real_streams.py`, `labhq/gateway/server.py`.
+
 ## 2026-09-28 · Windows 실행·demo 격리 #26
 
 - 한 일: demo의 gateway·runner 상태와 작업·인재·직원 경로를 임시 폴더로 격리했다. Windows npm shim은 Node.js 스크립트로 풀어 실행하고, 풀 수 없는 batch는 실행 전에 거부한다. `prefix_args`와 Windows 설정 안내를 추가했다.
