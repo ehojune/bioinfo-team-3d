@@ -179,7 +179,7 @@ class AgentAdapter(ABC):
         return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=ok, text=text or "",
                           structured=structured, session_id=st.session_id, cost_usd=st.cost_usd,
                           cost_known=st.cost_usd is not None, usage=st.usage,
-                          error=st.error)
+                          error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
         refused = self.preflight_error(ctx, {**os.environ, **self.engine_env(), **ctx.env})

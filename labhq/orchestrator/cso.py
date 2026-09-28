@@ -8,8 +8,10 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..models import RunnerUnavailable, Task, TaskResult, new_id
@@ -118,6 +120,8 @@ WAKE_PROMPT = """Your HPC jobs finished:
 {jobs}
 Job scripts and logs are under jobs/ in your workspace ({workdir}). Check exit status and outputs, then
 continue your step and report as instructed."""
+
+WRAP_PROMPT = "Your turn limit was reached. Save any partial results under outputs/ and write outputs/PARTIAL_STATUS.md with what is done and what remains unfinished."
 
 
 def format_roster(agents: list[dict]) -> str:
@@ -310,14 +314,19 @@ class Orchestrator:
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task) -> TaskResult:
         rid = task.request_id or ""
-        async def dispatch_with_retry(current: Task) -> TaskResult:
+        async def dispatch_with_retry(current: Task, max_attempts: int | None = None) -> TaskResult:
             key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
-            first_attempt = getattr(self.hub, "recovery_attempt", lambda _task: 1)(current)
-            for attempt in range(first_attempt, self.cfg.step_max_attempts + 1):
+            limit = max_attempts or self.cfg.step_max_attempts
+            first_attempt = min(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), limit)
+            previous_workdir = current.meta.get("workdir")
+            previous_session = current.resume_session_id
+            for attempt in range(first_attempt, limit + 1):
                 await self._check_budget(rid)
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
-                                                  "meta": {**current.meta, "attempt": attempt}})
+                                                  "resume_session_id": previous_session,
+                                                  "meta": {**current.meta, "attempt": attempt,
+                                                           **({"workdir": previous_workdir} if previous_workdir else {})}})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
                 offline = False
                 try:
@@ -331,6 +340,9 @@ class Orchestrator:
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
                     kind = failure_kind(res)
+                    previous_workdir = res.workdir or previous_workdir
+                    if res.session_id and self.hub.supports_resume(current.agent_id):
+                        previous_session = res.session_id
                 await self._check_budget(rid, block=False)
                 if kind is None:
                     return res
@@ -338,7 +350,7 @@ class Orchestrator:
                     if res.ok:
                         res = res.model_copy(update={"ok": False, "error": "empty result"})
                     return res  # this attempt ran; only its not-yet-started retry is blocked
-                if kind != "transient" or attempt == self.cfg.step_max_attempts:
+                if kind != "transient" or attempt == limit:
                     if res.ok:
                         res = res.model_copy(update={"ok": False, "error": "empty result"})
                     return res
@@ -355,6 +367,22 @@ class Orchestrator:
             raise AssertionError("unreachable")
 
         res = await dispatch_with_retry(task)
+        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
+                and self.hub.supports_resume(task.agent_id)):
+            wrap = Task(agent_id=task.agent_id, request_id=rid, prompt=WRAP_PROMPT,
+                        resume_session_id=res.session_id,
+                        meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
+                              "workdir": res.workdir, "agent_overrides": {"max_turns": 2},
+                              "outputs": ["PARTIAL_STATUS.md"]})
+            try:
+                partial = await dispatch_with_retry(wrap, max_attempts=1)
+                res = res.model_copy(update={"partial_results": bool(partial.outputs),
+                                             "outputs": list(dict.fromkeys([*res.outputs, *partial.outputs])),
+                                             "error": f"{res.error or 'error_max_turns'}; wrap-up: "
+                                                      f"{('partial results saved' if partial.outputs else
+                                                          'status note missing' if partial.ok else partial.error)}"})
+            except BudgetExceeded:
+                pass
         cycles = 0
         while res.ok and res.pending_jobs and cycles < self.cfg.max_wake_cycles:
             cycles += 1
@@ -411,8 +439,12 @@ class Orchestrator:
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
 
         async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
-            results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
-                                      error=f"skipped: {reason}")
+            previous = results.get(sid)
+            if feedback and sid in feedback and previous and previous.ok:
+                results[sid] = previous.model_copy(update={"revision_failed": f"skipped: {reason}"})
+            else:
+                results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
+                                          error=f"skipped: {reason}")
             await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
                                                             "upstream": upstream_ids or [], "reason": reason})
 
@@ -422,7 +454,11 @@ class Orchestrator:
                 r = results.get(d)
                 if r:
                     head = f"## {d} · {by_id[d]['agent_id']}" + ("" if r.ok else f" (FAILED: {short(r.error, 200)})")
-                    parts.append(f"{head}\n{clip(r.text, self.cfg.context_chars_per_step)}")
+                    artifacts = [{"workdir_id": r.workdir_id, "path": path}
+                                 for path in r.outputs]
+                    paths = "\n".join(str(Path(r.workdir) / path) for path in r.outputs) if r.workdir else ""
+                    parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
+                                 f"Readable files:\n{paths}\n{clip(r.text, self.cfg.context_chars_per_step)}")
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
@@ -434,12 +470,21 @@ class Orchestrator:
                 prev = results.get(step["id"])
                 prompt += f"\n\n[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}"
                 ctx += f"\n\n## Your previous result\n{clip(prev.text if prev else '', self.cfg.context_chars_per_step)}"
+            previous = results.get(step["id"])
+            upstream_dirs = [results[d].workdir for d in step["depends_on"]
+                             if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
+                        resume_session_id=(previous.session_id if previous and feedback and
+                                           step["id"] in feedback and
+                                           self.hub.supports_resume(step["agent_id"]) else None),
                         meta={"kind": "step", "step_id": step["id"], "request": request,
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
-                              "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", [])})
+                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
+                               "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
+                               **({"workdir": previous.workdir} if previous and previous.workdir and feedback
+                                  and step["id"] in feedback else {})})
             async with sem:
                 return await self.run_step(task)
 
@@ -468,14 +513,26 @@ class Orchestrator:
                 if t in done:
                     running.pop(sid)
                     try:
-                        results[sid] = t.result()
+                        outcome = t.result()
                     except BudgetExceeded as e:
                         await skip(sid, str(e))
                         continue
                     except asyncio.CancelledError:
-                        results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
+                        outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
-                        results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
+                        outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
+                    if outcome.ok and by_id[sid].get("outputs"):
+                        missing = [name for name in by_id[sid]["outputs"]
+                                   if (name if name.startswith("outputs/") else f"outputs/{name}")
+                                   not in outcome.outputs]
+                        if missing:
+                            outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
+                                                                 "error": f"incomplete: missing outputs: {', '.join(missing)}"})
+                    previous = results.get(sid)
+                    if feedback and sid in feedback and previous and previous.ok and not outcome.ok:
+                        outcome = previous.model_copy(update={"revision_failed":
+                            f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
+                    results[sid] = outcome
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
@@ -486,10 +543,16 @@ class Orchestrator:
                                                          if isinstance(structured, dict) else None)
                     if res.ok and isinstance(question, str) and question.strip():
                         if sid in decisions:
+                            if req_state is not None:
+                                req_state["pending_questions"] = [question.strip()]
+                                self.hub.save_request(rid)
                             raise RuntimeError(f"step {sid} still requires a PI decision after its answer")
                         # Forget the question-only result before waiting (durably): a restart during the wait must
                         # re-run the step, not treat it as done and feed dependents a question.
                         results.pop(sid, None)
+                        if req_state is not None:
+                            req_state["pending_questions"] = [question.strip()]
+                            self.hub.save_request(rid)
                         dec = await self.hub.request_approval(
                             kind="clarify", request_id=rid,
                             summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
@@ -502,6 +565,7 @@ class Orchestrator:
                         # Keep the question with the answer: "b" or "the second option" means nothing alone.
                         decisions[sid] = {"question": question.strip(), "answer": str(dec["note"]).strip()}
                         if req_state is not None:
+                            req_state["pending_questions"] = []
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
                             self.hub.save_request(rid)
                         todo.add(sid)
@@ -509,12 +573,40 @@ class Orchestrator:
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
         out = []
+        by_id = {s["id"]: s for s in steps}
+
+        def causes(sid: str, seen: set[str] | None = None) -> list[str]:
+            seen = seen or set()
+            if sid in seen:
+                return []
+            seen.add(sid)
+            r = results.get(sid)
+            if not r:
+                return [f"{sid}: not run"]
+            chain = [f"{sid} [{r.error_kind or failure_kind(r) or 'terminal'}]: {r.error or 'unknown error'}"]
+            for dep in by_id[sid].get("depends_on", []):
+                if dep not in results or not results[dep].ok:
+                    chain.extend(causes(dep, seen))
+            return chain
+
         for s in steps:
             r = results.get(s["id"])
-            status = "ok" if r and r.ok else ("SKIPPED" if r and (r.error or "").startswith("skipped:")
-                                               else "FAILED") + f": {short(r.error if r else 'not run', 200)}"
+            status = ("ok" if r and r.ok else "INCOMPLETE" if r and r.missing_outputs else
+                      "SKIPPED" if r and (r.error or "").startswith("skipped:") else "FAILED")
+            if r and not r.ok:
+                status += f": {short(r.error, 200)}"
+            artifacts = "\n".join(f"- {r.workdir_id or 'unknown-workdir'}/{p}" for p in r.outputs) if r else ""
+            detail = f"\nOutputs:\n{artifacts or '- none'}"
+            if r and r.missing_outputs:
+                detail += f"\nMissing: {', '.join(r.missing_outputs)}"
+            if r and r.revision_failed:
+                detail += f"\nRevision failed; retained last successful result: {r.revision_failed}"
+            if r and r.partial_results:
+                detail += "\nFailed with partial results."
+            if not r or not r.ok:
+                detail += "\nCause chain: " + " <- ".join(causes(s["id"]))
             out.append(f"### {s['id']} · {s['agent_id']} ({status})\nInstruction: {s['instruction']}\n"
-                       f"{clip(r.text if r else '', n)}")
+                       f"{clip(r.text if r else '', n)}{detail}")
         return "\n\n".join(out)
 
     # ---------- request entry point ----------
@@ -571,14 +663,22 @@ class Orchestrator:
                     for a in roster)
 
                 async def make_plan(plan_request: str) -> TaskResult:
-                    return await self.run_step(Task(
+                    continuation = self.hub.supports_resume(self.cfg.cso_agent)
+                    planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
+                        resume_session_id=req.get("cso_session_id") if continuation else None,
                         prompt=PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
                                                   capabilities=capabilities or "No workers available",
                                                   briefing=clip(briefing, 4000) or "(none)",
                                                   max_steps=self.cfg.max_steps),
                         meta={"kind": "plan", "roster": roster, "request": plan_request,
-                              "title": "업무 분해·배정 계획 수립"}))
+                              "title": "업무 분해·배정 계획 수립",
+                              **({"workdir": req["cso_workdir"]} if continuation and req.get("cso_workdir") else {})}))
+                    if planned.session_id:
+                        req["cso_session_id"] = planned.session_id
+                        req["cso_workdir"] = planned.workdir
+                        self.hub.save_request(rid)
+                    return planned
 
                 plan_res = await make_plan(text)
                 if not plan_res.ok:
@@ -590,6 +690,8 @@ class Orchestrator:
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
                 questions = [q for q in plan.get("clarifying_questions") or [] if isinstance(q, str) and q.strip()]
                 if questions:
+                    req["pending_questions"] = questions
+                    self.hub.save_request(rid)
                     await self._emit(rid, "request.questions", {"questions": questions})
                     if self.cfg.wait_for_clarification:
                         dec = await self.hub.request_approval(kind="clarify", request_id=rid,
@@ -600,6 +702,7 @@ class Orchestrator:
                             return
                         entry = {"questions": questions, "answer": str(dec["note"]).strip()}
                         req.setdefault("clarifications", []).append(entry)
+                        req["pending_questions"] = []
                         self.hub.save_request(rid)  # a restart must not lose the PI's answer
                         text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
                         plan_res = await make_plan(text)
@@ -608,6 +711,7 @@ class Orchestrator:
                             return
                         plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
                         if plan.get("clarifying_questions"):
+                            req["pending_questions"] = plan["clarifying_questions"]
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
@@ -629,7 +733,7 @@ class Orchestrator:
             def serialized_results() -> dict[str, dict]:
                 return {k: {**v.model_dump(mode="json"),
                             "status": "skipped" if (v.error or "").startswith("skipped:") else
-                                      ("done" if v.ok else "failed"),
+                                      ("done" if v.ok else "incomplete" if v.missing_outputs else "failed"),
                             "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
 
             if rid in self.budget_denials or any(not r.ok for r in results.values()):
@@ -722,14 +826,26 @@ class Orchestrator:
 
             final = await self.run_step(Task(
                 agent_id=self.cfg.cso_agent, request_id=rid,
+                resume_session_id=req.get("cso_session_id") if self.hub.supports_resume(self.cfg.cso_agent) else None,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)),
-                meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성"}))
+                meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성",
+                      **({"workdir": req["cso_workdir"]} if self.hub.supports_resume(self.cfg.cso_agent)
+                         and req.get("cso_workdir") else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
+            if req.get("plan", {}).get("steps"):
+                saved = {k: TaskResult.model_validate(v) for k, v in (req.get("results") or {}).items()}
+                req["report"] = self.format_results(req["plan"]["steps"], saved,
+                                                    self.cfg.context_chars_per_step)
+            else:
+                req["report"] = req["error"]
+            if req.get("pending_questions"):
+                req["report"] += "\n\nPending PI decisions/questions:\n" + "\n".join(
+                    f"- {question}" for question in req["pending_questions"])
             if hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", {"error": req["error"]})
             else:
@@ -737,6 +853,26 @@ class Orchestrator:
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
         req = self.hub.requests[rid]
+        if req.get("plan", {}).get("steps") and results:
+            audit = []
+            for step in req["plan"]["steps"]:
+                entry = results.get(step["id"], {})
+                outputs = entry.get("outputs") or []
+                paths = ", ".join(f"{entry.get('workdir_id') or 'unknown-workdir'}/{p}" for p in outputs)
+                line = f"- {step['id']}: {entry.get('status', 'not run')}; outputs: {paths or 'none'}"
+                if entry.get("missing_outputs"):
+                    line += f"; missing: {', '.join(entry['missing_outputs'])}"
+                if entry.get("revision_failed"):
+                    line += f"; revision failed: {entry['revision_failed']}"
+                if entry.get("partial_results"):
+                    line += "; failed with partial results"
+                if entry.get("error"):
+                    line += f"; cause: {entry.get('error_kind') or 'terminal'}: {entry['error']}"
+                audit.append(line)
+            report += "\n\nStep status and output paths:\n" + "\n".join(audit)
+        if req.get("pending_questions"):
+            report += "\n\nPending PI decisions/questions:\n" + "\n".join(
+                f"- {question}" for question in req["pending_questions"])
         if req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
             report += f"\n\n비용: {f'${known:.2f} + ' if known else ''}비용 미집계"

@@ -248,6 +248,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         elif typ == "result":
             st.result_seen = True
             st.final_text = ev.get("result")
+            st.error_kind = ev.get("subtype") if ev.get("subtype") != "success" else None
             st.session_id = ev.get("session_id") or st.session_id
             st.cost_usd = ev.get("total_cost_usd")
             from .base import token_counts

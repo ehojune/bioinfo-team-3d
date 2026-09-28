@@ -353,6 +353,11 @@ class Runner:
             if agent.contract and agent.contract.skill_dir:
                 ws.install_skill(Path(agent.contract.skill_dir))
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            root = self.ws_root.resolve()
+            for directory in task.meta.get("upstream_dirs", []):
+                upstream = Path(directory).resolve()
+                if upstream.is_dir() and upstream.is_relative_to(root):
+                    extra_dirs.append(str(upstream))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": self.broker.token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
@@ -378,6 +383,18 @@ class Runner:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
+        result.workdir_id = ws.dir.name
+        declared = task.meta.get("outputs", [])
+        found = []
+        for name in declared:
+            relative = Path(name)
+            if relative.is_absolute() or ".." in relative.parts:
+                continue
+            relative = relative if relative.parts and relative.parts[0] == "outputs" else Path("outputs") / relative
+            target = (ws.dir / relative).resolve()
+            if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
+                found.append(relative.as_posix())
+        result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "", encoding="utf-8")
         (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "", encoding="utf-8")
         ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
