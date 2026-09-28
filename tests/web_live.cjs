@@ -30,8 +30,8 @@ global.WebSocket = class {
 const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
 (async()=>{
   const {startLiveOffice} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
-  let S;
-  startLiveOffice(state=>{S=state;});
+  let S, visual, shown;
+  startLiveOffice((state, displayState)=>{S=state;visual=displayState;shown=state.agents.get('analyst') && displayState(state.agents.get('analyst'));});
   assert.equal(saved,'test-client');assert.equal(cleanURL,'/3d/');
   let ws=sockets[0]; assert(!ws.url.includes('since='));
   ws.readyState=1;ws.onopen();
@@ -53,8 +53,13 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
   row=element('approvals').children[0];row.children.filter(e=>e.tag==='button')[1].listeners.click();
   assert.equal(ws.sent.at(-1).approved,false);
   event({type:'approval.stale',seq:15,data:{id:'a2'}});assert.equal(S.approvals.size,0);
+  event({type:'agent.status',agent_id:'analyst',seq:16,ts:Date.now()/1000,data:{state:'done'}});
+  assert.equal(shown,'done');assert.equal(timers.length,1,'done schedules a delayed 3D render');
+  S.agents.get('analyst').stateAt-=4;
+  timers.shift()();assert.equal(shown,'idle','3D display returns to waiting after three seconds');
+  assert.equal(S.agents.get('analyst').state,'done','display must not change event state');
   ws.close();assert.equal(S.conn,'offline');assert.equal(element('token-form').hidden,false);
-  timers.shift()();ws=sockets.at(-1);assert(ws.url.endsWith('&since=15'));
+  timers.shift()();ws=sockets.at(-1);assert(ws.url.endsWith('&since=16'));
   ws.readyState=1;ws.onopen();
   event({type:'snapshot',seq:2,replay_gap:{requested_since:15},data:{agents:[],requests:[],approvals:[]}});
   assert.equal(S.agents.size,0);assert.equal(S.cost,0);assert.equal(S.requests.size,0);

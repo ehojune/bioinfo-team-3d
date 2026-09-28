@@ -152,7 +152,7 @@ updatePanel();resize();requestRender();
 
 // Roster changes rebuild shared batches; status events only update poses/textures.
 let rosterKey='', boardKey='';
-function syncLive(S) {
+function syncLive(S, visual) {
   const agents=[...S.agents.values()];
   const key=JSON.stringify(agents.map(a=>[a.id,a.name,a.role,a.employment]));
   if(key!==rosterKey){
@@ -167,7 +167,7 @@ function syncLive(S) {
       const base=known||ROSTER.find(def=>def.id==='contract');
       const extra=known?null:extras++;
       return {...base,id:a.id,name:a.name||a.id,role:a.role||'',task:a.task||'',archetype:base.id,
-        state:pose(a.state),seat:known?base.seat:extra===0?base.seat:[7.75,-3.8+(extra-1)*2.2],
+        state:pose(visual(a)),seat:known?base.seat:extra===0?base.seat:[7.75,-3.8+(extra-1)*2.2],
         extraContract:extra!==null&&extra>0,badge:extra===null?null:{letter:String.fromCharCode(65+extra),color:C.sage}};
     });
     for(const [index,def] of roster.entries()){
@@ -185,7 +185,7 @@ function syncLive(S) {
     stage.setAttribute('aria-label',`${chars.length}명 직원이 있는 3D 연구소`);
     frameCamera();
   }
-  for(const a of agents){const c=byId.get(a.id);c.state=pose(a.state);c.task=a.task||'';c.skin.setState(c.state);}
+  for(const a of agents){const c=byId.get(a.id);c.state=pose(visual(a));c.task=a.task||'';c.skin.setState(c.state);}
   const q=S.requests.get(S.current);
   const nextBoard=JSON.stringify(q||null);
   if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}

@@ -97,6 +97,14 @@ def test_both_pages_load_same_reducer_and_keep_dom_approvals():
         assert forbidden not in source
 
 
+def test_3d_uses_shared_visual_state_for_pose_and_marker():
+    main = (WEB / 'lab3d/src/main.js').read_text(encoding='utf-8')
+    assert 'state:pose(visual(a))' in main
+    assert 'c.state=pose(visual(a))' in main
+    assert 'c.skin.setState(c.state)' in main
+    assert 'c.status.update(c.state' in main
+
+
 def test_package_data_includes_office_assets():
     package = WEB.parent
     config = (package.parent / 'pyproject.toml').read_text(encoding='utf-8')

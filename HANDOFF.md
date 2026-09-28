@@ -49,7 +49,7 @@ P2 bioinfo-agent 연결: PI에게 실행 방식(CLI / 파이썬 패키지 / Clau
    cli.command를 맞춘다. 가능하면 bioinfo-agent가 labhq JSONL 이벤트(status/log/tool/result)를 내보내게 한다.
 P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
    hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
-P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer를 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
+P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer와 완료 후 3초 표시 규칙을 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
    Chrome headless의 폰/데스크톱 검증 완료. 다음: Claude 내장 브라우저 확인과 iPhone Safari 실사용·발열 점검.
 P5 프로젝트 GitHub 보고: private 테스트 저장소로 --project 요청 → 이슈, 코멘트, 보고서 커밋, 가림 처리를 확인한다.
 P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 scanpy 채용 → 수습 통과, 비용과 시간을 기록한다.
@@ -62,7 +62,7 @@ P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 s
 - 테스트를 지우거나 약하게 만들지 않는다. 바꿀 때마다 pytest -q, UI를 건드렸으면 브라우저로도 확인한다.
 - 구조를 크게 바꾸거나 의존성을 추가할 때는 먼저 PR 설명으로 제안하고 확인받는다.
 - P1 지적은 해당 PR에서 고친다. P2는 병합을 막지 않고 후속 issue로 넘긴다. 봇 리뷰 1회는 PR 생성 시 자동 리뷰 1번 또는 신뢰 작성자의 PR 상단 `@codex review` 댓글 1개다. push 묶음마다 한 번만 호출한다. 인라인 답글에는 `@codex`를 쓰지 않고, Running 중에는 다시 부르지 않는다.
-- 최대 10회다. 8회부터 경고하고, 10회에 합의하지 못하면 `needs-pi` 라벨과 막힌 이유를 남긴다. 게이트는 현재 head의 봇 Completed 리뷰·P1 없음·CI 통과·mergeable·비 draft·동일 저장소를 확인한 뒤 squash merge하고 P2 issue를 만든다. 👍는 병합 조건이 아니다. 포크 PR은 자동 병합하지 않는다.
+- 최대 10회다. 8회부터 요약 누락·파싱 실패·오래된 리뷰도 한 번 경고하고, 10회에 합의하지 못하면 `needs-pi` 라벨과 막힌 이유를 남긴다. 게이트는 현재 head의 봇 Completed 리뷰·P1 없음·CI 통과·mergeable·비 draft·동일 저장소를 확인한 뒤 squash merge하고 P2 issue를 만든다. 👍는 병합 조건이 아니다. 포크 PR은 자동 병합하지 않는다.
 - 보고는 한국어로, 기술 용어·명령·유전자 이름은 영어 그대로 쓴다.
 
 [5] 감독

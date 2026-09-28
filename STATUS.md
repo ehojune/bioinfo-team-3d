@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · 후속 issue #12·#13
+
+- 무엇을: 공유 표시 규칙으로 3D 완료 포즈·표지를 3초 뒤 대기로 돌리고, 리뷰 요약 누락·파싱 실패·stale 상태도 8·9회에 한 번 경고한다. Fixes #12, Fixes #13.
+- 테스트: Windows pytest 11 failed/256 passed/14 skipped → 11 failed/266 passed/14 skipped(새 실패 0). 대상 테스트 63 passed/1 skipped, Node 검사 2개, 공개 검사 통과.
+- 막힌 점: Windows 기준선 실패 11개는 그대로다. Linux CI와 실제 브라우저는 미검증.
+- 다음: Claude가 PR을 열고 Linux CI와 3D 실화면을 확인한다.
+
 ## 2026-09-28 · PR 게이트 실운영 점검
 
 - 무엇을: select 잡의 `PYTHONPATH`를 고정하고 쓰기 권한 부족은 경고로 끝낸다. `select`·`gate` check를 판정에서 제외하되 다른 check가 없으면 보류한다.
