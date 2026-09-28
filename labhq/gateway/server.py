@@ -138,11 +138,22 @@ class Hub:
         self.store.put("request", rid, self.requests[rid])
 
     def running_tasks(self) -> list[dict]:
-        return [{"id": tid, "request_id": entry.get("request_id"),
-                 "agent_id": (entry.get("payload") or {}).get("agent_id")}
-                for tid, entry in self.store.all("task").items()
-                if entry.get("accepted") and not entry.get("completed") and
-                self.requests.get(entry.get("request_id"), {}).get("status") == "running"]
+        """Accepted tasks of running requests, including steps asleep on HPC jobs (their task already returned)."""
+        out = []
+        for tid, entry in self.store.all("task").items():
+            req = self.requests.get(entry.get("request_id"), {})
+            if not entry.get("accepted") or req.get("status") != "running":
+                continue
+            if not entry.get("completed"):
+                state = "running"
+            elif ((entry.get("result") or {}).get("pending_jobs") and
+                  (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
+                state = "hibernating"
+            else:
+                continue
+            out.append({"id": tid, "request_id": entry.get("request_id"), "state": state,
+                        "agent_id": (entry.get("payload") or {}).get("agent_id")})
+        return out
 
     def request_summary(self, req: dict) -> dict:
         rid = req["id"]
@@ -157,7 +168,7 @@ class Hub:
                 entry = self.store.get("task", task["id"]) or {}
                 sid = entry.get("step_id") or entry.get("kind")
                 if sid and states.get(sid, "pending") == "pending":
-                    states[sid] = "running"
+                    states[sid] = task["state"]
         return {"id": rid, "status": req.get("status"), "text": short(req.get("text"), 120),
                 "created_at": req.get("created_at"), "updated_at": req.get("updated_at", req.get("created_at")),
                 "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),

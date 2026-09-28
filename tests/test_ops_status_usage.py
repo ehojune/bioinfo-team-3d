@@ -140,3 +140,73 @@ async def test_runner_first_interrupt_warns_second_exits(monkeypatch, capsys):
         await _run_runner_with_interrupts(runner)
     assert runner.stopped
     assert "task-1" in capsys.readouterr().err
+
+
+def test_steps_asleep_on_hpc_count_as_active(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r1"] = {"id": "r1", "text": "x", "status": "running", "created_at": 1.0,
+                          "plan": {"steps": [{"id": "s1"}]}, "results": {}}
+    hub.store.put("task", "t1", {"request_id": "r1", "step_id": "s1", "accepted": True, "completed": True,
+                                  "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}})
+    assert [t["state"] for t in hub.running_tasks()] == ["hibernating"]
+    assert hub.request_summary(hub.requests["r1"])["step_progress"]["steps"] == {"s1": "hibernating"}
+    hub.requests["r1"]["results"] = {"s1": {"ok": True}}
+    assert hub.running_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_failure_comment_keeps_stored_accounting(tmp_path):
+    import httpx
+
+    from labhq.settings import ProjectSettings
+
+    posted = []
+
+    def api(request):
+        if request.method == "POST" and request.url.path.endswith("/comments"):
+            posted.append(json.loads(request.content)["body"])
+            return httpx.Response(201, json={"html_url": "https://example.test/c"})
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"number": 7, "html_url": "https://example.test/7"})
+
+    settings = Settings(projects=[ProjectSettings(id="p", repo="o/p", commit_reports=False)])
+    settings.gateway.state_dir = str(tmp_path / "state")
+    from labhq.gateway.server import Hub
+    hub = Hub(settings, github_transport=httpx.MockTransport(api))
+    hub.requests["r"] = {"id": "r", "text": "t", "project_id": "p", "status": "failed",
+                         "cost_usd": 1.5, "cost_known": False}
+    hub.reporter.issues["r"] = 7
+    await hub.reporter.handle({"type": "request.failed", "request_id": "r", "data": {"error": "boom"}})
+    assert posted and "$1.5" in posted[-1] and "비용 미집계" in posted[-1]
+
+
+@pytest.mark.asyncio
+async def test_runner_interrupt_warns_while_hpc_jobs_are_watched(monkeypatch, capsys):
+    handlers = {}
+
+    def install(_sig, handler):
+        previous = handlers.get("current", signal.default_int_handler)
+        handlers["current"] = handler
+        return previous
+
+    monkeypatch.setattr(signal, "signal", install)
+
+    class FakeRunner:
+        tasks = {}
+        jobs = {"j1": {"terminal": False}, "j0": {"terminal": True}}
+
+        async def run_forever(self):
+            handlers["current"](signal.SIGINT, None)  # warns: a job is still being watched
+            handlers["current"](signal.SIGINT, None)
+
+        def stop(self):
+            pass
+
+    with pytest.raises(KeyboardInterrupt):
+        await _run_runner_with_interrupts(FakeRunner())
+    err = capsys.readouterr().err
+    assert "HPC job 1개" in err and "j1" in err and "j0" not in err

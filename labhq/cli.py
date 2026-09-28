@@ -132,12 +132,14 @@ async def _run_runner_with_interrupts(runner) -> None:
     def on_interrupt(_signum, _frame) -> None:
         nonlocal last_warning
         active = [tid for tid, task in runner.tasks.items() if not task.done()]
+        # A step asleep on HPC has no live task, but the runner still watches its jobs and wakes the agent.
+        jobs = [jid for jid, job in getattr(runner, "jobs", {}).items() if not job.get("terminal")]
         now = time.monotonic()
-        if not active or (last_warning and now - last_warning <= 10):
+        if not (active or jobs) or (last_warning and now - last_warning <= 10):
             raise KeyboardInterrupt
         last_warning = now
-        print(f"진행 중인 task {len(active)}개: {', '.join(active)}. 10초 안에 Ctrl+C를 다시 누르면 종료합니다.",
-              file=sys.stderr, flush=True)
+        print(f"진행 중인 task {len(active)}개, 감시 중인 HPC job {len(jobs)}개: {', '.join(active + jobs)}. "
+              "10초 안에 Ctrl+C를 다시 누르면 종료합니다.", file=sys.stderr, flush=True)
 
     signal.signal(signal.SIGINT, on_interrupt)
     try:

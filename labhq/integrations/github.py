@@ -344,8 +344,9 @@ class ProjectReporter:
                 ok = typ == "request.completed" and d.get("ok", True)
                 head = "🏁 완료" if ok else "💥 실패"
                 link = f"\n\n보고서: {report_url}" if report_url else ""
-                known = float(d.get("cost_usd") or 0)
-                cost = (f" · 비용 ${known}" if d.get("cost_known", True) else
+                # Failure events may carry no accounting; the stored request keeps what was actually spent.
+                known = float(d.get("cost_usd", req.get("cost_usd")) or 0)
+                cost = (f" · 비용 ${known}" if d.get("cost_known", req.get("cost_known", True)) else
                         f" · 비용 {f'${known} + ' if known else ''}비용 미집계")
                 marker = f"<!-- labhq terminal {rid} {ev.get('seq') or typ} -->"
                 saved = self._action(ev, "comment") or {}
