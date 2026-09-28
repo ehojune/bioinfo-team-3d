@@ -272,6 +272,16 @@ def apply(api: GitHub, snapshot: dict, action: Action) -> None:
             raise RuntimeError("GitHub did not confirm the squash merge")
 
 
+def advice(snapshot: dict) -> dict:
+    """Facts for Claude's merge judgment under the no-cap policy (PI decision 2026-09-28): no merge/needs_pi verdict."""
+    action = decide(snapshot, cap=10**9, warn_at=10**9)
+    return {"advisory": True,
+            "policy": "no fixed round cap; Claude judges review depth and merges",
+            "merge_conditions_met": action.kind == "merge",
+            "reasons": action.reasons,
+            "p2_followups": action.followups}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
@@ -288,6 +298,9 @@ def main() -> int:
         snap = snapshot_for(api, args.pr)
     except ValueError as error:
         print(json.dumps({"action": "none", "reasons": [str(error)]}, ensure_ascii=False))
+        return 0
+    if args.dry_run:
+        print(json.dumps(advice(snap), ensure_ascii=False))
         return 0
     action = decide(snap)
     print(json.dumps({"action": action.kind, "reasons": action.reasons, "followups": action.followups}, ensure_ascii=False))
