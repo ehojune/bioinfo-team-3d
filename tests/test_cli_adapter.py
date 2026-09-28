@@ -1,7 +1,6 @@
 """engine: cli — an external agent (like bioinfo-agent) speaking the labhq JSONL protocol."""
 
 import json
-import stat
 import sys
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from labhq.settings import Settings
 
 AGENT = r'''
 import json, sys, pathlib
+sys.stdout.reconfigure(encoding="utf-8")
 args = sys.argv[1:]
 prompt = sys.stdin.read()
 pathlib.Path(args[args.index("--outputs") + 1], "done.txt").write_text("ok")
@@ -43,9 +43,8 @@ def _ctx(tmp: Path, cli: CliSpec, resume: str | None = None):
 
 async def test_jsonl_protocol_and_placeholders(tmp_path):
     script = tmp_path / "bioinfo-agent"
-    script.write_text(f"#!{sys.executable}\n{AGENT}")
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    cli = CliSpec(command=[str(script), "run", "--task", "{prompt_file}", "--outputs", "{outputs}"],
+    script.write_text("# coding: utf-8\n" + AGENT, encoding="utf-8")
+    cli = CliSpec(command=[sys.executable, str(script), "run", "--task", "{prompt_file}", "--outputs", "{outputs}"],
                   stdin="prompt", output="jsonl", resume_args=["--resume", "{session_id}"])
     ctx, events = _ctx(tmp_path, cli)
     res = await get_adapter(Engine.cli, ctx.settings).run(ctx)
@@ -59,7 +58,7 @@ async def test_jsonl_protocol_and_placeholders(tmp_path):
 
     ctx2, _ = _ctx(tmp_path, cli, resume="ba-1")
     cmd = get_adapter(Engine.cli, ctx2.settings).build_command(ctx2)
-    assert cmd[-2:] == ["--resume", "ba-1"] and cmd[3].endswith("prompt.md")
+    assert cmd[-2:] == ["--resume", "ba-1"] and cmd[4].endswith("prompt.md")
 
 
 async def test_missing_binary_fails_cleanly(tmp_path):

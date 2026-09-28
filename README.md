@@ -9,7 +9,7 @@ CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은
 
 - **들어있는 것**: 실시간 웹 사무실(2.5D·3D, 폰 대응), 러너 데몬, CLI 어댑터 4종(Claude Code · Codex · Gemini ·
   직접 만든 에이전트용 범용 CLI), SGE/PBS HPC 도구(MCP), 승인 게이트, 게이트웨이, CSO 오케스트레이터,
-  **프로젝트별 GitHub 업데이트**, 파견직 채용·계약·인재풀, mock 엔진, 테스트 26개
+  **프로젝트별 GitHub 업데이트**, 파견직 채용·계약·인재풀, mock 엔진, 테스트
 - **아직 없는 것**: iOS 앱 (지금은 웹을 홈 화면에 추가해서 앱처럼 씀 — §6), 거버넌스(정부) 층 (§11)
 
 ---
@@ -20,19 +20,43 @@ CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은
 pip install -e ".[dev]"
 labhq demo --web   # mock 팀이 계속 일하는 사무실을 브라우저로: 출력되는 http://127.0.0.1:8787/?token=… 열기
 labhq demo         # 같은 흐름을 터미널 로그로
-pytest -q          # 26 passed
+pytest -q
 ```
 폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
 게이트웨이 없이 UI만 보려면 `labhq/web/index.html`을 브라우저로 열면 됩니다 (자동으로 데모 모드).
 
 ## 0-1. 실제 실행
 
-전제: 러너 머신에 `claude`, `codex`, `gemini`가 설치·로그인되어 있고 Python ≥ 3.10.
+전제: Python ≥ 3.10, Git, 사용할 직원 CLI의 설치·로그인. npm으로 `codex`/`gemini`를 설치했다면 Node.js도 필요합니다.
+`lit_scout`에는 별도 Antigravity CLI `agy`가 필요합니다. Antigravity 앱에는 CLI가 포함되지 않습니다.
+Windows PowerShell 설치: `irm https://antigravity.google/cli/install.ps1 | iex` (`%LOCALAPPDATA%\agy\bin\agy.exe`).
 
 ```bash
 cp config/labhq.example.yaml config/labhq.yaml      # 토큰, HPC, 데이터 구역, 예산 수정
 export LABHQ_CONFIG=$PWD/config/labhq.yaml
+```
 
+PowerShell:
+
+```powershell
+Copy-Item config/labhq.example.yaml config/labhq.yaml
+$env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
+```
+
+Windows 러너는 `policy.data_zones`에 `restricted` 구역이 있으면 시작을 거부합니다. Windows에서 시험할 때는 `data_zones: []`로 설정하세요.
+npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
+풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 다음처럼 `bin`과 `prefix_args`를 사용하세요(설치된 package 경로 확인).
+
+```yaml
+engines:
+  codex:
+    bin: "%APPDATA%/npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+  gemini:
+    bin: node
+    prefix_args: ["%APPDATA%/npm/node_modules/@google/gemini-cli/dist/index.js"]
+```
+
+```bash
 labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 요청·승인·이벤트를 로컬 SQLite에 저장
 labhq runner                 # 워크스테이션 또는 HPC 로그인 노드. 게이트웨이로 outbound 접속
 labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1회)
@@ -273,7 +297,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 - **승인·예산** (`policy.approvals`, `policy.budget`): `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 비용이 보고되지 않으면 `비용 미집계`로 표시하며 달러 예산에 0으로 더합니다.
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
   `permission_mode`, `project_dirs`.
-- **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `extra_args`, `env`.
+- **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `prefix_args`, `extra_args`, `env`.
   Claude·Codex의 `isolate_user_config`(기본 켜짐)는 PI 개인 CLI 설정을 직원 세션에서 뺍니다(§10). Gemini·Antigravity에는 이 옵션이 없습니다. Codex의 `windows_sandbox`는 Windows에서 다시 넣는 샌드박스 모드입니다. 모르는 키는 오류로 거부합니다.
   Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.
 

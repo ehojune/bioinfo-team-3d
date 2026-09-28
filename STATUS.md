@@ -10,6 +10,12 @@
 - 미해결: 이 환경의 기존 Windows/sandbox 실패 11건. 실제 엔진 과금·중단 시그널의 수동 운영 확인은 남았다.
 - 근거: `tests/test_ops_status_usage.py`, `tests/test_real_streams.py`, `labhq/gateway/server.py`.
 
+## 2026-09-28 · Windows 실행·demo 격리 #26
+
+- 한 일: demo의 gateway·runner 상태와 작업·인재·직원 경로를 임시 폴더로 격리했다. Windows npm shim은 Node.js 스크립트로 풀어 실행하고, 풀 수 없는 batch는 실행 전에 거부한다. `prefix_args`와 Windows 설정 안내를 추가했다.
+- 테스트: Windows `pytest -q` 342 passed/6 failed/17 skipped (원본 332 passed/10 failed/17 skipped; shebang 4건 해결, 새 실패 0). `bash scripts/check_public.sh` 통과.
+- 남은 점: 기존 plugin provenance 3건과 러너 상태 DB 3건 실패. 실제 직원 CLI 실행은 하지 않았다.
+
 ## 2026-09-28 · 후속 P2 #19·#21·#22
 
 - 무엇을: `labhq demo --host ::`가 IPv6 주소로 폰 URL을 출력한다(#19). plugin provenance 해시에 git index mode(실행 비트)를 넣었다(#21). `pr_gate.py --dry-run` advice가 병합이 막혀도 현재 head의 P2 목록을 담는다(#22). HANDOFF에 P5 완료와 P3 러너 계정 결정 대기를 적었다.
