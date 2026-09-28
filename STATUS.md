@@ -4,11 +4,19 @@
 
 ## 2026-09-28 · demo phone mode
 
-- 한 일: `labhq demo --web --phone`이 LAN 주소의 `/3d` URL과 새 client token을 출력하고 폰 승인을 기다린다. 기본 120초 뒤에만 자동 승인한다.
+- 한 일: `labhq demo --web --phone`이 LAN 주소의 `/3d` URL을 출력하고, client·runner token을 새로 만들고, 폰 승인을 기다린다. 기본 120초 뒤에만 자동 승인한다. 데모 publish 래퍼가 `runner_id`·`runner_seq`를 넘기지 않아 P1+ ⑤ 이후 `--web` 데모가 멈추던 문제도 고쳤다.
 - 테스트: phone mode 8 passed, 전체 `pytest -q` 268 passed/14 skipped/7 failed(Windows shebang 4, 긴 임시 경로 2, 기존 공개 가드 1). `bash scripts/check_public.sh` 통과.
 - 바꾼 파일: `labhq/cli.py`, `tests/test_demo_phone.py`, `README.md`, `STATUS.md`.
+- 검증: 폰 모드를 실제로 띄워 승인 대기 → 자동 승인, REST로 먼저 누른 거절 반영, 토큰 없는 요청 401을 확인했다.
 - 막힌 점: 전체 test 7건은 현재 Windows 환경·기존 코드에서 실패한다. iPhone Safari 실기와 Windows firewall 동작은 미검증.
 - 질문: 없음.
+
+## 2026-09-28 · 후속 issue #12·#13
+
+- 무엇을: 공유 표시 규칙으로 3D 완료 포즈·표지를 3초 뒤 대기로 돌리고, 리뷰 요약 누락·파싱 실패·stale 상태도 8·9회에 한 번 경고한다. Fixes #12, Fixes #13.
+- 테스트: Windows pytest 11 failed/256 passed/14 skipped → 11 failed/266 passed/14 skipped(새 실패 0). 대상 테스트 63 passed/1 skipped, Node 검사 2개, 공개 검사 통과.
+- 막힌 점: Windows 기준선 실패 11개는 그대로다. Linux CI와 실제 브라우저는 미검증.
+- 다음: Claude가 PR을 열고 Linux CI와 3D 실화면을 확인한다.
 
 ## 2026-09-28 · PR 게이트 실운영 점검
 

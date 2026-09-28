@@ -135,6 +135,15 @@ def _demo_token(exposed: bool, current: str) -> str:
     return secrets.token_urlsafe(16) if exposed else current
 
 
+def _demo_dial_host(host: str) -> str:
+    """Where the in-process runner connects: loopback of the bind family, or the bound address itself."""
+    if host in ("::1", "::"):
+        return "[::1]"
+    if host in LOOPBACK_HOSTS + WILDCARD_HOSTS:
+        return "127.0.0.1"
+    return _demo_url_hosts(host)[0]
+
+
 def _demo_url_hosts(host: str) -> list[str]:
     """Addresses a browser can use for the bind host (wildcard → this machine's LAN IPv4s)."""
     if host in LOOPBACK_HOSTS:
@@ -198,7 +207,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = Settings.load(None)
     gport = port if web else free_port()
-    dial = "127.0.0.1" if host in LOOPBACK_HOSTS + WILDCARD_HOSTS else _demo_url_hosts(host)[0]
+    dial = _demo_dial_host(host)
     s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
     exposed = phone or host not in LOOPBACK_HOSTS
     # Both default tokens are public; on the LAN anyone could otherwise join as a client or replace the runner.

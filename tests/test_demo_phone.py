@@ -149,3 +149,11 @@ def test_tap_publish_forwards_runner_sequence():
     asyncio.run(tap({"type": "runner.online"}))
     assert calls == [("agent.status", "local", 7), ("runner.online", None, None)]
     assert seen == ["agent.status", "runner.online"]
+
+
+def test_demo_dial_host_matches_bind_family():
+    assert cli._demo_dial_host("127.0.0.1") == "127.0.0.1"
+    assert cli._demo_dial_host("0.0.0.0") == "127.0.0.1"
+    assert cli._demo_dial_host("::1") == "[::1]"
+    assert cli._demo_dial_host("::") == "[::1]"
+    assert cli._demo_dial_host("192.168.1.4") == "192.168.1.4"

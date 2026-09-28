@@ -25,6 +25,8 @@ const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '
 const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실행'], ['review', '리뷰'], ['report', '보고']];
 
 const ag = id => S.agents.get(id);
+const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
+  ? 'idle' : STATE_KO[a.state] ? a.state : 'idle';
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
@@ -208,7 +210,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState };
 })(globalThis);
