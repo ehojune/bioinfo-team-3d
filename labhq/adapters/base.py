@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 import signal
 from abc import ABC, abstractmethod
@@ -69,8 +70,12 @@ def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
     return "bash", ["-lc", inner]
 
 
-def expand_env(env: dict[str, str]) -> dict[str, str]:
-    return {k: os.path.expandvars(v) for k, v in env.items()}
+def expand_env(env: dict[str, str], source: dict[str, str] | None = None) -> dict[str, str]:
+    if source is None:
+        return {k: os.path.expandvars(v) for k, v in env.items()}
+    # Match the environment passed to the child, including engine and task overrides.
+    return {k: re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
+                      lambda m: source.get(m.group(1), m.group(0)), v) for k, v in env.items()}
 
 
 def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: str) -> list[Path]:

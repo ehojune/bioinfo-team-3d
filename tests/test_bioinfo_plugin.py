@@ -1,0 +1,118 @@
+"""The one Claude Code staff member allowed to load the approved bioinfo plugin skill."""
+
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from labhq.adapters import get_adapter
+from labhq.adapters.base import RunContext
+from labhq.models import AgentSpec, Engine, Task
+from labhq.registry import Registry
+from labhq.settings import Settings
+from scripts.redact_stream import Redactor
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+async def _emit(kind, data):
+    pass
+
+
+def _ctx(tmp_path, agent, env=None):
+    wd = tmp_path / "work"
+    wd.mkdir(parents=True, exist_ok=True)
+    return RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=wd,
+                      settings=Settings(), mcp_servers=[], env=env or {}, emit=_emit, prompt="x")
+
+
+def test_core_agent_skill_exception_is_scoped(tmp_path, monkeypatch):
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text('{"name":"bioinfo"}')
+    monkeypatch.setenv("BIOINFO_AGENT_DIR", str(plugin))
+    registry = Registry(ROOT / "agents", tmp_path / "talent")
+    registry.load()
+    bioinfo = registry.get("bioinfo-agent")
+    assert bioinfo.engine == Engine.claude_code and bioinfo.builtin_mcp == ["approval", "hpc"]
+    for agent in registry.agents.values():
+        if agent.engine != Engine.claude_code:
+            continue
+        ctx = _ctx(tmp_path / agent.id, agent)
+        cmd = get_adapter(agent.engine, ctx.settings).build_command(ctx)
+        assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
+        if agent.id == "bioinfo-agent":
+            assert cmd[cmd.index("--plugin-dir") + 1] == str(plugin)
+            assert "--disable-slash-commands" not in cmd
+            settings = json.loads(cmd[cmd.index("--settings") + 1])
+            assert settings["autoMemoryEnabled"] is False and settings["claudeMdExcludes"]
+        else:
+            assert "--plugin-dir" not in cmd and "--disable-slash-commands" in cmd
+
+
+def test_plugin_dir_expands_task_environment_and_repeats_flag(tmp_path, monkeypatch):
+    monkeypatch.delenv("BIOINFO_AGENT_DIR", raising=False)
+    first, second = tmp_path / "first", tmp_path / "second"
+    for directory in (first, second):
+        (directory / ".claude-plugin").mkdir(parents=True)
+        (directory / ".claude-plugin" / "plugin.json").write_text("{}")
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine.claude_code,
+                      plugin_dirs=["${BIOINFO_AGENT_DIR}", str(second)], allow_skills=True)
+    ctx = _ctx(tmp_path, agent, {"BIOINFO_AGENT_DIR": str(first)})
+    adapter = get_adapter(agent.engine, ctx.settings)
+    assert adapter.preflight_error(ctx, ctx.env) is None
+    cmd = adapter.build_command(ctx)
+    assert [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--plugin-dir"] == [str(first), str(second)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [
+    ("unset", "BIOINFO_AGENT_DIR is not set"),
+    ("missing_dir", "plugin directory does not exist"),
+    ("missing_manifest", "plugin manifest is missing"),
+])
+async def test_plugin_preflight_refuses_before_workspace_write(tmp_path, monkeypatch, case, expected):
+    monkeypatch.delenv("BIOINFO_AGENT_DIR", raising=False)
+    plugin = tmp_path / "plugin"
+    if case == "missing_manifest":
+        plugin.mkdir()
+    env = {} if case == "unset" else {"BIOINFO_AGENT_DIR": str(plugin)}
+    agent = AgentSpec(id="bioinfo-agent", name="Bioinfo", role="test", engine=Engine.claude_code,
+                      plugin_dirs=["${BIOINFO_AGENT_DIR}"], allow_skills=True)
+    ctx = _ctx(tmp_path, agent, env)
+    result = await get_adapter(agent.engine, ctx.settings).run(ctx)
+    assert not result.ok and expected in result.error
+    assert not any(ctx.workdir.iterdir())
+
+
+@pytest.mark.parametrize("field", ["plugin_dirs", "allow_skills"])
+def test_plugin_options_reject_other_engines(field):
+    value = ["${BIOINFO_AGENT_DIR}"] if field == "plugin_dirs" else True
+    with pytest.raises(ValidationError, match="require engine: claude_code"):
+        AgentSpec(id="a", name="A", role="test", engine=Engine.cli, **{field: value})
+
+
+def test_redacted_real_plugin_init_is_minimal():
+    path = ROOT / "tests/fixtures/real/claude_code/claude_plugin_skills.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    init = json.loads(lines[0])
+    assert init["type"] == "system" and init["subtype"] == "init"
+    assert init["skills"] == ["bioinfo:bioinfo-analyze"]
+    assert "bioinfo-analyze" not in init["skills"]
+    assert init["plugins"] == [{"name": "bioinfo"}]
+    assert init["cwd"] == "<WORKDIR>"
+    assert "path" not in init["plugins"][0] and "source" not in init["plugins"][0]
+
+
+def test_plugin_init_redaction_discards_other_inventory():
+    raw = {"type": "system", "subtype": "init", "cwd": "private/work",
+           "skills": ["private-skill", "bioinfo:bioinfo-analyze"],
+           "plugins": [{"name": "personal", "path": "private/personal"},
+                       {"name": "bioinfo", "path": "private/plugin", "source": "bioinfo@inline"}]}
+    redactor = Redactor(home="", tmp="", workdir="", username="", plugin_skill="bioinfo:bioinfo-analyze")
+    init = json.loads(redactor.line(json.dumps(raw)))
+    assert init == {"type": "system", "subtype": "init", "cwd": "<WORKDIR>",
+                    "skills": ["bioinfo:bioinfo-analyze"], "plugins": [{"name": "bioinfo"}]}

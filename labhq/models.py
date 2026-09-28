@@ -21,7 +21,7 @@ class Engine(str, Enum):
     codex = "codex"
     gemini = "gemini"
     antigravity = "antigravity"
-    cli = "cli"  # any other agent program (e.g. the lab's own bioinfo-agent) behind a command template
+    cli = "cli"  # any other agent program behind a command template
     mock = "mock"
 
 
@@ -83,6 +83,8 @@ class AgentSpec(BaseModel):
     builtin_mcp: list[str] = ["approval"]  # labhq-provided MCP servers: approval, hpc
     mcp: list[McpServerSpec] = []
     project_dirs: list[str] = []
+    plugin_dirs: list[str] = []  # Claude Code --plugin-dir; ${VAR} expands at run time
+    allow_skills: bool = False  # per-agent exception to --disable-slash-commands
     permission_mode: str = "default"
     sandbox: str = "workspace-write"  # Codex sandbox
     cli: CliSpec | None = None  # engine: cli
@@ -95,6 +97,8 @@ class AgentSpec(BaseModel):
 
     @model_validator(mode="after")
     def antigravity_has_no_mcp(self) -> "AgentSpec":
+        if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills):
+            raise ValueError("plugin_dirs and allow_skills require engine: claude_code")
         if self.engine == Engine.antigravity and (self.builtin_mcp or self.mcp):
             raise ValueError("antigravity does not support builtin_mcp or MCP servers")
         return self

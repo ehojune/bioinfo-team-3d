@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · P2 bioinfo-agent plugin 연결
+
+- 무엇을: `bioinfo-agent`에 Claude Code plugin `bioinfo`를 `--plugin-dir`로 연결했다. 이 직원만 skill을 허용하고 나머지 개인 설정 격리는 유지한다. 실행 전 plugin 경로와 manifest를 검사한다.
+- 근거: 두 실제 init probe에서 skill 허용 시 `bioinfo:bioinfo-analyze`만 로드되고 `--disable-slash-commands` 시 skill은 비었다. 공개 fixture에는 해당 이름만 남겼다.
+- 테스트: 대상 71 passed. 전체 Windows `pytest -q`는 기준 커밋과 동일한 7 failed/14 skipped, 260→269 passed(새 실패 0). `bash scripts/check_public.sh` 통과.
+- 남은 점: Windows sandbox의 기준선 실패 7개와 PI 머신의 실제 plugin 분석 task·QC handoff 확인.
+
 ## 2026-09-28 · PR 게이트 실운영 점검
 
 - 무엇을: select 잡의 `PYTHONPATH`를 고정하고 쓰기 권한 부족은 경고로 끝낸다. `select`·`gate` check를 판정에서 제외하되 다른 check가 없으면 보류한다.

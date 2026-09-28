@@ -3,13 +3,15 @@
 Flags used (see https://code.claude.com/docs/en/cli-reference): -p, --output-format stream-json
 --verbose, --model, --permission-mode, --permission-prompt-tool, --mcp-config + --strict-mcp-config,
 --append-system-prompt-file, --max-turns, --max-budget-usd, --json-schema, --resume, --settings,
---add-dir, --tools, --allowedTools, --disallowedTools, --setting-sources, --disable-slash-commands.
+--add-dir, --plugin-dir, --tools, --allowedTools, --disallowedTools, --setting-sources,
+--disable-slash-commands.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from ..util import short
@@ -17,6 +19,7 @@ from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
+PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
@@ -24,6 +27,7 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 
     Verified on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_isolated.jsonl): ISOLATION_FLAGS drop
     user hooks, plugins, subagents and skills, but the user CLAUDE.md still loads until it is excluded here.
+    A staff member may explicitly load a plugin skill while retaining project,local setting sources.
     """
     excludes = []
     for home in child_config_dirs(env, cwd, "CLAUDE_CONFIG_DIR", ".claude"):
@@ -38,6 +42,23 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
+
+    def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
+        return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
+
+    def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
+        for raw, directory in zip(ctx.agent.plugin_dirs, self._plugin_dirs(ctx, env)):
+            for var in PLUGIN_VAR.findall(raw):
+                if not env.get(var):
+                    return f"{var} is not set"
+            path = Path(directory)
+            if not path.is_absolute():
+                path = ctx.workdir / path
+            if not path.is_dir():
+                return f"plugin directory does not exist: {directory}"
+            if not (path / ".claude-plugin" / "plugin.json").is_file():
+                return f"plugin manifest is missing: {directory}/.claude-plugin/plugin.json"
+        return None
 
     def prepare(self, ctx: RunContext) -> None:
         servers: dict[str, dict] = {}
@@ -69,7 +90,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--json-schema", json.dumps(t.output_schema)]
         settings = dict(ctx.claude_settings)
         if b.isolate_user_config:
-            cmd += ISOLATION_FLAGS
+            cmd += ISOLATION_FLAGS[:2] if a.allow_skills else ISOLATION_FLAGS
             settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
         if settings:
             cmd += ["--settings", json.dumps(settings)]
@@ -78,6 +99,8 @@ class ClaudeCodeAdapter(AgentAdapter):
         if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):
             cmd += ["--permission-prompt-tool", PERMISSION_TOOL]
         cmd += b.extra_args
+        for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
+            cmd += ["--plugin-dir", directory]
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
         for d in ctx.extra_dirs:
             cmd += ["--add-dir", d]
