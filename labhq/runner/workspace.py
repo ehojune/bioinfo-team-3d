@@ -1,4 +1,4 @@
-"""One directory per task = the lab notebook page for that task.
+"""One directory per task, reused by retries and revisions as the step notebook.
 
 <root>/<YYYY-MM-DD>/<task_id>_<agent_id>/
   TASK.md          instruction + teammates' context, exactly as sent
@@ -37,7 +37,8 @@ class TaskWorkspace:
         body = f"# Task {t.id}\n\nAssigned to: {a.name} ({a.id}) — {a.role}\n\n## Instruction\n{t.prompt}\n"
         if t.context:
             body += f"\n## Context from teammates\n{t.context}\n"
-        name = "TASK.md" if not t.resume_session_id else f"TASK_wake_{t.id}.md"
+        name = (f"TASK_wake_{t.id}.md" if t.resume_session_id else
+                f"TASK_{t.id}.md" if (self.dir / "TASK.md").exists() else "TASK.md")
         (self.dir / name).write_text(body, encoding="utf-8")
         if len(body) <= INLINE_LIMIT:
             return body

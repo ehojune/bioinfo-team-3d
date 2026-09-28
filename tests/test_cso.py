@@ -164,6 +164,8 @@ async def test_blocking_decision_denial_cancels_dispatch():
     hub = FakeHub(dispatch)
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] == "failed"
+    assert "Choose a cohort" in hub.requests["r"]["report"]
+    assert "Pending PI decisions/questions" in hub.requests["r"]["report"]
     assert not any(t.meta.get("step_id") == "B" for t in hub.calls)
 
 
@@ -177,6 +179,10 @@ def test_resume_uses_adapter_flag(tmp_path):
     assert not hub.supports_resume("gemini")
     assert not hub.supports_resume("antigravity")
     assert not hub.supports_resume("missing")
+    hub.agents["cli_plain"] = {"engine": "cli", "cli_resume": False}
+    hub.agents["cli_resumable"] = {"engine": "cli", "cli_resume": True}
+    assert not hub.supports_resume("cli_plain")
+    assert hub.supports_resume("cli_resumable")
 
 
 def test_runner_reports_effective_compute_capabilities():
@@ -228,6 +234,7 @@ async def test_failed_branch_skips_transitive_dependents_and_preserves_independe
     assert "B" in req["results"]["C"]["error"]
     assert req["results"]["D"]["status"] == "done"
     assert "SKIPPED" in req["report"] and "policy denied" in req["report"]
+    assert "A [terminal]: policy denied" in req["report"]
     assert Counter(t.meta.get("step_id") for t in hub.calls)["A"] == 1
     assert not any(t.meta.get("step_id") in ("B", "C") for t in hub.calls)
     assert sum(e["type"] == "request.step_skipped" for e in hub.events) == 2
@@ -269,14 +276,17 @@ async def test_timeout_retries_once_then_succeeds_with_two_attempts():
         nonlocal calls
         calls += 1
         return result(task, ok=calls == 2, text="done" if calls == 2 else "",
-                      error="timeout after 5s" if calls == 1 else None)
+                      error="timeout after 5s" if calls == 1 else None,
+                      session_id="worker-session")
 
     hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
     orch = Orchestrator(hub)
     res = await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work",
                                    meta={"kind": "step", "step_id": "A"}))
     assert res.ok and calls == 2 and orch.attempts["r"]["A"] == 2
     assert hub.calls[0].id != hub.calls[1].id
+    assert hub.calls[1].resume_session_id == "worker-session"
     assert [e["type"] for e in hub.events].count("request.step_retry") == 1
 
 
@@ -533,3 +543,173 @@ def test_saved_results_pop_is_durable(tmp_path):
     results.pop("s1", None)
     assert "s1" not in hub.requests["r"]["results"] and "s1" not in results
     assert "s1" not in (Hub(s).requests["r"].get("results") or {})  # survives a restart
+
+
+@pytest.mark.asyncio
+async def test_failed_revision_keeps_first_result_and_workspace():
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+    seen = []
+
+    async def dispatch(task):
+        seen.append(task)
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured={"steps": steps})
+        if kind == "step":
+            if task.meta["revision"]:
+                assert task.meta["workdir"] == "runs/A"
+                assert task.resume_session_id == "worker-session"
+                return result(task, ok=False, error="revision broke", workdir="runs/A")
+            return result(task, text="good evidence", workdir="runs/A", workdir_id="A",
+                          session_id="worker-session")
+        if kind == "review":
+            revise = task.meta["revision"] == 0
+            return result(task, structured={"verdict": "revise" if revise else "accept",
+                                            "scores": {"addresses_question": 4, "evidence": 4,
+                                                       "thoroughness": 4},
+                                            "issues": [{"step_id": "A", "problem": "check", "request": "retry"}]
+                                            if revise else []})
+        return result(task, text="final")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: agent_id == "worker"
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "done"
+    assert req["results"]["A"]["text"] == "good evidence"
+    assert "revision broke" in req["results"]["A"]["revision_failed"]
+    assert "revision failed" in req["report"]
+    assert all(t.resume_session_id is None for t in seen if t.meta["kind"] == "review")
+
+
+@pytest.mark.asyncio
+async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        sid = task.meta["step_id"]
+        if sid == "A" and len([x for x in calls if x.meta["step_id"] == "A"]) == 1:
+            return result(task, ok=False, error="timeout", workdir="runs/A")
+        if sid == "A":
+            assert task.meta["workdir"] == "runs/A"
+            return result(task, text="done", workdir="runs/A", workdir_id="A",
+                          outputs=["outputs/table.tsv"])
+        assert task.meta["upstream_dirs"] == ["runs/A"]
+        assert '"workdir_id": "A"' in task.context
+        assert "runs/A/outputs/table.tsv" in task.context.replace("\\", "/")
+        return result(task, text="used table")
+
+    hub = FakeHub(dispatch)
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "make table", "depends_on": [],
+              "outputs": ["table.tsv"]},
+             {"id": "B", "agent_id": "worker", "instruction": "use table", "depends_on": ["A"]}]
+    outcomes = {}
+    await Orchestrator(hub).run_dag("r", "question", steps, outcomes)
+    assert outcomes["A"].ok and outcomes["B"].ok
+    assert calls[0].id != calls[1].id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [True, False])
+async def test_max_turns_wraps_once_and_keeps_failure(resume):
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            assert task.resume_session_id == "session-1"
+            assert task.meta["agent_overrides"]["max_turns"] == 2
+            assert task.meta["workdir"] == "runs/A"
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
+                      session_id="session-1", workdir="runs/A")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: resume
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A"}))
+    assert not res.ok and res.partial_results is resume
+    assert res.outputs == (["outputs/PARTIAL_STATUS.md"] if resume else [])
+    assert len(hub.calls) == (2 if resume else 1)
+
+
+@pytest.mark.asyncio
+async def test_declared_missing_output_is_incomplete_and_skips_dependent():
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "make table", "depends_on": [],
+              "outputs": ["table.tsv"]},
+             {"id": "B", "agent_id": "worker", "instruction": "read A", "depends_on": ["A"]}]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": steps})
+        assert task.meta["step_id"] == "A"
+        return result(task, text="claimed done", workdir_id="A")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert req["results"]["A"]["status"] == "incomplete"
+    assert req["results"]["A"]["missing_outputs"] == ["table.tsv"]
+    assert "A [terminal]" in req["report"] and "table.tsv" in req["report"]
+    assert req["results"]["B"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_cso_reuses_session_for_replan_and_synthesis():
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            first = task.resume_session_id is None
+            return result(task, session_id="cso-session", workdir="runs/cso",
+                          structured={"steps": [STEPS[0]],
+                                      "clarifying_questions": ["Which group?"] if first else []})
+        return result(task, text="done", session_id="cso-session", workdir="runs/cso")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: agent_id == "cso"
+    hub.s.orchestrator.reviewer_agent = None
+    hub.request_approval = lambda **kwargs: asyncio.sleep(0, result={"approved": True, "note": "cases"})
+    await Orchestrator(hub).run_request("r")
+    control = [task for task in hub.calls if task.agent_id == "cso"]
+    assert hub.requests["r"]["status"] == "done"
+    assert [task.meta["kind"] for task in control] == ["plan", "plan", "synthesis"]
+    assert [task.resume_session_id for task in control] == [None, "cso-session", "cso-session"]
+    assert control[1].meta["workdir"] == control[2].meta["workdir"] == "runs/cso"
+
+
+@pytest.mark.asyncio
+async def test_runner_records_declared_artifact_and_reuses_workspace(tmp_path):
+    from pathlib import Path
+    from labhq.models import AgentSpec, Engine
+
+    settings = Settings()
+    settings.gateway.state_dir = settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    settings.hpc.scheduler = "none"
+    runner = Runner(settings)
+    runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.mock)
+    first = Task(agent_id="worker", request_id="r", prompt="Your step: make [artifact]",
+                 meta={"kind": "step", "outputs": ["artifact.txt"]})
+    produced = await runner.run_task(first)
+    assert produced.outputs == ["outputs/artifact.txt"]
+    assert produced.workdir_id == Path(produced.workdir).name
+    second = Task(agent_id="worker", request_id="r", prompt="continue",
+                  meta={"kind": "step", "workdir": produced.workdir,
+                        "upstream_dirs": [produced.workdir]})
+    resumed = await runner.run_task(second)
+    assert resumed.workdir == produced.workdir
+    assert (Path(resumed.workdir) / "outputs" / "artifact.txt").read_text() == "mock artifact\n"
+    assert (Path(resumed.workdir) / f"TASK_{second.id}.md").exists()
+    assert second.id in (Path(resumed.workdir) / "manifest.json").read_text()
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("table.tsv", "outputs/table.tsv"), ("./table.tsv", "outputs/table.tsv"),
+    (r"outputs\table.tsv", "outputs/table.tsv"), ("outputs/dir/../table.tsv", "outputs/table.tsv"),
+    ("../escape.tsv", None), ("/abs/t.tsv", None), ("C:/x/t.tsv", None),
+])
+def test_declared_outputs_normalize_like_the_runner(name, expected):
+    from labhq.util import output_relpath
+
+    assert output_relpath(name) == expected

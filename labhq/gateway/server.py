@@ -474,6 +474,8 @@ class Hub:
         engine = self.agents.get(agent_id, {}).get("engine")
         if not engine:
             return False
+        if engine == "cli":
+            return bool(self.agents[agent_id].get("cli_resume"))
         try:
             return get_adapter(engine, self.s).supports_resume
         except ValueError:
