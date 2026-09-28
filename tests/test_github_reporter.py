@@ -128,9 +128,38 @@ def test_restricted_zones_match_separators_case_and_directory_boundary():
 
 def test_root_restricted_zone_fails_closed():
     policy = PolicySettings(data_zones=[DataZone(path="/", level="restricted")])
-    out = sanitize("raw at /private/subject.cram (see https://github.com/o/p/issues/1)", policy)
-    assert "/private" not in out and "subject.cram" not in out
+    out = sanitize("raw at /private/subject 123.cram\nsee https://github.com/o/p/issues/1", policy)
+    assert "/private" not in out and "123.cram" not in out
     assert "https://github.com/o/p/issues/1" in out
+
+
+def test_zone_names_with_spaces_and_brackets_fail_closed_to_the_delimiter():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")])
+    out = sanitize("| s1 | /data/cohort/subject 123 (v2), part/sample.cram | pass |\nnext line", policy)
+    assert "123" not in out and "sample.cram" not in out and "part" not in out
+    assert out == "| s1 | <restricted-zone>| pass |\nnext line"
+    quoted = sanitize('{"path": "/data/cohort/a b.cram", "n": 1}', policy)
+    assert quoted == '{"path": "<restricted-zone>", "n": 1}'
+
+
+@pytest.mark.asyncio
+async def test_branch_and_sha_are_control_values_not_published_text():
+    policy = PolicySettings(data_zones=[DataZone(path="/data", level="restricted")])
+    seen: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "GET":
+            return httpx.Response(404, json={})
+        return httpx.Response(201, json={"content": {"html_url": "https://example.test/r"}})
+
+    client = GitHubClient("test-token", "https://example.test", httpx.MockTransport(api),
+                          lambda value: sanitize(value, policy))
+    await client.put_file("o/p", "r.md", "raw /data/x.cram", "msg /data/y", "feature/data")
+    assert seen[0].url.params["ref"] == "feature/data"
+    body = json.loads(seen[1].content)
+    assert body["branch"] == "feature/data"
+    assert "/data/" not in base64.b64decode(body["content"]).decode("utf-8") and "/data" not in body["message"]
 
 
 @pytest.mark.asyncio

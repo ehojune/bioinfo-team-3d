@@ -40,16 +40,18 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     out = text or ""
     zones = sorted((os.path.expanduser(z.path).rstrip("/\\") for z in policy.data_zones
                     if z.level == "restricted"), key=len, reverse=True)
+    # Names below a zone may contain spaces, commas or brackets, so where a path ends is unknowable.
+    # Fail closed: from the zone to the end of the line, stopping only at quote/markup delimiters.
+    tail = r"[^\r\n\"'`<>|]*"
     for zone in zones:
         if not zone:
-            # The zone is the POSIX root, so every absolute path is restricted; fail closed.
-            out = re.sub(r"(?<![\w.:/\-])/[^\s<>\"'`()[\]{};,]+", "<restricted-zone>", out)
+            # The zone is the POSIX root, so every absolute path is restricted.
+            out = re.sub(r"(?<![\w.:/\\-])/" + tail, "<restricted-zone>", out)
             continue
         parts = re.split(r"[/\\]+", zone)
         pattern = r"[/\\]+".join(re.escape(part) for part in parts)
-        # A zone is a directory boundary; consume descendants so none of the path survives.
-        out = re.sub(pattern + r"(?![\w.-])(?:[/\\]+[^\s/\\<>\"'`()[\]{};,]+)*[/\\]*",
-                     "<restricted-zone>", out, flags=re.IGNORECASE)
+        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
+        out = re.sub(pattern + r"(?![\w.-])" + tail, "<restricted-zone>", out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     for secret in extra_secrets:
@@ -88,11 +90,14 @@ class GitHubClient:
             raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:300]}")
         return r.json() if r.content else {}
 
+    CONTROL_KEYS = frozenset({"branch", "sha", "ref"})  # GitHub control values, not published text
+
     def _clean_value(self, value: Any) -> Any:
         if isinstance(value, str):
             return self.clean(value)
         if isinstance(value, dict):
-            return {self.clean(k) if isinstance(k, str) else k: self._clean_value(v)
+            return {self.clean(k) if isinstance(k, str) else k:
+                    v if k in self.CONTROL_KEYS and isinstance(v, str) else self._clean_value(v)
                     for k, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [self._clean_value(v) for v in value]
@@ -136,7 +141,7 @@ class GitHubClient:
         return issue.get("state") == "closed"
 
     async def put_file(self, repo: str, path: str, content: str, message: str, branch: str) -> dict:
-        path, content, branch = self.clean(path), self.clean(content), self.clean(branch)
+        path, content = self.clean(path), self.clean(content)  # branch is a ref, not published text
         sha = None
         r = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
         if r.status_code == 200:
