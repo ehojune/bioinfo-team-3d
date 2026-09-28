@@ -41,7 +41,10 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     return {"autoMemoryEnabled": False, "claudeMdExcludes": excludes}
 
 
-PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands")  # what Claude Code loads
+# Default component locations and root config files from the Claude Code plugin reference, plus any
+# relative path the manifest itself declares (custom commands/agents/hooks/mcpServers/lspServers files).
+PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands", "output-styles", "bin")
+PLUGIN_ROOT_FILES = (".mcp.json", ".lsp.json", "settings.json")
 
 
 def read_plugin_manifest(path: Path) -> dict | None:
@@ -52,16 +55,36 @@ def read_plugin_manifest(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _manifest_paths(value) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value.startswith(("./", "../")) else []
+    if isinstance(value, dict):
+        return [p for v in value.values() for p in _manifest_paths(v)]
+    if isinstance(value, list):
+        return [p for v in value for p in _manifest_paths(v)]
+    return []
+
+
 def plugin_provenance(name: str, path: Path) -> dict:
-    """Name, declared version and a content hash of the parts Claude Code loads (no local path)."""
+    """Name, declared version and a content hash of every part Claude Code loads (no local path)."""
+    manifest = read_plugin_manifest(path) or {}
+    root = path.resolve()
+    targets = [path / part for part in PLUGIN_PARTS + PLUGIN_ROOT_FILES]
+    for rel in _manifest_paths(manifest):
+        target = (path / rel).resolve()
+        if target == root or root in target.parents:  # a manifest path outside the plugin is not ours to hash
+            targets.append(target)
+    files: set[Path] = set()
+    for t in targets:
+        if t.is_file():
+            files.add(t.resolve())
+        elif t.is_dir():
+            files.update(f.resolve() for f in t.rglob("*") if f.is_file())
     h = hashlib.sha256()
-    for part in PLUGIN_PARTS:
-        base = path / part
-        files = sorted(p for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
-        for f in files:
-            h.update(f.relative_to(path).as_posix().encode("utf-8") + b"\0")
-            h.update(hashlib.sha256(f.read_bytes()).digest())
-    return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "sha256": h.hexdigest()}
+    for f in sorted(files, key=lambda f: f.relative_to(root).as_posix()):
+        h.update(f.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        h.update(hashlib.sha256(f.read_bytes()).digest())
+    return {"name": name, "version": manifest.get("version"), "sha256": h.hexdigest()}
 
 
 class ClaudeCodeAdapter(AgentAdapter):

@@ -171,3 +171,21 @@ def test_plugin_init_redaction_discards_other_inventory():
     init = json.loads(redactor.line(json.dumps(raw)))
     assert init == {"type": "system", "subtype": "init", "cwd": "<WORKDIR>",
                     "skills": ["bioinfo:bioinfo-analyze"], "plugins": [{"name": "bioinfo"}]}
+
+
+@pytest.mark.parametrize("rel", [".mcp.json", ".lsp.json", "custom/cmds/run.md"])
+def test_plugin_provenance_covers_root_config_and_manifest_paths(tmp_path, rel):
+    from labhq.adapters.claude_code import plugin_provenance
+
+    plugin = _plugin(tmp_path / "plugin")
+    manifest = {"name": "bioinfo", "version": "1", "commands": "./custom/cmds/"}
+    (plugin / ".claude-plugin" / "plugin.json").write_text(json.dumps(manifest))
+    target = plugin / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('{"a": 1}')
+    before = plugin_provenance("bioinfo", plugin)["sha256"]
+    target.write_text('{"a": 2}')
+    after = plugin_provenance("bioinfo", plugin)["sha256"]
+    assert after != before
+    (plugin / "notes.txt").write_text("not loaded by Claude Code")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] == after
