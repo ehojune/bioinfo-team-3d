@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
+from ..integrations.rounds import RoundRecorder
 from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
@@ -144,6 +145,10 @@ class Hub:
                                                             settings.gateway.event_buffer))
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
+        self.rounds = RoundRecorder(self, github_transport)
+        for rid, req in self.requests.items():
+            if req.get("status") == "interrupted":
+                self.rounds.write(rid)
 
     def save_request(self, rid: str) -> None:
         self.requests[rid]["updated_at"] = time.time()
@@ -201,6 +206,11 @@ class Hub:
                                            {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
                                            self.s.gateway.event_buffer)
         self.events.append(event)
+        try:
+            self.rounds.write(rid)
+            self.rounds.submit(rid)
+        except OSError as exc:
+            log.warning("round record write failed for %s: %s", rid, exc)
         if self.requests[rid].get("mode") == "direct":
             self.clear_step_jobs(rid, "direct")
         # A client joining after this checkpoint replays it from SQLite.
@@ -219,6 +229,7 @@ class Hub:
             self.store.delete("terminal_delivery", str(seq))
 
     def recover_terminal_deliveries(self) -> None:
+        self.rounds.recover()
         # The request row itself is the durable source for an issue that was not opened
         # before a crash. Queue it ahead of any terminal report for the same request.
         pending = sorted(self.store.all("reporter_delivery").values(), key=lambda event: event["seq"])

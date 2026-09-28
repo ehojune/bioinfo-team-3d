@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-09-28 · #43 라운드 기록
+
+- 결론: 요청 종료와 재시작 중단 시 `gateway.state_dir/rounds`에 Markdown·JSON을 남긴다.
+- 바뀐 것: schema v1 기록, 비공개 저장소 이슈 1건 갱신, 공개 여부 API 확인과 게시 가드. 플러그인 해시의 상위 Git 저장소 오판도 수정했다.
+- 실행한 것: Windows `pytest -q` 391 passed/17 skipped, `scripts/check_public.sh` 통과, mock demo 완료와 임시 폴더 내 기록 2건 확인.
+- 미해결: 실제 GitHub 발행은 mock 전송만 검증했다. 원본 HARVEST는 이 작업 환경에서 쓰기 권한이 없어 초안만 남겼다.
+- 근거: `labhq/integrations/rounds.py`, `tests/test_round_records.py`, `labhq/gateway/server.py`.
+
 ## 2026-09-28 · #27 결과 보존·연속성
 
 - 결론: 수정 실패 때 첫 성공 결과를 살리고, 단계 산출물과 실패 원인을 최종 보고에 남긴다.

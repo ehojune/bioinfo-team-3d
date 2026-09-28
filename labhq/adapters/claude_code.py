@@ -84,7 +84,10 @@ def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
     scripts they run are all covered while ignored run output (a plugin may keep GBs of runs/) is not.
     Without git, fall back to the reference's component locations plus paths the manifest declares.
     """
-    listed = _git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    top = _git(path, "rev-parse", "--show-toplevel")
+    own_checkout = bool(top and Path(top.decode().strip()).resolve() == path.resolve())
+    listed = (_git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+              if own_checkout else None)
     if listed is not None:
         commit = (_git(path, "rev-parse", "HEAD") or b"").decode().strip() or None
         names = [n for n in listed.decode("utf-8", "surrogateescape").split("\0") if n]
@@ -108,7 +111,9 @@ def plugin_provenance(name: str, path: Path) -> dict:
     """Name, declared version, git commit and a content-and-mode hash (no local path)."""
     root = path.resolve()
     files, commit = _plugin_files(path)
-    staged = _git(path, "ls-files", "--stage", "-z")
+    top = _git(path, "rev-parse", "--show-toplevel")
+    staged = (_git(path, "ls-files", "--stage", "-z")
+              if top and Path(top.decode().strip()).resolve() == root else None)
     index_modes = {}
     if staged is not None:
         for entry in staged.decode("utf-8", "surrogateescape").split("\0"):
