@@ -158,6 +158,29 @@ async def test_blocking_continuation_restores_previous_result_after_restart(cont
 
 
 @pytest.mark.asyncio
+async def test_run_request_exception_terminal_keeps_saved_cost():
+    async def dispatch(task):
+        raise AssertionError("dispatch should not be reached")
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"].update(plan={"steps": [{"id": "A", "agent_id": "worker",
+                                               "instruction": "Analyze", "depends_on": []}]},
+                             cost_usd=1.25, cost_known=False)
+    hub.result_map = lambda rid: (_ for _ in ()).throw(RuntimeError("broken checkpoint"))
+    terminal = []
+    hub.commit_terminal = lambda rid, typ, data: terminal.append((rid, typ, data))
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert len(terminal) == 1
+    rid, typ, data = terminal[0]
+    assert (rid, typ) == ("r", "request.failed")
+    assert data["error"] == "RuntimeError: broken checkpoint"
+    assert "A · worker (FAILED)" in data["report"]
+    assert data["cost_usd"] == 1.25 and data["cost_known"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("turns", [("ask", "job", "ask", "job"),
                                    ("job", "ask", "job"), ("both",)])
 async def test_step_rechecks_jobs_and_asks_after_each_wake(tmp_path, turns):
