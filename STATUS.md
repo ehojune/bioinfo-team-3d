@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #39 labhq_ask 질의 경로
+
+- 결론: 직원은 `labhq_ask`로 CSO·시설팀·동료에게 묻고, 코드가 판정한 hard stop만 PI에게 올린다. 답이 늦으면 step을 hibernate하고 같은 session·workdir에서 재개한다.
+- 바뀐 것: 5/20/15분 대기, task/대상/요청 3/2/12회 상한, 시설팀→CSO fallback, 동료 read-only consult, 메신저 질문·답변 이벤트, task별 capability token과 다른 task 사칭 403을 넣었다. #38의 묻고 멈추는 게이트도 이 경로를 쓴다.
+- 실행한 것: 수정 전 새 테스트가 `AskRequest` import에서 실패함을 확인했다. 수정 후 대상 10 passed, 전체 504 passed/17 skipped, 공개 검사를 통과했다. 실제 직원 CLI는 실행하지 않았다.
+- 미해결: 실제 PI 폰·직원 CLI 연동은 mock engine과 fake MCP client로 대신했다. commit 뒤 `patch_notes/README.md` 행을 만들고 amend해야 한다.
+- 근거: `labhq/tools/ask_mcp.py`, `labhq/orchestrator/cso.py`, `labhq/runner/approvals.py`, `tests/test_ask.py`, `tests/test_e2e_mock.py`.
+
 ## 2026-10-01 · HPC 도구 실패 표시·제출 후 재시도 차단 #80
 
 - 결론: HPC 운영 실패를 MCP 오류로 전달하고, 알려진 pending job이 있는 실패 시도는 자동으로 재실행하지 않는다.

@@ -12,10 +12,11 @@ const S = {
 // Task detail is derived from events and may be rebuilt from a snapshot.
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'askDetails', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
-  S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.seq = 0; S.doorUntil = 0;
+  S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.seq = 0; S.doorUntil = 0;
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -133,6 +134,22 @@ function apply(ev, replay = false) {
       const a = ag(id); if (!a || !d.text) break;
       a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
       if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
+      break;
+    }
+    case 'agent.ask': {
+      S.askDetails.set(d.id, { ...d, agent_id: d.agent_id || id });
+      if (S.askDetails.size > 120) S.askDetails.delete(S.askDetails.keys().next().value);
+      feed({ who: d.agent_id || id, to: String(d.to || '').replace(/^colleague:/, ''),
+        text: `질문: ${short(d.question, 150)}` }, ts, rid);
+      break;
+    }
+    case 'agent.answer': {
+      const ask = S.askDetails.get(d.ask_id) || {};
+      const rejected = d.status === 'rejected';
+      const question = d.question || ask.question;
+      feed({ who: d.from || id, to: d.to || ask.agent_id,
+        text: `${rejected ? '거절' : '답변'}: ${short(rejected ? d.reason : d.answer, 130)}${question ? ` (질문: ${short(question, 70)})` : ''}`,
+        cls: rejected ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'agent.usage': {

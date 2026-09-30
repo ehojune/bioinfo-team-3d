@@ -707,7 +707,8 @@ async def test_restart_during_revision_preserves_feedback_and_adopts_revision(tm
     assert hub.requests["r"]["results"]["s"]["text"] == "revised"
     assert hub.requests["r"].get("pending_revisions") == {}
     assert len(prompts) == 1 and "check again" in prompts[0][0]
-    assert "original" in prompts[0][1] and prompts[0][2] == 1
+    assert "Previous turn:\noriginal" in prompts[0][0] and prompts[0][2] == 1
+    assert "Your step (s): analyze" in prompts[0][0]
     assert not any(m.get("type") == "task.dispatch" for m in socket.sent)
 
 

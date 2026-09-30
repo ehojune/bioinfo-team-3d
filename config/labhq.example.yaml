@@ -9,6 +9,7 @@ gateway:
 runner:
   id: lab-workstation
   max_parallel: 4
+  consult_parallel: 2             # 막힌 직원의 질의 답변 전용 슬롯(일반 task와 분리)
   workspace_root: ~/.labhq/runs     # 태스크별 실험노트 폴더
   agents_dir: ../agents             # 이 파일 기준 상대경로
   talent_dir: ~/.labhq/talent       # 인재풀 (파견직 빌드 + 계약서 보관)
