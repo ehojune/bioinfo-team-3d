@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 막힌 단계 같은 세션 재개 #81 · 예외 종료 비용 #67
+
+- 결론: PI 답을 받은 막힌 단계는 같은 session·workdir로 이어 간다(수정 자체는 #76). 예외로 끝난 요청도 최종 비용을 화면에 보낸다.
+- 바뀐 것: `request.failed` 예외 경로 payload에 `cost_usd`·`cost_known`(#67). #81은 mock 직원 blocking_decision → PI 답 → 같은 session_id·workdir 재개, resume 없는 엔진은 같은 workdir 새 세션을 E2E로 고정했다.
+- 실행한 것: 전체 `pytest -q -p no:cacheprovider` 804 passed/17 skipped(main 병합 뒤), `node tests/*.cjs`, `bash scripts/check_public.sh` 통과.
+- 미해결: 실제 직원 CLI로 재개하는 것은 확인하지 않았다.
+- 근거: `tests/test_e2e_mock.py`, `tests/test_cso.py`, `tests/web_state.cjs`.
+
 ## 2026-10-01 · 후속 P2 네 건 #51 #53 #54 #68
 
 - 결론: 승인 timeout 기록, 자체 변경이 있는 merge의 패치노트 검사, 라운드 게시 재시도, IPv6 link-local 탐색과 doctor 오타 보고를 고쳤다.

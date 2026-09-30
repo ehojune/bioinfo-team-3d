@@ -12,6 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:14 | [`d28d7ba`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/d28d7ba) | **STATUS에 #81·#67 보고를 남겼습니다** |
+| 06:10 | [`523333f`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/523333f) | **PI 답을 받은 막힌 단계가 같은 세션·작업 폴더로 이어 가는지 끝까지 검사합니다** (#81). 수정은 #76에 들어갔고, 이 커밋은 resume 되는 직원과 안 되는 직원(같은 폴더, 새 세션) 모두를 E2E 테스트로 고정합니다 |
+| 06:10 | [`37d7d3b`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/37d7d3b) | **예외로 끝난 요청도 최종 비용을 화면에 보냅니다** (#67). 누적 비용을 여러 번 보낸 CLI 요청이 예외로 끝나면 화면에 중복 가산된 비용이 남았습니다 |
 | 06:09 | [`cb7df38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/cb7df38) | **STATUS에 이번 후속 네 건의 완료 보고를 남겼습니다.** 남은 GitHub rate-limit 대기 처리는 #97로 넘겼습니다 |
 | 06:06 | [`a06db38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a06db38) | **main을 합치기만 한 merge가 패치노트를 요구하던 문제를 고쳤습니다.** 양쪽이 같은 파일을 고쳤어도 git이 충돌 없이 합쳤으면 검사에서 빼고, git 자동 병합 결과와 달라진 파일(충돌 해소·추가 수정)만 셉니다 |
 | 06:02 | [`f8ef686`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/f8ef686) | **충돌을 직접 고친 merge commit도 패치노트 검사에 넣었습니다.** main을 합치기만 한 merge와 STATUS.md·패치노트만 정리한 merge는 계속 뺍니다 |
