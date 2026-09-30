@@ -16,12 +16,12 @@ from typing import Any
 
 import yaml
 
-from .util import free_port, strip_parent_claude_env
+from .util import atomic_write_text, free_port, strip_parent_claude_env
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = REPO / "bench"
 CASES_ROOT = BENCH_ROOT / "cases"
-ARMS = ("labhq", "opus-5.5", "gpt-6-astra")
+ARMS = ("labhq", "sonnet-max", "sol-ultra", "astra-ultra")
 REQUIRED = {"id", "title", "request", "references", "scripted_pi_answers", "check", "budget_usd",
             "mock_answer"}
 
@@ -91,8 +91,26 @@ def _default_output() -> Path:
     return Path(raw).expanduser() if raw else Path("~/.labhq/bench").expanduser()
 
 
+def _selected_arms(settings, arms: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    available = ("labhq", *settings.bench.arms)
+    selected = available if arms is None else arms
+    if not selected or len(set(selected)) != len(selected) or any(arm not in available for arm in selected):
+        raise ValueError(f"select unique arms from: {', '.join(available)}")
+    return selected
+
+
+def _staff_mapping(settings, overrides: list[str] | None = None) -> dict[str, str]:
+    mapping = dict(settings.bench.staff_model)
+    for override in overrides or []:
+        source, sep, target = override.partition("=")
+        if not sep or not source.strip() or not target.strip() or "=" in target:
+            raise ValueError("--staff-model must be FROM=TO")
+        mapping[source.strip()] = target.strip()
+    return mapping
+
+
 def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None = None,
-                   settings=None) -> dict[str, list[str]]:
+                   settings=None, arms: tuple[str, ...] | None = None) -> dict[str, list[str]]:
     from .adapters.claude_code import user_config_isolation
     from .settings import Settings
 
@@ -101,27 +119,39 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
     case_dir = run_dir or output_root / case["id"] / "<run-id>"
     budget = f"{float(case['budget_usd']):.2f}"
     claude_env = {**os.environ, **settings.engines.claude_code.env}
-    claude_settings = json.dumps(user_config_isolation(claude_env, case_dir / "opus-5.5"))
     claude = [settings.engines.claude_code.bin, *settings.engines.claude_code.prefix_args]
     codex = [settings.engines.codex.bin, *settings.engines.codex.prefix_args]
-    return {
-        "labhq": ["labhq", "bench", "run", case["id"], "--engines", "real", "--output",
-                  str(output_root), "--arm", "labhq"],
-        "opus-5.5": [*claude, "-p", prompt, "--output-format", "stream-json", "--verbose",
-                     "--model", "claude-opus-5-5", "--max-budget-usd", budget,
-                     "--setting-sources", "local", "--disable-slash-commands", "--settings", claude_settings,
-                     "--disallowedTools", "Agent", "Task", "SendMessage", "TeamCreate"],
-        "gpt-6-astra": [*codex, "exec", "--json", "--skip-git-repo-check", "-C",
-                         str(case_dir / "gpt-6-astra"), "-s", "workspace-write",
-                         "--ephemeral", "--ignore-user-config", "--ignore-rules", "-m", "gpt-6-astra", "-o",
-                         str(case_dir / "gpt-6-astra" / "answer.md"), prompt],
-    }
+    commands = {}
+    for arm in _selected_arms(settings, arms):
+        if arm == "labhq":
+            config = ["--config", settings.config_path] if settings.config_path else []
+            commands[arm] = ["labhq", *config, "bench", "run", case["id"], "--engines", "real",
+                             "--output", str(output_root), "--arms", "labhq"]
+            commands[arm] += [arg for source, target in settings.bench.staff_model.items()
+                              for arg in ("--staff-model", f"{source}={target}")]
+            continue
+        definition = settings.bench.arms[arm]
+        if definition.engine == "claude_code":
+            claude_settings = json.dumps(user_config_isolation(claude_env, case_dir / arm))
+            commands[arm] = [*claude, "-p", prompt, "--output-format", "stream-json", "--verbose",
+                             "--model", definition.model, "--effort", definition.effort,
+                             "--max-budget-usd", budget, "--setting-sources", "local",
+                             "--disable-slash-commands", "--settings", claude_settings,
+                             "--disallowedTools", "Agent", "Task", "SendMessage", "TeamCreate"]
+        else:
+            commands[arm] = [*codex, "exec", "--json", "--skip-git-repo-check", "-C",
+                             str(case_dir / arm), "-s", "workspace-write", "--ephemeral",
+                             "--ignore-user-config", "--ignore-rules", "-m", definition.model,
+                             "-c", f'model_reasoning_effort="{definition.effort}"',
+                             "-o", str(case_dir / arm / "answer.md"), prompt]
+    return commands
 
 
-def print_dry_run(case: dict[str, Any], output_root: Path) -> None:
+def print_dry_run(case: dict[str, Any], output_root: Path, settings=None,
+                  arms: tuple[str, ...] | None = None) -> None:
     preview_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     preview_dir = output_root / case["id"] / preview_id
-    for arm, command in _real_commands(case, output_root, preview_dir).items():
+    for arm, command in _real_commands(case, output_root, preview_dir, settings, arms).items():
         print(f"[{arm}] {subprocess.list2cmdline(command)}")
 
 
@@ -150,8 +180,18 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     from .gateway.server import RequestIn, create_app
     from .runner.daemon import Runner
     state = arm_dir / "state"
-    shutil.copytree(REPO / "agents", state / "agents")
+    shutil.copytree(base_settings.path(base_settings.runner.agents_dir), state / "agents")
     settings = base_settings.model_copy(deep=True)
+    staff_models = []
+    for path in sorted((state / "agents").rglob("*.yaml")):
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if spec.get("engine") == "claude_code" and spec.get("model") in settings.bench.staff_model:
+            spec["model"] = settings.bench.staff_model[spec["model"]]
+            path.write_text(yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        staff_models.append({"id": spec["id"], "engine": spec.get("engine"), "model": spec.get("model")})
+    if settings.recruit.contract_engine == "claude_code":
+        settings.recruit.contract_model = settings.bench.staff_model.get(
+            settings.recruit.contract_model, settings.recruit.contract_model)
     port = free_port()
     settings.gateway.state_dir = str(state / "gateway")
     settings.gateway.port = port
@@ -217,6 +257,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         (arm_dir / "answer.md").write_text(answer + "\n", encoding="utf-8")
         run = {
             "engine": "labhq", "mode": engines, "request_id": rid, "status": request["status"],
+            "staff_model": dict(settings.bench.staff_model), "staff_models": staff_models,
             "pi_interventions": interventions, "cost_usd": request.get("cost_usd"),
             "pi_questions_observable": True,
             "unscripted_approvals": unscripted_approvals,
@@ -283,10 +324,10 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
     else:
         from .adapters.base import AgentAdapter, _resolve_command
 
-        engine_name = "claude_code" if arm == "opus-5.5" else "codex"
+        engine_name = settings.bench.arms[arm].engine
         engine = getattr(settings.engines, engine_name)
         env = strip_parent_claude_env({**os.environ, **engine.env})
-        if arm == "gpt-6-astra":
+        if engine_name == "codex":
             from .adapters.base import child_config_dirs
 
             global_docs = [home / name for home in child_config_dirs(env, arm_dir,
@@ -317,7 +358,7 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         raw = stdout.decode("utf-8", "replace")
         (arm_dir / "events.jsonl").write_text(raw, encoding="utf-8")
         (arm_dir / "stderr.txt").write_text(stderr.decode("utf-8", "replace"), encoding="utf-8")
-        if arm == "opus-5.5":
+        if engine_name == "claude_code":
             answer, usage, cost = _parse_claude(raw)
             (arm_dir / "answer.md").write_text(answer.strip() + "\n", encoding="utf-8")
             known = cost is not None
@@ -330,6 +371,8 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         if error:
             run["error"] = error
     run["pi_questions_observable"] = False  # Noninteractive CLI: no question/answer channel.
+    definition = settings.bench.arms[arm]
+    run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine)
     (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return run
 
@@ -349,6 +392,9 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         token_total = sum(usage.get(key, 0) for key in keys if isinstance(usage.get(key, 0), int))
     return {
         "engine": run["engine"], "status": run["status"], "error": run.get("error"),
+        "model": run.get("model"), "effort": run.get("effort"), "mode": run.get("mode"),
+        "cli_engine": run.get("cli_engine"),
+        "staff_model": run.get("staff_model"), "staff_models": run.get("staff_models"),
         "artifact_exists": answer.is_file() and bool(answer.read_text(encoding="utf-8").strip()),
         "checks_passed": checked.returncode == 0, "check_output": (checked.stdout + checked.stderr).strip(),
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
@@ -364,13 +410,16 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| engine | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
-             "|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|"]
+             "| arm | model | effort | mode | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
+             "|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|"]
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
-        lines.append(f"| {row['engine']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
+        model = row.get("model") or "; ".join(
+            f"{staff['id']}={staff.get('model') or 'default'}" for staff in row.get("staff_models") or []) or "—"
+        lines.append(f"| {row['engine']} | {model} | {row.get('effort') or 'staff config'} | "
+                     f"{row.get('mode') or result['mode']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
                      f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | "
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {cost} | "
@@ -381,19 +430,44 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _write_comparison(directory: Path, result: dict[str, Any]) -> None:
+    for name, body in (("comparison.json", json.dumps(result, ensure_ascii=False, indent=2) + "\n"),
+                       ("comparison.md", _comparison_markdown(result))):
+        atomic_write_text(directory / name, body)
+
+
+def report_case(case_id: str, output_root: Path, engines: str = "real") -> dict[str, Any]:
+    """Use saved scores, never today's model definitions, to compare latest runs per arm."""
+    case = load_case(case_id)
+    directory = Path(output_root).expanduser().resolve() / case_id
+    latest = {}
+    for path in sorted(directory.glob("*/*/score.json")):
+        row = json.loads(path.read_text(encoding="utf-8"))
+        if row["mode"] == engines:
+            latest[row["engine"]] = row
+    if not latest:
+        raise ValueError(f"no {engines} benchmark results for {case_id}")
+    order = [*ARMS, *sorted(set(latest) - set(ARMS))]
+    result = {"schema_version": 2, "case_id": case_id, "title": case["title"],
+              "mode": engines, "rows": [latest[arm] for arm in order if arm in latest]}
+    _write_comparison(directory, result)
+    return result
+
+
 async def run_case(case_id: str, output_root: Path, engines: str = "real",
-                   arms: tuple[str, ...] = ARMS, settings=None) -> dict[str, Any]:
+                   arms: tuple[str, ...] | None = None, settings=None) -> dict[str, Any]:
     from .settings import Settings
 
     if engines not in {"real", "mock"}:
         raise ValueError("engines must be real or mock")
     case = load_case(case_id)
     settings = settings or Settings()
+    arms = _selected_arms(settings, arms)
     output_root = Path(output_root).expanduser().resolve()
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     case_dir = output_root / case_id / run_id
     case_dir.mkdir(parents=True, exist_ok=False)
-    commands = _real_commands(case, output_root, case_dir, settings)
+    commands = _real_commands(case, output_root, case_dir, settings, arms)
     rows = []
     for arm in arms:
         arm_dir = case_dir / arm
@@ -407,23 +481,36 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
                    "cost_usd": None, "cost_known": False, "usage": {},
                    "duration_s": round(time.monotonic() - started, 3),
                    "error": f"{type(exc).__name__}: {exc}"}
-            (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n",
-                                               encoding="utf-8")
-        rows.append(await _score(case, arm_dir, run))
-    result = {"schema_version": 1, "case_id": case_id, "run_id": run_id, "title": case["title"],
+        run["mode"] = engines
+        if arm == "labhq":
+            run["staff_model"] = dict(settings.bench.staff_model)
+        else:
+            definition = settings.bench.arms[arm]
+            run.update(model=definition.model, effort=definition.effort, cli_engine=definition.engine)
+        (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n",
+                                           encoding="utf-8")
+        row = await _score(case, arm_dir, run)
+        row["run_id"] = run_id
+        atomic_write_text(arm_dir / "score.json", json.dumps(row, ensure_ascii=False, indent=2) + "\n")
+        rows.append(row)
+    result = {"schema_version": 2, "case_id": case_id, "run_id": run_id, "title": case["title"],
               "budget_usd": float(case["budget_usd"]), "mode": engines, "rows": rows}
-    (case_dir / "comparison.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
-                                               encoding="utf-8")
-    (case_dir / "comparison.md").write_text(_comparison_markdown(result), encoding="utf-8")
+    _write_comparison(case_dir, result)
+    report_case(case_id, output_root, engines)
     return result
 
 
-async def run_test_agent(output_root: Path, engines: str = "real", settings=None) -> dict[str, Any]:
+async def run_test_agent(output_root: Path, engines: str = "real", settings=None,
+                          arms: tuple[str, ...] | None = None) -> dict[str, Any]:
+    from .settings import Settings
+
+    settings = settings or Settings()
+    arms = _selected_arms(settings, arms)
     output_root = Path(output_root).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     cases = []
     for case in load_cases():
-        result = await run_case(case["id"], output_root, engines=engines, settings=settings)
+        result = await run_case(case["id"], output_root, engines=engines, settings=settings, arms=arms)
         passed = all(row["status"] == "done" and row["artifact_exists"] and row["checks_passed"] and
                      row["within_budget"] is not False and not row.get("unscripted_approvals")
                      for row in result["rows"])
@@ -446,17 +533,24 @@ def run_cli(args) -> None:
         for case in load_cases():
             print(f"{case['id']:<28} ${float(case['budget_usd']):.2f}  {case['title']}")
         return
+    if args.bench_cmd == "report":
+        print(_comparison_markdown(report_case(args.case_id, output, args.engines)), end="")
+        return
+    settings = Settings.load(args.config)
+    settings.bench.staff_model = _staff_mapping(settings, getattr(args, "staff_model", None))
+    selection = getattr(args, "arms", None)
+    if selection is None:
+        selection = getattr(args, "arm", None)
+    arms = _selected_arms(settings, tuple(selection.split(",")) if selection is not None else None)
     if args.bench_cmd == "run":
         case = load_case(args.case_id)
         if args.dry_run:
-            print_dry_run(case, output)
+            print_dry_run(case, output, settings, arms)
             return
-        arms = (args.arm,) if args.arm else ARMS
-        settings = Settings.load(args.config)
-        result = asyncio.run(run_case(args.case_id, output, engines=args.engines, arms=arms, settings=settings))
-        print(_comparison_markdown(result), end="")
+        asyncio.run(run_case(args.case_id, output, engines=args.engines, arms=arms, settings=settings))
+        print(_comparison_markdown(report_case(args.case_id, output, args.engines)), end="")
         return
-    summary = asyncio.run(run_test_agent(output, engines=args.engines, settings=Settings.load(args.config)))
+    summary = asyncio.run(run_test_agent(output, engines=args.engines, settings=settings, arms=arms))
     print(f"bench test agent: PASS {summary['passed']} / FAIL {summary['failed']}")
     if summary["failed"]:
         raise SystemExit(1)

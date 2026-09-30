@@ -30,11 +30,14 @@ def test_case_catalog_has_five_bounded_cases():
         assert 0 < case["budget_usd"] <= 10
 
 
-def test_bench_list_and_dry_run_print_three_arms_without_running(tmp_path, capsys, monkeypatch):
+def test_bench_list_and_dry_run_print_four_arms_without_running(tmp_path, capsys, monkeypatch):
+    from labhq.settings import Settings
+
     monkeypatch.setattr("labhq.cli.Settings.load", lambda *_: (_ for _ in ()).throw(AssertionError("no config")))
     main(["bench", "list"])
     listed = capsys.readouterr().out
     assert "inco-kras-g12c" in listed and "public-penguins-qc" in listed
+    monkeypatch.setattr(Settings, "load", lambda *_: Settings())
 
     called = False
 
@@ -47,8 +50,12 @@ def test_bench_list_and_dry_run_print_three_arms_without_running(tmp_path, capsy
     main(["bench", "run", "inco-kras-g12c", "--dry-run", "--output", str(tmp_path)])
     output = capsys.readouterr().out
     assert "labhq" in output
-    assert "claude -p" in output and "claude-opus-5-5" in output
-    assert "codex exec" in output and "gpt-6-astra" in output
+    assert "claude -p" in output and "--model sonnet --effort max" in output
+    assert "codex exec" in output and "gpt-6-astra" in output and "gpt-5.6-sol" in output
+    assert 'model_reasoning_effort=\\"ultra\\"' in output
+    assert "--staff-model opus=sonnet" in output
+    assert all(f"[{arm}]" in output for arm in bench.ARMS)
+    assert "claude-opus" not in output
     assert "--ephemeral" in output and "--ignore-user-config" in output
     assert "--disallowedTools" in output and "SendMessage" in output
     assert not called and not any(tmp_path.iterdir())
@@ -57,7 +64,7 @@ def test_bench_list_and_dry_run_print_three_arms_without_running(tmp_path, capsy
 def test_mock_case_runs_all_arms_scores_and_records_case_id(tmp_path):
     result = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="mock"))
     assert result["case_id"] == "public-protein-qc"
-    assert [row["engine"] for row in result["rows"]] == ["labhq", "opus-5.5", "gpt-6-astra"]
+    assert [row["engine"] for row in result["rows"]] == list(bench.ARMS)
     assert all(row["artifact_exists"] and row["checks_passed"] for row in result["rows"])
     assert all(row["cost_usd"] == 0 and row["token_total"] == 0 for row in result["rows"])
     run_dir = tmp_path / "public-protein-qc" / result["run_id"]
@@ -70,8 +77,9 @@ def test_mock_case_runs_all_arms_scores_and_records_case_id(tmp_path):
     assert round_record["request"]["meta"]["case_id"] == "public-protein-qc"
     assert "PI가 질문을 받으면" not in round_record["request"]["text"]
     commands = bench._real_commands(bench.load_case("public-protein-qc"), tmp_path, run_dir)
-    assert commands["opus-5.5"][commands["opus-5.5"].index("-p") + 1] == round_record["request"]["text"]
-    assert commands["gpt-6-astra"][-1] == round_record["request"]["text"]
+    assert commands["sonnet-max"][commands["sonnet-max"].index("-p") + 1] == round_record["request"]["text"]
+    assert commands["astra-ultra"][-1] == round_record["request"]["text"]
+    assert commands["sol-ultra"][-1] == round_record["request"]["text"]
     for row in result["rows"][1:]:
         assert row["pi_questions_observable"] is False
         assert row["pi_interventions"] == 0
@@ -88,8 +96,9 @@ def test_scripted_pi_selects_the_matching_answer():
 def test_initial_prompt_never_discloses_scripted_pi_answers(case, tmp_path):
     prompt = bench._prompt(case)
     commands = bench._real_commands(case, tmp_path)
-    assert commands["opus-5.5"][commands["opus-5.5"].index("-p") + 1] == prompt
-    assert commands["gpt-6-astra"][-1] == prompt
+    assert commands["sonnet-max"][commands["sonnet-max"].index("-p") + 1] == prompt
+    assert commands["astra-ultra"][-1] == prompt
+    assert commands["sol-ultra"][-1] == prompt
     assert "PI가 질문을 받으면" not in prompt
     assert all(item["answer"] not in prompt for item in case["scripted_pi_answers"])
 
@@ -118,7 +127,7 @@ def _bench_process_exited(pid):
     return stat.is_file() and stat.read_text().rsplit(")", 1)[1].split()[0] == "Z"
 
 
-@pytest.mark.parametrize("arm", ["opus-5.5", "gpt-6-astra"])
+@pytest.mark.parametrize("arm", ["sonnet-max", "astra-ultra"])
 @pytest.mark.parametrize("stop", ["case-timeout", "runner-timeout", "cancel"])
 def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, stop):
     from labhq.settings import Settings
@@ -222,7 +231,7 @@ def test_test_agent_runs_cases_in_order_and_writes_summary(tmp_path, monkeypatch
 
 def test_one_failed_arm_is_scored_and_does_not_stop_the_next(tmp_path, monkeypatch):
     async def fake(case, arm, arm_dir, engines, command, settings):
-        if arm == "opus-5.5":
+        if arm == "sonnet-max":
             raise OSError("missing CLI")
         (arm_dir / "answer.md").write_text(case["mock_answer"], encoding="utf-8")
         return {"engine": arm, "status": "done", "pi_interventions": 0, "cost_usd": None,
@@ -230,7 +239,7 @@ def test_one_failed_arm_is_scored_and_does_not_stop_the_next(tmp_path, monkeypat
 
     monkeypatch.setattr(bench, "_run_baseline", fake)
     result = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="real",
-                                        arms=("opus-5.5", "gpt-6-astra")))
+                                        arms=("sonnet-max", "astra-ultra")))
     assert [row["status"] for row in result["rows"]] == ["failed", "done"]
     assert result["rows"][0]["artifact_exists"] is False
     assert result["rows"][1]["checks_passed"] is True
@@ -310,7 +319,7 @@ def test_scripted_pi_rejects_unscripted_approvals_and_reports_them(tmp_path, mon
     assert "미스크립트 승인" in (run_dir / "comparison.md").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("arm", ["opus-5.5", "gpt-6-astra"])
+@pytest.mark.parametrize("arm", ["sonnet-max", "astra-ultra"])
 def test_baseline_strips_parent_claude_env_after_engine_overrides(tmp_path, monkeypatch, arm):
     from labhq.settings import Settings
 
@@ -318,7 +327,7 @@ def test_baseline_strips_parent_claude_env_after_engine_overrides(tmp_path, monk
         monkeypatch.setenv(name, "host-session")
     monkeypatch.setenv("BENCH_KEEP", "keep")
     settings = Settings()
-    engine = settings.engines.claude_code if arm == "opus-5.5" else settings.engines.codex
+    engine = settings.engines.claude_code if arm == "sonnet-max" else settings.engines.codex
     engine.env = {"CLAUDE_CODE_SESSION_ID": "engine-session", "CLAUDECODE_OVERRIDE": "engine-session",
                   "CLAUDE_CONFIG_DIR": str(tmp_path / "config"), "BENCH_KEEP": "override"}
     child_env = {}
@@ -375,3 +384,178 @@ def test_test_agent_cli_returns_normally_when_all_cases_pass(tmp_path, monkeypat
     monkeypatch.setattr(Settings, "load", lambda *args: Settings())
     main(["bench", "test-agent", "--engines", "mock", "--output", str(tmp_path)])
     assert "PASS 5 / FAIL 0" in capsys.readouterr().out
+
+
+def test_configured_baselines_use_their_model_effort_and_engine(tmp_path):
+    from labhq.settings import Settings
+
+    config = tmp_path / "bench.yaml"
+    config.write_text(
+        "bench:\n  arms:\n"
+        "    old-opus: {engine: claude_code, model: claude-opus-5-5, effort: max}\n"
+        "    custom-codex: {engine: codex, model: gpt-5.6-sol, effort: high}\n"
+        "  staff_model: {}\n", encoding="utf-8")
+    settings = Settings.load(str(config))
+    commands = bench._real_commands(bench.load_case("public-protein-qc"), tmp_path, settings=settings)
+    assert list(commands) == ["labhq", "old-opus", "custom-codex"]
+    assert "claude-opus-5-5" in commands["old-opus"]
+    assert commands["old-opus"][commands["old-opus"].index("--effort") + 1] == "max"
+    assert commands["custom-codex"][commands["custom-codex"].index("-m") + 1] == "gpt-5.6-sol"
+    assert 'model_reasoning_effort="high"' in commands["custom-codex"]
+    assert commands["labhq"][1:3] == ["--config", str(config.resolve())]
+    assert "--staff-model" not in commands["labhq"]
+
+
+@pytest.mark.parametrize("engine", ["claude_code", "codex"])
+def test_custom_arm_parses_the_correct_cli_output(tmp_path, monkeypatch, engine):
+    from labhq.settings import Settings
+
+    settings = Settings.model_validate({"bench": {"arms": {
+        "custom": {"engine": engine, "model": "configured-model", "effort": "max"}}}})
+    raw = (b'{"type":"result","result":"claude answer","total_cost_usd":0.12, '
+           b'"usage":{"input_tokens":3}}\n' if engine == "claude_code" else
+           b'{"type":"turn.completed","usage":{"output_tokens":7}}\n')
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return raw, b""
+
+    async def spawn(*args, **kwargs):
+        (tmp_path / "answer.md").write_text("codex answer", encoding="utf-8")
+        return Process()
+
+    monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda command, *args: command)
+    monkeypatch.setattr("labhq.adapters.base.child_config_dirs", lambda *args: [tmp_path])
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    run = asyncio.run(bench._run_baseline(bench.load_case("public-protein-qc"), "custom", tmp_path,
+                                         "real", ["fake-cli"], settings))
+    assert run["engine"] == "custom" and run["model"] == "configured-model" and run["effort"] == "max"
+    assert run["usage"] == ({"input_tokens": 3} if engine == "claude_code" else {"output_tokens": 7})
+    assert run["cost_usd"] == (0.12 if engine == "claude_code" else None)
+    assert (tmp_path / "answer.md").read_text().strip() == (
+        "claude answer" if engine == "claude_code" else "codex answer")
+
+
+def test_selected_arms_accumulate_and_report_latest_without_rerunning(tmp_path, monkeypatch, capsys):
+    from labhq.settings import Settings
+
+    first = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="mock", arms=("sol-ultra",)))
+    first_run = tmp_path / "public-protein-qc" / first["run_id"]
+    assert sorted(path.name for path in first_run.iterdir() if path.is_dir()) == ["sol-ultra"]
+    second = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="mock",
+                                       arms=("sonnet-max", "astra-ultra")))
+    combined = bench.report_case("public-protein-qc", tmp_path, "mock")
+    assert [row["engine"] for row in combined["rows"]] == ["sonnet-max", "sol-ultra", "astra-ultra"]
+    assert [row["run_id"] for row in combined["rows"]] == [second["run_id"], first["run_id"], second["run_id"]]
+    settings = Settings()
+    settings.bench.arms["sol-ultra"].model = "changed-model"
+    settings.bench.arms["sol-ultra"].effort = "high"
+    third = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="mock",
+                                      arms=("sol-ultra",), settings=settings))
+    monkeypatch.setattr(bench, "run_case", lambda *args, **kwargs: pytest.fail("report must not run arms"))
+    main(["bench", "report", "public-protein-qc", "--engines", "mock", "--output", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "changed-model | high" in printed and "sonnet | max" in printed
+    saved = json.loads((tmp_path / "public-protein-qc" / "comparison.json").read_text(encoding="utf-8"))
+    assert saved["rows"][1]["run_id"] == third["run_id"]
+    assert saved["rows"][0]["run_id"] == second["run_id"]
+    original = json.loads((first_run / "sol-ultra" / "score.json").read_text(encoding="utf-8"))
+    assert original["model"] == "gpt-5.6-sol" and original["effort"] == "ultra"
+    with pytest.raises(ValueError, match="no real"):
+        bench.report_case("public-protein-qc", tmp_path, "real")
+
+
+@pytest.mark.parametrize("override,target", [(None, "sonnet"), (["opus=haiku"], "haiku")])
+def test_labhq_staff_model_replacement_is_claude_only_and_preserves_source(tmp_path, override, target):
+    import shutil
+    import yaml
+    from labhq.settings import Settings
+
+    source = tmp_path / "source-agents"
+    shutil.copytree(bench.REPO / "agents", source)
+    codex_file = source / "core" / "engineer.yaml"
+    spec = yaml.safe_load(codex_file.read_text(encoding="utf-8"))
+    assert spec["engine"] == "codex"
+    spec["model"] = "opus"  # Even a matching Codex model must not be replaced.
+    codex_file.write_text(yaml.safe_dump(spec, allow_unicode=True), encoding="utf-8")
+    before = {path.relative_to(source): path.read_bytes() for path in source.rglob("*.yaml")}
+    settings = Settings()
+    settings.runner.agents_dir = str(source)
+    settings.bench.staff_model = bench._staff_mapping(settings, override)
+    result = asyncio.run(bench.run_case("public-protein-qc", tmp_path / "out", engines="mock",
+                                       arms=("labhq",), settings=settings))
+    copied = tmp_path / "out" / "public-protein-qc" / result["run_id"] / "labhq" / "state" / "agents"
+    for relative, original in before.items():
+        assert (source / relative).read_bytes() == original
+        old = yaml.safe_load(original)
+        new = yaml.safe_load((copied / relative).read_text(encoding="utf-8"))
+        if old.get("engine") == "claude_code" and old.get("model") == "opus":
+            assert new == {**old, "model": target}
+        else:
+            assert (copied / relative).read_bytes() == original
+    row = result["rows"][0]
+    assert row["staff_model"] == {"opus": target}
+    assert next(staff for staff in row["staff_models"] if staff["id"] == "cso")["model"] == target
+    assert next(staff for staff in row["staff_models"] if staff["id"] == "engineer")["model"] == "opus"
+    assert settings.recruit.contract_model == "sonnet"
+
+
+@pytest.mark.parametrize("selection", ["unknown", "../escape", "sol-ultra,sol-ultra", "sol-ultra,", ""])
+def test_invalid_arm_selection_fails_before_writes(tmp_path, selection):
+    with pytest.raises(SystemExit) as exc:
+        main(["bench", "run", "public-protein-qc", "--arms", selection, "--output", str(tmp_path)])
+    assert exc.value.code == 2 and not any(tmp_path.iterdir())
+
+
+def test_selected_cli_dry_run_and_test_agent_forward_configuration(tmp_path, monkeypatch, capsys):
+    main(["bench", "run", "public-protein-qc", "--dry-run", "--arms", "sol-ultra", "--output", str(tmp_path)])
+    output = capsys.readouterr().out
+    assert "[sol-ultra]" in output and "[labhq]" not in output and "[sonnet-max]" not in output
+    seen = []
+
+    async def fake(case_id, output, engines, arms, settings):
+        seen.append((arms, settings.bench.staff_model))
+        return {"case_id": case_id, "run_id": "selected", "rows": [{"status": "done",
+                "artifact_exists": True, "checks_passed": True, "within_budget": True}]}
+
+    monkeypatch.setattr(bench, "run_case", fake)
+    main(["bench", "test-agent", "--arms", "labhq,sol-ultra", "--staff-model", "opus=haiku",
+          "--engines", "mock", "--output", str(tmp_path)])
+    assert seen == [(("labhq", "sol-ultra"), {"opus": "haiku"})] * 5
+
+
+def test_dry_run_loads_custom_arm_settings_and_staff_overrides(tmp_path, capsys):
+    config = tmp_path / "bench.yaml"
+    config.write_text("bench:\n  arms:\n"
+                      "    opus-max: {engine: claude_code, model: opus, effort: max}\n"
+                      "  staff_model: {opus: sonnet}\n", encoding="utf-8")
+    main(["--config", str(config), "bench", "run", "public-protein-qc", "--dry-run",
+          "--staff-model", "opus=haiku", "--output", str(tmp_path / "results")])
+    output = capsys.readouterr().out
+    assert "[opus-max]" in output and "--model opus --effort max" in output
+    assert "--staff-model opus=haiku" in output
+    assert "[sonnet-max]" not in output and not (tmp_path / "results").exists()
+
+
+def test_real_and_mock_reports_do_not_mix_same_arm_results(tmp_path, monkeypatch):
+    mock = asyncio.run(bench.run_case("public-protein-qc", tmp_path, engines="mock", arms=("sol-ultra",)))
+
+    async def fake(case, arm, arm_dir, engines, command, settings):
+        (arm_dir / "answer.md").write_text(case["mock_answer"], encoding="utf-8")
+        return {"engine": arm, "status": "done", "usage": {}, "cost_usd": None,
+                "cost_known": False, "duration_s": 0.1}
+
+    monkeypatch.setattr(bench, "_run_baseline", fake)
+    real = asyncio.run(bench.run_case("public-protein-qc", tmp_path, arms=("sol-ultra",)))
+    assert bench.report_case("public-protein-qc", tmp_path, "mock")["rows"][0]["run_id"] == mock["run_id"]
+    assert bench.report_case("public-protein-qc", tmp_path, "real")["rows"][0]["run_id"] == real["run_id"]
+
+
+@pytest.mark.parametrize("mapping", ["opus", "opus=", "=sonnet", "opus=sonnet=bad"])
+def test_invalid_staff_mapping_dry_run_is_rejected(tmp_path, mapping):
+    with pytest.raises(SystemExit) as exc:
+        main(["bench", "run", "public-protein-qc", "--dry-run", "--staff-model", mapping,
+              "--output", str(tmp_path)])
+    assert exc.value.code == 2 and not any(tmp_path.iterdir())

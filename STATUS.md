@@ -4,11 +4,11 @@
 
 ## 2026-10-01 · #40 비교 bench와 테스트 에이전트
 
-- 결론: 같은 case를 LabHQ, Opus 5.5 `claude -p`, gpt-6-astra `codex exec` 단일 세션에 주고 산출물·검사·PI 개입·비용·token·시간을 Markdown·JSON으로 비교한다. Virtual Biotech는 실행하지 않는다.
-- 바뀐 것: `labhq bench list|run|test-agent`, `--dry-run`, CI용 `--engines mock`, 고정 YAML case 5개와 결정적 검사, round record의 `request.meta.case_id`.
-- 실행한 것: 새 regression test가 구현 전 import 단계에서 실패함을 확인했다. 구현 후 전체 `pytest -q -p no:cacheprovider` 502 passed/17 skipped, 5-case mock test agent 5/5, 공개 검사를 통과했다. 실제 유료 CLI는 실행하지 않았다.
-- 미해결: 실제 세 arm 비용·token·과학 결과는 PI 머신에서 구독으로 실행해야 한다. Codex CLI는 USD 비용과 비용 상한 기능을 제공하지 않아 비용을 `미집계`로 남기고 token만 기록한다.
-- 근거: `labhq/bench.py`, `bench/cases/`, `tests/test_bench.py`, `labhq/integrations/rounds.py`.
+- 결론: PI 결정(2026-10-01, #40)에 따라 기본 arm은 `labhq`, `sonnet-max`(sonnet/max), `sol-ultra`(gpt-5.6-sol/ultra), `astra-ultra`(gpt-6-astra/ultra)다. LabHQ의 Claude 직원은 `opus=sonnet`으로 치환하고 Codex 직원은 설정을 유지한다.
+- 바뀐 것: `bench.arms`의 모델·effort 설정, `bench.staff_model`과 `--staff-model`, run·test-agent의 `--arms`, arm별 결과 누적과 `bench report`. 결과표는 실행 당시 모델·effort를 표시하며 real/mock을 따로 모은다. Opus는 설정으로 추가한다. README와 설정 예도 갱신했다.
+- 실행한 것: arm 선택·누적 report·모델 치환 회귀 테스트와 전체 `pytest -q -p no:cacheprovider` 556 passed/17 skipped, 네 arm의 `--dry-run` 명령 확인, `bash scripts/check_public.sh` 통과. 임시·상태 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: 실제 유료 CLI는 실행하지 않았다. 네 arm의 비용·token·과학 결과는 PI 머신에서 측정한다. Codex 비용은 `미집계`로 남긴다. `.git` 쓰기 제한으로 이번 변경의 커밋 계획만 `.pr-drafts/commits.json`에 남겼다.
+- 근거: `labhq/bench.py`, `labhq/settings.py`, `labhq/cli.py`, `config/labhq.example.yaml`, `tests/test_bench.py`.
 
 ## 2026-10-01 · Codex 직원·개발 라운드 기록 후속 #56 #69
 

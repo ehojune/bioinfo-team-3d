@@ -430,15 +430,25 @@ def main(argv: list[str] | None = None) -> None:
     bp = sub.add_parser("bench", help="compare LabHQ with single-session baselines")
     bsub = bp.add_subparsers(dest="bench_cmd", required=True)
     bsub.add_parser("list", help="list benchmark cases")
-    br = bsub.add_parser("run", help="run one case through LabHQ, Opus and Astra")
+    br = bsub.add_parser("run", help="run one case through selected benchmark arms")
     br.add_argument("case_id")
     br.add_argument("--engines", choices=["real", "mock"], default="real")
     br.add_argument("--dry-run", action="store_true", help="print commands without running them")
     br.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
-    br.add_argument("--arm", choices=["labhq", "opus-5.5", "gpt-6-astra"], help=argparse.SUPPRESS)
+    selection = br.add_mutually_exclusive_group()
+    selection.add_argument("--arms", help="comma-separated arms (default: labhq and configured baselines)")
+    selection.add_argument("--arm", help=argparse.SUPPRESS)
+    br.add_argument("--staff-model", action="append", metavar="FROM=TO",
+                    help="replace Claude staff models; repeat for multiple mappings (default: opus=sonnet)")
     bt = bsub.add_parser("test-agent", help="run every example job in order and summarize")
     bt.add_argument("--engines", choices=["real", "mock"], default="real")
     bt.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    bt.add_argument("--arms", help="comma-separated arms (default: labhq and configured baselines)")
+    bt.add_argument("--staff-model", action="append", metavar="FROM=TO")
+    breport = bsub.add_parser("report", help="combine the latest result for each arm of a case")
+    breport.add_argument("case_id")
+    breport.add_argument("--engines", choices=["real", "mock"], default="real")
+    breport.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
@@ -447,7 +457,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "bench":
         from .bench import run_cli
 
-        run_cli(args)
+        try:
+            run_cli(args)
+        except (ValueError, KeyError) as exc:
+            p.error(str(exc))
         return
     s = Settings.load(args.config)
 
