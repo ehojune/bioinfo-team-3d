@@ -4,7 +4,7 @@
 [![패치노트](https://img.shields.io/badge/%ED%8C%A8%EC%B9%98%EB%85%B8%ED%8A%B8-changelog-5B5BD6)](patch_notes/README.md)
 저장소: https://github.com/ehojune/bioinfo-team-3d
 
-CLI 코딩 에이전트(Claude Code · Codex · Gemini CLI)를 **연구소 직원**처럼 굴리는 플랫폼의 1단계 골격입니다.
+Claude Code와 Codex를 **연구소 직원**처럼 운영하는 플랫폼입니다. Gemini와 직접 만든 CLI도 어댑터로 연결할 수 있습니다.
 CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은 **Paper2Agent로 파견직**이 되어 팀에 합류합니다.
 모든 작업은 폰 승인 · 예산 캡 · 실험노트(출처 기록) 아래에서 돌아갑니다.
 
@@ -36,9 +36,7 @@ pytest -q
 
 ## 0-1. 실제 실행
 
-전제: Python ≥ 3.10, Git, 사용할 직원 CLI의 설치·로그인. npm으로 `codex`/`gemini`를 설치했다면 Node.js도 필요합니다.
-Antigravity(`agy`) 직원을 따로 두려면 CLI를 설치합니다. Antigravity 앱에는 CLI가 포함되지 않습니다.
-Windows PowerShell 설치: `irm https://antigravity.google/cli/install.ps1 | iex` (`%LOCALAPPDATA%\agy\bin\agy.exe`).
+전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
 cp config/labhq.example.yaml config/labhq.yaml      # 토큰, HPC, 데이터 구역, 예산 수정
@@ -57,14 +55,7 @@ Windows 러너는 `policy.data_zones`에 `restricted` 구역이 있으면 시작
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 다음처럼 `bin`과 `prefix_args`를 사용하세요(설치된 package 경로 확인).
 
-```yaml
-engines:
-  codex:
-    bin: "%APPDATA%/npm/node_modules/@openai/codex/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc/bin/codex.exe"
-  gemini:
-    bin: node
-    prefix_args: ["%APPDATA%/npm/node_modules/@google/gemini-cli/dist/index.js"]
-```
+Codex 직원 로그인 격리는 §10의 전용 `CODEX_HOME` 안내를 따릅니다. `labhq doctor`가 구성을 점검합니다.
 
 ```bash
 labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 요청·승인·이벤트를 로컬 SQLite에 저장
@@ -120,23 +111,24 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 
 ## 2. 조직도
 
-| 캐릭터 | id | 직무 | 기본 엔진/모델 | 도구 |
-|---|---|---|---|---|
-| 🦉 부엉이 CSO | `cso` | 질문 설계·업무 배분·증거 통합 (분석 안 함) | Claude Code / opus | Read·Glob·Grep만 |
-| 🐧 펭귄 비서실장 | `chief_of_staff` | 착수 브리핑: 동향·데이터 접근성·리스크 | Claude Code / sonnet | 웹 |
-| 🐻 곰 Biology 만물박사 | `biologist` | 가설·메커니즘·교란요인 | Claude Code / opus | 웹 |
-| 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 (검증된 파이프라인을 표준대로 반복) | Claude Code + bioinfo plugin | HPC |
-| 🐿️ 다람쥐 데이터 담당 | `data_steward` | 공개/통제접근 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | HPC |
-| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Codex / gpt-6-luna | 웹 검색 |
-| 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 (nf-core·Snakemake 우선) | Claude Code / opus | HPC |
-| 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트·컨테이너 | Codex | HPC |
-| 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC 보고서 | Claude Code / sonnet | HPC |
-| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 리뷰 (교차 벤더) | Codex / read-only | — |
-| 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증·오퍼레터 | Claude Code / opus | Skill·Agent |
-| 🐥 파견직 (논문 종이모자 병아리) | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | 논문 MCP + 논문 스킬 |
+| 캐릭터 | id | 직무 | 기본 엔진/모델 | Codex sandbox | 도구 |
+|---|---|---|---|---|---|
+| 🦉 부엉이 CSO | `cso` | 질문 설계·업무 배분·증거 통합 (분석 안 함) | Claude Code / opus | — | Read·Glob·Grep만 |
+| 🐧 펭귄 비서실장 | `chief_of_staff` | 착수 브리핑: 동향·데이터 접근성·리스크 | Claude Code / sonnet | — | 웹 |
+| 🐻 곰 Biology 만물박사 | `biologist` | 가설·메커니즘·교란요인 | Claude Code / opus | — | 웹 |
+| 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 | Claude Code + bioinfo plugin | — | HPC* |
+| 🐿️ 다람쥐 데이터 담당 | `data_steward` | 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | — | HPC* |
+| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌·파견직 후보 검색 | Codex / gpt-6-luna | workspace-write | live 웹·PubMed·bioRxiv |
+| 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 | Claude Code / opus | — | HPC* |
+| 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트 | Codex / gpt-6.1-sol | workspace-write | 웹 disabled·HPC* |
+| 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC | Claude Code / sonnet | — | HPC* |
+| 🐢 거북이 과학 리뷰어 | `sci_reviewer` | 3기준 교차 리뷰 | Codex / gpt-6-astra | read-only | live 웹 |
+| 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증 | Claude Code / opus | — | Skill·Agent |
+| 🐥 파견직 | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | — | 논문 MCP·skill |
 
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: codex`, `model: gpt-6-luna`)
-Codex 직원의 `tools`에 `WebSearch`나 `WebFetch`가 있으면 Codex 자체 웹 검색(`-c web_search="live"`)을 켭니다.
+Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="live"`, 없으면 `"disabled"`를 명시합니다.
+`HPC*`는 scheduler가 `none`이 아닐 때만 배선됩니다.
 
 ### 역할·엔진·도구를 나눈 기준
 
@@ -146,11 +138,12 @@ Codex 직원의 `tools`에 `WebSearch`나 `WebFetch`가 있으면 Codex 자체 �
 | 판단·조율·위험 관리가 큰 자리에 가장 높은 등급 모델 | CSO(opus) | PI 결정(2026-10-01): 막힌 직원의 질문에 CSO가 PI 대신 먼저 답하고, 위험한 것만 PI에게 올린다 |
 | 판단 업무는 opus, 정형·반복 업무는 sonnet | biologist·analyst·recruiter / chief_of_staff·data_steward·qc_reviewer | 첫 설계 |
 | 리뷰어는 다른 벤더 | sci_reviewer(Codex) | 같은 모델끼리 맹점을 공유하지 않게 |
-| 도구는 그 일에 필요한 것만 | CSO는 읽기만, HPC는 계산하는 직원만, 웹은 조사하는 직원만 | 표에서 드러나는 원칙. 따로 적어 둔 기록은 없다 |
+| 도구는 그 일에 필요한 것만 | CSO는 읽기만, HPC는 계산하는 직원만, 웹은 조사·리뷰 직원만 | 표에서 드러나는 원칙. 따로 적어 둔 기록은 없다 |
 | 엔진은 사정에 따라 바뀌었다 | engineer=Codex(PI 결정), lit_scout=Gemini CLI → Antigravity(개인 계정 차단) → Codex gpt-6-luna(Gemini 은퇴) | STATUS.md |
 
-측정으로 검증한 배정은 아직 없습니다. 첫 실험(#27)에서는 bioinfo-agent가 일을 하나도 받지 못했고, 읽기 전용 리뷰어에게 쓰기 작업이 배정됐습니다.
-역할별 모델을 바꿔 보는 실험은 #40 bench에서 합니다. 기준선은 같은 과제를 Opus 5.5 단일 세션과 gpt-6-astra 단일 세션에 줍니다.
+기록으로 확인된 기준은 직무 구분, 교차 벤더 리뷰, 판단은 opus·반복은 sonnet이라는 첫 설계입니다. 역할별 이유,
+도구 배정, `max_turns`, 모델 등급은 아직 검증하지 않았으며 #40 bench에서 잽니다. 엔진은 MCP·resume·hook·예산 상한
+지원 여부로 고릅니다(#39). 첫 실험(#27)에서는 bioinfo-agent가 배정되지 않고 읽기 전용 리뷰어에게 쓰기 작업이 갔습니다.
 
 ### bioinfo-agent 연결하기
 러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다. 실행 전에
@@ -325,6 +318,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 - **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `prefix_args`, `extra_args`, `env`.
   Claude·Codex의 `isolate_user_config`(기본 켜짐)는 PI 개인 CLI 설정을 직원 세션에서 뺍니다(§10). Gemini·Antigravity에는 이 옵션이 없습니다. Codex의 `windows_sandbox`는 Windows에서 다시 넣는 샌드박스 모드입니다. 모르는 키는 오류로 거부합니다.
   Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.
+- **라운드 기록** (`dev_log`): `repo`는 private 기록 저장소, `source_repo`는 환경 절의 labhq commit 링크에 씁니다. 종료 조건과 절차는 `HANDOFF.md`의 #69 항목에 있습니다.
 
 ## 9. 폰 연결
 
@@ -344,7 +338,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 - Claude는 권한 규칙을 POSIX로 정규화한 경로와 대조합니다. Windows에서는 `Read(//c/Users/...)`만 막히므로 labhq가 드라이브 경로를 그 형태로 바꿉니다.
 - 직원 CLI는 PI 개인 설정 없이 뜹니다(`isolate_user_config`). 가장 확실한 방법은 러너를 전용 계정으로 돌리는 것입니다.
   - Claude: `--setting-sources project,local --disable-slash-commands`에 사용자 CLAUDE.md 제외를 더하면 hook·skill·plugin·개인 서브에이전트·전역 지침이 모두 빠집니다(실측 `claude_isolated.jsonl`).
-  - Codex: `--ignore-user-config --ignore-rules`로 config.toml(plugin·notify hook·MCP)이 빠집니다. `CODEX_HOME`의 전역 AGENTS.md는 끌 플래그가 없어서, 그 파일이 있으면 Codex 직원 작업을 거부합니다. 러너 전용 계정을 쓰거나, 직원용 폴더를 `CODEX_HOME`으로 두고 한 번 `codex login`한 뒤 `engines.codex.env.CODEX_HOME`에 지정하세요(미검증). 개발 중에만 `engines.codex.allow_global_agents_md: true`.
+  - Codex: `--ignore-user-config --ignore-rules`로 config.toml(plugin·notify hook·MCP)이 빠집니다. `CODEX_HOME`의 전역 AGENTS.md는 끌 플래그가 없어서, 그 파일이 있으면 직원 작업을 거부합니다. 직원 전용 `CODEX_HOME`에서 `codex login`한 뒤 `engines.codex.env.CODEX_HOME`에 지정하세요. 개발 중에만 `engines.codex.allow_global_agents_md: true`.
   - Codex on Windows: config.toml을 건너뛰면 `[windows] sandbox`도 빠져 쓰기가 막히고, 종료 코드는 0입니다. labhq가 `windows.sandbox="elevated"`를 다시 넣습니다.
   - agy: 전역 지침을 읽지 않았습니다(실측). 사용자 `settings.json` 권한과 MCP는 끌 옵션이 없습니다.
 - 승인 대기가 길면 Claude의 MCP 툴 타임아웃에 걸릴 수 있어 러너가 `MCP_TOOL_TIMEOUT`을 늘려 줍니다.

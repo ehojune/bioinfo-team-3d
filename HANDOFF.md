@@ -95,3 +95,11 @@ PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정�
 
 1. HPC 러너 계정: 관리자에게 통제 원본을 읽지 못하는 러너 전용 서비스 계정을 받을지(권장), 다른 방식을 쓸지
 2. 거버넌스(정부) 층과 Yuan의 구성
+
+## 개발 라운드 기록 (#69)
+
+`dev_log.repo`에 private 기록 저장소를, `dev_log.source_repo`에 이 labhq 저장소의 `owner/name`을 적고
+`github.token_env`의 환경변수로 토큰을 줍니다. YAML에는 토큰을 넣지 않습니다.
+
+다음 중 하나면 기록 저장소를 끝냅니다: labhq v1.0, #40 bench 확정 뒤 20 rounds 동안 새 교훈 없음,
+또는 별도 보고 채널로 이전. `dev_log.enabled: false` → 남은 교훈 Yuan 수확 → 저장소 archive → #69 종료 순서입니다.

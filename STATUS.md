@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · Codex 직원·개발 라운드 기록 후속 #56 #69
+
+- 결론: Codex 직원의 쓰기·웹 권한을 명시하고 문헌 원 출처 확인을 강화했다. 개발 라운드는 설정한 labhq commit 링크와 종료 조건을 남긴다.
+- 바뀐 것: sandbox 기반 roster, 완료된 웹 검색 query parser와 실측 fixture, 직원별 모델·웹·PubMed·bioRxiv 설정, 전용 `CODEX_HOME` 안내, `dev_log.source_repo` 링크와 doctor·HANDOFF 운영 안내.
+- 실행한 것: 수정 전 regression 실패 확인. 수정 후 전체 `pytest -q -p no:cacheprovider` 500 passed/17 skipped, `bash scripts/check_public.sh` 통과. mock E2E 이벤트 수집이 중간에 1회 실패했으나 단독·전체 재실행은 통과했다. README 33,738→33,576 bytes(-162).
+- 미해결: 실제 Codex 로그인·hosted MCP·GitHub 발행은 실행하지 않았다.
+- 근거: `tests/test_real_streams.py`, `tests/test_registry.py`, `tests/test_round_records.py`, `tests/test_doctor.py`.
+
 ## 2026-10-01 · 후속 #24 #25 #46 #47 가드·doctor
 
 - 결론: plugin hash에 작업 트리의 실행 mode 반영(#24), hostname에 없는 IPv6 LAN 주소 탐색(#25), doctor가 러너의 data·계정 guard와 직원 adapter preflight를 그대로 재사용(#46), percent-encoded token 파라미터 이름도 로그에서 가림(#47).
