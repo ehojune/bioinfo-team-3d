@@ -67,7 +67,7 @@ def rows(base: str, head: str, pr: int | None, cwd: Path | None = None) -> str:
         files = changed_files(sha, cwd)
         if files and files <= {NOTES}:
             continue
-        when = datetime.fromisoformat(git("log", "-1", "--format=%cI", sha, cwd=cwd)).astimezone(KST)
+        when = datetime.fromtimestamp(int(git("log", "-1", "--format=%ct", sha, cwd=cwd)), KST)  # 3.10 rejects "Z"
         link = f"{REPO_URL}/pull/{pr}/commits/{sha[:7]}" if pr else f"{REPO_URL}/commit/{sha[:7]}"
         subject = git("log", "-1", "--format=%s", sha, cwd=cwd)
         out.append(f"| {when:%H:%M} | [`{sha[:7]}`]({link}) | **{subject}** |  <!-- {when:%Y-%m-%d} -->")

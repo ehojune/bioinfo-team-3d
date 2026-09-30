@@ -5,7 +5,7 @@
 ## 2026-10-01 · 패치노트와 README 갱신 규칙
 
 - 결론: 커밋마다 `patch_notes/README.md`에 한 줄, main 커밋 3개 안에 README 갱신을 CI(`patch-notes` job)가 확인한다. 형식은 PI의 튜토리얼 저장소 패치노트와 같다.
-- 바뀐 것: `scripts/patch_notes.py`(check·rows), `.github/workflows/test.yml`, 지난 커밋 99개 소급 기록, README 배지·동작 화면(2.5D·3D), 에이전트 규칙(CLAUDE.md·AGENTS.md).
+- 바뀐 것: `scripts/patch_notes.py`(check·rows), `.github/workflows/test.yml`, 지난 커밋 96개 소급 기록, README 배지·동작 화면(2.5D·3D), 에이전트 규칙(CLAUDE.md·AGENTS.md).
 - 실행한 것: `tests/test_patch_notes.py` 3개(임시 git 저장소로 규칙 확인), Windows `pytest -q`, 공개 검사.
 - 미해결: 스크린샷은 mock demo 화면이다. UI 개편 뒤 다시 찍는다.
 
