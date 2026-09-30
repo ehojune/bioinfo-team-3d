@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
@@ -338,6 +339,9 @@ class Hub:
         for body in candidates:
             if body:
                 result = TaskResult.model_validate(body)
+                outcome = read_ask_results(self.ask_results_for_task(result.task_id))
+                if outcome["status"] == "rejected":
+                    return rejected_step(result, outcome["reason"])
                 if result.ok and not waiting(result):
                     return result
         return None
@@ -747,15 +751,15 @@ class Hub:
             try:
                 await self.orchestrator.answer_ask(ask, runner_id)
             except Exception as exc:
-                await self.resolve_ask(ask, runner_id, {"answer": f"질의 처리 실패: {exc}",
-                                                        "from": "labhq", "status": "rejected"})
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason=f"질의 처리 실패: {exc}", **{"from": "labhq"}))
 
         task = asyncio.create_task(route())
         self.ask_tasks[ask.id] = task
         task.add_done_callback(lambda _task: self.ask_tasks.pop(ask.id, None))
 
     async def resolve_ask(self, ask: AskRequest, runner_id: str, answer: dict) -> None:
-        answer = {**answer, "status": answer.get("status", "answered"), "ask_id": ask.id}
+        answer = ask_result(**{**answer, "ask_id": ask.id})
         entry = self.store.get("ask", ask.id) or {"ask": ask.model_dump(mode="json"), "origin": runner_id}
         self.store.put("ask", ask.id, {**entry, "state": "resolved", "answer": answer,
                                        "resolved_at": time.time()})
@@ -777,6 +781,11 @@ class Hub:
             future = self.ask_waiters.setdefault(ask_id, asyncio.get_running_loop().create_future())
             answers.append(await future)
         return answers
+
+    def ask_results_for_task(self, task_id: str) -> list[dict]:
+        return [entry["answer"] for entry in self.store.all("ask").values()
+                if (entry.get("ask") or {}).get("task_id") == task_id
+                and entry.get("state") == "resolved" and entry.get("answer")]
 
     # ----- approvals -----
     async def request_approval(self, kind: str, summary: str, request_id: str | None = None,

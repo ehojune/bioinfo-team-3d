@@ -14,6 +14,7 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 
 from ..models import ASK_WAIT_SECONDS, ApprovalRequest, AskRequest, hard_stop_kind
+from ..ask_results import ask_result, read_ask_results
 from ..security import token_matches
 
 Handler = Callable[[Any], Awaitable[None]]
@@ -26,6 +27,7 @@ class Broker:
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
         self.hibernate_asks: dict[str, str] = {}
+        self.task_ask_results: dict[str, list[dict]] = {}
         self.identities: dict[str, dict[str, str | None]] = {}
         self._on_approval, self._on_event, self._on_track = on_approval, on_event, on_track
         self._on_ask = on_ask
@@ -90,8 +92,14 @@ class Broker:
             self.pending.pop(req.id, None)
 
     async def request_ask(self, req: AskRequest) -> dict:
+        def terminal(answer: dict) -> dict:
+            result = ask_result(**{**answer, "ask_id": req.id})
+            outcome = read_ask_results([result])
+            self.task_ask_results.setdefault(req.task_id or "", []).append(result)
+            return result if outcome["status"] == "answered" else {**result, "reason": outcome["reason"]}
+
         if self._on_ask is None:
-            return {"status": "rejected", "ask_id": req.id, "reason": "ask routing is unavailable"}
+            return terminal(ask_result(reason="ask routing is unavailable"))
         fut = asyncio.get_running_loop().create_future()
         self.pending_asks[req.id] = fut
         await self._on_ask(req)
@@ -108,7 +116,7 @@ class Broker:
                     "instruction": "Turn을 끝내세요. 답이 오면 같은 session으로 resume합니다."}
         try:
             answer = await asyncio.wait_for(fut, wait_s)
-            return {"status": "answered", "ask_id": req.id, **answer}
+            return terminal(answer)
         except asyncio.TimeoutError:
             self.hibernate_asks[req.id] = req.task_id or ""
             return {"status": "pending", "ask_id": req.id,
@@ -134,6 +142,7 @@ class Broker:
         return [ask_id for ask_id, owner in self.hibernate_asks.items() if owner == task_id]
 
     def finish_task(self, task_id: str) -> None:
+        self.task_ask_results.pop(task_id, None)
         for ask_id in self.pending_for_task(task_id):
             self.hibernate_asks.pop(ask_id, None)
 

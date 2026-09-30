@@ -59,7 +59,8 @@ async def test_failed_consult_is_rejected_with_reason(tmp_path, target, failure)
         answer = hub.store.get("ask", ask.id)["answer"]
         assert answer["status"] == "rejected"
         assert answer["routed_to"] == routed
-        assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in answer["answer"]
+        assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in answer["reason"]
+        assert "answer" not in answer
         assert (await hub.wait_asks([ask.id]))[0] == answer
         assert hub.events[-1]["data"]["status"] == "rejected"
     finally:
@@ -90,12 +91,15 @@ async def test_blocking_decision_failed_consult_never_resumes_step(tmp_path, fai
 
     hub.dispatch = dispatch
     try:
-        with pytest.raises(RuntimeError, match="question was rejected or unanswered"):
-            await hub.orchestrator.run_dag("r", "study", steps, hub.result_map("r"))
+        await hub.orchestrator.run_dag("r", "study", steps, hub.result_map("r"))
         assert [t.meta["step_id"] for t in calls if t.meta["kind"] == "step"] == ["A"]
-        assert hub.requests["r"]["pending_questions"] == ["Cases or controls?"]
+        assert hub.requests["r"]["pending_questions"] == []
         assert not hub.requests["r"].get("step_decisions")
-        assert not hub.requests["r"]["results"]
+        saved = hub.requests["r"]["results"]
+        assert not saved["A"]["ok"] and saved["A"]["error_kind"] == "ask_rejected"
+        assert "Cases or controls?" in saved["A"]["error"]
+        assert {"offline": "runner offline", "cli": "CLI exit 2", "empty": "empty"}[failure] in saved["A"]["error"]
+        assert not saved["B"]["ok"] and saved["B"]["error"].startswith("skipped: upstream A")
     finally:
         hub.store.close()
 

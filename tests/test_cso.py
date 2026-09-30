@@ -194,12 +194,12 @@ async def test_step_rechecks_jobs_and_asks_after_each_wake(tmp_path, turns):
     expected = []
     for index, pending in enumerate(turns):
         expected.append(("dispatch", dispatched[index].id))
-        if pending in {"job", "both"}:
-            expected.append(("job", dispatched[index].id))
-            assert "job_done" in dispatched[index + 1].prompt
         if pending in {"ask", "both"}:
             expected.append(("ask", [f"ask_{index}"]))
             assert "Use the selected inputs" in dispatched[index + 1].prompt
+        if pending in {"job", "both"}:
+            expected.append(("job", dispatched[index].id))
+            assert "job_done" in dispatched[index + 1].prompt
         assert dispatched[index + 1].meta["parent_task"] == dispatched[index].id
         assert dispatched[index + 1].meta["workdir"] == workdir
     expected.append(("dispatch", dispatched[-1].id))
@@ -377,7 +377,11 @@ async def test_blocking_decision_denial_cancels_dispatch():
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] == "failed"
     assert "Choose a cohort" in hub.requests["r"]["report"]
-    assert "Pending PI decisions/questions" in hub.requests["r"]["report"]
+    assert "question was rejected or unanswered" in hub.requests["r"]["report"]
+    assert not hub.requests["r"].get("pending_questions")
+    assert not hub.requests["r"]["results"]["A"]["ok"]
+    assert hub.requests["r"]["results"]["A"]["error_kind"] == "ask_rejected"
+    assert hub.requests["r"]["results"]["B"]["status"] == "skipped"
     assert not any(t.meta.get("step_id") == "B" for t in hub.calls)
 
 

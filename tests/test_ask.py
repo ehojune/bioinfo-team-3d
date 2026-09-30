@@ -81,7 +81,8 @@ async def test_ask_caps_are_enforced_before_consult(tmp_path, seed, current, mes
     await hub.orchestrator.answer_ask(ask, "runner")
     answer = hub.store.get("ask", ask.id)["answer"]
     assert answer["status"] == "rejected"
-    assert message in answer["answer"]
+    assert message in answer["reason"]
+    assert "answer" not in answer
 
 
 def test_ask_mcp_timeout_exceeds_longest_wait(tmp_path):

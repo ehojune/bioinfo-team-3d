@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..util import clip, extract_json, output_relpath, short
 
@@ -316,6 +317,8 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
+    if outcome.error_kind == "ask_rejected":
+        return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
     if outcome.pending_jobs:
@@ -381,7 +384,7 @@ class Orchestrator:
         self.hub.store.put("ask", ask.id, {**current, "signature": signature})
         for other_id, entry in entries.items():
             if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
-                cached = {**entry["answer"], "cached": True}
+                cached = ask_result(**{**entry["answer"], "cached": True})
                 await self.hub.resolve_ask(ask, runner_id, cached)
                 return
 
@@ -402,9 +405,8 @@ class Orchestrator:
         if limit_reason:
             self.hub.store.put("ask", ask.id, {**(self.hub.store.get("ask", ask.id) or {}),
                                                 "state": "rejected"})
-            await self.hub.resolve_ask(ask, runner_id, {"answer": limit_reason, "from": "labhq",
-                                                        "routed_to": "cso", "status": "rejected",
-                                                        "remaining_asks": 0})
+            await self.hub.resolve_ask(ask, runner_id, ask_result(reason=limit_reason, **{
+                "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
         stop = hard_stop_kind(ask)
@@ -430,14 +432,14 @@ class Orchestrator:
             note = str(decision.get("note") or "").strip()
             answer = note or ("PI가 진행을 허용하지 않았습니다" if not decision.get("approved") else
                               "PI가 승인했지만 답변을 남기지 않았습니다")
-            await self.hub.resolve_ask(ask, runner_id, {"answer": answer, "from": "pi",
-                                                        "routed_to": "pi", "hard_stop": stop})
+            await self.hub.resolve_ask(ask, runner_id, ask_result(answer=answer, decision=decision,
+                **{"from": "pi", "routed_to": "pi", "hard_stop": stop}))
             return
 
         if routed not in self.hub.agents:
-            await self.hub.resolve_ask(ask, runner_id, {
-                "answer": f"대상 직원 {routed!r}이 roster에 없습니다", "from": "labhq",
-                "routed_to": routed, "status": "rejected"})
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=f"대상 직원 {routed!r}이 roster에 없습니다",
+                **{"from": "labhq", "routed_to": routed}))
             return
 
         request = self.hub.requests.get(ask.request_id or "", {})
@@ -468,10 +470,9 @@ class Orchestrator:
                 self.hub.save_request(ask.request_id)
         answered = result.ok and bool(result.text.strip())
         answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
-        await self.hub.resolve_ask(ask, runner_id, {"answer": answer, "from": routed,
-                                                    "routed_to": routed,
-                                                    "status": "answered" if answered else "rejected",
-                                                    "remaining_asks": max(0, 2 - task_count)})
+        await self.hub.resolve_ask(ask, runner_id, ask_result(
+            answer=answer if answered else None, reason=None if answered else answer,
+            **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task) -> TaskResult:
@@ -509,6 +510,11 @@ class Orchestrator:
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+                    # Audit in-session replies too: a CLI success cannot override a denied ask.
+                    answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
+                    outcome = read_ask_results(answers)
+                    if outcome["status"] == "rejected":
+                        res = rejected_step(res, outcome["reason"])
                     kind = failure_kind(res)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
@@ -560,17 +566,17 @@ class Orchestrator:
         while res.ok and waiting(res) and cycles < self.cfg.max_wake_cycles:
             cycles += 1
             prompts = []
+            if res.pending_asks:
+                answers = await self.hub.wait_asks(res.pending_asks)
+                outcome = read_ask_results(answers)
+                if outcome["status"] == "rejected":
+                    return rejected_step(res, outcome["reason"])
+                prompts.append(ASK_WAKE_PROMPT.format(answers=outcome["answer"]))
             if res.pending_jobs:
                 info = await self.hub.wait_jobs(res.task_id)
                 jobs = "\n".join(f"- {j['job_id']} ({j.get('name') or ''}): {j['state']} exit={j.get('exit_status')}"
                                  for j in info.get("jobs", []))
                 prompts.append(WAKE_PROMPT.format(jobs=jobs, workdir=res.workdir))
-            if res.pending_asks:
-                answers = await self.hub.wait_asks(res.pending_asks)
-                rendered = "\n".join(
-                    f"- {answer.get('from', 'unknown')}: {answer.get('answer', '')}" for answer in answers
-                )
-                prompts.append(ASK_WAKE_PROMPT.format(answers=rendered))
             title = ("HPC 결과와 질의 답변을 받고 이어서 작업" if res.pending_jobs and res.pending_asks else
                      "HPC 결과 확인 후 이어서 작업" if res.pending_jobs else "질의 답변을 받고 이어서 작업")
             meta = {**task.meta, "kind": task.meta.get("kind", "step"),
@@ -655,6 +661,12 @@ class Orchestrator:
             ctx = upstream(step)
             updates = []
             if decision:
+                outcome = read_ask_results([decision])
+                if outcome["status"] == "rejected":
+                    previous = (TaskResult.model_validate(decision["previous_result"])
+                                if decision.get("previous_result") else
+                                TaskResult(task_id="", agent_id=step["agent_id"], ok=True))
+                    return rejected_step(previous, outcome["reason"])
                 updates.append(ASK_WAKE_PROMPT.format(answers=qa_text(decision)))
             revising = bool(feedback and step["id"] in feedback)
             if revising:
@@ -728,7 +740,8 @@ class Orchestrator:
                             outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
                     previous = results.get(sid)
-                    if feedback and sid in feedback and previous and previous.ok and not outcome.ok:
+                    if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
+                            and outcome.error_kind != "ask_rejected"):
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
@@ -756,8 +769,8 @@ class Orchestrator:
                             decision = await self.hub.request_approval(
                                 kind="clarify", request_id=rid,
                                 summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
-                            answer = {"status": "answered" if decision.get("approved") else "rejected",
-                                      "answer": decision.get("note"), "from": "pi"}
+                            answer = ask_result(decision=decision, **{"from": "pi"})
+                            answers = [answer]
                         else:
                             ask = AskRequest(task_id=res.task_id, agent_id=res.agent_id, request_id=rid,
                                              to="cso", question=question.strip(),
@@ -769,15 +782,19 @@ class Orchestrator:
                                                     "task_id": res.task_id, "agent_id": res.agent_id,
                                                     "request_id": rid, "data": ask.model_dump(mode="json")})
                             await self.answer_ask(ask, origin)
-                            answer = (await self.hub.wait_asks([ask.id]))[0]
-                        if answer.get("status") == "rejected" or not str(answer.get("answer") or "").strip():
-                            for pending in running.values():
-                                pending.cancel()
-                            if running:
-                                await asyncio.gather(*running.values(), return_exceptions=True)
-                            raise RuntimeError(f"step {sid} question was rejected or unanswered")
+                            answers = await self.hub.wait_asks([ask.id])
+                            answer = answers[0]
+                        outcome = read_ask_results(answers)
+                        if outcome["status"] == "rejected":
+                            results[sid] = rejected_step(res, f"{question.strip()}: {outcome['reason']}")
+                            if req_state is not None:
+                                req_state["pending_questions"] = []
+                                self.hub.save_request(rid)
+                            await self._emit(rid, "request.step_done", {"step_id": sid, "ok": False,
+                                "agent_id": res.agent_id, "reason": results[sid].error})
+                            continue
                         # Keep the question with the answer: "b" or "the second option" means nothing alone.
-                        decisions[sid] = {"question": question.strip(), "answer": str(answer["answer"]).strip(),
+                        decisions[sid] = {**ask_result(**answer), "question": question.strip(),
                                           "from": answer.get("from"), "session_id": res.session_id,
                                           "workdir": res.workdir, "previous_result": res.model_dump(mode="json")}
                         if req_state is not None:

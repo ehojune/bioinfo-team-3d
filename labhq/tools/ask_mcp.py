@@ -8,6 +8,7 @@ import os
 import httpx
 
 from ..models import ASK_MAX_WAIT_S
+from ..ask_results import ask_result
 from ..settings import Settings
 from ._mcpcompat import make_server
 
@@ -42,7 +43,7 @@ async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None 
             response.raise_for_status()
             return json.dumps(response.json(), ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({"status": "rejected", "reason": f"질의 broker에 연결하지 못했습니다: {exc}"},
+        return json.dumps(ask_result(reason=f"질의 broker에 연결하지 못했습니다: {exc}"),
                           ensure_ascii=False)
 
 

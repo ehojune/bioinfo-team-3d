@@ -19,6 +19,7 @@ import websockets
 
 from ..adapters import get_adapter
 from ..adapters.base import RunContext
+from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
 from ..policy import claude_settings
@@ -413,6 +414,9 @@ class Runner:
             try:
                 result = await get_adapter(agent.engine, self.s).run(ctx)
                 result.pending_asks = self.broker.pending_for_task(task.id)
+                outcome = read_ask_results(self.broker.task_ask_results.get(task.id, []))
+                if outcome["status"] == "rejected":
+                    result = rejected_step(result, outcome["reason"])
             finally:
                 self.broker.revoke_task_token(broker_token)
                 self.broker.finish_task(task.id)
