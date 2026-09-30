@@ -820,7 +820,7 @@ const Demo = (() => {
   const ROSTER = [
     ['chief_of_staff', '펭귄 비서실장', '착수 브리핑', 'claude_code', 'sonnet'], ['cso', '부엉이 CSO', '질문 설계·배분·통합', 'claude_code', 'opus'],
     ['sci_reviewer', '거북이 과학 리뷰어', '3기준 과학 리뷰', 'codex', null], ['biologist', '곰 Biology 만물박사', '가설·메커니즘', 'claude_code', 'opus'],
-    ['lit_scout', '여우 문헌·헤드헌터', '문헌 검색, 파견직 후보 발굴', 'gemini', 'pro'], ['bioinfo-agent', '수달 bioinfo-agent', '반복·정형 분석 전담', 'cli', null],
+    ['lit_scout', '여우 문헌·헤드헌터', '문헌 검색, 파견직 후보 발굴', 'codex', 'gpt-6-luna'], ['bioinfo-agent', '수달 bioinfo-agent', '반복·정형 분석 전담', 'cli', null],
     ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
     ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
     ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
@@ -992,7 +992,7 @@ const Demo = (() => {
       const steps = [{ id: 's1', agent_id: 'lit_scout', instruction: '관련 문헌·데이터 조사', depends_on: [] },
         { id: 's2', agent_id: 'biologist', instruction: '검증 가능한 가설로 정리', depends_on: ['s1'] }];
       E('request.plan', { request_id: rid, data: { steps, warnings: [], recruit: [] } });
-      await step(rid, 's1', 'lit_scout', steps[0].instruction, async () => { tool('lit_scout', 'google_web_search', short(body.text, 40), rid); await sleep(2000); say('lit_scout', '관련 논문 5편, 공개 데이터 2건을 찾았어요', rid); });
+      await step(rid, 's1', 'lit_scout', steps[0].instruction, async () => { tool('lit_scout', 'web_search', short(body.text, 40), rid); await sleep(2000); say('lit_scout', '관련 논문 5편, 공개 데이터 2건을 찾았어요', rid); });
       await step(rid, 's2', 'biologist', steps[1].instruction, async () => { await sleep(1800); say('biologist', '검증할 수 있는 가설 두 개로 정리했어요', rid); });
       await work('cso', rid, { kind: 'synthesis', title: '최종 보고서 작성' }, () => sleep(1200));
     }

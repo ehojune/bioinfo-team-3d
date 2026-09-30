@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 문헌 담당 gpt-6-luna 전환
+
+- 결론: `lit_scout`가 Antigravity/Gemini 대신 Codex `gpt-6-luna`로 돌고, Codex 자체 웹 검색을 쓴다.
+- 바뀐 것: `agents/core/lit_scout.yaml`, Codex 어댑터(직원 `tools`에 `WebSearch`·`WebFetch`가 있으면 `-c web_search="live"`), 정적 demo roster, README 조직도.
+- 실행한 것: Windows `pytest -q` 443 passed/17 skipped, 공개 검사 통과, codex-cli 0.159.2 실제 실행에서 격리 옵션과 함께 `web_search` 이벤트 확인.
+- 미해결: Antigravity의 과학 DB skill(dbSNP·ClinVar 등)은 Codex에 없다. 문헌·DB MCP 연결은 #41에서 다룬다.
+
 ## 2026-09-28 · #37 #38 #35 보안·재시도
 
 - 토큰 비교를 바이트 constant-time으로 통일하고 gateway 로그의 token 값을 가린다.
