@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:03 | [`ffb0c24`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/ffb0c24) | **bench를 모든 arm이 같은 구조화 결과 블록으로 채점합니다** (#92, #101). 전에는 답 문장을 정규식으로 읽어서 같은 뜻을 다르게 쓴 맞는 답이 FAIL이 됐습니다. 이제 답 끝의 JSON 결과 블록을 case의 기대값과 비교하고, 문장 검사는 참고용(`narrative_passed`)으로 따로 남깁니다. 기준선 명령에도 설정의 `extra_args`(proxy·profile 등)를 넣어 labhq arm과 같은 조건에서 돌립니다 |
 | 06:46 | [`82f267b`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/82f267b) | **package에 든 설정 template을 저장소 예시와 다시 맞췄습니다.** main의 bench 설정이 예시에만 들어가 있던 것을 동일성 테스트가 잡았습니다 |
 | 06:44 | [`dbc0e79`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/dbc0e79) | **main 병합에서 init과 bench를 함께 살렸습니다.** CLI에 `init`·`bench` 명령을 둘 다 두고, package data에 설정 template과 bench 자료를 함께 넣었습니다 |
 | 06:39 | [`191dd34`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/191dd34) | **init이 클러스터 종류를 추측하지 않게 했습니다** (Codex 리뷰). PBS에도 `qsub`·`qstat`이 있어서 전에는 SGE 설정이 저장돼 첫 PBS job부터 실패했습니다. 이제 SGE·PBS 관리 도구와 환경변수로 종류를 판별하고, 모르면 대화형에서는 묻고 `--yes`에서는 실패합니다 |
