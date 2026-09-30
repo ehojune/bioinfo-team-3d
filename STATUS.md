@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 패치노트와 README 갱신 규칙
+
+- 결론: 커밋마다 `patch_notes/README.md`에 한 줄, main 커밋 3개 안에 README 갱신을 CI(`patch-notes` job)가 확인한다. 형식은 PI의 튜토리얼 저장소 패치노트와 같다.
+- 바뀐 것: `scripts/patch_notes.py`(check·rows), `.github/workflows/test.yml`, 지난 커밋 99개 소급 기록, README 배지·동작 화면(2.5D·3D), 에이전트 규칙(CLAUDE.md·AGENTS.md).
+- 실행한 것: `tests/test_patch_notes.py` 3개(임시 git 저장소로 규칙 확인), Windows `pytest -q`, 공개 검사.
+- 미해결: 스크린샷은 mock demo 화면이다. UI 개편 뒤 다시 찍는다.
+
 ## 2026-10-01 · 문헌 담당 gpt-6-luna 전환
 
 - 결론: `lit_scout`가 Antigravity/Gemini 대신 Codex `gpt-6-luna`로 돌고, Codex 자체 웹 검색을 쓴다.

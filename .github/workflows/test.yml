@@ -23,3 +23,17 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest -q
+
+  patch-notes:
+    # PI 결정(2026-10-01): 커밋마다 패치노트 한 줄, main 커밋 3개 안에 README 갱신.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/patch_notes.py check --base origin/${{ github.base_ref }} --head HEAD

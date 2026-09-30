@@ -1,11 +1,20 @@
 # labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.2)
 
 [![test](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
+[![패치노트](https://img.shields.io/badge/%ED%8C%A8%EC%B9%98%EB%85%B8%ED%8A%B8-changelog-5B5BD6)](patch_notes/README.md)
 저장소: https://github.com/ehojune/bioinfo-team-3d
 
 CLI 코딩 에이전트(Claude Code · Codex · Gemini CLI)를 **연구소 직원**처럼 굴리는 플랫폼의 1단계 골격입니다.
 CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은 **Paper2Agent로 파견직**이 되어 팀에 합류합니다.
 모든 작업은 폰 승인 · 예산 캡 · 실험노트(출처 기록) 아래에서 돌아갑니다.
+
+바뀐 내용은 [패치노트](patch_notes/README.md)에서 확인하세요.
+
+| 2.5D 사무실 (`/`) | 3D 사무실 (`/3d`) |
+|---|---|
+| ![2.5D 사무실: 요청 진행 그래프, 사내 메신저, 직원 책상](docs/media/office-25d.png) | ![3D 종이숲 사무실: 직원 책상과 진행 중인 요청 패널](docs/media/office-3d.png) |
+
+`labhq demo --web`의 mock 시나리오 화면입니다. 실제 CLI 없이 돌아갑니다.
 
 - **들어있는 것**: 실시간 웹 사무실(2.5D·3D, 폰 대응), 러너 데몬, CLI 어댑터 4종(Claude Code · Codex · Gemini ·
   직접 만든 에이전트용 범용 CLI), SGE/PBS HPC 도구(MCP), 승인 게이트, 게이트웨이, CSO 오케스트레이터,
