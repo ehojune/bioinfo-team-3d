@@ -13,6 +13,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 06:21 | [`92c15f5`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/92c15f5) | **README 설정 절에 연구 규약 pilot을 적었습니다** |
+| 06:19 | [`e760f4a`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/e760f4a) | **main 병합에서 승인 timeout 응답을 양쪽 모두 살려 합쳤습니다.** #96의 `state: timed_out`과 이 브랜치의 `approval_id`·`decided_at`을 함께 돌려줍니다 |
 | 06:19 | [`980a635`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/980a635) | **CSO 연구 규약의 첫 단계를 넣었습니다** (#90, 기본 꺼짐). 켜면 CSO가 요청을 연구와 단순 작업으로 나눕니다. 연구는 계획(PLAN)을 schema로 검증하고 SHA-256으로 고정한 뒤 PI 승인을 받으며, 승인 뒤 계획이 바뀌면 재승인으로 되돌립니다. 직원 결과 schema에 연구 계약 필드를 더하고, 도메인 규칙 pack(`single_cell_de@1` 예시)을 덧붙이기만 하는 방식으로 불러옵니다. 이번에는 승인까지만 하고 연구 단계 실행·claim과 근거 원장·감사는 PR 2–4에서 붙입니다 |
 | 06:09 | [`cb7df38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/cb7df38) | **STATUS에 이번 후속 네 건의 완료 보고를 남겼습니다.** 남은 GitHub rate-limit 대기 처리는 #97로 넘겼습니다 |
 | 06:06 | [`a06db38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a06db38) | **main을 합치기만 한 merge가 패치노트를 요구하던 문제를 고쳤습니다.** 양쪽이 같은 파일을 고쳤어도 git이 충돌 없이 합쳤으면 검사에서 빼고, git 자동 병합 결과와 달라진 파일(충돌 해소·추가 수정)만 셉니다 |
