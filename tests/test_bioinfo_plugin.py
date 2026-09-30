@@ -316,3 +316,36 @@ def test_plugin_inside_a_parent_checkout_hashes_the_scripts_its_hooks_run(tmp_pa
     assert plugin_provenance("bioinfo", plugin)["sha256"] == before
     (plugin / "scripts" / "run.sh").write_text("echo two\n")
     assert plugin_provenance("bioinfo", plugin)["sha256"] != before
+
+
+@pytest.mark.parametrize("index_mode", ["100644", "100755"])
+def test_tracked_plugin_hash_includes_unstaged_executable_bits(tmp_path, monkeypatch, index_mode):
+    import os
+    from labhq.adapters import claude_code
+
+    plugin = _plugin(tmp_path / "plugin")
+    script = plugin / "hooks" / "start.sh"
+    script.parent.mkdir()
+    script.write_text("exit 0\n")
+    monkeypatch.setattr(claude_code, "_plugin_files", lambda path: ({script}, "fixed-commit"))
+    monkeypatch.setattr(claude_code, "_git", lambda *args: f"{index_mode} hash 0\thooks/start.sh\0".encode())
+    stat = Path.stat
+    executable = False
+
+    def working_stat(path, *args, **kwargs):
+        result = stat(path, *args, **kwargs)
+        if path == script:
+            values = list(result)
+            values[0] = (result.st_mode & ~0o111) | (0o111 if executable else 0)
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(Path, "stat", working_stat)
+    before = claude_code.plugin_provenance("bioinfo", plugin)
+    executable = True
+    after = claude_code.plugin_provenance("bioinfo", plugin)
+    assert after["sha256"] != before["sha256"]
+    assert after["commit"] == before["commit"] == "fixed-commit"
+    assert str(tmp_path) not in json.dumps(after)
+    executable = False
+    assert claude_code.plugin_provenance("bioinfo", plugin) == before
