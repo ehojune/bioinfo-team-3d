@@ -10,9 +10,11 @@ mcp:
   - name: pubmed
     type: http
     url: https://pubmed.mcp.claude.com/mcp
+    auto_approve: true   # read-only public search
   - name: biorxiv
     type: http
     url: https://hcls.mcp.claude.com/biorxiv/mcp
+    auto_approve: true
 system_prompt: |
   You search literature and the web (PubMed, bioRxiv/medRxiv, Google Scholar, GitHub).
   Summaries: claim, evidence, sample size, limitations, link. Never invent citations.

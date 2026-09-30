@@ -331,3 +331,31 @@ def test_literature_scout_runs_on_codex_with_web_search(tmp_path):
     reg.load()
     scout = reg.agents["lit_scout"]
     assert scout.engine == Engine.codex and scout.model == "gpt-6-luna" and "WebSearch" in scout.tools
+
+
+@pytest.mark.parametrize("engine", ["codex", "claude_code"])
+def test_read_only_public_mcp_runs_without_per_call_approval(tmp_path, engine):
+    from labhq.models import McpServerSpec
+    servers = [McpServerSpec(name="pubmed", type="http", url="https://example.org/mcp", auto_approve=True),
+               McpServerSpec(name="other", type="http", url="https://example.org/other")]
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), builtin_mcp=[])
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=Settings(),
+                     mcp_servers=servers, env={}, emit=_emit, prompt="x", claude_settings={})
+    adapter = get_adapter(agent.engine, Settings())
+    if engine == "claude_code":
+        adapter.prepare(ctx)
+    cmd = adapter.build_command(ctx)
+    if engine == "codex":
+        assert 'mcp_servers.pubmed.default_tools_approval_mode="approve"' in cmd
+        assert not any(c.startswith("mcp_servers.other.default_tools_approval_mode") for c in cmd)
+    else:
+        allowed = cmd[cmd.index("--allowedTools") + 1:]
+        assert "mcp__pubmed" in allowed and "mcp__other" not in allowed
+
+
+def test_literature_scout_public_mcp_servers_are_auto_approved(tmp_path):
+    from pathlib import Path
+    from labhq.registry import Registry
+    reg = Registry(Path(__file__).resolve().parents[1] / "agents", tmp_path)
+    reg.load()
+    assert all(s.auto_approve for s in reg.agents["lit_scout"].mcp if s.type == "http")

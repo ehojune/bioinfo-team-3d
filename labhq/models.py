@@ -39,6 +39,9 @@ class McpServerSpec(BaseModel):
     cwd: str | None = None
     url: str | None = None
     headers: dict[str, str] = {}
+    # Read-only public server (e.g. PubMed): its tools run without a per-call approval. Non-interactive
+    # `codex exec` otherwise refuses them ("approval policy is never") and the step fails.
+    auto_approve: bool = False
 
 
 class CliSpec(BaseModel):
