@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #77 실제 답 10개로 bench 검사 보정 #40
+
+- 결론: 직접 판정은 맞음 9·부분 1·틀림 0. 부분은 KRAS sol의 추가 동일성 주장에 근거 범위 문제가 있지만 필수 ID·assay 한계를 충족해 PASS로 정했다. 판정과 근거 줄은 `bench/calibration.md`에 있다.
+- 바뀐 것: 공개 답 10개를 fixture로 보존했다. 전체값과 하위 집계·다른 열·pair당 값을 구분하고, Markdown 수치·결측 개수/분모/비율·bp/kb 설계 범위를 처리한다. 같은 전체 문맥의 오답·모순은 계속 거부한다.
+- 검증: 보정·기존 변형 테스트 111 passed, 전체 pytest 680 passed/17 skipped, mock 5/5 PASS, 원본-fixture SHA-256 10/10 일치, 공개 검사 통과. pytest 임시·상태 폴더는 저장소 밖 TEMP를 사용했다.
+- 인계: `.git` 읽기 전용으로 이번 변경만 `.pr-drafts/commits.json`에 계획했다. 같은 보고를 `.pr-drafts/calibration-pr.md`에 남겼다. patch notes와 저장소 밖 로컬 노트·실제 run은 수정하지 않았다. 실제 run 재채점은 후속 작업이다.
+
 ## 2026-10-01 · PR #77 bench 검사·재채점 #40
 
 - 결론: 표현 차이로 생긴 FAIL을 줄이고 저장된 산출물을 현재 검사로 다시 채점한다.
