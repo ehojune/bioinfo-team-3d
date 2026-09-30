@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from .util import free_port
+from .util import free_port, strip_parent_claude_env
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = REPO / "bench"
@@ -137,10 +137,14 @@ async def _until(predicate, timeout: float, message: str) -> None:
         await asyncio.sleep(0.05)
 
 
-def _scripted_answer(case: dict[str, Any], summary: str) -> tuple[bool, str]:
+def _scripted_answer(case: dict[str, Any], summary: str, kind: str | None = None) -> tuple[bool, str] | None:
+    if kind != "clarify":
+        return None
     lowered = summary.lower()
     answers = case["scripted_pi_answers"]
-    selected = next((item for item in answers if str(item["question_contains"]).lower() in lowered), answers[0])
+    selected = next((item for item in answers if str(item["question_contains"]).lower() in lowered), None)
+    if selected is None:
+        return None
     return bool(selected.get("approved", True)), str(selected["answer"])
 
 
@@ -171,14 +175,21 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     app = create_app(settings)
     hub = app.state.hub
     interventions = 0
+    unscripted_approvals = 0
     original_publish = hub.publish
 
     async def publish(event: dict, *args, **kwargs) -> None:
-        nonlocal interventions
+        nonlocal interventions, unscripted_approvals
         await original_publish(event, *args, **kwargs)
         if event.get("type") == "approval.requested":
             interventions += 1
-            approved, note = _scripted_answer(case, str((event.get("data") or {}).get("summary") or ""))
+            data = event.get("data") or {}
+            answer = _scripted_answer(case, str(data.get("summary") or ""), data.get("kind"))
+            if answer is None:
+                unscripted_approvals += 1
+                approved, note = False, "미스크립트 승인: 승인 종류 또는 질문이 스크립트와 일치하지 않아 거절"
+            else:
+                approved, note = answer
 
             async def decide() -> None:
                 await asyncio.sleep(0.01)
@@ -211,6 +222,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         run = {
             "engine": "labhq", "mode": engines, "request_id": rid, "status": request["status"],
             "pi_interventions": interventions, "cost_usd": request.get("cost_usd"),
+            "unscripted_approvals": unscripted_approvals,
             "cost_known": request.get("cost_known", True), "usage": request.get("usage") or {},
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
@@ -276,7 +288,7 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
 
         engine_name = "claude_code" if arm == "opus-5.5" else "codex"
         engine = getattr(settings.engines, engine_name)
-        env = {**os.environ, **engine.env}
+        env = strip_parent_claude_env({**os.environ, **engine.env})
         if arm == "gpt-6-astra":
             from .adapters.base import child_config_dirs
 
@@ -325,6 +337,7 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "artifact_exists": answer.is_file() and bool(answer.read_text(encoding="utf-8").strip()),
         "checks_passed": checked.returncode == 0, "check_output": (checked.stdout + checked.stderr).strip(),
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
+        "unscripted_approvals": int(run.get("unscripted_approvals") or 0),
         "cost_known": bool(run.get("cost_known")),
         "token_total": token_total,
         "usage": usage, "duration_s": run.get("duration_s"),
@@ -335,13 +348,14 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| engine | 상태 | 산출물 | 검사 | PI 개입 | 비용(USD) | 상한 | tokens | 경과(초) |",
-             "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+             "| engine | 상태 | 산출물 | 검사 | PI 개입 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
+             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         lines.append(f"| {row['engine']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
-                     f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | {cost} | "
+                     f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | "
+                     f"{row.get('unscripted_approvals', 0)} | {cost} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
     failures = [row for row in result["rows"] if row.get("error")]
     if failures:
@@ -393,7 +407,8 @@ async def run_test_agent(output_root: Path, engines: str = "real", settings=None
     for case in load_cases():
         result = await run_case(case["id"], output_root, engines=engines, settings=settings)
         passed = all(row["status"] == "done" and row["artifact_exists"] and row["checks_passed"] and
-                     row["within_budget"] is not False for row in result["rows"])
+                     row["within_budget"] is not False and not row.get("unscripted_approvals")
+                     for row in result["rows"])
         cases.append({"case_id": case["id"], "run_id": result["run_id"], "passed": passed})
     summary = {"schema_version": 1, "mode": engines, "passed": sum(c["passed"] for c in cases),
                "failed": sum(not c["passed"] for c in cases), "cases": cases}
@@ -425,3 +440,5 @@ def run_cli(args) -> None:
         return
     summary = asyncio.run(run_test_agent(output, engines=args.engines, settings=Settings.load(args.config)))
     print(f"bench test agent: PASS {summary['passed']} / FAIL {summary['failed']}")
+    if summary["failed"]:
+        raise SystemExit(1)
