@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:32 | [`910e408`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/910e408) | **README 갱신 여부를 최종 diff로 판정합니다** (Codex 리뷰). 커밋별로 고친 파일을 합쳐서 봤더니, 한 커밋이 README를 고치고 다음 커밋이 되돌려도 통과했습니다. 최종 브랜치에는 README 변경이 없는데요. 자체 변경이 있는 merge commit 검사는 #53로 넘겼습니다 |
 | 01:30 | [`7ce3d95`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/7ce3d95) | `patch_notes.py rows`가 CI의 Python 3.10에서 커밋 시각(`...Z`)을 못 읽어 테스트가 실패했습니다. `fromisoformat`은 3.11부터 `Z`를 받습니다. Unix 시각으로 읽도록 바꿨습니다. STATUS의 소급 건수도 96개로 바로잡았습니다 |
 | 01:25 | [`47bea40`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/47bea40) | `patch_notes.py check`가 Windows 콘솔(cp949)에서 결과 기호(✓)를 못 찍고 예외로 멈추던 것을 고쳤습니다. 검사는 이미 통과한 뒤라, 성공인데 실패처럼 보였습니다 |
 | 01:24 | [`379fbfa`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/379fbfa) | **패치노트를 CI가 확인합니다.** 커밋마다 이 파일에 한 줄이 있는지, main에 README를 안 고친 커밋이 두 개 쌓였을 때 다음 PR이 README를 고치는지를 `scripts/patch_notes.py check`가 봅니다. 패치노트만 고친 커밋은 자기 해시를 담을 수 없어 셈에서 뺍니다. 지난 커밋 96개를 소급해 적었고, README 맨 위에 2.5D·3D 사무실 화면을 넣었습니다(mock demo) |
