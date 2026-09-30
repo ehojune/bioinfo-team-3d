@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:47 | [`ad60e0a`](https://github.com/ehojune/bioinfo-team-3d/pull/89/commits/ad60e0a) | **README에 연결된 도구 목록과 배지를 달았습니다.** PI가 붙인 plugin·skill·MCP(Claude for Life Sciences의 PubMed·bioRxiv 등)를 README에서 한눈에 보고 싶다고 해서 넣었습니다. 손으로 쓰면 곧 낡으니 `scripts/integrations.py`가 직원 설정(agents/core)에서 표와 배지를 만들고, 설정이 바뀌었는데 README가 그대로면 테스트가 실패합니다. 내장 MCP(승인·HPC), 외부 MCP(PubMed·bioRxiv), Claude Code plugin(bioinfo-agent), skill(Paper2Agent, bioinfo-analyze), 엔진 기능(Codex 웹 검색)이 쓰는 직원과 출처 링크와 함께 나옵니다 |
 | 03:44 | [`5d66b1e`](https://github.com/ehojune/bioinfo-team-3d/pull/85/commits/5d66b1e) | HANDOFF의 PR 흐름에서 패치노트를 PR보다 먼저 쓰라고 적었던 순서를 바로잡았습니다 (Codex 리뷰). 패치노트 링크에는 PR 번호가 들어가서, PR을 먼저 열어야 줄을 쓸 수 있습니다 |
 | 03:40 | [`120fae3`](https://github.com/ehojune/bioinfo-team-3d/pull/85/commits/120fae3) | **통제 데이터 원본 반출 금지 규칙을 되살렸습니다** (Codex 리뷰). HANDOFF를 다시 쓰면서 "통제접근 데이터 원본은 클러스터 밖이나 LLM 대화로 가져오지 않는다"는 규칙이 어디에도 필수 지침으로 남지 않게 됐습니다. 경로 가드는 sandbox가 아니라서 이 규칙이 빠지면 클러스터 연결을 설계·검증하는 동안 원본이 대화로 샐 수 있습니다. AGENTS.md·CLAUDE.md에 되살렸습니다. 같이 고친 것: 병합 권한을 Claude에서 개발 총괄(Claude 또는 Codex)로, 리뷰 5회가 고정 상한처럼 읽히던 문구, npm shim을 거부한다고 잘못 적은 안내 |
 | 03:38 | [`12febae`](https://github.com/ehojune/bioinfo-team-3d/pull/74/commits/12febae) | **결정 카드가 승인할 내용 전체를 보여 줍니다** (Codex 리뷰). 새 카드가 승인 요청의 요약(reason)만 보여 줘서, 도구 권한의 실제 명령이나 HPC 제출 스크립트·큐를 보지 못한 채 승인하게 되는 문제가 있었습니다. 승인 종류별로 중요한 항목을 먼저, 나머지도 모두 보여 주고 긴 값은 접습니다. 원문은 HTML로 해석하지 않고 글자로만 넣습니다 |
