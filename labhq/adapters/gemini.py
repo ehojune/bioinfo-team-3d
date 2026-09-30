@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, record_model_id, wrap_cwd
 
 APPROVAL_MAP = {"plan": "plan", "acceptEdits": "auto_edit", "auto": "auto_edit",
                 "bypassPermissions": "yolo", "default": "default", "manual": "default"}
@@ -60,6 +60,7 @@ class GeminiAdapter(AgentAdapter):
         typ = ev.get("type")
         if typ == "init":
             st.session_id = ev.get("session_id")
+            record_model_id(st, ctx, ev.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": ev.get("model")})
         elif typ == "message" and ev.get("role") == "assistant":
             chunk = ev.get("content") or ""

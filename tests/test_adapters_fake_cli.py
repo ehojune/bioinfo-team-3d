@@ -49,6 +49,7 @@ def _fake_cli(tmp: Path, name: str) -> Path:
 
 async def _run(tmp: Path, engine: Engine, name: str, schema: dict | None = None):
     s = Settings()
+    s.policy.approvals.timeout_s = 15
     getattr(s.engines, engine.value).bin = sys.executable
     getattr(s.engines, engine.value).prefix_args = [str(_fake_cli(tmp, name))]
     if engine == Engine.codex:  # hermetic: the host's ~/.codex/AGENTS.md would refuse the staff session
@@ -58,6 +59,7 @@ async def _run(tmp: Path, engine: Engine, name: str, schema: dict | None = None)
                       system_prompt="ROLE")
     task = Task(agent_id="a1", prompt="do it", output_schema=schema)
     events = []
+    run_fields = {}
 
     async def emit(t, d):
         events.append((t, d))
@@ -68,14 +70,14 @@ async def _run(tmp: Path, engine: Engine, name: str, schema: dict | None = None)
            McpServerSpec(name="paper_x", command="/venv/bin/python", args=["server.py"], cwd="/opt/x")]
     ctx = RunContext(task=task, agent=agent, workdir=wd, settings=s, mcp_servers=mcp, env={}, emit=emit,
                      prompt="do it", extra_dirs=["/data/proj"], claude_settings={"permissions": {"deny": ["Read(//d/**)"]}},
-                     use_permission_tool=True)
+                     use_permission_tool=True, record_run=lambda **fields: run_fields.update(fields))
     res = await get_adapter(engine, s).run(ctx)
     argv = json.loads((tmp / f"{name}.argv").read_text())
-    return res, argv, events, wd
+    return res, argv, events, wd, run_fields
 
 
 async def test_claude_code_adapter(tmp_path):
-    res, argv, events, wd = await _run(tmp_path, Engine.claude_code, "claude", {"type": "object"})
+    res, argv, events, wd, run_fields = await _run(tmp_path, Engine.claude_code, "claude", {"type": "object"})
     assert res.ok and res.text == "분석 완료" and res.session_id == "sess-1" and res.cost_usd == 0.42
     assert res.structured == {"verdict": "accept"}
     assert argv[:2] == ["-p", "do it"]
@@ -83,21 +85,29 @@ async def test_claude_code_adapter(tmp_path):
     assert argv[-4:] == ["--allowedTools", "Read", "Bash(ls *)"][-3:] or argv[-3:] == ["--allowedTools", "Read", "Bash(ls *)"]
     cfg = json.loads((wd / ".labhq" / "mcp.json").read_text())["mcpServers"]
     assert cfg["paper_x"]["command"] == "bash" and "cd /opt/x" in cfg["paper_x"]["args"][1]
+    assert cfg["labhq_approval"]["timeout"] == 135_000 and "timeout" not in cfg["paper_x"]
+    settings = json.loads(argv[argv.index("--settings") + 1])
+    assert settings["permissions"]["deny"] == ["Read(//d/**)", "SendMessage", "ListAgents"]
+    assert run_fields["model_id"] == "claude-opus"
     assert any(t == "agent.tool" for t, _ in events)
 
 
 async def test_codex_adapter(tmp_path):
-    res, argv, events, wd = await _run(tmp_path, Engine.codex, "codex", {"type": "object"})
+    res, argv, events, wd, run_fields = await _run(tmp_path, Engine.codex, "codex", {"type": "object"})
     assert res.ok and res.session_id == "thr-9" and res.structured == {"verdict": "revise"}
     assert argv[0] == "exec" and "--json" in argv and argv[argv.index("-s") + 1] == "workspace-write"
     assert 'mcp_servers.labhq_approval.env={K = "v"}' in argv
+    assert "mcp_servers.labhq_approval.tool_timeout_sec=135" in argv
+    assert not any("mcp_servers.paper_x.tool_timeout_sec" in arg for arg in argv)
     assert argv[-1].startswith("<task>") and "<structured_output_contract>" in argv[-1]
     assert (wd / "AGENTS.md").read_text().startswith("ROLE")
+    assert "model_id" not in run_fields
 
 
 async def test_gemini_adapter(tmp_path):
-    res, argv, events, wd = await _run(tmp_path, Engine.gemini, "gemini")
+    res, argv, events, wd, run_fields = await _run(tmp_path, Engine.gemini, "gemini")
     assert res.ok and res.text == "문헌 3편 요약\n" and res.session_id == "g-1"
     assert argv[:2] == ["-p", "do it"] and "--include-directories" in argv
     settings = json.loads((wd / ".gemini" / "settings.json").read_text())
     assert set(settings["mcpServers"]) == {"labhq_approval", "paper_x"}
+    assert run_fields["model_id"] == "gemini-pro"

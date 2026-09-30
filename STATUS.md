@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #55 러너 안전 경계
+
+- 결론: Windows timeout·취소가 CLI 프로세스 트리를 끝내고, 직원 subprocess는 부모 Claude 세션 마커를 받지 않는다. labhq MCP timeout과 Claude 교차 세션 tool 차단, 원자적 기록, resolved model provenance도 함께 적용했다.
+- 바뀐 것: Windows `CREATE_NEW_PROCESS_GROUP`·`taskkill /T /F`와 제한 환경 fallback, Claude env allowlist·doctor 안내, Codex/Claude MCP timeout, `SendMessage`·`ListAgents` deny, registry·계약 YAML·manifest `os.replace`, CLI가 보고한 `model_id`, Windows Python 3.12 CI.
+- 실행한 것: 수정 전 회귀 10건 실패를 확인했다. 수정 후 대상 60건과 Windows 손자 프로세스 종료 검사, 전체 `pytest -q -p no:cacheprovider` 501 passed/17 skipped, 공개 검사가 통과했다.
+- 미해결: #55의 6번 broker task token은 D 묶음 범위라 건드리지 않았다. 확인되지 않은 `crossSessionInbound` 설정도 넣지 않았다. 실제 Claude/Codex에서 장시간 MCP 승인을 기다리는 probe는 하지 않았다.
+- 근거: `labhq/adapters/base.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/codex.py`, `labhq/runner/workspace.py`, `tests/test_runner_safety.py`.
+
 ## 2026-10-01 · 후속 #24 #25 #46 #47 가드·doctor
 
 - 결론: plugin hash에 작업 트리의 실행 mode 반영(#24), hostname에 없는 IPv6 LAN 주소 탐색(#25), doctor가 러너의 data·계정 guard와 직원 adapter preflight를 그대로 재사용(#46), percent-encoded token 파라미터 이름도 로그에서 가림(#47).

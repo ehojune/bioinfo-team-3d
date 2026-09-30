@@ -90,7 +90,8 @@ async def test_cli_usage_reaches_manifest_and_request(tmp_path, monkeypatch):
     from labhq.runner.daemon import Runner
 
     script = tmp_path / "agent.py"
-    script.write_text('print(\'{"type":"usage","tokens":{"input_tokens":7,"output_tokens":4}}\')\n'
+    script.write_text('print(\'{"type":"status","state":"working","model_id":"resolved-cli-2026"}\')\n'
+                      'print(\'{"type":"usage","tokens":{"input_tokens":7,"output_tokens":4}}\')\n'
                       'print(\'{"type":"result","ok":true,"text":"done"}\')\n')
     settings = Settings()
     settings.runner.state_dir = settings.gateway.state_dir = str(tmp_path / "state")
@@ -106,6 +107,8 @@ async def test_cli_usage_reaches_manifest_and_request(tmp_path, monkeypatch):
     manifest = json.loads((runner.workspaces[task.id].dir / "manifest.json").read_text(encoding="utf-8"))
     assert result.ok
     assert manifest["runs"][task.id]["usage"] == {"input_tokens": 7, "output_tokens": 4}
+    assert manifest["runs"][task.id]["model_id"] == "resolved-cli-2026"
+    assert result.provenance["runs"][task.id]["model_id"] == "resolved-cli-2026"
     hub = create_app(settings).state.hub
     hub.requests["r"] = {"id": "r", "status": "running"}
     await hub.on_runner_message("runner", {"type": "task.result", "task_id": task.id,

@@ -24,6 +24,17 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
+  pytest-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
   patch-notes:
     # PI 결정(2026-10-01): 커밋마다 패치노트 한 줄, main 커밋 3개 안에 README 갱신.
     if: github.event_name == 'pull_request'

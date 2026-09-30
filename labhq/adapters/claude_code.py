@@ -17,7 +17,8 @@ import subprocess
 from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env, wrap_cwd
+from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
+                   record_model_id, wrap_cwd)
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
@@ -180,6 +181,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 servers[s.name] = {"type": "stdio", "command": command, "args": args, "env": expand_env(s.env)}
             else:
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
+            if s.name.startswith("labhq_"):
+                servers[s.name]["timeout"] = (self.settings.policy.approvals.timeout_s + 120) * 1000
         (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
         (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
 
@@ -201,6 +204,10 @@ class ClaudeCodeAdapter(AgentAdapter):
         if t.output_schema:
             cmd += ["--json-schema", json.dumps(t.output_schema)]
         settings = dict(ctx.claude_settings)
+        permissions = dict(settings.get("permissions") or {})
+        deny = list(permissions.get("deny") or [])
+        permissions["deny"] = list(dict.fromkeys([*deny, "SendMessage", "ListAgents"]))
+        settings["permissions"] = permissions
         if b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
             settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
@@ -233,6 +240,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         typ = ev.get("type")
         if typ == "system" and ev.get("subtype") == "init":
             st.session_id = ev.get("session_id")
+            record_model_id(st, ctx, ev.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": ev.get("model"),
                                             "mcp": [m.get("name") for m in ev.get("mcp_servers", []) if isinstance(m, dict)]})
         elif typ == "assistant":
