@@ -78,12 +78,51 @@ def test_lan_ipv6_addresses_prefer_non_local_and_keep_family(monkeypatch):
 
 def test_lan_ipv6_fallback_is_ipv6(monkeypatch):
     monkeypatch.setattr(cli.socket, "gethostname", lambda: "lab")
+    def no_route(*args, **kwargs):
+        raise OSError("no IPv6 route")
+    monkeypatch.setattr(cli.socket, "socket", no_route)
     monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *_args, **_kw: [])
     assert cli._demo_url_hosts("::") == ["[::1]"]
     monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *_args, **_kw: [
         (cli.socket.AF_INET6, 0, 0, "", ("fe80::2", 0, 0, 7)),
     ])
     assert cli._demo_url_hosts("::") == ["[fe80::2%257]"]
+
+
+@pytest.mark.parametrize("dns_error", [False, True])
+@pytest.mark.parametrize("sockaddr,expected", [
+    (("2001:db8::10", 1234, 0, 0), "[2001:db8::10]"),
+    (("fe80::10", 1234, 0, 9), "[fe80::10%259]"),
+])
+def test_lan_ipv6_route_finds_address_absent_from_hostname(monkeypatch, dns_error, sockaddr, expected):
+    calls = []
+
+    def lookup(*args, **kwargs):
+        if dns_error:
+            raise OSError("hostname lookup failed")
+        return [(cli.socket.AF_INET6, 0, 0, "", ("::1", 0, 0, 0))]
+
+    class Socket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def connect(self, target):
+            calls.append(target)
+
+        def getsockname(self):
+            return sockaddr
+
+    def socket(family, kind):
+        assert family == cli.socket.AF_INET6 and kind == cli.socket.SOCK_DGRAM
+        return Socket()
+
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(cli.socket, "socket", socket)
+    assert cli._demo_url_hosts("::") == (["[::1]", expected] if not dns_error and sockaddr[3] else [expected])
+    assert calls == [("2001:db8::1", 80)]
 
 
 def test_mock_approval_timeout_follows_policy(monkeypatch, tmp_path):
