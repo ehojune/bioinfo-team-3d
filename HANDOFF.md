@@ -17,7 +17,7 @@
 
 | 무엇 | 어떻게 |
 |---|---|
-| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → 패치노트만 고친 커밋 → PR → 상단에 리뷰 요청 댓글 한 번 → P1은 그 PR에서, P2는 `PR #N follow-up:` issue → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
+| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → 패치노트만 고친 커밋 → 상단에 리뷰 요청 댓글 한 번 → P1은 그 PR에서, P2는 `PR #N follow-up:` issue → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
 | 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 따로 쓴다. 쓴 뒤에는 rebase하지 말고 main을 merge한다(해시가 바뀐다). `python scripts/patch_notes.py rows --pr N`이 초안을 만든다 |
 | README 주기 | main 커밋 3개 안에 README를 한 번 고쳐야 CI가 통과한다. 병렬 PR의 병합 순서가 바뀌면 다음 PR이 README 차례가 된다 |
 | 리뷰 봇 깊이 | 고정 상한은 없다. 새 라운드는 직전 수정 확인이나 다른 부류의 결함이 있을 때만. 같은 부류가 더 좁게 반복되면 그 부류를 구조로 한 번 닫고 병합한다. 보통 2~3회에 끝나고, 5회를 넘기면 계속할지 판단한 이유를 PR에 적는다 |
