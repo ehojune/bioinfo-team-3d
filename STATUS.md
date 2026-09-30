@@ -9,6 +9,14 @@
 - 실행한 것: 공개 검사 통과. 문서만 바꿨다.
 - 미해결: 로컬 경로·진행 중 작업은 저장소 밖 노트에 있어 공개 저장소만으로는 이어받을 수 없다(의도).
 
+## 2026-10-01 · #57 웹 Command Center 1–5
+
+- 결론: Munder Difflin의 배치만 옮겨 2.5D 오른쪽 Command Center·폰 하단 탭·직원 카드 줄을 만들고, 결정 초안 보존·작업판·결정 이력을 구현했다. 6–8은 범위 밖으로 남겼다.
+- 바뀐 것: keyed 결정 카드와 공통 3D 입력, roster 전원 카드와 턴/시간 게이지, step별 시도·산출물·누락·리뷰·취소, 인증된 `GET /api/approvals/history`, allowlist를 쓰는 `/ui/{path}`.
+- 실행한 것: 수정 전 regression 4건 실패 확인, 전체 `pytest -q -p no:cacheprovider` 499 passed/17 skipped, `node tests/web_state.cjs`, `bash scripts/check_public.sh` 통과.
+- 미해결: 직원별 로그·capability card·사무실 소품 연결(6–8), 픽셀 테마는 하지 않았다. 실제 기기 화면과 스크린샷은 완료 판정에서 제외했다.
+- 근거: `labhq/web/ui/`, `labhq/web/state.js`, `labhq/gateway/server.py`, `tests/web_command_center.cjs`, `tests/test_web.py`.
+
 ## 2026-10-01 · Codex 직원·개발 라운드 기록 후속 #56 #69
 
 - 결론: Codex 직원의 쓰기·웹 권한을 명시하고 문헌 원 출처 확인을 강화했다. 개발 라운드는 설정한 labhq commit 링크와 종료 조건을 남긴다.

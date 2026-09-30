@@ -69,6 +69,22 @@ for(let i=0;i<150;i++)fresh.apply({type:'agent.log',agent_id:'analyst',ts:1000+i
 assert.equal(fresh.S.feed.length,120); assert.equal(fresh.S.agents.get('analyst').log.length,40);
 fresh.apply({type:'agent.usage',request_id:'r2',data:{tokens:{input_tokens:9},cost_known:false}});
 assert.equal(fresh.S.requests.get('r2').costKnown,false);
+fresh.apply({type:'request.plan',request_id:'r3',data:{steps:[
+  {id:'s1',agent_id:'analyst',instruction:'Inspect',outputs:['report.txt'],depends_on:[]},
+  {id:'s2',agent_id:'analyst',instruction:'Review report',depends_on:['s1']},
+]}});
+fresh.apply({type:'request.step_attempt',request_id:'r3',data:{step_id:'s1',attempt:2}});
+fresh.apply({type:'task.dispatched',request_id:'r3',task_id:'task-3',agent_id:'analyst',data:{step_id:'s1',kind:'step'}});
+fresh.apply({type:'task.result',request_id:'r3',task_id:'task-3',agent_id:'analyst',data:{
+  ok:false,text:'partial',outputs:['report.txt'],missing_outputs:['table.tsv'],error:'missing table',
+}});
+fresh.apply({type:'request.review',request_id:'r3',data:{verdict:'revise',issues:[
+  {step_id:'s1',problem:'표가 없습니다',request:'표를 추가하세요'},
+]}});
+const stepDetail=fresh.S.stepDetails.get('r3:s1');
+assert.equal(stepDetail.attempts,2);assert.deepEqual(Array.from(stepDetail.outputs),['report.txt']);
+assert.deepEqual(Array.from(stepDetail.missing_outputs),['table.tsv']);
+assert.equal(stepDetail.review_issues[0].problem,'표가 없습니다');
 for (const terminal of ['request.completed', 'request.failed']) {
   const costs = create();
   costs.apply({type:'agent.usage',request_id:'other',data:{cost_usd:2}});

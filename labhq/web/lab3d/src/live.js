@@ -1,3 +1,5 @@
+import {syncDecisionCards} from '../../ui/decide.js';
+
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
   const {S, apply, visual, KIND_KO} = globalThis.LabHQState.createOfficeState();
@@ -22,28 +24,14 @@ export function startLiveOffice(onState) {
     $('connection').textContent = {live:'실시간', connecting:'연결 중', offline:'연결 끊김 · 재시도 중', auth:'토큰 확인 필요'}[S.conn];
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
     $('approval-count').textContent = S.approvals.size;
-    const approvals = $('approvals'); approvals.replaceChildren();
-    if (!S.approvals.size) text(approvals, 'p', '대기 승인 없음');
-    for (const a of S.approvals.values()) {
-      const row = document.createElement('article'); approvals.append(row);
-      text(row, 'strong', `${KIND_KO[a.kind] || a.kind || '승인'} · ${a.agent_id || ''}`);
-      text(row, 'p', a.summary || a.id);
-      if (a.detail) text(row, 'p', typeof a.detail === 'string' ? a.detail : JSON.stringify(a.detail));
-      for (const approved of [true, false]) {
-        const button = text(row, 'button', approved ? '승인' : '거절');
-        button.disabled = S.conn !== 'live' || pending.has(a.id);
-        button.addEventListener('click', () => {
-          if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
-          let note = '';
-          if (a.kind === 'clarify' && approved) {  // a PI question needs a typed answer
-            note = (globalThis.prompt('답을 적어 주세요', '') || '').trim();
-            if (!note) return;
-          }
-          ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
-          pending.add(a.id); render();
-        });
-      }
-    }
+    syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
+      emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
+      onDecision:(a, approved, note) => {
+        if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
+        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = '답을 적어 주세요.'; return; }
+        ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
+        pending.add(a.id); render();
+      }});
     const requests = $('requests'); requests.replaceChildren();
     if (!S.requests.size) text(requests, 'p', '요청 없음');
     for (const q of [...S.requests.values()].reverse()) {
