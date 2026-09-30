@@ -17,8 +17,40 @@ import sys
 
 
 def numeric_text(text: str) -> str:
-    """Ignore inline Markdown decoration without changing IDs or line scopes."""
-    return text.replace("`", "").replace("**", "").replace("__", "")
+    """Remove decoration and attach table headers/units to numeric cells.
+
+    Keep original assertions too: a table must not hide a contradictory prose
+    assertion. Only explicit bp/kb header units are inherited, never guessed.
+    """
+    text = text.replace("`", "").replace("**", "").replace("__", "")
+    headers = None
+    assertions = []
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            headers = None
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
+            continue
+        if headers is None:
+            headers = cells
+            continue
+        if len(cells) != len(headers):
+            continue
+        for index, (header, cell) in enumerate(zip(headers, cells)):
+            row_label = (index == 1 and re.fullmatch(r"항목|지표|구간|metric|item|region", headers[0], re.I))
+            label_source = cells[0] if row_label else header
+            # A data table may put unit and single-copy scope in the header.
+            # Do not reinterpret two-copy IR totals as single-copy estimates.
+            if re.search(r"×\s*2|2\s*×|two\s*copies|두\s*사본", label_source, re.I):
+                continue
+            if not re.match(r"[+-]?\d", cell):
+                continue
+            unit = re.search(r"\((bp|kb)(?:\s*[,，]\s*×\s*1)?\)", header, re.I)
+            label = re.sub(r"\([^)]*\)", "", label_source).strip()
+            suffix = " " + unit[1] if unit and not re.search(r"\b(?:bp|kb)\b", cell, re.I) else ""
+            assertions.append(f"{label}: {cell}{suffix}")
+    return text + "\n" + "\n".join(assertions)
 
 
 def number(raw: str, unit: str | None = None) -> Decimal:

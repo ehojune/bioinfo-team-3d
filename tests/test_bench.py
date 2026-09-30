@@ -423,7 +423,8 @@ def test_custom_arm_parses_the_correct_cli_output(tmp_path, monkeypatch, engine)
             return raw, b""
 
     async def spawn(*args, **kwargs):
-        (tmp_path / "answer.md").write_text("codex answer", encoding="utf-8")
+        if engine == "codex":
+            (tmp_path / "answer.md").write_text("codex answer", encoding="utf-8")
         return Process()
 
     monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda command, *args: command)

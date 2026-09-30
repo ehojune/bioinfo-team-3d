@@ -1,11 +1,12 @@
-# 실제 답 10개 검사 보정 (2026-10-01, PR #77)
+# 실제 답 15개 검사 보정 (2026-10-01, PR #77)
 
 case의 요청과 고정 참고 자료를 직접 대조한 판정이다. 답 안의 자기평가·기존 score는 근거로 쓰지 않았다.
-**맞음 9 · 부분 1 · 틀림 0**, 검사 기대값은 **PASS 10**이다.
+**맞음 13 · 부분 2 · 틀림 0**, 검사 기대값은 **PASS 15**이다. Sonnet 추가 5개는 맞음 4·부분 1이다.
 
 - 맞음 → PASS: 요청한 수치·항목·한계를 충족한다. 설계 설정값을 관측값으로 취급하지 않는다.
 - 틀림 → FAIL: 필수 수치 오류, 필수 항목 누락, 같은 항목의 모순된 전체값 주장.
 - 부분 → 이 표에서 개별 결정한다. KRAS sol은 필수 ID와 IC50 비교 한계를 충족하므로 PASS지만, 추가 동일성 주장의 출처 범위는 감점한다. PASS는 과학적 주장 전체의 보증이 아니다.
+- Plastome Sonnet도 필수 입력·구조·경계 검증 계획·설계 범위를 충족해 PASS다. snapshot 밖 문헌값과 junction 해석은 별도 감점한다.
 
 ## 직접 판정
 
@@ -23,10 +24,16 @@ case의 요청과 고정 참고 자료를 직접 대조한 판정이다. 답 안
 | public-protein-qc | astra-ultra | 맞음 | PASS | [답 L7–13](../tests/fixtures/bench_real/public-protein-qc/astra-ultra.md#L7)의 4행·고유 3·중복 1종·초과 중복 1행·양수 4/4는 [참고 L2–5](../labhq/bench_data/references/protein-manifest.tsv#L2)와 일치. L19–22에 4행을 보존했고 L24는 선언값 검사와 실제 서열 검증을 구분한다. |
 | public-penguins-qc | sol-ultra | 맞음 | PASS | [답 L11–20](../tests/fixtures/bench_real/public-penguins-qc/sol-ultra.md#L11)의 5행·2종·Adelie 3/Gentoo 2·체중 결측 1(20%)·flipper 181–230 mm는 [참고 L2–6](../labhq/bench_data/references/penguins.tsv#L2)에서 재계산된다. L22의 결측 행도 일치. L26은 원본 전체로 일반화하지 않는다. |
 | public-penguins-qc | astra-ultra | 맞음 | PASS | [답 L7–14](../tests/fixtures/bench_real/public-penguins-qc/astra-ultra.md#L7)의 전체 5행·2종·체중 결측 1/5·flipper 181–230 mm와 폭 49 mm는 [참고 L2–6](../labhq/bench_data/references/penguins.tsv#L2)와 일치. flipper 결측 0은 체중 결측 1과 모순이 아니다. L16–18은 대치하지 않았고 대표성 한계를 밝혔다. |
+| inco-kras-g12c | sonnet-max | 맞음 | PASS | [답 L18–22](../tests/fixtures/bench_real/inco-kras-g12c/sonnet-max.md#L18)의 6OIM·MOV·1.65 Å·ChEMBL 4개가 [참고 L3–5](../labhq/bench_data/references/kras-g12c.md#L3)와 같다. L36·48은 외부 확인 실패와 회상을 구분하고 L54–60은 참고 L6의 assay 비교 제한을 지킨다. 추가 동일성 연결을 조회 결과로 주장하지 않는다. |
+| plastome-structure | sonnet-max | 부분 | PASS | [답 L23–27](../tests/fixtures/bench_real/plastome-structure/sonnet-max.md#L23)의 5행·종·accession·길이는 [참고 L2–6](../labhq/bench_data/references/plastome.tsv#L2)과 같다. L14·53–73은 사분구조·IR 탐지·합계 검산·junction 검증을 설계한다. L124–127의 SSC 17400–18100 bp·IR 한 사본 25700–26700 bp는 허용 범위 안이며 L119·145는 미검증 예상값으로 표시한다. 다만 L103–115의 문헌 구조값은 snapshot 밖인데 “확인값”으로 부르고 L64의 JSA를 ndhF–ycf1 쌍으로 단정한다. 이 추가 해석은 고정 자료로 확인되지 않아 부분 판정한다(L148의 문헌 미조회 한계 포함). |
+| geo-gastric-summary | sonnet-max | 맞음 | PASS | [답 L31–36](../tests/fixtures/bench_real/geo-gastric-summary/sonnet-max.md#L31)의 tumor/normal 각 n=10·13개 유전자 방향·EMT 양수·9606.ENSP는 [참고 L3–6](../labhq/bench_data/references/geo-gastric.md#L3)과 같다. L46–105의 manifest·L111–138의 paired/GSEA/STRING 계획·L142–160의 문헌 배경과 미산출 구분이 요청을 충족한다. full Hallmark 이름은 EMT 약칭과 같은 대상을 뜻한다. |
+| public-protein-qc | sonnet-max | 맞음 | PASS | [답 L14–17](../tests/fixtures/bench_real/public-protein-qc/sonnet-max.md#L14)의 입력과 L23–28의 4행·unique 3·중복 1종·양수 4/4가 [참고 L2–5](../labhq/bench_data/references/protein-manifest.tsv#L2)와 같다. L40의 P01116 중복과 BRCA1 1863 aa도 일치한다. L54·56은 선언 길이의 전수 양수와 실제 서열 미검증을 구분한다. L55의 중복 제거는 권고이며 실행하지 않았다. |
+| public-penguins-qc | sonnet-max | 맞음 | PASS | [답 L27–38](../tests/fixtures/bench_real/public-penguins-qc/sonnet-max.md#L27)의 5행·species 종류 수 2·체중 결측 1/5=20%, L48–51·68의 flipper 181–230 mm는 [참고 L2–6](../labhq/bench_data/references/penguins.tsv#L2)에서 재계산된다. L59–69의 원본 전체 344행·3종은 발췌본 집계와 다른 문맥이며 대표성 한계를 명시한다. 결측 대치·삭제는 하지 않았다. |
 
 ## 검사 기준과 한계
 
 - 수치는 Markdown 강조·inline code를 걷어낸 뒤 항목별 문맥에서 추출한다. 전체 행 수와 species별·중복 행 수, 체중 결측과 다른 열의 결측을 분리한다.
+- 표의 숫자 셀에는 헤더의 항목명·명시된 bp/kb 단위를 붙여 검사한다. IR 두 사본 합계는 제외한다. `species 종류 수`, `n=`, full Hallmark 이름, `전수 양수`를 허용하며 accession 뒤 연도·검증 단계 번호는 길이로 읽지 않는다. 원본 전체의 괄호 설명은 발췌본 species 집계에서 제외한다.
 - 같은 문맥의 모든 값이 맞아야 한다. 전체값 하나를 맞힌 뒤 다른 전체값을 덧붙이면 FAIL이다. 결측 개수·분모·백분율도 함께 대조한다. GEO의 `각 pair` 문장은 `detail`로 소비하되 이것만 있으면 PASS하지 않는다.
 - Plastome 참고 표에는 IR·SSC 정답 범위가 없다. mock의 25–27/17–18 kb를 유일한 정답으로 쓰던 검사를 **IR 한 사본 25–27 kb, SSC 17–19 kb 안의 순서 있는 설계 범위**로 보정했다. bp/kb 환산, 역전·음수·범위 이탈을 검사하며 IR 두 사본 합계는 제외한다. 이는 이 bench의 설계 허용 범위이지 과 전체의 생물학적 한계가 아니다.
 - 예상 규모의 외부 대조: [Sato 1999, 초록](https://pubmed.ncbi.nlm.nih.gov/10574454/)의 SSC 17780·IR 26264 bp와 [Zhu 2021, Abstract](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0248556)의 SSC 17786·IR 26208 bp를 직접 확인했다. sol이 인용한 IR 26035–26459 bp도 [2022 비교 연구, IR junction characteristics](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0263310)와 일치한다.
@@ -43,3 +50,13 @@ case의 요청과 고정 참고 자료를 직접 대조한 판정이다. 답 안
 | geo-gastric-summary | 20260930T194618.740824Z |
 | public-protein-qc | 20260930T200045.272283Z |
 | public-penguins-qc | 20260930T200328.053468Z |
+
+Sonnet은 요청 시간대의 각 case에서 `sonnet-max/answer.md`가 있는 최신 run을 읽었다. 공개 snapshot·설계 보고서이며 절대경로·계정·토큰 없이 원본 bytes를 보존했다(SHA-256 5/5 일치). 권한 실패 문장도 수정하지 않았다. 결과 폴더에는 쓰지 않았다.
+
+| case | Sonnet run (UTC) |
+|---|---|
+| inco-kras-g12c | 20260930T201941.223731Z |
+| plastome-structure | 20260930T202811.185415Z |
+| geo-gastric-summary | 20260930T202400.040120Z |
+| public-protein-qc | 20260930T201743.514311Z |
+| public-penguins-qc | 20260930T201610.773481Z |

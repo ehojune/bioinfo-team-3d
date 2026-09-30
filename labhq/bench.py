@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -84,7 +85,8 @@ def _prompt(case: dict[str, Any]) -> str:
             raise ValueError("benchmark references exceed 1 MB")
         source = f"\n출처: {reference['source']}" if reference.get("source") else ""
         sections.append(f"\n### {reference['label']}{source}\n{body.strip()}")
-    sections.append("\n산출물은 근거와 검사 가능한 수치를 포함한 Markdown 보고서 하나로 작성한다.")
+    sections.append("\n산출물은 근거와 검사 가능한 수치를 포함한 Markdown 보고서 하나로 작성한다. "
+                    "작업 폴더의 answer.md에 저장하고, 저장하지 못하면 응답 본문에 보고서 전체를 제시한다.")
     return "\n".join(sections) + "\n"
 
 
@@ -136,11 +138,29 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
             continue
         definition = settings.bench.arms[arm]
         if definition.engine == "claude_code":
-            claude_settings = json.dumps(user_config_isolation(claude_env, case_dir / arm))
+            arm_dir = (case_dir / arm).resolve()
+            # Claude's Edit path rules cover Write/NotebookEdit too. Windows
+            # absolute permission paths use //c/... rather than C:/... .
+            scope = arm_dir.as_posix()
+            if arm_dir.drive:
+                scope = "/" + arm_dir.drive[0].lower() + scope[2:]
+            edit_rule = f"Edit(/{scope}/**)"
+            isolation = user_config_isolation(claude_env, arm_dir)
+            isolation["permissions"] = {"additionalDirectories": []}
+            guard = shlex.join([Path(sys.executable).as_posix(),
+                                Path(__file__).with_name("bench_permissions.py").as_posix(),
+                                arm_dir.as_posix()])
+            isolation["hooks"] = {"PreToolUse": [{
+                "matcher": "Write|Edit|NotebookEdit|Bash|PowerShell",
+                "hooks": [{"type": "command", "command": guard}]
+            }]}
+            claude_settings = json.dumps(isolation)
             commands[arm] = [*claude, "-p", prompt, "--output-format", "stream-json", "--verbose",
                              "--model", definition.model, "--effort", definition.effort,
                              "--max-budget-usd", budget, "--setting-sources", "local",
                              "--disable-slash-commands", "--settings", claude_settings,
+                             "--permission-mode", "acceptEdits", "--allowedTools", edit_rule,
+                             "Bash(pwd)", "Bash(wc -l *)",
                              "--disallowedTools", "Agent", "Task", "SendMessage", "TeamCreate"]
         else:
             commands[arm] = [*codex, "exec", "--json", "--skip-git-repo-check", "-C",
@@ -389,7 +409,11 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         (arm_dir / "stderr.txt").write_text(stderr.decode("utf-8", "replace"), encoding="utf-8")
         if engine_name == "claude_code":
             answer, usage, cost = _parse_claude(raw)
-            (arm_dir / "answer.md").write_text(answer.strip() + "\n", encoding="utf-8")
+            answer_path = _inside(arm_dir, "answer.md")
+            # Once Claude can write, the final message may only say "saved".
+            # Preserve the actual report; retain chat fallback for older runs.
+            if not answer_path.is_file() or not answer_path.read_text(encoding="utf-8").strip():
+                answer_path.write_text(answer.strip() + "\n", encoding="utf-8")
             known = cost is not None
         else:
             answer, usage = _parse_codex(raw, arm_dir / "answer.md")

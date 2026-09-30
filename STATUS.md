@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #77 Sonnet 보정·Claude arm 권한 #40
+
+- 판정: Sonnet 5개는 KRAS·GEO·Protein·Penguins 맞음, Plastome 부분/PASS다. 전체 fixture 15개는 맞음 13·부분 2이며 판정-검사 15/15 일치한다. 근거 줄·출처는 `bench/calibration.md`; Sonnet 원본 bytes/SHA-256 5/5 일치다.
+- 변경: 표 헤더·단위·행 항목, species 종류 수·n=·EMT 이름·전수 양수 표현을 처리한다. accession 뒤 연도·단계 번호와 원본 전체 설명은 필수 집계와 구분한다. Claude는 acceptEdits·arm 경로·전용 hook으로 안쪽 파일 쓰기/단순 명령을 허용하고 밖 쓰기를 거부한다. 공통 prompt는 answer.md 저장을 요청하며 저장한 보고서를 채팅 요약으로 덮어쓰지 않는다.
+- 검증: 전체 pytest 783 passed/18 skipped(TEMP 임시·상태 폴더), fixture 변조·누락·모순 회귀, dry-run argv/실제 hook 안·밖 판정/cwd 검사 통과. `bash scripts/check_public.sh`·신규 파일 공개 검사·diff 검사 통과. 새 의존성은 없다.
+- 한계·인계: Native Windows의 Claude OS sandbox 부재로 임의 script/interpreter는 거부한다. Codex workspace-write와 그 실행 권한까지 완전히 같지는 않다(`docs/reference/bench-permissions.md`). 실제 CLI 재실행·결과 폴더 쓰기·patch notes·저장소 밖 노트 수정은 하지 않았다. `.git` read-only라 이번 변경만 `.pr-drafts/commits.json`, 같은 PR 보고는 `.pr-drafts/sonnet-pr.md`에 계획한다.
+
 ## 2026-10-01 · PR #77 3회차 P1·bench 예산 정책 #40
 
 - 변경: bench 자료·검사기를 `labhq/bench_data/` package-data로 옮기고 `importlib.resources`로 찾는다. labhq와 baseline에 같은 case/runner timeout을 적용한다.
