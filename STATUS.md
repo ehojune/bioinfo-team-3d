@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #90 연구 수행 규약 PR 1
+
+- 결론: 연구 계약 pilot은 opt-in으로 두고, 단순 변환·집계·원문 요약은 기존 경로를 유지한다. 연구 요청은 PR 1에서 PLAN 검증과 CP1 승인까지만 진행하며 직원 연구 step은 실행하지 않는다.
+- 바뀐 것: `work_kind` 접수 판정, PLAN v2와 직원 result v2 schema, plan SHA-256 receipt와 변경 시 재승인 표시, `extend_only` domain pack loader·충돌 검사, `single_cell_de@1` 예시와 PI·직원용 규약 문서를 추가했다.
+- 실행한 것: 새 회귀 8 passed, 전체 `pytest -q -p no:cacheprovider` 790 passed/17 skipped, `bash scripts/check_public.sh`, `git diff --check` 통과. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
+- 미해결: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. `.git`이 읽기 전용이라 커밋·PR 대신 초안을 남겼고 patch notes는 수정하지 않았다.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `tests/test_research_protocol.py`, `docs/research_protocol.md`.
+
 ## 2026-10-01 · #39 labhq_ask 질의 경로
 
 - 결론: 직원은 `labhq_ask`로 CSO·시설팀·동료에게 묻고, 코드가 판정한 hard stop만 PI에게 올린다. 답이 늦으면 step을 hibernate하고 같은 session·workdir에서 재개한다.

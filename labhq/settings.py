@@ -172,6 +172,14 @@ class OrchestratorSettings(BaseModel):
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
 
 
+class ResearchSettings(BaseModel):
+    """Opt-in research contract pilot. Research execution is intentionally disabled in PR 1."""
+
+    enabled: bool = False
+    pack_dirs: list[str] = []
+    active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
+
+
 class GitHubSettings(BaseModel):
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
@@ -213,6 +221,7 @@ class Settings(BaseModel):
     policy: PolicySettings = PolicySettings()
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
+    research: ResearchSettings = ResearchSettings()
     github: GitHubSettings = GitHubSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []

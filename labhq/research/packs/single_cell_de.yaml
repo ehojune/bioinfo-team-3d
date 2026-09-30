@@ -1,0 +1,41 @@
+schema_version: 1
+id: single_cell_de
+version: "1"
+title: Single-cell differential expression across donors
+core_contract: extend_only
+applies_when: Conditions are compared across biological donors using single-cell expression data.
+sources:
+  - title: labhq research protocol R08 and R18
+    url: docs/research_protocol.md
+    revision: "v0.1"
+    license: repository-local protocol; no external text copied
+fields:
+  - name: donor_id
+    description: Biological donor identifier used as the independent experimental unit.
+    required: true
+  - name: condition
+    description: Condition assigned to each donor or paired donor sample.
+    required: true
+  - name: batch
+    description: Technical batch or a documented reason that batch is not applicable.
+    required: true
+  - name: count_scale
+    description: Raw-count or transformed scale used by the selected model.
+    required: true
+  - name: independent_replicates
+    description: Number and definition of independent biological replicates.
+    required: true
+validators:
+  - id: single_cell_de.donor_unit
+    requirement: Cells must not be treated as independent donor replicates.
+  - id: single_cell_de.model_assumption
+    requirement: The plan must state why the selected model matches the count scale and donor structure.
+reviewer_questions:
+  - Does the model preserve donor-level independence and pairing?
+  - Are batch and condition distinguishable in the design?
+fixtures:
+  - id: donor_batch_confounded
+    purpose: Detect cell-level pseudoreplication and complete donor-batch confounding.
+acceptance:
+  - Use pseudobulk or a donor-dependent model, with the choice fixed in the approved plan.
+  - Mark a fully confounded donor and batch design as not identifiable rather than reporting a condition effect.
