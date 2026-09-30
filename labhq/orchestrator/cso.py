@@ -380,11 +380,11 @@ class Orchestrator:
                               "outputs": ["PARTIAL_STATUS.md"]})
             try:
                 partial = await dispatch_with_retry(wrap, max_attempts=1)
+                note = ("partial results saved" if partial.outputs else
+                        "status note missing" if partial.ok else partial.error)
                 res = res.model_copy(update={"partial_results": bool(partial.outputs),
                                              "outputs": list(dict.fromkeys([*res.outputs, *partial.outputs])),
-                                             "error": f"{res.error or 'error_max_turns'}; wrap-up: "
-                                                      f"{('partial results saved' if partial.outputs else
-                                                          'status note missing' if partial.ok else partial.error)}"})
+                                             "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
         cycles = 0
