@@ -76,6 +76,9 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert "revision failed" in req["results"][analyst_step]["revision_failed"]
         steward = next(st["id"] for st in steps if st["agent_id"] == "data_steward")
         assert req["results"][steward]["outputs"] == ["outputs/artifact.txt"]
+        runs = req["results"][steward]["provenance"]["runs"]  # sent by the runner, not read off its disk
+        assert runs and all("started_at" in r and "ended_at" in r for r in runs.values())
+        assert hub.runner_capabilities and all("engine_cli_versions" in c for c in hub.runner_capabilities.values())
         assert "outputs/artifact.txt" in req["report"]
 
         rid_partial = hub.create_request(RequestIn(text="Partial study [max-turns]"))

@@ -193,9 +193,10 @@ def test_runner_reports_effective_compute_capabilities():
     runner.s.runner.force_engine = "mock"
     runner.registry = SimpleNamespace(roster=lambda: [{"id": "analyst", "engine": "claude_code"}])
     runner.incarnation = "test"
+    runner.engine_versions = {"mock": "unreported"}
     hello = runner.hello()
     assert hello["capabilities"] == {"scheduler": "none", "compute_backends": ["local CLI"],
-                                      "hpc_tools": False}
+                                      "hpc_tools": False, "engine_cli_versions": {"mock": "unreported"}}
     assert hello["agents"][0]["engine"] == "mock"
 
 

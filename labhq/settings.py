@@ -178,6 +178,14 @@ class GitHubSettings(BaseModel):
     codex_mention: str = "@codex"  # only in the one top-level review request; each mention starts a Codex session
 
 
+class DevLogSettings(BaseModel):
+    enabled: bool = True
+    repo: str | None = None
+    allow_public: bool = False
+    labels: list[str] = Field(default_factory=lambda: ["labhq-round"])
+    improvement_notes: bool = False
+
+
 class ProjectSettings(BaseModel):
     """One research project = one GitHub repo where the lab posts its updates."""
 
@@ -204,6 +212,7 @@ class Settings(BaseModel):
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
     github: GitHubSettings = GitHubSettings()
+    dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
     config_path: str | None = None
 

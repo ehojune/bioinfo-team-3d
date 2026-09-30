@@ -54,7 +54,14 @@ recruit:
 github:
   token_env: GITHUB_TOKEN        # 게이트웨이 호스트의 환경변수에서 읽음 (YAML에 토큰 금지). fine-grained PAT: Issues·Contents RW
   dashboard_url: null            # 예: https://labhq.<tailnet>.ts.net — 이슈 본문에 사무실 링크
-  codex_mention: "@codex"        # PR 상단 리뷰 요청에만 한 번. 댓글마다 봇 세션이 따로 뜨므로 인라인 답글에는 쓰지 않음
+  codex_mention: "@codex"        # codex 멘션은 PR 상단 리뷰 요청에만 한 번
+
+dev_log:
+  enabled: true                   # 로컬 rounds 기록은 항상 생성; false면 GitHub 발행 중단
+  repo: null                      # 비워 두면 로컬에만 기록. 발행 시 별도 비공개 저장소 owner/name
+  allow_public: false            # 실제 GitHub visibility가 public이면 발행 거부
+  labels: [labhq-round]
+  improvement_notes: false
 
 projects:                        # 프로젝트마다 GitHub 저장소 하나. 요청에 --project 를 주면 거기로 업데이트
   - id: my-project

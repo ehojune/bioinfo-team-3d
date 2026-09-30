@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #43 라운드 기록
+
+- 결론: 요청이 끝나거나 재시작으로 중단되면 `gateway.state_dir/rounds`에 Markdown·JSON 기록을 남기고, 설정한 private 저장소에는 요청마다 이슈 1건을 갱신한다.
+- 바뀐 것: schema v1 기록, 게시 전마다 저장소 공개 여부 확인, 본문이 같으면 재게시 생략. 실행 환경 snapshot(labhq 버전, git commit, 러너 CLI 버전)은 요청을 만들 때 한 번 저장해 복구 때 덮어쓰지 않는다. 러너가 시작할 때 CLI `--version`을 capability로 보내고, 작업 결과에 manifest 요약(실행 시각, 모델, 턴, CLI 버전, plugin)을 실어 gateway가 러너 디스크를 못 읽어도 기록이 비지 않는다. 상위 저장소 안의 plugin도 하위 파일 전체(hook이 부르는 scripts 포함)를 hash한다.
+- 실행한 것: Windows `pytest -q` 456 passed/17 skipped(임시 폴더를 저장소 안에 둔 경우도 통과), `scripts/check_public.sh` 통과, Codex 리뷰 5회.
+- 미해결: 실제 GitHub 발행은 mock 전송만 검증했다. 기록 저장소(private) 생성은 PI 결정. timeout된 PI 승인을 결정으로 남기는 일은 후속 issue.
+- 근거: `labhq/integrations/rounds.py`, `labhq/runner/versions.py`, `labhq/runner/workspace.py`, `tests/test_round_records.py`.
+
 ## 2026-10-01 · 패치노트와 README 갱신 규칙
 
 - 결론: 커밋마다 `patch_notes/README.md`에 한 줄, main 커밋 3개 안에 README 갱신을 CI(`patch-notes` job)가 확인한다. 형식은 PI의 튜토리얼 저장소 패치노트와 같다.

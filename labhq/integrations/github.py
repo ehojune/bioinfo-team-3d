@@ -127,6 +127,20 @@ class GitHubClient:
     async def create_issue(self, repo: str, title: str, body: str, labels: list[str]) -> dict:
         return await self._req("POST", f"/repos/{repo}/issues", json={"title": title, "body": body, "labels": labels})
 
+    async def find_marked_issue(self, repo: str, marker: str) -> dict | None:
+        page = 1
+        while True:
+            issues = await self._req("GET", f"/repos/{repo}/issues",
+                                     params={"state": "all", "per_page": 100, "page": page})
+            match = next((issue for issue in issues if not issue.get("pull_request") and
+                          marker in (issue.get("body") or "")), None)
+            if match or len(issues) < 100:
+                return match
+            page += 1
+
+    async def edit_issue(self, repo: str, number: int, body: str) -> dict:
+        return await self._req("PATCH", f"/repos/{repo}/issues/{number}", json={"body": body})
+
     async def find_request_issue(self, repo: str, rid: str) -> dict | None:
         marker = f"<!-- labhq request {rid} -->"
         legacy = f"request id: `{rid}`"

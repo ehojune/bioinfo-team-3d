@@ -18,6 +18,12 @@ from scripts.redact_stream import Redactor
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _no_outer_repo(tmp_path, monkeypatch):
+    # A pytest temp dir inside a checkout would make git see the outer repo; each test builds its own layout.
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", tmp_path.as_posix())
+
+
 async def _emit(kind, data):
     pass
 
@@ -289,3 +295,24 @@ def test_skill_member_ignores_workspace_memory_files(tmp_path):
     for name in ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md"):
         assert (wd / name).as_posix() in ex
     assert (wd / ".claude" / "rules").as_posix() + "/**" in ex
+
+
+@pytest.mark.parametrize("ignored_by_parent", [False, True])
+def test_plugin_inside_a_parent_checkout_hashes_the_scripts_its_hooks_run(tmp_path, ignored_by_parent):
+    import subprocess
+    from labhq.adapters.claude_code import plugin_provenance
+    repo = tmp_path / "parent"
+    plugin = _plugin(repo / "plugins" / "bioinfo")
+    (plugin / "hooks").mkdir()
+    (plugin / "hooks" / "hooks.json").write_text('{"hooks": {"Stop": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/run.sh"}]}}')
+    (plugin / "scripts").mkdir()
+    (plugin / "scripts" / "run.sh").write_text("echo one\n")
+    (repo / "unrelated.txt").write_text("outside the plugin\n")
+    if ignored_by_parent:
+        (repo / ".gitignore").write_text("plugins/\n")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    before = plugin_provenance("bioinfo", plugin)["sha256"]
+    (repo / "unrelated.txt").write_text("changed, still outside\n")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] == before
+    (plugin / "scripts" / "run.sh").write_text("echo two\n")
+    assert plugin_provenance("bioinfo", plugin)["sha256"] != before
