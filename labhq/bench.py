@@ -77,8 +77,13 @@ def load_case(case_id: str, cases_root: Path | None = None) -> dict[str, Any]:
                 not isinstance(rule, dict) or rule.get("type") not in allowed_types):
             raise ValueError(f"case {case_id} has an invalid result field: {key}")
         if rule["type"] == "integer_range":
-            if (type(rule.get("minimum")) is not int or type(rule.get("maximum")) is not int or
-                    rule["minimum"] >= rule["maximum"]):
+            # equals = an observed range (both endpoints exact); minimum/maximum = a design tolerance.
+            exact = rule.get("equals")
+            bounds = (rule.get("minimum"), rule.get("maximum"))
+            if ("equals" in rule) == any(b is not None for b in bounds):
+                raise ValueError(f"case {case_id} range field needs equals or minimum/maximum: {key}")
+            low, high = exact if isinstance(exact, list) and len(exact) == 2 else bounds
+            if type(low) is not int or type(high) is not int or low >= high:
                 raise ValueError(f"case {case_id} has an invalid range field: {key}")
         elif "equals" not in rule:
             raise ValueError(f"case {case_id} result field lacks equals: {key}")
@@ -527,7 +532,9 @@ def _structured_result(case: dict[str, Any], text: str) -> dict[str, Any]:
         if not valid_type:
             invalid_types.append(key)
             continue
-        if kind == "integer_range":
+        if kind == "integer_range" and "equals" in rule:
+            matches = value == rule["equals"]
+        elif kind == "integer_range":
             matches = rule["minimum"] <= value[0] < value[1] <= rule["maximum"]
         elif kind == "string_list":
             matches = sorted(value) == sorted(rule["equals"])

@@ -115,3 +115,37 @@ def test_test_agent_counts_format_and_content_failures_separately(tmp_path, monk
     report = (tmp_path / "test-agent-summary.md").read_text(encoding="utf-8")
     assert "| inco-kras-g12c | FAIL | 1 | 0 |" in report
     assert "| plastome-structure | FAIL | 0 | 1 |" in report
+
+
+import pytest
+
+
+@pytest.mark.parametrize("submitted,passed", [
+    ([181, 230], True),
+    ([200, 210], False),  # inside the observed range but not the observed range
+    ([182, 230], False),
+    ([181, 229], False),
+])
+def test_observed_range_requires_both_exact_endpoints(tmp_path, submitted, passed):
+    case = bench.load_case("public-penguins-qc")
+    values = {"row_count": 5, "species_count": 2, "body_mass_missing_count": 1,
+              "flipper_length_mm": submitted}
+    assert _score(case, tmp_path, _block(values))["content_passed"] is passed
+
+
+@pytest.mark.parametrize("submitted,passed", [([25500, 26500], True), ([24000, 26500], False)])
+def test_design_tolerance_range_still_accepts_any_subrange(tmp_path, submitted, passed):
+    case = bench.load_case("plastome-structure")
+    values = {key: rule.get("equals", [rule.get("minimum"), rule.get("maximum")])
+              for key, rule in case["result_fields"].items()}
+    values["ir_single_copy_bp"] = submitted
+    assert _score(case, tmp_path, _block(values))["content_passed"] is passed
+
+
+def test_range_rule_must_pick_one_kind(tmp_path):
+    text = (bench.CASES_ROOT / "public-penguins-qc.yaml").read_text(encoding="utf-8")
+    both = "  flipper_length_mm: {type: integer_range, equals: [181, 230], minimum: 181, maximum: 230}"
+    lines = [both if line.startswith("  flipper_length_mm:") else line for line in text.splitlines()]
+    (tmp_path / "public-penguins-qc.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        bench.load_case("public-penguins-qc", tmp_path)
