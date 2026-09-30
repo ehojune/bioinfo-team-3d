@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:29 | [`db913e4`](https://github.com/ehojune/bioinfo-team-3d/pull/85/commits/db913e4) | **개발 총괄을 Claude와 Codex가 번갈아 맡을 수 있게 HANDOFF.md를 다시 썼습니다.** 9월 25일 인계 때의 내용(테스트 26개, Gemini, P단계 순서)에 머물러 있어서, 이어받는 쪽이 지금 무엇을 해야 하는지 알 수 없었습니다. 시작할 때 읽을 순서, 규칙에 더해 겪어서 안 작업 방식(패치노트는 코드 커밋 뒤, 쓴 뒤에는 rebase 대신 merge, Codex sandbox는 커밋을 못 해서 커밋 계획 파일로 받기 등), 작업 큐, 최근 PI 결정, 결정 대기를 한곳에 두었습니다. 로컬 경로와 진행 중 작업은 저장소 밖 노트에 있습니다 |
 | 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
 | 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |
