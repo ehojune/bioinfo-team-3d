@@ -632,6 +632,8 @@ async def test_retry_cost_is_in_request_budget():
     assert orch.cost["r"] == pytest.approx(0.8)
     assert len(hub.calls) == 2
     assert len(hub.approvals) == 1
+    assert hub.approvals[0]["detail"] == {"spent_usd": 0.8, "limit_usd": 0.5,
+                                          "requested_budget_usd": 1.0}
     with pytest.raises(BudgetExceeded):
         await orch.run_step(Task(agent_id="worker", request_id="r", prompt="next"))
     assert len(hub.calls) == 2 and len(hub.approvals) == 1
