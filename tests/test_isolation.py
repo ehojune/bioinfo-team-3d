@@ -269,3 +269,21 @@ def test_probe_name_cannot_leave_the_output_dir(tmp_path, monkeypatch, name):
     with pytest.raises(SystemExit) as exc:
         probe.main()
     assert exc.value.code == 2
+
+
+def test_codex_turns_on_web_search_only_for_web_staff(tmp_path):
+    assert 'web_search="live"' not in _command("codex", tmp_path)
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine.codex, builtin_mcp=[], tools=["WebSearch"])
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=Settings(),
+                     mcp_servers=[], env={}, emit=_emit, prompt="x", claude_settings={})
+    cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
+    assert cmd[cmd.index('web_search="live"') - 1] == "-c" and cmd.index('web_search="live"') < len(cmd) - 1
+
+
+def test_literature_scout_runs_on_codex_with_web_search(tmp_path):
+    from pathlib import Path
+    from labhq.registry import Registry
+    reg = Registry(Path(__file__).resolve().parents[1] / "agents", tmp_path)
+    reg.load()
+    scout = reg.agents["lit_scout"]
+    assert scout.engine == Engine.codex and scout.model == "gpt-6-luna" and "WebSearch" in scout.tools

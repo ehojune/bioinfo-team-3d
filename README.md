@@ -28,7 +28,7 @@ pytest -q
 ## 0-1. 실제 실행
 
 전제: Python ≥ 3.10, Git, 사용할 직원 CLI의 설치·로그인. npm으로 `codex`/`gemini`를 설치했다면 Node.js도 필요합니다.
-`lit_scout`에는 별도 Antigravity CLI `agy`가 필요합니다. Antigravity 앱에는 CLI가 포함되지 않습니다.
+Antigravity(`agy`) 직원을 따로 두려면 CLI를 설치합니다. Antigravity 앱에는 CLI가 포함되지 않습니다.
 Windows PowerShell 설치: `irm https://antigravity.google/cli/install.ps1 | iex` (`%LOCALAPPDATA%\agy\bin\agy.exe`).
 
 ```bash
@@ -118,7 +118,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🐻 곰 Biology 만물박사 | `biologist` | 가설·메커니즘·교란요인 | Claude Code / opus | 웹 |
 | 🦦 수달 bioinfo-agent | `bioinfo-agent` | 반복·정형 분석 전담 (검증된 파이프라인을 표준대로 반복) | Claude Code + bioinfo plugin | HPC |
 | 🐿️ 다람쥐 데이터 담당 | `data_steward` | 공개/통제접근 데이터 확보, 매니페스트·체크섬 | Claude Code / sonnet | HPC |
-| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Antigravity / gemini-3.8-flash-high | Google 검색 |
+| 🦊 여우 문헌·헤드헌터 | `lit_scout` | 문헌 검색 + 파견직 후보(논문+코드) 발굴 | Codex / gpt-6-luna | 웹 검색 |
 | 🦝 너구리 분석가 | `analyst` | 분석 설계·실행 (nf-core·Snakemake 우선) | Claude Code / opus | HPC |
 | 🐙 문어 엔지니어 | `engineer` | 파이프라인·도구·테스트·컨테이너 | Codex | HPC |
 | 🦔 고슴도치 Data QC | `qc_reviewer` | PASS/WARN/FAIL QC 보고서 | Claude Code / sonnet | HPC |
@@ -127,6 +127,7 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🐥 파견직 (논문 종이모자 병아리) | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | 논문 MCP + 논문 스킬 |
 
 엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: antigravity`, `model: gemini-3.8-flash-high`)
+Codex 직원의 `tools`에 `WebSearch`나 `WebFetch`가 있으면 Codex 자체 웹 검색(`-c web_search="live"`)을 켭니다.
 
 ### bioinfo-agent 연결하기
 러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다. 실행 전에
