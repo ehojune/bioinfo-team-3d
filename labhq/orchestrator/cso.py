@@ -710,7 +710,9 @@ class Orchestrator:
                 return
             try:
                 dec = await self.hub.request_approval(kind="budget", request_id=rid,
-                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?")
+                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?",
+                                                      detail={"spent_usd": spent, "limit_usd": limit,
+                                                              "requested_budget_usd": max(limit * 2, spent)})
             except Exception as exc:
                 dec = {"approved": False, "note": str(exc)}
             spent = self.cost.get(rid, 0.0)  # include concurrently completed attempts in this decision
@@ -1287,7 +1289,9 @@ class Orchestrator:
                 req["report"] += "\n\nPending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"])
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
-            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000)}
+            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000),
+                      "cost_usd": float(req.get("cost_usd") or 0),
+                      "cost_known": req.get("cost_known", True)}
             if hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
             else:

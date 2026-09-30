@@ -10,6 +10,51 @@
 - 미해결: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. `.git`이 읽기 전용이라 커밋 대신 초안을 남겼고 patch notes는 수정하지 않았다.
 - 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/web/ui/decide.js`, `tests/test_research_protocol.py`, `tests/web_decision_detail.cjs`, `docs/research_protocol.md`.
 
+## 2026-10-01 · PR #77 Sonnet 보정·Claude arm 권한 #40
+
+- 판정: Sonnet 5개는 KRAS·GEO·Protein·Penguins 맞음, Plastome 부분/PASS다. 전체 fixture 15개는 맞음 13·부분 2이며 판정-검사 15/15 일치한다. 근거 줄·출처는 `bench/calibration.md`; Sonnet 원본 bytes/SHA-256 5/5 일치다.
+- 변경: 표 헤더·단위·행 항목, species 종류 수·n=·EMT 이름·전수 양수 표현을 처리한다. accession 뒤 연도·단계 번호와 원본 전체 설명은 필수 집계와 구분한다. Claude는 acceptEdits·arm 경로·전용 hook으로 안쪽 파일 쓰기/단순 명령을 허용하고 밖 쓰기를 거부한다. 공통 prompt는 answer.md 저장을 요청하며 저장한 보고서를 채팅 요약으로 덮어쓰지 않는다.
+- 검증: 전체 pytest 783 passed/18 skipped(TEMP 임시·상태 폴더), fixture 변조·누락·모순 회귀, dry-run argv/실제 hook 안·밖 판정/cwd 검사 통과. `bash scripts/check_public.sh`·신규 파일 공개 검사·diff 검사 통과. 새 의존성은 없다.
+- 한계·인계: Native Windows의 Claude OS sandbox 부재로 임의 script/interpreter는 거부한다. Codex workspace-write와 그 실행 권한까지 완전히 같지는 않다(`docs/reference/bench-permissions.md`). 실제 CLI 재실행·결과 폴더 쓰기·patch notes·저장소 밖 노트 수정은 하지 않았다. `.git` read-only라 이번 변경만 `.pr-drafts/commits.json`, 같은 PR 보고는 `.pr-drafts/sonnet-pr.md`에 계획한다.
+
+## 2026-10-01 · PR #77 3회차 P1·bench 예산 정책 #40
+
+- 변경: bench 자료·검사기를 `labhq/bench_data/` package-data로 옮기고 `importlib.resources`로 찾는다. labhq와 baseline에 같은 case/runner timeout을 적용한다.
+- 예산: 기본 거절을 유지한다. `--approve-budget-up-to N`은 labhq의 요청 총예산이 원래 case 예산 N배 이내일 때만 승인한다. 표에 승인 횟수·최종 비용/예산 배수를 기록하며 원래 예산 초과는 FAIL이다.
+- 검증: 전체 pytest 705 passed/17 skipped(TEMP 임시·상태 폴더). wheel non-editable 설치 후 case 5개·참고 자료·검사기 실행, `bash scripts/check_public.sh`·diff 검사 통과.
+- 인계: `.git`은 read-only라 이번 변경만 `.pr-drafts/commits.json`에 계획한다. patch notes·저장소 밖 로컬 노트는 수정하지 않는다. 실행 중인 병렬 단계의 비용까지 제한하는 정책은 아니다.
+
+## 2026-10-01 · PR #77 실제 답 10개로 bench 검사 보정 #40
+
+- 결론: 직접 판정은 맞음 9·부분 1·틀림 0. 부분은 KRAS sol의 추가 동일성 주장에 근거 범위 문제가 있지만 필수 ID·assay 한계를 충족해 PASS로 정했다. 판정과 근거 줄은 `bench/calibration.md`에 있다.
+- 바뀐 것: 공개 답 10개를 fixture로 보존했다. 전체값과 하위 집계·다른 열·pair당 값을 구분하고, Markdown 수치·결측 개수/분모/비율·bp/kb 설계 범위를 처리한다. 같은 전체 문맥의 오답·모순은 계속 거부한다.
+- 검증: 보정·기존 변형 테스트 111 passed, 전체 pytest 680 passed/17 skipped, mock 5/5 PASS, 원본-fixture SHA-256 10/10 일치, 공개 검사 통과. pytest 임시·상태 폴더는 저장소 밖 TEMP를 사용했다.
+- 인계: `.git` 읽기 전용으로 이번 변경만 `.pr-drafts/commits.json`에 계획했다. 같은 보고를 `.pr-drafts/calibration-pr.md`에 남겼다. patch notes와 저장소 밖 로컬 노트·실제 run은 수정하지 않았다. 실제 run 재채점은 후속 작업이다.
+
+## 2026-10-01 · PR #77 bench 검사·재채점 #40
+
+- 결론: 표현 차이로 생긴 FAIL을 줄이고 저장된 산출물을 현재 검사로 다시 채점한다.
+- 바뀐 것: `re:`·숫자 추출 비교, 다섯 case의 한국어·영어·단위·띄어쓰기 검사, `bench rescore <case> [--run-id ID | --all]`(기본 최신 run). 이전 판정은 `score_history`에 남기고 실행별·case별 comparison을 갱신한다. 실행 기록과 비용·모델은 보존한다.
+- 실행한 것: 새 테스트 44개 포함 전체 pytest 613 passed/17 skipped, case마다 정답 변형 2개·숫자 오류·항목 누락 검사, mock test-agent 5/5와 저장된 mock 재채점, 공개 검사·diff 검사 통과.
+- 인계: `.git` 읽기 전용이라 이번 변경만 `.pr-drafts/commits.json`에 남겼다. PR 보고 초안은 `.pr-drafts/rescore-pr.md`. patch notes는 요청대로 수정하지 않았다.
+- 근거: `labhq/bench_data/checks/contains_terms.py`, `labhq/bench_data/cases/`, `labhq/bench.py`, `tests/test_bench_rescore.py`.
+
+## 2026-10-01 · #40 비교 bench와 테스트 에이전트
+
+- 결론: PI 결정(2026-10-01, #40)에 따라 기본 arm은 `labhq`, `sonnet-max`(sonnet/max), `sol-ultra`(gpt-5.6-sol/ultra), `astra-ultra`(gpt-6-astra/ultra)다. LabHQ의 Claude 직원은 `opus=sonnet`으로 치환하고 Codex 직원은 설정을 유지한다.
+- 바뀐 것: `bench.arms`의 모델·effort 설정, `bench.staff_model`과 `--staff-model`, run·test-agent의 `--arms`, arm별 결과 누적과 `bench report`. 결과표는 실행 당시 모델·effort를 표시하며 real/mock을 따로 모은다. Opus는 설정으로 추가한다. README와 설정 예도 갱신했다.
+- 실행한 것: arm 선택·누적 report·모델 치환 회귀 테스트와 전체 `pytest -q -p no:cacheprovider` 556 passed/17 skipped, 네 arm의 `--dry-run` 명령 확인, `bash scripts/check_public.sh` 통과. 임시·상태 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: 실제 유료 CLI는 실행하지 않았다. 네 arm의 비용·token·과학 결과는 PI 머신에서 측정한다. Codex 비용은 `미집계`로 남긴다. `.git` 쓰기 제한으로 이번 변경의 커밋 계획만 `.pr-drafts/commits.json`에 남겼다.
+- 근거: `labhq/bench.py`, `labhq/settings.py`, `labhq/cli.py`, `config/labhq.example.yaml`, `tests/test_bench.py`.
+
+## 2026-10-01 · 막힌 단계 같은 세션 재개 #81 · 예외 종료 비용 #67
+
+- 결론: PI 답을 받은 막힌 단계는 같은 session·workdir로 이어 간다(수정 자체는 #76). 예외로 끝난 요청도 최종 비용을 화면에 보낸다.
+- 바뀐 것: `request.failed` 예외 경로 payload에 `cost_usd`·`cost_known`(#67). #81은 mock 직원 blocking_decision → PI 답 → 같은 session_id·workdir 재개, resume 없는 엔진은 같은 workdir 새 세션을 E2E로 고정했다.
+- 실행한 것: 전체 `pytest -q -p no:cacheprovider` 804 passed/17 skipped(main 병합 뒤), `node tests/*.cjs`, `bash scripts/check_public.sh` 통과.
+- 미해결: 실제 직원 CLI로 재개하는 것은 확인하지 않았다.
+- 근거: `tests/test_e2e_mock.py`, `tests/test_cso.py`, `tests/web_state.cjs`.
+
 ## 2026-10-01 · 후속 P2 네 건 #51 #53 #54 #68
 
 - 결론: 승인 timeout 기록, 자체 변경이 있는 merge의 패치노트 검사, 라운드 게시 재시도, IPv6 link-local 탐색과 doctor 오타 보고를 고쳤다.

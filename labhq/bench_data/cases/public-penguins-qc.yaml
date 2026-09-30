@@ -1,0 +1,27 @@
+order: 5
+id: public-penguins-qc
+title: 소형 공개 Palmer Penguins QC
+request: >-
+  제공한 Palmer Penguins 공개 데이터 발췌본을 QC하라. 행·species 수, body_mass_g 결측,
+  flipper_length_mm 범위를 계산하고 원본 전체를 대표하지 않는다는 한계를 적어라.
+references:
+  - label: Palmer Penguins excerpt
+    path: references/penguins.tsv
+    source: https://github.com/allisonhorst/palmerpenguins
+scripted_pi_answers:
+  - question_contains: 결측
+    answer: 삭제하거나 대치하지 말고 결측 개수만 보고한다.
+check:
+  script: checks/contains_terms.py
+  args:
+    - 'num:5:(?:^\s*(?:[-*>]|\d+\.)?\s*\|?\s*|[;。!?]\s*|\.\s+|,\s*)(?:(?:데이터|전체|총|원본|발췌본|excerpt|total|data)(?:은|는)?\s*[:|]?\s*)?(?:(?:행\s*수|rows?(?:\s*count)?)[ \t:|=]*(?:(?:은|는|이|가)\s*)?|(?=[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:행(?!과|·|에서|에|째)|rows?|records?)(?![A-Za-z])))(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:행(?!과|·|에서|에|째)|rows?|records?)?'
+    - 'num:2:(?P<detail>원본(?:\s*전체)?\s*\([^\n)]*\))|(?:^\s*(?:[-*>]|\d+\.)?\s*\|?\s*|[;。!?]\s*|\.\s+|,\s*)(?:(?:고유\s*)?(?:species(?:\s*(?:종류\s*수|수|count))?|종\s*수)[ \t:|=]*(?:(?:은|는|이|가)\s*)?|(?=[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:종|(?:개\s*)?species)))(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:종|(?:개\s*)?species)?'
+    - 'num:1/5:(?:^\s*(?:[-*>]|\d+\.)?\s*\|?\s*|[;。!?]\s*|\.\s+|,\s*)(?:body_mass_g(?:는|의)?\s*)?(?:결측(?:치|값|률)?|missing(?:\s*(?:values?|count|rate))?)(?:\s*(?:수|개수))?[ \t:|=]*(?:(?:은|는|이|가)\s*)?(?=[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d|\s*%)(?:\s*(?:건|행|개))?)?(?:\s*/\s*(?P<total>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:건|행|개)?)?(?:[ \t]*[=(]?[ \t]*(?P<percent>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*%)?'
+    - 'num:181:(?:flipper_length_mm|flipper\s*length|지느러미\s*길이)[^\d\n.;]{0,25}(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:mm\s*)?(?:[–—−~-]|to|부터)\s*[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:mm)?'
+    - 'num:230:(?:flipper_length_mm|flipper\s*length|지느러미\s*길이)[^\d\n.;]{0,25}[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:mm\s*)?(?:[–—−~-]|to|부터)\s*(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:mm)?(?!\s*(?:cm|m|km|bp|kb)\b)'
+    - 're:발췌|excerpt|subset'
+budget_usd: 0.5
+mock_answer: |
+  # Palmer Penguins QC
+  발췌본은 5행, 2 species다. body_mass_g는 결측 1건이고 flipper_length_mm 범위는 181–230이다.
+  작은 발췌본이므로 공개 원본 전체의 분포를 대표하지 않는다.

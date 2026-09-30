@@ -463,10 +463,50 @@ def main(argv: list[str] | None = None) -> None:
     dp.add_argument("--host", help="demo bind address (default: loopback, or 0.0.0.0 with --phone)")
     dp.add_argument("--approve-timeout", type=float, default=120, help="phone approval fallback in seconds")
     dp.add_argument("--port", type=int, default=8787)
+    bp = sub.add_parser("bench", help="compare LabHQ with single-session baselines")
+    bsub = bp.add_subparsers(dest="bench_cmd", required=True)
+    bsub.add_parser("list", help="list benchmark cases")
+    br = bsub.add_parser("run", help="run one case through selected benchmark arms")
+    br.add_argument("case_id")
+    br.add_argument("--engines", choices=["real", "mock"], default="real")
+    br.add_argument("--dry-run", action="store_true", help="print commands without running them")
+    br.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    selection = br.add_mutually_exclusive_group()
+    selection.add_argument("--arms", help="comma-separated arms (default: labhq and configured baselines)")
+    selection.add_argument("--arm", help=argparse.SUPPRESS)
+    br.add_argument("--staff-model", action="append", metavar="FROM=TO",
+                    help="replace Claude staff models; repeat for multiple mappings (default: opus=sonnet)")
+    br.add_argument("--approve-budget-up-to", type=float, metavar="MULTIPLIER",
+                    help="experimental labhq-only budget approvals up to this multiple of the case budget")
+    bt = bsub.add_parser("test-agent", help="run every example job in order and summarize")
+    bt.add_argument("--engines", choices=["real", "mock"], default="real")
+    bt.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    bt.add_argument("--arms", help="comma-separated arms (default: labhq and configured baselines)")
+    bt.add_argument("--staff-model", action="append", metavar="FROM=TO")
+    bt.add_argument("--approve-budget-up-to", type=float, metavar="MULTIPLIER")
+    breport = bsub.add_parser("report", help="combine the latest result for each arm of a case")
+    breport.add_argument("case_id")
+    breport.add_argument("--engines", choices=["real", "mock"], default="real")
+    breport.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    bs = bsub.add_parser("rescore", help="recheck saved artifacts with the current case checks")
+    bs.add_argument("case_id")
+    rescoring = bs.add_mutually_exclusive_group()
+    rescoring.add_argument("--run-id", help="saved run to rescore (default: latest run)")
+    rescoring.add_argument("--all", action="store_true", help="rescore every saved run of this case")
+    bs.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+    if args.cmd == "bench":
+        from .bench import run_cli
+
+        try:
+            run_cli(args)
+        except (ValueError, KeyError) as exc:
+            p.error(str(exc))
+        return
     s = Settings.load(args.config)
 
     if args.cmd == "doctor":

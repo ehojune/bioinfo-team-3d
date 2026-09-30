@@ -49,6 +49,7 @@ class RequestIn(BaseModel):
     project_dirs: list[str] = []
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
+    meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
 
 
 class CodexReviewIn(BaseModel):
