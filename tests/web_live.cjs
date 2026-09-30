@@ -17,6 +17,7 @@ class Element {
 }
 const elements = new Map();
 const element = id => { if(!elements.has(id))elements.set(id,new Element());return elements.get(id); };
+const textIn = el => el.textContent + el.children.map(textIn).join('');
 global.document = {getElementById:element,createElement:tag=>new Element(tag),querySelector:element,
   body:{classList:{add(){}}}};
 global.location = {search:'?token=test-client',pathname:'/3d/',protocol:'http:',host:'example.invalid'};
@@ -47,17 +48,25 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   assert.equal(S.cost,1,'duplicate seq ignored');
-  event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission'}});
+  event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission',
+    detail:{tool_name:'Bash',input:JSON.stringify({command:'printf "<example>"',args:['--example']})}}});
   let row=element('approvals').children[0].children[0];
   assert.equal(row._decisionParts.summary.textContent,'<img src=x>','untrusted text is never HTML');
+  assert.match(textIn(row._decisionParts.detail),/Bash/);
+  assert.match(textIn(row._decisionParts.detail),/printf.*<example>/s,'3D retains tool command input');
   row._decisionParts.approve.onclick();
   assert.deepEqual(ws.sent,[{type:'approval.resolve',id:'a1',approved:true,note:''}]);
   row._decisionParts.approve.onclick();
   assert.equal(ws.sent.length,1,'pending decision cannot be double sent');
   event({type:'approval.resolved',seq:13,data:{id:'a1',approved:true}});
   assert.equal(S.approvals.size,0);
-  event({type:'approval.requested',seq:14,data:{id:'a2',summary:'Reject example'}});
-  row=element('approvals').children[0].children[0];row._decisionParts.deny.onclick();
+  event({type:'approval.requested',seq:14,data:{id:'a2',kind:'hpc_submit',summary:'Reject example',
+    detail:{queue:'example.q',script_path:'jobs/example.sh',script_preview:'#!/bin/bash\nprintf example',cores:4}}});
+  row=element('approvals').children[0].children[0];
+  for(const value of ['example.q','jobs/example.sh','#!/bin/bash\nprintf example','cores']) {
+    assert.ok(textIn(row._decisionParts.detail).includes(value),'3D retains HPC '+value);
+  }
+  row._decisionParts.deny.onclick();
   assert.equal(ws.sent.at(-1).approved,false);
   event({type:'approval.stale',seq:15,data:{id:'a2'}});assert.equal(S.approvals.size,0);
   event({type:'agent.status',agent_id:'analyst',seq:16,ts:Date.now()/1000,data:{state:'done'}});

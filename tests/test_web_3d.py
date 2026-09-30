@@ -122,6 +122,7 @@ def test_package_data_includes_office_assets():
     ('web_state.cjs', 'isolation and bounds: OK'),
     ('web_live.cjs', 'reconnect and replay gap: OK'),
     ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
+    ('web_decision_detail.cjs', 'fail 0'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

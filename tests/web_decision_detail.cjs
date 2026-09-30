@@ -1,0 +1,71 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const {test} = require('node:test');
+
+// Native textContent semantics; any HTML insertion is a test failure.
+class Element {
+  constructor(tag='div') { this.tagName=tag.toUpperCase();this.children=[];this.dataset={};this.value='';this._text=''; }
+  set textContent(value) { this._text=String(value);this.children=[]; }
+  get textContent() { return this._text+this.children.map(child=>child.textContent).join(''); }
+  set innerHTML(value) { throw new Error('approval detail must never use innerHTML'); }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this._text='';this.children=[];this.append(...children); }
+}
+global.document={createElement:tag=>new Element(tag)};
+const source=fs.readFileSync(path.join(__dirname,'../labhq/web/ui/decide.js'),'utf8');
+const modulePromise=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const nodes=el=>[el,...el.children.flatMap(nodes)];
+async function card(kind,detail) {
+  const decide=await modulePromise,container=new Element();
+  const approval={id:'example',kind,detail};
+  const [row]=decide.syncDecisionCards(container,[approval]);
+  return {decide,container,approval,row,detail:row._decisionParts.detail};
+}
+
+test('tool_permission command, arguments and all extra fields appear as literal DOM text',async()=>{
+  for (const input of [{command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']},
+    JSON.stringify({command:'printf "<img src=x onerror=alert(1)>"',args:['--example','a&b']})]) {
+    const c=await card('tool_permission',{tool_name:'Bash',input,extra:'<script>example</script>'});
+    assert.match(c.detail.textContent,/printf/,'command must be visible before approval');
+    assert.match(c.detail.textContent,/tool_name.*Bash/s);
+    const pre=nodes(c.detail).find(n=>n.tagName==='PRE'&&n.textContent.includes('command'));
+    assert.equal(pre.textContent,JSON.stringify(typeof input==='string'?JSON.parse(input):input,null,2));
+    assert.match(c.detail.textContent,/<script>example<\/script>/);
+    assert.equal(nodes(c.detail).some(n=>['IMG','SCRIPT'].includes(n.tagName)),false);
+  }
+});
+
+test('hpc_submit shows queue, script path, full script preview and every resource',async()=>{
+  const detail={reason:'example',queue:'example.q',script_path:'jobs/example.sh',
+    script_preview:'#!/bin/bash\nprintf "<example>&"\n',cores:4,mem:'8G',walltime:'01:00:00',resources:{gpu:0},extra:false};
+  const c=await card('hpc_submit',detail);
+  assert.ok(c.detail.textContent.includes(detail.script_preview),'script_preview must be visible before approval');
+  for (const [key,value] of Object.entries(detail)) {
+    assert.ok(c.detail.textContent.includes(key),key+' label must be visible');
+    assert.ok(c.detail.textContent.includes(typeof value==='object'?JSON.stringify(value,null,2):String(value)),key+' value must be visible');
+  }
+});
+
+test('long values expand in full and stay expanded across keyed updates',async()=>{
+  const script='printf example\n'.repeat(90)+'# final line <example>';
+  const c=await card('hpc_submit',{script_preview:script});
+  const fold=nodes(c.detail).find(n=>n.tagName==='DETAILS');
+  assert.ok(fold,'long values need a native expandable control');
+  assert.ok(!fold.open,'long value starts collapsed');
+  assert.equal(nodes(fold).find(n=>n.tagName==='PRE').textContent,script,'no content is truncated');
+  fold.open=true;c.row._decisionParts.note.value='draft';
+  c.decide.syncDecisionCards(c.container,[{...c.approval,detail:{script_preview:script}}]);
+  assert.ok(nodes(c.detail).includes(fold),'unchanged details retain their DOM');
+  assert.equal(fold.open,true);assert.equal(c.row._decisionParts.note.value,'draft');
+  c.decide.syncDecisionCards(c.container,[{...c.approval,detail:{script_preview:'replacement'}}]);
+  assert.match(c.detail.textContent,/replacement/);assert.ok(!c.detail.textContent.includes('final line'));
+});
+
+test('other approval kinds preserve every key/value and legacy detail strings',async()=>{
+  const c=await card('future_kind',{'<key>':{nested:[0,false,null]},empty:'',zero:0,no:false,nil:null});
+  for (const key of ['<key>','empty','zero','no','nil']) assert.ok(c.detail.textContent.includes(key));
+  assert.match(c.detail.textContent,/\n  "nested": \[/);assert.match(c.detail.textContent,/null/);
+  const legacy=await card('clarify','Question <example>');assert.match(legacy.detail.textContent,/Question <example>/);
+  assert.equal((await card('clarify',null)).detail.hidden,true);
+});

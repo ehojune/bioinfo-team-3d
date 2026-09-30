@@ -8,6 +8,43 @@ function add(parent, tag, text = '', className = '') {
   return el;
 }
 
+function detailValue(value) {
+  // The permission broker may send input as a serialized JSON string.
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed !== null && typeof parsed === 'object') return JSON.stringify(parsed, null, 2);
+    } catch {}
+    return value;
+  }
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function renderDetail(container, kind, detail) {
+  const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
+    kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] : [];
+  const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
+    [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key))]
+      .map(key => [key, detailValue(detail[key])]) : detail == null ? [] : [['detail', detailValue(detail)]];
+  const signature = JSON.stringify(entries);
+  // Live renders must preserve the PI's expanded values while the detail is unchanged.
+  if (container._detailSignature === signature) return;
+  container._detailSignature = signature;
+  container.replaceChildren();
+  container.hidden = entries.length === 0;
+  if (!entries.length) return;
+  const list = add(container, 'dl', '', 'approval-detail');
+  for (const [key, value] of entries) {
+    add(list, 'dt', key);
+    const cell = add(list, 'dd');
+    if (value.length > 500 || value.split('\n').length > 8) {
+      const fold = add(cell, 'details');
+      add(fold, 'summary', `전체 보기 (${value.length}자) · ${value.slice(0, 120)}…`);
+      add(fold, 'pre', value);
+    } else add(cell, 'pre', value);
+  }
+}
+
 function createCard(item, options) {
   const row = doc().createElement(options.tagName || 'li');
   row.className = item.type === 'suggestion' ? 'ap sug' : 'ap';
@@ -23,7 +60,7 @@ function createCard(item, options) {
   const title = add(kind, 'strong');
   const who = add(kind, 'span');
   const summary = add(body, 'p', '', 'sum');
-  const detail = add(body, 'p', '', 'why');
+  const detail = add(body, 'div', '', 'why');
   const timing = add(body, 'p', '', 'decision-meta');
   const note = add(body, 'textarea', '', 'ans');
   note.rows = item.value.kind === 'clarify' ? 3 : 2;
@@ -75,9 +112,7 @@ function updateCard(row, item, options) {
   p.title.textContent = item.type === 'suggestion' ? '파견직 채용 제안' : (labels[value.kind] || value.kind || '결정');
   p.who.textContent = options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO';
   p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : value.summary || value.id;
-  const reason = item.type === 'suggestion' ? value.reason : (typeof value.detail === 'string' ? value.detail : value.detail?.reason);
-  p.detail.textContent = reason || '';
-  p.detail.hidden = !reason;
+  renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail);
   p.timing.textContent = item.type === 'approval' ? timingText(value, options) : '';
   p.note.placeholder = value.kind === 'clarify' ? '답을 적어 주세요. 거절하면 요청을 멈춥니다.' : '메모(선택)';
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : value.kind === 'clarify' ? '답하고 진행' : '승인';
