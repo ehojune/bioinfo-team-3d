@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
 | 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |
 | 02:59 | [`00e4df0`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/00e4df0) | **Codex 직원의 권한 표시와 웹 검색을 바로잡았습니다(#56).** CSO가 보는 직원 명단에서 lit_scout가 읽기 전용으로 나와, 파일을 쓰는 일을 배정받지 못할 수 있었습니다. Codex 직원은 이제 sandbox 값으로 판정합니다. 웹 검색은 기본으로 켜져 있어서, 웹이 필요 없는 engineer는 명시적으로 끄고 lit_scout·sci_reviewer만 켭니다. 검색어가 로그에 빈칸으로 남던 것도 실제 CLI 출력(`item.completed`의 `action.query`)으로 고쳤습니다. lit_scout에는 PubMed·bioRxiv MCP를 붙였고, luna가 검색 스니펫만 보고 릴리스 버전을 틀린 일이 있어 "ID·버전·날짜·인용은 원 출처에서 확인" 규칙을 넣었습니다. engineer는 gpt-6.1-sol, sci_reviewer는 gpt-6-astra로 고정했습니다 |
