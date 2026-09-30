@@ -185,6 +185,15 @@ class TaskResult(BaseModel):
         return self
 
 
+def waiting(result: TaskResult | dict[str, Any], *, jobs_finished: bool = False) -> bool:
+    """Whether a live or persisted result still waits for jobs or ask answers."""
+    if isinstance(result, TaskResult):
+        jobs, asks = result.pending_jobs, result.pending_asks
+    else:
+        jobs, asks = result.get("pending_jobs"), result.get("pending_asks")
+    return bool(asks or (not jobs_finished and jobs))
+
+
 class Event(BaseModel):
     type: str
     ts: float = Field(default_factory=time.time)

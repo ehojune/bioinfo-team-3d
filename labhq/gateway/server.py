@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..integrations.rounds import RoundRecorder, environment_snapshot
-from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id
+from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
@@ -158,7 +158,7 @@ class Hub:
         self.store.put("request", rid, self.requests[rid])
 
     def running_tasks(self) -> list[dict]:
-        """Accepted tasks of running requests, including steps asleep on HPC jobs (their task already returned)."""
+        """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
         out = []
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
@@ -166,8 +166,7 @@ class Hub:
                 continue
             if not entry.get("completed"):
                 state = "running"
-            elif (((tid not in self.jobs_done and (entry.get("result") or {}).get("pending_jobs")) or
-                   (entry.get("result") or {}).get("pending_asks")) and
+            elif (waiting(entry.get("result") or {}, jobs_finished=tid in self.jobs_done) and
                   (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
                 state = "hibernating"
             else:
@@ -339,7 +338,7 @@ class Hub:
         for body in candidates:
             if body:
                 result = TaskResult.model_validate(body)
-                if result.ok and not result.pending_jobs:
+                if result.ok and not waiting(result):
                     return result
         return None
 

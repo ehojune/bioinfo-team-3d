@@ -19,7 +19,7 @@ import websockets
 
 from ..adapters import get_adapter
 from ..adapters.base import RunContext
-from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult
+from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
 from ..policy import claude_settings
 from ..registry import Registry
@@ -440,8 +440,8 @@ class Runner:
                       usage=result.usage,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
-        state = "hibernating" if pending or result.pending_asks else ("done" if result.ok else "error")
-        extra = ({"jobs": pending, "asks": result.pending_asks} if pending or result.pending_asks else
+        state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
+        extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))
         await emit("agent.status", {"state": state, **extra})
         await emit("task.result", result.model_dump(mode="json"))

@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id
+from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..util import clip, extract_json, output_relpath, short
 
 if TYPE_CHECKING:
@@ -316,7 +316,7 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
         return "transient"
     if isinstance(outcome, BaseException):
         return "terminal"
-    if outcome.ok and (outcome.text.strip() or outcome.structured is not None or outcome.pending_jobs):
+    if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
     error = (outcome.error or "").lower()
     if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
@@ -462,9 +462,11 @@ class Orchestrator:
             request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
             if ask.request_id in self.hub.requests:
                 self.hub.save_request(ask.request_id)
-        answer = result.text.strip() if result.ok and result.text.strip() else f"상담 실패: {result.error or 'empty answer'}"
+        answered = result.ok and bool(result.text.strip())
+        answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
         await self.hub.resolve_ask(ask, runner_id, {"answer": answer, "from": routed,
                                                     "routed_to": routed,
+                                                    "status": "answered" if answered else "rejected",
                                                     "remaining_asks": max(0, 2 - task_count)})
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
@@ -551,7 +553,7 @@ class Orchestrator:
             except BudgetExceeded:
                 pass
         cycles = 0
-        while res.ok and (res.pending_jobs or res.pending_asks) and cycles < self.cfg.max_wake_cycles:
+        while res.ok and waiting(res) and cycles < self.cfg.max_wake_cycles:
             cycles += 1
             prompts = []
             if res.pending_jobs:
