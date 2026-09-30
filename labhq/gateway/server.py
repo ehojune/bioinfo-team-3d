@@ -164,7 +164,7 @@ class Hub:
                 continue
             if not entry.get("completed"):
                 state = "running"
-            elif ((entry.get("result") or {}).get("pending_jobs") and
+            elif (tid not in self.jobs_done and (entry.get("result") or {}).get("pending_jobs") and
                   (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
                 state = "hibernating"
             else:

@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 후속 #30–#33 러너·운영
+
+- 결론: npm shim 옆 Node 우선(#30), custom CLI token 보존(#31), 종료 비용으로 웹 합계 동기화(#32), HPC 기상 중 끝난 task를 hibernating 집계에서 제외(#33).
+- 바뀐 것: `labhq/adapters/base.py`, `labhq/adapters/cli.py`, `labhq/web/state.js`, `labhq/gateway/server.py`와 각 regression test.
+- 실행한 것: 수정 전 새 테스트 9 failed(네 issue 재현), 수정 후 전체 `pytest -q` 통과, 공개 검사 통과. 작업은 Codex(gpt-6.1-sol)가 했고 커밋·PR은 Claude가 만들었다.
+- 미해결: 2.5D·3D 화면 확인은 reducer 테스트로 대신했다. 실제 CLI·HPC 실행은 범위 밖.
+
 ## 2026-10-01 · #43 라운드 기록
 
 - 결론: 요청이 끝나거나 재시작으로 중단되면 `gateway.state_dir/rounds`에 Markdown·JSON 기록을 남기고, 설정한 private 저장소에는 요청마다 이슈 1건을 갱신한다.
