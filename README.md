@@ -135,8 +135,22 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 | 🦫 비버 인사팀 | `recruiter` | Paper2Agent 변환·검증·오퍼레터 | Claude Code / opus | Skill·Agent |
 | 🐥 파견직 (논문 종이모자 병아리) | `c_<slug>` | 논문의 방법 적용 | Claude Code / sonnet | 논문 MCP + 논문 스킬 |
 
-엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: antigravity`, `model: gemini-3.8-flash-high`)
+엔진·모델·도구는 `agents/core/*.yaml`에서 직원별로 바꿉니다. (예: `engine: codex`, `model: gpt-6-luna`)
 Codex 직원의 `tools`에 `WebSearch`나 `WebFetch`가 있으면 Codex 자체 웹 검색(`-c web_search="live"`)을 켭니다.
+
+### 역할·엔진·도구를 나눈 기준
+
+| 기준 | 어디에 적용했나 | 근거 |
+|---|---|---|
+| 1인 PI 바이오인포 랩의 직무로 나눈다 | 역할 목록 전체 | Virtual Biotech 구조를 옮기며 바꾼 점(§1) |
+| 판단·조율·위험 관리가 큰 자리에 가장 높은 등급 모델 | CSO(opus) | PI 결정(2026-10-01): 막힌 직원의 질문에 CSO가 PI 대신 먼저 답하고, 위험한 것만 PI에게 올린다 |
+| 판단 업무는 opus, 정형·반복 업무는 sonnet | biologist·analyst·recruiter / chief_of_staff·data_steward·qc_reviewer | 첫 설계 |
+| 리뷰어는 다른 벤더 | sci_reviewer(Codex) | 같은 모델끼리 맹점을 공유하지 않게 |
+| 도구는 그 일에 필요한 것만 | CSO는 읽기만, HPC는 계산하는 직원만, 웹은 조사하는 직원만 | 표에서 드러나는 원칙. 따로 적어 둔 기록은 없다 |
+| 엔진은 사정에 따라 바뀌었다 | engineer=Codex(PI 결정), lit_scout=Gemini CLI → Antigravity(개인 계정 차단) → Codex gpt-6-luna(Gemini 은퇴) | STATUS.md |
+
+측정으로 검증한 배정은 아직 없습니다. 첫 실험(#27)에서는 bioinfo-agent가 일을 하나도 받지 못했고, 읽기 전용 리뷰어에게 쓰기 작업이 배정됐습니다.
+역할별 모델을 바꿔 보는 실험은 #40 bench에서 합니다. 기준선은 같은 과제를 Opus 5.5 단일 세션과 gpt-6-astra 단일 세션에 줍니다.
 
 ### bioinfo-agent 연결하기
 러너 환경변수 `BIOINFO_AGENT_DIR`에 bioinfo Claude Code plugin 디렉터리를 지정합니다. 실행 전에

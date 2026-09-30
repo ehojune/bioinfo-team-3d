@@ -125,10 +125,10 @@ def plugin_provenance(name: str, path: Path) -> dict:
     h = hashlib.sha256()
     for f in sorted(resolved, key=lambda f: f.relative_to(root).as_posix()):
         relative = f.relative_to(root).as_posix()
-        mode = index_modes.get(relative)
-        if mode is None:
-            mode = "100755" if f.stat().st_mode & 0o111 else "100644"
-        h.update(relative.encode("utf-8") + b"\0" + mode.encode("ascii") + b"\0")
+        work_mode = "100755" if f.stat().st_mode & 0o111 else "100644"
+        index_mode = index_modes.get(relative, work_mode)
+        h.update(relative.encode("utf-8") + b"\0" + index_mode.encode("ascii") + b"\0" +
+                 work_mode.encode("ascii") + b"\0")
         h.update(hashlib.sha256(f.read_bytes()).digest())
     return {"name": name, "version": (read_plugin_manifest(path) or {}).get("version"), "commit": commit,
             "sha256": h.hexdigest()}
