@@ -177,6 +177,7 @@ class Hub:
             else:
                 continue
             out.append({"id": tid, "request_id": entry.get("request_id"), "state": state,
+                        "step_id": entry.get("step_id") or entry.get("kind"),
                         "agent_id": (entry.get("payload") or {}).get("agent_id")})
         return out
 
@@ -915,6 +916,7 @@ class Hub:
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
+            "running_tasks": self.running_tasks(),
             "recent_events": list(self.events)[-200:],
         }}
 

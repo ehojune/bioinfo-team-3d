@@ -39,18 +39,22 @@ pytest -q
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
-cp config/labhq.example.yaml config/labhq.yaml      # 토큰, HPC, 데이터 구역, 예산 수정
+labhq init                                        # 첫 설치 설정과 doctor 점검
 export LABHQ_CONFIG=$PWD/config/labhq.yaml
 ```
 
 PowerShell:
 
 ```powershell
-Copy-Item config/labhq.example.yaml config/labhq.yaml
+labhq init
 $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
 ```
 
-Windows 러너는 `policy.data_zones`에 `restricted` 구역이 있으면 시작을 거부합니다. Windows에서 시험할 때는 `data_zones: []`로 설정하세요.
+`labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
+`--yes`는 기본값을 수락하고 `--dry-run`은 파일 생성 없이 변경과 doctor 점검을 보여 줍니다. 기존 설정은 보존하며 `--force`일 때만 교체합니다.
+Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`과 사람이 실행할 로그인 명령을 안내합니다.
+Codex `bin`이 비어 있거나 `auto`이면 Windows 앱의 최신 폴더(mtime)를 탐지하며 doctor에 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
+
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 다음처럼 `bin`과 `prefix_args`를 사용하세요(설치된 package 경로 확인).
@@ -307,8 +311,8 @@ flowchart LR
 
 같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
 `/`는 2.5D, `/3d`는 3D 사무실입니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
-- 2.5D: 오른쪽 Command Center의 결정·작업판·메신저·HPC 탭과 아래 직원 카드 줄. 폰에서는 탭이 화면 아래에 고정됩니다.
-- 3D: 실제 roster·상태 표지·요청 보드·메모가 있는 DOM 승인/거절. 완료 표시는 3초 뒤 대기로 돌아갑니다. 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
+- 2.5D: 오른쪽 Command Center의 결정·작업판·메신저·HPC 탭과 아래 직원 카드 줄. 폰에서는 탭이 화면 아래에 고정되고 직원 줄은 접혀 있습니다. 결정 이력은 요청별로 묶어 최근 10건부터 보여 줍니다.
+- 3D: 실제 roster·상태 표지·요청 보드·메모가 있는 DOM 승인/거절. 완료 표시는 3초 뒤 대기로 돌아가며 승인 대기 시간은 계속 갱신됩니다. 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
 - 데모: `/3d?demo=1`. 데이터가 없으면 빈 사무실과 빈 요청 목록을 표시합니다.
 - 요청 입력·채용·계약 관리는 2.5D에서 합니다. 아래 기능 설명은 2.5D 기준입니다.
 
@@ -323,7 +327,7 @@ flowchart LR
 - 뒷벽 **화이트보드**: 지금 요청과 단계(브리핑 → 계획 → 실행 → 리뷰 → 보고), 스텝별 진행
 - **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
 - 오른쪽(폰에서는 하단 탭): **결정함**(메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
-- 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지
+- 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지. 폰에서는 **직원 보기**로 펼칩니다.
 - 아래 입력창: CSO에게(팀 전체) 또는 특정 직원에게 직접. 데스크톱에서는 노란 **메모를 책상에 끌어다 놓으면** 그 직원에게 맡김
 - 직원을 누르면 상세 카드: 지금 하는 일, 엔진·모델, 최근 활동, 파견직이면 계약 연장·종료
 

@@ -180,8 +180,10 @@ a{color:var(--sleep-ink)}
 .ap .sum.pre{white-space:pre-wrap}
 .ap .ans{width:100%;box-sizing:border-box;margin-top:6px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--panel);color:var(--ink);resize:vertical}
 .ap.sug{border-color:var(--line);background:var(--panel)}.ap.sug .kind{color:var(--sleep-ink)}
-.decision-history{margin:14px 0 0;padding:10px 0 0 20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.decision-history{margin:14px 0 0;padding:10px 0 0;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.decision-history-group h3{margin:8px 0 2px;font-size:12px;color:var(--ink)}.decision-history-group ol{margin:0;padding-left:20px}
 .decision-history li{padding:3px 0}.decision-history strong,.decision-history span,.decision-history small{display:block}.decision-history strong{color:var(--ink)}
+.decision-history-more{margin-top:8px}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
 .btn.go{background:var(--working);border-color:var(--working);color:#fff}
@@ -231,11 +233,13 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 /* staff strip */
 .staff-wrap{position:sticky;z-index:18;bottom:76px;max-width:1280px;margin:0 auto 8px;padding:0 16px}
 .staff-wrap h2{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}  /* label for screen readers; a visible title over the floor overlapped its last row */
+.staff-toggle{display:none}
 .staff-strip{display:flex;gap:8px;overflow-x:auto;padding:8px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:0 5px 20px rgba(20,35,50,.09)}
 .staff-card{flex:0 0 190px;display:grid;gap:2px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:8px;cursor:pointer}
 .staff-card-top{display:flex;align-items:center;justify-content:space-between;gap:6px}.staff-card-top strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.staff-card-top em{font-style:normal;font-size:11px;color:var(--muted);white-space:nowrap}
 .staff-role,.staff-tool,.staff-gauge-label{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.staff-gauge{width:100%;height:7px;accent-color:var(--working)}
-.staff-waiting{border-color:var(--wait)}.staff-hibernating{border-color:var(--sleep)}.staff-working{border-color:var(--working)}
+.staff-waiting,.staff-queued{border-color:var(--wait)}.staff-hibernating{border-color:var(--sleep)}.staff-working{border-color:var(--working)}
+.staff-done{border-color:var(--done)}.staff-error{border-color:var(--error);background:var(--error-bg)}
 
 /* composer */
 .composer{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--paper);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
@@ -247,11 +251,13 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .composer select{flex:none;max-width:30%;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 6px}
 .composer .btn{min-height:44px}
 @media (max-width:620px){
-  body{padding-bottom:210px}
+  body{padding-bottom:160px}
   .panels{max-height:none;overflow:visible;padding:10px}
   .cc-tabs{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:45;padding:5px 8px calc(5px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--panel)}
   .cc-tabs button{min-height:42px}
   .staff-wrap{bottom:156px;padding:0 8px}.staff-wrap h2{display:none}.staff-card{flex-basis:165px}
+  .staff-toggle{display:block;width:100%;min-height:38px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink)}
+  .staff-wrap:not(.open) .staff-strip{display:none}
   .composer{bottom:53px}
   .composer-in{flex-wrap:wrap;gap:6px 8px}
   #ask{order:1;flex:1 1 60%}
@@ -338,6 +344,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 
 <section class="staff-wrap" aria-labelledby="staff-heading">
   <h2 id="staff-heading">직원</h2>
+  <button class="staff-toggle" id="staff-toggle" type="button" aria-controls="staff-strip" aria-expanded="false">직원 보기</button>
   <div class="staff-strip" id="staff-strip"></div>
 </section>
 
@@ -611,7 +618,7 @@ function renderApprovals() {
   syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
     emptyText: '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' });
-  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO });
+  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO, requests: S.requests });
 }
 
 function dagSVG(q) {
@@ -748,6 +755,12 @@ $('#approvals').addEventListener('click', async e => {
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
 $('#zones').addEventListener('click', e => { const s = e.target.closest('.seat[data-agent]'); if (s) openSheet(s.dataset.agent); });
 $('#staff-strip').addEventListener('click', e => { const card = e.target.closest('.staff-card[data-agent]'); if (card) openSheet(card.dataset.agent); });
+$('#staff-toggle').addEventListener('click', () => {
+  const wrap = $('.staff-wrap'), open = !wrap.classList.contains('open');
+  wrap.classList.toggle('open', open);
+  $('#staff-toggle').setAttribute('aria-expanded', String(open));
+  $('#staff-toggle').textContent = open ? '직원 닫기' : '직원 보기';
+});
 
 function openSheet(id) {
   const a = ag(id); if (!a) return;
@@ -837,7 +850,7 @@ function startLive() {
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
-    history: () => get('/api/approvals/history?limit=30'),
+    history: () => get('/api/approvals/history?limit=50'),
   };
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }

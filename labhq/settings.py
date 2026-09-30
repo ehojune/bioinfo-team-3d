@@ -51,6 +51,11 @@ class IsolatedEngineBin(EngineBin):
 
 
 class CodexBin(IsolatedEngineBin):
+    @field_validator("bin", mode="before")
+    @classmethod
+    def empty_bin_is_auto(cls, value):
+        return "" if value is None else value
+
     # --ignore-user-config also drops `[windows] sandbox`; without it Codex refuses workspace writes on Windows.
     windows_sandbox: str = "elevated"
     # $CODEX_HOME/AGENTS.md (the PI's global instructions) cannot be switched off by flags; refuse unless allowed.
