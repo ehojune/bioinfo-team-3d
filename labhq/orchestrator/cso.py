@@ -144,6 +144,22 @@ Options: {options}
 Request: {request}
 Plan: {plan}"""
 
+
+def continuation_prompt(task: Task, updates: str, *, resumable: bool,
+                        previous_result: TaskResult | None, context_chars: int) -> str:
+    """One policy for continuing a task, including engines without session resume."""
+    if resumable:
+        return updates
+    previous = ""
+    if previous_result:
+        previous = previous_result.text
+        if previous_result.structured is not None:
+            previous += "\n" + json.dumps(previous_result.structured, ensure_ascii=False)
+    return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
+            f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
+            f"\n\nContinuation updates:\n{updates}")
+
+
 def format_roster(agents: list[dict]) -> str:
     lines = []
     for a in agents:
@@ -460,6 +476,7 @@ class Orchestrator:
             first_attempt = min(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), limit)
             previous_workdir = current.meta.get("workdir")
             previous_session = current.resume_session_id
+            previous_result = None
             for attempt in range(first_attempt, limit + 1):
                 await self._check_budget(rid)
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
@@ -467,6 +484,13 @@ class Orchestrator:
                                                   "resume_session_id": previous_session,
                                                   "meta": {**current.meta, "attempt": attempt,
                                                            **({"workdir": previous_workdir} if previous_workdir else {})}})
+                if attempt > 1:
+                    can_resume = bool(previous_session and self.hub.supports_resume(current.agent_id))
+                    attempt_task = attempt_task.model_copy(update={
+                        "prompt": continuation_prompt(
+                            current, "Retry the same task after the transient failure.", resumable=can_resume,
+                            previous_result=previous_result, context_chars=self.cfg.context_chars_per_step),
+                        "context": "", "resume_session_id": previous_session if can_resume else None})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
                 offline = False
                 try:
@@ -484,6 +508,7 @@ class Orchestrator:
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
                 await self._check_budget(rid, block=False)
+                previous_result = res
                 if kind is None:
                     return res
                 if rid in self.budget_denials:
@@ -509,7 +534,9 @@ class Orchestrator:
         res = await dispatch_with_retry(task)
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
                 and self.hub.supports_resume(task.agent_id)):
-            wrap = Task(agent_id=task.agent_id, request_id=rid, prompt=WRAP_PROMPT,
+            wrap = Task(agent_id=task.agent_id, request_id=rid,
+                        prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
+                                                   previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
                               "workdir": res.workdir, "agent_overrides": {"max_turns": 2},
@@ -544,17 +571,11 @@ class Orchestrator:
                     "parent_task": res.task_id, "workdir": res.workdir,
                     "title": title}
             can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
-            prompt = "\n\n".join(prompts)
-            context = ""
-            if not can_resume:
-                prompt = f"Original instruction:\n{task.prompt}\n\nContinuation updates:\n{prompt}"
-                context = "\n\n".join(part for part in (
-                    task.context, f"Previous turn:\n{clip(res.text, self.cfg.context_chars_per_step)}"
-                ) if part)
             wake = Task(
                 agent_id=task.agent_id, request_id=task.request_id, output_schema=task.output_schema,
-                prompt=prompt, meta=meta,
-                resume_session_id=res.session_id if can_resume else None, context=context,
+                prompt=continuation_prompt(task, "\n\n".join(prompts), resumable=can_resume,
+                                           previous_result=res, context_chars=self.cfg.context_chars_per_step),
+                meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
             res = await dispatch_with_retry(wake)
         return res
@@ -625,22 +646,25 @@ class Orchestrator:
         async def run_one(step: dict) -> TaskResult:
             prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
             decision = decisions.get(step["id"])
-            if decision:
-                prompt = ASK_WAKE_PROMPT.format(answers=qa_text(decision))
             ctx = upstream(step)
-            if feedback and step["id"] in feedback:
-                prev = results.get(step["id"])
-                prompt += f"\n\n[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}"
-                ctx += f"\n\n## Your previous result\n{clip(prev.text if prev else '', self.cfg.context_chars_per_step)}"
+            updates = []
+            if decision:
+                updates.append(ASK_WAKE_PROMPT.format(answers=qa_text(decision)))
+            revising = bool(feedback and step["id"] in feedback)
+            if revising:
+                updates.append(f"[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}")
             previous = results.get(step["id"])
+            if previous is None and decision and decision.get("previous_result"):
+                previous = TaskResult.model_validate(decision["previous_result"])
+            session_id = (previous.session_id if previous and revising else
+                          decision.get("session_id") if decision else None)
+            can_resume = bool(session_id and self.hub.supports_resume(step["agent_id"]))
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
-                        resume_session_id=((decision.get("session_id") if decision else None) or
-                                           (previous.session_id if previous and feedback and
-                                            step["id"] in feedback else None))
-                                          if self.hub.supports_resume(step["agent_id"]) else None,
+                        resume_session_id=session_id if can_resume else None,
                         meta={"kind": "step", "step_id": step["id"], "request": request,
+                              "instruction": step["instruction"],
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
@@ -649,6 +673,12 @@ class Orchestrator:
                                **({"workdir": decision["workdir"]} if decision and decision.get("workdir") else
                                   {"workdir": previous.workdir} if previous and previous.workdir and feedback
                                   and step["id"] in feedback else {})})
+            if updates:
+                task = task.model_copy(update={
+                    "prompt": continuation_prompt(task, "\n\n".join(updates), resumable=can_resume,
+                                                   previous_result=previous,
+                                                   context_chars=self.cfg.context_chars_per_step),
+                    "context": ""})
             async with sem:
                 return await self.run_step(task)
 
@@ -741,10 +771,9 @@ class Orchestrator:
                                 await asyncio.gather(*running.values(), return_exceptions=True)
                             raise RuntimeError(f"step {sid} question was rejected or unanswered")
                         # Keep the question with the answer: "b" or "the second option" means nothing alone.
-                        decisions[sid] = {"question": question.strip(), "answer": str(answer["answer"]).strip()}
-                        if hasattr(self.hub, "store"):
-                            decisions[sid].update({"from": answer.get("from"), "session_id": res.session_id,
-                                                   "workdir": res.workdir})
+                        decisions[sid] = {"question": question.strip(), "answer": str(answer["answer"]).strip(),
+                                          "from": answer.get("from"), "session_id": res.session_id,
+                                          "workdir": res.workdir, "previous_result": res.model_dump(mode="json")}
                         if req_state is not None:
                             req_state["pending_questions"] = []
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]
