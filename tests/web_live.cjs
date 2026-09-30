@@ -24,9 +24,11 @@ global.location = {search:'?token=test-client',pathname:'/3d/',protocol:'http:',
 let saved, cleanURL;
 global.localStorage = {getItem(){return saved;},setItem(k,v){saved=v;}};
 global.history = {replaceState(a,b,url){cleanURL=url;}};
-const timers=[];
+const timers=[];const intervals=[];let clock=1000;
+Date.now=()=>clock*1000;
 global.setTimeout = callback => { timers.push(callback);return timers.length; };
 global.clearTimeout = () => {};
+global.setInterval = callback => { intervals.push(callback);return intervals.length; };
 const sockets=[];
 global.WebSocket = class {
   constructor(url){this.url=url;this.readyState=0;this.sent=[];sockets.push(this);}
@@ -49,11 +51,15 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').repla
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   assert.equal(S.cost,1,'duplicate seq ignored');
   event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission',
-    detail:{tool_name:'Bash',input:JSON.stringify({command:'printf "<example>"',args:['--example']})}}});
+    created_at:clock,detail:{tool_name:'Bash',input:JSON.stringify({command:'printf "<example>"',args:['--example']})}}});
   let row=element('approvals').children[0].children[0];
   assert.equal(row._decisionParts.summary.textContent,'<img src=x>','untrusted text is never HTML');
   assert.match(textIn(row._decisionParts.detail),/Bash/);
   assert.match(textIn(row._decisionParts.detail),/printf.*<example>/s,'3D retains tool command input');
+  assert.equal(intervals.length,1,'3D starts one periodic decision-card clock');
+  clock+=30;intervals[0]();
+  row=element('approvals').children[0].children[0];
+  assert.match(row._decisionParts.timing.textContent,/30초 대기/,'3D waiting time advances without an event');
   row._decisionParts.approve.onclick();
   assert.deepEqual(ws.sent,[{type:'approval.resolve',id:'a1',approved:true,note:''}]);
   row._decisionParts.approve.onclick();

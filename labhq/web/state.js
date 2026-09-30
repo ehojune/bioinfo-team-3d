@@ -108,6 +108,13 @@ function apply(ev, replay = false) {
         if (r.review) q.review = r.review;
         if (r.status !== 'running') q.phase = 'done';
       }
+      for (const task of d.running_tasks || []) {
+        if (!task.request_id || !task.step_id) continue;
+        const q = S.requests.get(task.request_id);
+        if (!q) continue;
+        q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;
+        Object.assign(stepDetail(task.request_id, task.step_id), { task_id: task.id });
+      }
       S.cost = (d.requests || []).reduce((total, r) => total + (Number(r.cost_usd) || 0), 0);
       S.approvals.clear();
       (d.approvals || []).forEach(x => S.approvals.set(x.id, x));

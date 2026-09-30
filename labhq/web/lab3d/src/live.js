@@ -77,5 +77,6 @@ export function startLiveOffice(onState) {
   $('token-form').addEventListener('submit', event => {
     event.preventDefault(); token = $('token').value.trim(); saveToken(token); lastSeq = 0; open();
   });
+  setInterval(() => { if (S.approvals.size) render(); }, 1000);
   open();
 }

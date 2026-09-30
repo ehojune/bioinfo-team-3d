@@ -2,7 +2,8 @@ const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
 
 function statusOf(state) {
-  return state === 'working' ? '일함' : state === 'waiting' ? '내 답 기다림' : state === 'hibernating' ? 'HPC 수면' : '대기';
+  return state === 'working' ? '일함' : state === 'waiting' ? '내 답 기다림' : state === 'hibernating' ? 'HPC 수면' :
+    state === 'done' ? '완료' : state === 'error' ? '오류' : state === 'queued' ? '순서 대기' : '대기';
 }
 
 function makeCard(agent) {

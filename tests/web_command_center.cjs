@@ -55,6 +55,12 @@ async function load(name){
   strip.syncStaffCards(staff,[{id:'a',name:'A',role:'one'},{id:'b',name:'B',role:'two'}],{visual:a=>a.state||'idle'});
   strip.syncStaffCards(staff,[{id:'a',name:'A',role:'one'},{id:'b',name:'B',role:'two'},{id:'c',name:'C',role:'three'}],{visual:a=>a.state||'idle'});
   assert.equal(staff.querySelectorAll('[data-agent]').length,3,'card count follows roster');
+  strip.syncStaffCards(staff,[{id:'done',name:'Done',state:'done'},{id:'error',name:'Error',state:'error'},{id:'queued',name:'Queued',state:'queued'}],{visual:a=>a.state});
+  const statusCards=staff.querySelectorAll('[data-agent]');
+  assert.equal(statusCards[0]._staffParts.status.textContent,'완료');
+  assert.equal(statusCards[1]._staffParts.status.textContent,'오류');
+  assert.match(statusCards[1].className,/staff-error/,'오류 카드는 색 구분용 class를 가진다');
+  assert.equal(statusCards[2]._staffParts.status.textContent,'순서 대기');
 
   const shell=await load('shell.js');
   const nav=new Element('nav'),panels=[new Element('section'),new Element('section')];
