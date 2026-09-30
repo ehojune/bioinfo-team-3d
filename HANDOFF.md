@@ -1,100 +1,87 @@
-# labhq 인수인계 — 이어서 작업할 에이전트에게
+# labhq 인수인계 — 개발 총괄에게
 
-저장소 https://github.com/ehojune/bioinfo-team-3d · 패키지와 CLI 이름은 `labhq`
+저장소 https://github.com/ehojune/bioinfo-team-3d (public) · 패키지와 CLI 이름은 `labhq`
 
-이 파일이 작업 지시의 원본입니다. 감독은 PI와 Claude(chat), 보고는 PR과 `STATUS.md`로 합니다.
+개발 총괄은 Claude와 Codex가 번갈아 맡습니다(PI 결정 2026-10-01). 한쪽의 주간 사용량이 차면 다른 쪽이 이어받습니다.
+이 파일은 공개해도 되는 인수인계입니다. PI PC의 로컬 경로·진행 중 작업·보조 스크립트는 저장소 밖 노트에 있고,
+`CLAUDE.local.md`(Claude)와 PI의 Codex 전역 지침이 그 노트를 가리킵니다. 결정은 GitHub issue에, 진행 보고는 PR과 `STATUS.md`에 남깁니다.
 
-## 프롬프트 (그대로 붙여 넣어 시작)
+## 시작할 때
 
-```text
-너는 labhq를 이어받아 개발하는 엔지니어 에이전트다.
+1. `STATUS.md` 맨 위 몇 항목, 열린 PR(`gh pr list`), 고정 issue #69
+2. 아래 작업 큐와 PI 결정
+3. `pytest -q`, 설정이 있는 PC면 `labhq doctor`
+4. 끝낼 때: 진행 중인 것을 로컬 노트의 "지금 진행 중"에 적고, 새로 안 것은 `HARVEST.md`(gitignore)에 적는다
 
-저장소: https://github.com/ehojune/bioinfo-team-3d (public, 기본 브랜치 main, 인계 시점 커밋 db49ed4)
-저장소 이름은 bioinfo-team-3d이고, 파이썬 패키지와 CLI 이름은 labhq다.
+## 작업 방식 — 규칙(CLAUDE.md·AGENTS.md)에 더해 겪어서 안 것
 
-labhq는 PI 한 명이 Claude Code · Codex · Gemini CLI 에이전트를 바이오인포 연구소 직원처럼 운영하는 플랫폼이다.
-CSO가 요청을 쪼개 정규직 11명(bioinfo-agent 포함)에게 맡기고, 팀에 없는 방법은 Paper2Agent로 논문을 파견직
-에이전트로 만들어 채용한다. 러너는 SGE/PBS HPC에 작업을 내고, 기다리는 동안 에이전트를 재웠다가 끝나면 깨운다.
-PI는 웹 사무실(폰 포함)에서 실시간 상태를 보고 승인한다. 결과는 프로젝트별 GitHub 저장소에 이슈와 보고서로 올라간다.
+| 무엇 | 어떻게 |
+|---|---|
+| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → 패치노트만 고친 커밋 → PR → 상단에 리뷰 요청 댓글 한 번 → P1은 그 PR에서, P2는 `PR #N follow-up:` issue → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
+| 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 따로 쓴다. 쓴 뒤에는 rebase하지 말고 main을 merge한다(해시가 바뀐다). `python scripts/patch_notes.py rows --pr N`이 초안을 만든다 |
+| README 주기 | main 커밋 3개 안에 README를 한 번 고쳐야 CI가 통과한다. 병렬 PR의 병합 순서가 바뀌면 다음 PR이 README 차례가 된다 |
+| 리뷰 봇 깊이 | 같은 부류가 더 좁게 반복되면 사례를 막지 말고 그 부류를 구조로 한 번 닫고 병합한다. 5회를 넘기면 멈추고 PR에 이유를 적는다 |
+| Codex에 통째 위임 | Codex sandbox는 `.git`에 쓸 수 없다. 지시서에 "commit하지 말고 `.pr-drafts/commits.json`에 [{message, files}]"를 넣고, 받는 쪽이 커밋한다. 커밋 제목을 `#`로 시작하지 않는다(rebase가 주석으로 지운다) |
+| 병렬 PR | 같은 설정을 두 PR이 다른 규칙으로 넣으면 충돌 없이 한쪽이 덮인다(#76의 MCP timeout). 병합 뒤 겹친 규칙을 테스트로 확인한다 |
+| Python 3.10 | 여러 줄 f-string 치환식, `fromisoformat("...Z")`는 3.10에서 깨진다. 3.12 CI만 보면 놓친다 |
+| Windows 직원 CLI | `.cmd` shim은 거부하므로 실제 exe 경로를 쓴다. Codex 앱 exe는 업데이트마다 폴더가 바뀐다(#73) |
+| Codex 직원 | 개인 `~/.codex/AGENTS.md`가 있는 PC는 직원 전용 `CODEX_HOME`에 로그인해야 preflight를 통과한다. 개인 skill 폴더는 여전히 읽히는데 PI는 괜찮다고 했다(#55) |
+| PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
 
-현재 상태: pytest 26개 통과. 웹 UI는 헤드리스 DOM 검사와 실제 게이트웨이 이벤트 재생으로만 검증했다.
-실제 CLI(claude/codex/gemini), 실제 HPC, 실제 GitHub API 보고, 실제 Paper2Agent 변환, 실기기 화면은 아직 한 번도 돌려 보지 않았다.
+## 작업 큐 (2026-10-01)
 
-[1] 시작
-1. git clone https://github.com/ehojune/bioinfo-team-3d && cd bioinfo-team-3d
-2. python -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
-3. pytest -q  → 26 passed 여야 한다
-4. labhq demo --web → 출력된 http://127.0.0.1:8787/?token=change-me-client 에서 사무실이 움직이는지 본다
-5. (완료, #1) 인수인계 문서 5개와 v0.2.1은 이미 main에 있다. 다시 만들지 말고 STATUS.md 맨 위 항목부터 읽는다.
+| 상태 | issue / PR | 내용 |
+|---|---|---|
+| 리뷰 중 | PR #74 (#57) | 웹 Command Center 1–5. 봇 P1(결정 카드에 승인 상세 전체 표시)을 고치는 중 |
+| 리뷰 중 | PR #76 (#39, #55 6번) | labhq_ask 질의 경로, task별 broker token |
+| 리뷰 중 | PR #77 (#40) | bench·테스트 에이전트(mock 5/5). 실제 비교는 PI 구독으로 PI 머신에서 |
+| 작업 중 | #63 | README 연결 목록·배지를 직원 설정에서 자동 생성 |
+| 다음 | #80 #81 #82 | HPC 도구 실패 표시, 막힌 단계 같은 세션 재개, `--resume` 비용 합산 확인 |
+| 다음 | #35 #36 #58 #73 | 시설팀, 접수·참고 자료, 증거 계층(VB 이식), 첫 설정 마법사 |
+| 나중 | #59 #60 #61 #62 #75 #83 #84 | 실행 중 제어, 요청 간 기억, 트리거, fan-out, 폰 UX, #71 후속, 프롬프트 보강 |
+| 장기 | #70 #79 | 보고 채널(GitHub·Notion·웹), 클라우드 상주 에이전트와의 공생 |
+| 후속 P2 | #51 #53 #54 #67 #68 | 작은 결함 |
+| 막힘 | P3 실제 HPC | 아래 결정 대기 1 |
 
-[2] 작업 방식
-- 단계마다 새 브랜치(예: p1-real-cli)에서 작업하고 PR을 연다. main에 직접 push하지 않는다.
-- PR 본문에는 템플릿대로 한 일, 테스트 결과, 바꾼 파일, 막힌 점, 질문을 적고, 같은 내용을 STATUS.md 맨 위에 추가한다.
-- ⛔에서는 멈추고 PI 확인을 받는다. PI 위임(2026-09-28): 병합은 Claude가 판단해서 한다. 자동 병합 워크플로는 껐다.
+조사 요약은 #64(1차), #78(코드 흐름 리뷰), 구조 판단은 #39 댓글(일회성+재개 유지, 상주형은 bench로 판정)에 있습니다.
 
-[3] 작업 순서
-P0 완료: public 저장소 ehojune/bioinfo-team-3d
-P0+ 완료(#2): .github/workflows/test.yml이 모든 브랜치 push와 PR마다 pytest를 돌리고, README 맨 위에 저장소 주소와 CI 배지가 있다.
-P1 실제 CLI 연동: claude/codex/gemini --version 기록 → ⛔ 실제 계정으로 첫 실행 전 확인 → 임시 디렉터리에서 엔진별 direct 요청 1개씩.
-   실제 stream 출력을 tests/fixtures/에 저장하고 파서 테스트를 추가한다. 반드시 확인: Claude --permission-prompt-tool과
-   --settings deny 규칙, Codex exec의 MCP 호출 자동 취소 이슈(openai/codex#24135), Gemini stream-json 이벤트 이름과 승인 모드.
-   fixture에는 토큰, 계정 이름, 내부 경로가 남지 않게 가린다.
-P1+ 안전·복구 최소선 (PI 결정 2026-09-26, P2·P3 전에): ① 게이트웨이의 요청·승인과 러너의 HPC 잡을 디스크에 남기고
-   재시작 때 복구한다 ② CSO는 실패한 단계의 하위 단계만 skip하고, 리뷰 판정 실패는 요청 실패로 기록하며, 일시적 오류는 기본 2회까지 시도한다 (`p1plus-cso`).
-   ③ LLM·MCP 실행 계정은 통제 원본에 닿지 못하게 한다(전용 계정·파일 권한). 데이터 구역 가드가 동작하지 않는 OS(현재 Windows)에서는
-     러너가 시작을 거부한다. 권장 구성: Linux 러너 전용 계정, 데이터 계정 소유 `0700` 구역, `hpc.submit_prefix`로 데이터 계정 잡 제출(`hpc.user`·`hpc.job_group` 지정, 두 계정 모두 같은 그룹, `sudoers`는 `qsub`·`qdel`만 허용),
-     상대 출력은 `hpc_out/`에 쓰고 공유 폴더에는 집계 결과만 둔다. `workspace_root` 밖 상위 경로의 통과 권한은 별도 설정한다 ④ 직원 CLI가 PI 개인 설정(hook·서브에이전트·config·전역 지침)을 물려받지 않게 격리한다
-   ⑤ 이벤트에 schema_version과 순번을 넣고 재연결 때 빠진 이벤트를 다시 보낸다. ①·⑤는 direct 요청·runner 세대·HPC job·제어 단계·리뷰 진행도·GitHub 이슈/계획/리뷰/최종 전달·실시간 이벤트 순서·replay-gap 화면도 복구한다. 근거: 세 자문(gpt-6-sol, gpt-6-astra, Gemini) 설계 검토.
-P2 bioinfo-agent 연결 완료: Claude Code plugin을 `BIOINFO_AGENT_DIR`와 `--plugin-dir`로 로드한다.
-   이 직원만 skill을 허용하고 나머지 개인 설정 격리는 유지한다. 실제 작업 실행은 PI 머신에서 확인한다.
-P3 실제 HPC: config/labhq.yaml(커밋 금지)에 scheduler, PE 이름, 메모리 리소스, 큐를 채운다 → ⛔ 첫 제출 전 확인 →
-   hello-world 잡으로 승인 → 수면 → 기상 흐름을 확인한다. 실제 qstat/qacct(또는 PBS qstat -f) 출력을 가려서 fixture로 추가한다.
-   클러스터 값은 조회로 확정했다(SGE, 제출은 로그인 노드, PE `smp`, `h_vmem`·`h_rt`, 로그인 노드의 HTTPS 열림). 러너 계정이 막혀 있다:
-   PI 계정은 통제 원본을 읽을 수 있어 러너가 시작을 거부한다. bwrap만으로 대체하는 안은 세 자문(gpt-6-sol, gpt-6-astra, Gemini)이
-   모두 부족하다고 봤다(샌드박스 안에서 직접 qsub, 승인된 잡의 원본 출력). 권장: 관리자에게 러너 전용 서비스 계정을 받는다.
-P4 1단계 구현: `/`(2.5D)와 `/3d`가 `state.js` reducer와 완료 후 3초 표시 규칙을 공유한다. 3D에 실제 roster·상태·요청 보드와 DOM 승인 UI, since 재연결을 연결했다.
-   Chrome headless의 폰/데스크톱 검증 완료. `labhq demo --web --phone`이 같은 Wi-Fi의 폰용 URL을 출력하고 승인을 기다린다.
-   다음: iPhone Safari 실사용·발열 점검.
-P5 프로젝트 GitHub 보고 완료: private 테스트 저장소에서 이슈·코멘트·보고서 커밋·닫기·재시작 중복 없음을 확인했다. 첫 실행에서 통제 경로가
-   가려지지 않아 공개 가드를 접근 정책의 경로 판정으로 바꿨고(#17), 재검증에서 경로 변형·붙은 글자·file URI·가짜 secret이 모두 가려졌다.
-P6 Paper2Agent 실채용: labhq setup-paper2agent → 컨테이너나 VM에서 scanpy 채용 → 수습 통과, 비용과 시간을 기록한다.
-보류(PI 확인 전에는 만들지 않음): iOS 네이티브 앱, 거버넌스(정부) 층.
+## PI 결정 (최근)
 
-[4] 규칙
-- 이 저장소는 public이다. 커밋 전에 scripts/check_public.sh를 돌리고, 연구 데이터·코호트 정보·내부 서버 경로·토큰을 커밋하지 않는다.
-- 비밀값은 환경변수로만 다룬다. config/labhq.yaml은 커밋하지 않는다.
-- 통제접근(DUA) 데이터의 원본을 클러스터 밖이나 LLM 대화로 가져오지 않는다.
-- 테스트를 지우거나 약하게 만들지 않는다. 바꿀 때마다 pytest -q, UI를 건드렸으면 브라우저로도 확인한다.
-- 구조를 크게 바꾸거나 의존성을 추가할 때는 먼저 PR 설명으로 제안하고 확인받는다.
-- P1 지적은 해당 PR에서 고친다. P2는 병합을 막지 않고 후속 issue로 넘긴다. codex 리뷰는 push 묶음마다 PR 상단 요청 댓글 한 번만 부른다. 인라인 답글·PR 본문·커밋 메시지에는 codex 멘션 문자열을 쓰지 않고, Running 중에는 다시 부르지 않는다.
-- 고정 상한은 없다(PI 결정 2026-09-28). 새 라운드는 직전 수정의 확인이 필요하거나 다른 부류의 결함이 나왔을 때만 부른다. 같은 부류의 더 좁은 변형이 이어지면 그 부류를 닫는 수정 한 번 뒤 병합하고 나머지는 후속 issue로 넘긴다. 판단이 서지 않는 쟁점만 PI에게 넘긴다. 병합 전 확인: 현재 head의 CI 통과, mergeable, 비 draft, 동일 저장소. `scripts/pr_gate.py --dry-run`은 판정 보조로 쓸 수 있다.
-- 보고는 한국어로, 기술 용어·명령·유전자 이름은 영어 그대로 쓴다.
+| 날짜 | 결정 | 기록 |
+|---|---|---|
+| 2026-10-01 | 개발 총괄은 Claude·Codex 교대. Codex(Pro)에 생산 작업을 적극 위임, 모델·effort는 총괄이 고른다 | 이 파일 |
+| 2026-10-01 | Gemini/Antigravity 은퇴, lit_scout는 Codex gpt-6-luna | #49 |
+| 2026-10-01 | 커밋마다 패치노트, README는 main 커밋 3개 안에 갱신, README에 동작 화면 | #52, #63 |
+| 2026-10-01 | 직원 OS 격리는 하지 않는다. 하네싱·승인 게이트는 나중에 '과업' 단위로 | #55 댓글 |
+| 2026-10-01 | 개발 기록은 private `labhq-rounds`, 종료 조건은 #69. 프로젝트별 보고 저장소는 유지 | #43, #69, #70 |
+| 2026-10-01 | labhq_ask: CSO가 먼저 답하고 위험한 것만 PI. 그래서 CSO에 가장 높은 등급 모델 | #39 |
+| 2026-10-01 | bench 기준선: Opus 5.5·gpt-6-astra 단일 세션. Virtual Biotech 실행은 안 함 | #40 |
+| 2026-10-01 | 클라우드 상주 에이전트는 장기 과제. 공개 데이터 + PI 명시 동의 job부터 | #79 |
+| 2026-09-28 | 병합은 총괄이 판단, 고정 라운드 상한 없음 | CLAUDE.md |
 
-[5] 감독
-PR과 STATUS.md가 공식 보고 채널이다. Claude(chat)가 public 저장소의 PR과 STATUS.md를 읽고 리뷰하며,
-PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정은 다음 단계로 넘어가기 전에 반영한다.
-```
+## 결정 대기 (PI)
+
+1. P3 실제 HPC: 러너 전용 계정은 받을 수 없다(2026-09-28). 권고안은 에이전트를 클러스터 밖에 두고 기관 게이트웨이 broker로만 접근하는 것이다. 확정 전에는 실제 제출을 하지 않는다.
+2. 거버넌스(정부) 층과 Yuan 구성(보류)
+3. 실제 bench 실행 시점과 한도: Opus 5.5·gpt-6-astra·labhq를 실제 CLI로 돌리면 PI 구독 사용량을 쓴다
 
 ## 구조 한눈에
 
 | 층 | 파일 | 역할 |
 |---|---|---|
-| 게이트웨이 | `labhq/gateway/server.py` | WebSocket(러너·클라이언트), REST, 웹 사무실 서빙, 승인 저장소 |
-| 오케스트레이터 | `labhq/orchestrator/cso.py` | 브리핑 → 계획(JSON DAG) → 병렬 실행 → 리뷰 → 보고, HPC 수면/기상, 예산 |
-| 러너 | `labhq/runner/daemon.py` | 게이트웨이에 outbound 접속, 태스크 실행, MCP 배선, 잡 감시 |
-| 어댑터 | `labhq/adapters/*.py` | claude_code · codex · gemini · cli(자체 에이전트) · mock |
+| 게이트웨이 | `labhq/gateway/server.py` | WebSocket(러너·클라이언트), REST, 웹 사무실 서빙, 승인·결정 이력 |
+| 오케스트레이터 | `labhq/orchestrator/cso.py` | 브리핑 → 계획(JSON DAG) → 병렬 실행 → 리뷰 → 보고, HPC 수면/기상, 예산, 질의 라우팅 |
+| 러너 | `labhq/runner/daemon.py`, `versions.py` | 게이트웨이에 outbound 접속, 태스크 실행, MCP 배선, 잡 감시, CLI 버전 보고 |
+| 어댑터 | `labhq/adapters/*.py` | claude_code · codex · cli(자체 에이전트) · antigravity · gemini · mock |
 | 도구 | `labhq/tools/*.py` | SGE/PBS 스케줄러, hpc_mcp, approval_mcp(권한 프롬프트) |
 | 파견직 | `labhq/recruit/paper2agent.py` | 채용 → 오퍼레터 → 수습 → 계약 → 인재풀 |
-| GitHub | `labhq/integrations/github.py` | 요청별 이슈, 코멘트, 보고서 커밋, 공개 가드, @codex 리뷰 |
-| 웹 | `labhq/web/index.html`, `state.js`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, DOM 승인 |
-| 직원 | `agents/core/*.yaml` | 정규직 11명 (엔진·모델·도구·프롬프트) |
+| GitHub·기록 | `labhq/integrations/github.py`, `rounds.py` | 프로젝트 보고, 공개 가드, 개발 라운드 기록 |
+| 점검 | `labhq/doctor.py` | 실행 전 점검과 capability manifest |
+| 웹 | `labhq/web/index.html`, `state.js`, `ui/`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, 결정·작업판·메신저 탭 |
+| 직원 | `agents/core/*.yaml` | 정규직 11명(엔진·모델·도구·프롬프트), 역할 기준은 README §2 |
+| 패치노트 | `patch_notes/README.md`, `scripts/patch_notes.py` | 커밋별 변경 이력과 CI 검사 |
 
 이벤트 프로토콜과 설정은 `README.md` §7–8, 알려진 한계는 §10을 보세요.
-
-## 결정 대기 (PI)
-
-1. HPC 러너 계정: 관리자에게 통제 원본을 읽지 못하는 러너 전용 서비스 계정을 받을지(권장), 다른 방식을 쓸지
-2. 거버넌스(정부) 층과 Yuan의 구성
 
 ## 개발 라운드 기록 (#69)
 
@@ -103,3 +90,4 @@ PI가 그 리뷰를 PR 코멘트로 전달한다. 리뷰에서 요청한 수정�
 
 다음 중 하나면 기록 저장소를 끝냅니다: labhq v1.0, #40 bench 확정 뒤 20 rounds 동안 새 교훈 없음,
 또는 별도 보고 채널로 이전. `dev_log.enabled: false` → 남은 교훈 Yuan 수확 → 저장소 archive → #69 종료 순서입니다.
+기록 저장소는 공개로 바꾸지 않습니다. 이미 올린 기록은 되돌릴 수 없습니다(#69 댓글).
