@@ -1,6 +1,9 @@
 import asyncio
 import json
 import os
+import signal
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -66,12 +69,129 @@ def test_mock_case_runs_all_arms_scores_and_records_case_id(tmp_path):
     round_record = json.loads(Path(labhq_run["round_json"]).read_text(encoding="utf-8"))
     assert round_record["request"]["meta"]["case_id"] == "public-protein-qc"
     assert "PI가 질문을 받으면" not in round_record["request"]["text"]
+    commands = bench._real_commands(bench.load_case("public-protein-qc"), tmp_path, run_dir)
+    assert commands["opus-5.5"][commands["opus-5.5"].index("-p") + 1] == round_record["request"]["text"]
+    assert commands["gpt-6-astra"][-1] == round_record["request"]["text"]
+    for row in result["rows"][1:]:
+        assert row["pi_questions_observable"] is False
+        assert row["pi_interventions"] == 0
+    assert "감지 불가·답변 미제공" in (run_dir / "comparison.md").read_text(encoding="utf-8")
 
 
 def test_scripted_pi_selects_the_matching_answer():
     case = bench.load_case("public-protein-qc")
     assert bench._scripted_answer(case, "중복 accession을 제거할까요?", "clarify") == (
         True, "중복은 제거하지 말고 원본 4행과 unique 3개를 함께 보고한다.")
+
+
+@pytest.mark.parametrize("case", bench.load_cases(), ids=lambda case: case["id"])
+def test_initial_prompt_never_discloses_scripted_pi_answers(case, tmp_path):
+    prompt = bench._prompt(case)
+    commands = bench._real_commands(case, tmp_path)
+    assert commands["opus-5.5"][commands["opus-5.5"].index("-p") + 1] == prompt
+    assert commands["gpt-6-astra"][-1] == prompt
+    assert "PI가 질문을 받으면" not in prompt
+    assert all(item["answer"] not in prompt for item in case["scripted_pi_answers"])
+
+
+def _bench_process_exited(pid):
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.windll.kernel32
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100000, False, pid)
+        if not handle:
+            return True
+        try:
+            return kernel.WaitForSingleObject(handle, 0) == 0
+        finally:
+            kernel.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    stat = Path(f"/proc/{pid}/stat")
+    return stat.is_file() and stat.read_text().rsplit(")", 1)[1].split()[0] == "Z"
+
+
+@pytest.mark.parametrize("arm", ["opus-5.5", "gpt-6-astra"])
+@pytest.mark.parametrize("stop", ["case-timeout", "runner-timeout", "cancel"])
+def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, stop):
+    from labhq.settings import Settings
+
+    pids_file = tmp_path / "pids.txt"
+    script = tmp_path / "stalled_cli.py"
+    script.write_text(
+        "import os, pathlib, subprocess, sys, time\n"
+        "pids = pathlib.Path(sys.argv[1])\n"
+        "if len(sys.argv) > 2:\n"
+        "    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "    pids.with_suffix('.child').write_text(f'{os.getpid()} {child.pid}')\n"
+        "else:\n"
+        "    child = subprocess.Popen([sys.executable, __file__, str(pids), 'child'])\n"
+        "    while not pids.with_suffix('.child').is_file(): time.sleep(0.01)\n"
+        "    pids.write_text(f'{os.getpid()} ' + pids.with_suffix('.child').read_text())\n"
+        "time.sleep(60)\n", encoding="utf-8")
+    case = bench.load_case("public-protein-qc")
+    settings = Settings()
+    settings.runner.task_timeout_s = 30 if stop != "runner-timeout" else 1
+    if stop == "case-timeout":
+        case["timeout_s"] = 1
+    monkeypatch.setattr("labhq.adapters.base.child_config_dirs", lambda *args: [tmp_path])
+    processes = []
+    original_spawn = asyncio.create_subprocess_exec
+
+    async def spawn(*args, **kwargs):
+        proc = await original_spawn(*args, **kwargs)
+        if args[0] == sys.executable:
+            processes.append(proc)
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def exercise():
+        task = asyncio.create_task(bench._run_baseline(
+            case, arm, tmp_path, "real", [sys.executable, str(script), str(pids_file)], settings))
+        pids = []
+        started = time.monotonic()
+        try:
+            await bench._until(pids_file.is_file, 5, "fake CLI did not start")
+            pids = list(map(int, pids_file.read_text().split()))
+            assert len(pids) == 3 and all(not _bench_process_exited(pid) for pid in pids)
+            if stop == "cancel":
+                task.cancel()  # asyncio.run translates Ctrl+C into cancellation of the main task.
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(asyncio.shield(task), 4)
+            else:
+                run = await asyncio.wait_for(asyncio.shield(task), 4)
+                assert run["status"] == "failed"
+                assert run["error"] == "timeout after 1s"
+                assert json.loads((tmp_path / "run.json").read_text())["error"] == run["error"]
+            assert time.monotonic() - started < 5
+            await bench._until(lambda: all(_bench_process_exited(pid) for pid in pids),
+                               2, "baseline left a live descendant")
+        finally:
+            # Keep the deliberately failing pre-fix regression from leaking its fake CLI.
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if not pids and pids_file.is_file():
+                pids = list(map(int, pids_file.read_text().split()))
+            for pid in reversed(pids):
+                if not _bench_process_exited(pid):
+                    try:
+                        os.kill(pid, signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+            for proc in processes:
+                if proc.returncode is None:
+                    proc.kill()
+                await asyncio.wait_for(proc.wait(), 3)
+
+    asyncio.run(exercise())
 
 
 def test_scripted_pi_requires_kind_and_keeps_explicit_denial():

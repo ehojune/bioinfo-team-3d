@@ -72,7 +72,7 @@ def load_cases(cases_root: Path | None = None) -> list[dict[str, Any]]:
     return sorted(cases, key=lambda case: (int(case.get("order", 999)), case["id"]))
 
 
-def _prompt(case: dict[str, Any], include_scripted_answers: bool = True) -> str:
+def _prompt(case: dict[str, Any]) -> str:
     sections = [case["request"].strip(), "\n참고 자료(이 실행에서 고정):"]
     total = 0
     for reference in case["references"]:
@@ -82,10 +82,6 @@ def _prompt(case: dict[str, Any], include_scripted_answers: bool = True) -> str:
             raise ValueError("benchmark references exceed 1 MB")
         source = f"\n출처: {reference['source']}" if reference.get("source") else ""
         sections.append(f"\n### {reference['label']}{source}\n{body.strip()}")
-    if include_scripted_answers:
-        sections.append("\nPI가 질문을 받으면 다음 답변만 사용한다:")
-        for answer in case["scripted_pi_answers"]:
-            sections.append(f"- {answer['question_contains']}: {answer['answer']}")
     sections.append("\n산출물은 근거와 검사 가능한 수치를 포함한 Markdown 보고서 하나로 작성한다.")
     return "\n".join(sections) + "\n"
 
@@ -211,7 +207,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         runner = Runner(settings)
         runner_task = asyncio.create_task(runner.run_forever())
         await _until(lambda: "cso" in hub.agents, 20, "benchmark runner did not register")
-        rid = hub.create_request(RequestIn(text=_prompt(case, include_scripted_answers=False),
+        rid = hub.create_request(RequestIn(text=_prompt(case),
                                            budget_usd=float(case["budget_usd"]),
                                            meta={"case_id": case["id"]}))
         await _until(lambda: hub.requests[rid]["status"] != "running", 900, "benchmark request timed out")
@@ -222,6 +218,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         run = {
             "engine": "labhq", "mode": engines, "request_id": rid, "status": request["status"],
             "pi_interventions": interventions, "cost_usd": request.get("cost_usd"),
+            "pi_questions_observable": True,
             "unscripted_approvals": unscripted_approvals,
             "cost_known": request.get("cost_known", True), "usage": request.get("usage") or {},
             "duration_s": round(time.monotonic() - started, 3),
@@ -284,7 +281,7 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
                "cost_usd": 0.0, "cost_known": True, "usage": {},
                "duration_s": round(time.monotonic() - started, 3)}
     else:
-        from .adapters.base import _resolve_command
+        from .adapters.base import AgentAdapter, _resolve_command
 
         engine_name = "claude_code" if arm == "opus-5.5" else "codex"
         engine = getattr(settings.engines, engine_name)
@@ -298,10 +295,25 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
             if global_docs:
                 raise RuntimeError("Codex baseline refused: global AGENTS instructions would change the comparison")
         command = _resolve_command(command, env, engine_name)
+        timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
+        group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                      if os.name == "nt" else {"start_new_session": True})
         process = await asyncio.create_subprocess_exec(*command, cwd=arm_dir, env=env,
+                                                       stdin=asyncio.subprocess.DEVNULL,
                                                        stdout=asyncio.subprocess.PIPE,
-                                                       stderr=asyncio.subprocess.PIPE)
-        stdout, stderr = await process.communicate()
+                                                       stderr=asyncio.subprocess.PIPE, **group_args)
+        drain = asyncio.create_task(process.communicate())
+        error = None
+        try:
+            await asyncio.wait_for(asyncio.shield(drain), timeout)
+        except asyncio.TimeoutError:
+            error = f"timeout after {timeout:g}s"
+        finally:
+            # Shield the pipes so timeout, Ctrl+C and cancellation can kill and reap the tree.
+            if not drain.done():
+                await AgentAdapter._kill(process)
+                await asyncio.shield(drain)
+        stdout, stderr = drain.result()
         raw = stdout.decode("utf-8", "replace")
         (arm_dir / "events.jsonl").write_text(raw, encoding="utf-8")
         (arm_dir / "stderr.txt").write_text(stderr.decode("utf-8", "replace"), encoding="utf-8")
@@ -312,9 +324,12 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         else:
             answer, usage = _parse_codex(raw, arm_dir / "answer.md")
             cost, known = None, False
-        run = {"engine": arm, "mode": "real", "status": "done" if process.returncode == 0 else "failed",
+        run = {"engine": arm, "mode": "real", "status": "done" if process.returncode == 0 and not error else "failed",
                "returncode": process.returncode, "pi_interventions": 0, "cost_usd": cost,
                "cost_known": known, "usage": usage, "duration_s": round(time.monotonic() - started, 3)}
+        if error:
+            run["error"] = error
+    run["pi_questions_observable"] = False  # Noninteractive CLI: no question/answer channel.
     (arm_dir / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return run
 
@@ -337,6 +352,7 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "artifact_exists": answer.is_file() and bool(answer.read_text(encoding="utf-8").strip()),
         "checks_passed": checked.returncode == 0, "check_output": (checked.stdout + checked.stderr).strip(),
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
+        "pi_questions_observable": bool(run.get("pi_questions_observable", run["engine"] == "labhq")),
         "unscripted_approvals": int(run.get("unscripted_approvals") or 0),
         "cost_known": bool(run.get("cost_known")),
         "token_total": token_total,
@@ -348,13 +364,15 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| engine | 상태 | 산출물 | 검사 | PI 개입 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
-             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+             "| engine | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
+             "|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|"]
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
+        pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
         lines.append(f"| {row['engine']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
                      f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | "
+                     f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {cost} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
     failures = [row for row in result["rows"] if row.get("error")]

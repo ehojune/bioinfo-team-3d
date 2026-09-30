@@ -88,6 +88,8 @@ labhq bench test-agent --output ~/.labhq/bench
 
 CI에서는 `--engines mock`으로 세 arm과 검사·비교표 생성을 끝까지 확인합니다. case YAML은
 `bench/cases/`에 요청, 고정 참고 자료, scripted PI 답변, 검사 스크립트, 비용 상한을 담습니다.
+초기 prompt는 세 arm이 같으며 scripted 답변은 LabHQ의 실제 질문에만 제공합니다. 비대화 baseline은 질문 감지가 불가능해 답변을 받지 않으며 결과표에 이 한계를 표시합니다.
+baseline 시간 상한은 case의 `timeout_s`, 없으면 `runner.task_timeout_s`를 씁니다. timeout·취소 시 CLI 프로세스 트리를 종료합니다.
 결과는 `case-id/<run-id>/comparison.md`·`comparison.json`, 전체 실행은 `test-agent-summary.*`로 남습니다.
 LabHQ round record의 `request.meta.case_id`로 같은 실행을 찾을 수 있습니다. 결과 기본 폴더는
 `$LABHQ_BENCH_DIR` 또는 `~/.labhq/bench`이며 저장소에는 넣지 않습니다.
