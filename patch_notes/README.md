@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:46 | [`82f267b`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/82f267b) | **package에 든 설정 template을 저장소 예시와 다시 맞췄습니다.** main의 bench 설정이 예시에만 들어가 있던 것을 동일성 테스트가 잡았습니다 |
 | 06:44 | [`dbc0e79`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/dbc0e79) | **main 병합에서 init과 bench를 함께 살렸습니다.** CLI에 `init`·`bench` 명령을 둘 다 두고, package data에 설정 template과 bench 자료를 함께 넣었습니다 |
 | 06:39 | [`191dd34`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/191dd34) | **init이 클러스터 종류를 추측하지 않게 했습니다** (Codex 리뷰). PBS에도 `qsub`·`qstat`이 있어서 전에는 SGE 설정이 저장돼 첫 PBS job부터 실패했습니다. 이제 SGE·PBS 관리 도구와 환경변수로 종류를 판별하고, 모르면 대화형에서는 묻고 `--yes`에서는 실패합니다 |
 | 06:32 | [`42442ed`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/42442ed) | **main 병합에서 doctor의 두 변경을 함께 살렸습니다.** 직원 명단이 없을 때 init에서는 fail로 보는 규칙과 #96의 `force_engine` 오타 보고를 합쳤습니다 |
