@@ -2,6 +2,9 @@
 
 import hashlib
 import os
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -177,9 +180,68 @@ def test_config_flag_and_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("LABHQ_CONFIG", str(target))
     cli.main(["init", "--yes"])
     assert target.exists()
+    agents_dir = Path(yaml.safe_load(target.read_text(encoding="utf-8"))["runner"]["agents_dir"])
+    assert agents_dir.is_absolute()
+    assert list((agents_dir / "core").glob("*.yaml"))
     other = tmp_path / "explicit" / "labhq.yaml"
     cli.main(["-c", str(other), "init", "--yes"])
     assert other.exists()
+    assert Path(yaml.safe_load(other.read_text(encoding="utf-8"))["runner"]["agents_dir"]) == agents_dir
+
+
+def test_packaged_template_matches_repository_copy():
+    repository = Path(__file__).resolve().parents[1] / "config" / "labhq.example.yaml"
+    assert wizard._template_text() == repository.read_text(encoding="utf-8")
+
+
+def test_packaged_resource_works_outside_repository(tmp_path):
+    repository = Path(__file__).resolve().parents[1]
+    package_archive = tmp_path / "labhq-package.zip"
+    with zipfile.ZipFile(package_archive, "w") as archive:
+        for path in (repository / "labhq").rglob("*.py"):
+            archive.write(path, path.relative_to(repository))
+        resource = repository / "labhq" / "config" / "labhq.example.yaml"
+        archive.write(resource, resource.relative_to(repository))
+    assert '"config/*.yaml"' in (repository / "pyproject.toml").read_text(encoding="utf-8")
+    probe = (
+        "import pathlib, sys; sys.path.insert(0, sys.argv[1]); "
+        "from labhq.init_wizard import _template_text; "
+        "from labhq import cli; "
+        "assert 'runner:' in _template_text(); "
+        "target = pathlib.Path(sys.argv[2]); "
+        "code = 0; "
+        "\ntry: cli.main(['-c', str(target), 'init', '--yes'])"
+        "\nexcept SystemExit as exc: code = exc.code"
+        "\nassert code == 1; assert not target.exists()"
+    )
+    subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(package_archive), str(tmp_path / "outside" / "labhq.yaml")],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_missing_roster_fails_without_writing_config(tmp_path, monkeypatch, capsys):
+    target = tmp_path / "wheel-install" / "labhq.yaml"
+    monkeypatch.setattr(wizard, "_find_agents_dir", lambda *_: None)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["-c", str(target), "init", "--yes"])
+    assert exc.value.code == 1
+    assert not target.exists()
+    assert "roster" in capsys.readouterr().err
+
+
+def test_existing_config_with_no_active_agents_fails_init(tmp_path, capsys):
+    target = tmp_path / "existing.yaml"
+    empty = tmp_path / "empty-agents"
+    empty.mkdir()
+    target.write_text(yaml.safe_dump({"runner": {"agents_dir": str(empty)}}), encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["-c", str(target), "init", "--yes"])
+    assert exc.value.code == 1
+    assert "no active agents found" in capsys.readouterr().out
 
 
 def _app(tmp_path, monkeypatch):

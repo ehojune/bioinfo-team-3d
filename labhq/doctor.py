@@ -112,7 +112,7 @@ def _network_check(url: str) -> bool:
 
 
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
-            dry_run: bool = False) -> dict:
+            dry_run: bool = False, require_roster: bool = False) -> dict:
     rows: list[dict] = []
     config = settings.config_path
     if requested_config and not config:
@@ -194,7 +194,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         agents = []
         rows.append(_row("staff", "roster", "fail", type(exc).__name__, "Fix the agent YAML files."))
     if not agents:
-        rows.append(_row("staff", "roster", "warn", "no active agents found", "Set runner.agents_dir."))
+        rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
+                         "no active agents found", "Set runner.agents_dir."))
     for agent in agents:
         if settings.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(settings.runner.force_engine)})

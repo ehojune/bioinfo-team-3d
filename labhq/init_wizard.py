@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+from importlib import resources
 from pathlib import Path
 
 import yaml
@@ -12,6 +13,37 @@ import yaml
 from . import doctor
 from .adapters.base import _resolve_command
 from .settings import Settings
+
+
+class InitError(ValueError):
+    """A safe, user-facing initialization error."""
+
+
+def _template_text() -> str:
+    template = resources.files("labhq").joinpath("config").joinpath("labhq.example.yaml")
+    return template.read_text(encoding="utf-8")
+
+
+def _find_agents_dir(target: Path, configured: str) -> Path | None:
+    relative = Path(os.path.expandvars(os.path.expanduser(configured)))
+    candidates = [
+        target.parent / relative,
+        Path(__file__).resolve().parents[1] / "agents",
+        Path.cwd() / "agents",
+    ]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            probe = Settings.model_validate({"runner": {"agents_dir": str(candidate)}})
+            if doctor._roster(probe):
+                return candidate
+        except (OSError, ValueError, yaml.YAMLError):
+            continue
+    return None
 
 
 def _is_windows() -> bool:
@@ -56,8 +88,11 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         print("기존 설정과 token을 보존합니다. 교체하려면 --force를 사용하세요.")
         settings = Settings.load(str(target))
     else:
-        example = Path(__file__).resolve().parents[1] / "config" / "labhq.example.yaml"
-        data = yaml.safe_load(example.read_text(encoding="utf-8"))
+        data = yaml.safe_load(_template_text())
+        agents_dir = _find_agents_dir(target, data.setdefault("runner", {}).get("agents_dir", "../agents"))
+        if agents_dir is None:
+            raise InitError("활성 직원 roster를 찾지 못했습니다. agents/core가 있는 checkout에서 다시 실행하세요.")
+        data["runner"]["agents_dir"] = str(agents_dir)
         gateway = data.setdefault("gateway", {})
         for key in ("runner_token", "client_token"):
             gateway[key] = "<generated at write>" if dry_run else secrets.token_urlsafe(32)
@@ -110,7 +145,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             print("설정 저장 완료 (token과 로컬 경로 출력 생략)")
         if staff_home:
             print("로그인은 직접 실행하세요: " + _login_command(settings))
-    result = doctor.collect(settings, dry_run=dry_run)
+    result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
     print(doctor.render(result))
     summary = result["summary"]
     print(f"doctor: ok {summary['ok']}, warn {summary['warn']}, fail {summary['fail']}")

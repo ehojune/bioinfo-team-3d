@@ -436,11 +436,13 @@ def main(argv: list[str] | None = None) -> None:
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     if args.cmd == "init":
-        from .init_wizard import run
+        from .init_wizard import InitError, run
         from yaml import YAMLError
 
         try:
             result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force)
+        except InitError as exc:
+            p.exit(1, f"init: {exc}\n")
         except (OSError, ValueError, YAMLError):
             p.exit(1, "init: 설정을 읽거나 쓸 수 없습니다. 설정 파일과 권한을 확인하세요.\n")
         if result["summary"]["fail"]:

@@ -28,7 +28,7 @@ build-backend = "setuptools.build_meta"
 include = ["labhq*"]
 
 [tool.setuptools.package-data]
-labhq = ["web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*", "web/lab3d/assets/*",
+labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*", "web/lab3d/assets/*",
          "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]
