@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, record_model_id
 
 
 class AntigravityAdapter(AgentAdapter):
@@ -46,6 +46,7 @@ class AntigravityAdapter(AgentAdapter):
         typ = ev.get("event")
         data = ev.get(typ) or {}
         if typ == "init":
+            record_model_id(st, ctx, data.get("model"))
             await ctx.emit("agent.status", {"state": "working", "model": data.get("model")})
         elif typ == "step_update":
             st.session_id = data.get("conversation_id") or st.session_id

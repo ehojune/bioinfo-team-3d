@@ -30,6 +30,20 @@ def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
     assert "worker" in doctor.render(result)
 
 
+def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "not-reported")
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    result = doctor.collect(settings)
+    checks = {row["name"]: row for row in result["checks"]}
+    assert checks["claude_parent_session_env"]["status"] == "warn"
+    assert "2" in checks["claude_parent_session_env"]["detail"]
+    assert "not-reported" not in json.dumps(result)
+    assert checks["codex_user_skills_leak"]["status"] == "warn"
+    assert checks["codex_user_skills_leak"]["detail"] == "직원 세션이 PI 개인 skill·규칙을 읽을 수 있음"
+
+
 def test_doctor_uses_runner_resolution_and_prefix_args(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     settings.engines.claude_code.bin = "node"

@@ -21,6 +21,7 @@ from typing import Any
 
 from .. import __version__
 from ..models import AgentSpec, Task
+from ..util import atomic_write_text
 
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
 
@@ -72,7 +73,7 @@ class TaskWorkspace:
             "agent_spec_sha256": hashlib.sha256(self.agent.model_dump_json().encode()).hexdigest(),
         }
         data.update(fields)
-        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        atomic_write_text(p, json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
     def provenance(self) -> dict[str, Any]:
         """The manifest fields round records need, sent with the result instead of read from this disk."""
@@ -80,7 +81,7 @@ class TaskWorkspace:
             data = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
-        keep = ("started_at", "ended_at", "engine", "model", "engine_cli_version", "plugins", "turns")
+        keep = ("started_at", "ended_at", "engine", "model", "model_id", "engine_cli_version", "plugins", "turns")
         runs = {tid: {k: run[k] for k in keep if k in run}
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
@@ -92,4 +93,4 @@ class TaskWorkspace:
             self.write_manifest()
         data = json.loads(p.read_text(encoding="utf-8"))
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
-        p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        atomic_write_text(p, json.dumps(data, indent=2, ensure_ascii=False, default=str))

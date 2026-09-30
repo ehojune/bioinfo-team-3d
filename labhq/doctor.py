@@ -20,6 +20,7 @@ from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner.versions import _probe, _version
 from .settings import Settings
+from .util import parent_claude_markers
 
 SOURCES = {
     "ENA": "https://www.ebi.ac.uk/ena/browser/home",
@@ -100,6 +101,14 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     else:
         rows.append(_row("config", "file", "ok" if config else "warn",
                          _safe_path(config) if config else "defaults", "Set --config for this host."))
+    markers = parent_claude_markers(dict(os.environ))
+    rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
+                     f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
+                     if markers else "부모 Claude 세션 마커 없음",
+                     "직원 CLI는 labhq runner를 통해 시작하세요."))
+    rows.append(_row("staff", "codex_user_skills_leak", "warn",
+                     "직원 세션이 PI 개인 skill·규칙을 읽을 수 있음",
+                     "PI 결정: 현재는 격리하지 않으며 재현성 해석에 반영하세요."))
     for name, raw in (("gateway state", settings.gateway.state_dir), ("runner state", settings.runner.state_dir),
                       ("workspace", settings.runner.workspace_root)):
         path = settings.path(raw)

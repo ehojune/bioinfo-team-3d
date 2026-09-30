@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from .models import AgentSpec, Employment
+from .util import atomic_write_text
 
 
 def _dump(spec: AgentSpec) -> str:
@@ -59,7 +60,7 @@ class Registry:
                                       "archived_at": time.time()}
         dst = self.talent_dir / self._slug(spec)
         dst.mkdir(parents=True, exist_ok=True)
-        (dst / "contract.yaml").write_text(_dump(spec), encoding="utf-8")
+        atomic_write_text(dst / "contract.yaml", _dump(spec))
         if path and path.exists():
             path.unlink()
         self.agents.pop(spec.id, None)
@@ -85,10 +86,10 @@ class Registry:
         assert spec.employment == Employment.contract and spec.contract
         p = self.agents_dir / "contract" / f"{spec.id}.yaml"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(_dump(spec), encoding="utf-8")
+        atomic_write_text(p, _dump(spec))
         tdir = self.talent_dir / self._slug(spec)
         tdir.mkdir(parents=True, exist_ok=True)
-        (tdir / "contract.yaml").write_text(_dump(spec), encoding="utf-8")
+        atomic_write_text(tdir / "contract.yaml", _dump(spec))
         self.agents[spec.id] = spec
         self.paths[spec.id] = p
         return p

@@ -35,7 +35,17 @@ def _contract(tmp: Path, expires_in: float) -> AgentSpec:
                                            talent_dir=str(tmp / "talent" / "tissue")))
 
 
-def test_contract_lifecycle(tmp_path):
+def test_contract_lifecycle(tmp_path, monkeypatch):
+    import labhq.registry as registry_module
+
+    writes = []
+    original = registry_module.atomic_write_text
+
+    def record(path, text):
+        writes.append(Path(path))
+        original(path, text)
+
+    monkeypatch.setattr(registry_module, "atomic_write_text", record)
     (tmp_path / "agents" / "core").mkdir(parents=True)
     reg = Registry(tmp_path / "agents", tmp_path / "talent")
     reg.save_contract(_contract(tmp_path, 3600))
@@ -48,6 +58,8 @@ def test_contract_lifecycle(tmp_path):
     spec = reg.rehire("tissue", days=7)
     reg.load()
     assert "c_tissue" in reg.agents and spec.contract.expires_at > time.time() + 6 * 86400
+    assert tmp_path / "agents" / "contract" / "c_tissue.yaml" in writes
+    assert tmp_path / "talent" / "tissue" / "contract.yaml" in writes
 
 
 def test_expired_contract_goes_to_talent_pool(tmp_path):

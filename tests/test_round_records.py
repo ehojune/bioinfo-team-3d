@@ -250,11 +250,12 @@ async def test_record_uses_the_provenance_a_remote_runner_sent(tmp_path):
         workdir="/runner-only/disk/task-a",  # not on the gateway's disk
         provenance={"engine": "codex", "model": "model-remote", "runs": {"t1": {
             "started_at": 10.0, "ended_at": 25.0, "turns": 3, "engine_cli_version": "2.0.1",
-            "plugins": [{"name": "remote-plugin", "version": "1.0"}]}}})
+            "model_id": "model-resolved", "plugins": [{"name": "remote-plugin", "version": "1.0"}]}}})
     record = hub.rounds.write("req-remote")
     step = next(s for s in record["steps"] if s["id"] == "a")
     assert (step["duration_s"], step["turns"], step["engine_cli_version"]) == (15.0, 3, "2.0.1")
     assert "model-remote" in record["environment"]["model_ids"]
+    assert "model-resolved" in record["environment"]["model_ids"]
     assert record["environment"]["plugin_provenance"][0]["name"] == "remote-plugin"
 
 
