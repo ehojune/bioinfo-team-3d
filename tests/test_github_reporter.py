@@ -12,12 +12,23 @@ import pytest
 import uvicorn
 
 from labhq.gateway.server import Hub, RequestIn, create_app
-from labhq.integrations.github import GitHubClient, codex_comment, sanitize
+from labhq.integrations.github import GitHubClient, GitHubHTTPError, codex_comment, sanitize
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, ProjectSettings, Settings
 from labhq.util import free_port
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def test_github_error_preserves_rate_limit_reset_as_retry_delay(monkeypatch):
+    from labhq.integrations import github
+
+    monkeypatch.setattr(github.time, "time", lambda: 1_000)
+    response = httpx.Response(403, headers={"X-RateLimit-Remaining": "0",
+                                            "X-RateLimit-Reset": "1060"}, text="limited")
+    error = GitHubHTTPError("GET", "/repos/o/p", response)
+    assert error.rate_limited
+    assert error.retry_delay_s() == 60
 
 
 def fake_github(calls: list):
