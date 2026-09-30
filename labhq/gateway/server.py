@@ -198,7 +198,8 @@ class Hub:
                 "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),
                                   "total": len(steps) if steps else (1 if req.get("mode") == "direct" else 0),
                                   "steps": states}, "cost_usd": req.get("cost_usd", 0),
-                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {})}
+                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {}),
+                "usage_known": req.get("usage_known", True)}
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -581,9 +582,10 @@ class Hub:
                 if tid not in costs:
                     amount = float((msg.get("data") or {}).get("cost_usd") or 0)
                     costs[tid] = amount
-                    req["cost_usd"] = round(float(req.get("cost_usd") or 0) + amount, 4)
+                    req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
                     known = result.cost_known if result.cost_known is not None else result.cost_usd is not None
                     req["cost_known"] = req.get("cost_known", True) and known
+                    req["usage_known"] = req.get("usage_known", True) and result.usage_known
                     req.setdefault("usage_by_task", {})[tid] = result.usage
                     totals: dict[str, int] = {}
                     for usage in req["usage_by_task"].values():
@@ -838,8 +840,9 @@ class Hub:
                            {"approval": req.model_dump(mode="json"), "approved": False,
                             "note": "timed out", "state": "timed_out", "decided_at": time.time()})
             await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": request_id,
-                                "data": {"id": req.id, "approved": False, "note": "timed out"}})
-            return {"approved": False, "note": "timed out", "approval_id": req.id,
+                               "data": {"id": req.id, "approved": False, "note": "timed out",
+                                        "state": "timed_out"}})
+            return {"approved": False, "note": "timed out", "state": "timed_out", "approval_id": req.id,
                     "decided_at": time.time()}
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
@@ -903,7 +906,7 @@ class Hub:
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
-                                                                  "usage", "agent_id")},
+                                                                  "usage", "usage_known", "agent_id")},
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
