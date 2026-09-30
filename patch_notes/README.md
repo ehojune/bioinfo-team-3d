@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:20 | [`84833b8`](https://github.com/ehojune/bioinfo-team-3d/pull/76/commits/84833b8) | **막힌 직원이 묻고 같은 세션으로 이어 갈 수 있습니다(#39 `labhq_ask`).** 지금까지 직원은 막히면 추측하거나 실패로 끝났습니다. 이제 CSO·시설팀·동료·PI에게 물을 수 있습니다. PI 결정대로 CSO가 먼저 답하고, 데이터 구역·예산 상한·범위 밖·설치·파괴적 작업만 PI 폰으로 갑니다(이 판정은 코드에 고정해 CSO가 넘을 수 없습니다). CSO 5분·시설팀 20분·동료 15분 안에는 세션 안에서 기다리고, PI 답은 기다리지 않고 단계를 재웠다가 답이 오면 같은 세션으로 이어 갑니다. 질문 상한은 task당 3회·대상당 2회·요청당 12회이고, 질문과 대리 답변은 모두 사내 메신저에 남습니다. 러너 broker의 공용 token을 task별 token으로 바꿔 다른 직원 이름으로 보내면 403입니다(#55 6번). rebase 때 앞 PR의 일반 timeout이 labhq_ask의 긴 대기를 덮어쓰던 것도 고쳤습니다 |
 | 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
 | 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |
