@@ -402,3 +402,29 @@ async def test_budget_denial_after_research_plan_correction_stops_before_cp1():
     assert [item["kind"] for item in hub.approvals] == ["budget"]
     assert hub.requests["r"]["status"] == "failed"
     assert "예산 승인 거부" in hub.requests["r"]["report"]
+
+
+def _stats(**changes):
+    from labhq.research.contract import StatisticsPlan
+    base = {"applicable": True, "reason": "group comparison", "estimand": "condition effect",
+            "analysis_unit": "donor", "comparison_groups": ["case", "control"], "primary_outcomes": ["expression"],
+            "multiple_testing": "FDR", "missing_and_exclusions": "pre-specified",
+            "effect_size_and_interval": "estimate and CI"}
+    return StatisticsPlan.model_validate({**base, **changes})
+
+
+@pytest.mark.parametrize("field,empty", [("comparison_groups", []), ("multiple_testing", None),
+                                         ("missing_and_exclusions", None), ("effect_size_and_interval", None)])
+def test_applied_statistics_must_fix_each_decision_before_approval(field, empty):
+    # An unstated choice could be made after seeing results, so CP1 cannot freeze it.
+    with pytest.raises(ValidationError):
+        _stats(**{field: empty})
+    waived = _stats(**{field: empty, "not_applicable": {field: "single pre-specified outcome"}})
+    assert waived.not_applicable[field]
+    with pytest.raises(ValidationError):
+        _stats(**{field: empty, "not_applicable": {field: "  "}})
+
+
+def test_statistics_waiver_cannot_skip_core_fields():
+    with pytest.raises(ValidationError):
+        _stats(estimand=None, not_applicable={"estimand": "exploratory"})

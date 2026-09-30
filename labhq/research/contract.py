@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import time
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -91,11 +91,26 @@ class StatisticsPlan(StrictModel):
     missing_and_exclusions: str | None = None
     effect_size_and_interval: str | None = None
     sensitivity_analyses: list[str] = []
+    # Decisions that may be waived only with a stated reason (field -> reason).
+    not_applicable: dict[str, str] = {}
+
+    CORE: ClassVar[tuple[str, ...]] = ("estimand", "analysis_unit", "primary_outcomes")
+    WAIVABLE: ClassVar[tuple[str, ...]] = ("comparison_groups", "multiple_testing", "missing_and_exclusions", "effect_size_and_interval")
 
     @model_validator(mode="after")
     def complete_if_applicable(self) -> "StatisticsPlan":
-        if self.applicable and not (self.estimand and self.analysis_unit and self.primary_outcomes):
+        if not self.applicable:
+            return self
+        if not all(getattr(self, name) for name in self.CORE):
             raise ValueError("applicable statistics requires estimand, analysis_unit, and primary_outcomes")
+        unknown = set(self.not_applicable) - set(self.WAIVABLE)
+        if unknown:
+            raise ValueError(f"statistics not_applicable may only waive {', '.join(self.WAIVABLE)}")
+        # Freezing these before analysis is the point: an unstated choice can be made after seeing results.
+        missing = [name for name in self.WAIVABLE
+                   if not getattr(self, name) and not str(self.not_applicable.get(name, "")).strip()]
+        if missing:
+            raise ValueError("applicable statistics must fix or give a not_applicable reason for: " + ", ".join(missing))
         return self
 
 

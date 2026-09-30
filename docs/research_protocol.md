@@ -31,7 +31,7 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `brief` | 질문·용도·대상·범위·산출물·관찰 가능한 완료 조건 |
 | 가설 | 설명·비교 연구는 주가설, null/대안, 구별할 관찰. 탐색·기술 조사는 탐색 목적 |
 | `protocol` | 분석 단위, 선정/제외, 비교군, 주요 지표, 검증법, 자원 상한, 중단·승인 조건, data boundary |
-| 통계 | 적용 여부와 이유. 적용 시 estimand·독립 단위·검정군·주요 outcome·다중검정·결측·효과크기/CI |
+| 통계 | 적용 여부와 이유. 적용 시 estimand·독립 단위·주요 outcome은 필수, 검정군·다중검정·결측·효과크기/CI는 정하거나 `not_applicable`에 사유를 적는다 |
 | step | phase, claim ID, input ref, output, check, evidence slot, dependency |
 | pack | 정확한 `id@version`과 SHA-256, `pack_values[pack_key]`의 field·validator·acceptance 설명 |
 
