@@ -197,6 +197,9 @@ function apply(ev, replay = false) {
     case 'request.completed': case 'request.failed': {
       const q = req(rid);
       q.status = t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
+        S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;
+      }
       if (d.cost_known === false) q.costKnown = false;
       if (d.report) q.report = d.report;
       if (d.error) q.error = d.error;

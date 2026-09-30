@@ -157,6 +157,32 @@ def test_steps_asleep_on_hpc_count_as_active(tmp_path):
     assert hub.running_tasks() == []
 
 
+@pytest.mark.parametrize("wake_first", [False, True])
+@pytest.mark.asyncio
+async def test_finished_jobs_do_not_count_as_sleeping_during_wake(tmp_path, wake_first):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r1"] = {"id": "r1", "text": "x", "status": "running", "created_at": 1.0,
+                          "plan": {"steps": [{"id": "s1"}]}, "results": {}}
+    sleeping = {"request_id": "r1", "step_id": "s1", "accepted": True, "completed": True,
+                "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}}
+    wake = {**sleeping, "completed": False, "result": None}
+    if wake_first:
+        hub.store.put("task", "wake", wake)
+    hub.store.put("task", "sleep", sleeping)
+    await hub.on_runner_message("runner", {"type": "jobs.finished", "task_id": "sleep",
+                                          "request_id": "r1", "data": {}})
+    if not wake_first:
+        assert hub.running_tasks() == []
+        hub.store.put("task", "wake", wake)
+    assert [t["id"] for t in hub.running_tasks()] == ["wake"]
+    assert hub.request_summary(hub.requests["r1"])["step_progress"]["steps"] == {"s1": "running"}
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["running_tasks"] == 1
+
+
 @pytest.mark.asyncio
 async def test_failure_comment_keeps_stored_accounting(tmp_path):
     import httpx

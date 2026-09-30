@@ -12,6 +12,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:41 | [`cba4dc2`](https://github.com/ehojune/bioinfo-team-3d/pull/65/commits/cba4dc2) | **HPC에서 깨어나는 동안 이미 끝난 작업이 계속 '수면 중'으로 세지던 문제(#33).** 기상 처리 중에는 `jobs_done`에 들어간 작업도 hibernating 집계에 남아 health와 상태 화면이 틀렸습니다. 끝난 작업은 집계에서 뺍니다 |
+| 01:41 | [`65099fc`](https://github.com/ehojune/bioinfo-team-3d/pull/65/commits/65099fc) | **직접 만든 CLI 직원(`engine: cli`)의 token 사용량이 결과에서 사라지던 문제(#31).** JSONL usage 이벤트는 받았지만 RunState에 남기지 않아 작업 결과, manifest, 요청 합계가 모두 0이었습니다. 유효한 counter만 골라 보존합니다 |
+| 01:41 | [`f3dd98b`](https://github.com/ehojune/bioinfo-team-3d/pull/65/commits/f3dd98b) | **웹 화면의 비용 합계가 최종 비용과 어긋나던 문제(#32).** 진행 중 들어온 부분 비용을 더하기만 하고, 종료 이벤트의 최종 비용으로 맞추지 않았습니다. 이제 요청 합계는 최종 비용으로 바꾸고 전체 합계에는 차액만 반영합니다. 같은 종료 이벤트가 두 번 와도 두 번 더하지 않습니다 |
+| 01:41 | [`af7cdd5`](https://github.com/ehojune/bioinfo-team-3d/pull/65/commits/af7cdd5) | **Windows npm shim이 옆에 둔 Node 대신 PATH의 Node를 쓰던 문제(#30).** npm 전역 설치 shim은 자기 폴더의 `node.exe`를 먼저 부르는데, labhq는 shim을 풀어 실행하면서 PATH에서 `node`를 찾았습니다. PATH의 Node가 다른 버전이면 CLI가 엉뚱한 런타임으로 돕니다. launcher를 읽어 shim 옆 Node가 있으면 그것을, 없으면 PATH를 씁니다 |
 | 01:33 | [`baba229`](https://github.com/ehojune/bioinfo-team-3d/pull/48/commits/baba229) | **GitHub에 쓰기 직전에 저장소 공개 여부를 다시 확인합니다** (Codex 리뷰). 확인은 한 번 앞에서 하고, 그 뒤에 기존 issue를 여러 쪽 조회했습니다. 그 사이 저장소가 공개로 바뀌면 연구 기록이 그대로 올라갈 수 있었습니다. 같은 부류의 틈이 라운드마다 더 좁게 나와서 사례를 막지 않고 구조로 닫았습니다. 모든 POST·PATCH 바로 앞에 확인 호출이 붙고, 그 사이에 다른 대기가 없습니다. 게시 재시도는 #54로 넘겼습니다 |
 | 01:32 | [`910e408`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/910e408) | **README 갱신 여부를 최종 diff로 판정합니다** (Codex 리뷰). 커밋별로 고친 파일을 합쳐서 봤더니, 한 커밋이 README를 고치고 다음 커밋이 되돌려도 통과했습니다. 최종 브랜치에는 README 변경이 없는데요. 자체 변경이 있는 merge commit 검사는 #53로 넘겼습니다 |
 | 01:30 | [`7ce3d95`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/7ce3d95) | `patch_notes.py rows`가 CI의 Python 3.10에서 커밋 시각(`...Z`)을 못 읽어 테스트가 실패했습니다. `fromisoformat`은 3.11부터 `Z`를 받습니다. Unix 시각으로 읽도록 바꿨습니다. STATUS의 소급 건수도 96개로 바로잡았습니다 |

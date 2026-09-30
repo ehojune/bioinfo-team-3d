@@ -65,3 +65,49 @@ async def test_missing_binary_fails_cleanly(tmp_path):
     ctx, _ = _ctx(tmp_path, CliSpec(command=["definitely-not-installed-bioinfo-agent"]))
     res = await get_adapter(Engine.cli, ctx.settings).run(ctx)
     assert not res.ok and "executable not found" in res.error
+
+
+async def test_jsonl_usage_keeps_cumulative_token_counters(tmp_path):
+    script = tmp_path / "agent.py"
+    events = [
+        {"type": "usage", "tokens": {"input_tokens": 2, "cache_read_tokens": 1}},
+        {"type": "usage", "tokens": {"input_tokens": 7, "output_tokens": 4, "custom_tokens": 0}},
+        {"type": "usage", "tokens": {"input_tokens": -1, "output_tokens": True, "bad": "9"}},
+        {"type": "usage", "cost_usd": 0.3},
+        {"type": "result", "ok": True, "text": "done"},
+    ]
+    script.write_text("import json\n" + "\n".join(f"print({json.dumps(json.dumps(ev))})" for ev in events))
+    ctx, emitted = _ctx(tmp_path, CliSpec(command=[sys.executable, str(script)], output="jsonl"))
+    result = await get_adapter(Engine.cli, ctx.settings).run(ctx)
+    assert result.ok and result.cost_usd == 0.3
+    assert result.usage == {"input_tokens": 7, "cache_read_tokens": 1, "output_tokens": 4, "custom_tokens": 0}
+    assert any(t == "agent.usage" and d.get("tokens", {}).get("input_tokens") == 7
+               for t, d in emitted if isinstance(d.get("tokens"), dict))
+
+
+async def test_cli_usage_reaches_manifest_and_request(tmp_path, monkeypatch):
+    from labhq.gateway.server import create_app
+    from labhq.runner.daemon import Runner
+
+    script = tmp_path / "agent.py"
+    script.write_text('print(\'{"type":"usage","tokens":{"input_tokens":7,"output_tokens":4}}\')\n'
+                      'print(\'{"type":"result","ok":true,"text":"done"}\')\n')
+    settings = Settings()
+    settings.runner.state_dir = settings.gateway.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.cli, builtin_mcp=[],
+                      cli=CliSpec(command=[sys.executable, str(script)], output="jsonl"))
+    runner = Runner(settings)
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    task = Task(agent_id=agent.id, request_id="r", prompt="test")
+    result = await runner.run_task(task)
+    manifest = json.loads((runner.workspaces[task.id].dir / "manifest.json").read_text(encoding="utf-8"))
+    assert result.ok
+    assert manifest["runs"][task.id]["usage"] == {"input_tokens": 7, "output_tokens": 4}
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running"}
+    await hub.on_runner_message("runner", {"type": "task.result", "task_id": task.id,
+                                          "request_id": "r", "data": result.model_dump()})
+    assert hub.request_summary(hub.requests["r"])["usage"] == {"input_tokens": 7, "output_tokens": 4}
