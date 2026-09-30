@@ -10,6 +10,29 @@
 - 미해결: 실제 유료 CLI는 실행하지 않았다. 네 arm의 비용·token·과학 결과는 PI 머신에서 측정한다. Codex 비용은 `미집계`로 남긴다. `.git` 쓰기 제한으로 이번 변경의 커밋 계획만 `.pr-drafts/commits.json`에 남겼다.
 - 근거: `labhq/bench.py`, `labhq/settings.py`, `labhq/cli.py`, `config/labhq.example.yaml`, `tests/test_bench.py`.
 
+## 2026-10-01 · 연결된 도구 목록·배지 #63
+
+- 결론: README §2의 연결된 도구 표와 shields.io 배지를 정규직 YAML에서 생성한다.
+- 바뀐 것: `scripts/integrations.py --write/--check`, 종류별 항목 수 배지, 직원·공개 출처 링크. 내장 MCP 2·외부 MCP 2·plugin 1·skill 2·엔진 기능 3. README 33,603→37,441 bytes(+3,838).
+- 실행한 것: 전체 `pytest -q -p no:cacheprovider` 516 passed/17 skipped, README `--check`, `bash scripts/check_public.sh`, `git diff --check` 통과. 테스트는 `PYTHONPATH`를 clone 루트로, `LABHQ_STATE_DIR`를 임시 state로, `--basetemp`를 저장소 밖 임시 폴더로 지정했다.
+- 미해결: 실제 설치·인증·MCP 접속은 검증하지 않았다. 파견직 예시·PI 개인 커넥터·이 clone에 없는 labhq_ask는 제외했다. `.git` 읽기 전용이라 커밋·PR 발행 대신 초안을 남겼으며 patch_notes는 수정하지 않았다. 작업 범위 밖 로컬 인계·수확 파일은 갱신하지 않았다.
+- 근거: `agents/core/*.yaml`, `labhq/runner/daemon.py`, `labhq/recruit/paper2agent.py`, `tests/test_integrations.py`.
+
+## 2026-10-01 · HANDOFF 개편: 개발 총괄 교대
+
+- 결론: 개발 총괄을 Claude와 Codex가 번갈아 맡을 수 있게 HANDOFF.md를 지금 기준으로 다시 썼다(PI 결정 2026-10-01).
+- 바뀐 것: 시작 순서, 규칙에 더해 겪어서 안 작업 방식, 작업 큐, 최근 PI 결정, 결정 대기, 구조 표. CLAUDE.md·AGENTS.md의 ⛔ 체크포인트 문구를 작업 큐·결정 대기로 바꿨다. 105줄·10,663바이트 → 93줄·8,053바이트.
+- 실행한 것: 공개 검사 통과. 문서만 바꿨다.
+- 미해결: 로컬 경로·진행 중 작업은 저장소 밖 노트에 있어 공개 저장소만으로는 이어받을 수 없다(의도).
+
+## 2026-10-01 · #57 웹 Command Center 1–5
+
+- 결론: Munder Difflin의 배치만 옮겨 2.5D 오른쪽 Command Center·폰 하단 탭·직원 카드 줄을 만들고, 결정 초안 보존·작업판·결정 이력을 구현했다. 6–8은 범위 밖으로 남겼다.
+- 바뀐 것: keyed 결정 카드와 공통 3D 입력, roster 전원 카드와 턴/시간 게이지, step별 시도·산출물·누락·리뷰·취소, 인증된 `GET /api/approvals/history`, allowlist를 쓰는 `/ui/{path}`.
+- 실행한 것: 수정 전 regression 4건 실패 확인, 전체 `pytest -q -p no:cacheprovider` 499 passed/17 skipped, `node tests/web_state.cjs`, `bash scripts/check_public.sh` 통과.
+- 미해결: 직원별 로그·capability card·사무실 소품 연결(6–8), 픽셀 테마는 하지 않았다. 실제 기기 화면과 스크린샷은 완료 판정에서 제외했다.
+- 근거: `labhq/web/ui/`, `labhq/web/state.js`, `labhq/gateway/server.py`, `tests/web_command_center.cjs`, `tests/test_web.py`.
+
 ## 2026-10-01 · Codex 직원·개발 라운드 기록 후속 #56 #69
 
 - 결론: Codex 직원의 쓰기·웹 권한을 명시하고 문헌 원 출처 확인을 강화했다. 개발 라운드는 설정한 labhq commit 링크와 종료 조건을 남긴다.

@@ -32,7 +32,7 @@ labhq demo         # 같은 흐름을 터미널 로그로
 pytest -q
 ```
 폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
-게이트웨이 없이 UI만 보려면 `labhq/web/index.html`을 브라우저로 열면 됩니다 (자동으로 데모 모드).
+게이트웨이 없이 UI만 보려면 `python -m http.server --directory labhq/web 8000` 뒤 `http://127.0.0.1:8000/?demo=1`을 엽니다.
 
 ## 0-1. 실제 실행
 
@@ -165,6 +165,28 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="live"`, 없으면 `"disabled"`를 명시합니다.
 `HPC*`는 scheduler가 `none`이 아닐 때만 배선됩니다.
 
+### 연결된 도구
+
+정규직 설정(`agents/core/*.yaml`)과 labhq 배선 코드에서 만든 목록입니다. 설치·로그인·네트워크 연결 성공을 뜻하지 않으며, 파견직 예시와 PI 개인 커넥터는 제외합니다.
+설정 변경 후 `python scripts/integrations.py --write`로 갱신하고 `--check`로 일치 여부를 확인합니다. 배지 숫자는 표의 항목 수입니다.
+
+<!-- integrations:start -->
+![builtin MCP: 2](https://img.shields.io/static/v1?label=builtin%20MCP&message=2&color=5B5BD6) ![external MCP: 2](https://img.shields.io/static/v1?label=external%20MCP&message=2&color=007EC6) ![plugin: 1](https://img.shields.io/static/v1?label=plugin&message=1&color=8A2BE2) ![skill: 2](https://img.shields.io/static/v1?label=skill&message=2&color=228B22) ![engine: 3](https://img.shields.io/static/v1?label=engine&message=3&color=555555)
+
+| 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
+|---|---|---|---|---|
+| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
+| 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [data_steward](agents/core/data_steward.yaml), [engineer](agents/core/engineer.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
+| 외부 MCP | PubMed | 생의학 논문 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://pubmed.mcp.claude.com/mcp) · [직원 설정](agents/core/) |
+| 외부 MCP | bioRxiv / medRxiv | preprint 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/biorxiv/mcp) · [직원 설정](agents/core/) |
+| Claude Code plugin | bioinfo-agent (`bioinfo`) | bioinfo plugin 로드 (plugin_dirs) | [bioinfo-agent](agents/core/bioinfo-agent.yaml) | [직원 설정](agents/core/) |
+| skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](agents/core/) · [채용 코드](labhq/recruit/paper2agent.py) |
+| skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](agents/core/bioinfo-agent.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](agents/core/engineer.yaml), [lit_scout](agents/core/lit_scout.yaml), [sci_reviewer](agents/core/sci_reviewer.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](agents/core/lit_scout.yaml), [sci_reviewer](agents/core/sci_reviewer.yaml) | [adapter](labhq/adapters/codex.py) · [직원 설정](agents/core/) |
+<!-- integrations:end -->
+
 ### 역할·엔진·도구를 나눈 기준
 
 | 기준 | 어디에 적용했나 | 근거 |
@@ -278,8 +300,9 @@ flowchart LR
 ## 6. 웹 사무실과 폰
 
 같은 Wi-Fi의 폰에서 체험하려면 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 엽니다. 승인은 폰에서 누르거나 기본 120초 뒤 자동 처리됩니다.
-`/`는 2.5D, `/3d`는 3D 사무실입니다. 화면의 전환 링크로 오갑니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
-- 3D: 실제 roster·상태 표지·요청 보드·DOM 승인/거절. 완료 표시는 3초 뒤 대기로 돌아갑니다. 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
+`/`는 2.5D, `/3d`는 3D 사무실입니다. 두 화면은 빌드 없이 `state.js` reducer와 `/ws/client`를 공유하며 같은 client token으로 연결합니다.
+- 2.5D: 오른쪽 Command Center의 결정·작업판·메신저·HPC 탭과 아래 직원 카드 줄. 폰에서는 탭이 화면 아래에 고정됩니다.
+- 3D: 실제 roster·상태 표지·요청 보드·메모가 있는 DOM 승인/거절. 완료 표시는 3초 뒤 대기로 돌아갑니다. 재연결은 `since`, 이벤트 공백은 snapshot으로 복구합니다.
 - 데모: `/3d?demo=1`. 데이터가 없으면 빈 사무실과 빈 요청 목록을 표시합니다.
 - 요청 입력·채용·계약 관리는 2.5D에서 합니다. 아래 기능 설명은 2.5D 기준입니다.
 
@@ -293,7 +316,8 @@ flowchart LR
 
 - 뒷벽 **화이트보드**: 지금 요청과 단계(브리핑 → 계획 → 실행 → 리뷰 → 보고), 스텝별 진행
 - **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
-- 오른쪽(폰에서는 아래): **결정할 일**(승인·거절, 파견직 채용 제안), 요청의 작업 순서도(DAG), **사내 메신저**, HPC 작업 목록
+- 오른쪽(폰에서는 하단 탭): **결정함**(메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
+- 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지
 - 아래 입력창: CSO에게(팀 전체) 또는 특정 직원에게 직접. 데스크톱에서는 노란 **메모를 책상에 끌어다 놓으면** 그 직원에게 맡김
 - 직원을 누르면 상세 카드: 지금 하는 일, 엔진·모델, 최근 활동, 파견직이면 계약 연장·종료
 
@@ -333,7 +357,7 @@ flowchart LR
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`), `GET /api/requests/{id}`,
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
-`GET /api/projects`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
+`GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
 모든 게이트웨이 이벤트에는 `schema_version: 1`과 재시작 후에도 이어지는 `seq`가 붙습니다. `/ws/client?since=<seq>`와 `/api/events?since=<seq>`는 이후 이벤트를 재전송합니다. 보관 상한을 지난 `since`에는 `replay_gap` 스냅샷으로 화면 상태를 교체합니다.
 

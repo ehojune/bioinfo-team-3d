@@ -5,6 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import create_app
+from labhq.models import ApprovalRequest
 from labhq.settings import Settings
 
 
@@ -72,8 +73,45 @@ def test_clarify_approval_takes_a_typed_answer():
 
     web = Path(__file__).resolve().parents[1] / "labhq" / "web"
     html = (web / "index.html").read_text(encoding="utf-8")
-    assert 'textarea class="ans"' in html and "approved: ok, note }" in html
-    assert "if (ans && act === 'approve' && !note)" in html
+    decide = (web / "ui" / "decide.js").read_text(encoding="utf-8")
+    assert "add(body, 'textarea', '', 'ans')" in decide and "approved: ok, note }" in html
+    assert "li.dataset.kind === 'clarify'" in html
     live = (web / "lab3d" / "src" / "live.js").read_text(encoding="utf-8")
     assert "a.kind === 'clarify' && approved" in live and "approved, note}" in live
     assert "clarify: 'PI 질문'" in (web / "state.js").read_text(encoding="utf-8")
+
+
+def test_ui_modules_are_bounded_static_assets(tmp_path):
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    client = TestClient(create_app(s))
+    for name in ("decide.js", "strip.js", "tasks.js", "shell.js"):
+        response = client.get(f"/ui/{name}")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/javascript")
+    for path in ("/ui/missing.js", "/ui/private.txt", "/ui/%2e%2e/state.js", "/ui/C:%5cWindows%5cwin.ini"):
+        assert client.get(path).status_code in (403, 404)
+
+
+def test_approval_history_is_authenticated_and_newest_first(tmp_path):
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(s)
+    hub = app.state.hub
+    first = ApprovalRequest(id="appr_first", kind="budget", summary="first", created_at=10)
+    second = ApprovalRequest(id="appr_second", kind="tool_permission", summary="second", created_at=20)
+    for request in (first, second):
+        hub.approvals[request.id] = {"approval": request.model_dump(mode="json"), "origin": None}
+        hub.save_approval(request.id)
+    headers = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    with TestClient(app) as client:
+        assert client.get("/api/approvals/history").status_code == 401
+        assert client.get("/api/approvals/history", headers=headers).status_code == 200
+        assert client.post("/api/approvals/appr_first", headers=headers,
+                           json={"approved": True, "note": "ok"}).status_code == 200
+        assert client.post("/api/approvals/appr_second", headers=headers,
+                           json={"approved": False, "note": "later"}).status_code == 200
+        history = client.get("/api/approvals/history?limit=2", headers=headers).json()
+        assert [item["approval"]["id"] for item in history] == ["appr_second", "appr_first"]
+        assert history[0]["note"] == "later"
+        assert client.get("/api/approvals/history?limit=0", headers=headers).status_code == 422
