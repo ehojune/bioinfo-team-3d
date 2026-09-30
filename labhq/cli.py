@@ -384,6 +384,10 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="labhq", description="Bio lab HQ — multi-agent research lab")
     p.add_argument("-c", "--config", default=None, help="config YAML (default: $LABHQ_CONFIG)")
     sub = p.add_subparsers(dest="cmd", required=True)
+    init = sub.add_parser("init", help="configure this installation and run doctor")
+    init.add_argument("--yes", action="store_true", help="accept suggested defaults")
+    init.add_argument("--dry-run", action="store_true", help="preview without writing files")
+    init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
     sub.add_parser("gateway")
     sub.add_parser("runner")
     sub.add_parser("agents")
@@ -431,6 +435,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    if args.cmd == "init":
+        from .init_wizard import run
+        from yaml import YAMLError
+
+        try:
+            result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force)
+        except (OSError, ValueError, YAMLError):
+            p.exit(1, "init: 설정을 읽거나 쓸 수 없습니다. 설정 파일과 권한을 확인하세요.\n")
+        if result["summary"]["fail"]:
+            raise SystemExit(1)
+        return
     s = Settings.load(args.config)
 
     if args.cmd == "doctor":

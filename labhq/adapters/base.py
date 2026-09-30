@@ -85,8 +85,34 @@ def _npm_script(shim: Path) -> tuple[Path, bool] | None:
     return None
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _codex_app_executable(env: dict[str, str]) -> str | None:
+    """Updates replace the hash directory; select by directory mtime, not its name."""
+    local = env.get("LOCALAPPDATA")
+    if not _is_windows() or not local:
+        return None
+    candidates = []
+    try:
+        for directory in (Path(local) / "OpenAI" / "Codex" / "bin").iterdir():
+            try:
+                executable = directory / "codex.exe"
+                if directory.is_dir() and executable.is_file():
+                    candidates.append((directory.stat().st_mtime_ns, str(executable)))
+            except OSError:
+                continue
+    except OSError:
+        return None
+    return max(candidates)[1] if candidates else None
+
+
 def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[str]:
-    executable = shutil.which(cmd[0], path=env.get("PATH")) or cmd[0]
+    requested = cmd[0]
+    if engine == "codex" and requested.strip().lower() in ("", "auto"):
+        requested = _codex_app_executable(env) or "codex"
+    executable = shutil.which(requested, path=env.get("PATH")) or requested
     if Path(executable).suffix.lower() not in (".cmd", ".bat"):
         return [executable, *cmd[1:]]
     shim = Path(executable)

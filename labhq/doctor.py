@@ -60,6 +60,24 @@ def _writable(path: Path) -> bool:
         return False
 
 
+def _would_be_writable(path: Path) -> bool:
+    """Dry-run estimate without creating directories or temporary files."""
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return path.is_dir() and os.access(path, os.W_OK)
+
+
+def _safe_executable_path(path: str, env: dict[str, str]) -> str:
+    local = env.get("LOCALAPPDATA")
+    if local:
+        try:
+            relative = Path(path).relative_to(Path(local) / "OpenAI" / "Codex" / "bin")
+            return "%LOCALAPPDATA%/OpenAI/Codex/bin/" + relative.as_posix()
+        except ValueError:
+            pass
+    return _safe_path(path)
+
+
 def _roster(settings: Settings) -> list[AgentSpec]:
     base = settings.path(settings.runner.agents_dir)
     agents = {}
@@ -93,7 +111,8 @@ def _network_check(url: str) -> bool:
     return False
 
 
-def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False) -> dict:
+def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
+            dry_run: bool = False) -> dict:
     rows: list[dict] = []
     config = settings.config_path
     if requested_config and not config:
@@ -112,7 +131,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     for name, raw in (("gateway state", settings.gateway.state_dir), ("runner state", settings.runner.state_dir),
                       ("workspace", settings.runner.workspace_root)):
         path = settings.path(raw)
-        good = _writable(path)
+        good = _would_be_writable(path) if dry_run else _writable(path)
         rows.append(_row("config", name, "ok" if good else "fail", _safe_path(path),
                          "Choose a writable directory."))
     restricted = [z for z in settings.policy.data_zones if z.level == "restricted"]
@@ -156,12 +175,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             rows.append(_row("engine", name, "warn", "executable missing or unsupported shim",
                              f"Install {name} or set engines.{name}.bin and prefix_args."))
             continue
-        code, raw = _probe([*resolved, "--version"], env)
-        detail = _safe_path(resolved[0]) + " " + _version(raw)
+        code, raw = (None, "") if dry_run else _probe([*resolved, "--version"], env)
+        detail = _safe_executable_path(resolved[0], env) + (" (probe skipped: dry-run)" if dry_run else " " + _version(raw))
         rows.append(_row("engine", name, "ok" if code == 0 else "warn", detail,
                          "Check the executable and prefix_args if version fails."))
         if name in LOGIN:
-            code, _ = _probe([*resolved, *LOGIN[name]], env)
+            code, _ = (None, "") if dry_run else _probe([*resolved, *LOGIN[name]], env)
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
@@ -225,7 +244,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         rows.append(_row("compute", tool, "ok" if found else "warn", "on PATH" if found else "missing",
                          f"Install or configure {tool} if bioinfo-agent needs it."))
     for name, url in SOURCES.items():
-        reachable = _network_check(url) if network else None
+        reachable = _network_check(url) if network and not dry_run else None
         rows.append(_row("data", name, "ok" if reachable else "warn",
                          "reachable" if reachable else "unreachable" if network else "skipped",
                          "Use --network to test connectivity." if not network else "Check network access."))
