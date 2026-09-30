@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:30 | [`7ce3d95`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/7ce3d95) | `patch_notes.py rows`가 CI의 Python 3.10에서 커밋 시각(`...Z`)을 못 읽어 테스트가 실패했습니다. `fromisoformat`은 3.11부터 `Z`를 받습니다. Unix 시각으로 읽도록 바꿨습니다. STATUS의 소급 건수도 96개로 바로잡았습니다 |
 | 01:25 | [`47bea40`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/47bea40) | `patch_notes.py check`가 Windows 콘솔(cp949)에서 결과 기호(✓)를 못 찍고 예외로 멈추던 것을 고쳤습니다. 검사는 이미 통과한 뒤라, 성공인데 실패처럼 보였습니다 |
 | 01:24 | [`379fbfa`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/379fbfa) | **패치노트를 CI가 확인합니다.** 커밋마다 이 파일에 한 줄이 있는지, main에 README를 안 고친 커밋이 두 개 쌓였을 때 다음 PR이 README를 고치는지를 `scripts/patch_notes.py check`가 봅니다. 패치노트만 고친 커밋은 자기 해시를 담을 수 없어 셈에서 뺍니다. 지난 커밋 96개를 소급해 적었고, README 맨 위에 2.5D·3D 사무실 화면을 넣었습니다(mock demo) |
 | 01:10 | [`a5665c2`](https://github.com/ehojune/bioinfo-team-3d/pull/50/commits/a5665c2) | **Python 3.10에서 CSO 모듈이 import되지 않던 문제.** 여러 줄에 걸친 f-string 치환식은 3.12부터만 됩니다. #42 이후 CI의 3.10 job이 테스트 수집 단계에서 SyntaxError로 계속 빨간불이었는데, 로컬(3.12)과 3.12 job은 통과해서 놓쳤습니다. 치환식을 변수로 빼고 WSL Python 3.10.12로 추적 중인 `.py` 전부를 컴파일해 확인했습니다 |
