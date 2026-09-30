@@ -262,3 +262,34 @@ def test_runner_probes_engine_versions_and_sends_the_manifest_summary(tmp_path):
     prov = ws.provenance()
     assert prov["engine"] == "codex" and prov["runs"]["t1"] == {"started_at": 1.0, "ended_at": 4.0,
                                                               "engine_cli_version": "9.8.7"}
+
+
+@pytest.mark.asyncio
+async def test_every_write_directly_follows_a_visibility_check_even_after_paging(tmp_path):
+    class TurnsPublicWhilePaging(FakeGitHub):
+        def __call__(self, request):
+            response = super().__call__(request)
+            if request.method == "GET" and request.url.path.endswith("/issues") and self.flip:
+                self.public = True
+            return response
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = TurnsPublicWhilePaging()
+    remote.flip = False
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-a", "done")
+    hub.rounds.write("req-a")
+    assert await hub.rounds.publish("req-a")  # create
+    hub.requests["req-a"]["report"] = "updated"
+    hub.rounds.write("req-a")
+    assert await hub.rounds.publish("req-a")  # edit
+    writes = [i for i, (method, _, _) in enumerate(remote.calls) if method in {"POST", "PATCH"}]
+    assert len(writes) == 2
+    assert all(remote.calls[i - 1][:2] == ("GET", "/repos/records/private") for i in writes)
+    remote.flip = True  # the repository turns public while the issue list is being read
+    hub.requests["req-a"]["report"] = "updated again"
+    hub.rounds.write("req-a")
+    before = len([c for c in remote.calls if c[0] in {"POST", "PATCH"}])
+    assert not await hub.rounds.publish("req-a")
+    assert len([c for c in remote.calls if c[0] in {"POST", "PATCH"}]) == before

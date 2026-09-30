@@ -284,6 +284,15 @@ class RoundRecorder:
             finally:
                 self.queue.task_done()
 
+    async def _may_post(self, gh: GitHubClient) -> bool:
+        """Visibility right now. Every write is preceded by this call; nothing else awaits in between."""
+        meta = await gh._req("GET", f"/repos/{self.s.dev_log.repo}")
+        private = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
+        if not private and not self.s.dev_log.allow_public:
+            log.warning("round issue publication refused: configured repository is public")
+            return False
+        return True
+
     async def publish(self, rid: str) -> bool:
         cfg = self.s.dev_log
         if not cfg.repo or root_zone_restricted(self.s.policy):
@@ -308,16 +317,13 @@ class RoundRecorder:
         digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
         if (self.hub.store.get("round_issue", rid) or {}).get("sha256") == digest:
             return True  # exactly this record is already published
-        # Checked before every write: the repository can be made public while the gateway runs.
-        meta = await gh._req("GET", f"/repos/{cfg.repo}")
-        private = bool(meta.get("private") is True or meta.get("visibility") in {"private", "internal"})
-        if not private and not cfg.allow_public:
-            log.warning("round issue publication refused: configured repository is public")
+        existing = await gh.find_marked_issue(cfg.repo, marker)  # reads only; may page through many issues
+        if existing and existing.get("body") == body:
+            number = existing["number"]
+        elif not await self._may_post(gh):  # checked after paging, immediately before the one write
             return False
-        existing = await gh.find_marked_issue(cfg.repo, marker)
-        if existing:
-            if existing.get("body") != body:
-                await gh.edit_issue(cfg.repo, existing["number"], body)
+        elif existing:
+            await gh.edit_issue(cfg.repo, existing["number"], body)
             number = existing["number"]
         else:
             created = await gh.create_issue(cfg.repo, f"[labhq round] {short(clean(record['request'].get('text') or rid), 70)}",
