@@ -48,7 +48,7 @@ def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
 
 # Default component locations and root config files from the Claude Code plugin reference, plus any
 # relative path the manifest itself declares (custom commands/agents/hooks/mcpServers/lspServers files).
-PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands", "output-styles", "bin")
+PLUGIN_PARTS = (".claude-plugin", "skills", "agents", "hooks", "commands", "output-styles", "bin", "scripts")
 PLUGIN_ROOT_FILES = (".mcp.json", ".lsp.json", "settings.json")
 
 
@@ -84,13 +84,12 @@ def _plugin_files(path: Path) -> tuple[set[Path], str | None]:
     scripts they run are all covered while ignored run output (a plugin may keep GBs of runs/) is not.
     Without git, fall back to the reference's component locations plus paths the manifest declares.
     """
-    top = _git(path, "rev-parse", "--show-toplevel")
-    own_checkout = bool(top and Path(top.decode().strip()).resolve() == path.resolve())
-    listed = (_git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-              if own_checkout else None)
-    if listed is not None:
+    # In its own checkout or a parent repo's subfolder, ls-files lists only this subtree, relative to it.
+    # A plugin the parent repo ignores lists nothing and falls through to the component walk.
+    listed = _git(path, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    names = [n for n in (listed or b"").decode("utf-8", "surrogateescape").split("\0") if n]
+    if names:
         commit = (_git(path, "rev-parse", "HEAD") or b"").decode().strip() or None
-        names = [n for n in listed.decode("utf-8", "surrogateescape").split("\0") if n]
         return {(path / n) for n in names if (path / n).is_file()}, commit
     root = path.resolve()
     targets = [path / part for part in PLUGIN_PARTS + PLUGIN_ROOT_FILES]
@@ -111,9 +110,7 @@ def plugin_provenance(name: str, path: Path) -> dict:
     """Name, declared version, git commit and a content-and-mode hash (no local path)."""
     root = path.resolve()
     files, commit = _plugin_files(path)
-    top = _git(path, "rev-parse", "--show-toplevel")
-    staged = (_git(path, "ls-files", "--stage", "-z")
-              if top and Path(top.decode().strip()).resolve() == root else None)
+    staged = _git(path, "ls-files", "--stage", "-z")  # paths relative to the plugin, as above
     index_modes = {}
     if staged is not None:
         for entry in staged.decode("utf-8", "surrogateescape").split("\0"):
