@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:47 | [`16718a1`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/16718a1) | **PI가 승인하는 연구 계획을 화면에서 전부 보고, 도메인 규칙을 계획 단계에서 강제합니다** (Codex 리뷰). 전에는 승인 카드에 hash와 버전만 있어 PI가 무엇을 승인하는지 볼 수 없었습니다. 이제 hash 입력과 같은 계획 전체(질문·가설·protocol·완료/중단 조건·자원·데이터 경계·pack 값)를 결정 카드에 보여 줍니다. 켠 도메인 pack의 필수 값(예: `single_cell_de@1`의 donor_id·batch·count_scale)이 빠지거나 규칙을 어기면 승인으로 가지 않고 다시 계획합니다 |
 | 06:47 | [`4b88568`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/4b88568) | **main 병합에서 package data 목록을 합쳤습니다.** bench 자료와 연구 규약 pack을 함께 배포합니다 |
 | 06:21 | [`92c15f5`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/92c15f5) | **README 설정 절에 연구 규약 pilot을 적었습니다** |
 | 06:19 | [`e760f4a`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/e760f4a) | **main 병합에서 승인 timeout 응답을 양쪽 모두 살려 합쳤습니다.** #96의 `state: timed_out`과 이 브랜치의 `approval_id`·`decided_at`을 함께 돌려줍니다 |
