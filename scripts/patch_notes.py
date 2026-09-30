@@ -27,12 +27,18 @@ def git(*args: str, cwd: Path | None = None) -> str:
 
 
 def pr_commits(base: str, head: str, cwd: Path | None = None) -> list[str]:
-    out = git("rev-list", "--reverse", "--no-merges", f"{base}..{head}", cwd=cwd)
-    return out.split() if out else []
+    out = git("rev-list", "--reverse", "--parents", f"{base}..{head}", cwd=cwd)
+    commits = []
+    for line in out.splitlines():
+        sha, *parents = line.split()
+        if len(parents) > 1 and not (changed_files(sha, cwd) - {"STATUS.md", NOTES}):
+            continue  # A sync merge or bookkeeping-only resolution needs no separate note.
+        commits.append(sha)
+    return commits
 
 
 def changed_files(sha: str, cwd: Path | None = None) -> set[str]:
-    out = git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
+    out = git("diff-tree", "--cc", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
     return set(out.split("\n")) if out else set()
 
 

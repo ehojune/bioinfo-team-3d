@@ -80,3 +80,43 @@ def test_a_readme_edit_reverted_later_is_not_a_refresh(repo):
     revert = commit(repo, {"README.md": "v1\n"}, "README revert")
     commit(repo, {pn.NOTES: f"# 패치노트\n{edit[:7]}\n{revert[:7]}\n"}, "패치노트")
     assert any("README.md를 안 고친" in p for p in pn.check("main", "HEAD", repo))
+
+
+@pytest.mark.parametrize("files,needs_note", [
+    (["a.py"], True),
+    (["STATUS.md"], False),
+    ([pn.NOTES], False),
+    (["STATUS.md", pn.NOTES], False),
+    (["a.py", "STATUS.md", pn.NOTES], True),
+])
+def test_merge_resolution_requires_note_only_for_own_code_change(repo, files, needs_note):
+    commit(repo, {name: "base\n" for name in files}, "base files")
+    run(repo, "checkout", "-q", "-b", "feature")
+    feature = commit(repo, {name: "feature\n" for name in files}, "feature side")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, {name: "main\n" for name in files}, "main side")
+    run(repo, "checkout", "-q", "feature")
+    result = subprocess.run(["git", "merge", "main", "--no-ff", "--no-commit"],
+                            cwd=repo, capture_output=True)
+    assert result.returncode == 1
+    merge = commit(repo, {name: "resolved\n" for name in files}, "resolve both parents")
+    assert (merge in pn.pr_commits("main", "HEAD", repo)) is needs_note
+    problems = pn.check("main", "HEAD", repo)
+    assert any(merge[:7] in p for p in problems) is needs_note
+    assert (merge[:7] in pn.rows("main", "HEAD", 99, repo)) is needs_note
+    if needs_note:
+        commit(repo, {pn.NOTES: f"# notes\n{feature[:7]}\n{merge[:7]}\n",
+                      "README.md": "refreshed\n"}, "document resolution")
+        assert not any(merge[:7] in p for p in pn.check("main", "HEAD", repo))
+
+
+def test_merge_without_own_changes_is_excluded(repo):
+    run(repo, "checkout", "-q", "-b", "feature")
+    commit(repo, {"a.py": "feature\n"}, "feature")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, {"b.py": "main\n"}, "main")
+    run(repo, "checkout", "-q", "feature")
+    run(repo, "merge", "-q", "--no-ff", "main", "-m", "sync main")
+    merge = run(repo, "rev-parse", "HEAD")
+    assert merge not in pn.pr_commits("main", "HEAD", repo)
+    assert not any(merge[:7] in p for p in pn.check("main", "HEAD", repo))
