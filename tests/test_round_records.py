@@ -195,3 +195,36 @@ async def test_recovery_rebuilds_existing_records_and_skips_unchanged_publish(tm
     await hub.rounds.drain()
     assert len(remote.calls) == before  # same record already published: no API calls
 
+
+
+@pytest.mark.asyncio
+async def test_recovery_keeps_the_environment_the_round_ran_with(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+    cfg = settings(tmp_path)
+    hub = Hub(cfg)
+    hub.runner_capabilities = {"runner-1": {"engine_cli_versions": {"claude_code": "1.0.0"}}}
+    round_request(hub, "req-env", "done")
+    first = hub.rounds.write("req-env")["environment"]
+    assert first["engine_cli_versions"] == {"runner-1": {"claude_code": "1.0.0"}}
+    # The gateway restarts on an upgraded checkout with other runners attached.
+    monkeypatch.setattr(rounds, "__version__", "99.0.0")
+    hub.runner_capabilities = {"runner-2": {"engine_cli_versions": {"claude_code": "9.9.9"}}}
+    hub.rounds.recover()
+    rebuilt = json.loads((hub.rounds.directory / "req-env.json").read_text(encoding="utf-8"))["environment"]
+    assert rebuilt["labhq_version"] == first["labhq_version"] != "99.0.0"
+    assert rebuilt["engine_cli_versions"] == first["engine_cli_versions"]
+    assert hub.store.get("request", "req-env")["environment"]["labhq_version"] == first["labhq_version"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_request_takes_its_environment_from_the_first_record(tmp_path, monkeypatch):
+    from labhq.integrations import rounds
+    cfg = settings(tmp_path)
+    hub = Hub(cfg)
+    round_request(hub, "req-old", "done")
+    hub.rounds.write("req-old")
+    hub.requests["req-old"].pop("environment")  # written by a build that did not snapshot
+    monkeypatch.setattr(rounds, "__version__", "99.0.0")
+    hub.rounds.recover()
+    rebuilt = json.loads((hub.rounds.directory / "req-old.json").read_text(encoding="utf-8"))["environment"]
+    assert rebuilt["labhq_version"] != "99.0.0"

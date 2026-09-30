@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 import logging
@@ -25,7 +26,9 @@ if TYPE_CHECKING:
 log = logging.getLogger("labhq.rounds")
 
 
+@functools.lru_cache(maxsize=1)
 def _git_commit() -> str | None:
+    """HEAD when this process first asks: the code it loaded, even if the checkout moves later."""
     root = Path(__file__).resolve().parents[2]
     if not (root / ".git").exists():
         return None
@@ -53,6 +56,15 @@ def _clean_tree(value: Any, clean) -> Any:
     if isinstance(value, list):
         return [_clean_tree(v, clean) for v in value]
     return value
+
+
+def environment_snapshot(hub: "Hub") -> dict:
+    """What ran the request. Taken once when it starts, so rebuilding a record later never restamps it."""
+    return {"labhq_version": __version__, "git_commit": _git_commit(),
+            "engine_cli_versions": {k: v.get("engine_cli_versions") for k, v in hub.runner_capabilities.items()
+                                    if v.get("engine_cli_versions")},
+            "instance": Path(hub.s.gateway.state_dir).name,
+            "state_dir_name": Path(hub.s.gateway.state_dir).name}
 
 
 def build_record(hub: "Hub", rid: str) -> dict:
@@ -150,12 +162,8 @@ def build_record(hub: "Hub", rid: str) -> dict:
                     "clarifications": req.get("clarifications") or [],
                     "pending_questions": req.get("pending_questions") or [],
                     "step_decisions": req.get("step_decisions") or []},
-        "environment": {"labhq_version": __version__, "git_commit": _git_commit(),
-                        "engine_cli_versions": {k: v.get("engine_cli_versions") for k, v in hub.runner_capabilities.items()
-                                                if v.get("engine_cli_versions")},
-                        "model_ids": sorted(models), "plugin_provenance": plugins,
-                        "instance": Path(hub.s.gateway.state_dir).name,
-                        "state_dir_name": Path(hub.s.gateway.state_dir).name},
+        "environment": {**(req.get("environment") or environment_snapshot(hub)),
+                        "model_ids": sorted(models), "plugin_provenance": plugins},
         "plan": {"steps": planned, "warnings": plan.get("warnings") or []},
         "steps": steps,
         "review": {"verdict": (req.get("review") or {}).get("verdict"),
@@ -214,6 +222,11 @@ class RoundRecorder:
             log.warning("dev_log.repo is unset; rounds are recorded locally only")
 
     def write(self, rid: str) -> dict:
+        req = self.hub.requests[rid]
+        if not req.get("environment"):
+            # Requests from before snapshots existed: keep what their first record stored, else stamp once now.
+            req["environment"] = self._stored_environment(rid) or environment_snapshot(self.hub)
+            self.hub.save_request(rid)
         record = build_record(self.hub, rid)
         for suffix, body in (("json", json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n"),
                              ("md", render_record(record))):
@@ -222,6 +235,15 @@ class RoundRecorder:
             temporary.write_text(body, encoding="utf-8")
             os.replace(temporary, target)
         return record
+
+    def _stored_environment(self, rid: str) -> dict | None:
+        try:
+            env = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8")).get("environment")
+        except (OSError, ValueError):
+            return None
+        if not isinstance(env, dict):
+            return None
+        return {k: v for k, v in env.items() if k not in {"model_ids", "plugin_provenance"}} or None
 
     def submit(self, rid: str) -> None:
         if not self.s.dev_log.enabled or not self.s.dev_log.repo or root_zone_restricted(self.s.policy):

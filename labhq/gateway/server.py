@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
-from ..integrations.rounds import RoundRecorder
+from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
@@ -764,6 +764,7 @@ class Hub:
             raise KeyError(f"unknown project {body.project_id!r}")
         if proj and proj.local_dir and proj.local_dir not in req["project_dirs"]:
             req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
+        req["environment"] = environment_snapshot(self)
         self.requests[rid] = req
         self.save_request(rid)
         asyncio.get_running_loop().create_task(self._start_request(rid))
