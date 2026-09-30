@@ -89,10 +89,12 @@ class CodexAdapter(AgentAdapter):
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
         for s in ctx.mcp_servers:
             key = f"mcp_servers.{s.name}"
-            if s.name in ("labhq_hpc", "labhq_approval") or s.auto_approve:
+            if s.name in ("labhq_hpc", "labhq_approval", "labhq_ask") or s.auto_approve:
                 # labhq tools enforce phone approval inside the broker; auto_approve servers are read-only.
                 flags += ["-c", f'{key}.default_tools_approval_mode="approve"']
-            if s.name.startswith("labhq_"):
+            if s.timeout_s:  # labhq_ask waits longer than a phone approval
+                flags += ["-c", f"{key}.tool_timeout_sec={s.timeout_s}"]
+            elif s.name.startswith("labhq_"):
                 flags += ["-c", f"{key}.tool_timeout_sec={self.settings.policy.approvals.timeout_s + 120}"]
             if s.type == "stdio":
                 command, args = wrap_cwd(s)

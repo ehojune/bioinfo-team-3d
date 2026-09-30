@@ -19,7 +19,7 @@ import websockets
 
 from ..adapters import get_adapter
 from ..adapters.base import RunContext
-from ..models import AgentSpec, ApprovalRequest, Engine, Event, McpServerSpec, Task, TaskResult
+from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult
 from .versions import engine_cli_versions
 from ..policy import claude_settings
 from ..registry import Registry
@@ -100,6 +100,7 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir))
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
+        self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
@@ -108,7 +109,8 @@ class Runner:
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
-        self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event, self._on_track)
+        self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
+                             self._on_track, self._on_ask)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -287,6 +289,9 @@ class Runner:
                     await self.emit(Event(type="agent.status", task_id=task_id, agent_id=agent_id,
                                           request_id=self.task_req.get(task_id), data={"state": "working"}))
             self.send({"type": "approval.ack", "id": msg["id"]})
+        elif typ == "ask.resolved":
+            self.broker.resolve_ask(msg["id"], msg.get("answer") or {})
+            self.send({"type": "ask.ack", "id": msg["id"]})
         elif typ == "runner.ack":
             self.store.ack(int(msg["runner_seq"]))
         elif typ == "registry.reload":
@@ -342,15 +347,22 @@ class Runner:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
         return agent
 
-    def _mcp_servers(self, agent: AgentSpec, env: dict[str, str]) -> list[McpServerSpec]:
+    def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
         env = {**env, "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))}
         servers: list[McpServerSpec] = []
+        timeout_s = max(self.s.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
         if "approval" in agent.builtin_mcp:
             servers.append(McpServerSpec(name="labhq_approval", command=sys.executable,
-                                         args=["-m", "labhq.tools.approval_mcp"], env=env))
+                                         args=["-m", "labhq.tools.approval_mcp"], env=env,
+                                         timeout_s=timeout_s))
         if "hpc" in agent.builtin_mcp and self.s.hpc.scheduler != "none":
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
-                                         args=["-m", "labhq.tools.hpc_mcp"], env=env))
+                                         args=["-m", "labhq.tools.hpc_mcp"], env=env,
+                                         timeout_s=timeout_s))
+        if allow_ask and agent.engine != Engine.antigravity:
+            servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
+                                         args=["-m", "labhq.tools.ask_mcp"], env=env,
+                                         timeout_s=timeout_s))
         return servers + list(agent.mcp)
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
@@ -364,7 +376,9 @@ class Runner:
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
 
         await emit("agent.status", {"state": "queued"})
-        async with self.sem:
+        consult = task.meta.get("kind") == "consult"
+        semaphore = self.consult_sem if consult else self.sem
+        async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
@@ -375,8 +389,9 @@ class Runner:
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     extra_dirs.append(str(upstream))
+            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
             env = {
-                "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": self.broker.token,
+                "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
             }
@@ -384,8 +399,9 @@ class Runner:
                 env["LABHQ_CONFIG"] = self.s.config_path
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                mcp_servers=self._mcp_servers(agent, env),
-                env={**env, "MCP_TOOL_TIMEOUT": str((self.s.policy.approvals.timeout_s + 120) * 1000)},
+                mcp_servers=self._mcp_servers(agent, env, allow_ask=not consult),
+                env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
+                                                          ASK_MAX_WAIT_S) + 120) * 1000)},
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs,
                 claude_settings=claude_settings(self.s.policy),
                 use_permission_tool="approval" in agent.builtin_mcp,
@@ -394,7 +410,12 @@ class Runner:
             ws.update_run(task.id, started_at=time.time(), engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                           resume_of=task.resume_session_id, kind=task.meta.get("kind"))
-            result = await get_adapter(agent.engine, self.s).run(ctx)
+            try:
+                result = await get_adapter(agent.engine, self.s).run(ctx)
+                result.pending_asks = self.broker.pending_for_task(task.id)
+            finally:
+                self.broker.revoke_task_token(broker_token)
+                self.broker.finish_task(task.id)
 
         pending = [jid for jid, j in self.jobs.items() if j["task_id"] == task.id and not j["terminal"]]
         for jid in pending:
@@ -419,8 +440,9 @@ class Runner:
                       usage=result.usage,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
-        state = "hibernating" if pending else ("done" if result.ok else "error")
-        extra = {"jobs": pending} if pending else ({"error": short(result.error, 200)} if result.error else {})
+        state = "hibernating" if pending or result.pending_asks else ("done" if result.ok else "error")
+        extra = ({"jobs": pending, "asks": result.pending_asks} if pending or result.pending_asks else
+                 ({"error": short(result.error, 200)} if result.error else {}))
         await emit("agent.status", {"state": state, **extra})
         await emit("task.result", result.model_dump(mode="json"))
         return result
@@ -433,6 +455,13 @@ class Runner:
         await self.emit(Event(type="approval.requested", data=req.model_dump(mode="json"), **base))
         if req.task_id:
             await self.emit(Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base))
+
+    async def _on_ask(self, req: AskRequest) -> None:
+        req.request_id = req.request_id or self.task_req.get(req.task_id or "")
+        base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
+        await self.emit(Event(type="ask.requested", data=req.model_dump(mode="json"), **base))
+        if req.task_id:
+            await self.emit(Event(type="agent.status", data={"state": "waiting", "ask": req.id}, **base))
 
     async def _on_tool_event(self, body: dict) -> None:
         tid = body.get("task_id")

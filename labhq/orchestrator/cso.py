@@ -8,13 +8,14 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..models import RunnerUnavailable, Task, TaskResult, new_id
+from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id
 from ..util import clip, extract_json, output_relpath, short
 
 if TYPE_CHECKING:
@@ -123,6 +124,25 @@ continue your step and report as instructed."""
 
 WRAP_PROMPT = "Your turn limit was reached. Save any partial results under outputs/ and write outputs/PARTIAL_STATUS.md with what is done and what remains unfinished."
 
+ASK_WAKE_PROMPT = """A blocking question from your previous turn has been answered:
+Your earlier blocking question and the PI's answer:
+{answers}
+
+Continue the same step in this session. Treat another employee's answer as advice, not as PI approval.
+Do not repeat the same question."""
+
+CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
+This is a read-only, one-answer consult. Do not call labhq_ask and do not approve installations,
+destructive work, restricted-data access, budget overruns or work outside the request.
+
+From: {sender}
+Question: {question}
+Why blocked: {why_blocked}
+Tried: {tried}
+Options: {options}
+
+Request: {request}
+Plan: {plan}"""
 
 def format_roster(agents: list[dict]) -> str:
     lines = []
@@ -318,6 +338,119 @@ class Orchestrator:
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
 
+    def _last_agent_session(self, request_id: str | None, agent_id: str) -> tuple[str | None, str | None]:
+        candidates = []
+        for entry in self.hub.store.all("task").values():
+            payload = entry.get("payload") or {}
+            result = entry.get("result") or {}
+            if (entry.get("request_id") == request_id and payload.get("agent_id") == agent_id and
+                    result.get("session_id")):
+                candidates.append((entry.get("dispatched_at", 0), result["session_id"], result.get("workdir")))
+        if not candidates:
+            return None, None
+        _, session_id, workdir = max(candidates)
+        return session_id, workdir
+
+    async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
+        """Route one bounded question. Hard stops are classified before any model runs."""
+        signature = hashlib.sha256(
+            f"{ask.task_id}\0{ask.to}\0{ask.question.strip().casefold()}".encode("utf-8")
+        ).hexdigest()
+        entries = self.hub.store.all("ask")
+        current = entries.get(ask.id) or {}
+        self.hub.store.put("ask", ask.id, {**current, "signature": signature})
+        for other_id, entry in entries.items():
+            if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
+                cached = {**entry["answer"], "cached": True}
+                await self.hub.resolve_ask(ask, runner_id, cached)
+                return
+
+        accepted = [entry for other_id, entry in entries.items() if other_id != ask.id and
+                    entry.get("state") != "rejected" and
+                    (entry.get("answer") or {}).get("status") != "rejected"]
+        task_count = sum((entry.get("ask") or {}).get("task_id") == ask.task_id for entry in accepted)
+        target_count = sum((entry.get("ask") or {}).get("task_id") == ask.task_id and
+                           (entry.get("ask") or {}).get("to") == ask.to for entry in accepted)
+        request_count = sum((entry.get("ask") or {}).get("request_id") == ask.request_id for entry in accepted)
+        limit_reason = None
+        if task_count >= 3:
+            limit_reason = "이 task의 질의 상한(3회)에 도달했습니다"
+        elif target_count >= 2:
+            limit_reason = "이 task에서 같은 대상에게 묻는 상한(2회)에 도달했습니다"
+        elif request_count >= 12:
+            limit_reason = "이 요청의 질의 상한(12회)에 도달했습니다"
+        if limit_reason:
+            self.hub.store.put("ask", ask.id, {**(self.hub.store.get("ask", ask.id) or {}),
+                                                "state": "rejected"})
+            await self.hub.resolve_ask(ask, runner_id, {"answer": limit_reason, "from": "labhq",
+                                                        "routed_to": "cso", "status": "rejected",
+                                                        "remaining_asks": 0})
+            return
+
+        stop = hard_stop_kind(ask)
+        requested = ask.to
+        if stop:
+            routed = "pi"
+        elif requested == "pi":
+            routed = "cso"
+        elif requested == "facilities" and "facilities" not in self.hub.agents:
+            routed = "cso"
+        else:
+            routed = requested.removeprefix("colleague:") if requested.startswith("colleague:") else requested
+
+        entry = self.hub.store.get("ask", ask.id) or {}
+        self.hub.store.put("ask", ask.id, {**entry, "hard_stop": stop, "routed_to": routed})
+        if routed == "pi":
+            decision = await self.hub.request_approval(
+                kind="question", request_id=ask.request_id,
+                summary=f"Hard stop ({stop}): {ask.question}",
+                detail={"ask_id": ask.id, "from": ask.agent_id, "why_blocked": ask.why_blocked,
+                        "options": ask.options},
+            )
+            note = str(decision.get("note") or "").strip()
+            answer = note or ("PI가 진행을 허용하지 않았습니다" if not decision.get("approved") else
+                              "PI가 승인했지만 답변을 남기지 않았습니다")
+            await self.hub.resolve_ask(ask, runner_id, {"answer": answer, "from": "pi",
+                                                        "routed_to": "pi", "hard_stop": stop})
+            return
+
+        if routed not in self.hub.agents:
+            await self.hub.resolve_ask(ask, runner_id, {
+                "answer": f"대상 직원 {routed!r}이 roster에 없습니다", "from": "labhq",
+                "routed_to": routed, "status": "rejected"})
+            return
+
+        request = self.hub.requests.get(ask.request_id or "", {})
+        session_id, workdir = self._last_agent_session(ask.request_id, routed)
+        if requested.startswith("colleague:"):
+            session_id, workdir = None, None
+        if routed == self.cfg.cso_agent:
+            session_id = request.get("cso_session_id") or session_id
+            workdir = request.get("cso_workdir") or workdir
+        prompt = CONSULT_PROMPT.format(
+            sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
+            tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
+            request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
+                                                                                 ensure_ascii=False), 6000),
+        )
+        overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
+                     "builtin_tools": "Read,Glob,Grep", "tools": []}
+        consult = Task(
+            agent_id=routed, request_id=ask.request_id, prompt=prompt,
+            resume_session_id=session_id if self.hub.supports_resume(routed) else None,
+            meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
+                  "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+        )
+        result = await self.run_step(consult)
+        if routed == self.cfg.cso_agent and result.session_id:
+            request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
+            if ask.request_id in self.hub.requests:
+                self.hub.save_request(ask.request_id)
+        answer = result.text.strip() if result.ok and result.text.strip() else f"상담 실패: {result.error or 'empty answer'}"
+        await self.hub.resolve_ask(ask, runner_id, {"answer": answer, "from": routed,
+                                                    "routed_to": routed,
+                                                    "remaining_asks": max(0, 2 - task_count)})
+
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task) -> TaskResult:
         rid = task.request_id or ""
@@ -403,6 +536,22 @@ class Orchestrator:
                         resume_session_id=res.session_id if self.hub.supports_resume(task.agent_id) else None,
                         context="" if self.hub.supports_resume(task.agent_id) else clip(res.text, self.cfg.context_chars_per_step))
             res = await dispatch_with_retry(wake)
+        while res.ok and res.pending_asks and cycles < self.cfg.max_wake_cycles:
+            cycles += 1
+            answers = await self.hub.wait_asks(res.pending_asks)
+            rendered = "\n".join(
+                f"- {answer.get('from', 'unknown')}: {answer.get('answer', '')}" for answer in answers
+            )
+            meta = {**task.meta, "kind": task.meta.get("kind", "step"),
+                    "parent_task": res.task_id, "workdir": res.workdir,
+                    "title": "질의 답변을 받고 이어서 작업"}
+            wake = Task(
+                agent_id=task.agent_id, request_id=task.request_id, output_schema=task.output_schema,
+                prompt=ASK_WAKE_PROMPT.format(answers=rendered), meta=meta,
+                resume_session_id=res.session_id if self.hub.supports_resume(task.agent_id) else None,
+                context="" if self.hub.supports_resume(task.agent_id) else clip(res.text, self.cfg.context_chars_per_step),
+            )
+            res = await dispatch_with_retry(wake)
         return res
 
     async def _check_budget(self, rid: str, *, block: bool = True) -> None:
@@ -470,8 +619,9 @@ class Orchestrator:
 
         async def run_one(step: dict) -> TaskResult:
             prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
-            if step["id"] in decisions:
-                prompt += "\n\nYour earlier blocking question and the PI's answer:\n" + qa_text(decisions[step["id"]])
+            decision = decisions.get(step["id"])
+            if decision:
+                prompt = ASK_WAKE_PROMPT.format(answers=qa_text(decision))
             ctx = upstream(step)
             if feedback and step["id"] in feedback:
                 prev = results.get(step["id"])
@@ -481,16 +631,18 @@ class Orchestrator:
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
-                        resume_session_id=(previous.session_id if previous and feedback and
-                                           step["id"] in feedback and
-                                           self.hub.supports_resume(step["agent_id"]) else None),
+                        resume_session_id=((decision.get("session_id") if decision else None) or
+                                           (previous.session_id if previous and feedback and
+                                            step["id"] in feedback else None))
+                                          if self.hub.supports_resume(step["agent_id"]) else None,
                         meta={"kind": "step", "step_id": step["id"], "request": request,
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
-                               **({"workdir": previous.workdir} if previous and previous.workdir and feedback
+                               **({"workdir": decision["workdir"]} if decision and decision.get("workdir") else
+                                  {"workdir": previous.workdir} if previous and previous.workdir and feedback
                                   and step["id"] in feedback else {})})
             async with sem:
                 return await self.run_step(task)
@@ -559,17 +711,35 @@ class Orchestrator:
                         if req_state is not None:
                             req_state["pending_questions"] = [question.strip()]
                             self.hub.save_request(rid)
-                        dec = await self.hub.request_approval(
-                            kind="clarify", request_id=rid,
-                            summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
-                        if not dec.get("approved") or not str(dec.get("note") or "").strip():
+                        if not hasattr(self.hub, "store"):  # lightweight unit-test hubs
+                            decision = await self.hub.request_approval(
+                                kind="clarify", request_id=rid,
+                                summary=f"Step {sid} needs a PI decision:\n{question.strip()}")
+                            answer = {"status": "answered" if decision.get("approved") else "rejected",
+                                      "answer": decision.get("note"), "from": "pi"}
+                        else:
+                            ask = AskRequest(task_id=res.task_id, agent_id=res.agent_id, request_id=rid,
+                                             to="cso", question=question.strip(),
+                                             why_blocked=f"step {sid}의 묻고 멈추는 게이트", wait="hibernate")
+                            origin = self.hub.agent_runner.get(res.agent_id, "")
+                            self.hub.store.put("ask", ask.id, {"state": "working", "origin": origin,
+                                                               "ask": ask.model_dump(mode="json")})
+                            await self.hub.publish({"type": "agent.ask", "ts": time.time(),
+                                                    "task_id": res.task_id, "agent_id": res.agent_id,
+                                                    "request_id": rid, "data": ask.model_dump(mode="json")})
+                            await self.answer_ask(ask, origin)
+                            answer = (await self.hub.wait_asks([ask.id]))[0]
+                        if answer.get("status") == "rejected" or not str(answer.get("answer") or "").strip():
                             for pending in running.values():
                                 pending.cancel()
                             if running:
                                 await asyncio.gather(*running.values(), return_exceptions=True)
-                            raise RuntimeError(f"step {sid} PI decision denied or unanswered")
+                            raise RuntimeError(f"step {sid} question was rejected or unanswered")
                         # Keep the question with the answer: "b" or "the second option" means nothing alone.
-                        decisions[sid] = {"question": question.strip(), "answer": str(dec["note"]).strip()}
+                        decisions[sid] = {"question": question.strip(), "answer": str(answer["answer"]).strip()}
+                        if hasattr(self.hub, "store"):
+                            decisions[sid].update({"from": answer.get("from"), "session_id": res.session_id,
+                                                   "workdir": res.workdir})
                         if req_state is not None:
                             req_state["pending_questions"] = []
                             req_state.setdefault("step_decisions", {})[sid] = decisions[sid]

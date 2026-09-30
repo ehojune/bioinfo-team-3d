@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..integrations.rounds import RoundRecorder, environment_snapshot
-from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
+from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
@@ -114,6 +114,8 @@ class Hub:
         self.futures: dict[str, asyncio.Future] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
+        self.ask_waiters: dict[str, asyncio.Future] = {}
+        self.ask_tasks: dict[str, asyncio.Task] = {}
         self.terminal_queued: set[int] = set()
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
@@ -164,7 +166,8 @@ class Hub:
                 continue
             if not entry.get("completed"):
                 state = "running"
-            elif (tid not in self.jobs_done and (entry.get("result") or {}).get("pending_jobs") and
+            elif (((tid not in self.jobs_done and (entry.get("result") or {}).get("pending_jobs")) or
+                   (entry.get("result") or {}).get("pending_asks")) and
                   (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
                 state = "hibernating"
             else:
@@ -420,6 +423,15 @@ class Hub:
                 await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
                                                    "approved": entry["approved"], "note": entry["note"]})
 
+    async def flush_ask_answers(self, runner_id: str) -> None:
+        for ask_id, entry in self.store.all("ask").items():
+            if (entry.get("origin") == runner_id and entry.get("state") == "resolved"
+                    and not entry.get("delivered")):
+                await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask_id,
+                                                   "answer": entry["answer"]})
+            elif entry.get("origin") == runner_id and entry.get("state") in {"pending", "working"}:
+                self._start_ask(AskRequest.model_validate(entry["ask"]), runner_id)
+
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
@@ -531,6 +543,10 @@ class Hub:
             return
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
+        if typ == "ask.ack":
+            entry = self.store.get("ask", str(msg["id"]))
+            if entry:
+                self.store.put("ask", str(msg["id"]), {**entry, "delivered": True})
         if typ == "task.result":
             rid = msg.get("request_id")
             tid = msg.get("task_id") or ""
@@ -569,6 +585,19 @@ class Hub:
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
+        elif typ == "ask.requested":
+            ask = AskRequest.model_validate(msg["data"])
+            existing = self.store.get("ask", ask.id)
+            if existing and existing.get("state") == "resolved":
+                await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id,
+                                                   "answer": existing["answer"]})
+            elif existing is None:
+                self.store.put("ask", ask.id, {"state": "pending", "origin": runner_id,
+                                                "ask": ask.model_dump(mode="json")})
+                await self.publish({"type": "agent.ask", "ts": time.time(), "task_id": ask.task_id,
+                                    "agent_id": ask.agent_id, "request_id": ask.request_id,
+                                    "data": ask.model_dump(mode="json")})
+                self._start_ask(ask, runner_id)
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
             self.store.put("jobs_done", tid, msg["data"])
@@ -707,6 +736,47 @@ class Hub:
         fut = self.jobs_waiters.setdefault(task_id, asyncio.get_running_loop().create_future())
         return await fut
 
+    def _start_ask(self, ask: AskRequest, runner_id: str) -> None:
+        if ask.id in self.ask_tasks and not self.ask_tasks[ask.id].done():
+            return
+
+        async def route() -> None:
+            entry = self.store.get("ask", ask.id) or {}
+            self.store.put("ask", ask.id, {**entry, "state": "working"})
+            try:
+                await self.orchestrator.answer_ask(ask, runner_id)
+            except Exception as exc:
+                await self.resolve_ask(ask, runner_id, {"answer": f"질의 처리 실패: {exc}",
+                                                        "from": "labhq", "status": "rejected"})
+
+        task = asyncio.create_task(route())
+        self.ask_tasks[ask.id] = task
+        task.add_done_callback(lambda _task: self.ask_tasks.pop(ask.id, None))
+
+    async def resolve_ask(self, ask: AskRequest, runner_id: str, answer: dict) -> None:
+        answer = {**answer, "status": answer.get("status", "answered"), "ask_id": ask.id}
+        entry = self.store.get("ask", ask.id) or {"ask": ask.model_dump(mode="json"), "origin": runner_id}
+        self.store.put("ask", ask.id, {**entry, "state": "resolved", "answer": answer,
+                                       "resolved_at": time.time()})
+        waiter = self.ask_waiters.pop(ask.id, None)
+        if waiter and not waiter.done():
+            waiter.set_result(answer)
+        await self.publish({"type": "agent.answer", "ts": time.time(), "task_id": ask.task_id,
+                            "agent_id": answer.get("from"), "request_id": ask.request_id, "data": answer})
+        if runner_id in self.runners:
+            await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id, "answer": answer})
+
+    async def wait_asks(self, ask_ids: list[str]) -> list[dict]:
+        answers = []
+        for ask_id in ask_ids:
+            entry = self.store.get("ask", ask_id)
+            if entry and entry.get("state") == "resolved":
+                answers.append(entry["answer"])
+                continue
+            future = self.ask_waiters.setdefault(ask_id, asyncio.get_running_loop().create_future())
+            answers.append(await future)
+        return answers
+
     # ----- approvals -----
     async def request_approval(self, kind: str, summary: str, request_id: str | None = None,
                                detail: dict | None = None, timeout_s: int | None = None) -> dict:
@@ -827,6 +897,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
                                 hello.get("capabilities"))
             await hub.flush_decisions(runner_id)
+            await hub.flush_ask_answers(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:

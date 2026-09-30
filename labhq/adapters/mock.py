@@ -99,6 +99,25 @@ class MockAdapter(AgentAdapter):
 
         # steer only by this agent's own instruction, not by the overall request quoted in the prompt
         own = t.prompt.split("Your step", 1)[-1] if kind == "step" else t.prompt if kind == "direct" else ""
+        ask_target = None
+        match = re.search(r"\[ask:(cso|facilities|colleague:[A-Za-z0-9_.-]+)\]", own)
+        if match:
+            ask_target = match.group(1)
+        elif "[ask:pi-install]" in own:
+            ask_target = "pi"
+        if ask_target and not t.resume_session_id:
+            question = ("새 package를 설치해도 되나요?" if ask_target == "pi" else
+                        "이 막힘을 풀기 위한 결정을 알려 주세요")
+            answer = await self._broker(ctx, "/ask", {
+                "task_id": t.id, "agent_id": a.id, "to": ask_target, "question": question,
+                "why_blocked": "mock 질의 회귀 테스트", "tried": ["mock preflight"],
+                "options": [], "refs": [], "wait": "short",
+            })
+            if answer.get("status") == "answered":
+                label = "CSO 답변" if answer.get("from") == "cso" else f"{answer.get('from')} 답변"
+                text += f" · {label}: {answer.get('answer')}"
+            else:
+                text += f" · 질문 {answer.get('ask_id')} 대기 후 hibernate"
         if kind == "wrap_up":
             (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text(
                 "Partial results saved; main step unfinished.\n", encoding="utf-8")
