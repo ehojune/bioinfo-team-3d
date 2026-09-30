@@ -18,6 +18,9 @@ from pathlib import Path
 from ..util import short
 from .base import ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env, wrap_cwd
 
+# Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
+WEB_TOOLS = {"WebSearch", "WebFetch"}
+
 
 def _toml(v: object) -> str:
     if isinstance(v, dict):
@@ -77,6 +80,8 @@ class CodexAdapter(AgentAdapter):
                 flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
         if a.model:
             flags += ["-m", a.model]
+        if any(t.split("(")[0] in WEB_TOOLS for t in a.tools):
+            flags += ["-c", 'web_search="live"']
         for d in ctx.extra_dirs:
             flags += ["--add-dir", d]
         if t.output_schema:
