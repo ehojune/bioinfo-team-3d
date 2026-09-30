@@ -206,6 +206,8 @@ class Scheduler:
         if self.cfg.scheduler == "mock":
             return []
         p = self._run(["qstat", "-u", self.user])
+        if p.returncode != 0:
+            raise RuntimeError(f"qstat failed ({p.returncode}): {p.stderr.strip() or p.stdout.strip()}")
         return parse_sge_qstat(p.stdout) if self.cfg.scheduler == "sge" else parse_pbs_qstat_table(p.stdout)
 
     def status(self, job_id: str) -> JobInfo:
@@ -216,13 +218,25 @@ class Scheduler:
                 if j.job_id == job_id:
                     return j
             p = self._run(["qacct", "-j", job_id])
-            if p.returncode == 0 and "exit_status" in p.stdout:
-                return parse_sge_qacct(job_id, p.stdout)
-            return JobInfo(job_id=job_id, state="missing")  # accounting can lag; watcher retries
+            if p.returncode != 0:
+                detail = p.stderr.strip() or p.stdout.strip()
+                if re.fullmatch(rf"error: job id {re.escape(job_id)} not found", detail, re.I):
+                    return JobInfo(job_id=job_id, state="missing")  # accounting can lag; watcher retries
+                raise RuntimeError(f"qacct failed ({p.returncode}): {detail}")
+            if "exit_status" not in p.stdout:
+                raise RuntimeError("qacct returned no exit_status; job state is unknown")
+            return parse_sge_qacct(job_id, p.stdout)
         args = ["qstat", "-fx", job_id] if self.cfg.pbs.pro else ["qstat", "-f", job_id]
         p = self._run(args)
-        info = parse_pbs_qstat_full(p.stdout) if p.returncode == 0 else None
-        return info or JobInfo(job_id=job_id, state="missing")
+        if p.returncode != 0:
+            detail = p.stderr.strip() or p.stdout.strip()
+            if re.fullmatch(rf"qstat: Unknown Job Id(?: Error)? {re.escape(job_id)}", detail, re.I):
+                return JobInfo(job_id=job_id, state="missing")
+            raise RuntimeError(f"qstat failed ({p.returncode}): {detail}")
+        info = parse_pbs_qstat_full(p.stdout)
+        if info is None:
+            raise RuntimeError("qstat returned no job record; job state is unknown")
+        return info
 
     def cancel(self, job_id: str) -> str:
         if self.cfg.scheduler == "mock":

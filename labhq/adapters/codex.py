@@ -129,9 +129,15 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool_error", {"text": short(item.get("aggregated_output"), 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
-            elif it == "mcp_tool_call" and typ == "item.completed" and item.get("status") == "failed":
+            elif it == "mcp_tool_call" and typ == "item.completed":
+                result = item.get("result") or {}
+                tool_error = isinstance(result, dict) and (result.get("isError") or result.get("is_error"))
+                if item.get("status") != "failed" and not tool_error:
+                    return
                 err = item.get("error")
-                message = str((err.get("message") if isinstance(err, dict) else err) or "MCP tool failed")
+                detail = "\n".join(str(block.get("text", "")) for block in result.get("content", [])
+                                   if isinstance(block, dict) and block.get("type") == "text") if tool_error else ""
+                message = str((err.get("message") if isinstance(err, dict) else err) or detail or "MCP tool failed")
                 # The agent may recover from an ordinary tool failure; an approval-policy refusal means
                 # labhq wired the server wrong (openai/codex#24135), so that one fails the task loudly.
                 if "approval policy" in message:
