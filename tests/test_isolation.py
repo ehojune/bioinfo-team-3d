@@ -359,3 +359,25 @@ def test_literature_scout_public_mcp_servers_are_auto_approved(tmp_path):
     reg = Registry(Path(__file__).resolve().parents[1] / "agents", tmp_path)
     reg.load()
     assert all(s.auto_approve for s in reg.agents["lit_scout"].mcp if s.type == "http")
+
+
+@pytest.mark.parametrize("engine", ["codex", "claude_code"])
+def test_labhq_ask_keeps_its_own_longer_mcp_timeout(tmp_path, engine):
+    from labhq.models import McpServerSpec
+    settings = Settings()
+    ask = McpServerSpec(name="labhq_ask", command="python", timeout_s=settings.policy.approvals.timeout_s + 3600)
+    hpc = McpServerSpec(name="labhq_hpc", command="python")
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), builtin_mcp=[])
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[ask, hpc], env={}, emit=_emit, prompt="x", claude_settings={})
+    ctx.meta_dir.mkdir(parents=True, exist_ok=True)
+    adapter = get_adapter(agent.engine, settings)
+    generic = settings.policy.approvals.timeout_s + 120
+    if engine == "claude_code":
+        adapter.prepare(ctx)
+        servers = json.loads((ctx.meta_dir / "mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+        assert servers["labhq_ask"]["timeout"] == ask.timeout_s * 1000 and servers["labhq_hpc"]["timeout"] == generic * 1000
+    else:
+        cmd = adapter.build_command(ctx)
+        assert f"mcp_servers.labhq_ask.tool_timeout_sec={ask.timeout_s}" in cmd
+        assert f"mcp_servers.labhq_hpc.tool_timeout_sec={generic}" in cmd

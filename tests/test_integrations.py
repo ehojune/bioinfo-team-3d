@@ -27,7 +27,7 @@ def test_repository_readme_passes_cli_check():
     content = render(ROOT / "agents")
     assert "PubMed" in content and "bioRxiv / medRxiv" in content
     assert "bioinfo-agent (`bioinfo`)" in content and "Paper2Agent" in content
-    assert "labhq_ask" not in content and "AlphaGenome" not in content
+    assert "labhq_ask" in content and "AlphaGenome" not in content  # labhq_ask is wired by the runner (#39)
 
 
 def test_temporary_inventory_deduplicates_and_uses_public_provenance(tmp_path, monkeypatch):
@@ -53,7 +53,7 @@ def test_temporary_inventory_deduplicates_and_uses_public_provenance(tmp_path, m
     assert "labhq_hpc" in content and "scheduler가 none이 아닐 때" in content
     assert "bioinfo:bioinfo-analyze" in content and "Paper2Agent" in content
     assert "Codex 웹 검색" in content
-    assert "message=2&color=5B5BD6" in content  # Unique built-in servers, not staff count.
+    assert "message=3&color=5B5BD6" in content  # Unique built-in servers (approval, hpc, ask), not staff count.
     assert "message=1&color=007EC6" in content
     assert all(secret not in content for secret in ("private-value", "private-directory", "ignored"))
 

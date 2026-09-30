@@ -179,9 +179,11 @@ class ClaudeCodeAdapter(AgentAdapter):
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
                 servers[s.name] = {"type": "stdio", "command": command, "args": args, "env": expand_env(s.env)}
+                if s.timeout_s:
+                    servers[s.name]["timeout"] = s.timeout_s * 1000
             else:
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
-            if s.name.startswith("labhq_"):
+            if s.name.startswith("labhq_") and not s.timeout_s:  # labhq_ask sets its own, longer wait
                 servers[s.name]["timeout"] = (self.settings.policy.approvals.timeout_s + 120) * 1000
         (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
         (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")

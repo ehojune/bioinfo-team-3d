@@ -80,6 +80,9 @@ def collect(agents_dir: Path) -> list[Integration]:
                 name, description = BUILTIN[builtin]
                 add("내장 MCP", name, description, staff, source,
                     link("runner", "labhq/runner/daemon.py"))
+        if engine != "antigravity":  # the runner wires labhq_ask into every other staff session
+            add("내장 MCP", "labhq_ask", "막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI)",
+                staff, source, link("runner", "labhq/runner/daemon.py"))
 
         for server in spec.get("mcp", []):
             name = identifier(server["name"])
