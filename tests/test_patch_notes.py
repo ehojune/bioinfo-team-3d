@@ -70,3 +70,13 @@ def test_rows_lists_commits_newest_first_and_links_the_pr(repo):
     out = pn.rows("main", "HEAD", 7, repo).splitlines()
     assert [second[:7] in out[0], first[:7] in out[1], len(out)] == [True, True, 2]
     assert f"/pull/7/commits/{first[:7]}" in out[1]
+
+
+def test_a_readme_edit_reverted_later_is_not_a_refresh(repo):
+    commit(repo, {"b.py": "1\n"}, "main change 1")
+    commit(repo, {"b.py": "2\n"}, "main change 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    edit = commit(repo, {"README.md": "v2\n"}, "README edit")
+    revert = commit(repo, {"README.md": "v1\n"}, "README revert")
+    commit(repo, {pn.NOTES: f"# 패치노트\n{edit[:7]}\n{revert[:7]}\n"}, "패치노트")
+    assert any("README.md를 안 고친" in p for p in pn.check("main", "HEAD", repo))

@@ -51,7 +51,8 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
         if sha[:7] not in notes:
             subject = git("log", "-1", "--format=%s", sha, cwd=cwd)
             problems.append(f"패치노트에 커밋 {sha[:7]}({subject})이 없습니다. {NOTES}에 한 줄 적어 주세요.")
-    touched = set().union(*(changed_files(sha, cwd) for sha in commits)) if commits else set()
+    # The final diff, not the union of commits: a README edit reverted later is not a refresh.
+    touched = set(git("diff", "--name-only", f"{base}...{head}", cwd=cwd).split()) if commits else set()
     last = git("log", "-1", "--format=%H", base, "--", "README.md", cwd=cwd)
     behind = int(git("rev-list", "--count", "--first-parent", f"{last}..{base}", cwd=cwd)) if last else README_EVERY
     if commits and "README.md" not in touched and behind + 1 >= README_EVERY:
