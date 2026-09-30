@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:11 | [`c0c516c`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/c0c516c) | **관측한 범위는 양 끝이 정확해야 맞음으로 채점합니다** (Codex 리뷰). 펭귄 case의 지느러미 길이처럼 실제 최솟값·최댓값을 묻는 문항에서 `[200, 210]` 같은 오답이 범위 안에 든다는 이유로 통과했습니다. 관측 범위(`equals`)와 설계 허용 범위(`minimum`/`maximum`, 엽록체 IR·SSC)를 나눴습니다 |
 | 07:03 | [`ffb0c24`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/ffb0c24) | **bench를 모든 arm이 같은 구조화 결과 블록으로 채점합니다** (#92, #101). 전에는 답 문장을 정규식으로 읽어서 같은 뜻을 다르게 쓴 맞는 답이 FAIL이 됐습니다. 이제 답 끝의 JSON 결과 블록을 case의 기대값과 비교하고, 문장 검사는 참고용(`narrative_passed`)으로 따로 남깁니다. 기준선 명령에도 설정의 `extra_args`(proxy·profile 등)를 넣어 labhq arm과 같은 조건에서 돌립니다 |
 | 06:46 | [`82f267b`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/82f267b) | **package에 든 설정 template을 저장소 예시와 다시 맞췄습니다.** main의 bench 설정이 예시에만 들어가 있던 것을 동일성 테스트가 잡았습니다 |
 | 06:44 | [`dbc0e79`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/dbc0e79) | **main 병합에서 init과 bench를 함께 살렸습니다.** CLI에 `init`·`bench` 명령을 둘 다 두고, package data에 설정 template과 bench 자료를 함께 넣었습니다 |
