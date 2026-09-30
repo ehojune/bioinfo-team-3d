@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +18,7 @@ from .adapters import get_adapter
 from .models import AgentSpec, Engine, Task
 from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
+from .runner.versions import _probe, _version
 from .settings import Settings
 
 SOURCES = {
@@ -57,20 +57,6 @@ def _writable(path: Path) -> bool:
         return True
     except OSError:
         return False
-
-
-def _probe(argv: list[str], env: dict[str, str]) -> tuple[int | None, str]:
-    try:
-        done = subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace", timeout=5,
-                              stdin=subprocess.DEVNULL)
-        return done.returncode, (done.stdout or done.stderr).strip()
-    except (OSError, subprocess.SubprocessError):
-        return None, ""
-
-
-def _version(raw: str) -> str:
-    match = re.search(r"\bv?\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*", raw[:300])
-    return match.group(0) if match else "unreported"
 
 
 def _roster(settings: Settings) -> list[AgentSpec]:

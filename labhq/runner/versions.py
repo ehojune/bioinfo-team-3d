@@ -2,10 +2,25 @@
 from __future__ import annotations
 
 import os
+import re
+import subprocess
 
 from ..adapters.base import _resolve_command, expand_env
-from ..doctor import _probe, _version
 from ..settings import Settings
+
+
+def _probe(argv: list[str], env: dict[str, str]) -> tuple[int | None, str]:
+    try:
+        done = subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace", timeout=5,
+                              stdin=subprocess.DEVNULL)
+        return done.returncode, (done.stdout or done.stderr).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+
+
+def _version(raw: str) -> str:
+    match = re.search(r"\bv?\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*", raw[:300])
+    return match.group(0) if match else "unreported"
 
 
 def engine_cli_versions(settings: Settings, engines: set[str]) -> dict[str, str]:
