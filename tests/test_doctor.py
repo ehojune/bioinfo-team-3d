@@ -55,7 +55,9 @@ def test_doctor_reuses_plugin_preflight_and_detects_windows_refusal(tmp_path, mo
                      "plugin_dirs: ['${TEST_PLUGIN_DIR}']\nallow_skills: true\n"
                      "required_skills: ['bioinfo:run']\n", encoding="utf-8")
     settings.policy.data_zones = [DataZone(path="/restricted", level="restricted")]
-    monkeypatch.setattr(doctor.sys, "platform", "win32")
+    from types import SimpleNamespace
+    from labhq.runner import daemon
+    monkeypatch.setattr(daemon, "os", SimpleNamespace(name="nt"))
     monkeypatch.delenv("TEST_PLUGIN_DIR", raising=False)
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
     result = doctor.collect(settings)
@@ -92,3 +94,88 @@ def test_manifest_refuses_repository_state_dir(tmp_path):
     settings.runner.state_dir = str(doctor.Path(__file__).resolve().parents[1] / "state")
     with pytest.raises(OSError, match="outside the repository"):
         doctor.save({"checks": []}, settings)
+
+
+@pytest.mark.parametrize("case,expected", [
+    ("readable", "fail"), ("traversable", "fail"), ("unc", "fail"),
+    ("override", "warn"), ("denied", "ok"), ("absent", "ok"),
+])
+def test_doctor_reuses_posix_data_guard(tmp_path, monkeypatch, case, expected):
+    import os
+    from types import SimpleNamespace
+    from labhq.runner import daemon
+
+    settings = _settings(tmp_path)
+    zone = tmp_path / "restricted"
+    zone.mkdir()
+    settings.policy.data_zones = [DataZone(path="//test-host/share" if case == "unc" else str(zone))]
+    settings.policy.allow_runner_read_restricted = case == "override"
+    guard_os = SimpleNamespace(name="posix", R_OK=os.R_OK, X_OK=os.X_OK,
+                               path=SimpleNamespace(exists=lambda p: case != "absent", isdir=lambda p: True),
+                               access=lambda p, mode: case in ("readable", "override") or
+                               (case == "traversable" and mode == os.X_OK))
+
+    def listdir(path):
+        raise PermissionError()
+
+    guard_os.listdir = listdir
+    # Patch only the guard module's view, keeping pathlib on the host OS.
+    monkeypatch.setattr(daemon, "os", guard_os)
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["name"] == "restricted data zones")
+    assert row["status"] == expected
+    assert str(zone) not in json.dumps(result)
+    assert not list((tmp_path / "state").glob("*.sqlite3"))
+
+
+def test_doctor_runs_staff_adapter_preflight_with_engine_environment(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: codex\n", encoding="utf-8")
+    config = tmp_path / "staff-config"
+    config.mkdir()
+    (config / "AGENTS.md").write_text("global instructions", encoding="utf-8")
+    settings.engines.codex.env = {"CODEX_HOME": str(config)}
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: "available")
+    monkeypatch.setattr(doctor, "_resolve_command", lambda cmd, env, engine: cmd)
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")
+    assert row["status"] == "fail" and "AGENTS.md" in row["detail"]
+    assert str(config) not in json.dumps(result)
+    settings.engines.codex.allow_global_agents_md = True
+    result = doctor.collect(settings)
+    assert next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")["status"] == "ok"
+
+
+@pytest.mark.parametrize("case", ["group_missing", "runner_group", "user_missing", "user_group"])
+def test_doctor_reuses_submit_prefix_account_guard(tmp_path, monkeypatch, case):
+    import sys
+    from types import SimpleNamespace
+    from labhq.runner import daemon
+
+    settings = _settings(tmp_path)
+    settings.hpc.submit_prefix = ["sudo"]
+    settings.hpc.job_group, settings.hpc.user = "test-group", "test-user"
+
+    def group(name):
+        if case == "group_missing":
+            raise KeyError(name)
+        return SimpleNamespace(gr_gid=42)
+
+    def user(name):
+        if case == "user_missing":
+            raise KeyError(name)
+        return SimpleNamespace(pw_gid=42)
+
+    monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=group))
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(getpwnam=user))
+    monkeypatch.setattr(daemon, "os", SimpleNamespace(name="posix", getgid=lambda: 7 if case == "runner_group" else 42,
+                        getgroups=lambda: [], getgrouplist=lambda *a: [] if case == "user_group" else [42]))
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["name"] == "HPC job group")
+    assert row["status"] == "fail"
+    assert "test-user" not in json.dumps(result) and "test-group" not in json.dumps(result)
+    assert not list((tmp_path / "state").glob("*.sqlite3"))

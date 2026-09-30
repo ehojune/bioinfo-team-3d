@@ -7,7 +7,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -16,9 +15,10 @@ from urllib.request import Request, urlopen
 import yaml
 
 from .adapters.base import RunContext, _resolve_command, expand_env
-from .adapters.claude_code import ClaudeCodeAdapter
-from .models import AgentSpec, Task
+from .adapters import get_adapter
+from .models import AgentSpec, Engine, Task
 from .recruit.paper2agent import skill_installed
+from .runner.daemon import check_data_boundary, check_job_group
 from .settings import Settings
 
 SOURCES = {
@@ -88,11 +88,12 @@ def _roster(settings: Settings) -> list[AgentSpec]:
     return list(agents.values())
 
 
-def _plugin_check(settings: Settings, agent: AgentSpec, env: dict[str, str]) -> str | None:
+def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent,
                      workdir=settings.path(settings.runner.workspace_root), settings=settings,
                      mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
-    return ClaudeCodeAdapter(settings).preflight_error(ctx, env)
+    adapter = get_adapter(agent.engine, settings)
+    return adapter.preflight_error(ctx, {**os.environ, **adapter.engine_env(), **ctx.env})
 
 
 def _network_check(url: str) -> bool:
@@ -120,10 +121,23 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         rows.append(_row("config", name, "ok" if good else "fail", _safe_path(path),
                          "Choose a writable directory."))
     restricted = [z for z in settings.policy.data_zones if z.level == "restricted"]
-    refused = bool(restricted) and sys.platform == "win32"
-    rows.append(_row("config", "restricted data zones", "fail" if refused else "ok",
-                     f"{len(restricted)} configured" + ("; Windows runner refuses them" if refused else ""),
+    try:
+        override = check_data_boundary(settings)
+        status, detail = ("warn", "unsafe read override enabled") if override else ("ok", f"{len(restricted)} configured")
+    except (RuntimeError, OSError) as exc:
+        status, detail = "fail", str(exc) if isinstance(exc, RuntimeError) else "data guard check unavailable"
+    rows.append(_row("config", "restricted data zones", status, detail,
                      "Run on a supported POSIX runner or remove restricted zones for a safe test."))
+    try:
+        check_job_group(settings)
+        status, detail = "ok", "runner account check passed" if settings.hpc.submit_prefix else "not required"
+        if settings.hpc.submit_prefix and os.name == "nt":
+            status, detail = "warn", "POSIX account lookup unavailable on Windows"
+    except (RuntimeError, OSError) as exc:
+        # Guard errors can contain account/group names; show only the reason.
+        status, detail = "fail", str(exc).split(":", 1)[0] if isinstance(exc, RuntimeError) else "account check unavailable"
+    rows.append(_row("config", "HPC job group", status, detail,
+                     "Check hpc.user and hpc.job_group membership for the runner and job accounts."))
 
     available: dict[str, bool] = {}
     for name in settings.engines.__class__.model_fields:
@@ -162,19 +176,22 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     if not agents:
         rows.append(_row("staff", "roster", "warn", "no active agents found", "Set runner.agents_dir."))
     for agent in agents:
+        if settings.runner.force_engine:
+            agent = agent.model_copy(update={"engine": Engine(settings.runner.force_engine)})
         engine = agent.engine.value
         ready = available.get(engine, engine == "mock")
-        rows.append(_row("staff", agent.id, "ok" if ready else "warn", f"engine={engine}",
-                         f"Install or configure the {engine} engine."))
-        if agent.plugin_dirs or agent.required_skills:
-            try:
-                error = _plugin_check(settings, agent,
-                                      {**os.environ, **expand_env(settings.engines.claude_code.env, os.environ)})
-            except OSError:
-                error = "plugin files inaccessible"
-            if error:
-                for raw in agent.plugin_dirs:
-                    error = error.replace(raw, _safe_path(raw))
+        plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills)
+        try:
+            error = _adapter_check(settings, agent)
+        except OSError:
+            error = "adapter preflight files inaccessible"
+        if error:
+            for raw in agent.plugin_dirs:
+                error = error.replace(raw, _safe_path(raw))
+        status = ("warn" if plugin else "fail") if error else "ok" if ready else "warn"
+        rows.append(_row("staff", agent.id, status, error or f"engine={engine}",
+                         f"Resolve the {engine} adapter preflight or install/configure its executable."))
+        if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
     try:
