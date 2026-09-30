@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:23 | [`7b03bb1`](https://github.com/ehojune/bioinfo-team-3d/pull/77/commits/7b03bb1) | **labhq가 단일 세션보다 나은지 잴 bench를 넣었습니다(#40).** 같은 과제를 labhq, Opus 5.5 `claude -p` 단일 세션, gpt-6-astra `codex exec` 단일 세션에 주고, 산출물·결정적 검사·PI 개입 횟수·비용·시간을 나란히 표로 냅니다(PI 결정한 기준선). case는 저비용 5개(inco KRAS G12C, 엽록체 구조, GEO 위암 요약, 공개 단백질·펭귄 데이터 QC)이고 통제 데이터와 큰 다운로드는 없습니다. `labhq bench test-agent`는 예시 job을 차례로 넣고 결과를 검사해 요약하는 테스트 에이전트입니다. mock 엔진으로 5건 모두 PASS를 확인했고, 실제 CLI 비교는 PI 구독을 쓰므로 PI 머신에서 돌립니다 |
 | 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
 | 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |
