@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import logging
 import os
 import re
@@ -90,9 +92,34 @@ class GitHubHTTPError(RuntimeError):
     def __init__(self, method: str, path: str, response: httpx.Response):
         super().__init__(f"GitHub {method} {path} → {response.status_code}: {response.text[:300]}")
         self.status_code = response.status_code
-        self.rate_limited = (response.status_code == 403 and
-                             (response.headers.get("x-ratelimit-remaining") == "0" or
-                              "retry-after" in response.headers))
+        self.retry_after = response.headers.get("retry-after")
+        remaining = response.headers.get("x-ratelimit-remaining")
+        self.rate_limit_reset = (response.headers.get("x-ratelimit-reset")
+                                 if response.status_code == 403 and remaining == "0" else None)
+        self.rate_limited = (response.status_code == 429 or self.retry_after is not None or
+                             response.status_code == 403 and remaining == "0")
+
+    def retry_delay_s(self, now: float | None = None) -> float:
+        """Return the server-provided lower bound before another request."""
+        current = time.time() if now is None else now
+        delays: list[float] = []
+        if self.retry_after:
+            try:
+                delays.append(float(self.retry_after))
+            except ValueError:
+                try:
+                    parsed = parsedate_to_datetime(self.retry_after)
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    delays.append(parsed.timestamp() - current)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+        if self.rate_limit_reset:
+            try:
+                delays.append(float(self.rate_limit_reset) - current)
+            except ValueError:
+                pass
+        return max([0.0, *delays])
 
 
 class GitHubClient:
