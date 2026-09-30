@@ -91,6 +91,7 @@ labhq bench run inco-kras-g12c --arms labhq,sonnet-max,sol-ultra,astra-ultra --o
 labhq bench run inco-kras-g12c --arms labhq --staff-model opus=sonnet
 labhq bench run inco-kras-g12c --arms sol-ultra,astra-ultra
 labhq bench report inco-kras-g12c
+labhq bench rescore inco-kras-g12c --all  # 현재 검사로 재채점; --run-id ID 또는 생략 시 최신 run, 이전 판정은 score.json에 보존
 labhq bench test-agent --arms labhq,sonnet-max --engines mock
 ```
 

@@ -449,6 +449,12 @@ def main(argv: list[str] | None = None) -> None:
     breport.add_argument("case_id")
     breport.add_argument("--engines", choices=["real", "mock"], default="real")
     breport.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    bs = bsub.add_parser("rescore", help="recheck saved artifacts with the current case checks")
+    bs.add_argument("case_id")
+    rescoring = bs.add_mutually_exclusive_group()
+    rescoring.add_argument("--run-id", help="saved run to rescore (default: latest run)")
+    rescoring.add_argument("--all", action="store_true", help="rescore every saved run of this case")
+    bs.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")

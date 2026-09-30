@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #77 bench 검사·재채점 #40
+
+- 결론: 표현 차이로 생긴 FAIL을 줄이고 저장된 산출물을 현재 검사로 다시 채점한다.
+- 바뀐 것: `re:`·숫자 추출 비교, 다섯 case의 한국어·영어·단위·띄어쓰기 검사, `bench rescore <case> [--run-id ID | --all]`(기본 최신 run). 이전 판정은 `score_history`에 남기고 실행별·case별 comparison을 갱신한다. 실행 기록과 비용·모델은 보존한다.
+- 실행한 것: 새 테스트 44개 포함 전체 pytest 613 passed/17 skipped, case마다 정답 변형 2개·숫자 오류·항목 누락 검사, mock test-agent 5/5와 저장된 mock 재채점, 공개 검사·diff 검사 통과.
+- 인계: `.git` 읽기 전용이라 이번 변경만 `.pr-drafts/commits.json`에 남겼다. PR 보고 초안은 `.pr-drafts/rescore-pr.md`. patch notes는 요청대로 수정하지 않았다.
+- 근거: `bench/checks/contains_terms.py`, `bench/cases/`, `labhq/bench.py`, `tests/test_bench_rescore.py`.
+
 ## 2026-10-01 · #40 비교 bench와 테스트 에이전트
 
 - 결론: PI 결정(2026-10-01, #40)에 따라 기본 arm은 `labhq`, `sonnet-max`(sonnet/max), `sol-ultra`(gpt-5.6-sol/ultra), `astra-ultra`(gpt-6-astra/ultra)다. LabHQ의 Claude 직원은 `opus=sonnet`으로 치환하고 Codex 직원은 설정을 유지한다.

@@ -13,7 +13,12 @@ scripted_pi_answers:
     answer: 고정 snapshot의 ID와 비교 가능성만 검증하고 신규 실험은 제안으로 표시한다.
 check:
   script: checks/contains_terms.py
-  args: [6OIM, CHEMBL4535757, CHEMBL4594350, CHEMBL6068410, "직접 비교"]
+  args:
+    - 're:(?<![A-Za-z0-9_])6OIM(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])CHEMBL4535757(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])CHEMBL4594350(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])CHEMBL6068410(?![A-Za-z0-9_])'
+    - 're:(?:직접\s*비교(?:를)?\s*(?:하지\s*(?:않|말)|불가|금지|할\s*수\s*없)|(?:cannot|can''t|do\s+not|must\s+not|should\s+not)\s+(?:be\s+)?(?:directly\s+compar(?:e|ed)|compar(?:e|ed)\s+directly)|not\s+directly\s+comparable)'
 budget_usd: 2.0
 mock_answer: |
   # KRAS G12C

@@ -13,7 +13,14 @@ scripted_pi_answers:
     answer: GPL570 series matrix를 쓰고 paired design을 우선한다.
 check:
   script: checks/contains_terms.py
-  args: [GSE79973, "tumor 10", "normal 10", GKN1, COL1A1, HALLMARK_EMT, "9606.ENSP"]
+  args:
+    - 're:(?<![A-Za-z0-9_])GSE79973(?![A-Za-z0-9_])'
+    - 'num:10:(?:tumou?r|종양)[^\d\n.;]{0,20}(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:개|건|명|samples?)?'
+    - 'num:10:(?:normal|정상)[^\d\n.;]{0,20}(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:개|건|명|samples?)?'
+    - 're:(?<![A-Za-z0-9_])GKN1(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])COL1A1(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])HALLMARK_EMT(?![A-Za-z0-9_])'
+    - 're:(?<![A-Za-z0-9_])9606\s*\.\s*ENSP(?![A-Za-z_])'
 budget_usd: 2.0
 mock_answer: |
   # GSE79973 계획

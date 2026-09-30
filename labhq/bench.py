@@ -386,6 +386,8 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
     checked = await asyncio.to_thread(subprocess.run, command, capture_output=True, text=True, encoding="utf-8",
                                       errors="replace", timeout=30,
                                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    if checked.returncode not in {0, 1}:
+        raise ValueError("benchmark checker error: " + (checked.stdout + checked.stderr).strip())
     usage = run.get("usage") or {}
     if isinstance(usage.get("total_tokens"), int):
         token_total = usage["total_tokens"]
@@ -399,6 +401,7 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "staff_model": run.get("staff_model"), "staff_models": run.get("staff_models"),
         "artifact_exists": answer.is_file() and bool(answer.read_text(encoding="utf-8").strip()),
         "checks_passed": checked.returncode == 0, "check_output": (checked.stdout + checked.stderr).strip(),
+        "check": case["check"],
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
         "pi_questions_observable": bool(run.get("pi_questions_observable", run["engine"] == "labhq")),
         "unscripted_approvals": int(run.get("unscripted_approvals") or 0),
@@ -454,6 +457,84 @@ def report_case(case_id: str, output_root: Path, engines: str = "real") -> dict[
               "mode": engines, "rows": [latest[arm] for arm in order if arm in latest]}
     _write_comparison(directory, result)
     return result
+
+
+async def rescore_case(case_id: str, output_root: Path, run_id: str | None = None,
+                       all_runs: bool = False) -> list[dict[str, Any]]:
+    """Recheck saved artifacts without running arms; default to the latest run."""
+    case = load_case(case_id)
+    if run_id is not None and all_runs:
+        raise ValueError("--run-id and --all are mutually exclusive")
+    directory = Path(output_root).expanduser().resolve() / case_id
+    if run_id is not None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id):
+            raise ValueError("invalid benchmark run id")
+        candidates = [_inside(directory, run_id)]
+    else:
+        candidates = sorted(path for path in directory.iterdir() if path.is_dir() and
+                            any(path.glob("*/run.json"))) if directory.is_dir() else []
+        if not all_runs:
+            candidates = candidates[-1:]
+    if not candidates:
+        raise ValueError(f"no saved benchmark runs for {case_id}")
+
+    # Read and score everything first. A missing record or checker error must not
+    # leave a half-rescored selection; execution metrics remain in run.json.
+    updates = []
+    for run_dir in candidates:
+        run_dir = _inside(directory, run_dir.name)
+        records = sorted(run_dir.glob("*/run.json"))
+        if not records:
+            raise ValueError(f"no saved arms for run {run_dir.name}")
+        rows = []
+        modes = set()
+        for record in records:
+            record = _inside(directory, str(record.relative_to(directory)))
+            arm_dir = record.parent
+            for filename in ("answer.md", "score.json"):
+                _inside(directory, str((arm_dir / filename).relative_to(directory)))
+            run = json.loads(record.read_text(encoding="utf-8"))
+            if run.get("mode") not in {"real", "mock"}:
+                raise ValueError(f"invalid saved mode for run {run_dir.name}")
+            modes.add(run["mode"])
+            score_path = arm_dir / "score.json"
+            old = json.loads(score_path.read_text(encoding="utf-8")) if score_path.is_file() else None
+            row = dict(old or {})
+            checked = await _score(case, arm_dir, run)
+            # Only grading changes. Preserve saved model, usage, cost and status.
+            if old is None:
+                row.update(checked)
+            else:
+                row.update({key: checked[key] for key in
+                            ("artifact_exists", "checks_passed", "check_output", "check")})
+            row["run_id"] = run_dir.name
+            row["rescored_at"] = datetime.now(timezone.utc).isoformat()
+            history = list(row.get("score_history") or [])
+            if old is not None:
+                history.append({"rescored_at": row["rescored_at"],
+                                "score": {key: value for key, value in old.items()
+                                          if key != "score_history"}})
+            row["score_history"] = history
+            rows.append((score_path, row))
+        if len(modes) != 1:
+            raise ValueError(f"mixed modes in saved run {run_dir.name}")
+        result = {"schema_version": 2, "case_id": case_id, "run_id": run_dir.name,
+                  "title": case["title"], "budget_usd": float(case["budget_usd"]),
+                  "mode": modes.pop(), "rows": [row for _, row in rows]}
+        updates.append((run_dir, rows, result))
+
+    # Keep the aggregate's selected real/mock view when both were rescored.
+    comparison_path = directory / "comparison.json"
+    selected_mode = (json.loads(comparison_path.read_text(encoding="utf-8")).get("mode")
+                     if comparison_path.is_file() else None)
+    for run_dir, rows, result in updates:
+        for score_path, row in rows:
+            atomic_write_text(score_path, json.dumps(row, ensure_ascii=False, indent=2) + "\n")
+        _write_comparison(run_dir, result)
+    modes = {result["mode"] for _, _, result in updates}
+    for mode in sorted(modes, key=lambda mode: mode == selected_mode):
+        report_case(case_id, output_root, mode)
+    return [result for _, _, result in updates]
 
 
 async def run_case(case_id: str, output_root: Path, engines: str = "real",
@@ -537,6 +618,12 @@ def run_cli(args) -> None:
         return
     if args.bench_cmd == "report":
         print(_comparison_markdown(report_case(args.case_id, output, args.engines)), end="")
+        return
+    if args.bench_cmd == "rescore":
+        results = asyncio.run(rescore_case(args.case_id, output, args.run_id, args.all))
+        for result in results:
+            print(f"rescored: {result['run_id']}")
+            print(_comparison_markdown(result), end="")
         return
     settings = Settings.load(args.config)
     settings.bench.staff_model = _staff_mapping(settings, getattr(args, "staff_model", None))
