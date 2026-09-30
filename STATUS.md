@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 연결된 도구 목록·배지 #63
+
+- 결론: README §2의 연결된 도구 표와 shields.io 배지를 정규직 YAML에서 생성한다.
+- 바뀐 것: `scripts/integrations.py --write/--check`, 종류별 항목 수 배지, 직원·공개 출처 링크. 내장 MCP 2·외부 MCP 2·plugin 1·skill 2·엔진 기능 3. README 33,603→37,441 bytes(+3,838).
+- 실행한 것: 전체 `pytest -q -p no:cacheprovider` 516 passed/17 skipped, README `--check`, `bash scripts/check_public.sh`, `git diff --check` 통과. 테스트는 `PYTHONPATH`를 clone 루트로, `LABHQ_STATE_DIR`를 임시 state로, `--basetemp`를 저장소 밖 임시 폴더로 지정했다.
+- 미해결: 실제 설치·인증·MCP 접속은 검증하지 않았다. 파견직 예시·PI 개인 커넥터·이 clone에 없는 labhq_ask는 제외했다. `.git` 읽기 전용이라 커밋·PR 발행 대신 초안을 남겼으며 patch_notes는 수정하지 않았다. 작업 범위 밖 로컬 인계·수확 파일은 갱신하지 않았다.
+- 근거: `agents/core/*.yaml`, `labhq/runner/daemon.py`, `labhq/recruit/paper2agent.py`, `tests/test_integrations.py`.
+
 ## 2026-10-01 · HANDOFF 개편: 개발 총괄 교대
 
 - 결론: 개발 총괄을 Claude와 Codex가 번갈아 맡을 수 있게 HANDOFF.md를 지금 기준으로 다시 썼다(PI 결정 2026-10-01).

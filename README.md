@@ -130,6 +130,28 @@ Stanford Zou 연구실의 Virtual Biotech(bioRxiv 2026, 저자 중 Jiacheng Miao
 Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="live"`, 없으면 `"disabled"`를 명시합니다.
 `HPC*`는 scheduler가 `none`이 아닐 때만 배선됩니다.
 
+### 연결된 도구
+
+정규직 설정(`agents/core/*.yaml`)과 labhq 배선 코드에서 만든 목록입니다. 설치·로그인·네트워크 연결 성공을 뜻하지 않으며, 파견직 예시와 PI 개인 커넥터는 제외합니다.
+설정 변경 후 `python scripts/integrations.py --write`로 갱신하고 `--check`로 일치 여부를 확인합니다. 배지 숫자는 표의 항목 수입니다.
+
+<!-- integrations:start -->
+![builtin MCP: 2](https://img.shields.io/static/v1?label=builtin%20MCP&message=2&color=5B5BD6) ![external MCP: 2](https://img.shields.io/static/v1?label=external%20MCP&message=2&color=007EC6) ![plugin: 1](https://img.shields.io/static/v1?label=plugin&message=1&color=8A2BE2) ![skill: 2](https://img.shields.io/static/v1?label=skill&message=2&color=228B22) ![engine: 3](https://img.shields.io/static/v1?label=engine&message=3&color=555555)
+
+| 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
+|---|---|---|---|---|
+| 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
+| 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [data_steward](agents/core/data_steward.yaml), [engineer](agents/core/engineer.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
+| 외부 MCP | PubMed | 생의학 논문 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://pubmed.mcp.claude.com/mcp) · [직원 설정](agents/core/) |
+| 외부 MCP | bioRxiv / medRxiv | preprint 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/biorxiv/mcp) · [직원 설정](agents/core/) |
+| Claude Code plugin | bioinfo-agent (`bioinfo`) | bioinfo plugin 로드 (plugin_dirs) | [bioinfo-agent](agents/core/bioinfo-agent.yaml) | [직원 설정](agents/core/) |
+| skill | Paper2Agent | 논문·코드를 파견직으로 변환 (setup-paper2agent 필요) | [recruiter](agents/core/recruiter.yaml) | [Paper2Agent](https://github.com/jmiao24/Paper2Agent) · [직원 설정](agents/core/) · [채용 코드](labhq/recruit/paper2agent.py) |
+| skill | bioinfo:bioinfo-analyze | 실행 전 존재 확인 (required_skills) | [bioinfo-agent](agents/core/bioinfo-agent.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Claude Code | 직원 실행 엔진 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](agents/core/engineer.yaml), [lit_scout](agents/core/lit_scout.yaml), [sci_reviewer](agents/core/sci_reviewer.yaml) | [직원 설정](agents/core/) |
+| 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](agents/core/lit_scout.yaml), [sci_reviewer](agents/core/sci_reviewer.yaml) | [adapter](labhq/adapters/codex.py) · [직원 설정](agents/core/) |
+<!-- integrations:end -->
+
 ### 역할·엔진·도구를 나눈 기준
 
 | 기준 | 어디에 적용했나 | 근거 |
