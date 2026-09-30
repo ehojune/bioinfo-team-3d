@@ -12,6 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
+| 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |
+| 02:59 | [`00e4df0`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/00e4df0) | **Codex 직원의 권한 표시와 웹 검색을 바로잡았습니다(#56).** CSO가 보는 직원 명단에서 lit_scout가 읽기 전용으로 나와, 파일을 쓰는 일을 배정받지 못할 수 있었습니다. Codex 직원은 이제 sandbox 값으로 판정합니다. 웹 검색은 기본으로 켜져 있어서, 웹이 필요 없는 engineer는 명시적으로 끄고 lit_scout·sci_reviewer만 켭니다. 검색어가 로그에 빈칸으로 남던 것도 실제 CLI 출력(`item.completed`의 `action.query`)으로 고쳤습니다. lit_scout에는 PubMed·bioRxiv MCP를 붙였고, luna가 검색 스니펫만 보고 릴리스 버전을 틀린 일이 있어 "ID·버전·날짜·인용은 원 출처에서 확인" 규칙을 넣었습니다. engineer는 gpt-6.1-sol, sci_reviewer는 gpt-6-astra로 고정했습니다 |
 | 02:12 | [`71589ce`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/71589ce) | **README §2에 역할·엔진·도구를 나눈 기준을 적었습니다.** PI가 물은 질문에 대한 답입니다. 기록된 기준(직무 구분, 판단은 opus·반복은 sonnet, 다른 벤더 리뷰어)과 오늘 PI가 밝힌 CSO 최고 등급 모델의 이유를, 기록 없이 표에서만 드러나는 도구 원칙과 사정에 따라 바뀐 엔진 이력과 구분했습니다. 측정으로 검증한 배정은 아직 없다는 점도 적었습니다 |
 | 01:45 | [`a8483c0`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/a8483c0) | doctor가 러너 guard를 import하고(#46) 러너가 doctor의 버전 확인 함수를 import해서(#48) 순환 import가 생겼습니다. rebase 뒤 테스트 7개 모듈이 수집 단계에서 멈췄습니다. 버전 확인 함수를 `runner/versions.py`로 옮겼습니다 |
 | 01:43 | [`99e7f97`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/99e7f97) | **URL에서 퍼센트 인코딩된 token 파라미터 이름도 로그에서 가립니다(#47).** `%74oken=...`처럼 이름을 인코딩하면 가림 규칙을 비껴갔습니다. query key를 한 번 decode한 뒤 판정합니다 |
