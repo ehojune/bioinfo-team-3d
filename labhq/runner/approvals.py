@@ -13,18 +13,24 @@ from typing import Any, Awaitable, Callable
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 
-from ..models import ApprovalRequest
+from ..models import ASK_WAIT_SECONDS, ApprovalRequest, AskRequest, hard_stop_kind
+from ..ask_results import ask_result, read_ask_results
 from ..security import token_matches
 
 Handler = Callable[[Any], Awaitable[None]]
 
 
 class Broker:
-    def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_track: Handler):
+    def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_track: Handler,
+                 on_ask: Handler | None = None):
         self.port = port
-        self.token = secrets.token_urlsafe(24)
         self.pending: dict[str, asyncio.Future] = {}
+        self.pending_asks: dict[str, asyncio.Future] = {}
+        self.hibernate_asks: dict[str, str] = {}
+        self.task_ask_results: dict[str, list[dict]] = {}
+        self.identities: dict[str, dict[str, str | None]] = {}
         self._on_approval, self._on_event, self._on_track = on_approval, on_event, on_track
+        self._on_ask = on_ask
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -32,28 +38,44 @@ class Broker:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
-    def _check(self, token: str) -> None:
-        if not token_matches(token, self.token):
+    def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None) -> str:
+        token = secrets.token_urlsafe(24)
+        self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id}
+        return token
+
+    def revoke_task_token(self, token: str) -> None:
+        self.identities.pop(token, None)
+
+    def _identity(self, token: str, body: dict) -> dict[str, str | None]:
+        identity = next((value for key, value in self.identities.items() if token_matches(token, key)), None)
+        if identity is None:
             raise HTTPException(401, "bad broker token")
+        for field in ("task_id", "agent_id", "request_id"):
+            supplied = body.get(field)
+            if supplied is not None and supplied != identity[field]:
+                raise HTTPException(403, f"broker token does not grant {field}")
+        return {**body, **identity}
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(title="labhq-broker")
 
         @app.post("/approval")
         async def approval(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            self._check(x_labhq_token)
-            return await self.request_approval(ApprovalRequest.model_validate(body))
+            return await self.request_approval(ApprovalRequest.model_validate(
+                self._identity(x_labhq_token, body)))
+
+        @app.post("/ask")
+        async def ask(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            return await self.request_ask(AskRequest.model_validate(self._identity(x_labhq_token, body)))
 
         @app.post("/event")
         async def event(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            self._check(x_labhq_token)
-            await self._on_event(body)
+            await self._on_event(self._identity(x_labhq_token, body))
             return {"ok": True}
 
         @app.post("/jobs/track")
         async def track(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            self._check(x_labhq_token)
-            await self._on_track(body)
+            await self._on_track(self._identity(x_labhq_token, body))
             return {"ok": True}
 
         return app
@@ -69,12 +91,60 @@ class Broker:
         finally:
             self.pending.pop(req.id, None)
 
+    async def request_ask(self, req: AskRequest) -> dict:
+        def terminal(answer: dict) -> dict:
+            result = ask_result(**{**answer, "ask_id": req.id})
+            outcome = read_ask_results([result])
+            self.task_ask_results.setdefault(req.task_id or "", []).append(result)
+            return result if outcome["status"] == "answered" else {**result, "reason": outcome["reason"]}
+
+        if self._on_ask is None:
+            return terminal(ask_result(reason="ask routing is unavailable"))
+        fut = asyncio.get_running_loop().create_future()
+        self.pending_asks[req.id] = fut
+        await self._on_ask(req)
+        target = "colleague" if req.to.startswith("colleague:") else req.to
+        if target == "pi" and hard_stop_kind(req) is None:
+            target = "cso"
+        wait_s = 0 if req.wait == "hibernate" else ASK_WAIT_SECONDS[target]
+        if hard_stop_kind(req):
+            wait_s = 0
+        if wait_s <= 0:
+            self.hibernate_asks[req.id] = req.task_id or ""
+            self.pending_asks.pop(req.id, None)
+            return {"status": "pending", "ask_id": req.id,
+                    "instruction": "Turn을 끝내세요. 답이 오면 같은 session으로 resume합니다."}
+        try:
+            answer = await asyncio.wait_for(fut, wait_s)
+            return terminal(answer)
+        except asyncio.TimeoutError:
+            self.hibernate_asks[req.id] = req.task_id or ""
+            return {"status": "pending", "ask_id": req.id,
+                    "instruction": "대기 상한을 넘었습니다. Turn을 끝내면 답이 올 때 resume합니다."}
+        finally:
+            self.pending_asks.pop(req.id, None)
+
     def resolve(self, approval_id: str, approved: bool, note: str = "") -> bool:
         fut = self.pending.get(approval_id)
         if fut and not fut.done():
             fut.set_result({"approved": approved, "note": note})
             return True
         return False
+
+    def resolve_ask(self, ask_id: str, answer: dict) -> bool:
+        fut = self.pending_asks.get(ask_id)
+        if fut and not fut.done():
+            fut.set_result(answer)
+            return True
+        return ask_id in self.hibernate_asks
+
+    def pending_for_task(self, task_id: str) -> list[str]:
+        return [ask_id for ask_id, owner in self.hibernate_asks.items() if owner == task_id]
+
+    def finish_task(self, task_id: str) -> None:
+        self.task_ask_results.pop(task_id, None)
+        for ask_id in self.pending_for_task(task_id):
+            self.hibernate_asks.pop(ask_id, None)
 
     async def serve(self) -> None:
         config = uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="warning", lifespan="off")

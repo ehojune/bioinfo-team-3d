@@ -107,6 +107,10 @@ ROLE_FOOTER = """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
+- If environment, installation, login or tool errors block you, use labhq_ask(to="facilities").
+- For a method or scope decision use to="cso"; ask a colleague only for a fact only that colleague can answer.
+- Use to="pi" only for a data-zone, cost-cap, out-of-scope, installation or destructive-work hard stop.
+- A bioinfo-agent gate that says to ask and stop must use labhq_ask, then end the turn when it returns pending.
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - Report in Korean; keep technical terms, gene names and commands in English.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to

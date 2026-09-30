@@ -21,7 +21,8 @@ from pydantic import BaseModel
 
 from ..integrations.github import ProjectReporter
 from ..integrations.rounds import RoundRecorder, environment_snapshot
-from ..models import ApprovalRequest, RunnerUnavailable, Task, TaskResult, new_id
+from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
@@ -30,6 +31,7 @@ from ..store import StateStore
 from ..util import short
 
 log = logging.getLogger(__name__)
+TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -114,6 +116,8 @@ class Hub:
         self.futures: dict[str, asyncio.Future] = {}
         self.jobs_waiters: dict[str, asyncio.Future] = {}
         self.jobs_done: dict[str, dict] = self.store.all("jobs_done")
+        self.ask_waiters: dict[str, asyncio.Future] = {}
+        self.ask_tasks: dict[str, asyncio.Task] = {}
         self.terminal_queued: set[int] = set()
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
@@ -156,7 +160,7 @@ class Hub:
         self.store.put("request", rid, self.requests[rid])
 
     def running_tasks(self) -> list[dict]:
-        """Accepted tasks of running requests, including steps asleep on HPC jobs (their task already returned)."""
+        """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
         out = []
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
@@ -164,7 +168,7 @@ class Hub:
                 continue
             if not entry.get("completed"):
                 state = "running"
-            elif (tid not in self.jobs_done and (entry.get("result") or {}).get("pending_jobs") and
+            elif (waiting(entry.get("result") or {}, jobs_finished=tid in self.jobs_done) and
                   (entry.get("step_id") or entry.get("kind")) not in (req.get("results") or {})):
                 state = "hibernating"
             else:
@@ -208,6 +212,7 @@ class Hub:
                                            {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
                                            self.s.gateway.event_buffer)
         self.events.append(event)
+        self._restart_request_asks(rid)
         try:
             self.rounds.write(rid)
             self.rounds.submit(rid)
@@ -337,7 +342,10 @@ class Hub:
         for body in candidates:
             if body:
                 result = TaskResult.model_validate(body)
-                if result.ok and not result.pending_jobs:
+                outcome = read_ask_results(self.ask_results_for_task(result.task_id))
+                if outcome["status"] == "rejected":
+                    return rejected_step(result, outcome["reason"])
+                if result.ok and not waiting(result):
                     return result
         return None
 
@@ -420,6 +428,20 @@ class Hub:
             if entry["origin"] == runner_id:
                 await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
                                                    "approved": entry["approved"], "note": entry["note"]})
+
+    async def flush_ask_answers(self, runner_id: str) -> None:
+        for ask_id, entry in self.store.all("ask").items():
+            if (entry.get("origin") == runner_id and entry.get("state") == "resolved"
+                    and not entry.get("delivered")):
+                await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask_id,
+                                                   "answer": entry["answer"]})
+            elif entry.get("origin") == runner_id and entry.get("state") in {"pending", "working"}:
+                self._start_ask(AskRequest.model_validate(entry["ask"]), runner_id)
+
+    def _restart_request_asks(self, rid: str) -> None:
+        for entry in self.store.all("ask").values():
+            if (entry.get("ask") or {}).get("request_id") == rid and entry.get("state") in {"pending", "working"}:
+                self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
         if capabilities is not None:
@@ -533,6 +555,10 @@ class Hub:
             return
         if typ == "approval.ack":
             self.store.delete("decision", str(msg["id"]))
+        if typ == "ask.ack":
+            entry = self.store.get("ask", str(msg["id"]))
+            if entry:
+                self.store.put("ask", str(msg["id"]), {**entry, "delivered": True})
         if typ == "task.result":
             rid = msg.get("request_id")
             tid = msg.get("task_id") or ""
@@ -572,6 +598,19 @@ class Hub:
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
+        elif typ == "ask.requested":
+            ask = AskRequest.model_validate(msg["data"])
+            existing = self.store.get("ask", ask.id)
+            if existing and existing.get("state") == "resolved":
+                await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id,
+                                                   "answer": existing["answer"]})
+            elif existing is None:
+                self.store.put("ask", ask.id, {"state": "pending", "origin": runner_id,
+                                                "ask": ask.model_dump(mode="json")})
+                await self.publish({"type": "agent.ask", "ts": time.time(), "task_id": ask.task_id,
+                                    "agent_id": ask.agent_id, "request_id": ask.request_id,
+                                    "data": ask.model_dump(mode="json")})
+                self._start_ask(ask, runner_id)
         elif typ == "jobs.finished":
             tid = msg.get("task_id") or ""
             self.store.put("jobs_done", tid, msg["data"])
@@ -711,6 +750,74 @@ class Hub:
         fut = self.jobs_waiters.setdefault(task_id, asyncio.get_running_loop().create_future())
         return await fut
 
+    def _start_ask(self, ask: AskRequest, runner_id: str) -> None:
+        def request_status():
+            return self.requests.get(ask.request_id, {}).get("status") if ask.request_id else "running"
+
+        status = request_status()
+        if status not in {"waiting_for_runner", "running"} | TERMINAL_REQUEST_STATES:
+            return
+        previous = self.ask_tasks.get(ask.id)
+        if previous and not previous.done():
+            if status not in TERMINAL_REQUEST_STATES:
+                return
+            previous.cancel()
+
+        async def route() -> None:
+            # Recheck after scheduling: a resume decision or terminal checkpoint may intervene.
+            status = request_status()
+            if status in TERMINAL_REQUEST_STATES:
+                request = self.requests.get(ask.request_id, {})
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason=f"request {status}: {request.get('error') or 'request ended'}", **{"from": "labhq"}))
+                return
+            if status not in {"waiting_for_runner", "running"}:
+                return
+            entry = self.store.get("ask", ask.id) or {}
+            self.store.put("ask", ask.id, {**entry, "state": "working"})
+            try:
+                await self.orchestrator.answer_ask(ask, runner_id)
+            except Exception as exc:
+                await self.resolve_ask(ask, runner_id, ask_result(
+                    reason=f"질의 처리 실패: {exc}", **{"from": "labhq"}))
+
+        task = asyncio.create_task(route())
+        self.ask_tasks[ask.id] = task
+        def finished(done):
+            if self.ask_tasks.get(ask.id) is done:
+                self.ask_tasks.pop(ask.id, None)
+        task.add_done_callback(finished)
+
+    async def resolve_ask(self, ask: AskRequest, runner_id: str, answer: dict) -> None:
+        answer = ask_result(**{**answer, "ask_id": ask.id})
+        entry = self.store.get("ask", ask.id) or {"ask": ask.model_dump(mode="json"), "origin": runner_id}
+        self.store.put("ask", ask.id, {**entry, "state": "resolved", "answer": answer,
+                                       "resolved_at": time.time()})
+        waiter = self.ask_waiters.pop(ask.id, None)
+        if waiter and not waiter.done():
+            waiter.set_result(answer)
+        await self.publish({"type": "agent.answer", "ts": time.time(), "task_id": ask.task_id,
+                            "agent_id": answer.get("from"), "request_id": ask.request_id,
+                            "data": {**answer, "to": ask.agent_id, "question": ask.question}})
+        if runner_id in self.runners:
+            await self.send_runner(runner_id, {"type": "ask.resolved", "id": ask.id, "answer": answer})
+
+    async def wait_asks(self, ask_ids: list[str]) -> list[dict]:
+        answers = []
+        for ask_id in ask_ids:
+            entry = self.store.get("ask", ask_id)
+            if entry and entry.get("state") == "resolved":
+                answers.append(entry["answer"])
+                continue
+            future = self.ask_waiters.setdefault(ask_id, asyncio.get_running_loop().create_future())
+            answers.append(await future)
+        return answers
+
+    def ask_results_for_task(self, task_id: str) -> list[dict]:
+        return [entry["answer"] for entry in self.store.all("ask").values()
+                if (entry.get("ask") or {}).get("task_id") == task_id
+                and entry.get("state") == "resolved" and entry.get("answer")]
+
     # ----- approvals -----
     async def request_approval(self, kind: str, summary: str, request_id: str | None = None,
                                detail: dict | None = None, timeout_s: int | None = None) -> dict:
@@ -753,6 +860,7 @@ class Hub:
             if approved:
                 self.requests[rid]["status"] = "waiting_for_runner"
                 self.save_request(rid)
+                self._restart_request_asks(rid)
                 asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
@@ -834,6 +942,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
+        for rid, request in hub.requests.items():
+            if request.get("status") in TERMINAL_REQUEST_STATES:
+                hub._restart_request_asks(rid)
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
@@ -859,6 +970,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
                                 hello.get("capabilities"))
             await hub.flush_decisions(runner_id)
+            await hub.flush_ask_answers(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:

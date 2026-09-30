@@ -70,8 +70,19 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         types = [e["type"] for e in seen if e.get("request_id") == rid]
         assert types.count("request.review") == 2  # revise → accept
         assert "recruit.suggested" in types and "job.submitted" in types and "jobs.finished" in types
-        assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 2
+        assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 1
+        assert "agent.ask" in types and "agent.answer" in types
         assert any(e["type"] == "approval.resolved" for e in seen)
+        biologist_step = next(st["id"] for st in steps if st["agent_id"] == "biologist")
+        biologist_tasks = [v for v in hub.store.all("task").values()
+                           if v.get("request_id") == rid
+                           and (v.get("payload") or {}).get("meta", {}).get("step_id") == biologist_step]
+        first_biologist = next(v for v in biologist_tasks
+                               if not (v.get("payload") or {}).get("resume_session_id"))
+        resumed_biologist = next(v for v in biologist_tasks
+                                 if (v.get("payload") or {}).get("resume_session_id"))
+        assert resumed_biologist["payload"]["resume_session_id"] == first_biologist["result"]["session_id"]
+        assert resumed_biologist["payload"]["meta"]["workdir"] == first_biologist["result"]["workdir"]
         assert "깨어나서" in req["results"][analyst_step]["text"]  # analyst hibernated on HPC and was resumed
         assert "revision failed" in req["results"][analyst_step]["revision_failed"]
         steward = next(st["id"] for st in steps if st["agent_id"] == "data_steward")
