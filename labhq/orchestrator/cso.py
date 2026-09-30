@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -357,6 +358,7 @@ class Orchestrator:
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
         self.budget_outcomes: dict[str, list[dict]] = {}
+        self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
@@ -386,6 +388,39 @@ class Orchestrator:
             return (rid, "direct")
         sid = task.get("step_id") or meta.get("step_id")
         return (rid, "step", sid) if sid else (rid, "task", tid)
+
+    @asynccontextmanager
+    async def _consult_lock(self, request_id: str | None, agent_id: str):
+        # Lock the target for the request, including selection of its session/workdir.
+        # A session can rotate after each consult; locking its old ID would let a
+        # waiter overlap a new consult using the updated ID and the same workdir.
+        key = (request_id, agent_id)
+        lock, users = self.consult_locks.get(key, (asyncio.Lock(), 0))
+        self.consult_locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, users = self.consult_locks[key]
+            if users == 1:
+                del self.consult_locks[key]
+            else:
+                self.consult_locks[key] = (lock, users - 1)
+
+    def _consult_resource_busy(self, agent_id: str, session_id: str | None, workdir: str | None) -> bool:
+        for entry in self.hub.store.all("task").values():
+            payload = entry.get("payload") or {}
+            if entry.get("completed") or payload.get("agent_id") != agent_id:
+                continue
+            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight.
+            meta = payload.get("meta") or {}
+            if meta.get("kind") == "consult":
+                continue
+            active_workdir = meta.get("workdir")
+            if ((session_id and payload.get("resume_session_id") == session_id) or
+                    (workdir and active_workdir and Path(workdir).resolve() == Path(active_workdir).resolve())):
+                return True
+        return False
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
@@ -459,12 +494,6 @@ class Orchestrator:
             return
 
         request = self.hub.requests.get(ask.request_id or "", {})
-        session_id, workdir = self._last_agent_session(ask.request_id, routed)
-        if requested.startswith("colleague:"):
-            session_id, workdir = None, None
-        if routed == self.cfg.cso_agent:
-            session_id = request.get("cso_session_id") or session_id
-            workdir = request.get("cso_workdir") or workdir
         prompt = CONSULT_PROMPT.format(
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
@@ -473,17 +502,26 @@ class Orchestrator:
         )
         overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
                      "builtin_tools": "Read,Glob,Grep", "tools": []}
-        consult = Task(
-            agent_id=routed, request_id=ask.request_id, prompt=prompt,
-            resume_session_id=session_id if self.hub.supports_resume(routed) else None,
-            meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
-                  "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
-        )
-        result = await self.run_step(consult)
-        if routed == self.cfg.cso_agent and result.session_id:
-            request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
-            if ask.request_id in self.hub.requests:
-                self.hub.save_request(ask.request_id)
+        async with self._consult_lock(ask.request_id, routed):
+            session_id, workdir = self._last_agent_session(ask.request_id, routed)
+            if requested.startswith("colleague:"):
+                session_id, workdir = None, None
+            if routed == self.cfg.cso_agent:
+                session_id = request.get("cso_session_id") or session_id
+                workdir = request.get("cso_workdir") or workdir
+            if self._consult_resource_busy(routed, session_id, workdir):
+                session_id, workdir = None, None
+            consult = Task(
+                agent_id=routed, request_id=ask.request_id, prompt=prompt,
+                resume_session_id=session_id if self.hub.supports_resume(routed) else None,
+                meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
+                      "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+            )
+            result = await self.run_step(consult)
+            if routed == self.cfg.cso_agent and result.session_id:
+                request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
+                if ask.request_id in self.hub.requests:
+                    self.hub.save_request(ask.request_id)
         answered = result.ok and bool(result.text.strip())
         answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
         await self.hub.resolve_ask(ask, runner_id, ask_result(
@@ -500,6 +538,7 @@ class Orchestrator:
             previous_workdir = current.meta.get("workdir")
             previous_session = current.resume_session_id
             previous_result = None
+            retry_answers = []
             for attempt in range(first_attempt, limit + 1):
                 await self._check_budget(rid)
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
@@ -511,7 +550,8 @@ class Orchestrator:
                     can_resume = bool(previous_session and self.hub.supports_resume(current.agent_id))
                     attempt_task = attempt_task.model_copy(update={
                         "prompt": continuation_prompt(
-                            current, "Retry the same task after the transient failure.", resumable=can_resume,
+                            current, "\n\n".join(["Retry the same task after the transient failure.", *retry_answers]),
+                            resumable=can_resume,
                             previous_result=previous_result, context_chars=self.cfg.context_chars_per_step),
                         "context": "", "resume_session_id": previous_session if can_resume else None})
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
@@ -526,15 +566,21 @@ class Orchestrator:
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
-                    # Audit in-session replies too: a CLI success cannot override a denied ask.
-                    answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
-                    outcome = read_ask_results(answers)
-                    if outcome["status"] == "rejected":
-                        res = rejected_step(res, outcome["reason"])
                     kind = failure_kind(res)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                # Audit even failed/exceptional attempts. Keep answered asks across
+                # every retry, including engines without session resume.
+                answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
+                outcome = read_ask_results(answers)
+                if outcome["status"] == "rejected":
+                    res = rejected_step(res, outcome["reason"])
+                    kind = "terminal"
+                elif outcome["answer"]:
+                    update = ASK_WAKE_PROMPT.format(answers=outcome["answer"])
+                    if update not in retry_answers:
+                        retry_answers.append(update)
                 await self._check_budget(rid, block=False)
                 previous_result = res
                 if kind is None:
