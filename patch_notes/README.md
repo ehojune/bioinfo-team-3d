@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:42 | [`cf69efb`](https://github.com/ehojune/bioinfo-team-3d/pull/77/commits/cf69efb) | **bench가 스크립트에 없는 승인을 자동으로 허락하지 않습니다** (Codex 리뷰). 실제 labhq arm에서 예산 초과나 도구 권한 같은 승인이 오면, 준비된 첫 답을 골라 승인해 버렸습니다. 요청 예산이 저절로 늘고 도구 권한이 PI 확인 없이 열리는 셈입니다. 이제 질문 확인(clarify)이 case의 문구와 실제로 맞을 때만 답하고, 나머지는 거절로 기록해 결과표에 '미스크립트 승인'으로 보여 줍니다. 같이 고친 것: 기준선 subprocess에도 부모 Claude 세션 표식 제거, 실패가 하나라도 있으면 test-agent가 exit code 1 |
 | 03:23 | [`7b03bb1`](https://github.com/ehojune/bioinfo-team-3d/pull/77/commits/7b03bb1) | **labhq가 단일 세션보다 나은지 잴 bench를 넣었습니다(#40).** 같은 과제를 labhq, Opus 5.5 `claude -p` 단일 세션, gpt-6-astra `codex exec` 단일 세션에 주고, 산출물·결정적 검사·PI 개입 횟수·비용·시간을 나란히 표로 냅니다(PI 결정한 기준선). case는 저비용 5개(inco KRAS G12C, 엽록체 구조, GEO 위암 요약, 공개 단백질·펭귄 데이터 QC)이고 통제 데이터와 큰 다운로드는 없습니다. `labhq bench test-agent`는 예시 job을 차례로 넣고 결과를 검사해 요약하는 테스트 에이전트입니다. mock 엔진으로 5건 모두 PASS를 확인했고, 실제 CLI 비교는 PI 구독을 쓰므로 PI 머신에서 돌립니다 |
 | 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
