@@ -12,6 +12,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:45 | [`a8483c0`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/a8483c0) | doctor가 러너 guard를 import하고(#46) 러너가 doctor의 버전 확인 함수를 import해서(#48) 순환 import가 생겼습니다. rebase 뒤 테스트 7개 모듈이 수집 단계에서 멈췄습니다. 버전 확인 함수를 `runner/versions.py`로 옮겼습니다 |
+| 01:43 | [`7e51df9`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/7e51df9) | **plugin 파일의 실행 권한만 바꿔도 provenance가 달라집니다(#24).** hash에 Git index의 mode만 넣어서, 커밋하지 않은 `chmod +x`는 같은 plugin으로 기록됐습니다. hook script는 실행 권한이 있어야 돌기 때문에 실제 동작이 다른데도요. 작업 트리의 실행 bit도 반영합니다 |
+| 01:43 | [`64e9294`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/64e9294) | **폰 demo가 IPv6 LAN 주소를 못 찾던 문제(#25).** hostname 조회에 IPv6 주소가 나오지 않는 PC에서는 폰에 보여 줄 주소가 IPv4뿐이었습니다. UDP route를 한 번 열어 실제로 나가는 주소를 봅니다(패킷은 보내지 않습니다) |
+| 01:43 | [`c3812aa`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/c3812aa) | **`labhq doctor`가 러너와 같은 guard로 판정합니다(#46).** doctor가 데이터 구역·계정 검사와 직원 preflight를 따로 흉내 내서, doctor는 통과인데 실제 러너는 거부하는 경우가 생길 수 있었습니다. 러너의 함수를 그대로 부릅니다 |
+| 01:43 | [`99e7f97`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/99e7f97) | **URL에서 퍼센트 인코딩된 token 파라미터 이름도 로그에서 가립니다(#47).** `%74oken=...`처럼 이름을 인코딩하면 가림 규칙을 비껴갔습니다. query key를 한 번 decode한 뒤 판정합니다 |
 | 01:33 | [`baba229`](https://github.com/ehojune/bioinfo-team-3d/pull/48/commits/baba229) | **GitHub에 쓰기 직전에 저장소 공개 여부를 다시 확인합니다** (Codex 리뷰). 확인은 한 번 앞에서 하고, 그 뒤에 기존 issue를 여러 쪽 조회했습니다. 그 사이 저장소가 공개로 바뀌면 연구 기록이 그대로 올라갈 수 있었습니다. 같은 부류의 틈이 라운드마다 더 좁게 나와서 사례를 막지 않고 구조로 닫았습니다. 모든 POST·PATCH 바로 앞에 확인 호출이 붙고, 그 사이에 다른 대기가 없습니다. 게시 재시도는 #54로 넘겼습니다 |
 | 01:32 | [`910e408`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/910e408) | **README 갱신 여부를 최종 diff로 판정합니다** (Codex 리뷰). 커밋별로 고친 파일을 합쳐서 봤더니, 한 커밋이 README를 고치고 다음 커밋이 되돌려도 통과했습니다. 최종 브랜치에는 README 변경이 없는데요. 자체 변경이 있는 merge commit 검사는 #53로 넘겼습니다 |
 | 01:30 | [`7ce3d95`](https://github.com/ehojune/bioinfo-team-3d/pull/52/commits/7ce3d95) | `patch_notes.py rows`가 CI의 Python 3.10에서 커밋 시각(`...Z`)을 못 읽어 테스트가 실패했습니다. `fromisoformat`은 3.11부터 `Z`를 받습니다. Unix 시각으로 읽도록 바꿨습니다. STATUS의 소급 건수도 96개로 바로잡았습니다 |
