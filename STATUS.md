@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 후속 P2 네 건 #51 #53 #54 #68
+
+- 결론: 승인 timeout 기록, 자체 변경이 있는 merge의 패치노트 검사, 라운드 게시 재시도, IPv6 link-local 탐색과 doctor 오타 보고를 고쳤다.
+- 바뀐 것: 명확화·예산 승인이 시간 초과되면 `timed_out` 결정으로 저장해 라운드 기록 `pi_decisions`에 보인다(#51). `scripts/patch_notes.py`가 git 자동 병합 결과와 달라진 파일이 있는 merge만 검사하고, STATUS.md·패치노트만 정리한 merge와 깨끗한 동기화 merge는 뺀다(#53). `RoundRecorder`가 일시 실패한 GitHub 게시를 상한 있는 backoff로 다시 넣고 영구 거부는 재시도하지 않는다(#54). global IPv6 route가 없으면 interface 열거로 link-local 주소를 찾고, `force_engine` 오타는 doctor fail 행으로 보고한다(#68).
+- 실행한 것: issue마다 수정 전 실패하는 회귀 테스트, 전체 `pytest -q -p no:cacheprovider` 807 passed/17 skipped(main 병합 뒤), `bash scripts/check_public.sh` 통과.
+- 미해결: GitHub `Retry-After`·rate-limit reset 시각을 backoff에 반영하는 것은 #97로 넘긴다.
+- 근거: `tests/test_approval_timeout.py`, `tests/test_patch_notes.py`, `tests/test_round_records.py`, `tests/test_ipv6_interfaces.py`, `tests/test_doctor.py`.
+
 ## 2026-10-01 · #39 labhq_ask 질의 경로
 
 - 결론: 직원은 `labhq_ask`로 CSO·시설팀·동료에게 묻고, 코드가 판정한 hard stop만 PI에게 올린다. 답이 늦으면 step을 hibernate하고 같은 session·workdir에서 재개한다.
