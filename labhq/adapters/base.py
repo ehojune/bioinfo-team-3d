@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, short, strip_parent_claude_env
+from ..util import extract_json, merge_staff_env, short
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
 
@@ -297,13 +297,13 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        refused = self.preflight_error(
-            ctx, strip_parent_claude_env({**os.environ, **self.engine_env(), **ctx.env}))
+        env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
+        refused = self.preflight_error(ctx, env)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
-        env = strip_parent_claude_env({**os.environ, **self.engine_env(), **ctx.env})
+        env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         if engine_bin is not None:
             cmd = [os.path.expandvars(os.path.expanduser(cmd[0])),
@@ -376,9 +376,9 @@ class AgentAdapter(ABC):
 
     @staticmethod
     async def _kill(proc: asyncio.subprocess.Process) -> None:
-        if proc.returncode is not None:
-            return
         if os.name == "nt":
+            if proc.returncode is not None:
+                return
             descendants = _windows_descendants(proc.pid)
             returncode = None
             try:
@@ -406,11 +406,37 @@ class AgentAdapter(ABC):
             except asyncio.TimeoutError:
                 pass
             return
+
+        pgid = proc.pid
         try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            await asyncio.wait_for(proc.wait(), 10)
-        except (ProcessLookupError, asyncio.TimeoutError):
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        if proc.returncode is None:
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
+                await asyncio.wait_for(proc.wait(), 10)
+            except asyncio.TimeoutError:
+                pass
+
+        def group_exists() -> bool:
+            try:
+                os.killpg(pgid, 0)
+                return True
             except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True
+
+        deadline = asyncio.get_running_loop().time() + 0.2
+        while group_exists() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.02)
+        if group_exists():
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
                 pass

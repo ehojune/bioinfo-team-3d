@@ -69,6 +69,18 @@ def _process_exited(pid: int) -> bool:
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
+def _posix_process_exited(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    status = Path(f"/proc/{pid}/status")
+    try:
+        return "State:\tZ" in status.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows process-tree termination")
 @pytest.mark.asyncio
 async def test_windows_timeout_kills_cli_and_grandchild(tmp_path):
@@ -96,3 +108,39 @@ async def test_windows_timeout_kills_cli_and_grandchild(tmp_path):
     while time.monotonic() < deadline and not (_process_exited(parent) and _process_exited(child)):
         await asyncio.sleep(0.05)
     assert _process_exited(parent) and _process_exited(child)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group termination")
+@pytest.mark.asyncio
+async def test_posix_timeout_kills_sigterm_ignoring_grandchild(tmp_path):
+    pids = tmp_path / "pids.txt"
+    script = tmp_path / "tree.py"
+    script.write_text(
+        "import os, pathlib, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "pathlib.Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    settings = Settings()
+    settings.runner.task_timeout_s = 1
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine.cli, builtin_mcp=[],
+                      cli=CliSpec(command=[sys.executable, str(script), str(pids)]))
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=workdir,
+                     settings=settings, mcp_servers=[], env={}, emit=_emit, prompt="x")
+    child = None
+    try:
+        result = await get_adapter(agent.engine, settings).run(ctx)
+        assert not result.ok and result.error == "timeout after 1s"
+        _parent, child = map(int, pids.read_text(encoding="utf-8").split())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not _posix_process_exited(child):
+            await asyncio.sleep(0.05)
+        assert _posix_process_exited(child)
+    finally:
+        if child is not None and not _posix_process_exited(child):
+            os.kill(child, 9)
