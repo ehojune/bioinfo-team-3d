@@ -162,7 +162,7 @@ class Hub:
 
     def running_tasks(self) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
-        out = []
+        selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
             if not entry.get("accepted") or req.get("status") != "running":
@@ -174,10 +174,15 @@ class Hub:
                 state = "hibernating"
             else:
                 continue
-            out.append({"id": tid, "request_id": entry.get("request_id"), "state": state,
-                        "step_id": entry.get("step_id") or entry.get("kind"),
-                        "agent_id": (entry.get("payload") or {}).get("agent_id")})
-        return out
+            step_id = entry.get("step_id") or entry.get("kind")
+            task = {"id": tid, "request_id": entry.get("request_id"), "state": state,
+                    "step_id": step_id, "agent_id": (entry.get("payload") or {}).get("agent_id"),
+                    "dispatched_at": entry.get("dispatched_at", 0)}
+            key = (task["request_id"], step_id)
+            rank = (1 if state == "running" else 0, float(task["dispatched_at"] or 0))
+            if key not in selected or rank > selected[key][0]:
+                selected[key] = (rank, task)
+        return [selected[key][1] for key in sorted(selected)]
 
     def request_summary(self, req: dict) -> dict:
         rid = req["id"]
