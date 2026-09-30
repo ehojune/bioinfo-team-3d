@@ -1143,6 +1143,10 @@ class Orchestrator:
                             if not plan_res.ok:
                                 self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
                                 return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
                             plan = (plan_res.structured if isinstance(plan_res.structured, dict)
                                     else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")

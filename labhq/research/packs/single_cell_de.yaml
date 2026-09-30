@@ -50,6 +50,11 @@ fields:
     required: true
     value_type: string
     allowed_values: [identifiable, fully_confounded_not_identifiable]
+  - name: conclusion_mode
+    description: Whether the plan may estimate a condition effect or is limited to descriptive reporting.
+    required: true
+    value_type: string
+    allowed_values: [condition_effect, descriptive_only]
 validators:
   - id: single_cell_de.donor_unit
     requirement: Cells must not be treated as independent donor replicates.
@@ -63,10 +68,49 @@ reviewer_questions:
 fixtures:
   - id: donor_batch_confounded
     purpose: Detect cell-level pseudoreplication and complete donor-batch confounding.
-acceptance:
+rules:
   - id: single_cell_de.donor_model
-    requirement: Use pseudobulk or a donor-dependent model, with the choice fixed in the approved plan.
-    required_fields: [donor_id, independent_replicates, replicate_definition, model]
-  - id: single_cell_de.identifiability
-    requirement: Mark a fully confounded donor and batch design as not identifiable rather than reporting a condition effect.
-    required_fields: [condition, batch, batch_design]
+    description: Use a donor-level model fixed in the approved plan.
+    require:
+      field: model
+      in: [pseudobulk, donor_dependent]
+  - id: single_cell_de.confounded_conclusion_mode
+    description: A fully confounded design is limited to descriptive reporting.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: conclusion_mode
+      value: descriptive_only
+  - id: single_cell_de.confounded_study_type
+    description: A fully confounded design may only support a descriptive conclusion.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    forbid:
+      field: brief.study_type
+      in: [explanatory, comparative]
+  - id: single_cell_de.confounded_hypothesis
+    description: A fully confounded design cannot carry a condition-effect hypothesis.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: brief.primary_hypothesis
+      value: null
+  - id: single_cell_de.confounded_statistics
+    description: Inferential condition-effect statistics are disabled under full confounding.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: protocol.statistics.applicable
+      value: false
+  - id: single_cell_de.confounded_estimand
+    description: A condition-effect estimand is absent under full confounding.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: protocol.statistics.estimand
+      value: null

@@ -246,6 +246,24 @@ def _present(value: Any) -> bool:
     return value is not None and (not isinstance(value, str) or bool(value.strip()))
 
 
+def _pack_predicate_matches(predicate: Any, pack_fields: dict[str, Any], plan_values: dict[str, Any]) -> bool:
+    if predicate.field in pack_fields:
+        current = pack_fields[predicate.field]
+    elif predicate.field in plan_values:
+        current = plan_values[predicate.field]
+    elif "." not in predicate.field:
+        return False
+    else:
+        current: Any = plan_values
+        for part in predicate.field.split("."):
+            current = current[part]
+    if "value" in predicate.model_fields_set:
+        return current == predicate.value
+    if "in_" in predicate.model_fields_set:
+        return current in predicate.in_
+    return current not in predicate.not_in
+
+
 def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
                           pack_definitions: dict[str, Any] | None) -> None:
     if set(plan.pack_values) != set(active_packs):
@@ -289,15 +307,27 @@ def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
             if missing:
                 raise ValueError(f"pack_values[{key}].validators.{rule.id} missing fields {missing}")
 
-        acceptance_ids = {rule.id for rule in pack.acceptance}
+        acceptance_ids = {rule.id for rule in pack.rules}
         if set(supplied.acceptance) != acceptance_ids:
             raise ValueError(f"pack_values[{key}].acceptance must contain {sorted(acceptance_ids)}")
-        for rule in pack.acceptance:
+        for rule in pack.rules:
             if not _present(supplied.acceptance[rule.id]):
-                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} must explain how it is met")
-            missing = [name for name in rule.required_fields if not _present(supplied.fields.get(name))]
-            if missing:
-                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} missing fields {missing}")
+                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} must describe the rule outcome")
+
+        plan_values = plan.model_dump(mode="python")
+        for rule in pack.rules:
+            if rule.when is not None and not _pack_predicate_matches(rule.when, supplied.fields, plan_values):
+                continue
+            if rule.require is not None:
+                passed = _pack_predicate_matches(rule.require, supplied.fields, plan_values)
+                outcome = "require"
+                predicate = rule.require
+            else:
+                passed = not _pack_predicate_matches(rule.forbid, supplied.fields, plan_values)
+                outcome = "forbid"
+                predicate = rule.forbid
+            if not passed:
+                raise ValueError(f"pack rule {rule.id} failed: {outcome} {predicate.field}")
 
 
 def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str, str],

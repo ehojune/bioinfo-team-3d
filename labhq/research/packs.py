@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class PackSource(StrictModel):
@@ -47,10 +47,54 @@ class PackFixture(StrictModel):
     purpose: str = Field(min_length=1)
 
 
-class PackAcceptance(StrictModel):
+class PackPredicate(StrictModel):
+    field: str = Field(min_length=1)
+    value: Any = None
+    in_: list[Any] | None = Field(default=None, alias="in", min_length=1)
+    not_in: list[Any] | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def exactly_one_operator(self) -> "PackPredicate":
+        operators = {"value", "in_", "not_in"} & self.model_fields_set
+        if len(operators) != 1:
+            raise ValueError("pack predicate requires exactly one operator: value, in, or not_in")
+        return self
+
+    @model_serializer(mode="plain")
+    def serialize_predicate(self) -> dict[str, Any]:
+        result = {"field": self.field}
+        if "value" in self.model_fields_set:
+            result["value"] = self.value
+        elif "in_" in self.model_fields_set:
+            result["in"] = self.in_
+        else:
+            result["not_in"] = self.not_in
+        return result
+
+
+class PackRule(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
-    requirement: str = Field(min_length=1)
-    required_fields: list[str] = Field(min_length=1)
+    description: str = Field(min_length=1)
+    when: PackPredicate | None = None
+    require: PackPredicate | None = None
+    forbid: PackPredicate | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_outcome(self) -> "PackRule":
+        if (self.require is None) == (self.forbid is None):
+            raise ValueError("pack rule requires exactly one of require or forbid")
+        return self
+
+
+_PLAN_RULE_FIELDS = {
+    "intake.work_kind", "intake.scope_status", "intake.confidence", "intake.source",
+    "brief.question", "brief.purpose", "brief.subject", "brief.scope", "brief.study_type",
+    "brief.primary_hypothesis", "protocol.revision", "protocol.analysis_unit",
+    "protocol.statistics.applicable", "protocol.statistics.reason", "protocol.statistics.estimand",
+    "protocol.statistics.analysis_unit", "protocol.statistics.multiple_testing",
+    "protocol.statistics.missing_and_exclusions", "protocol.statistics.effect_size_and_interval",
+    "notes",
+}
 
 
 class DomainRulePack(StrictModel):
@@ -65,7 +109,7 @@ class DomainRulePack(StrictModel):
     validators: list[PackValidator] = Field(min_length=1)
     reviewer_questions: list[str] = Field(min_length=1)
     fixtures: list[PackFixture] = Field(min_length=1)
-    acceptance: list[PackAcceptance] = Field(min_length=1)
+    rules: list[PackRule] = Field(min_length=1)
 
     @model_validator(mode="after")
     def declarative_rules_are_well_formed(self) -> "DomainRulePack":
@@ -78,14 +122,20 @@ class DomainRulePack(StrictModel):
                 raise ValueError(f"domain pack field {field.name}: allowed_values requires string type")
             if field.minimum is not None and field.value_type != "integer":
                 raise ValueError(f"domain pack field {field.name}: minimum requires integer type")
-        for section, rules in (("validator", self.validators), ("acceptance", self.acceptance)):
+        for section, rules in (("validator", self.validators), ("rule", self.rules)):
             ids = [rule.id for rule in rules]
             if len(ids) != len(set(ids)):
                 raise ValueError(f"domain pack {section} ids must be unique")
-            for rule in rules:
-                unknown = sorted(set(rule.required_fields) - known)
-                if unknown:
-                    raise ValueError(f"domain pack {section} {rule.id}: unknown required fields {unknown}")
+        for rule in self.validators:
+            unknown = sorted(set(rule.required_fields) - known)
+            if unknown:
+                raise ValueError(f"domain pack validator {rule.id}: unknown required fields {unknown}")
+        for rule in self.rules:
+            for predicate in (rule.when, rule.require, rule.forbid):
+                if predicate is None:
+                    continue
+                if predicate.field not in known and predicate.field not in _PLAN_RULE_FIELDS:
+                    raise ValueError(f"domain pack rule {rule.id}: unknown rule field {predicate.field!r}")
         return self
 
     @property
@@ -99,7 +149,7 @@ class LoadedPack(StrictModel):
 
 
 def pack_sha256(pack: DomainRulePack) -> str:
-    canonical = json.dumps(pack.model_dump(mode="json"), ensure_ascii=False, sort_keys=True,
+    canonical = json.dumps(pack.model_dump(mode="json", by_alias=True), ensure_ascii=False, sort_keys=True,
                            separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -130,12 +180,19 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
         raise ValueError(f"unknown research packs: {missing}")
     selected = {key: catalog[key] for key in keys}
     validators: dict[str, str] = {}
+    rules: dict[str, dict[str, Any]] = {}
     for key, loaded in selected.items():
         for validator in loaded.pack.validators:
             previous = validators.get(validator.id)
             if previous is not None and previous != validator.requirement:
                 raise ValueError(f"research packs conflict on validator {validator.id!r} ({key})")
             validators[validator.id] = validator.requirement
+        for rule in loaded.pack.rules:
+            value = rule.model_dump(mode="json", by_alias=True)
+            previous_rule = rules.get(rule.id)
+            if previous_rule is not None and previous_rule != value:
+                raise ValueError(f"research packs conflict on rule {rule.id!r} ({key})")
+            rules[rule.id] = value
     return selected
 
 
@@ -160,6 +217,6 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
                                 "fields": [field.model_dump(mode="json") for field in pack.fields],
                                 "validators": [v.model_dump(mode="json") for v in pack.validators],
                                 "reviewer_questions": pack.reviewer_questions,
-                                "acceptance": [a.model_dump(mode="json") for a in pack.acceptance]},
+                                "rules": [rule.model_dump(mode="json", by_alias=True) for rule in pack.rules]},
                                ensure_ascii=False, sort_keys=True))
     return "\n".join(rows)

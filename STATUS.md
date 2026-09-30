@@ -2,13 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
-## 2026-10-01 · #90 연구 수행 규약 PR 1
+## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
 
-- 결론: 1회차 P1 두 건을 고쳐 PI가 CP1에서 hash 원문인 동결 PLAN 전체를 확인하고, active pack 요구를 통과한 PLAN만 승인하게 했다. pilot은 여전히 CP1 뒤 멈춘다.
-- 바뀐 것: canonical PLAN JSON을 SHA-256과 approval detail이 함께 쓰며, 2.5D·3D 공용 결정 카드가 질문·가설·protocol·완료/중단·자원·data boundary·pack 값을 나눠 보여 준다. `pack_values[pack_key]`에 field·validator·acceptance 값을 두고 타입·허용값·최솟값·요구 field를 동결 전에 검사한다.
-- 실행한 것: 두 지적의 수정 전 실패 회귀를 확인했다. 수정 뒤 연구 규약 10 passed, Node 결정 카드 5 passed, 전체 pytest 840 passed/17 skipped, `tests/*.cjs` 5개와 `bash scripts/check_public.sh`가 통과했다. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
-- 미해결: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. `.git`이 읽기 전용이라 커밋 대신 초안을 남겼고 patch notes는 수정하지 않았다.
-- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/web/ui/decide.js`, `tests/test_research_protocol.py`, `tests/web_decision_detail.cjs`, `docs/research_protocol.md`.
+- 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
+- 변경: pack `rules`는 `when`과 `require|forbid`, predicate의 `value|in|not_in`을 쓴다. loader가 모르는 field·연산자와 충돌하는 rule을 거부한다. acceptance 문자열은 설명으로만 남긴다. `single_cell_de@1`은 완전 혼동 시 비교·설명 가설, inferential statistics, condition-effect estimand을 금지한다.
+- 검증: 수정 전 confounded PLAN·잘못된 rule 문법·correction 뒤 budget 거절 회귀가 실패함을 확인했다. 수정 뒤 연구 규약 14 passed, 전체 pytest 1108 passed/18 skipped, `tests/*.cjs` 5개와 `bash scripts/check_public.sh`가 통과했다. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
+- 한계·인계: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. patch notes는 수정하지 않았다.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/research/packs/single_cell_de.yaml`, `labhq/orchestrator/cso.py`, `tests/test_research_protocol.py`, `docs/research_protocol.md`.
 
 ## 2026-10-01 · PR #77 Sonnet 보정·Claude arm 권한 #40
 

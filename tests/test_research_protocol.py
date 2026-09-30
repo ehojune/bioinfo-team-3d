@@ -28,6 +28,7 @@ def valid_pack_values():
                 "model": "pseudobulk",
                 "model_rationale": "The count model consumes raw counts and preserves donor independence.",
                 "batch_design": "identifiable",
+                "conclusion_mode": "condition_effect",
             },
             "validators": {
                 "single_cell_de.donor_unit": "Aggregate cells within each donor before inference.",
@@ -35,7 +36,11 @@ def valid_pack_values():
             },
             "acceptance": {
                 "single_cell_de.donor_model": "Use donor-level pseudobulk fixed before CP1.",
-                "single_cell_de.identifiability": "Condition and batch are not fully confounded.",
+                "single_cell_de.confounded_conclusion_mode": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_study_type": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_hypothesis": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_statistics": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_estimand": "Not active because the design is identifiable.",
             },
         }
     }
@@ -192,6 +197,70 @@ def test_active_pack_requires_fields_validators_and_acceptance_before_cp1():
             validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
 
 
+def test_confounded_single_cell_plan_cannot_claim_a_condition_effect():
+    settings = Settings()
+    settings.research.active_packs = ["single_cell_de@1"]
+    selected = configured_packs(settings)
+    refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for loaded in selected.values()]
+    plan = valid_plan(refs, pack_values=valid_pack_values())
+    plan["pack_values"]["single_cell_de@1"]["fields"]["batch_design"] = "fully_confounded_not_identifiable"
+
+    with pytest.raises(ValueError, match="single_cell_de.confounded_conclusion_mode"):
+        validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(selected),
+                               pack_definitions=selected)
+
+    plan["pack_values"]["single_cell_de@1"]["fields"]["conclusion_mode"] = "descriptive_only"
+    plan["brief"]["study_type"] = "exploratory"
+    plan["brief"]["primary_hypothesis"] = None
+    plan["protocol"]["statistics"]["applicable"] = False
+    plan["protocol"]["statistics"]["estimand"] = None
+    validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(selected),
+                           pack_definitions=selected)
+
+    violations = [
+        (("brief", "primary_hypothesis"), "condition changes expression",
+         "single_cell_de.confounded_hypothesis"),
+        (("protocol", "statistics", "applicable"), True,
+         "single_cell_de.confounded_statistics"),
+        (("protocol", "statistics", "estimand"), "condition effect",
+         "single_cell_de.confounded_estimand"),
+    ]
+    for path, value, rule_id in violations:
+        broken = copy.deepcopy(plan)
+        target = broken
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+        if rule_id == "single_cell_de.confounded_statistics":
+            broken["protocol"]["statistics"]["estimand"] = "condition effect"
+        with pytest.raises(ValueError, match=rule_id):
+            validate_research_plan(broken, max_steps=2, active_packs=pack_snapshot(selected),
+                                   pack_definitions=selected)
+
+
+@pytest.mark.parametrize(
+    ("predicate", "message"),
+    [
+        ({"field": "batch_design", "equals": "fully_confounded_not_identifiable"}, "equals"),
+        ({"field": "unknown_pack_field", "value": "x"}, "unknown_pack_field"),
+    ],
+)
+def test_pack_loader_rejects_unknown_rule_operators_and_fields(tmp_path, predicate, message):
+    source = Path("labhq/research/packs/single_cell_de.yaml")
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    raw["rules"] = [{
+        "id": "single_cell_de.invalid_syntax",
+        "description": "Invalid rule used to exercise loader validation.",
+        "when": predicate,
+        "require": {"field": "brief.study_type", "in": ["exploratory", "technical"]},
+    }]
+    (tmp_path / "invalid.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises((ValidationError, ValueError), match=message):
+        load_pack_catalog([tmp_path])
+
+
 @pytest.mark.asyncio
 async def test_default_off_and_enabled_simple_direct_keep_one_call_and_same_result():
     async def reply(task):
@@ -301,3 +370,35 @@ async def test_invalid_pack_values_replan_before_cp1():
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
     assert len(hub.approvals) == 1
     assert hub.requests["r"]["status"] == "done" and hub.requests["r"]["outcome"] == "plan_approved"
+
+
+@pytest.mark.asyncio
+async def test_budget_denial_after_research_plan_correction_stops_before_cp1():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    invalid = valid_plan()
+    invalid["steps"] = []
+    replies = [invalid, valid_plan()]
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=replies.pop(0), cost_usd=0.6)
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    hub.requests["r"]["budget_usd"] = 1.0
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        if kwargs["kind"] == "budget":
+            return {"approved": False, "note": "denied", "approval_id": "budget_no", "decided_at": 1.0}
+        return {"approved": True, "note": "approved", "approval_id": "appr_test", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert [item["kind"] for item in hub.approvals] == ["budget"]
+    assert hub.requests["r"]["status"] == "failed"
+    assert "예산 승인 거부" in hub.requests["r"]["report"]
