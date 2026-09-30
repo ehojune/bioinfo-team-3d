@@ -69,4 +69,30 @@ for(let i=0;i<150;i++)fresh.apply({type:'agent.log',agent_id:'analyst',ts:1000+i
 assert.equal(fresh.S.feed.length,120); assert.equal(fresh.S.agents.get('analyst').log.length,40);
 fresh.apply({type:'agent.usage',request_id:'r2',data:{tokens:{input_tokens:9},cost_known:false}});
 assert.equal(fresh.S.requests.get('r2').costKnown,false);
+for (const terminal of ['request.completed', 'request.failed']) {
+  const costs = create();
+  costs.apply({type:'agent.usage',request_id:'other',data:{cost_usd:2}});
+  costs.apply({type:'agent.usage',request_id:'r',data:{cost_usd:0.25}});
+  costs.apply({type:terminal,request_id:'r',data:{cost_usd:1.5,cost_known:true}});
+  assert.equal(costs.req('r').cost,1.5, 'terminal total replaces live subtotal');
+  assert.equal(costs.S.cost,3.5, 'other requests keep their costs');
+  costs.apply({type:terminal,request_id:'r',data:{cost_usd:1.5}});
+  assert.equal(costs.S.cost,3.5, 'repeated terminal total is idempotent');
+  costs.apply({type:terminal,request_id:'r',data:{cost_known:false}});
+  assert.equal(costs.req('r').cost,1.5, 'missing final cost preserves known subtotal');
+  assert.equal(costs.req('r').costKnown,false);
+  costs.apply({type:terminal,request_id:'r',data:{cost_usd:0}});
+  assert.equal(costs.S.cost,2, 'zero final cost corrects the subtotal');
+  for (const cost_usd of [null, -1, 'bad', Infinity]) {
+    costs.apply({type:terminal,request_id:'r',data:{cost_usd}});
+    assert.equal(costs.S.cost,2, 'invalid final cost is ignored');
+  }
+  const finalOnly = create();
+  finalOnly.apply({type:terminal,request_id:'r',data:{cost_usd:0.3}});
+  assert.equal(finalOnly.req('r').cost,0.3, 'result-only cost is visible immediately');
+  assert.equal(finalOnly.S.cost,0.3);
+  finalOnly.apply({type:'snapshot',data:{requests:[{id:'r',status:'done',cost_usd:0.3}],
+    recent_events:[{type:terminal,request_id:'r',data:{cost_usd:0.3}}]}});
+  assert.equal(finalOnly.S.cost,0.3, 'snapshot replaces replayed totals');
+}
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);
