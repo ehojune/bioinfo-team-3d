@@ -19,7 +19,7 @@ import json
 
 from ..models import CliSpec
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, wrap_cwd
+from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, token_counts, wrap_cwd
 
 
 class _Keep(dict):
@@ -93,7 +93,10 @@ class CliAdapter(AgentAdapter):
             await ctx.emit("agent.tool", {"name": ev.get("name"), "input": short(ev.get("input"), 400)})
         elif typ == "usage":
             st.cost_usd = ev.get("cost_usd", st.cost_usd)
-            await ctx.emit("agent.usage", {"cost_usd": ev.get("cost_usd"), "tokens": ev.get("tokens")})
+            raw = ev.get("tokens")
+            tokens = token_counts(raw, tuple(raw) if isinstance(raw, dict) else ())
+            st.usage.update(tokens)  # cumulative counters; omitted fields keep their last value
+            await ctx.emit("agent.usage", {"cost_usd": ev.get("cost_usd"), "tokens": tokens})
         elif typ == "result":
             st.result_seen = True
             st.final_text = str(ev.get("text", ""))
