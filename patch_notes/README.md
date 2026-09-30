@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:16 | [`e67d921`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/e67d921) | **package에 든 설정 template에 연구 규약 설정을 반영했습니다** |
+| 07:14 | [`3370b3b`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/3370b3b) | **도메인 pack의 합격 조건을 문장이 아니라 기계가 판정하는 규칙으로 바꿨습니다** (Codex 리뷰). 전에는 조건 설명만 비어 있지 않으면 통과해서, 조건과 batch가 완전히 겹쳐 효과를 추정할 수 없는 설계에서도 효과를 주장하는 계획이 승인으로 갔습니다. 이제 pack이 `when`·`require`/`forbid` 규칙을 선언하고, 계획이 하나라도 어기면 승인 대신 다시 계획합니다. 모르는 필드·연산자가 든 pack은 불러올 때 거부합니다. 계획을 고치느라 예산 승인이 거절되면 승인 단계로 가지 않고 멈춥니다 |
 | 06:56 | [`db0d1dd`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/db0d1dd) | **재접속하거나 이벤트가 끊긴 뒤에도 실행 중인 단계가 그대로 보입니다** (#87). gateway snapshot에서 진행 중 단계 상태를 되살립니다 |
 | 06:56 | [`d54d267`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/d54d267) | **직원 카드에 완료·오류가 표시되고, 3D 승인 카드의 대기 시간이 계속 갱신됩니다** (#88) |
 | 06:55 | [`5e14d87`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/5e14d87) | **폰에서 직원 줄이 화면 절반을 차지하지 않고, 결정 이력이 끝없이 늘어나지 않습니다** (#75). 좁은 화면에서는 직원 줄을 접고, 결정 이력은 최근 것부터 나눠 보여 줍니다 |
