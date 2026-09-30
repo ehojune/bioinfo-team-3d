@@ -427,10 +427,28 @@ def main(argv: list[str] | None = None) -> None:
     dp.add_argument("--host", help="demo bind address (default: loopback, or 0.0.0.0 with --phone)")
     dp.add_argument("--approve-timeout", type=float, default=120, help="phone approval fallback in seconds")
     dp.add_argument("--port", type=int, default=8787)
+    bp = sub.add_parser("bench", help="compare LabHQ with single-session baselines")
+    bsub = bp.add_subparsers(dest="bench_cmd", required=True)
+    bsub.add_parser("list", help="list benchmark cases")
+    br = bsub.add_parser("run", help="run one case through LabHQ, Opus and Astra")
+    br.add_argument("case_id")
+    br.add_argument("--engines", choices=["real", "mock"], default="real")
+    br.add_argument("--dry-run", action="store_true", help="print commands without running them")
+    br.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    br.add_argument("--arm", choices=["labhq", "opus-5.5", "gpt-6-astra"], help=argparse.SUPPRESS)
+    bt = bsub.add_parser("test-agent", help="run every example job in order and summarize")
+    bt.add_argument("--engines", choices=["real", "mock"], default="real")
+    bt.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+    if args.cmd == "bench":
+        from .bench import run_cli
+
+        run_cli(args)
+        return
     s = Settings.load(args.config)
 
     if args.cmd == "doctor":

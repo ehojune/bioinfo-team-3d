@@ -1,0 +1,21 @@
+order: 4
+id: public-protein-qc
+title: 소형 공개 UniProt manifest QC
+request: >-
+  제공한 공개 단백질 manifest를 QC하라. 행 수, unique accession 수, 중복 accession,
+  길이의 양수 여부를 보고하고 외부 다운로드는 하지 않는다.
+references:
+  - label: UniProt manifest excerpt
+    path: references/protein-manifest.tsv
+    source: https://www.uniprot.org/
+scripted_pi_answers:
+  - question_contains: 중복
+    answer: 중복은 제거하지 말고 원본 4행과 unique 3개를 함께 보고한다.
+check:
+  script: checks/contains_terms.py
+  args: ["4행", "unique 3", P01116, "중복", "1863"]
+budget_usd: 0.5
+mock_answer: |
+  # 공개 단백질 manifest QC
+  원본은 4행이고 unique 3 accession이다. P01116이 중복이며 모든 길이는 양수다.
+  가장 긴 선언값은 BRCA1_HUMAN의 1863 aa다.

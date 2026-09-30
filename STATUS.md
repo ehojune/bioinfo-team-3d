@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #40 비교 bench와 테스트 에이전트
+
+- 결론: 같은 case를 LabHQ, Opus 5.5 `claude -p`, gpt-6-astra `codex exec` 단일 세션에 주고 산출물·검사·PI 개입·비용·token·시간을 Markdown·JSON으로 비교한다. Virtual Biotech는 실행하지 않는다.
+- 바뀐 것: `labhq bench list|run|test-agent`, `--dry-run`, CI용 `--engines mock`, 고정 YAML case 5개와 결정적 검사, round record의 `request.meta.case_id`.
+- 실행한 것: 새 regression test가 구현 전 import 단계에서 실패함을 확인했다. 구현 후 전체 `pytest -q -p no:cacheprovider` 502 passed/17 skipped, 5-case mock test agent 5/5, 공개 검사를 통과했다. 실제 유료 CLI는 실행하지 않았다.
+- 미해결: 실제 세 arm 비용·token·과학 결과는 PI 머신에서 구독으로 실행해야 한다. Codex CLI는 USD 비용과 비용 상한 기능을 제공하지 않아 비용을 `미집계`로 남기고 token만 기록한다.
+- 근거: `labhq/bench.py`, `bench/cases/`, `tests/test_bench.py`, `labhq/integrations/rounds.py`.
+
 ## 2026-10-01 · Codex 직원·개발 라운드 기록 후속 #56 #69
 
 - 결론: Codex 직원의 쓰기·웹 권한을 명시하고 문헌 원 출처 확인을 강화했다. 개발 라운드는 설정한 labhq commit 링크와 종료 조건을 남긴다.

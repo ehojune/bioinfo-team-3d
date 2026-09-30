@@ -1,0 +1,21 @@
+order: 3
+id: geo-gastric-summary
+title: GEO 위암 DE·pathway·문헌 요약 계획
+request: >-
+  GSE79973의 paired tumor/normal 분석, pathway·GSEA·STRING 검증과 짧은 문헌 요약을 설계하라.
+  고정 snapshot 밖 수치는 추정하지 말고 다운로드 없이 재현 manifest 항목을 제시하라.
+references:
+  - label: GSE79973 snapshot
+    path: references/geo-gastric.md
+    source: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973
+scripted_pi_answers:
+  - question_contains: 플랫폼
+    answer: GPL570 series matrix를 쓰고 paired design을 우선한다.
+check:
+  script: checks/contains_terms.py
+  args: [GSE79973, "tumor 10", "normal 10", GKN1, COL1A1, HALLMARK_EMT, "9606.ENSP"]
+budget_usd: 2.0
+mock_answer: |
+  # GSE79973 계획
+  GSE79973의 tumor 10과 paired normal 10을 GPL570에서 비교한다. GKN1 down, COL1A1 up을
+  방향성 대조로 쓰고 HALLMARK_EMT를 GSEA에서 확인한다. STRING은 9606.ENSP ID를 기록한다.

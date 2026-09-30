@@ -1,0 +1,21 @@
+order: 1
+id: inco-kras-g12c
+title: inco KRAS G12C 근거 감사
+request: >-
+  KRAS G12C 저해제 연구 질문을 짧게 정리하고, 고정 참고 자료의 PDB·ChEMBL ID를 교차 확인하라.
+  assay 조건이 다른 IC50를 한 순위표로 합치지 말고 검증 한계를 적어라.
+references:
+  - label: KRAS G12C snapshot
+    path: references/kras-g12c.md
+    source: https://www.rcsb.org/structure/6OIM
+scripted_pi_answers:
+  - question_contains: 범위
+    answer: 고정 snapshot의 ID와 비교 가능성만 검증하고 신규 실험은 제안으로 표시한다.
+check:
+  script: checks/contains_terms.py
+  args: [6OIM, CHEMBL4535757, CHEMBL4594350, CHEMBL6068410, "직접 비교"]
+budget_usd: 2.0
+mock_answer: |
+  # KRAS G12C
+  PDB 6OIM과 sotorasib CHEMBL4535757를 확인했다. 비교군은 adagrasib CHEMBL4594350,
+  olomorasib CHEMBL6068410이다. assay 조건과 단위가 다르면 IC50를 직접 비교하지 않는다.

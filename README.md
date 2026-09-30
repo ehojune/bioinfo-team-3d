@@ -73,6 +73,25 @@ labhq talent                 # 인재풀
 labhq contract extend c_scanpy --days 14    # extend | release | activate | rehire
 ```
 
+### 비교 bench
+
+같은 요청을 LabHQ, Opus 5.5 `claude -p`, gpt-6-astra `codex exec` 단일 세션에 차례로 보냅니다.
+실제 실행은 구독을 쓰므로 PI 머신에서만 시작합니다.
+개인 설정은 격리하며, Codex global `AGENTS.md`가 있으면 공정한 비교가 아니므로 실행을 거부합니다.
+
+```bash
+labhq bench list
+labhq bench run inco-kras-g12c --dry-run
+labhq bench run inco-kras-g12c --output ~/.labhq/bench
+labhq bench test-agent --output ~/.labhq/bench
+```
+
+CI에서는 `--engines mock`으로 세 arm과 검사·비교표 생성을 끝까지 확인합니다. case YAML은
+`bench/cases/`에 요청, 고정 참고 자료, scripted PI 답변, 검사 스크립트, 비용 상한을 담습니다.
+결과는 `case-id/<run-id>/comparison.md`·`comparison.json`, 전체 실행은 `test-agent-summary.*`로 남습니다.
+LabHQ round record의 `request.meta.case_id`로 같은 실행을 찾을 수 있습니다. 결과 기본 폴더는
+`$LABHQ_BENCH_DIR` 또는 `~/.labhq/bench`이며 저장소에는 넣지 않습니다.
+
 ---
 
 ## 1. The Virtual Biotech는 어떤 에이전트를 넣었나

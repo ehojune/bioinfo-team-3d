@@ -169,6 +169,7 @@ def build_record(hub: "Hub", rid: str) -> dict:
     return {
         "schema_version": 1, "request_id": rid,
         "request": {"text": req.get("text"), "mode": req.get("mode"), "project_id": req.get("project_id"),
+                    "meta": req.get("meta") or {},
                     "clarifications": req.get("clarifications") or [],
                     "pending_questions": req.get("pending_questions") or [],
                     "step_decisions": req.get("step_decisions") or []},
@@ -201,6 +202,7 @@ def render_record(record: dict) -> str:
         shown_commit = f"[{commit}](https://github.com/{source_repo}/commit/{commit})"
     lines = [f"# Round {record['request_id']}", "", "## 요청", str(req.get("text") or ""),
              f"- 모드: {req.get('mode') or '—'}", f"- 프로젝트: {req.get('project_id') or '—'}",
+             f"- meta: {json.dumps(req.get('meta') or {}, ensure_ascii=False)}",
              f"- 확인 질문·답변: {json.dumps(req.get('clarifications') or [], ensure_ascii=False)}",
              f"- 단계 결정: {json.dumps(req.get('step_decisions') or {}, ensure_ascii=False)}",
              "", "## 환경", f"- labhq: {record['environment']['labhq_version']}",

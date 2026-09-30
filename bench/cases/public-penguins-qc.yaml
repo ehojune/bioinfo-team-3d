@@ -1,0 +1,21 @@
+order: 5
+id: public-penguins-qc
+title: 소형 공개 Palmer Penguins QC
+request: >-
+  제공한 Palmer Penguins 공개 데이터 발췌본을 QC하라. 행·species 수, body_mass_g 결측,
+  flipper_length_mm 범위를 계산하고 원본 전체를 대표하지 않는다는 한계를 적어라.
+references:
+  - label: Palmer Penguins excerpt
+    path: references/penguins.tsv
+    source: https://github.com/allisonhorst/palmerpenguins
+scripted_pi_answers:
+  - question_contains: 결측
+    answer: 삭제하거나 대치하지 말고 결측 개수만 보고한다.
+check:
+  script: checks/contains_terms.py
+  args: ["5행", "2 species", "결측 1", "181", "230", "발췌"]
+budget_usd: 0.5
+mock_answer: |
+  # Palmer Penguins QC
+  발췌본은 5행, 2 species다. body_mass_g는 결측 1건이고 flipper_length_mm 범위는 181–230이다.
+  작은 발췌본이므로 공개 원본 전체의 분포를 대표하지 않는다.

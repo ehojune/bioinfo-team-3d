@@ -20,6 +20,7 @@ def round_request(hub, rid, status):
     hub.requests[rid] = {
         "id": rid, "text": "Inspect /data/restricted/sample and ghp_" + "x" * 30,
         "mode": "orchestrate", "project_id": "demo", "status": status,
+        "meta": {"case_id": "bench-case"},
         "created_at": 1.0, "finished_at": 3.0 if status != "interrupted" else None,
         "clarifications": [{"questions": ["scope?"], "answer": "one sample"}],
         "step_decisions": [{"step_id": "b", "approved": False}],
@@ -50,6 +51,7 @@ def test_local_round_schema_and_status(tmp_path, status):
                            "steps", "review", "pi_decisions", "result"}
     assert record["schema_version"] == 1
     assert record["request"]["clarifications"][0]["answer"] == "one sample"
+    assert record["request"]["meta"] == {"case_id": "bench-case"}
     assert record["request"]["step_decisions"][0]["approved"] is False
     assert record["steps"][0]["attempts"] == 2
     assert record["result"]["status"] == status
