@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+
+ASK_WAIT_SECONDS = {"cso": 300, "facilities": 1200, "colleague": 900, "pi": 0}
+ASK_MAX_WAIT_S = max(ASK_WAIT_SECONDS.values())
 
 
 def new_id(prefix: str) -> str:
@@ -42,6 +47,7 @@ class McpServerSpec(BaseModel):
     # Read-only public server (e.g. PubMed): its tools run without a per-call approval. Non-interactive
     # `codex exec` otherwise refuses them ("approval policy is never") and the step fails.
     auto_approve: bool = False
+    timeout_s: int | None = None
 
 
 class CliSpec(BaseModel):
@@ -161,6 +167,7 @@ class TaskResult(BaseModel):
     cost_known: bool | None = None
     usage: dict[str, int] = {}
     pending_jobs: list[str] = []
+    pending_asks: list[str] = []
     workdir: str | None = None
     workdir_id: str | None = None
     outputs: list[str] = []  # paths relative to workdir
@@ -176,6 +183,15 @@ class TaskResult(BaseModel):
         if self.cost_known is None:
             self.cost_known = self.cost_usd is not None
         return self
+
+
+def waiting(result: TaskResult | dict[str, Any], *, jobs_finished: bool = False) -> bool:
+    """Whether a live or persisted result still waits for jobs or ask answers."""
+    if isinstance(result, TaskResult):
+        jobs, asks = result.pending_jobs, result.pending_asks
+    else:
+        jobs, asks = result.get("pending_jobs"), result.get("pending_asks")
+    return bool(asks or (not jobs_finished and jobs))
 
 
 class Event(BaseModel):
@@ -197,3 +213,55 @@ class ApprovalRequest(BaseModel):
     detail: dict[str, Any] = {}
     created_at: float = Field(default_factory=time.time)
     timeout_s: int = 3600
+
+
+class AskRequest(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("ask"))
+    task_id: str | None = None
+    agent_id: str | None = None
+    request_id: str | None = None
+    to: str
+    question: str = Field(min_length=1, max_length=700)
+    why_blocked: str = Field(min_length=1, max_length=1200)
+    tried: list[str] = Field(default_factory=list, max_length=12)
+    options: list[str] = Field(default_factory=list, max_length=12)
+    refs: list[str] = Field(default_factory=list, max_length=20)
+    wait: Literal["short", "hibernate"] = "short"
+    created_at: float = Field(default_factory=time.time)
+
+    @model_validator(mode="after")
+    def valid_target_and_refs(self) -> "AskRequest":
+        if self.to not in {"cso", "facilities", "pi"} and not re.fullmatch(
+            r"colleague:[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", self.to
+        ):
+            raise ValueError("to must be cso, facilities, pi, or colleague:<agent_id>")
+        for ref in self.refs:
+            normalized = ref.replace("\\", "/")
+            if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
+                    or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
+                raise ValueError("refs must be relative paths inside the task workspace")
+        self.question = self.question.strip()
+        self.why_blocked = self.why_blocked.strip()
+        if not self.question or not self.why_blocked:
+            raise ValueError("question and why_blocked cannot be blank")
+        return self
+
+
+HARD_STOP_PATTERNS = {
+    "data_zone": (r"통제.{0,12}(데이터|구역|원본)", r"데이터.{0,12}구역",
+                  r"\b(?:data.{0,8}(?:zone|boundary)|restricted.{0,8}(?:data|zone))\b",
+                  r"controlled.?access", r"\bdua\b"),
+    "budget_cap": (r"(비용|예산).{0,12}(상한|초과)",
+                   r"(?:budget|cost).{0,12}(cap|limit|exceed|overrun)"),
+    "out_of_scope": (r"범위.{0,6}(밖|외|초과)", r"요청.{0,8}(밖|외)", r"out.of.scope", r"scope.{0,8}(expand|outside)"),
+    "installation": (r"설치", r"\binstall(?:ation|ing)?\b", r"\b(?:pip|conda|npm|apt)\s+install\b"),
+    "destructive": (r"(재귀 )?삭제", r"파괴", r"\brm\s+-[a-z]*r[a-z]*f\b", r"\b(drop|format|overwrite|destroy|delete)\b"),
+}
+
+
+def hard_stop_kind(ask: AskRequest) -> str | None:
+    text = "\n".join([ask.question, ask.why_blocked, *ask.tried, *ask.options]).casefold()
+    for kind, patterns in HARD_STOP_PATTERNS.items():
+        if any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
+            return kind
+    return None

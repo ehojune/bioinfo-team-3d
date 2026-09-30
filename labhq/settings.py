@@ -23,6 +23,7 @@ class GatewaySettings(BaseModel):
 class RunnerSettings(BaseModel):
     id: str = "local"
     max_parallel: int = 4
+    consult_parallel: int = Field(default=2, ge=1)
     workspace_root: str = "~/.labhq/runs"
     agents_dir: str = "./agents"
     talent_dir: str = "~/.labhq/talent"  # 인재풀: every contract ever hired, kept for rehire

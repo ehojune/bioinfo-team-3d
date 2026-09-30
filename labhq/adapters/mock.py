@@ -98,7 +98,28 @@ class MockAdapter(AgentAdapter):
                           "verification_status": "reviewed", "limitations": ["mock conversion"]}
 
         # steer only by this agent's own instruction, not by the overall request quoted in the prompt
-        own = t.prompt.split("Your step", 1)[-1] if kind == "step" else t.prompt if kind == "direct" else ""
+        # Real engines retain the instruction in their session; mock uses the step metadata.
+        own = (t.meta.get("instruction", t.prompt.split("Your step", 1)[-1]) if kind == "step" else
+               t.prompt if kind == "direct" else "")
+        ask_target = None
+        match = re.search(r"\[ask:(cso|facilities|colleague:[A-Za-z0-9_.-]+)\]", own)
+        if match:
+            ask_target = match.group(1)
+        elif "[ask:pi-install]" in own:
+            ask_target = "pi"
+        if ask_target and not t.resume_session_id:
+            question = ("새 package를 설치해도 되나요?" if ask_target == "pi" else
+                        "이 막힘을 풀기 위한 결정을 알려 주세요")
+            answer = await self._broker(ctx, "/ask", {
+                "task_id": t.id, "agent_id": a.id, "to": ask_target, "question": question,
+                "why_blocked": "mock 질의 회귀 테스트", "tried": ["mock preflight"],
+                "options": [], "refs": [], "wait": "short",
+            })
+            if answer.get("status") == "answered":
+                label = "CSO 답변" if answer.get("from") == "cso" else f"{answer.get('from')} 답변"
+                text += f" · {label}: {answer.get('answer')}"
+            else:
+                text += f" · 질문 {answer.get('ask_id')} 대기 후 hibernate"
         if kind == "wrap_up":
             (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text(
                 "Partial results saved; main step unfinished.\n", encoding="utf-8")
@@ -110,7 +131,8 @@ class MockAdapter(AgentAdapter):
         if kind == "step" and "[max-turns]" in own:
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="error_max_turns",
                               error_kind="error_max_turns", session_id=f"mock-session-{t.id[-4:]}", cost_usd=0.0)
-        if kind == "step" and "[block]" in own and "Your earlier blocking question and the PI's answer:" not in own:
+        if (kind == "step" and "[block]" in own and not t.resume_session_id
+                and "Your earlier blocking question and the PI's answer:" not in t.prompt):
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",
