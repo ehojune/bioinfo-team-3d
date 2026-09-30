@@ -524,32 +524,37 @@ class Orchestrator:
             except BudgetExceeded:
                 pass
         cycles = 0
-        while res.ok and res.pending_jobs and cycles < self.cfg.max_wake_cycles:
+        while res.ok and (res.pending_jobs or res.pending_asks) and cycles < self.cfg.max_wake_cycles:
             cycles += 1
-            info = await self.hub.wait_jobs(res.task_id)
-            jobs = "\n".join(f"- {j['job_id']} ({j.get('name') or ''}): {j['state']} exit={j.get('exit_status')}"
-                             for j in info.get("jobs", []))
-            meta = {**task.meta, "kind": task.meta.get("kind", "step"), "parent_task": res.task_id, "workdir": res.workdir}
-            meta["title"] = "HPC 결과 확인 후 이어서 작업"
-            wake = Task(agent_id=task.agent_id, request_id=task.request_id, output_schema=task.output_schema,
-                        prompt=WAKE_PROMPT.format(jobs=jobs, workdir=res.workdir), meta=meta,
-                        resume_session_id=res.session_id if self.hub.supports_resume(task.agent_id) else None,
-                        context="" if self.hub.supports_resume(task.agent_id) else clip(res.text, self.cfg.context_chars_per_step))
-            res = await dispatch_with_retry(wake)
-        while res.ok and res.pending_asks and cycles < self.cfg.max_wake_cycles:
-            cycles += 1
-            answers = await self.hub.wait_asks(res.pending_asks)
-            rendered = "\n".join(
-                f"- {answer.get('from', 'unknown')}: {answer.get('answer', '')}" for answer in answers
-            )
+            prompts = []
+            if res.pending_jobs:
+                info = await self.hub.wait_jobs(res.task_id)
+                jobs = "\n".join(f"- {j['job_id']} ({j.get('name') or ''}): {j['state']} exit={j.get('exit_status')}"
+                                 for j in info.get("jobs", []))
+                prompts.append(WAKE_PROMPT.format(jobs=jobs, workdir=res.workdir))
+            if res.pending_asks:
+                answers = await self.hub.wait_asks(res.pending_asks)
+                rendered = "\n".join(
+                    f"- {answer.get('from', 'unknown')}: {answer.get('answer', '')}" for answer in answers
+                )
+                prompts.append(ASK_WAKE_PROMPT.format(answers=rendered))
+            title = ("HPC 결과와 질의 답변을 받고 이어서 작업" if res.pending_jobs and res.pending_asks else
+                     "HPC 결과 확인 후 이어서 작업" if res.pending_jobs else "질의 답변을 받고 이어서 작업")
             meta = {**task.meta, "kind": task.meta.get("kind", "step"),
                     "parent_task": res.task_id, "workdir": res.workdir,
-                    "title": "질의 답변을 받고 이어서 작업"}
+                    "title": title}
+            can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
+            prompt = "\n\n".join(prompts)
+            context = ""
+            if not can_resume:
+                prompt = f"Original instruction:\n{task.prompt}\n\nContinuation updates:\n{prompt}"
+                context = "\n\n".join(part for part in (
+                    task.context, f"Previous turn:\n{clip(res.text, self.cfg.context_chars_per_step)}"
+                ) if part)
             wake = Task(
                 agent_id=task.agent_id, request_id=task.request_id, output_schema=task.output_schema,
-                prompt=ASK_WAKE_PROMPT.format(answers=rendered), meta=meta,
-                resume_session_id=res.session_id if self.hub.supports_resume(task.agent_id) else None,
-                context="" if self.hub.supports_resume(task.agent_id) else clip(res.text, self.cfg.context_chars_per_step),
+                prompt=prompt, meta=meta,
+                resume_session_id=res.session_id if can_resume else None, context=context,
             )
             res = await dispatch_with_retry(wake)
         return res

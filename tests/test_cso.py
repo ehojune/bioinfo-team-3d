@@ -58,6 +58,91 @@ def result(task, ok=True, **kwargs):
     return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=ok, **kwargs)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turns", [("ask", "job", "ask", "job"),
+                                   ("job", "ask", "job"), ("both",)])
+async def test_step_rechecks_jobs_and_asks_after_each_wake(tmp_path, turns):
+    events = []
+    dispatched = []
+    workdir = str(tmp_path / "workspace")
+
+    async def dispatch(task):
+        index = len(dispatched)
+        dispatched.append(task)
+        events.append(("dispatch", task.id))
+        if index == len(turns):
+            return result(task, text="completed", workdir=workdir)
+        pending = turns[index]
+        return result(task, text=f"waiting {index}", workdir=workdir,
+                      pending_jobs=[f"job_{index}"] if pending in {"job", "both"} else [],
+                      pending_asks=[f"ask_{index}"] if pending in {"ask", "both"} else [])
+
+    async def wait_jobs(task_id):
+        events.append(("job", task_id))
+        await asyncio.sleep(0)
+        return {"jobs": [{"job_id": "job_done", "state": "done", "exit_status": 0}]}
+
+    async def wait_asks(ask_ids):
+        events.append(("ask", ask_ids))
+        await asyncio.sleep(0)
+        return [{"from": "cso", "answer": "Use the selected inputs"}]
+
+    hub = FakeHub(dispatch)
+    hub.wait_jobs, hub.wait_asks = wait_jobs, wait_asks
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert res.ok and res.text == "completed"
+    assert not res.pending_jobs and not res.pending_asks
+    expected = []
+    for index, pending in enumerate(turns):
+        expected.append(("dispatch", dispatched[index].id))
+        if pending in {"job", "both"}:
+            expected.append(("job", dispatched[index].id))
+            assert "job_done" in dispatched[index + 1].prompt
+        if pending in {"ask", "both"}:
+            expected.append(("ask", [f"ask_{index}"]))
+            assert "Use the selected inputs" in dispatched[index + 1].prompt
+        assert dispatched[index + 1].meta["parent_task"] == dispatched[index].id
+        assert dispatched[index + 1].meta["workdir"] == workdir
+    expected.append(("dispatch", dispatched[-1].id))
+    assert events == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_resume", [False, True])
+async def test_nonresumable_ask_wake_keeps_original_instruction_and_context(tmp_path, supports_resume):
+    workdir = str(tmp_path / "workspace")
+    original = Task(agent_id="worker", request_id="r", prompt="Compare the selected groups and write summary.md",
+                    context="Upstream: only use the QC-passing inputs",
+                    output_schema={"type": "object"}, meta={"kind": "step", "step_id": "A"})
+
+    async def dispatch(task):
+        index = len(hub.calls) - 1
+        return result(task, text=f"progress {index}", workdir=workdir,
+                      session_id=f"session_{index}", pending_asks=[f"ask_{index}"] if index < 2 else [])
+
+    async def wait_asks(ask_ids):
+        return [{"from": "cso", "answer": f"Advice for {ask_ids[0]}"}]
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: supports_resume
+    hub.wait_asks = wait_asks
+    res = await Orchestrator(hub).run_step(original)
+    assert res.ok and len(hub.calls) == 3
+    for index, wake in enumerate(hub.calls[1:]):
+        assert f"Advice for ask_{index}" in wake.prompt
+        assert wake.meta["workdir"] == workdir and wake.meta["step_id"] == "A"
+        assert wake.output_schema == original.output_schema
+        if supports_resume:
+            assert wake.resume_session_id == f"session_{index}"
+            assert wake.context == ""
+            assert original.prompt not in wake.prompt
+        else:
+            assert wake.resume_session_id is None
+            assert original.prompt in wake.prompt
+            assert original.context in wake.context
+            assert f"progress {index}" in wake.context
+
+
 STEPS = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": deps}
          for sid, deps in (("A", []), ("B", ["A"]), ("C", ["B"]), ("D", []))]
 
