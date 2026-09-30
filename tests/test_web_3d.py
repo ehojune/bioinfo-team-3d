@@ -103,6 +103,8 @@ def test_3d_uses_shared_visual_state_for_pose_and_marker():
     assert 'c.state=pose(visual(a))' in main
     assert 'c.skin.setState(c.state)' in main
     assert 'c.status.update(c.state' in main
+    live = (WEB / 'lab3d/src/live.js').read_text(encoding='utf-8')
+    assert 'syncDecisionCards' in live and 'prompt(' not in live
 
 
 def test_package_data_includes_office_assets():
@@ -110,7 +112,7 @@ def test_package_data_includes_office_assets():
     config = (package.parent / 'pyproject.toml').read_text(encoding='utf-8')
     patterns = ast.literal_eval(re.search(r'labhq = (\[[\s\S]*?\])', config)[1])
     included = {p for pattern in patterns for p in package.glob(pattern) if p.is_file()}
-    needed = {WEB / 'state.js', WEB / 'lab3d/index.html'}
+    needed = {WEB / 'state.js', WEB / 'lab3d/index.html', *(WEB / 'ui').glob('*.js')}
     for folder in (WEB / 'lab3d/src', WEB / 'lab3d/assets', WEB / 'vendor/three'):
         needed.update(p for p in folder.rglob('*') if p.suffix in {'.js', '.gltf', '.glb', '.bin'})
     assert needed <= included
@@ -119,6 +121,7 @@ def test_package_data_includes_office_assets():
 @pytest.mark.parametrize('filename,marker', [
     ('web_state.cjs', 'isolation and bounds: OK'),
     ('web_live.cjs', 'reconnect and replay gap: OK'),
+    ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

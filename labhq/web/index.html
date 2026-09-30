@@ -81,7 +81,7 @@ a{color:var(--sleep-ink)}
 .chip.st-done{color:var(--ink)}
 .chip.st-skipped{color:var(--muted);text-decoration:line-through}
 .chip.st-revise{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
-.chip.st-error{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
+.chip.st-error,.chip.st-failed{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
 .rack,.door{flex:none;width:52px;height:auto;display:block}
 .rack-body{fill:#2B3642}.rack-slot{fill:#3A4652}
 .led{fill:#56616C}.led.queued{fill:var(--wait)}.led.running{fill:var(--working)}.led.completed{fill:#8FA0AF}.led.failed{fill:var(--error)}
@@ -158,7 +158,11 @@ a{color:var(--sleep-ink)}
 @keyframes walkin{0%{transform:translateX(-160px);opacity:0}25%{opacity:1}100%{transform:none}}
 
 /* panels */
-.panels{display:grid;gap:22px;align-content:start;min-width:0}
+.panels{display:grid;gap:12px;align-content:start;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;max-height:calc(100vh - 92px);overflow:auto}
+.cc-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;position:sticky;top:-12px;z-index:3;background:var(--panel);padding:12px 0 6px}
+.cc-tabs button{border:0;border-bottom:2px solid transparent;background:none;min-height:38px;cursor:pointer;color:var(--muted)}
+.cc-tabs button.active{border-color:var(--focus);color:var(--ink);font-weight:600}
+.panel[hidden]{display:none}
 .panel h2{margin:0 0 8px;font:600 16px/1.3 var(--ui);display:flex;align-items:baseline;gap:8px}
 .panel h2 .n{font:500 13px var(--ui);color:var(--muted)}
 .list{list-style:none;margin:0;padding:0}
@@ -170,10 +174,13 @@ a{color:var(--sleep-ink)}
 .ap .kind span{font-weight:400;color:var(--muted);margin-left:6px}
 .ap .sum{margin:0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
 .ap .why{margin:2px 0 0;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.decision-meta{margin:4px 0 0;font-size:12px;color:var(--muted)}
 .ap .acts{display:flex;gap:8px;margin-top:8px}
 .ap .sum.pre{white-space:pre-wrap}
 .ap .ans{width:100%;box-sizing:border-box;margin-top:6px;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--panel);color:var(--ink);resize:vertical}
 .ap.sug{border-color:var(--line);background:var(--panel)}.ap.sug .kind{color:var(--sleep-ink)}
+.decision-history{margin:14px 0 0;padding:10px 0 0 20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.decision-history li{padding:3px 0}.decision-history strong,.decision-history span,.decision-history small{display:block}.decision-history strong{color:var(--ink)}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:6px 14px;font-weight:500;cursor:pointer;min-height:40px}
 .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
 .btn.go{background:var(--working);border-color:var(--working);color:#fff}
@@ -190,7 +197,7 @@ a{color:var(--sleep-ink)}
 .dag-node.st-skipped rect{stroke:var(--muted)}
 .dag-node.st-skipped text{fill:var(--muted);text-decoration:line-through}
 .dag-node.st-revise rect{stroke:var(--wait);fill:var(--wait-bg)}
-.dag-node.st-error rect{stroke:var(--error);fill:var(--error-bg)}
+.dag-node.st-error rect,.dag-node.st-failed rect{stroke:var(--error);fill:var(--error-bg)}
 .dag-node text{font:500 12px var(--ui);fill:var(--ink)}.dag-node text.s{font-weight:400;fill:var(--muted)}
 .dag-edge{fill:none;stroke:var(--line);stroke-width:1.5}
 .gh{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}
@@ -212,6 +219,23 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .state.queued,.state.held{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
 .state.failed{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
 
+/* command center */
+.kanban{display:grid;grid-template-columns:repeat(4,minmax(145px,1fr));gap:8px;overflow-x:auto;padding-bottom:4px}
+.kanban-column{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:7px;min-width:145px}
+.kanban-column h3{margin:0 0 6px;font-size:12px;color:var(--muted)}
+.task-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:6px;font-size:12px}
+.task-card summary{display:flex;justify-content:space-between;gap:6px;cursor:pointer}.task-card p{margin:5px 0;overflow-wrap:anywhere}.task-card ul{margin:3px 0;padding-left:18px}
+.task-working{border-color:var(--working)}.task-review,.task-error,.task-failed{border-color:var(--wait)}.task-done{opacity:.82}.task-meta{color:var(--muted)}.task-error,.missing{color:var(--error-ink)}.review{color:var(--wait-ink)}
+
+/* staff strip */
+.staff-wrap{position:sticky;z-index:18;bottom:76px;max-width:1280px;margin:0 auto 8px;padding:0 16px}
+.staff-wrap h2{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}  /* label for screen readers; a visible title over the floor overlapped its last row */
+.staff-strip{display:flex;gap:8px;overflow-x:auto;padding:8px;background:var(--paper);border:1px solid var(--line);border-radius:14px;box-shadow:0 5px 20px rgba(20,35,50,.09)}
+.staff-card{flex:0 0 190px;display:grid;gap:2px;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:8px;cursor:pointer}
+.staff-card-top{display:flex;align-items:center;justify-content:space-between;gap:6px}.staff-card-top strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.staff-card-top em{font-style:normal;font-size:11px;color:var(--muted);white-space:nowrap}
+.staff-role,.staff-tool,.staff-gauge-label{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.staff-gauge{width:100%;height:7px;accent-color:var(--working)}
+.staff-waiting{border-color:var(--wait)}.staff-hibernating{border-color:var(--sleep)}.staff-working{border-color:var(--working)}
+
 /* composer */
 .composer{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--paper);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
 .composer-in{max-width:1280px;margin:0 auto;display:flex;gap:8px;align-items:center}
@@ -222,12 +246,17 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .composer select{flex:none;max-width:30%;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 6px}
 .composer .btn{min-height:44px}
 @media (max-width:620px){
-  body{padding-bottom:150px}
+  body{padding-bottom:210px}
+  .panels{max-height:none;overflow:visible;padding:10px}
+  .cc-tabs{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:45;padding:5px 8px calc(5px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--panel)}
+  .cc-tabs button{min-height:42px}
+  .staff-wrap{bottom:156px;padding:0 8px}.staff-wrap h2{display:none}.staff-card{flex-basis:165px}
+  .composer{bottom:53px}
   .composer-in{flex-wrap:wrap;gap:6px 8px}
   #ask{order:1;flex:1 1 60%}
   #send{order:2}
   .composer select{order:3;flex:1 1 40%;max-width:none;min-height:38px;font-size:14px}
-  .toast{bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+  .toast{bottom:calc(185px + env(safe-area-inset-bottom,0px))}
 }
 
 /* sheet + toast */
@@ -279,25 +308,37 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <div class="zones" id="zones"></div>
   </section>
 
-  <aside class="panels">
-    <section class="panel" aria-labelledby="h-ap">
+  <aside class="panels" id="command-center" aria-label="Command Center">
+    <nav class="cc-tabs" id="cc-tabs" aria-label="Command Center 탭">
+      <button type="button" data-tab-target="decisions">결정</button>
+      <button type="button" data-tab-target="tasks">작업판</button>
+      <button type="button" data-tab-target="feed">메신저</button>
+      <button type="button" data-tab-target="jobs">HPC</button>
+    </nav>
+    <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
       <div id="approvals"></div>
+      <div id="approval-history" aria-label="결정 이력"></div>
     </section>
-    <section class="panel" aria-labelledby="h-req">
-      <h2 id="h-req">진행 중인 요청</h2>
+    <section class="panel" data-tab="tasks" aria-labelledby="h-req" hidden>
+      <h2 id="h-req">작업판</h2>
       <div id="request"></div>
     </section>
-    <section class="panel" aria-labelledby="h-feed">
+    <section class="panel" data-tab="feed" aria-labelledby="h-feed" hidden>
       <h2 id="h-feed">사내 메신저</h2>
       <ul class="list" id="feed"></ul>
     </section>
-    <section class="panel" aria-labelledby="h-jobs">
+    <section class="panel" data-tab="jobs" aria-labelledby="h-jobs" hidden>
       <h2 id="h-jobs">HPC 작업</h2>
       <ul class="list" id="jobs"></ul>
     </section>
   </aside>
 </main>
+
+<section class="staff-wrap" aria-labelledby="staff-heading">
+  <h2 id="staff-heading">직원</h2>
+  <div class="staff-strip" id="staff-strip"></div>
+</section>
 
 <div class="composer">
   <div class="composer-in">
@@ -315,7 +356,11 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <dialog class="sheet" id="sheet"><div class="sheet-in" id="sheet-in"></div></dialog>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
-<script>
+<script type="module">
+import {syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
+import {syncStaffCards} from './ui/strip.js';
+import {syncTaskBoard} from './ui/tasks.js';
+import {initTabShell} from './ui/shell.js';
 (() => {
 'use strict';
 const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
@@ -333,6 +378,8 @@ const store = {
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
+initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+let decisionHistory = [];
 
 /* ---------------- staff art: original chibi animals ---------------- */
 const FUR = {
@@ -443,6 +490,7 @@ function apply(ev, replay = false) {
     if (effect.type === 'toast') toast(effect.text);
     if (effect.type === 'renderAfter') setTimeout(schedule, effect.ms);
   }
+  if (!replay && ev.type === 'approval.resolved') setTimeout(refreshHistory, 100);
   if (!replay) schedule();
 }
 /* ---------------- rendering ---------------- */
@@ -450,7 +498,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderStaff();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -555,27 +603,14 @@ function renderRack() {
 }
 function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
 
-let apKey = '';
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions;
-  const key = items.map(a => a.id).concat(sugs.map(s => s.id)).join();
   const total = items.length + sugs.length;
   $('#ap-count').textContent = total ? `${total}건` : '';
-  if (key === apKey) return;
-  apKey = key;
-  const el = $('#approvals');
-  if (!total) { el.innerHTML = '<p class="empty-note">지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.</p>'; return; }
-  el.innerHTML = '<ul class="list">' + items.map(a => `
-<li class="ap" data-id="${esc(a.id)}"><span class="who">${headSVG(kindOf(ag(a.agent_id)))}</span><div>
-<div class="kind">${esc(KIND_KO[a.kind] || a.kind)}<span>${esc(nick(a.agent_id) || 'CSO')}</span></div>
-<p class="sum${a.kind === 'clarify' ? ' pre' : ''}">${esc(a.summary)}</p>${(a.detail && a.detail.reason) ? `<p class="why">${esc(short(a.detail.reason, 220))}</p>` : ''}
-${a.kind === 'clarify' ? '<textarea class="ans" rows="3" placeholder="답을 적어 주세요. 거절하면 요청을 멈춥니다."></textarea>' : ''}
-<div class="acts"><button type="button" class="btn go" data-act="approve">${a.kind === 'clarify' ? '답하고 진행' : '승인'}</button><button type="button" class="btn" data-act="deny">거절</button></div></div></li>`).join('') +
-  sugs.map(s => `
-<li class="ap sug" data-sug="${esc(s.id)}"><span class="who">${headSVG('owl')}</span><div>
-<div class="kind">파견직 채용 제안<span>CSO</span></div>
-<p class="sum">${esc(short(s.repo || s.paper, 90))}</p><p class="why">${esc(short(s.reason, 200))}</p>
-<div class="acts"><button type="button" class="btn go" data-act="hire">채용하기</button><button type="button" class="btn" data-act="later">나중에</button></div></div></li>`).join('') + '</ul>';
+  syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
+    taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
+    emptyText: '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' });
+  syncDecisionHistory($('#approval-history'), decisionHistory, { kindLabels: KIND_KO });
 }
 
 function dagSVG(q) {
@@ -610,7 +645,8 @@ function dagSVG(q) {
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown]) : 'none';
+  const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -619,9 +655,13 @@ function renderRequest() {
     `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : ''}</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
-  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${phaseList(q)}${q.plan.length ? `<div class="dag">${dagSVG(q)}</div>` : ''}
+  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>${q.costKnown ? `비용 $${q.cost.toFixed(2)}` : `비용 $${q.cost.toFixed(2)} + 비용 미집계`}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
 ${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}`;
+  syncTaskBoard($('#task-board'), q, S.stepDetails, { nick, onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null });
+}
+function renderStaff() {
+  syncStaffCards($('#staff-strip'), S.agents.values(), { visual, toolLabel, now });
 }
 let feedKey = '';
 function avatar(who) {
@@ -665,6 +705,10 @@ function renderTargets() {
 /* ---------------- interactions ---------------- */
 let api = null;
 let toastTimer = 0;
+function refreshHistory() {
+  if (!api?.history) return;
+  api.history().then(items => { decisionHistory = items; schedule(); }).catch(() => {});
+}
 function toast(text) {
   const t = $('#toast');
   t.textContent = text; t.classList.add('show');
@@ -690,7 +734,7 @@ $('#approvals').addEventListener('click', async e => {
     if (li.dataset.id) {
       const ans = li.querySelector('textarea.ans'), note = ans ? ans.value.trim() : '';
       // A PI question needs an answer; an empty approval would be read as "unanswered" and stop the request.
-      if (ans && act === 'approve' && !note) { toast('답을 적어 주세요'); ans.focus(); btn.disabled = false; return; }
+      if (li.dataset.kind === 'clarify' && act === 'approve' && !note) { toast('답을 적어 주세요'); ans.focus(); btn.disabled = false; return; }
       await api.approve(li.dataset.id, act === 'approve', note); toast(act === 'approve' ? (ans ? '답을 보냈어요' : '승인했어요') : '거절했어요');
     }
     else {
@@ -702,6 +746,7 @@ $('#approvals').addEventListener('click', async e => {
 });
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
 $('#zones').addEventListener('click', e => { const s = e.target.closest('.seat[data-agent]'); if (s) openSheet(s.dataset.agent); });
+$('#staff-strip').addEventListener('click', e => { const card = e.target.closest('.staff-card[data-agent]'); if (card) openSheet(card.dataset.agent); });
 
 function openSheet(id) {
   const a = ag(id); if (!a) return;
@@ -776,6 +821,11 @@ function startLive() {
     if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
     return r.json();
   };
+  const get = async path => {
+    const r = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
+    return r.json();
+  };
   let ws = null, backoff = 1000;
   api = {
     request: body => post('/api/requests', body),
@@ -785,12 +835,14 @@ function startLive() {
     },
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
+    cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
+    history: () => get('/api/approvals/history?limit=30'),
   };
   const open = () => {
     if (!token) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
     bar.classList.remove('show');
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; schedule(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); schedule(); };
     ws.onmessage = e => { try {
       const ev = JSON.parse(e.data);
       if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;

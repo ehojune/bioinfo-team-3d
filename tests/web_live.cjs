@@ -5,10 +5,15 @@ const root = path.resolve(__dirname, '..', 'labhq/web');
 require(path.join(root, 'state.js'));
 // A small DOM/transport harness exercises decisions and reconnects without a browser dependency.
 class Element {
-  constructor(tag='div') { this.tag=tag; this.children=[]; this.textContent=''; this.listeners={}; }
-  append(child) { this.children.push(child); }
-  replaceChildren() { this.children=[]; }
+  constructor(tag='div') { this.tag=tag; this.tagName=tag.toUpperCase(); this.children=[]; this.textContent=''; this.listeners={}; this.dataset={}; this.value=''; }
+  append(...children) { for(const child of children)this.children.push(child); }
+  replaceChildren(...children) { this.children=[];this.append(...children); }
   addEventListener(type, callback) { this.listeners[type]=callback; }
+  querySelector(selector){
+    const all=[];const visit=node=>{for(const child of node.children){all.push(child);visit(child);}};visit(this);
+    if(selector==='textarea')return all.find(e=>e.tagName==='TEXTAREA')||null;
+    return null;
+  }
 }
 const elements = new Map();
 const element = id => { if(!elements.has(id))elements.set(id,new Element());return elements.get(id); };
@@ -27,7 +32,9 @@ global.WebSocket = class {
   send(message){this.sent.push(JSON.parse(message));}
   close(){this.readyState=3;this.onclose?.({code:1000});}
 };
-const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
+const decide = fs.readFileSync(path.join(root,'ui/decide.js'),'utf8');
+const decideUrl = 'data:text/javascript;base64,'+Buffer.from(decide).toString('base64');
+const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8').replace("'../../ui/decide.js'", `'${decideUrl}'`);
 (async()=>{
   const {startLiveOffice} = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
   let S, visual, shown;
@@ -41,16 +48,16 @@ const source = fs.readFileSync(path.join(root,'lab3d/src/live.js'),'utf8');
   event({type:'agent.usage',seq:11,data:{cost_usd:1}});
   assert.equal(S.cost,1,'duplicate seq ignored');
   event({type:'approval.requested',seq:12,data:{id:'a1',summary:'<img src=x>',kind:'tool_permission'}});
-  let row=element('approvals').children[0];
-  assert.equal(row.children[1].textContent,'<img src=x>','untrusted text is never HTML');
-  row.children.find(e=>e.tag==='button').listeners.click();
+  let row=element('approvals').children[0].children[0];
+  assert.equal(row._decisionParts.summary.textContent,'<img src=x>','untrusted text is never HTML');
+  row._decisionParts.approve.onclick();
   assert.deepEqual(ws.sent,[{type:'approval.resolve',id:'a1',approved:true,note:''}]);
-  row.children.find(e=>e.tag==='button').listeners.click();
+  row._decisionParts.approve.onclick();
   assert.equal(ws.sent.length,1,'pending decision cannot be double sent');
   event({type:'approval.resolved',seq:13,data:{id:'a1',approved:true}});
   assert.equal(S.approvals.size,0);
   event({type:'approval.requested',seq:14,data:{id:'a2',summary:'Reject example'}});
-  row=element('approvals').children[0];row.children.filter(e=>e.tag==='button')[1].listeners.click();
+  row=element('approvals').children[0].children[0];row._decisionParts.deny.onclick();
   assert.equal(ws.sent.at(-1).approved,false);
   event({type:'approval.stale',seq:15,data:{id:'a2'}});assert.equal(S.approvals.size,0);
   event({type:'agent.status',agent_id:'analyst',seq:16,ts:Date.now()/1000,data:{state:'done'}});
