@@ -374,6 +374,19 @@ class Orchestrator:
         _, session_id, workdir = max(candidates)
         return session_id, workdir
 
+    def _ask_scope(self, body: dict) -> tuple:
+        """Recover a stable step identity from the durable task ledger, including old asks."""
+        rid, tid = body.get("request_id"), body.get("task_id")
+        task = self.hub.store.get("task", tid) if tid else None
+        task = task or {}
+        meta = (task.get("payload") or {}).get("meta") or {}
+        kind = task.get("kind") or meta.get("kind")
+        if kind == "direct" or (kind in {None, "wrap_up"} and
+                                self.hub.requests.get(rid, {}).get("mode") == "direct"):
+            return (rid, "direct")
+        sid = task.get("step_id") or meta.get("step_id")
+        return (rid, "step", sid) if sid else (rid, "task", tid)
+
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
         signature = hashlib.sha256(
@@ -381,7 +394,9 @@ class Orchestrator:
         ).hexdigest()
         entries = self.hub.store.all("ask")
         current = entries.get(ask.id) or {}
-        self.hub.store.put("ask", ask.id, {**current, "signature": signature})
+        scope = self._ask_scope(ask.model_dump())
+        self.hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "origin": runner_id,
+                                           **current, "signature": signature, "scope": scope})
         for other_id, entry in entries.items():
             if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
                 cached = ask_result(**{**entry["answer"], "cached": True})
@@ -391,15 +406,16 @@ class Orchestrator:
         accepted = [entry for other_id, entry in entries.items() if other_id != ask.id and
                     entry.get("state") != "rejected" and
                     (entry.get("answer") or {}).get("status") != "rejected"]
-        task_count = sum((entry.get("ask") or {}).get("task_id") == ask.task_id for entry in accepted)
-        target_count = sum((entry.get("ask") or {}).get("task_id") == ask.task_id and
-                           (entry.get("ask") or {}).get("to") == ask.to for entry in accepted)
+        same_step = [entry for entry in accepted if
+                     tuple(entry.get("scope") or self._ask_scope(entry.get("ask") or {})) == scope]
+        task_count = len(same_step)
+        target_count = sum((entry.get("ask") or {}).get("to") == ask.to for entry in same_step)
         request_count = sum((entry.get("ask") or {}).get("request_id") == ask.request_id for entry in accepted)
         limit_reason = None
         if task_count >= 3:
-            limit_reason = "이 task의 질의 상한(3회)에 도달했습니다"
+            limit_reason = "이 step/task의 질의 상한(3회)에 도달했습니다"
         elif target_count >= 2:
-            limit_reason = "이 task에서 같은 대상에게 묻는 상한(2회)에 도달했습니다"
+            limit_reason = "이 step/task에서 같은 대상에게 묻는 상한(2회)에 도달했습니다"
         elif request_count >= 12:
             limit_reason = "이 요청의 질의 상한(12회)에 도달했습니다"
         if limit_reason:
@@ -590,6 +606,13 @@ class Orchestrator:
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
             res = await dispatch_with_retry(wake)
+        if res.ok and waiting(res):
+            res = res.model_copy(update={
+                "ok": False, "error_kind": "wake_limit",
+                "error": f"wake cycle limit ({self.cfg.max_wake_cycles}) reached; "
+                         f"pending asks: {res.pending_asks}; pending jobs: {res.pending_jobs}",
+                "pending_asks": [], "pending_jobs": [], "blocking_decision": None,
+            })
         return res
 
     async def _check_budget(self, rid: str, *, block: bool = True) -> None:
@@ -741,7 +764,7 @@ class Orchestrator:
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
                     previous = results.get(sid)
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
-                            and outcome.error_kind != "ask_rejected"):
+                            and outcome.error_kind not in {"ask_rejected", "wake_limit"}):
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
