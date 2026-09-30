@@ -120,3 +120,29 @@ def test_merge_without_own_changes_is_excluded(repo):
     merge = run(repo, "rev-parse", "HEAD")
     assert merge not in pn.pr_commits("main", "HEAD", repo)
     assert not any(merge[:7] in p for p in pn.check("main", "HEAD", repo))
+
+
+def test_clean_merge_of_a_file_both_sides_changed_is_excluded(repo):
+    # diff-tree --cc lists such a file although git merged it without any manual edit.
+    commit(repo, {"a.py": "one\ntwo\nthree\nfour\nfive\n"}, "base")
+    run(repo, "checkout", "-q", "-b", "feature")
+    commit(repo, {"a.py": "ONE\ntwo\nthree\nfour\nfive\n"}, "feature edits the top")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, {"a.py": "one\ntwo\nthree\nfour\nFIVE\n"}, "main edits the bottom")
+    run(repo, "checkout", "-q", "feature")
+    run(repo, "merge", "-q", "--no-ff", "main", "-m", "sync main")
+    merge = run(repo, "rev-parse", "HEAD")
+    assert "a.py" in pn.changed_files(merge, repo)
+    assert merge not in pn.pr_commits("main", "HEAD", repo)
+
+
+def test_extra_edit_inside_a_clean_merge_needs_a_note(repo):
+    commit(repo, {"a.py": "base\n"}, "base")
+    run(repo, "checkout", "-q", "-b", "feature")
+    commit(repo, {"b.py": "feature\n"}, "feature")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, {"c.py": "main\n"}, "main")
+    run(repo, "checkout", "-q", "feature")
+    run(repo, "merge", "-q", "--no-ff", "--no-commit", "main")
+    merge = commit(repo, {"a.py": "edited during merge\n"}, "merge with an extra edit")
+    assert merge in pn.pr_commits("main", "HEAD", repo)
