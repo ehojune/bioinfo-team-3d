@@ -39,18 +39,22 @@ pytest -q
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
-cp config/labhq.example.yaml config/labhq.yaml      # 토큰, HPC, 데이터 구역, 예산 수정
+labhq init                                        # 첫 설치 설정과 doctor 점검
 export LABHQ_CONFIG=$PWD/config/labhq.yaml
 ```
 
 PowerShell:
 
 ```powershell
-Copy-Item config/labhq.example.yaml config/labhq.yaml
+labhq init
 $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
 ```
 
-Windows 러너는 `policy.data_zones`에 `restricted` 구역이 있으면 시작을 거부합니다. Windows에서 시험할 때는 `data_zones: []`로 설정하세요.
+`labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
+`--yes`는 기본값을 수락하고 `--dry-run`은 파일 생성 없이 변경과 doctor 점검을 보여 줍니다. 기존 설정은 보존하며 `--force`일 때만 교체합니다.
+Windows에서는 restricted 구역을 빼고, 개인 Codex 지침이 있으면 직원 전용 `CODEX_HOME`과 사람이 실행할 로그인 명령을 안내합니다.
+Codex `bin`이 비어 있거나 `auto`이면 Windows 앱의 최신 폴더(mtime)를 탐지하며 doctor에 경로를 표시합니다. 앱이 없으면 PATH를 사용합니다.
+
 실행 전 `labhq doctor`로 설정·엔진·직원·계산 도구를 점검하세요. `labhq doctor --json`은 러너 상태 디렉터리에 `capabilities.json`을 쓰고, `--network`를 붙일 때만 공개 데이터 사이트에 접속합니다. 이 manifest의 `runner_capabilities`는 러너가 보고하는 기능과 같은 설정·roster에서 산출한 사실입니다.
 npm의 `.cmd`/`.bat` shim은 여러 줄 prompt를 손상시킬 수 있어 labhq가 표준 npm shim만 Node.js로 풀어 실행합니다.
 풀 수 없는 shim은 거부합니다. Windows에서 직접 지정하려면 다음처럼 `bin`과 `prefix_args`를 사용하세요(설치된 package 경로 확인).
