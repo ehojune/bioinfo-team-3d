@@ -2,6 +2,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 후속 #104 #106 #107 #108
+
+- #104: bench CLI tree 종료 검사를 남은 PID 조건 대기(10초 상한)로 바꾸고 timeout에 PID를 표시한다.
+- #106: 같은 step은 running을 hibernating보다 우선하고 같은 상태면 최신 dispatch를 고른다. task board에 HPC 대기와 실행 중 task 취소를 복원한다.
+- #107: 403 reset header는 remaining=0일 때만 rate limit으로 보고 reset·Retry-After까지 기다린다. 그 밖의 403은 1회 뒤 failed다.
+- #108: 예전 `checks_passed`를 legacy 결과로 보존하고 구조화 채점 세 열은 N/A로 구분한다. report에 `bench rescore --all` 안내를 넣었다.
+- 테스트: 수정 전 회귀 5건 실패 확인. 전체 pytest 연속 3회 각 1131 passed/18 skipped, Node 8개, `bash scripts/check_public.sh`, diff 검사가 통과했다.
+- 한계: 실제 GitHub rate limit 응답은 호출하지 않았고 MockTransport로 header·대기·재시도를 검증했다. 기존 FastAPI deprecation warning 196건은 남아 있다.
+
 ## 2026-10-01 · 웹 후속 #75 #87 #88
 
 - 결론: 폰의 고정 직원 줄을 기본으로 접고 결정 이력을 최근 10건부터 요청별로 묶었다. 재접속 snapshot은 200개 이전의 활성 task도 실행 중으로 복원하며, 직원 카드와 3D 승인 시계가 실제 상태를 계속 보여 준다.
