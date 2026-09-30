@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -13,7 +15,33 @@ from labhq.research.packs import configured_packs, load_pack_catalog, pack_snaps
 from labhq.settings import Settings
 
 
-def valid_plan(packs=None, steps=1):
+def valid_pack_values():
+    return {
+        "single_cell_de@1": {
+            "fields": {
+                "donor_id": "metadata.donor_id",
+                "condition": "metadata.condition",
+                "batch": "metadata.library_batch",
+                "count_scale": "raw_counts",
+                "independent_replicates": 4,
+                "replicate_definition": "one biological donor",
+                "model": "pseudobulk",
+                "model_rationale": "The count model consumes raw counts and preserves donor independence.",
+                "batch_design": "identifiable",
+            },
+            "validators": {
+                "single_cell_de.donor_unit": "Aggregate cells within each donor before inference.",
+                "single_cell_de.model_assumption": "Use a raw-count model with donor and batch terms.",
+            },
+            "acceptance": {
+                "single_cell_de.donor_model": "Use donor-level pseudobulk fixed before CP1.",
+                "single_cell_de.identifiability": "Condition and batch are not fully confounded.",
+            },
+        }
+    }
+
+
+def valid_plan(packs=None, steps=1, pack_values=None):
     return {
         "schema_version": 2,
         "intake": {"work_kind": "research", "reason": "PI specified work_kind=research",
@@ -29,12 +57,14 @@ def valid_plan(packs=None, steps=1):
                      "primary_metrics": ["log fold change"], "validation_methods": ["held-out donor QC"],
                      "resource_limits": ["one local planning call"], "stop_conditions": ["design not identifiable"],
                      "approval_conditions": ["CP1 before execution"], "not_applicable": {},
+                     "data_boundaries": ["public metadata and counts only; no controlled raw data leaves its zone"],
                      "statistics": {"applicable": True, "reason": "group comparison", "estimand": "condition effect",
                                     "analysis_unit": "donor", "comparison_groups": ["case", "control"],
                                     "primary_outcomes": ["expression"], "multiple_testing": "FDR",
                                     "missing_and_exclusions": "pre-specified", "effect_size_and_interval": "estimate and CI",
                                     "sensitivity_analyses": ["batch-adjusted"]},
                      "packs": packs or []},
+        "pack_values": pack_values or {},
         "clarifying_questions": [],
         "steps": [{"id": f"s{i + 1}", "agent_id": "worker", "instruction": f"work {i + 1}",
                    "phase": "analysis", "claim_ids": [f"c{i + 1}"], "input_refs": ["public-input"],
@@ -134,6 +164,34 @@ def test_builtin_pack_loads_with_hash_and_conflicts_fail(tmp_path):
         select_packs(catalog, ["single_cell_de@1", "other_pack@1"])
 
 
+def test_active_pack_requires_fields_validators_and_acceptance_before_cp1():
+    settings = Settings()
+    settings.research.active_packs = ["single_cell_de@1"]
+    selected = configured_packs(settings)
+    refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for loaded in selected.values()]
+    snapshot = pack_snapshot(selected)
+    complete = valid_plan(refs, pack_values=valid_pack_values())
+    validate_research_plan(complete, max_steps=2, active_packs=snapshot, pack_definitions=selected)
+
+    for field in ("donor_id", "batch", "count_scale"):
+        broken = copy.deepcopy(complete)
+        del broken["pack_values"]["single_cell_de@1"]["fields"][field]
+        with pytest.raises(ValueError, match=field):
+            validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
+
+    invalid = copy.deepcopy(complete)
+    invalid["pack_values"]["single_cell_de@1"]["fields"]["count_scale"] = "unknown_scale"
+    with pytest.raises(ValueError, match="count_scale"):
+        validate_research_plan(invalid, max_steps=2, active_packs=snapshot, pack_definitions=selected)
+
+    for section in ("validators", "acceptance"):
+        broken = copy.deepcopy(complete)
+        broken["pack_values"]["single_cell_de@1"][section] = {}
+        with pytest.raises(ValueError, match=section):
+            validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
+
+
 @pytest.mark.asyncio
 async def test_default_off_and_enabled_simple_direct_keep_one_call_and_same_result():
     async def reply(task):
@@ -195,7 +253,7 @@ async def test_research_plan_replans_over_limit_then_freezes_without_employee_di
     selected = configured_packs(settings)
     refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
             for loaded in selected.values()]
-    replies = [valid_plan(refs, steps=2), valid_plan(refs, steps=1)]
+    replies = [valid_plan(refs, steps=2), valid_plan(refs, steps=1, pack_values=valid_pack_values())]
 
     async def reply(task):
         assert task.meta["kind"] == "plan"
@@ -215,4 +273,31 @@ async def test_research_plan_replans_over_limit_then_freezes_without_employee_di
     assert request["research_contract"]["approval"]["request_id"] == "r"
     assert request["research_contract"]["approval"]["protocol_revision"] == 1
     assert hub.approvals[0]["kind"] == "research_plan" and len(hub.approvals[0]["summary"]) <= 700
+    canonical = hub.approvals[0]["detail"]["plan_canonical"]
+    assert json.loads(canonical) == request["plan"]
+    assert hashlib.sha256(canonical.encode("utf-8")).hexdigest() == request["research_contract"]["plan_sha256"]
     assert not any(task.meta["kind"] == "step" for task in hub.calls)
+
+
+@pytest.mark.asyncio
+async def test_invalid_pack_values_replan_before_cp1():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = ["single_cell_de@1"]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    selected = configured_packs(settings)
+    refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for loaded in selected.values()]
+    incomplete = valid_plan(refs, pack_values=valid_pack_values())
+    del incomplete["pack_values"]["single_cell_de@1"]["fields"]["donor_id"]
+    replies = [incomplete, valid_plan(refs, pack_values=valid_pack_values())]
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=replies.pop(0))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert len(hub.approvals) == 1
+    assert hub.requests["r"]["status"] == "done" and hub.requests["r"]["outcome"] == "plan_approved"

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..research.contract import (RESEARCH_PLAN_SCHEMA, classify_intake, freeze_plan,
+from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
                                  refresh_plan_approval, validate_research_plan)
 from ..research.packs import configured_packs, pack_snapshot, render_pack_catalog
 from ..util import clip, extract_json, output_relpath, short
@@ -116,10 +116,12 @@ Contract rules:
 - Explanatory/comparative work states a primary hypothesis, alternatives, and distinguishing observations.
   Exploratory/technical work uses its purpose and does not invent H0/H1.
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
-  conditions, and statistics applicability before execution. Every not_applicable item needs a reason.
+  conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
 - Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
-- Domain packs may extend this contract but cannot weaken it. A pack conflict makes planning fail.
+- For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
+  a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
+  Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
 - PR 1 pilot stops after CP1 approval. Research steps will not run in this PR.
 
 PI's request: {request}"""
@@ -1003,6 +1005,7 @@ class Orchestrator:
                     decision = await self.hub.request_approval(
                         kind="research_plan", request_id=rid, summary=summary[:700],
                         detail={"gate": "research_plan", "target_sha256": plan_hash,
+                                "plan_canonical": canonical_plan_json(plan),
                                 "protocol_revision": plan["protocol"]["revision"],
                                 "packs": plan["protocol"]["packs"],
                                 "scope_status": plan["intake"]["scope_status"]})
@@ -1020,7 +1023,7 @@ class Orchestrator:
                 if research_lane:
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
                                                        active_packs=active_pack_hashes,
-                                                       expected_intake=intake)
+                                                       expected_intake=intake, pack_definitions=packs)
                     req["plan"] = validated.model_dump(mode="json")
                     await finish_research_plan(req["plan"])
                     return
@@ -1122,7 +1125,7 @@ class Orchestrator:
                         try:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                active_packs=active_pack_hashes,
-                                                               expected_intake=intake)
+                                                               expected_intake=intake, pack_definitions=packs)
                             bad_agents = [step.agent_id for step in validated.steps
                                           if step.agent_id not in known or step.agent_id in orchestration]
                             if bad_agents:

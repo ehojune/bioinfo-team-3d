@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -24,11 +24,15 @@ class PackField(StrictModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     description: str = Field(min_length=1)
     required: bool = True
+    value_type: Literal["string", "integer", "boolean"] = "string"
+    allowed_values: list[str] = []
+    minimum: float | None = None
 
 
 class PackValidator(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
     requirement: str = Field(min_length=1)
+    required_fields: list[str] = Field(min_length=1)
 
     @field_validator("id")
     @classmethod
@@ -43,6 +47,12 @@ class PackFixture(StrictModel):
     purpose: str = Field(min_length=1)
 
 
+class PackAcceptance(StrictModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
+    requirement: str = Field(min_length=1)
+    required_fields: list[str] = Field(min_length=1)
+
+
 class DomainRulePack(StrictModel):
     schema_version: Literal[1]
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
@@ -55,7 +65,28 @@ class DomainRulePack(StrictModel):
     validators: list[PackValidator] = Field(min_length=1)
     reviewer_questions: list[str] = Field(min_length=1)
     fixtures: list[PackFixture] = Field(min_length=1)
-    acceptance: list[str] = Field(min_length=1)
+    acceptance: list[PackAcceptance] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def declarative_rules_are_well_formed(self) -> "DomainRulePack":
+        field_names = [field.name for field in self.fields]
+        if len(field_names) != len(set(field_names)):
+            raise ValueError("domain pack field names must be unique")
+        known = set(field_names)
+        for field in self.fields:
+            if field.allowed_values and field.value_type != "string":
+                raise ValueError(f"domain pack field {field.name}: allowed_values requires string type")
+            if field.minimum is not None and field.value_type != "integer":
+                raise ValueError(f"domain pack field {field.name}: minimum requires integer type")
+        for section, rules in (("validator", self.validators), ("acceptance", self.acceptance)):
+            ids = [rule.id for rule in rules]
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"domain pack {section} ids must be unique")
+            for rule in rules:
+                unknown = sorted(set(rule.required_fields) - known)
+                if unknown:
+                    raise ValueError(f"domain pack {section} {rule.id}: unknown required fields {unknown}")
+        return self
 
     @property
     def key(self) -> str:
@@ -129,5 +160,6 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
                                 "fields": [field.model_dump(mode="json") for field in pack.fields],
                                 "validators": [v.model_dump(mode="json") for v in pack.validators],
                                 "reviewer_questions": pack.reviewer_questions,
-                                "acceptance": pack.acceptance}, ensure_ascii=False, sort_keys=True))
+                                "acceptance": [a.model_dump(mode="json") for a in pack.acceptance]},
+                               ensure_ascii=False, sort_keys=True))
     return "\n".join(rows)

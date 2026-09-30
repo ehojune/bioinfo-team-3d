@@ -110,6 +110,7 @@ class ProtocolContract(StrictModel):
     resource_limits: list[str] = Field(min_length=1)
     stop_conditions: list[str] = Field(min_length=1)
     approval_conditions: list[str] = Field(min_length=1)
+    data_boundaries: list[str] = Field(min_length=1)
     not_applicable: dict[str, str] = {}
     statistics: StatisticsPlan
     packs: list[PackRef] = []
@@ -148,11 +149,18 @@ class RecruitProposal(StrictModel):
     reason: str
 
 
+class PackPlanValue(StrictModel):
+    fields: dict[str, Any]
+    validators: dict[str, str]
+    acceptance: dict[str, str]
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
     intake: IntakeDecision
     brief: ResearchBrief
     protocol: ProtocolContract
+    pack_values: dict[str, PackPlanValue]
     clarifying_questions: list[str]
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
@@ -234,24 +242,87 @@ RESEARCH_PLAN_SCHEMA: dict[str, Any] = ResearchPlan.model_json_schema()
 RESEARCH_RESULT_SCHEMA: dict[str, Any] = ResearchResult.model_json_schema()
 
 
+def _present(value: Any) -> bool:
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
+def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
+                          pack_definitions: dict[str, Any] | None) -> None:
+    if set(plan.pack_values) != set(active_packs):
+        raise ValueError(f"research plan pack_values must equal the configured snapshot: {sorted(active_packs)}")
+    if not active_packs:
+        return
+    if pack_definitions is None or set(pack_definitions) != set(active_packs):
+        raise ValueError("active research packs require their definitions before PLAN validation")
+    for key, loaded in pack_definitions.items():
+        if loaded.sha256 != active_packs[key]:
+            raise ValueError(f"research pack definition hash changed for {key}")
+        supplied = plan.pack_values[key]
+        pack = loaded.pack
+        declared = {field.name: field for field in pack.fields}
+        unknown = sorted(set(supplied.fields) - set(declared))
+        if unknown:
+            raise ValueError(f"pack_values[{key}].fields contains undeclared fields: {unknown}")
+        for name, field in declared.items():
+            if field.required and (name not in supplied.fields or not _present(supplied.fields.get(name))):
+                raise ValueError(f"pack_values[{key}].fields.{name} is required")
+            if name not in supplied.fields:
+                continue
+            current = supplied.fields[name]
+            valid_type = ((field.value_type == "string" and isinstance(current, str)) or
+                          (field.value_type == "integer" and isinstance(current, int) and not isinstance(current, bool)) or
+                          (field.value_type == "boolean" and isinstance(current, bool)))
+            if not valid_type:
+                raise ValueError(f"pack_values[{key}].fields.{name} must be {field.value_type}")
+            if field.allowed_values and current not in field.allowed_values:
+                raise ValueError(f"pack_values[{key}].fields.{name} must be one of {field.allowed_values}")
+            if field.minimum is not None and current < field.minimum:
+                raise ValueError(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
+
+        validator_ids = {rule.id for rule in pack.validators}
+        if set(supplied.validators) != validator_ids:
+            raise ValueError(f"pack_values[{key}].validators must contain {sorted(validator_ids)}")
+        for rule in pack.validators:
+            if not _present(supplied.validators[rule.id]):
+                raise ValueError(f"pack_values[{key}].validators.{rule.id} must explain how it passes")
+            missing = [name for name in rule.required_fields if not _present(supplied.fields.get(name))]
+            if missing:
+                raise ValueError(f"pack_values[{key}].validators.{rule.id} missing fields {missing}")
+
+        acceptance_ids = {rule.id for rule in pack.acceptance}
+        if set(supplied.acceptance) != acceptance_ids:
+            raise ValueError(f"pack_values[{key}].acceptance must contain {sorted(acceptance_ids)}")
+        for rule in pack.acceptance:
+            if not _present(supplied.acceptance[rule.id]):
+                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} must explain how it is met")
+            missing = [name for name in rule.required_fields if not _present(supplied.fields.get(name))]
+            if missing:
+                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} missing fields {missing}")
+
+
 def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str, str],
-                           expected_intake: IntakeDecision | None = None) -> ResearchPlan:
+                           expected_intake: IntakeDecision | None = None,
+                           pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
     plan = ResearchPlan.model_validate(value)
     if len(plan.steps) > max_steps:
         raise ValueError(f"research plan has {len(plan.steps)} steps; maximum is {max_steps}; re-plan without truncation")
     selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
     if selected != active_packs:
         raise ValueError(f"research plan packs must equal the configured snapshot: {sorted(active_packs)}")
+    _validate_pack_values(plan, active_packs, pack_definitions)
     if expected_intake and (plan.intake.work_kind != expected_intake.work_kind or
                             plan.intake.scope_status != expected_intake.scope_status):
         raise ValueError("research PLAN intake does not match the request intake decision")
     return plan
 
 
-def plan_sha256(plan: ResearchPlan | dict[str, Any]) -> str:
+def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:
     value = plan.model_dump(mode="json") if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan).model_dump(mode="json")
-    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def plan_sha256(plan: ResearchPlan | dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_plan_json(plan).encode("utf-8")).hexdigest()
 
 
 def freeze_plan(plan: ResearchPlan | dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:

@@ -30,14 +30,14 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `intake` | 판정, 이유, scope 상태, 명시/규칙/CSO 출처 |
 | `brief` | 질문·용도·대상·범위·산출물·관찰 가능한 완료 조건 |
 | 가설 | 설명·비교 연구는 주가설, null/대안, 구별할 관찰. 탐색·기술 조사는 탐색 목적 |
-| `protocol` | 분석 단위, 선정/제외, 비교군, 주요 지표, 검증법, 자원 상한, 중단·승인 조건 |
+| `protocol` | 분석 단위, 선정/제외, 비교군, 주요 지표, 검증법, 자원 상한, 중단·승인 조건, data boundary |
 | 통계 | 적용 여부와 이유. 적용 시 estimand·독립 단위·검정군·주요 outcome·다중검정·결측·효과크기/CI |
 | step | phase, claim ID, input ref, output, check, evidence slot, dependency |
-| pack | 정확한 `id@version`과 SHA-256 |
+| pack | 정확한 `id@version`과 SHA-256, `pack_values[pack_key]`의 field·validator·acceptance 값 |
 
 비적용 항목은 `not_applicable`과 이유를 남긴다. step 상한을 넘으면 뒤를 자르지 않고 재계획한다. schema, DAG, 직원 ID, pack snapshot이 맞아야 CP1로 간다.
 
-정규화한 PLAN 전체의 SHA-256을 승인 대상으로 삼는다. 승인 뒤 질문·방법·대상·지표·선정 기준·범위·자원·pack이 바뀌면 receipt를 `needs_reapproval`로 표시한다. 오류 수정과 재시도는 승인 범위 안일 때만 재승인 없이 진행한다.
+정규화한 PLAN 전체의 canonical JSON을 SHA-256 입력과 CP1 상세 화면에 함께 쓴다. 결정 카드에는 질문·가설·protocol·완료/중단 조건·자원·data boundary·pack 값을 나눠 보여 주고, hash 입력 원문도 보존한다. 승인 뒤 질문·방법·대상·지표·선정 기준·범위·자원·pack이 바뀌면 receipt를 `needs_reapproval`로 표시한다.
 
 ## 3. 직원 결과 계약
 
@@ -83,6 +83,8 @@ receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 �
 
 pack은 core 계약을 약화하지 않고 필드·validator·review 질문·fixture·완료 기준만 더한다. 형식은 `schema_version`, `id`, `version`, `core_contract=extend_only`, `applies_when`, 출처/라이선스, 필드, validator, reviewer 질문, fixture, acceptance다. loader가 내용을 hash하고 같은 validator의 상충 요구를 발견하면 계획을 멈춘다.
 
-예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 pack이 정하지 않고 요청별 PLAN에서 고정한다.
+active pack마다 PLAN의 `pack_values[pack_key]`에 선언된 field 값과 validator·acceptance별 충족 설명을 둔다. 동결 전에 필수 field, 타입·허용값·최솟값, 각 규칙의 요구 field를 검사한다. 누락이나 실패가 있으면 CP1을 열지 않고 한 번 재계획한다.
+
+예시는 `labhq/research/packs/single_cell_de.yaml`이다. `donor_id`, `condition`, `batch`, `count_scale`, 독립 replicate 수·정의, model·근거, batch 식별 가능성을 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
 
 이 규약은 라이선스가 확인되지 않은 inco 저장소에서 문구·표·template을 가져오지 않았다. 여러 연구 workflow의 구조만 비교 대상으로 참고했고, labhq 계약과 표현은 새로 작성했다.

@@ -13,23 +13,50 @@ fields:
   - name: donor_id
     description: Biological donor identifier used as the independent experimental unit.
     required: true
+    value_type: string
   - name: condition
     description: Condition assigned to each donor or paired donor sample.
     required: true
+    value_type: string
   - name: batch
     description: Technical batch or a documented reason that batch is not applicable.
     required: true
+    value_type: string
   - name: count_scale
     description: Raw-count or transformed scale used by the selected model.
     required: true
+    value_type: string
+    allowed_values: [raw_counts, normalized_counts, log_transformed]
   - name: independent_replicates
-    description: Number and definition of independent biological replicates.
+    description: Number of independent biological replicates.
     required: true
+    value_type: integer
+    minimum: 2
+  - name: replicate_definition
+    description: Definition of the independent biological replicate.
+    required: true
+    value_type: string
+  - name: model
+    description: Donor-level statistical model fixed before approval.
+    required: true
+    value_type: string
+    allowed_values: [pseudobulk, donor_dependent]
+  - name: model_rationale
+    description: Why the model matches the count scale and donor structure.
+    required: true
+    value_type: string
+  - name: batch_design
+    description: Whether condition and batch are identifiable or fully confounded and not identifiable.
+    required: true
+    value_type: string
+    allowed_values: [identifiable, fully_confounded_not_identifiable]
 validators:
   - id: single_cell_de.donor_unit
     requirement: Cells must not be treated as independent donor replicates.
+    required_fields: [donor_id, independent_replicates, replicate_definition, model]
   - id: single_cell_de.model_assumption
     requirement: The plan must state why the selected model matches the count scale and donor structure.
+    required_fields: [count_scale, model, model_rationale]
 reviewer_questions:
   - Does the model preserve donor-level independence and pairing?
   - Are batch and condition distinguishable in the design?
@@ -37,5 +64,9 @@ fixtures:
   - id: donor_batch_confounded
     purpose: Detect cell-level pseudoreplication and complete donor-batch confounding.
 acceptance:
-  - Use pseudobulk or a donor-dependent model, with the choice fixed in the approved plan.
-  - Mark a fully confounded donor and batch design as not identifiable rather than reporting a condition effect.
+  - id: single_cell_de.donor_model
+    requirement: Use pseudobulk or a donor-dependent model, with the choice fixed in the approved plan.
+    required_fields: [donor_id, independent_replicates, replicate_definition, model]
+  - id: single_cell_de.identifiability
+    requirement: Mark a fully confounded donor and batch design as not identifiable rather than reporting a condition effect.
+    required_fields: [condition, batch, batch_design]

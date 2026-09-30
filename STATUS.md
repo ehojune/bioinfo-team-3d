@@ -4,11 +4,11 @@
 
 ## 2026-10-01 · #90 연구 수행 규약 PR 1
 
-- 결론: 연구 계약 pilot은 opt-in으로 두고, 단순 변환·집계·원문 요약은 기존 경로를 유지한다. 연구 요청은 PR 1에서 PLAN 검증과 CP1 승인까지만 진행하며 직원 연구 step은 실행하지 않는다.
-- 바뀐 것: `work_kind` 접수 판정, PLAN v2와 직원 result v2 schema, plan SHA-256 receipt와 변경 시 재승인 표시, `extend_only` domain pack loader·충돌 검사, `single_cell_de@1` 예시와 PI·직원용 규약 문서를 추가했다.
-- 실행한 것: 새 회귀 8 passed, 전체 `pytest -q -p no:cacheprovider` 790 passed/17 skipped, `bash scripts/check_public.sh`, `git diff --check` 통과. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
-- 미해결: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. `.git`이 읽기 전용이라 커밋·PR 대신 초안을 남겼고 patch notes는 수정하지 않았다.
-- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `tests/test_research_protocol.py`, `docs/research_protocol.md`.
+- 결론: 1회차 P1 두 건을 고쳐 PI가 CP1에서 hash 원문인 동결 PLAN 전체를 확인하고, active pack 요구를 통과한 PLAN만 승인하게 했다. pilot은 여전히 CP1 뒤 멈춘다.
+- 바뀐 것: canonical PLAN JSON을 SHA-256과 approval detail이 함께 쓰며, 2.5D·3D 공용 결정 카드가 질문·가설·protocol·완료/중단·자원·data boundary·pack 값을 나눠 보여 준다. `pack_values[pack_key]`에 field·validator·acceptance 값을 두고 타입·허용값·최솟값·요구 field를 동결 전에 검사한다.
+- 실행한 것: 두 지적의 수정 전 실패 회귀를 확인했다. 수정 뒤 연구 규약 10 passed, Node 결정 카드 5 passed, 전체 pytest 840 passed/17 skipped, `tests/*.cjs` 5개와 `bash scripts/check_public.sh`가 통과했다. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
+- 미해결: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. `.git`이 읽기 전용이라 커밋 대신 초안을 남겼고 patch notes는 수정하지 않았다.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/web/ui/decide.js`, `tests/test_research_protocol.py`, `tests/web_decision_detail.cjs`, `docs/research_protocol.md`.
 
 ## 2026-10-01 · 후속 P2 네 건 #51 #53 #54 #68
 
