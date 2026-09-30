@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 웹 후속 #75 #87 #88
+
+- 결론: 폰의 고정 직원 줄을 기본으로 접고 결정 이력을 최근 10건부터 요청별로 묶었다. 재접속 snapshot은 200개 이전의 활성 task도 실행 중으로 복원하며, 직원 카드와 3D 승인 시계가 실제 상태를 계속 보여 준다.
+- 바뀐 것: **직원 보기** 토글, 결정 이력 **더 보기**, snapshot `running_tasks`, 완료·오류·순서 대기 문구와 오류 색, 3D 1초 갱신을 넣었다. main에 이미 있던 #87 REST 요청 요약의 활성 task 반영과 #88 2.5D 15초 갱신은 중복하지 않았다. README는 정규화 UTF-8 41,583→41,781 bytes(+198)다.
+- 실행한 것: issue별 수정 전 Node 회귀 실패 확인. 수정 후 `node tests/*.cjs` 7개, 전체 pytest 1094 passed/18 skipped, `bash scripts/check_public.sh`, diff 검사가 통과했다. 375×812 headless Chrome에서 직원 줄이 접히고 사무실 첫 두 줄이 보였다.
+- 미해결: 실제 iPhone·Android의 touch와 Safari 동작은 확인하지 않았다. FastAPI `on_event` deprecation warning 192건은 기존 경고다.
+- 근거: `tests/web_issue75.cjs`, `tests/web_issue87.cjs`, `tests/web_command_center.cjs`, `tests/web_live.cjs`, `tests/test_ops_status_usage.py`.
+
 ## 2026-10-01 · PR #77 Sonnet 보정·Claude arm 권한 #40
 
 - 판정: Sonnet 5개는 KRAS·GEO·Protein·Penguins 맞음, Plastome 부분/PASS다. 전체 fixture 15개는 맞음 13·부분 2이며 판정-검사 15/15 일치한다. 근거 줄·출처는 `bench/calibration.md`; Sonnet 원본 bytes/SHA-256 5/5 일치다.
