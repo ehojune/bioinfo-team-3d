@@ -86,6 +86,15 @@ def codex_comment(body: str, mention: str = "@codex") -> str:
     return body if mention in body else f"{mention} {body}"
 
 
+class GitHubHTTPError(RuntimeError):
+    def __init__(self, method: str, path: str, response: httpx.Response):
+        super().__init__(f"GitHub {method} {path} → {response.status_code}: {response.text[:300]}")
+        self.status_code = response.status_code
+        self.rate_limited = (response.status_code == 403 and
+                             (response.headers.get("x-ratelimit-remaining") == "0" or
+                              "retry-after" in response.headers))
+
+
 class GitHubClient:
     def __init__(self, token: str, api_url: str, transport: httpx.AsyncBaseTransport | None = None,
                  clean: Callable[[str], str] | None = None):
@@ -108,7 +117,7 @@ class GitHubClient:
                     kw["json"] = self._clean_value(kw["json"])
         r = await self.http.request(method, path, **kw)
         if r.status_code >= 400:
-            raise RuntimeError(f"GitHub {method} {path} → {r.status_code}: {r.text[:300]}")
+            raise GitHubHTTPError(method, path, r)
         return r.json() if r.content else {}
 
     CONTROL_KEYS = frozenset({"branch", "sha", "ref"})  # GitHub control values, not published text
