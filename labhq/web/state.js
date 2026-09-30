@@ -9,10 +9,13 @@ const S = {
   jobs: new Map(), feed: [], cost: 0, conn: mode === 'demo' ? 'demo' : 'connecting', projects: [],
   lastSay: {}, taskStep: new Map(), seq: 0, doorUntil: 0,
 };
+// Task detail is derived from events and may be rebuilt from a snapshot.
+// Keep it out of legacy state serialization while exposing it to both UIs.
+Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
-  S.lastSay = {}; S.taskStep.clear(); S.seq = 0; S.doorUntil = 0;
+  S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.seq = 0; S.doorUntil = 0;
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -30,11 +33,20 @@ const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
-  S.agents.set(a.id, { ...prev, ...a });
+  const next = { ...prev, ...a }, usage = next.usage || {}, toolCalls = next.toolCalls || 0;
+  delete next.usage; delete next.toolCalls;
+  Object.defineProperty(next, 'usage', { value: usage, writable: true, enumerable: false });
+  Object.defineProperty(next, 'toolCalls', { value: toolCalls, writable: true, enumerable: false });
+  S.agents.set(a.id, next);
 }
 function req(rid) {
   if (!S.requests.has(rid)) S.requests.set(rid, { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() });
   return S.requests.get(rid);
+}
+function stepDetail(rid, sid) {
+  const key = `${rid}:${sid}`;
+  if (!S.stepDetails.has(key)) S.stepDetails.set(key, { attempts: 0, outputs: [], missing_outputs: [], review_issues: [] });
+  return S.stepDetails.get(key);
 }
 function setPlan(q, plan) {
   q.plan = (plan.steps || []).map(s => ({ ...s, depends_on: s.depends_on || [] }));
@@ -91,6 +103,8 @@ function apply(ev, replay = false) {
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         if (r.plan) setPlan(q, r.plan);
         Object.assign(q.steps, r.step_status || {});
+        for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
+        if (r.review) q.review = r.review;
         if (r.status !== 'running') q.phase = 'done';
       }
       S.cost = (d.requests || []).reduce((total, r) => total + (Number(r.cost_usd) || 0), 0);
@@ -112,7 +126,7 @@ function apply(ev, replay = false) {
       if (d.state === 'done' && !replay) effects.push({ type: 'renderAfter', ms: 3200 });
       break;
     }
-    case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
+    case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
     case 'agent.log': {
       if (d.level === 'debug' || d.level === 'thinking') break;
@@ -123,14 +137,26 @@ function apply(ev, replay = false) {
     }
     case 'agent.usage': {
       const c = Number(d.cost_usd) || 0;
+      const a = ag(id);
+      if (a) a.usage = { ...(a.usage || {}), ...(d.tokens || {}), ...('num_turns' in d ? { num_turns: d.num_turns } : {}) };
       if (c > 0) { S.cost += c; if (rid) req(rid).cost += c; }
       if (rid && d.cost_known === false) req(rid).costKnown = false;
       break;
     }
-    case 'task.dispatched': onDispatch(ev); break;
+    case 'task.dispatched': {
+      onDispatch(ev);
+      if (rid && d.step_id) Object.assign(stepDetail(rid, d.step_id), {
+        task_id: ev.task_id, attempts: Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1),
+      });
+      break;
+    }
     case 'task.result': {
       const sid = S.taskStep.get(ev.task_id);
-      if (sid && rid && d.ok === false) req(rid).steps[sid] = 'error';
+      if (sid && rid) {
+        if (d.ok === false) req(rid).steps[sid] = 'error';
+        Object.assign(stepDetail(rid, sid), { task_id: ev.task_id, ok: d.ok, text: d.text || '', error: d.error || '',
+          outputs: d.outputs || [], missing_outputs: d.missing_outputs || [] });
+      }
       break;
     }
     case 'approval.requested': {
@@ -159,12 +185,17 @@ function apply(ev, replay = false) {
       feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
       break;
     }
+    case 'request.step_attempt': {
+      if (rid && d.step_id) stepDetail(rid, d.step_id).attempts = Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1);
+      break;
+    }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; break; }
-    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; break; }
+    case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(stepDetail(rid, d.step_id), { attempts: d.attempts || stepDetail(rid, d.step_id).attempts, error: d.reason || stepDetail(rid, d.step_id).error }); break; }
+    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
       q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
+      for (const step of q.plan) stepDetail(rid, step.id).review_issues = (d.issues || []).filter(issue => issue.step_id === step.id);
       if (d.verdict === 'revise') (d.issues || []).forEach(i => { if (i.step_id in q.steps) q.steps[i.step_id] = 'revise'; });
       const unparsed = d.status === 'review_unparsed';
       feed({ who: 'sci_reviewer', text: unparsed ? '리뷰 판정 실패. PI 확인이 필요해요'
