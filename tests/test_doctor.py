@@ -143,10 +143,22 @@ def test_doctor_runs_staff_adapter_preflight_with_engine_environment(tmp_path, m
     result = doctor.collect(settings)
     row = next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")
     assert row["status"] == "fail" and "AGENTS.md" in row["detail"]
+    assert "CODEX_HOME" in row["hint"] and "codex login" in row["hint"]
     assert str(config) not in json.dumps(result)
     settings.engines.codex.allow_global_agents_md = True
     result = doctor.collect(settings)
     assert next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")["status"] == "ok"
+
+
+def test_doctor_shows_enabled_dev_log_target_and_exit_conditions(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    settings.dev_log.repo = "records/private"
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["name"] == "dev log")
+    assert row["status"] == "ok"
+    assert "records/private" in row["detail"]
+    assert "v1.0" in row["detail"] and "20" in row["detail"] and "#69" in row["detail"]
 
 
 @pytest.mark.parametrize("case", ["group_missing", "runner_group", "user_missing", "user_group"])

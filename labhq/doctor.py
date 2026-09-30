@@ -124,6 +124,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         status, detail = "fail", str(exc).split(":", 1)[0] if isinstance(exc, RuntimeError) else "account check unavailable"
     rows.append(_row("config", "HPC job group", status, detail,
                      "Check hpc.user and hpc.job_group membership for the runner and job accounts."))
+    if settings.dev_log.enabled:
+        repo = settings.dev_log.repo or "로컬만 사용(dev_log.repo 미설정)"
+        status = "ok" if settings.dev_log.repo else "warn"
+        detail = f"{repo}; 종료: v1.0, #40 bench 뒤 20 rounds 새 교훈 없음, 또는 보고 채널 이전 (#69)"
+        rows.append(_row("config", "dev log", status, detail,
+                         "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
 
     available: dict[str, bool] = {}
     for name in settings.engines.__class__.model_fields:
@@ -175,8 +181,10 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             for raw in agent.plugin_dirs:
                 error = error.replace(raw, _safe_path(raw))
         status = ("warn" if plugin else "fail") if error else "ok" if ready else "warn"
-        rows.append(_row("staff", agent.id, status, error or f"engine={engine}",
-                         f"Resolve the {engine} adapter preflight or install/configure its executable."))
+        hint = ("직원 전용 CODEX_HOME에서 codex login한 뒤 engines.codex.env.CODEX_HOME에 지정하세요."
+                if engine == "codex" and error and "CODEX_HOME" in error else
+                f"Resolve the {engine} adapter preflight or install/configure its executable.")
+        rows.append(_row("staff", agent.id, status, error or f"engine={engine}", hint))
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))

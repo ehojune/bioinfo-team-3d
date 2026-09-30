@@ -181,6 +181,7 @@ class GitHubSettings(BaseModel):
 class DevLogSettings(BaseModel):
     enabled: bool = True
     repo: str | None = None
+    source_repo: str | None = None  # owner/name used to link the labhq commit in each round
     allow_public: bool = False
     labels: list[str] = Field(default_factory=lambda: ["labhq-round"])
     improvement_notes: bool = False

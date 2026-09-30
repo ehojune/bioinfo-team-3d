@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from ..gateway.server import Hub
 
 log = logging.getLogger("labhq.rounds")
+REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 @functools.lru_cache(maxsize=1)
@@ -61,6 +63,7 @@ def _clean_tree(value: Any, clean) -> Any:
 def environment_snapshot(hub: "Hub") -> dict:
     """What ran the request. Taken once when it starts, so rebuilding a record later never restamps it."""
     return {"labhq_version": __version__, "git_commit": _git_commit(),
+            "source_repo": hub.s.dev_log.source_repo,
             "engine_cli_versions": {k: v.get("engine_cli_versions") for k, v in hub.runner_capabilities.items()
                                     if v.get("engine_cli_versions")},
             "instance": Path(hub.s.gateway.state_dir).name,
@@ -187,12 +190,17 @@ def build_record(hub: "Hub", rid: str) -> dict:
 def render_record(record: dict) -> str:
     data = json.dumps(record, ensure_ascii=False, indent=2, default=str)
     req, result = record["request"], record["result"]
+    commit = record["environment"].get("git_commit")
+    source_repo = record["environment"].get("source_repo")
+    shown_commit = commit or "미확인"
+    if commit and isinstance(source_repo, str) and REPO_NAME.fullmatch(source_repo):
+        shown_commit = f"[{commit}](https://github.com/{source_repo}/commit/{commit})"
     lines = [f"# Round {record['request_id']}", "", "## 요청", str(req.get("text") or ""),
              f"- 모드: {req.get('mode') or '—'}", f"- 프로젝트: {req.get('project_id') or '—'}",
              f"- 확인 질문·답변: {json.dumps(req.get('clarifications') or [], ensure_ascii=False)}",
              f"- 단계 결정: {json.dumps(req.get('step_decisions') or {}, ensure_ascii=False)}",
              "", "## 환경", f"- labhq: {record['environment']['labhq_version']}",
-             f"- Git: {record['environment']['git_commit'] or '미확인'}",
+             f"- Git: {shown_commit}",
              f"- 모델: {', '.join(record['environment']['model_ids']) or '보고 없음'}",
              f"- 인스턴스: {record['environment']['instance']}", "", "## 계획"]
     lines += [f"- {s.get('id')}: {s.get('agent_id')} (선행: {', '.join(s.get('depends_on') or []) or '없음'})"
