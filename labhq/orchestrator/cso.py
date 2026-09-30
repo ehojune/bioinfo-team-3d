@@ -282,6 +282,10 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
         return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or outcome.pending_jobs):
         return None
+    if outcome.pending_jobs:
+        # A failed CLI turn can still have submitted live jobs. Replaying the step
+        # risks another qsub even when the CLI supports session resume.
+        return "terminal"
     error = (outcome.error or "").lower()
     if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
                                       "budget", "cancel", "ineligibletier", "401")):
