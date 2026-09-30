@@ -58,7 +58,8 @@ github:
 
 dev_log:
   enabled: true                   # 로컬 rounds 기록은 항상 생성; false면 GitHub 발행 중단
-  repo: null                      # 비워 두면 로컬에만 기록. 발행 시 별도 비공개 저장소 owner/name
+  repo: null                      # 비워 두면 로컬만 기록. PI 예시: ehojune/labhq-rounds (private)
+  source_repo: null               # labhq commit 링크용 owner/name. 비우면 sha만 표시
   allow_public: false            # 실제 GitHub visibility가 public이면 발행 거부
   labels: [labhq-round]
   improvement_notes: false

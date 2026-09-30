@@ -65,8 +65,12 @@ STEPS = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": dep
 def test_roster_and_dependencies():
     roster = format_roster([{"id": "reader", "name": "Reader", "role": "inspect",
                              "engine": "codex", "model": "small", "sandbox": "read-only",
-                             "tools": ["Read"], "hpc_tools": False, "max_turns": 8}])
+                             "tools": ["Read"], "hpc_tools": False, "max_turns": 8},
+                            {"id": "lit_scout", "name": "Scout", "role": "search",
+                             "engine": "codex", "model": "small", "sandbox": "workspace-write",
+                             "tools": ["WebSearch"], "hpc_tools": False, "max_turns": 8}])
     assert "read-only" in roster and "labhq_hpc=no" in roster and "max_turns=8" in roster
+    assert "lit_scout: Scout – search (codex/small); write-capable" in roster
     raw = [{"id": "A", "agent_id": "worker", "instruction": "produce", "outputs": ["table.tsv"], "depends_on": []},
            {"id": "B", "agent_id": "worker", "instruction": "Use table.tsv from A", "depends_on": []},
            {"id": "R", "agent_id": "sci_reviewer", "instruction": "review", "depends_on": []}]

@@ -81,16 +81,16 @@ class CodexAdapter(AgentAdapter):
                 flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
         if a.model:
             flags += ["-m", a.model]
-        if any(t.split("(")[0] in WEB_TOOLS for t in a.tools):
-            flags += ["-c", 'web_search="live"']
+        web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
+        flags += ["-c", f'web_search="{web_search}"']
         for d in ctx.extra_dirs:
             flags += ["--add-dir", d]
         if t.output_schema:
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
         for s in ctx.mcp_servers:
             key = f"mcp_servers.{s.name}"
-            if s.name in ("labhq_hpc", "labhq_approval"):
-                # The labhq broker enforces phone approval inside these tools.
+            if s.name in ("labhq_hpc", "labhq_approval") or s.auto_approve:
+                # labhq tools enforce phone approval inside the broker; auto_approve servers are read-only.
                 flags += ["-c", f'{key}.default_tools_approval_mode="approve"']
             if s.name.startswith("labhq_"):
                 flags += ["-c", f"{key}.tool_timeout_sec={self.settings.policy.approvals.timeout_s + 120}"]
@@ -139,8 +139,11 @@ class CodexAdapter(AgentAdapter):
                 await ctx.emit("agent.tool_error", {"text": short(message, 400)})
             elif it == "file_change" and typ == "item.completed":
                 await ctx.emit("agent.tool", {"name": "edit", "input": short(item.get("changes"), 300)})
-            elif it == "web_search" and typ == "item.started":
-                await ctx.emit("agent.tool", {"name": "web_search", "input": short(item.get("query"), 200)})
+            elif it == "web_search" and typ == "item.completed":
+                action = item.get("action") or {}
+                query = action.get("query") if isinstance(action, dict) else None
+                await ctx.emit("agent.tool", {"name": "web_search",
+                                               "input": short(query or item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True
             from .base import token_counts

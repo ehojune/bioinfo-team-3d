@@ -229,8 +229,9 @@ class ClaudeCodeAdapter(AgentAdapter):
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
         for d in ctx.extra_dirs:
             cmd += ["--add-dir", d]
-        if a.tools:
-            cmd += ["--allowedTools", *a.tools]
+        allowed = [*a.tools, *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
+        if allowed:
+            cmd += ["--allowedTools", *allowed]
         if a.disallowed_tools:
             cmd += ["--disallowedTools", *a.disallowed_tools]
         return cmd

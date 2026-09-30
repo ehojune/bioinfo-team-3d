@@ -62,6 +62,18 @@ def test_local_round_schema_and_status(tmp_path, status):
     assert "/data/restricted/sample" in md
 
 
+def test_round_environment_links_the_configured_labhq_commit(tmp_path):
+    cfg = settings(tmp_path)
+    cfg.dev_log.source_repo = "example/labhq"
+    hub = Hub(cfg)
+    round_request(hub, "req-link", "done")
+    record = hub.rounds.write("req-link")
+    sha = record["environment"]["git_commit"]
+    md = (hub.rounds.directory / "req-link.md").read_text(encoding="utf-8")
+    assert record["environment"]["source_repo"] == "example/labhq"
+    assert f"https://github.com/example/labhq/commit/{sha}" in md
+
+
 @pytest.mark.asyncio
 async def test_terminal_commit_and_restart_recovery_write_files(tmp_path):
     cfg = settings(tmp_path)

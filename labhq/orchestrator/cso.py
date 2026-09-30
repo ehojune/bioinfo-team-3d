@@ -131,9 +131,12 @@ def format_roster(agents: list[dict]) -> str:
         tools = f" · tools: {', '.join(a['mcp'])}" if a.get("mcp") else ""
         allowed = a.get("tools") or []
         builtin = a.get("builtin_tools")
-        access = "read-only" if a.get("sandbox") == "read-only" or a.get("permission_mode") == "plan" or (
-            builtin and not any(x in builtin for x in ("Write", "Edit", "Bash"))) or (
-            allowed and not any(x.startswith(("Write", "Edit", "Bash")) for x in allowed)) else "write-capable"
+        if a.get("engine") == "codex":
+            access = "read-only" if a.get("sandbox") == "read-only" else "write-capable"
+        else:
+            access = "read-only" if a.get("permission_mode") == "plan" or (
+                builtin and not any(x in builtin for x in ("Write", "Edit", "Bash"))) or (
+                allowed and not any(x.startswith(("Write", "Edit", "Bash")) for x in allowed)) else "write-capable"
         lines.append(f"- {a['id']}{tag}: {a['name']} – {a['role']} "
                      f"({a['engine']}/{a.get('model') or 'default'}); {access}; "
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
