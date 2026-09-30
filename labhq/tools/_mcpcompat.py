@@ -6,6 +6,8 @@ import asyncio
 import os
 from typing import Any
 
+from ..util import strip_parent_claude_env
+
 try:  # mcp >= 2
     from mcp.server.mcpserver import MCPServer as _Server
 except ImportError:  # mcp < 2
@@ -25,7 +27,8 @@ async def list_tools(spec: Any, timeout_s: float = 90) -> list[str]:
 
         params = StdioServerParameters(
             command=spec.command, args=list(spec.args),
-            env={**os.environ, **{k: os.path.expandvars(v) for k, v in spec.env.items()}},
+            env=strip_parent_claude_env(
+                {**os.environ, **{k: os.path.expandvars(v) for k, v in spec.env.items()}}),
             cwd=spec.cwd,
         )
         async with stdio_client(params) as streams:

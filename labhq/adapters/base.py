@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import signal
+import subprocess
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from typing import Any, Awaitable, Callable
 
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, short
+from ..util import extract_json, short, strip_parent_claude_env
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
 
@@ -23,6 +24,45 @@ _NPM_NODE_LINE = re.compile(
     r'\s+"%(?:dp0%|~dp0)[\\/](?P<script>[^"%\r\n]+?\.(?:js|mjs|cjs))"\s+%\*\s*$',
     re.IGNORECASE,
 )
+
+
+def _windows_descendants(root_pid: int) -> list[int]:
+    """Snapshot descendants before taskkill; some sandboxed Windows hosts deny taskkill /T."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel = ctypes.windll.kernel32
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel.CreateToolhelp32Snapshot(0x00000002, 0)
+    if snapshot == ctypes.c_void_p(-1).value:
+        return []
+    children: dict[int, list[int]] = {}
+    entry = ProcessEntry()
+    entry.dwSize = ctypes.sizeof(entry)
+    try:
+        more = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            children.setdefault(int(entry.th32ParentProcessID), []).append(int(entry.th32ProcessID))
+            more = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel.CloseHandle(snapshot)
+    found, pending = [], list(children.get(root_pid, []))
+    while pending:
+        pid = pending.pop()
+        found.append(pid)
+        pending.extend(children.get(pid, []))
+    return found
 
 
 def _npm_script(shim: Path) -> tuple[Path, bool] | None:
@@ -106,6 +146,7 @@ class RunState:
     error: str | None = None
     usage: dict = field(default_factory=dict)
     result_seen: bool = False
+    model_id: str | None = None
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
@@ -113,6 +154,15 @@ def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
     source = raw if isinstance(raw, dict) else {}
     return {key: value for key in fields if isinstance((value := source.get(key)), int)
             and not isinstance(value, bool) and value >= 0}
+
+
+def record_model_id(st: RunState, ctx: RunContext, value: Any) -> None:
+    """Persist a resolved model only when the CLI reports one."""
+    if not isinstance(value, str) or not value.strip() or value == st.model_id:
+        return
+    st.model_id = value
+    if ctx.record_run:
+        ctx.record_run(model_id=value)
 
 
 def wrap_cwd(spec: McpServerSpec) -> tuple[str, list[str]]:
@@ -191,12 +241,13 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        refused = self.preflight_error(ctx, {**os.environ, **self.engine_env(), **ctx.env})
+        refused = self.preflight_error(
+            ctx, strip_parent_claude_env({**os.environ, **self.engine_env(), **ctx.env}))
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
-        env = {**os.environ, **self.engine_env(), **ctx.env}
+        env = strip_parent_claude_env({**os.environ, **self.engine_env(), **ctx.env})
         engine_bin = getattr(self.settings.engines, self.engine, None)
         if engine_bin is not None:
             cmd = [os.path.expandvars(os.path.expanduser(cmd[0])),
@@ -211,11 +262,13 @@ class AgentAdapter(ABC):
 
         payload = self.stdin_payload(ctx)
         try:
+            group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                          if os.name == "nt" else {"start_new_session": True})
             proc = await asyncio.create_subprocess_exec(
                 *cmd, cwd=str(ctx.workdir), env=env,
                 stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                limit=32 * 1024 * 1024, start_new_session=True,
+                limit=32 * 1024 * 1024, **group_args,
             )
         except FileNotFoundError:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
@@ -244,14 +297,16 @@ class AgentAdapter(ABC):
             async for raw in proc.stderr:
                 stderr_tail.append(raw.decode(errors="replace").rstrip())
 
+        drain = asyncio.gather(read_out(), read_err(), proc.wait())
         try:
-            await asyncio.wait_for(asyncio.gather(read_out(), read_err(), proc.wait()),
-                                   timeout=self.settings.runner.task_timeout_s)
+            await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
             st.error = f"timeout after {self.settings.runner.task_timeout_s}s"
             await self._kill(proc)
+            await drain
         except asyncio.CancelledError:
             await self._kill(proc)
+            await asyncio.shield(drain)
             raise
         (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
@@ -266,6 +321,34 @@ class AgentAdapter(ABC):
     @staticmethod
     async def _kill(proc: asyncio.subprocess.Process) -> None:
         if proc.returncode is not None:
+            return
+        if os.name == "nt":
+            descendants = _windows_descendants(proc.pid)
+            returncode = None
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    "taskkill", "/T", "/F", "/PID", str(proc.pid),
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(killer.wait(), 5)
+                returncode = killer.returncode
+            except (FileNotFoundError, asyncio.TimeoutError):
+                pass
+            if returncode != 0:
+                for pid in reversed(descendants):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except (OSError, ProcessLookupError):
+                        pass
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                await asyncio.wait_for(proc.wait(), 5)
+            except asyncio.TimeoutError:
+                pass
             return
         try:
             os.killpg(proc.pid, signal.SIGTERM)

@@ -99,6 +99,9 @@ def build_record(hub: "Hub", rid: str) -> dict:
             for run in runs.values():
                 for plugin in run.get("plugins") or []:
                     plugins.append({"step_id": sid, **plugin})
+                for key in ("model", "model_id"):
+                    if run.get(key):
+                        models.add(run[key])
             if manifest.get("model"):
                 models.add(manifest["model"])
         duration = sum(max(0, run["ended_at"] - run["started_at"])
@@ -138,8 +141,9 @@ def build_record(hub: "Hub", rid: str) -> dict:
         if manifest.get("model"):
             models.add(manifest["model"])
         for run in (manifest.get("runs") or {}).values():
-            if run.get("model"):
-                models.add(run["model"])
+            for key in ("model", "model_id"):
+                if run.get(key):
+                    models.add(run[key])
             for plugin in run.get("plugins") or []:
                 entry = {"task_id": (t.get("payload") or {}).get("id"), **plugin}
                 if entry not in plugins:

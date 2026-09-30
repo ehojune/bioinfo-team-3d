@@ -1,9 +1,51 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
+import tempfile
+from pathlib import Path
 from typing import Any
+
+
+CLAUDE_ENV_PASSTHROUGH = frozenset({
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+})
+
+
+def parent_claude_markers(env: dict[str, str]) -> list[str]:
+    """Claude host-session variables that must not reach staff subprocesses."""
+    return [key for key in env if (key.upper().startswith("CLAUDE_") or
+                                    key.upper().startswith("CLAUDECODE"))
+            and key.upper() not in CLAUDE_ENV_PASSTHROUGH]
+
+
+def strip_parent_claude_env(env: dict[str, str]) -> dict[str, str]:
+    blocked = set(parent_claude_markers(env))
+    return {key: value for key, value in env.items() if key not in blocked}
+
+
+def atomic_write_text(path: str | Path, text: str) -> None:
+    """Replace a text file from a same-directory temporary file."""
+    target = Path(path)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=target.parent,
+            prefix=f".{target.name}.", suffix=".tmp", delete=False,
+        ) as out:
+            temporary = Path(out.name)
+            out.write(text)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, target)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def short(obj: Any, n: int = 300) -> str:

@@ -16,7 +16,8 @@ import os
 from pathlib import Path
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env, wrap_cwd
+from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
+                   record_model_id, wrap_cwd)
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
 WEB_TOOLS = {"WebSearch", "WebFetch"}
@@ -91,6 +92,8 @@ class CodexAdapter(AgentAdapter):
             if s.name in ("labhq_hpc", "labhq_approval"):
                 # The labhq broker enforces phone approval inside these tools.
                 flags += ["-c", f'{key}.default_tools_approval_mode="approve"']
+            if s.name.startswith("labhq_"):
+                flags += ["-c", f"{key}.tool_timeout_sec={self.settings.policy.approvals.timeout_s + 120}"]
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
                 flags += ["-c", f"{key}.command={_toml(command)}", "-c", f"{key}.args={_toml(args)}"]
@@ -106,6 +109,7 @@ class CodexAdapter(AgentAdapter):
 
     async def handle_line(self, line: str, st: RunState, ctx: RunContext) -> None:
         ev = json.loads(line)
+        record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
         typ = ev.get("type")
         if typ == "thread.started":
             st.session_id = ev.get("thread_id")

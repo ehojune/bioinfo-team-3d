@@ -19,7 +19,8 @@ import json
 
 from ..models import CliSpec
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, token_counts, wrap_cwd
+from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, record_model_id,
+                   token_counts, wrap_cwd)
 
 
 class _Keep(dict):
@@ -84,6 +85,7 @@ class CliAdapter(AgentAdapter):
             await ctx.emit("agent.log", {"text": short(line, 2000)})
             return
         typ = ev["type"]
+        record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
         if typ == "status":
             await ctx.emit("agent.status", {"state": ev.get("state", "working"), "task": ev.get("task")})
         elif typ == "log":

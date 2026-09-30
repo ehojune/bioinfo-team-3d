@@ -41,14 +41,58 @@ def test_claude_isolation_flags_and_claude_md_exclude(tmp_path):
 def test_claude_isolation_keeps_policy_deny_rules(tmp_path):
     deny = {"permissions": {"deny": ["Read(//data/cohort/**)"]}}
     s = _settings_arg(_command("claude_code", tmp_path, claude_settings=deny))
-    assert s["permissions"] == deny["permissions"] and "claudeMdExcludes" in s
+    assert s["permissions"]["deny"] == ["Read(//data/cohort/**)", "SendMessage", "ListAgents"]
+    assert "claudeMdExcludes" in s
 
 
 def test_claude_isolation_can_be_turned_off(tmp_path):
     settings = Settings()
     settings.engines.claude_code.isolate_user_config = False
     cmd = _command("claude_code", tmp_path, settings=settings)
-    assert "--setting-sources" not in cmd and "--disable-slash-commands" not in cmd and "--settings" not in cmd
+    assert "--setting-sources" not in cmd and "--disable-slash-commands" not in cmd
+    assert _settings_arg(cmd)["permissions"]["deny"] == ["SendMessage", "ListAgents"]
+
+
+@pytest.mark.asyncio
+async def test_staff_subprocess_drops_parent_claude_session_markers(tmp_path, monkeypatch):
+    import sys
+    from labhq.models import CliSpec
+
+    blocked = {
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_CODE_MESSAGING_TOKEN": "secret",
+        "CLAUDE_EFFORT": "high",
+        "CLAUDECODE": "1",
+    }
+    kept = {
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config"),
+        "CLAUDE_CODE_OAUTH_TOKEN": "oauth",
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "CLAUDE_CODE_USE_VERTEX": "1",
+    }
+    for key, value in {**blocked, **kept}.items():
+        monkeypatch.setenv(key, value)
+    script = tmp_path / "env_agent.py"
+    script.write_text(
+        "import json, os, pathlib, sys\n"
+        "keys = [k for k in os.environ if k.upper().startswith('CLAUDE')]\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps({k: os.environ[k] for k in keys}))\n"
+        "print('{\"type\":\"result\",\"ok\":true,\"text\":\"done\"}')\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "env.json"
+    settings = Settings()
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine.cli, builtin_mcp=[],
+                      cli=CliSpec(command=[sys.executable, str(script), str(output)], output="jsonl"))
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
+                     mcp_servers=[], env={}, emit=_emit, prompt="x")
+    result = await get_adapter(agent.engine, settings).run(ctx)
+    received = json.loads(output.read_text(encoding="utf-8"))
+    assert result.ok
+    assert not (blocked.keys() & received.keys())
+    assert {key: received[key] for key in kept} == kept
 
 
 @pytest.mark.parametrize("windows", [True, False])

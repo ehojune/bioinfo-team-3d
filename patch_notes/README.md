@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:57 | [`3981449`](https://github.com/ehojune/bioinfo-team-3d/pull/71/commits/3981449) | **러너가 Windows에서 멈춘 직원 CLI를 끝까지 정리합니다(#55).** timeout이나 취소가 나면 `os.killpg`가 Windows에 없어 AttributeError가 났고, CLI와 그 아래 MCP 프로세스가 계속 돌았습니다(Windows에서 재현). 이제 직원 CLI를 새 process group으로 띄우고 `taskkill /T /F`로 트리째 끄며, 그 명령이 막힌 환경에서는 미리 적어 둔 하위 PID를 정리합니다. 함께 고친 것: Claude Code 안에서 labhq를 띄우면 부모 세션 표식(`CLAUDE_CODE_*`)이 직원에게 넘어가던 것(인증·설정 키 4개만 남김), labhq MCP 도구가 폰 승인을 기다리다 60초에 끊길 수 있던 것(승인 대기 + 120초), 직원 세션이 다른 Claude 세션에 메시지를 보낼 수 있던 것(`SendMessage`·`ListAgents` 차단), registry·계약·manifest를 쓰다 죽으면 파일이 깨질 수 있던 것(임시 파일 뒤 교체), CLI가 알려 준 실제 모델 id를 기록에 남기기. CI에 Windows job을 더했습니다 |
 | 02:12 | [`71589ce`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/71589ce) | **README §2에 역할·엔진·도구를 나눈 기준을 적었습니다.** PI가 물은 질문에 대한 답입니다. 기록된 기준(직무 구분, 판단은 opus·반복은 sonnet, 다른 벤더 리뷰어)과 오늘 PI가 밝힌 CSO 최고 등급 모델의 이유를, 기록 없이 표에서만 드러나는 도구 원칙과 사정에 따라 바뀐 엔진 이력과 구분했습니다. 측정으로 검증한 배정은 아직 없다는 점도 적었습니다 |
 | 01:45 | [`a8483c0`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/a8483c0) | doctor가 러너 guard를 import하고(#46) 러너가 doctor의 버전 확인 함수를 import해서(#48) 순환 import가 생겼습니다. rebase 뒤 테스트 7개 모듈이 수집 단계에서 멈췄습니다. 버전 확인 함수를 `runner/versions.py`로 옮겼습니다 |
 | 01:43 | [`99e7f97`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/99e7f97) | **URL에서 퍼센트 인코딩된 token 파라미터 이름도 로그에서 가립니다(#47).** `%74oken=...`처럼 이름을 인코딩하면 가림 규칙을 비껴갔습니다. query key를 한 번 decode한 뒤 판정합니다 |
