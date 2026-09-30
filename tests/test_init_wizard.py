@@ -144,10 +144,33 @@ def test_yes_uses_plugin_environment_default(tmp_path, monkeypatch):
     assert _data()["engines"]["claude_code"]["env"]["BIOINFO_AGENT_DIR"] == str(plugin)
 
 
-def test_scheduler_present_keeps_example_default(monkeypatch):
-    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in ("qsub", "qstat") else None)
+@pytest.mark.parametrize("marker,expected", [("qconf", "sge"), ("pbsnodes", "pbs")])
+def test_scheduler_family_is_detected_not_assumed(monkeypatch, marker, expected):
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    tools = {"qsub", "qstat", marker}
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in tools else None)
     wizard.run(yes=True)
-    assert _data()["hpc"]["scheduler"] == "sge"
+    assert _data()["hpc"]["scheduler"] == expected
+
+
+def test_unknown_scheduler_family_fails_with_yes(monkeypatch):
+    # PBS also has qsub/qstat: keeping the SGE example default would break the first PBS job.
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in ("qsub", "qstat") else None)
+    with pytest.raises(wizard.InitError):
+        wizard.run(yes=True)
+    assert not Path("config/labhq.yaml").exists()
+
+
+def test_unknown_scheduler_family_asks_interactively(monkeypatch):
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in ("qsub", "qstat") else None)
+    monkeypatch.setattr("builtins.input", lambda prompt: "pbs" if "scheduler" in prompt else "")
+    wizard.run(yes=False)
+    assert _data()["hpc"]["scheduler"] == "pbs"
 
 
 @pytest.mark.parametrize("missing", ["qsub", "qstat"])

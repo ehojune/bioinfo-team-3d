@@ -46,6 +46,15 @@ def _find_agents_dir(target: Path, configured: str) -> Path | None:
     return None
 
 
+def _detect_scheduler() -> str | None:
+    """Scheduler family from its own admin tools or environment; None when unclear."""
+    if os.environ.get("SGE_ROOT") or shutil.which("qconf"):
+        return "sge"
+    if os.environ.get("PBS_HOME") or os.environ.get("PBS_EXEC") or shutil.which("pbsnodes"):
+        return "pbs"
+    return None
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
 
@@ -100,10 +109,20 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         hpc = data.setdefault("hpc", {})
         if not all(shutil.which(tool) for tool in ("qsub", "qstat")):
             print("qsub/qstat을 모두 찾지 못했습니다. hpc.scheduler: none을 제안합니다.")
-            scheduler = _ask("hpc.scheduler (none/sge/pbs/mock)", "none", yes)
-            if scheduler not in ("none", "sge", "pbs", "mock"):
-                raise ValueError("invalid scheduler")
-            hpc["scheduler"] = scheduler
+            default = "none"
+        else:
+            # SGE and PBS both ship qsub/qstat; a wrong family fails only at the first job.
+            default = _detect_scheduler()
+            if default is None and yes:
+                raise InitError("qsub/qstat은 있지만 SGE인지 PBS인지 알 수 없습니다. "
+                                "--yes 없이 실행해 hpc.scheduler를 고르세요.")
+            print(f"qsub/qstat 발견: {default or '종류 미확인'}")
+        scheduler = _ask("hpc.scheduler (none/sge/pbs/mock)", default or "", yes)
+        if scheduler not in ("none", "sge", "pbs", "mock"):
+            raise InitError("hpc.scheduler는 none, sge, pbs, mock 중 하나여야 합니다.")
+        hpc["scheduler"] = scheduler
+        if scheduler == "pbs":
+            print("PBS Pro면 hpc.pro: true로 바꾸세요(Torque는 그대로).")
         print("hpc.scheduler: " + hpc["scheduler"])
         if _is_windows():
             policy = data.setdefault("policy", {})
