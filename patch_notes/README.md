@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:12 | [`71589ce`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/71589ce) | **README §2에 역할·엔진·도구를 나눈 기준을 적었습니다.** PI가 물은 질문에 대한 답입니다. 기록된 기준(직무 구분, 판단은 opus·반복은 sonnet, 다른 벤더 리뷰어)과 오늘 PI가 밝힌 CSO 최고 등급 모델의 이유를, 기록 없이 표에서만 드러나는 도구 원칙과 사정에 따라 바뀐 엔진 이력과 구분했습니다. 측정으로 검증한 배정은 아직 없다는 점도 적었습니다 |
 | 01:45 | [`a8483c0`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/a8483c0) | doctor가 러너 guard를 import하고(#46) 러너가 doctor의 버전 확인 함수를 import해서(#48) 순환 import가 생겼습니다. rebase 뒤 테스트 7개 모듈이 수집 단계에서 멈췄습니다. 버전 확인 함수를 `runner/versions.py`로 옮겼습니다 |
 | 01:43 | [`99e7f97`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/99e7f97) | **URL에서 퍼센트 인코딩된 token 파라미터 이름도 로그에서 가립니다(#47).** `%74oken=...`처럼 이름을 인코딩하면 가림 규칙을 비껴갔습니다. query key를 한 번 decode한 뒤 판정합니다 |
 | 01:43 | [`c3812aa`](https://github.com/ehojune/bioinfo-team-3d/pull/66/commits/c3812aa) | **`labhq doctor`가 러너와 같은 guard로 판정합니다(#46).** doctor가 데이터 구역·계정 검사와 직원 preflight를 따로 흉내 내서, doctor는 통과인데 실제 러너는 거부하는 경우가 생길 수 있었습니다. 러너의 함수를 그대로 부릅니다 |
