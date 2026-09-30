@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:06 | [`a06db38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a06db38) | **main을 합치기만 한 merge가 패치노트를 요구하던 문제를 고쳤습니다.** 양쪽이 같은 파일을 고쳤어도 git이 충돌 없이 합쳤으면 검사에서 빼고, git 자동 병합 결과와 달라진 파일(충돌 해소·추가 수정)만 셉니다 |
 | 06:02 | [`f8ef686`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/f8ef686) | **충돌을 직접 고친 merge commit도 패치노트 검사에 넣었습니다.** main을 합치기만 한 merge와 STATUS.md·패치노트만 정리한 merge는 계속 뺍니다 |
 | 06:02 | [`decb280`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/decb280) | **IPv6 link-local만 있는 LAN에서도 폰 접속 주소를 찾습니다.** `force_engine` 설정에 오타가 있어도 doctor가 멈추지 않고 해당 행을 fail로 보여 줍니다 |
 | 06:02 | [`a7378bd`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a7378bd) | **라운드 기록의 GitHub 게시가 한 번 실패해도 다시 시도합니다.** 전에는 gateway를 재시작할 때까지 issue가 빠진 채 남았습니다. 상한이 있는 backoff로 다시 넣고, 공개 저장소 거부처럼 다시 해도 안 되는 실패는 재시도하지 않습니다 |
