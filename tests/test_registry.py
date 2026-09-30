@@ -13,6 +13,17 @@ def test_core_agents_load():
     ids = set(reg.agents)
     assert {"cso", "chief_of_staff", "sci_reviewer", "recruiter", "analyst", "qc_reviewer"} <= ids
     assert reg.get("cso").can_orchestrate
+    lit = reg.get("lit_scout")
+    assert lit.model == "gpt-6-luna"
+    assert {(m.name, m.type, m.url) for m in lit.mcp} == {
+        ("pubmed", "http", "https://pubmed.mcp.claude.com/mcp"),
+        ("biorxiv", "http", "https://hcls.mcp.claude.com/biorxiv/mcp"),
+    }
+    assert reg.get("engineer").model == "gpt-6.1-sol" and not reg.get("engineer").tools
+    assert reg.get("sci_reviewer").model == "gpt-6-astra"
+    assert reg.get("sci_reviewer").tools == ["WebSearch"]
+    assert "original source" in lit.system_prompt
+    assert "original source" in reg.get("sci_reviewer").system_prompt
 
 
 def _contract(tmp: Path, expires_in: float) -> AgentSpec:

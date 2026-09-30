@@ -23,6 +23,9 @@ CASES = [
      "approval policy is never", 1, "<ID_1>"),
     ("codex", "codex_mcp_call_approved", 0, True,
      "I\u2019ll call the echo tool and return its response verbatim.ECHO:p1", None, 1, "<ID_1>"),
+    ("codex", "codex_web_search", 0, True,
+     "I’ll check nf-core’s official release page for the current version and link.3.10.0 — https://github.com/nf-core/sarek/releases",
+     None, 1, "01a0f352-2ce0-76d3-a813-d35166117373"),
     ("gemini", "gemini_cli_ineligible", 0, False, "", "Gemini CLI 개인 계정", 0, None),
     ("antigravity", "agy_simple", 0, True, "LABHQ_P1_OK\n", None, 0, "<ID_1>"),
     ("antigravity", "agy_bad_model", 1, False, "", "invalid model selection", 0, "<ID_1>"),
@@ -65,6 +68,10 @@ async def test_captured_stream(tmp_path, engine, case, exit_code, ok, text, erro
         assert result.usage["input_tokens"] == 24285
         assert result.usage["cached_input_tokens"] == 12800
         assert result.cost_known is False
+    if case == "codex_web_search":
+        search = next(data for kind, data in events if kind == "agent.tool")
+        assert search == {"name": "web_search",
+                          "input": "site:github.com/nf-core/sarek/releases latest nf-core sarek release"}
     if case == "agy_simple":
         assert result.usage["total_tokens"] == 18681
         assert result.cost_known is False
@@ -145,6 +152,24 @@ def test_codex_approves_only_builtin_mcp(tmp_path):
     cmd = get_adapter(agent.engine, settings).build_command(ctx)
     assert 'mcp_servers.labhq_hpc.default_tools_approval_mode="approve"' in cmd
     assert not any("mcp_servers.external.default_tools_approval_mode" in arg for arg in cmd)
+
+
+def test_codex_web_search_is_always_explicit(tmp_path):
+    settings = Settings()
+    task = Task(agent_id="a", prompt="test")
+
+    async def emit(kind, data):
+        pass
+
+    def command(tools):
+        agent = AgentSpec(id="a", name="A", role="r", engine=Engine.codex,
+                          tools=tools, builtin_mcp=[])
+        ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=settings,
+                         mcp_servers=[], env={}, emit=emit, prompt="test")
+        return get_adapter(agent.engine, settings).build_command(ctx)
+
+    assert 'web_search="live"' in command(["WebSearch"])
+    assert 'web_search="disabled"' in command([])
 
 
 def test_antigravity_rejects_mcp_at_load():

@@ -3,6 +3,7 @@ name: 문어 코딩 엔지니어
 role: 파이프라인·도구 개발, 테스트, 컨테이너
 character: octopus
 engine: codex
+model: gpt-6.1-sol
 sandbox: workspace-write
 builtin_mcp: [hpc]
 system_prompt: |

@@ -6,9 +6,17 @@ engine: codex
 model: gpt-6-luna
 tools: [WebSearch]  # Codex: live web search
 builtin_mcp: []
+mcp:
+  - name: pubmed
+    type: http
+    url: https://pubmed.mcp.claude.com/mcp
+  - name: biorxiv
+    type: http
+    url: https://hcls.mcp.claude.com/biorxiv/mcp
 system_prompt: |
   You search literature and the web (PubMed, bioRxiv/medRxiv, Google Scholar, GitHub).
   Summaries: claim, evidence, sample size, limitations, link. Never invent citations.
   Headhunting mode (when asked to scout a method): return candidates with paper DOI, code repo URL,
   license, last commit date, whether it has runnable tutorials or notebooks (Paper2Agent needs
   them), required hardware or API keys, and one line on what tool it would add to the team.
+  Verify IDs, versions, dates, and citations against the original source, not a search snippet.
