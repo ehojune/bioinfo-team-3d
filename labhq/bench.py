@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ import yaml
 from .util import atomic_write_text, free_port, strip_parent_claude_env
 
 REPO = Path(__file__).resolve().parents[1]
-BENCH_ROOT = REPO / "bench"
+BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
 CASES_ROOT = BENCH_ROOT / "cases"
 ARMS = ("labhq", "sonnet-max", "sol-ultra", "astra-ultra")
 REQUIRED = {"id", "title", "request", "references", "scripted_pi_answers", "check", "budget_usd",
@@ -176,11 +178,27 @@ def _scripted_answer(case: dict[str, Any], summary: str, kind: str | None = None
     return bool(selected.get("approved", True)), str(selected["answer"])
 
 
-async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings) -> dict[str, Any]:
+def _validate_budget_multiplier(value: float | None) -> None:
+    if value is not None and (not math.isfinite(value) or value < 1):
+        raise ValueError("--approve-budget-up-to must be finite and at least 1")
+
+
+def _budget_answer(case: dict[str, Any], data: dict, multiplier: float | None) -> tuple[bool, str] | None:
+    if multiplier is None or data.get("kind") != "budget":
+        return None
+    requested = (data.get("detail") or {}).get("requested_budget_usd")
+    cap = float(case["budget_usd"]) * multiplier
+    approved = (type(requested) in (int, float) and math.isfinite(requested) and 0 < requested <= cap)
+    return approved, f"실험 예산 정책: {'승인' if approved else '거절'} (case 예산 {multiplier:g}배, ${cap:g}까지)"
+
+
+async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings,
+                     approve_budget_up_to: float | None = None) -> dict[str, Any]:
     import uvicorn
 
     from .gateway.server import RequestIn, create_app
     from .runner.daemon import Runner
+    _validate_budget_multiplier(approve_budget_up_to)
     state = arm_dir / "state"
     shutil.copytree(base_settings.path(base_settings.runner.agents_dir), state / "agents")
     settings = base_settings.model_copy(deep=True)
@@ -214,15 +232,18 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     hub = app.state.hub
     interventions = 0
     unscripted_approvals = 0
+    budget_approvals = 0
     original_publish = hub.publish
 
     async def publish(event: dict, *args, **kwargs) -> None:
-        nonlocal interventions, unscripted_approvals
+        nonlocal interventions, unscripted_approvals, budget_approvals
         await original_publish(event, *args, **kwargs)
         if event.get("type") == "approval.requested":
             interventions += 1
             data = event.get("data") or {}
-            answer = _scripted_answer(case, str(data.get("summary") or ""), data.get("kind"))
+            answer = _budget_answer(case, data, approve_budget_up_to)
+            if answer is None:
+                answer = _scripted_answer(case, str(data.get("summary") or ""), data.get("kind"))
             if answer is None:
                 unscripted_approvals += 1
                 approved, note = False, "미스크립트 승인: 승인 종류 또는 질문이 스크립트와 일치하지 않아 거절"
@@ -230,9 +251,12 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
                 approved, note = answer
 
             async def decide() -> None:
+                nonlocal budget_approvals
                 await asyncio.sleep(0.01)
                 try:
                     await hub.resolve_approval(event["data"]["id"], approved, note)
+                    if data.get("kind") == "budget" and approved:
+                        budget_approvals += 1
                 except KeyError:
                     pass
 
@@ -252,7 +276,9 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
         rid = hub.create_request(RequestIn(text=_prompt(case),
                                            budget_usd=float(case["budget_usd"]),
                                            meta={"case_id": case["id"]}))
-        await _until(lambda: hub.requests[rid]["status"] != "running", 900, "benchmark request timed out")
+        timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
+        await _until(lambda: hub.requests[rid]["status"] != "running", timeout,
+                     f"benchmark request timed out after {timeout:g}s")
         request = hub.requests[rid]
         record = hub.rounds.write(rid)
         answer = case["mock_answer"].strip() if engines == "mock" else str(request.get("report") or "").strip()
@@ -263,6 +289,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "pi_interventions": interventions, "cost_usd": request.get("cost_usd"),
             "pi_questions_observable": True,
             "unscripted_approvals": unscripted_approvals,
+            "budget_approvals": budget_approvals, "approve_budget_up_to": approve_budget_up_to,
             "cost_known": request.get("cost_known", True), "usage": request.get("usage") or {},
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
@@ -405,6 +432,10 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
         "pi_questions_observable": bool(run.get("pi_questions_observable", run["engine"] == "labhq")),
         "unscripted_approvals": int(run.get("unscripted_approvals") or 0),
+        "budget_approvals": int(run.get("budget_approvals") or 0),
+        "approve_budget_up_to": run.get("approve_budget_up_to"),
+        "cost_budget_ratio": None if run.get("cost_usd") is None else
+                             float(run["cost_usd"]) / float(case["budget_usd"]),
         "cost_known": bool(run.get("cost_known")),
         "token_total": token_total,
         "usage": usage, "duration_s": run.get("duration_s"),
@@ -415,10 +446,14 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| arm | model | effort | mode | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 비용(USD) | 상한 | tokens | 경과(초) |",
-             "|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|"]
+             "| arm | model | effort | mode | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 예산 승인(회) | 비용(USD) | 최종 비용/예산(배) | 상한 | tokens | 경과(초) |",
+             "|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
+        ratio = row.get("cost_budget_ratio")
+        if ratio is None and row["cost_usd"] is not None and result.get("budget_usd"):
+            ratio = float(row["cost_usd"]) / float(result["budget_usd"])
+        ratio_text = "미집계" if ratio is None else f"{ratio:.3f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
         model = row.get("model") or "; ".join(
@@ -427,7 +462,7 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
                      f"{row.get('mode') or result['mode']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
                      f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | "
                      f"{pi_questions} | "
-                     f"{row.get('unscripted_approvals', 0)} | {cost} | "
+                     f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
     failures = [row for row in result["rows"] if row.get("error")]
     if failures:
@@ -454,6 +489,7 @@ def report_case(case_id: str, output_root: Path, engines: str = "real") -> dict[
         raise ValueError(f"no {engines} benchmark results for {case_id}")
     order = [*ARMS, *sorted(set(latest) - set(ARMS))]
     result = {"schema_version": 2, "case_id": case_id, "title": case["title"],
+              "budget_usd": float(case["budget_usd"]),
               "mode": engines, "rows": [latest[arm] for arm in order if arm in latest]}
     _write_comparison(directory, result)
     return result
@@ -538,11 +574,13 @@ async def rescore_case(case_id: str, output_root: Path, run_id: str | None = Non
 
 
 async def run_case(case_id: str, output_root: Path, engines: str = "real",
-                   arms: tuple[str, ...] | None = None, settings=None) -> dict[str, Any]:
+                   arms: tuple[str, ...] | None = None, settings=None,
+                   approve_budget_up_to: float | None = None) -> dict[str, Any]:
     from .settings import Settings
 
     if engines not in {"real", "mock"}:
         raise ValueError("engines must be real or mock")
+    _validate_budget_multiplier(approve_budget_up_to)
     case = load_case(case_id)
     settings = settings or Settings()
     arms = _selected_arms(settings, arms)
@@ -557,7 +595,7 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
         arm_dir.mkdir(parents=True, exist_ok=True)
         started = time.monotonic()
         try:
-            run = await (_run_labhq(case, arm_dir, engines, settings) if arm == "labhq" else
+            run = await (_run_labhq(case, arm_dir, engines, settings, approve_budget_up_to) if arm == "labhq" else
                          _run_baseline(case, arm, arm_dir, engines, commands[arm], settings))
         except Exception as exc:
             run = {"engine": arm, "mode": engines, "status": "failed", "pi_interventions": 0,
@@ -584,16 +622,19 @@ async def run_case(case_id: str, output_root: Path, engines: str = "real",
 
 
 async def run_test_agent(output_root: Path, engines: str = "real", settings=None,
-                          arms: tuple[str, ...] | None = None) -> dict[str, Any]:
+                          arms: tuple[str, ...] | None = None,
+                          approve_budget_up_to: float | None = None) -> dict[str, Any]:
     from .settings import Settings
 
     settings = settings or Settings()
+    _validate_budget_multiplier(approve_budget_up_to)
     arms = _selected_arms(settings, arms)
     output_root = Path(output_root).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     cases = []
     for case in load_cases():
-        result = await run_case(case["id"], output_root, engines=engines, settings=settings, arms=arms)
+        policy = {} if approve_budget_up_to is None else {"approve_budget_up_to": approve_budget_up_to}
+        result = await run_case(case["id"], output_root, engines=engines, settings=settings, arms=arms, **policy)
         passed = all(row["status"] == "done" and row["artifact_exists"] and row["checks_passed"] and
                      row["within_budget"] is not False and not row.get("unscripted_approvals")
                      for row in result["rows"])
@@ -626,6 +667,9 @@ def run_cli(args) -> None:
             print(_comparison_markdown(result), end="")
         return
     settings = Settings.load(args.config)
+    multiplier = getattr(args, "approve_budget_up_to", None)
+    _validate_budget_multiplier(multiplier)
+    policy = {} if multiplier is None else {"approve_budget_up_to": multiplier}
     settings.bench.staff_model = _staff_mapping(settings, getattr(args, "staff_model", None))
     selection = getattr(args, "arms", None)
     if selection is None:
@@ -635,11 +679,13 @@ def run_cli(args) -> None:
         case = load_case(args.case_id)
         if args.dry_run:
             print_dry_run(case, output, settings, arms)
+            if multiplier is not None and "labhq" in arms:
+                print(f"[labhq budget policy] --approve-budget-up-to {multiplier:g} (${float(case['budget_usd']) * multiplier:g})")
             return
-        asyncio.run(run_case(args.case_id, output, engines=args.engines, arms=arms, settings=settings))
+        asyncio.run(run_case(args.case_id, output, engines=args.engines, arms=arms, settings=settings, **policy))
         print(_comparison_markdown(report_case(args.case_id, output, args.engines)), end="")
         return
-    summary = asyncio.run(run_test_agent(output, engines=args.engines, settings=settings, arms=arms))
+    summary = asyncio.run(run_test_agent(output, engines=args.engines, settings=settings, arms=arms, **policy))
     print(f"bench test agent: PASS {summary['passed']} / FAIL {summary['failed']}")
     if summary["failed"]:
         raise SystemExit(1)

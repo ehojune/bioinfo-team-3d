@@ -418,7 +418,9 @@ class Orchestrator:
                 return
             try:
                 dec = await self.hub.request_approval(kind="budget", request_id=rid,
-                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?")
+                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?",
+                                                      detail={"spent_usd": spent, "limit_usd": limit,
+                                                              "requested_budget_usd": max(limit * 2, spent)})
             except Exception as exc:
                 dec = {"approved": False, "note": str(exc)}
             spent = self.cost.get(rid, 0.0)  # include concurrently completed attempts in this decision

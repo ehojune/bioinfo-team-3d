@@ -440,11 +440,14 @@ def main(argv: list[str] | None = None) -> None:
     selection.add_argument("--arm", help=argparse.SUPPRESS)
     br.add_argument("--staff-model", action="append", metavar="FROM=TO",
                     help="replace Claude staff models; repeat for multiple mappings (default: opus=sonnet)")
+    br.add_argument("--approve-budget-up-to", type=float, metavar="MULTIPLIER",
+                    help="experimental labhq-only budget approvals up to this multiple of the case budget")
     bt = bsub.add_parser("test-agent", help="run every example job in order and summarize")
     bt.add_argument("--engines", choices=["real", "mock"], default="real")
     bt.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
     bt.add_argument("--arms", help="comma-separated arms (default: labhq and configured baselines)")
     bt.add_argument("--staff-model", action="append", metavar="FROM=TO")
+    bt.add_argument("--approve-budget-up-to", type=float, metavar="MULTIPLIER")
     breport = bsub.add_parser("report", help="combine the latest result for each arm of a case")
     breport.add_argument("case_id")
     breport.add_argument("--engines", choices=["real", "mock"], default="real")

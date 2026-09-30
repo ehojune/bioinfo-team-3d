@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #77 3회차 P1·bench 예산 정책 #40
+
+- 변경: bench 자료·검사기를 `labhq/bench_data/` package-data로 옮기고 `importlib.resources`로 찾는다. labhq와 baseline에 같은 case/runner timeout을 적용한다.
+- 예산: 기본 거절을 유지한다. `--approve-budget-up-to N`은 labhq의 요청 총예산이 원래 case 예산 N배 이내일 때만 승인한다. 표에 승인 횟수·최종 비용/예산 배수를 기록하며 원래 예산 초과는 FAIL이다.
+- 검증: 전체 pytest 705 passed/17 skipped(TEMP 임시·상태 폴더). wheel non-editable 설치 후 case 5개·참고 자료·검사기 실행, `bash scripts/check_public.sh`·diff 검사 통과.
+- 인계: `.git`은 read-only라 이번 변경만 `.pr-drafts/commits.json`에 계획한다. patch notes·저장소 밖 로컬 노트는 수정하지 않는다. 실행 중인 병렬 단계의 비용까지 제한하는 정책은 아니다.
+
 ## 2026-10-01 · PR #77 실제 답 10개로 bench 검사 보정 #40
 
 - 결론: 직접 판정은 맞음 9·부분 1·틀림 0. 부분은 KRAS sol의 추가 동일성 주장에 근거 범위 문제가 있지만 필수 ID·assay 한계를 충족해 PASS로 정했다. 판정과 근거 줄은 `bench/calibration.md`에 있다.
@@ -15,7 +22,7 @@
 - 바뀐 것: `re:`·숫자 추출 비교, 다섯 case의 한국어·영어·단위·띄어쓰기 검사, `bench rescore <case> [--run-id ID | --all]`(기본 최신 run). 이전 판정은 `score_history`에 남기고 실행별·case별 comparison을 갱신한다. 실행 기록과 비용·모델은 보존한다.
 - 실행한 것: 새 테스트 44개 포함 전체 pytest 613 passed/17 skipped, case마다 정답 변형 2개·숫자 오류·항목 누락 검사, mock test-agent 5/5와 저장된 mock 재채점, 공개 검사·diff 검사 통과.
 - 인계: `.git` 읽기 전용이라 이번 변경만 `.pr-drafts/commits.json`에 남겼다. PR 보고 초안은 `.pr-drafts/rescore-pr.md`. patch notes는 요청대로 수정하지 않았다.
-- 근거: `bench/checks/contains_terms.py`, `bench/cases/`, `labhq/bench.py`, `tests/test_bench_rescore.py`.
+- 근거: `labhq/bench_data/checks/contains_terms.py`, `labhq/bench_data/cases/`, `labhq/bench.py`, `tests/test_bench_rescore.py`.
 
 ## 2026-10-01 · #40 비교 bench와 테스트 에이전트
 

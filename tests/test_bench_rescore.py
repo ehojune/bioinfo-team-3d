@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from bench.checks.contains_terms import matches
+from labhq.bench_data.checks.contains_terms import matches
 from labhq import bench
 from labhq.cli import main
 
