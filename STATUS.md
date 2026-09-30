@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 후속 #24 #25 #46 #47 가드·doctor
+
+- 결론: plugin hash에 작업 트리의 실행 mode 반영(#24), hostname에 없는 IPv6 LAN 주소 탐색(#25), doctor가 러너의 data·계정 guard와 직원 adapter preflight를 그대로 재사용(#46), percent-encoded token 파라미터 이름도 로그에서 가림(#47).
+- 바뀐 것: `labhq/adapters/claude_code.py`, `labhq/cli.py`, `labhq/doctor.py`, `labhq/runner/daemon.py`, `labhq/security.py`와 각 regression test.
+- 실행한 것: 수정 전 regression 20건 실패 확인, 수정 후 전체 `pytest -q` 통과, 공개 검사 통과. 작업은 Codex(gpt-6.1-sol)가 했고 커밋·rebase·PR은 Claude가 만들었다.
+- 미해결: 실제 HPC·CLI 로그인·LAN 연결은 검증하지 않았다(Windows에서 POSIX host API는 mock).
+
 ## 2026-10-01 · #43 라운드 기록
 
 - 결론: 요청이 끝나거나 재시작으로 중단되면 `gateway.state_dir/rounds`에 Markdown·JSON 기록을 남기고, 설정한 private 저장소에는 요청마다 이슈 1건을 갱신한다.

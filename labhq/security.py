@@ -5,6 +5,7 @@ import logging
 import re
 import traceback
 from copy import deepcopy
+from urllib.parse import unquote_plus
 
 
 def token_matches(provided: str | None, expected: str | None) -> bool:
@@ -16,10 +17,17 @@ def token_matches(provided: str | None, expected: str | None) -> bool:
 
 
 _TOKEN = re.compile(r"(?i)(\btoken=)[^\s&#'\"<>,)]*")
+_QUERY_PARAM = re.compile(r"([?&])([^=\s&#'\"<>]+)=([^\s&#'\"<>]*)")
 
 
 def redact_tokens(value: str) -> str:
-    return _TOKEN.sub(r"\1[REDACTED]", value)
+    def redact(match):
+        # Decode keys once, as Starlette does; leave other parameters untouched.
+        if unquote_plus(match[2]).casefold() == "token":
+            return f"{match[1]}{match[2]}=[REDACTED]"
+        return match[0]
+
+    return _TOKEN.sub(r"\1[REDACTED]", _QUERY_PARAM.sub(redact, value))
 
 
 class TokenRedactionFilter(logging.Filter):
