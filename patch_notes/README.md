@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:38 | [`12febae`](https://github.com/ehojune/bioinfo-team-3d/pull/74/commits/12febae) | **결정 카드가 승인할 내용 전체를 보여 줍니다** (Codex 리뷰). 새 카드가 승인 요청의 요약(reason)만 보여 줘서, 도구 권한의 실제 명령이나 HPC 제출 스크립트·큐를 보지 못한 채 승인하게 되는 문제가 있었습니다. 승인 종류별로 중요한 항목을 먼저, 나머지도 모두 보여 주고 긴 값은 접습니다. 원문은 HTML로 해석하지 않고 글자로만 넣습니다 |
+| 03:18 | [`09dac23`](https://github.com/ehojune/bioinfo-team-3d/pull/74/commits/09dac23) | **웹 사무실에 Command Center를 넣었습니다(#57 1–5).** PI가 좋게 본 Munder Difflin 배치(사무실 + 오른쪽 탭 + 아래 직원 카드 줄)를 빌드 없는 정적 웹 그대로 옮겼습니다. 먼저 버그 하나: 새 승인이 도착하면 결정 목록을 통째로 다시 그려서, PI가 쓰던 답이 지워졌습니다. 카드를 id로 갱신하도록 바꾸고 모든 결정 카드에 메모 칸을 달았습니다. 추가한 것은 오른쪽 탭(결정·작업판·메신저·HPC, 폰에서는 하단 탭), 늘 보이는 직원 카드 줄(상태·현재 도구·게이지), 단계별 kanban 작업판, 결정 이력(`GET /api/approvals/history`)입니다. 데스크톱과 폰 모바일 에뮬레이션에서 화면을 확인했고 README의 2.5D 그림도 새 화면으로 바꿨습니다 |
 | 03:09 | [`cce4533`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/cce4533) | **문헌 MCP 호출이 승인 대기로 막히지 않습니다** (Codex 리뷰). 새로 붙인 PubMed·bioRxiv MCP에 승인 설정이 없어서, 비대화로 도는 Codex가 도구 호출을 거부하고 문헌 단계 전체가 실패할 수 있었습니다(실측 fixture에 같은 거부가 있습니다). 공개 읽기 전용 서버에만 `auto_approve`를 켜고, Codex와 Claude 양쪽에서 그 서버의 도구를 호출마다 묻지 않게 했습니다. 기본값은 꺼져 있습니다 |
 | 02:59 | [`3c13e04`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/3c13e04) | HANDOFF·README·설정 예시에 기록 저장소 켜는 법과 종료 절차, Codex 직원 전용 로그인(`CODEX_HOME`) 안내를 넣었습니다. Gemini를 앞세운 소개문도 현재 구성으로 고쳤습니다 |
 | 02:59 | [`ff3674a`](https://github.com/ehojune/bioinfo-team-3d/pull/72/commits/ff3674a) | **라운드 기록이 labhq commit으로 이어집니다(#69).** 기록의 환경 절에 그 요청을 돌린 labhq commit 링크를 답니다(`dev_log.source_repo`). `labhq doctor`는 기록 저장소가 켜져 있으면 대상 저장소와 종료 조건을 한 줄로 보여 줘서, 기록 저장소가 쓸모를 다한 뒤에도 켜져 있는 일을 막습니다 |

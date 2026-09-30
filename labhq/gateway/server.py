@@ -434,6 +434,7 @@ class Hub:
                                                  "hpc" in a.get("builtin_mcp", [])))
             self.agents[a["id"]] = {**a, "runner_id": runner_id,
                                     "scheduler": caps.get("scheduler", "none"),
+                                    "task_timeout_s": a.get("task_timeout_s", self.s.runner.task_timeout_s),
                                     "compute_backends": (["local CLI"] +
                                                          [b for b in caps.get("compute_backends", [])
                                                           if b != "local CLI" and hpc_tools]),
@@ -666,6 +667,7 @@ class Hub:
         await self.publish({"type": "task.dispatched", "ts": time.time(), "task_id": task.id,
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
+                                     "attempt": task.meta.get("attempt", 1), "outputs": task.meta.get("outputs", []),
                                      "title": task.meta.get("title"), "prompt": task.prompt[:300]}})
         try:
             await self.send_runner(rid, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
@@ -722,6 +724,11 @@ class Hub:
         except asyncio.TimeoutError:
             self.approvals.pop(req.id, None)
             self.store.delete("approval", req.id)
+            self.store.put("approval_decision", req.id,
+                           {"approval": req.model_dump(mode="json"), "approved": False,
+                            "note": "timed out", "state": "timed_out", "decided_at": time.time()})
+            await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": request_id,
+                                "data": {"id": req.id, "approved": False, "note": "timed out"}})
             return {"approved": False, "note": "timed out"}
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
@@ -786,12 +793,35 @@ class Hub:
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "usage", "agent_id")},
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
-                                          for sid, outcome in (r.get("results") or {}).items()}}
+                                          for sid, outcome in (r.get("results") or {}).items()},
+                          "step_details": self.request_step_details(r.get("id", ""), r),
+                          "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
             "recent_events": list(self.events)[-200:],
         }}
+
+    def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:
+        tasks = [(tid, entry) for tid, entry in self.store.all("task").items()
+                 if entry.get("request_id") == rid and entry.get("step_id")]
+        review = request.get("review") or (request.get("review_progress") or {}).get("review") or {}
+        details: dict[str, dict] = {}
+        for step in (request.get("plan") or {}).get("steps", []):
+            sid = step.get("id")
+            matches = [(tid, entry) for tid, entry in tasks if entry.get("step_id") == sid]
+            result = (request.get("results") or {}).get(sid) or {}
+            latest = max(matches, key=lambda pair: pair[1].get("dispatched_at", 0), default=(None, {}))
+            details[sid] = {
+                "task_id": result.get("task_id") or latest[0],
+                "attempts": max((int(entry.get("attempt") or 1) for _, entry in matches), default=0),
+                "outputs": result.get("outputs") or [],
+                "missing_outputs": result.get("missing_outputs") or [],
+                "text": short(result.get("text") or "", 500),
+                "error": result.get("error") or "",
+                "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
+            }
+        return details
 
 
 def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
@@ -919,6 +949,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def approvals() -> list[dict]:
         return [e["approval"] for e in hub.approvals.values()]
 
+    @app.get("/api/approvals/history", dependencies=[Depends(auth)])
+    async def approval_history(limit: int = 50) -> list[dict]:
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "limit must be 1..200")
+        decisions = hub.store.all("approval_decision").values()
+        return sorted(decisions, key=lambda item: item.get("decided_at", 0), reverse=True)[:limit]
+
     @app.post("/api/approvals/{aid}", dependencies=[Depends(auth)])
     async def decide(aid: str, body: DecisionIn) -> dict:
         try:
@@ -1005,6 +1042,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/state.js")
     async def office_state() -> FileResponse:
         return static_file(WEB, "state.js")
+
+    @app.get("/ui/{path:path}")
+    async def office_ui_asset(path: str) -> FileResponse:
+        return static_file(WEB / "ui", path)
 
     @app.get("/3d/{path:path}")
     async def office3d_asset(path: str) -> FileResponse:
