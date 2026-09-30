@@ -559,3 +559,18 @@ def test_invalid_staff_mapping_dry_run_is_rejected(tmp_path, mapping):
         main(["bench", "run", "public-protein-qc", "--dry-run", "--staff-model", mapping,
               "--output", str(tmp_path)])
     assert exc.value.code == 2 and not any(tmp_path.iterdir())
+
+
+
+
+def test_baseline_commands_expand_configured_env_paths(tmp_path, monkeypatch):
+    # Local configs write engine bins as ${LOCALAPPDATA}/... the way staff adapters accept; unexpanded it was WinError 2.
+    from labhq.settings import Settings
+    monkeypatch.setenv("LABHQ_TEST_BIN_DIR", str(tmp_path))
+    settings = Settings()
+    settings.engines.codex.bin = "${LABHQ_TEST_BIN_DIR}/codex.exe"
+    settings.engines.claude_code.bin = "${LABHQ_TEST_BIN_DIR}/claude.exe"
+    commands = bench._real_commands(bench.load_cases()[0], tmp_path, settings=settings)
+    baselines = [c for arm, c in commands.items() if arm != "labhq"]
+    assert baselines and all(c[0].startswith(str(tmp_path)) for c in baselines)
+    assert all("${LABHQ_TEST_BIN_DIR}" not in c[0] for c in baselines)

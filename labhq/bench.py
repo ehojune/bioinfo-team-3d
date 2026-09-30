@@ -118,9 +118,11 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
     prompt = _prompt(case)
     case_dir = run_dir or output_root / case["id"] / "<run-id>"
     budget = f"{float(case['budget_usd']):.2f}"
-    claude_env = {**os.environ, **settings.engines.claude_code.env}
-    claude = [settings.engines.claude_code.bin, *settings.engines.claude_code.prefix_args]
-    codex = [settings.engines.codex.bin, *settings.engines.codex.prefix_args]
+    claude_env = {**os.environ, **{k: os.path.expandvars(v) for k, v in settings.engines.claude_code.env.items()}}
+    # Same expansion as AgentAdapter.run: configs write bins as ${LOCALAPPDATA}/... or ~/...
+    expand = lambda value: os.path.expandvars(os.path.expanduser(value))
+    claude = [expand(a) for a in (settings.engines.claude_code.bin, *settings.engines.claude_code.prefix_args)]
+    codex = [expand(a) for a in (settings.engines.codex.bin, *settings.engines.codex.prefix_args)]
     commands = {}
     for arm in _selected_arms(settings, arms):
         if arm == "labhq":
@@ -326,7 +328,7 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
 
         engine_name = settings.bench.arms[arm].engine
         engine = getattr(settings.engines, engine_name)
-        env = strip_parent_claude_env({**os.environ, **engine.env})
+        env = strip_parent_claude_env({**os.environ, **{k: os.path.expandvars(v) for k, v in engine.env.items()}})
         if engine_name == "codex":
             from .adapters.base import child_config_dirs
 
