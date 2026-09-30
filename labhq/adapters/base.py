@@ -25,7 +25,7 @@ _NPM_NODE_LINE = re.compile(
 )
 
 
-def _npm_script(shim: Path) -> Path | None:
+def _npm_script(shim: Path) -> tuple[Path, bool] | None:
     try:
         lines = shim.read_text(encoding="utf-8-sig").splitlines()
     except (OSError, UnicodeError):
@@ -37,7 +37,11 @@ def _npm_script(shim: Path) -> Path | None:
         if match:
             script = (shim.parent / match.group("script").replace("\\", "/")).resolve()
             if script.is_file():
-                return script
+                launcher = match.group("launcher").lower()
+                local_node = "%" in launcher and (launcher != '"%_prog%"' or any(
+                    re.search(r'set\s+"?_prog=%(?:dp0%|~dp0)[\\/]node\.exe"?\s*$', line.strip(), re.IGNORECASE)
+                    for line in lines))
+                return script, local_node
     return None
 
 
@@ -45,10 +49,15 @@ def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[s
     executable = shutil.which(cmd[0], path=env.get("PATH")) or cmd[0]
     if Path(executable).suffix.lower() not in (".cmd", ".bat"):
         return [executable, *cmd[1:]]
-    script = _npm_script(Path(executable))
-    node = shutil.which("node.exe", path=env.get("PATH")) or shutil.which("node", path=env.get("PATH"))
-    if script and node and Path(node).suffix.lower() not in (".cmd", ".bat"):
-        return [node, str(script), *cmd[1:]]
+    shim = Path(executable)
+    target = _npm_script(shim)
+    if target:
+        script, local_node = target
+        adjacent = (shim.parent / "node.exe").resolve()
+        node = str(adjacent) if local_node and adjacent.is_file() else (
+            shutil.which("node.exe", path=env.get("PATH")) or shutil.which("node", path=env.get("PATH")))
+        if node and Path(node).suffix.lower() not in (".cmd", ".bat"):
+            return [node, str(script), *cmd[1:]]
     raise ValueError(f"{engine}: cannot run {executable!r} with agent arguments; "
                      "set engines.<engine>.bin to a native executable or use bin: node with prefix_args")
 

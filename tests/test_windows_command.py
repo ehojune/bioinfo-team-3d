@@ -13,6 +13,36 @@ from labhq.models import AgentSpec, CliSpec, Engine, Task
 from labhq.settings import Settings
 
 
+@pytest.mark.parametrize("path_node", [False, True])
+@pytest.mark.parametrize("launcher", ['"%_prog%"', '"%~dp0\\node.exe"'])
+def test_npm_shim_prefers_its_own_node(tmp_path, monkeypatch, path_node, launcher):
+    shim = tmp_path / "agent.cmd"
+    shim.write_text('SET "_prog=%~dp0\\node.exe"\n'
+                    f'{launcher} "%~dp0\\agent.js" %*\n')
+    script = tmp_path / "agent.js"
+    script.touch()
+    node = tmp_path / "node.exe"
+    node.touch()
+    other = tmp_path / "path-node.exe"
+    monkeypatch.setattr("labhq.adapters.base.shutil.which",
+                        lambda value, **_: str(other) if path_node and value == "node.exe" else None)
+    assert _resolve_command([str(shim), "arg"], {}, "cli") == [str(node), str(script), "arg"]
+
+
+@pytest.mark.parametrize("launcher", ['"%~dp0\\node.exe"', 'node', '"%_prog%"'])
+def test_npm_shim_uses_path_node_when_launcher_requires_it(tmp_path, monkeypatch, launcher):
+    shim = tmp_path / "agent.cmd"
+    shim.write_text('SET "_prog=node"\n' + f'{launcher} "%~dp0\\agent.js" %*\n')
+    script = tmp_path / "agent.js"
+    script.touch()
+    if launcher != '"%~dp0\\node.exe"':
+        (tmp_path / "node.exe").touch()
+    node = tmp_path / "path-node.exe"
+    monkeypatch.setattr("labhq.adapters.base.shutil.which",
+                        lambda value, **_: str(node) if value == "node.exe" else None)
+    assert _resolve_command([str(shim)], {}, "cli") == [str(node), str(script)]
+
+
 @pytest.mark.parametrize("name, script", [
     ("codex", "node_modules/@openai/codex/bin/codex.js"),
     ("gemini", "node_modules/@google/gemini-cli/bundle/gemini.js"),
