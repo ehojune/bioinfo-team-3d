@@ -9,6 +9,7 @@ from labhq.orchestrator.cso import (BudgetExceeded, Orchestrator, failure_kind, 
                                     format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from labhq.tools.scheduler import Scheduler
 
 
 class FakeHub:
@@ -240,6 +241,26 @@ async def test_nonresumable_ask_wake_keeps_original_instruction_and_context(tmp_
             assert original.context in wake.prompt
             assert f"progress {index}" in wake.prompt
             assert wake.context == ""  # the common prompt carries all fallback context
+
+
+async def test_failed_attempt_with_submitted_job_does_not_resubmit():
+    settings = Settings()
+    settings.hpc.scheduler = "mock"
+    scheduler = Scheduler(settings.hpc)
+    submissions = []
+
+    async def dispatch(task):
+        jid = scheduler.submit("fixture.sh", "fixture")
+        submissions.append(jid)
+        return result(task, ok=False, error="timeout after submission", pending_jobs=[jid],
+                      session_id="fixture-session", workdir="runs/fixture")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda _: True
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="submit"))
+    assert len(submissions) == 1
+    assert not res.ok and res.pending_jobs == submissions
+    assert not any(e["type"] == "request.step_retry" for e in hub.events)
 
 
 STEPS = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": deps}

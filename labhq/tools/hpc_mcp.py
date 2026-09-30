@@ -17,7 +17,7 @@ import httpx
 
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
-from ._mcpcompat import make_server
+from ._mcpcompat import ToolError, make_server
 from .scheduler import Scheduler, build_script, sanitize_job_name
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -146,7 +146,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     script: the script body (commands; scheduler directives optional). With account switching,
     relative outputs go to hpc_out/; otherwise it runs from your workspace.
     cores / mem (total, e.g. "32G") / walltime ("HH:MM:SS"). reason: why this job is needed.
-    Returns JSON: {"submitted": true, "job_id": ...} or {"submitted": false, "reason": ...}.
+    Returns JSON: {"submitted": true, "job_id": ...} or a normal PI denial.
+    Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
@@ -160,7 +161,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                            S.path(S.runner.workspace_root) if S.hpc.submit_prefix else None,
                            S.hpc.user if S.hpc.submit_prefix else None)
     except (OSError, KeyError, RuntimeError) as e:
-        return json.dumps({"submitted": False, "reason": f"job file permissions: {e}"})
+        raise ToolError(f"job file permissions: {e}") from e
     ch = core_hours(cores, walltime)
 
     if hpc_needs_approval(cores, walltime, S.policy):
@@ -173,9 +174,10 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                 "timeout_s": S.policy.approvals.timeout_s,
             }, timeout=S.policy.approvals.timeout_s + 30)
         except Exception as e:  # fail closed
-            return json.dumps({"submitted": False, "reason": f"approval broker unreachable: {e}"})
+            raise ToolError(f"approval broker unreachable: {e}") from e
         if not dec.get("approved"):
-            return json.dumps({"submitted": False, "reason": dec.get("note") or "denied by the PI"})
+            return json.dumps({"submitted": False, "reason": dec.get("note") or "denied by the PI",
+                               "note": "Do not resubmit this job unless the PI explicitly requests it."})
 
     try:
         job_id = await asyncio.to_thread(
@@ -183,7 +185,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
             str(logs / f"{name}_{stamp}.out"), str(logs / f"{name}_{stamp}.err"),
         )
     except Exception as e:
-        return json.dumps({"submitted": False, "error": str(e)})
+        raise ToolError(str(e)) from e
 
     try:
         await _broker("/jobs/track", {"task_id": TASK, "agent_id": AGENT, "job_id": job_id,
@@ -202,21 +204,31 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
 @server.tool()
 async def hpc_status(job_id: str) -> str:
     """Current state of one job (queued/running/completed/failed/…) with exit status if known."""
-    info = await asyncio.to_thread(SCHED.status, job_id)
+    try:
+        info = await asyncio.to_thread(SCHED.status, job_id)
+    except Exception as e:
+        raise ToolError(str(e)) from e
     return json.dumps(info.to_dict())
 
 
 @server.tool()
 async def hpc_queue() -> str:
     """All of the lab account's jobs currently known to the scheduler."""
-    jobs = await asyncio.to_thread(SCHED.queue)
+    try:
+        jobs = await asyncio.to_thread(SCHED.queue)
+    except Exception as e:
+        raise ToolError(str(e)) from e
     return json.dumps([j.to_dict() for j in jobs])
 
 
 @server.tool()
 async def hpc_cancel(job_id: str) -> str:
     """Cancel a job you submitted."""
-    return json.dumps({"job_id": job_id, "result": await asyncio.to_thread(SCHED.cancel, job_id)})
+    try:
+        result = await asyncio.to_thread(SCHED.cancel, job_id)
+    except Exception as e:
+        raise ToolError(str(e)) from e
+    return json.dumps({"job_id": job_id, "result": result})
 
 
 if __name__ == "__main__":
