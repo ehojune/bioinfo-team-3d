@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:39 | [`191dd34`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/191dd34) | **init이 클러스터 종류를 추측하지 않게 했습니다** (Codex 리뷰). PBS에도 `qsub`·`qstat`이 있어서 전에는 SGE 설정이 저장돼 첫 PBS job부터 실패했습니다. 이제 SGE·PBS 관리 도구와 환경변수로 종류를 판별하고, 모르면 대화형에서는 묻고 `--yes`에서는 실패합니다 |
 | 06:32 | [`42442ed`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/42442ed) | **main 병합에서 doctor의 두 변경을 함께 살렸습니다.** 직원 명단이 없을 때 init에서는 fail로 보는 규칙과 #96의 `force_engine` 오타 보고를 합쳤습니다 |
 | 06:32 | [`fb7b433`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/fb7b433) | **init이 실행할 수 없는 설정을 만들고 성공으로 끝나지 않게 했습니다** (Codex 리뷰). 설정 template을 package에 넣어 wheel 설치에서도 init이 돌고, 저장할 위치와 상관없이 찾은 직원 명단의 절대경로를 적습니다. 명단을 못 찾거나 doctor에서 활성 직원이 0명이면 이유와 함께 실패로 끝냅니다 |
 | 06:14 | [`d28d7ba`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/d28d7ba) | **STATUS에 #81·#67 보고를 남겼습니다** |
