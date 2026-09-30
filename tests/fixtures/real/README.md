@@ -2,6 +2,7 @@
 
 - 캡처: 2026-09-25~26, Windows 11.
 - 버전: Claude Code 2.1.282, codex-cli 0.155.0-alpha.16, gemini-cli 0.57.0, agy 1.2.11.
+- resume fixture: `claude_resume_cost.jsonl`은 Claude Code 2.1.282, `codex_resume_usage.jsonl`은 codex-cli 0.159.2의 첫 호출과 같은 세션 재개 두 번을 캡처했습니다.
 - `scripts/redact_stream.py`가 홈·임시·작업 경로, 사용자명, 이메일, ID, 키·토큰을 가립니다.
 - JSONL은 줄마다 파싱 가능하게 유지합니다. `.stderr.txt`도 같은 규칙을 씁니다.
 - 재캡처: `python scripts/probe_engines.py ENGINE --output-dir <저장소 밖 경로> --redact`.

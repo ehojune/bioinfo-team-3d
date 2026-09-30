@@ -111,4 +111,13 @@ for (const terminal of ['request.completed', 'request.failed']) {
     recent_events:[{type:terminal,request_id:'r',data:{cost_usd:0.3}}]}});
   assert.equal(finalOnly.S.cost,0.3, 'snapshot replaces replayed totals');
 }
+const failedCosts = create();
+failedCosts.apply({type:'agent.usage',request_id:'failed',data:{cost_usd:0.2}});
+failedCosts.apply({type:'agent.usage',request_id:'failed',data:{cost_usd:0.3,cost_known:false}});
+failedCosts.apply({type:'request.failed',request_id:'failed',data:{
+  error:'exception',cost_usd:1.25,cost_known:false,
+}});
+assert.equal(failedCosts.req('failed').cost,1.25, 'exception terminal uses the persisted final total');
+assert.equal(failedCosts.S.cost,1.25);
+assert.equal(failedCosts.req('failed').costKnown,false);
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

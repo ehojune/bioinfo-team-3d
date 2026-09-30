@@ -27,12 +27,34 @@ def git(*args: str, cwd: Path | None = None) -> str:
 
 
 def pr_commits(base: str, head: str, cwd: Path | None = None) -> list[str]:
-    out = git("rev-list", "--reverse", "--no-merges", f"{base}..{head}", cwd=cwd)
-    return out.split() if out else []
+    out = git("rev-list", "--reverse", "--parents", f"{base}..{head}", cwd=cwd)
+    commits = []
+    for line in out.splitlines():
+        sha, *parents = line.split()
+        if len(parents) > 1 and not (merge_own_changes(sha, parents, cwd) - {"STATUS.md", NOTES}):
+            continue  # A sync merge or bookkeeping-only resolution needs no separate note.
+        commits.append(sha)
+    return commits
+
+
+def merge_own_changes(sha: str, parents: list[str], cwd: Path | None = None) -> set[str]:
+    """Files a merge changed beyond git's automatic merge (conflict resolutions, extra edits).
+
+    `diff-tree --cc` also lists files both sides changed that git merged cleanly, so
+    compare with the tree git itself would produce (conflict markers included).
+    """
+    if len(parents) != 2:
+        return changed_files(sha, cwd)
+    run = subprocess.run(["git", "merge-tree", "--write-tree", "--no-messages", *parents], cwd=cwd,
+                         capture_output=True, text=True, encoding="utf-8")
+    if run.returncode not in (0, 1) or not run.stdout.split():
+        return changed_files(sha, cwd)  # git < 2.38: fall back to the wider --cc set
+    out = git("diff", "--name-only", run.stdout.split()[0], sha, cwd=cwd)
+    return set(out.split("\n")) if out else set()
 
 
 def changed_files(sha: str, cwd: Path | None = None) -> set[str]:
-    out = git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
+    out = git("diff-tree", "--cc", "--no-commit-id", "--name-only", "-r", "--root", sha, cwd=cwd)
     return set(out.split("\n")) if out else set()
 
 

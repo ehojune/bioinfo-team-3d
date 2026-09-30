@@ -1,0 +1,6 @@
+{"type": "thread.started", "thread_id": "00000000-0000-7000-8000-000000000082"}
+{"type": "turn.completed", "usage": {"input_tokens": 25624, "cached_input_tokens": 7936, "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0}}
+{"type": "thread.started", "thread_id": "00000000-0000-7000-8000-000000000082"}
+{"type": "turn.completed", "usage": {"input_tokens": 55788, "cached_input_tokens": 7936, "cache_write_input_tokens": 0, "output_tokens": 20, "reasoning_output_tokens": 8}}
+{"type": "thread.started", "thread_id": "00000000-0000-7000-8000-000000000082"}
+{"type": "turn.completed", "usage": {"input_tokens": 85978, "cached_input_tokens": 37888, "cache_write_input_tokens": 0, "output_tokens": 25, "reasoning_output_tokens": 8}}

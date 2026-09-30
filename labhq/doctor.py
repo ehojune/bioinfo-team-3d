@@ -196,9 +196,22 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     if not agents:
         rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
                          "no active agents found", "Set runner.agents_dir."))
+    forced = None
+    invalid_force = False
+    if settings.runner.force_engine:
+        try:
+            forced = Engine(settings.runner.force_engine)
+        except ValueError:
+            invalid_force = True
+            rows.append(_row("config", "runner.force_engine", "fail", "unknown engine",
+                             "Set runner.force_engine to a supported engine or remove it."))
     for agent in agents:
-        if settings.runner.force_engine:
-            agent = agent.model_copy(update={"engine": Engine(settings.runner.force_engine)})
+        if invalid_force:
+            rows.append(_row("staff", agent.id, "fail", "invalid runner.force_engine",
+                             "Fix runner.force_engine before running staff."))
+            continue
+        if forced:
+            agent = agent.model_copy(update={"engine": forced})
         engine = agent.engine.value
         ready = available.get(engine, engine == "mock")
         plugin = engine == "claude_code" and (agent.plugin_dirs or agent.required_skills)
