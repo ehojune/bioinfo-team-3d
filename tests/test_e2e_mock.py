@@ -92,6 +92,30 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert hub.runner_capabilities and all("engine_cli_versions" in c for c in hub.runner_capabilities.values())
         assert "outputs/artifact.txt" in req["report"]
 
+        # Resume을 지원하지 않는 엔진도 blocking 답을 같은 workdir의 새 세션에 전달한다.
+        supports_resume = hub.supports_resume
+        hub.supports_resume = lambda agent_id: False if agent_id == "biologist" else supports_resume(agent_id)
+        rid_no_resume = hub.create_request(RequestIn(text="Resume 없는 blocking 확인 [block]"))
+        await _until(lambda: hub.requests[rid_no_resume]["status"] != "running", 30)
+        no_resume = hub.requests[rid_no_resume]
+        assert no_resume["status"] == "done", no_resume.get("error")
+        blocked_step = next(st["id"] for st in no_resume["plan"]["steps"]
+                            if st["agent_id"] == "biologist")
+        blocked_tasks = sorted(
+            (v for v in hub.store.all("task").values()
+             if v.get("request_id") == rid_no_resume
+             and (v.get("payload") or {}).get("meta", {}).get("step_id") == blocked_step),
+            key=lambda v: v["dispatched_at"],
+        )
+        assert len(blocked_tasks) == 2
+        first_blocked, continued_blocked = blocked_tasks
+        assert not continued_blocked["payload"].get("resume_session_id")
+        assert continued_blocked["payload"]["meta"]["workdir"] == first_blocked["result"]["workdir"]
+        assert continued_blocked["result"]["session_id"] != first_blocked["result"]["session_id"]
+        assert "Choose sample group (a) cases or (b) controls." in continued_blocked["payload"]["prompt"]
+        assert "answer:" in continued_blocked["payload"]["prompt"]
+        hub.supports_resume = supports_resume
+
         rid_partial = hub.create_request(RequestIn(text="Partial study [max-turns]"))
         await _until(lambda: hub.requests[rid_partial]["status"] != "running", 30)
         partial = hub.requests[rid_partial]

@@ -838,8 +838,9 @@ class Hub:
                            {"approval": req.model_dump(mode="json"), "approved": False,
                             "note": "timed out", "state": "timed_out", "decided_at": time.time()})
             await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": request_id,
-                                "data": {"id": req.id, "approved": False, "note": "timed out"}})
-            return {"approved": False, "note": "timed out"}
+                                "data": {"id": req.id, "approved": False, "note": "timed out",
+                                         "state": "timed_out"}})
+            return {"approved": False, "note": "timed out", "state": "timed_out"}
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
         entry = self.approvals.pop(approval_id, None)

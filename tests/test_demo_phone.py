@@ -10,6 +10,24 @@ from labhq import cli
 from labhq.settings import Settings
 
 
+@pytest.fixture(autouse=True)
+def no_host_interface_enumeration(monkeypatch):
+    monkeypatch.setattr(cli, "_interface_ipv6_addresses", lambda: [], raising=False)
+
+
+def test_link_local_interface_fallback_without_global_route(monkeypatch):
+    def no_route(*args, **kwargs):
+        raise OSError("no global IPv6 route")
+    monkeypatch.setattr(cli.socket, "socket", no_route)
+    monkeypatch.setattr(cli.socket, "getaddrinfo", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_interface_ipv6_addresses",
+                        lambda: [("fe80::abcd", 0, 0, 7), ("fe80::bad", 0, 0, 0)], raising=False)
+    hosts = cli._demo_url_hosts("::")
+    assert hosts == ["[fe80::abcd%257]"]
+    assert cli._phone_url_lines(hosts, 8787, "demo-token")[0].startswith(
+        "http://[fe80::abcd%257]:8787/3d?")
+
+
 def test_demo_settings_keep_every_path_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setenv("LABHQ_STATE_DIR", str(tmp_path.parent / "real-state"))
     settings = cli._demo_settings(tmp_path)

@@ -39,6 +39,22 @@
 - 미해결: 실제 유료 CLI는 실행하지 않았다. 네 arm의 비용·token·과학 결과는 PI 머신에서 측정한다. Codex 비용은 `미집계`로 남긴다. `.git` 쓰기 제한으로 이번 변경의 커밋 계획만 `.pr-drafts/commits.json`에 남겼다.
 - 근거: `labhq/bench.py`, `labhq/settings.py`, `labhq/cli.py`, `config/labhq.example.yaml`, `tests/test_bench.py`.
 
+## 2026-10-01 · 막힌 단계 같은 세션 재개 #81 · 예외 종료 비용 #67
+
+- 결론: PI 답을 받은 막힌 단계는 같은 session·workdir로 이어 간다(수정 자체는 #76). 예외로 끝난 요청도 최종 비용을 화면에 보낸다.
+- 바뀐 것: `request.failed` 예외 경로 payload에 `cost_usd`·`cost_known`(#67). #81은 mock 직원 blocking_decision → PI 답 → 같은 session_id·workdir 재개, resume 없는 엔진은 같은 workdir 새 세션을 E2E로 고정했다.
+- 실행한 것: 전체 `pytest -q -p no:cacheprovider` 804 passed/17 skipped(main 병합 뒤), `node tests/*.cjs`, `bash scripts/check_public.sh` 통과.
+- 미해결: 실제 직원 CLI로 재개하는 것은 확인하지 않았다.
+- 근거: `tests/test_e2e_mock.py`, `tests/test_cso.py`, `tests/web_state.cjs`.
+
+## 2026-10-01 · 후속 P2 네 건 #51 #53 #54 #68
+
+- 결론: 승인 timeout 기록, 자체 변경이 있는 merge의 패치노트 검사, 라운드 게시 재시도, IPv6 link-local 탐색과 doctor 오타 보고를 고쳤다.
+- 바뀐 것: 명확화·예산 승인이 시간 초과되면 `timed_out` 결정으로 저장해 라운드 기록 `pi_decisions`에 보인다(#51). `scripts/patch_notes.py`가 git 자동 병합 결과와 달라진 파일이 있는 merge만 검사하고, STATUS.md·패치노트만 정리한 merge와 깨끗한 동기화 merge는 뺀다(#53). `RoundRecorder`가 일시 실패한 GitHub 게시를 상한 있는 backoff로 다시 넣고 영구 거부는 재시도하지 않는다(#54). global IPv6 route가 없으면 interface 열거로 link-local 주소를 찾고, `force_engine` 오타는 doctor fail 행으로 보고한다(#68).
+- 실행한 것: issue마다 수정 전 실패하는 회귀 테스트, 전체 `pytest -q -p no:cacheprovider` 807 passed/17 skipped(main 병합 뒤), `bash scripts/check_public.sh` 통과.
+- 미해결: GitHub `Retry-After`·rate-limit reset 시각을 backoff에 반영하는 것은 #97로 넘긴다.
+- 근거: `tests/test_approval_timeout.py`, `tests/test_patch_notes.py`, `tests/test_round_records.py`, `tests/test_ipv6_interfaces.py`, `tests/test_doctor.py`.
+
 ## 2026-10-01 · #39 labhq_ask 질의 경로
 
 - 결론: 직원은 `labhq_ask`로 CSO·시설팀·동료에게 묻고, 코드가 판정한 hard stop만 PI에게 올린다. 답이 늦으면 step을 hibernate하고 같은 session·workdir에서 재개한다.

@@ -1,6 +1,7 @@
 """Round records are local first and remote publication is guarded."""
 
 import json
+import asyncio
 
 import httpx
 import pytest
@@ -126,6 +127,71 @@ class FakeGitHub:
             self.issue["body"] = body["body"]
             return httpx.Response(200, json=self.issue)
         return httpx.Response(404, json={})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+async def test_transient_publication_retries_without_restart(tmp_path, method, monkeypatch):
+    class FailsOnce(FakeGitHub):
+        failed = False
+
+        def __call__(self, request):
+            if request.method == method and not self.failed:
+                self.failed = True
+                return httpx.Response(500, json={"message": "temporarily unavailable"})
+            return super().__call__(request)
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FailsOnce()
+    if method == "PATCH":
+        remote.issue = {"number": 7, "body": "<!-- labhq round req-retry -->\nold"}
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    monkeypatch.setattr(hub.rounds, "RETRY_BASE_S", 0.01, raising=False)
+    round_request(hub, "req-retry", "done")
+    hub.rounds.write("req-retry")
+    hub.rounds.submit("req-retry")
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert remote.failed
+        assert remote.issue is not None and "Finished" in remote.issue["body"]
+        assert hub.store.get("round_delivery", "req-retry") is None
+    finally:
+        hub.rounds.worker.cancel()
+        await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["public", 401, 403, 422, 500])
+async def test_publication_stops_on_permanent_failure_or_retry_limit(tmp_path, failure, monkeypatch):
+    calls = []
+
+    def remote(request):
+        calls.append(request.method)
+        if failure == "public":
+            return httpx.Response(200, json=[] if request.url.path.endswith("/issues") else {"private": False})
+        return httpx.Response(failure, json={"message": "failed"})
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    monkeypatch.setattr(hub.rounds, "RETRY_BASE_S", 0.01, raising=False)
+    monkeypatch.setattr(hub.rounds, "MAX_ATTEMPTS", 3, raising=False)
+    round_request(hub, "req-stop", "done")
+    hub.rounds.write("req-stop")
+    hub.rounds.submit("req-stop")
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert len(calls) == (2 if failure == "public" else 3 if failure == 500 else 1)
+        assert not any(method in {"POST", "PATCH"} for method in calls)
+        assert hub.store.get("round_delivery", "req-stop")["state"] == "failed"
+        before = len(calls)
+        hub.rounds.recover()
+        await hub.rounds.drain()
+        assert len(calls) == before
+    finally:
+        hub.rounds.worker.cancel()
+        await asyncio.gather(hub.rounds.worker, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -1151,7 +1151,9 @@ class Orchestrator:
                 req["report"] += "\n\nPending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"])
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
-            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000)}
+            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000),
+                      "cost_usd": float(req.get("cost_usd") or 0),
+                      "cost_known": req.get("cost_known", True)}
             if hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
             else:

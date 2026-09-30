@@ -19,7 +19,7 @@ from .. import __version__
 from ..models import TaskResult
 from ..orchestrator.cso import failure_kind
 from ..util import short
-from .github import GitHubClient, MAX_BODY, root_zone_restricted, sanitize
+from .github import GitHubClient, GitHubHTTPError, MAX_BODY, root_zone_restricted, sanitize
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
@@ -228,11 +228,17 @@ def render_record(record: dict) -> str:
 
 
 class RoundRecorder:
+    MAX_ATTEMPTS = 5
+    RETRY_BASE_S = 1.0
+    RETRY_MAX_S = 30.0
+
     def __init__(self, hub: "Hub", transport: httpx.AsyncBaseTransport | None = None):
         self.hub, self.s, self.transport = hub, hub.s, transport
         self.directory = self.s.path(self.s.gateway.state_dir) / "rounds"
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
+        self.retry_tasks: set[asyncio.Task] = set()
+        self.generation = 0
         self.worker: asyncio.Task | None = None
         self.client: GitHubClient | None = None
         if not self.s.dev_log.repo:
@@ -262,13 +268,15 @@ class RoundRecorder:
             return None
         return {k: v for k, v in env.items() if k not in {"model_ids", "plugin_provenance"}} or None
 
-    def submit(self, rid: str) -> None:
+    def submit(self, rid: str, *, attempts: int = 0) -> None:
         if not self.s.dev_log.enabled or not self.s.dev_log.repo or root_zone_restricted(self.s.policy):
             return
-        self.hub.store.put("round_delivery", rid, {"request_id": rid})
+        self.generation += 1
+        self.hub.store.put("round_delivery", rid, {"request_id": rid, "generation": self.generation,
+                                                   "attempts": attempts, "state": "pending"})
         if self.worker is None or self.worker.done():
             self.worker = asyncio.get_running_loop().create_task(self._run())
-        self.queue.put_nowait(rid)
+        self.queue.put_nowait((rid, self.generation))
 
     def recover(self) -> None:
         """Rebuild every terminal/interrupted record from the DB and re-queue delivery.
@@ -282,21 +290,63 @@ class RoundRecorder:
                 self.write(rid)
                 pending.add(rid)
         for rid in pending:
-            self.submit(rid)
+            delivery = self.hub.store.get("round_delivery", rid) or {}
+            if delivery.get("state") != "failed":
+                self.submit(rid, attempts=delivery.get("attempts", 0))
 
     async def drain(self) -> None:
         await self.queue.join()
 
     async def _run(self) -> None:
-        while True:
-            rid = await self.queue.get()
-            try:
-                if await self.publish(rid):
-                    self.hub.store.delete("round_delivery", rid)
-            except Exception as exc:
-                log.warning("round issue publication failed: %s", exc)
-            finally:
-                self.queue.task_done()
+        try:
+            while True:
+                rid, generation = await self.queue.get()
+                deferred = False
+                try:
+                    delivery = self.hub.store.get("round_delivery", rid) or {}
+                    if delivery.get("generation") != generation:
+                        continue  # A newer record was submitted while this one waited.
+                    attempts = delivery.get("attempts", 0) + 1
+                    transient = False
+                    try:
+                        published = await self.publish(rid)
+                    except Exception as exc:
+                        published = False
+                        transient = (isinstance(exc, httpx.TransportError) or
+                                     isinstance(exc, GitHubHTTPError) and
+                                     (exc.status_code in {408, 429} or exc.status_code >= 500 or exc.rate_limited))
+                        log.warning("round issue publication failed: %s", exc)
+                    # publish() awaits network I/O; do not clear or overwrite a newer submission.
+                    current = self.hub.store.get("round_delivery", rid) or {}
+                    if current.get("generation") != generation:
+                        continue
+                    if published:
+                        self.hub.store.delete("round_delivery", rid)
+                    else:
+                        retry = transient and attempts < self.MAX_ATTEMPTS
+                        self.hub.store.put("round_delivery", rid, {**delivery, "attempts": attempts,
+                                                                    "state": "pending" if retry else "failed"})
+                        if retry:
+                            delay = min(self.RETRY_MAX_S, self.RETRY_BASE_S * 2 ** (attempts - 1))
+                            task = asyncio.create_task(self._retry(rid, generation, delay))
+                            self.retry_tasks.add(task)
+                            task.add_done_callback(self.retry_tasks.discard)
+                            task.add_done_callback(lambda _: self.queue.task_done())
+                            deferred = True
+                finally:
+                    if not deferred:
+                        self.queue.task_done()
+        finally:
+            retries = list(self.retry_tasks)
+            for task in retries:
+                task.cancel()
+            await asyncio.gather(*retries, return_exceptions=True)
+
+    async def _retry(self, rid: str, generation: int, delay: float) -> None:
+        # The done callback releases the old queue item after the replacement is queued,
+        # including cancellation before this coroutine starts. drain() waits through backoff.
+        await asyncio.sleep(delay)
+        self.queue.put_nowait((rid, generation))
 
     async def _may_post(self, gh: GitHubClient) -> bool:
         """Visibility right now. Every write is preceded by this call; nothing else awaits in between."""

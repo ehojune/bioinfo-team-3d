@@ -12,7 +12,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:14 | [`d28d7ba`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/d28d7ba) | **STATUS에 #81·#67 보고를 남겼습니다** |
 | 06:11 | [`1115030`](https://github.com/ehojune/bioinfo-team-3d/pull/77/commits/1115030) | **Sonnet 답으로 검사를 다시 맞추고 Claude 기준선에 파일 쓰기를 열었습니다.** 검사가 GPT 답 표현에 맞춰져 있어 Sonnet의 맞는 답(예: `species 종류 수 | 2`)을 FAIL로 봤습니다. 실제 답 15개(GPT 10, Sonnet 5)를 참고 자료와 대조해 판정과 검사가 모두 일치하게 고쳤습니다. Claude 기준선은 자기 arm 폴더 안에서 파일을 쓰고 명령을 실행할 수 있고, 폴더 밖 쓰기는 계속 막습니다 |
+| 06:10 | [`523333f`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/523333f) | **PI 답을 받은 막힌 단계가 같은 세션·작업 폴더로 이어 가는지 끝까지 검사합니다** (#81). 수정은 #76에 들어갔고, 이 커밋은 resume 되는 직원과 안 되는 직원(같은 폴더, 새 세션) 모두를 E2E 테스트로 고정합니다 |
+| 06:10 | [`37d7d3b`](https://github.com/ehojune/bioinfo-team-3d/pull/98/commits/37d7d3b) | **예외로 끝난 요청도 최종 비용을 화면에 보냅니다** (#67). 누적 비용을 여러 번 보낸 CLI 요청이 예외로 끝나면 화면에 중복 가산된 비용이 남았습니다 |
+| 06:09 | [`cb7df38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/cb7df38) | **STATUS에 이번 후속 네 건의 완료 보고를 남겼습니다.** 남은 GitHub rate-limit 대기 처리는 #97로 넘겼습니다 |
+| 06:06 | [`a06db38`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a06db38) | **main을 합치기만 한 merge가 패치노트를 요구하던 문제를 고쳤습니다.** 양쪽이 같은 파일을 고쳤어도 git이 충돌 없이 합쳤으면 검사에서 빼고, git 자동 병합 결과와 달라진 파일(충돌 해소·추가 수정)만 셉니다 |
+| 06:02 | [`f8ef686`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/f8ef686) | **충돌을 직접 고친 merge commit도 패치노트 검사에 넣었습니다.** main을 합치기만 한 merge와 STATUS.md·패치노트만 정리한 merge는 계속 뺍니다 |
+| 06:02 | [`decb280`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/decb280) | **IPv6 link-local만 있는 LAN에서도 폰 접속 주소를 찾습니다.** `force_engine` 설정에 오타가 있어도 doctor가 멈추지 않고 해당 행을 fail로 보여 줍니다 |
+| 06:02 | [`a7378bd`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/a7378bd) | **라운드 기록의 GitHub 게시가 한 번 실패해도 다시 시도합니다.** 전에는 gateway를 재시작할 때까지 issue가 빠진 채 남았습니다. 상한이 있는 backoff로 다시 넣고, 공개 저장소 거부처럼 다시 해도 안 되는 실패는 재시도하지 않습니다 |
+| 06:02 | [`90f8ca3`](https://github.com/ehojune/bioinfo-team-3d/pull/96/commits/90f8ca3) | **PI 승인이 시간 초과된 것도 기록에 남깁니다.** 명확화·예산 승인이 응답 없이 끝나면 결정 이력과 라운드 기록이 비어서 거절과 무응답을 구분할 수 없었습니다. 이제 `timed_out` 결정으로 저장합니다 |
 | 06:01 | [`705c865`](https://github.com/ehojune/bioinfo-team-3d/pull/95/commits/705c865) | **resume 비용을 두 번 세지 않게 했습니다.** 실측해 보니 Claude Code의 `--resume` 결과는 그 세션의 누적 비용을, Codex `exec resume`은 누적 token을 보고합니다(짧은 세션 3회: $0.0508 → $0.0599 → $0.0664). labhq는 이 값을 호출마다 더해서 HPC 기상·재시도·리뷰 수정 때 앞선 비용이 다시 합산되고 예산 상한이 일찍 걸렸습니다. 이제 러너가 같은 세션의 직전 누적값을 빼서 호출별 증분만 보고하고, 원래 누적값은 실행 기록에 따로 남깁니다. 직전 값을 못 찾으면 비용을 '모름'으로 표시합니다 |
 | 05:51 | [`09acf2e`](https://github.com/ehojune/bioinfo-team-3d/pull/76/commits/09acf2e) | **동시에 온 질의가 같은 세션을 쓰지 않게 했습니다** (Codex 리뷰). 병렬 단계 둘이 같은 직원(특히 CSO)에게 동시에 물으면 두 상담이 같은 resume 세션과 작업 폴더로 돌아 대화가 섞이고 폴더의 MCP 설정 token이 덮였습니다. 요청·대상 직원별로 상담을 한 번에 하나씩 돌리고, 그 직원의 단계가 같은 세션·폴더로 실행 중이면 상담은 새 세션에서 합니다. 일시 오류로 단계를 다시 돌릴 때도 이미 받은 질의 답을 새 시도에 넘깁니다 |
 | 05:46 | [`e3cbb39`](https://github.com/ehojune/bioinfo-team-3d/pull/77/commits/e3cbb39) | **bench 자료를 배포 package에 넣고 시간 제한을 통일했습니다** (Codex 리뷰). 일반 wheel 설치에서는 case·검사·참고 자료가 빠져 bench가 돌지 않았습니다. 자료를 `labhq/bench_data/`로 옮겨 package에 포함합니다. labhq arm에도 case의 timeout을 적용하고, 실험 예산 초과는 기본으로 거절하되 `--approve-budget-up-to N`으로 정한 금액까지만 승인합니다 |

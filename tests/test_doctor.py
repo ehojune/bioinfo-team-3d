@@ -15,6 +15,20 @@ def _settings(tmp_path):
                                     "hpc": {"scheduler": "none"}})
 
 
+@pytest.mark.parametrize("empty_roster", [False, True])
+def test_invalid_force_engine_is_failure_and_doctor_finishes(tmp_path, monkeypatch, empty_roster):
+    settings = _settings(tmp_path)
+    settings.runner.force_engine = "mok"
+    if empty_roster:
+        (tmp_path / "agents" / "core" / "worker.yaml").unlink()
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["name"] == "runner.force_engine")
+    assert row["status"] == "fail"
+    assert any(r["group"] == "data" for r in result["checks"])
+    assert doctor.save(result, settings).is_file()
+
+
 def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setattr(doctor, "_network_check", lambda url: (_ for _ in ()).throw(AssertionError("network")))

@@ -11,6 +11,7 @@ import secrets
 import signal
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import time
@@ -237,7 +238,42 @@ def _lan_ipv6_addresses() -> list[str]:
                 add(sock.getsockname())
         except OSError:
             pass
+    if not preferred:
+        for sockaddr in _interface_ipv6_addresses():
+            add(sockaddr)
     return sorted(preferred) or sorted(fallback) or ["[::1]"]
+
+
+def _interface_ipv6_addresses() -> list[tuple]:
+    """OS interface addresses, including numeric scopes without a global IPv6 route."""
+    addresses = []
+    try:
+        if sys.platform == "win32":
+            command = ("@(Get-NetIPAddress -AddressFamily IPv6 -ErrorAction Stop | "
+                       "Select-Object IPAddress,InterfaceIndex) | ConvertTo-Json -Compress")
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                                    capture_output=True, text=True, timeout=3, check=True,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            rows = json.loads(result.stdout)
+            for row in rows if isinstance(rows, list) else [rows]:
+                addresses.append((row["IPAddress"], 0, 0, int(row["InterfaceIndex"])))
+        elif sys.platform.startswith("linux"):
+            for line in Path("/proc/net/if_inet6").read_text(encoding="ascii").splitlines():
+                raw, index, *_ = line.split()
+                addresses.append((str(ipaddress.IPv6Address(int(raw, 16))), 0, 0, int(index, 16)))
+        else:
+            # BSD/macOS expose scoped IPv6 interface addresses through the system ifconfig.
+            result = subprocess.run(["ifconfig", "-a"], capture_output=True, text=True, timeout=3, check=True)
+            interface = None
+            for line in result.stdout.splitlines():
+                if line and not line[0].isspace():
+                    interface = line.split(":", 1)[0]
+                fields = line.split()
+                if fields and fields[0] == "inet6" and interface:
+                    addresses.append((fields[1], 0, 0, socket.if_nametoindex(interface)))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        pass
+    return addresses
 
 
 def _phone_url_lines(addresses: list[str], port: int, token: str) -> list[str]:
