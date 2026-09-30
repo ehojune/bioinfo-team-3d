@@ -353,6 +353,34 @@ class Runner:
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env))
         return servers + list(agent.mcp)
 
+    def _resume_baseline(self, task: Task, agent: AgentSpec, ws: TaskWorkspace) -> dict | None:
+        """Look across this runner's workspaces, including a reused workspace after restart."""
+        if not task.resume_session_id:
+            return None
+        paths = set(self.ws_root.glob("*/*/manifest.json"))
+        paths.update(workspace.dir / "manifest.json" for workspace in self.workspaces.values())
+        paths.add(ws.dir / "manifest.json")
+        latest, latest_at = None, -1.0
+        for path in sorted(paths):
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            runs = manifest.get("runs", {}) if isinstance(manifest, dict) else {}
+            if not isinstance(runs, dict):
+                continue
+            for tid, run in runs.items():
+                if (tid == task.id or not isinstance(run, dict)
+                        or run.get("session_id") != task.resume_session_id
+                        or run.get("runner_id", self.s.runner.id) != self.s.runner.id
+                        or run.get("engine") != agent.engine.value):
+                    continue
+                timestamp = max((value for key in ("accounting_at", "ended_at", "started_at")
+                                 if type(value := run.get(key)) in (int, float)), default=0)
+                if timestamp >= latest_at:
+                    latest, latest_at = run, timestamp
+        return latest
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
@@ -390,8 +418,10 @@ class Runner:
                 claude_settings=claude_settings(self.s.policy),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
+                resume_baseline=self._resume_baseline(task, agent, ws),
             )
-            ws.update_run(task.id, started_at=time.time(), engine=agent.engine.value, model=agent.model,
+            ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
+                          engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                           resume_of=task.resume_session_id, kind=task.meta.get("kind"))
             result = await get_adapter(agent.engine, self.s).run(ctx)
@@ -416,7 +446,7 @@ class Runner:
         (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "", encoding="utf-8")
         ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
                       cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
-                      usage=result.usage,
+                      usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
         state = "hibernating" if pending else ("done" if result.ok else "error")

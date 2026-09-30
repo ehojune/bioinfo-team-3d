@@ -160,6 +160,7 @@ class TaskResult(BaseModel):
     cost_usd: float | None = None
     cost_known: bool | None = None
     usage: dict[str, int] = {}
+    usage_known: bool = True
     pending_jobs: list[str] = []
     workdir: str | None = None
     workdir_id: str | None = None

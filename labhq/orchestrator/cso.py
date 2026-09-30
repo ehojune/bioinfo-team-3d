@@ -893,9 +893,10 @@ class Orchestrator:
             report += (f"\n\nBudget: ${outcome['spent_usd']:.2f} > "
                        f"${outcome['limit_usd']:.2f}; {decision}.")
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
-                   cost_usd=round(self.cost.get(rid, 0.0), 4), finished_at=time.time())
+                   cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
         data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
-                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {})}
+                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {}),
+                "usage_known": req.get("usage_known", True)}
         if hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.

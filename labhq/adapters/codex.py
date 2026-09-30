@@ -152,12 +152,13 @@ class CodexAdapter(AgentAdapter):
                                                "input": short(query or item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True
-            from .base import token_counts
-            usage = token_counts(ev.get("usage"), ("input_tokens", "cached_input_tokens",
+            from .base import cumulative_usage, record_accounting, token_counts
+            total = token_counts(ev.get("usage"), ("input_tokens", "cached_input_tokens",
                 "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"))
-            for key, value in usage.items():
-                st.usage[key] = st.usage.get(key, 0) + value
-            await ctx.emit("agent.usage", {"tokens": usage, "cost_known": False})
+            usage = cumulative_usage(total, st, ctx)
+            record_accounting(st, ctx)
+            await ctx.emit("agent.usage", {"tokens": usage, "usage_known": st.usage_known,
+                                           "cost_usd": None, "cost_known": False})
         elif typ in ("turn.failed", "error"):
             err = ev.get("error")
             st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
