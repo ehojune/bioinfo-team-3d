@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import re
 import shlex
 import shutil
 import signal
 import subprocess
+import time
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -105,6 +107,10 @@ ROLE_FOOTER = """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
+- If environment, installation, login or tool errors block you, use labhq_ask(to="facilities").
+- For a method or scope decision use to="cso"; ask a colleague only for a fact only that colleague can answer.
+- Use to="pi" only for a data-zone, cost-cap, out-of-scope, installation or destructive-work hard stop.
+- A bioinfo-agent gate that says to ask and stop must use labhq_ask, then end the turn when it returns pending.
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - Report in Korean; keep technical terms, gene names and commands in English.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
@@ -128,6 +134,7 @@ class RunContext:
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts
+    resume_baseline: dict | None = None  # runner-local snapshot, taken before this invocation
 
     @property
     def meta_dir(self) -> Path:
@@ -145,6 +152,9 @@ class RunState:
     structured: Any = None
     error: str | None = None
     usage: dict = field(default_factory=dict)
+    usage_known: bool = True
+    session_cost_total: float | None = None
+    session_usage_total: dict | None = None
     result_seen: bool = False
     model_id: str | None = None
 
@@ -154,6 +164,52 @@ def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
     source = raw if isinstance(raw, dict) else {}
     return {key: value for key in fields if isinstance((value := source.get(key)), int)
             and not isinstance(value, bool) and value >= 0}
+
+
+def session_baseline(st: RunState, ctx: RunContext) -> dict | None:
+    baseline = ctx.resume_baseline
+    if baseline and baseline.get("session_id") == st.session_id == ctx.task.resume_session_id:
+        return baseline
+    return None
+
+
+def cumulative_cost(total: Any, st: RunState, ctx: RunContext) -> None:
+    """Unknown resume deltas stay unknown; never bill a session total as a new call."""
+    valid = isinstance(total, (int, float)) and not isinstance(total, bool) and math.isfinite(total) and total >= 0
+    st.session_cost_total = total if valid else None
+    baseline = session_baseline(st, ctx)
+    before = baseline.get("session_cost_total") if baseline else None
+    if not ctx.task.resume_session_id:
+        before = 0.0
+    known = (valid and isinstance(before, (int, float)) and not isinstance(before, bool)
+             and math.isfinite(before) and 0 <= before <= total)
+    st.cost_usd = total - before if known else None
+
+
+def cumulative_usage(total: dict[str, int], st: RunState, ctx: RunContext) -> dict[str, int]:
+    """Return an event delta and keep the full invocation delta in RunState."""
+    previous = st.session_usage_total
+    baseline = session_baseline(st, ctx)
+    before = baseline.get("session_usage_total") if baseline else None
+    if not ctx.task.resume_session_id:
+        before = {key: 0 for key in total}
+    known = bool(total) and isinstance(before, dict) and all(
+        type(before.get(key)) is int and 0 <= before[key] <= value for key, value in total.items())
+    st.usage_known = known
+    st.usage = {key: value - before[key] for key, value in total.items()} if known else {}
+    event_before = previous if previous is not None else before
+    event_known = known and isinstance(event_before, dict) and all(
+        type(event_before.get(key)) is int and 0 <= event_before[key] <= value for key, value in total.items())
+    st.session_usage_total = total
+    return {key: value - event_before[key] for key, value in total.items()} if event_known else {}
+
+
+def record_accounting(st: RunState, ctx: RunContext) -> None:
+    if ctx.record_run:
+        ctx.record_run(session_id=st.session_id, session_cost_total=st.session_cost_total,
+                       session_usage_total=st.session_usage_total, accounting_at=time.time(),
+                       cost_usd=st.cost_usd, cost_known=st.cost_usd is not None,
+                       usage=st.usage, usage_known=st.usage_known)
 
 
 def record_model_id(st: RunState, ctx: RunContext, value: Any) -> None:
@@ -237,7 +293,7 @@ class AgentAdapter(ABC):
             ok = False
         return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=ok, text=text or "",
                           structured=structured, session_id=st.session_id, cost_usd=st.cost_usd,
-                          cost_known=st.cost_usd is not None, usage=st.usage,
+                          cost_known=st.cost_usd is not None, usage=st.usage, usage_known=st.usage_known,
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:

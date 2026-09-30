@@ -10,8 +10,10 @@ from ..util import strip_parent_claude_env
 
 try:  # mcp >= 2
     from mcp.server.mcpserver import MCPServer as _Server
+    from mcp.server.mcpserver.exceptions import ToolError
 except ImportError:  # mcp < 2
     from mcp.server.fastmcp import FastMCP as _Server  # type: ignore
+    from mcp.server.fastmcp.exceptions import ToolError  # type: ignore
 
 
 def make_server(name: str, instructions: str) -> Any:

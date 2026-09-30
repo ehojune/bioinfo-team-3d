@@ -89,10 +89,12 @@ class CodexAdapter(AgentAdapter):
             flags += ["--output-schema", str(ctx.meta_dir / "output_schema.json")]
         for s in ctx.mcp_servers:
             key = f"mcp_servers.{s.name}"
-            if s.name in ("labhq_hpc", "labhq_approval") or s.auto_approve:
+            if s.name in ("labhq_hpc", "labhq_approval", "labhq_ask") or s.auto_approve:
                 # labhq tools enforce phone approval inside the broker; auto_approve servers are read-only.
                 flags += ["-c", f'{key}.default_tools_approval_mode="approve"']
-            if s.name.startswith("labhq_"):
+            if s.timeout_s:  # labhq_ask waits longer than a phone approval
+                flags += ["-c", f"{key}.tool_timeout_sec={s.timeout_s}"]
+            elif s.name.startswith("labhq_"):
                 flags += ["-c", f"{key}.tool_timeout_sec={self.settings.policy.approvals.timeout_s + 120}"]
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
@@ -129,9 +131,15 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool_error", {"text": short(item.get("aggregated_output"), 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
-            elif it == "mcp_tool_call" and typ == "item.completed" and item.get("status") == "failed":
+            elif it == "mcp_tool_call" and typ == "item.completed":
+                result = item.get("result") or {}
+                tool_error = isinstance(result, dict) and (result.get("isError") or result.get("is_error"))
+                if item.get("status") != "failed" and not tool_error:
+                    return
                 err = item.get("error")
-                message = str((err.get("message") if isinstance(err, dict) else err) or "MCP tool failed")
+                detail = "\n".join(str(block.get("text", "")) for block in result.get("content", [])
+                                   if isinstance(block, dict) and block.get("type") == "text") if tool_error else ""
+                message = str((err.get("message") if isinstance(err, dict) else err) or detail or "MCP tool failed")
                 # The agent may recover from an ordinary tool failure; an approval-policy refusal means
                 # labhq wired the server wrong (openai/codex#24135), so that one fails the task loudly.
                 if "approval policy" in message:
@@ -146,12 +154,13 @@ class CodexAdapter(AgentAdapter):
                                                "input": short(query or item.get("query"), 200)})
         elif typ == "turn.completed":
             st.result_seen = True
-            from .base import token_counts
-            usage = token_counts(ev.get("usage"), ("input_tokens", "cached_input_tokens",
+            from .base import cumulative_usage, record_accounting, token_counts
+            total = token_counts(ev.get("usage"), ("input_tokens", "cached_input_tokens",
                 "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"))
-            for key, value in usage.items():
-                st.usage[key] = st.usage.get(key, 0) + value
-            await ctx.emit("agent.usage", {"tokens": usage, "cost_known": False})
+            usage = cumulative_usage(total, st, ctx)
+            record_accounting(st, ctx)
+            await ctx.emit("agent.usage", {"tokens": usage, "usage_known": st.usage_known,
+                                           "cost_usd": None, "cost_known": False})
         elif typ in ("turn.failed", "error"):
             err = ev.get("error")
             st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"

@@ -9,6 +9,7 @@ from labhq.orchestrator.cso import (BudgetExceeded, Orchestrator, failure_kind, 
                                     format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from labhq.tools.scheduler import Scheduler
 
 
 class FakeHub:
@@ -56,6 +57,210 @@ class FakeHub:
 
 def result(task, ok=True, **kwargs):
     return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=ok, **kwargs)
+
+
+@pytest.fixture
+def continuations(monkeypatch):
+    from labhq.orchestrator import cso
+
+    calls = []
+    original = cso.continuation_prompt
+
+    def spy(task, updates, **kwargs):
+        prompt = original(task, updates, **kwargs) + f"\n[continuation call {len(calls)}]"
+        calls.append({"task": task, "updates": updates, "prompt": prompt, **kwargs})
+        return prompt
+
+    monkeypatch.setattr(cso, "continuation_prompt", spy)
+    return calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["ask", "job", "both", "blocking", "revision", "retry"])
+@pytest.mark.parametrize("resume_mode", ["unsupported", "supported", "missing_session"])
+async def test_every_step_continuation_uses_common_prompt(tmp_path, continuations, route, resume_mode):
+    session = None if resume_mode == "missing_session" else "worker-session"
+    workdir = str(tmp_path / "workspace")
+    request, instruction, context = "Original PI request", "Analyze selected inputs", "QC-passing upstream inputs"
+    prior_text = "Prior step evidence"
+
+    async def dispatch(task):
+        if len(hub.calls) == 1 and route != "revision":
+            return result(task, ok=route != "retry", text=prior_text, session_id=session, workdir=workdir,
+                          error="HTTP 503 overloaded" if route == "retry" else None,
+                          pending_asks=["ask_1"] if route in {"ask", "both"} else [],
+                          pending_jobs=["job_1"] if route in {"job", "both"} else [],
+                          blocking_decision="Cases or controls?" if route == "blocking" else None)
+        return result(task, text="completed", session_id=session, workdir=workdir)
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: resume_mode != "unsupported"
+    hub.wait_asks = lambda ids: asyncio.sleep(0, result=[{"from": "cso", "answer": "Selected answer"}])
+    hub.wait_jobs = lambda tid: asyncio.sleep(0, result={
+        "jobs": [{"job_id": "job_1", "state": "done", "exit_status": 0}]})
+    hub.request_approval = lambda **kw: asyncio.sleep(0, result={"approved": True, "note": "Selected answer"})
+    orch = Orchestrator(hub)
+    if route in {"blocking", "revision"}:
+        steps = [{"id": "U", "agent_id": "worker", "instruction": "upstream", "depends_on": []},
+                 {"id": "A", "agent_id": "worker", "instruction": instruction, "depends_on": ["U"]}]
+        results = {"U": TaskResult(task_id="u", agent_id="worker", ok=True, text=context)}
+        if route == "revision":
+            results["A"] = TaskResult(task_id="prior", agent_id="worker", ok=True, text=prior_text,
+                                      session_id=session, workdir=workdir)
+        await orch.run_dag("r", request, steps, results, only={"A"},
+                           feedback={"A": "Verify the evidence"} if route == "revision" else None)
+        assert results["A"].ok and results["A"].text == "completed"
+    else:
+        original = Task(agent_id="worker", request_id="r", prompt=f"{request}\nYour step: {instruction}",
+                        context=context, meta={"kind": "step", "step_id": "A"})
+        res = await orch.run_step(original)
+        assert res.ok and res.text == "completed"
+    assert len(continuations) == 1
+    call, continued = continuations[0], hub.calls[-1]
+    assert continued.prompt == call["prompt"]  # a helper call that is discarded must fail
+    assert continued.meta["workdir"] == workdir
+    can_resume = resume_mode == "supported"
+    assert call["resumable"] is can_resume
+    assert continued.resume_session_id == (session if can_resume else None)
+    if can_resume:
+        assert request not in continued.prompt and instruction not in continued.prompt
+        assert context not in continued.prompt and prior_text not in continued.prompt
+    else:
+        for required in (request, instruction, context, prior_text):
+            assert required in continued.prompt
+    if route in {"ask", "both", "blocking"}:
+        assert "Selected answer" in continued.prompt
+    if route in {"job", "both"}:
+        assert "job_1" in continued.prompt and "exit=0" in continued.prompt
+    if route == "revision":
+        assert "Verify the evidence" in continued.prompt
+
+
+@pytest.mark.asyncio
+async def test_blocking_continuation_restores_previous_result_after_restart(continuations):
+    import json
+
+    async def dispatch(task):
+        return result(task, text="completed")
+
+    hub = FakeHub(dispatch)
+    previous = TaskResult(task_id="blocked", agent_id="worker", ok=True,
+                          text="Saved blocking turn", structured={"blocking_decision": "Which inputs?"})
+    hub.requests["r"]["step_decisions"] = json.loads(json.dumps({"A": {
+        "question": "Which inputs?", "answer": "QC-passing", "previous_result": previous.model_dump(mode="json")}}))
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "Compare inputs", "depends_on": []}]
+    results = {}
+    await Orchestrator(hub).run_dag("r", "Original request", steps, results)
+    assert results["A"].ok and len(continuations) == 1
+    assert hub.calls[0].prompt == continuations[0]["prompt"]
+    for required in ("Original request", "Compare inputs", "Saved blocking turn", "Which inputs?", "QC-passing"):
+        assert required in hub.calls[0].prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turns", [("ask", "job", "ask", "job"),
+                                   ("job", "ask", "job"), ("both",)])
+async def test_step_rechecks_jobs_and_asks_after_each_wake(tmp_path, turns):
+    events = []
+    dispatched = []
+    workdir = str(tmp_path / "workspace")
+
+    async def dispatch(task):
+        index = len(dispatched)
+        dispatched.append(task)
+        events.append(("dispatch", task.id))
+        if index == len(turns):
+            return result(task, text="completed", workdir=workdir)
+        pending = turns[index]
+        return result(task, text=f"waiting {index}", workdir=workdir,
+                      pending_jobs=[f"job_{index}"] if pending in {"job", "both"} else [],
+                      pending_asks=[f"ask_{index}"] if pending in {"ask", "both"} else [])
+
+    async def wait_jobs(task_id):
+        events.append(("job", task_id))
+        await asyncio.sleep(0)
+        return {"jobs": [{"job_id": "job_done", "state": "done", "exit_status": 0}]}
+
+    async def wait_asks(ask_ids):
+        events.append(("ask", ask_ids))
+        await asyncio.sleep(0)
+        return [{"from": "cso", "answer": "Use the selected inputs"}]
+
+    hub = FakeHub(dispatch)
+    hub.wait_jobs, hub.wait_asks = wait_jobs, wait_asks
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert res.ok and res.text == "completed"
+    assert not res.pending_jobs and not res.pending_asks
+    expected = []
+    for index, pending in enumerate(turns):
+        expected.append(("dispatch", dispatched[index].id))
+        if pending in {"ask", "both"}:
+            expected.append(("ask", [f"ask_{index}"]))
+            assert "Use the selected inputs" in dispatched[index + 1].prompt
+        if pending in {"job", "both"}:
+            expected.append(("job", dispatched[index].id))
+            assert "job_done" in dispatched[index + 1].prompt
+        assert dispatched[index + 1].meta["parent_task"] == dispatched[index].id
+        assert dispatched[index + 1].meta["workdir"] == workdir
+    expected.append(("dispatch", dispatched[-1].id))
+    assert events == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_resume", [False, True])
+async def test_nonresumable_ask_wake_keeps_original_instruction_and_context(tmp_path, supports_resume):
+    workdir = str(tmp_path / "workspace")
+    original = Task(agent_id="worker", request_id="r", prompt="Compare the selected groups and write summary.md",
+                    context="Upstream: only use the QC-passing inputs",
+                    output_schema={"type": "object"}, meta={"kind": "step", "step_id": "A"})
+
+    async def dispatch(task):
+        index = len(hub.calls) - 1
+        return result(task, text=f"progress {index}", workdir=workdir,
+                      session_id=f"session_{index}", pending_asks=[f"ask_{index}"] if index < 2 else [])
+
+    async def wait_asks(ask_ids):
+        return [{"from": "cso", "answer": f"Advice for {ask_ids[0]}"}]
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: supports_resume
+    hub.wait_asks = wait_asks
+    res = await Orchestrator(hub).run_step(original)
+    assert res.ok and len(hub.calls) == 3
+    for index, wake in enumerate(hub.calls[1:]):
+        assert f"Advice for ask_{index}" in wake.prompt
+        assert wake.meta["workdir"] == workdir and wake.meta["step_id"] == "A"
+        assert wake.output_schema == original.output_schema
+        if supports_resume:
+            assert wake.resume_session_id == f"session_{index}"
+            assert wake.context == ""
+            assert original.prompt not in wake.prompt
+        else:
+            assert wake.resume_session_id is None
+            assert original.prompt in wake.prompt
+            assert original.context in wake.prompt
+            assert f"progress {index}" in wake.prompt
+            assert wake.context == ""  # the common prompt carries all fallback context
+
+
+async def test_failed_attempt_with_submitted_job_does_not_resubmit():
+    settings = Settings()
+    settings.hpc.scheduler = "mock"
+    scheduler = Scheduler(settings.hpc)
+    submissions = []
+
+    async def dispatch(task):
+        jid = scheduler.submit("fixture.sh", "fixture")
+        submissions.append(jid)
+        return result(task, ok=False, error="timeout after submission", pending_jobs=[jid],
+                      session_id="fixture-session", workdir="runs/fixture")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda _: True
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="submit"))
+    assert len(submissions) == 1
+    assert not res.ok and res.pending_jobs == submissions
+    assert not any(e["type"] == "request.step_retry" for e in hub.events)
 
 
 STEPS = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": deps}
@@ -146,7 +351,10 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert hub.approvals[0]["kind"] == "clarify"
     rerun = [t for t in calls if t.meta.get("step_id") == "A"][1]
     assert "Q1. Cases or controls?\nPI answer: cases" in rerun.prompt  # the answer arrives with its question
-    assert hub.requests["r"]["step_decisions"]["A"] == {"question": "Cases or controls?", "answer": "cases"}
+    decision = hub.requests["r"]["step_decisions"]["A"]
+    assert decision["question"] == "Cases or controls?" and decision["answer"] == "cases"
+    assert decision["previous_result"]["text"] == "blocked"
+    assert decision["previous_result"]["structured"] == {"blocking_decision": "Cases or controls?"}
 
 
 def test_configured_orchestration_agents_are_not_workers():
@@ -169,7 +377,11 @@ async def test_blocking_decision_denial_cancels_dispatch():
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["status"] == "failed"
     assert "Choose a cohort" in hub.requests["r"]["report"]
-    assert "Pending PI decisions/questions" in hub.requests["r"]["report"]
+    assert "question was rejected or unanswered" in hub.requests["r"]["report"]
+    assert not hub.requests["r"].get("pending_questions")
+    assert not hub.requests["r"]["results"]["A"]["ok"]
+    assert hub.requests["r"]["results"]["A"]["error_kind"] == "ask_rejected"
+    assert hub.requests["r"]["results"]["B"]["status"] == "skipped"
     assert not any(t.meta.get("step_id") == "B" for t in hub.calls)
 
 
@@ -619,7 +831,7 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [True, False])
-async def test_max_turns_wraps_once_and_keeps_failure(resume):
+async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     async def dispatch(task):
         if task.meta["kind"] == "wrap_up":
             assert task.resume_session_id == "session-1"
@@ -636,6 +848,10 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume):
     assert not res.ok and res.partial_results is resume
     assert res.outputs == (["outputs/PARTIAL_STATUS.md"] if resume else [])
     assert len(hub.calls) == (2 if resume else 1)
+    assert len(continuations) == (1 if resume else 0)
+    if resume:
+        assert hub.calls[1].prompt == continuations[0]["prompt"]
+        assert continuations[0]["resumable"] is True
 
 
 @pytest.mark.asyncio

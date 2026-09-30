@@ -175,11 +175,12 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 설정 변경 후 `python scripts/integrations.py --write`로 갱신하고 `--check`로 일치 여부를 확인합니다. 배지 숫자는 표의 항목 수입니다.
 
 <!-- integrations:start -->
-![builtin MCP: 2](https://img.shields.io/static/v1?label=builtin%20MCP&message=2&color=5B5BD6) ![external MCP: 2](https://img.shields.io/static/v1?label=external%20MCP&message=2&color=007EC6) ![plugin: 1](https://img.shields.io/static/v1?label=plugin&message=1&color=8A2BE2) ![skill: 2](https://img.shields.io/static/v1?label=skill&message=2&color=228B22) ![engine: 3](https://img.shields.io/static/v1?label=engine&message=3&color=555555)
+![builtin MCP: 3](https://img.shields.io/static/v1?label=builtin%20MCP&message=3&color=5B5BD6) ![external MCP: 2](https://img.shields.io/static/v1?label=external%20MCP&message=2&color=007EC6) ![plugin: 1](https://img.shields.io/static/v1?label=plugin&message=1&color=8A2BE2) ![skill: 2](https://img.shields.io/static/v1?label=skill&message=2&color=228B22) ![engine: 3](https://img.shields.io/static/v1?label=engine&message=3&color=555555)
 
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
 | 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
+| 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [engineer](agents/core/engineer.yaml), [lit_scout](agents/core/lit_scout.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml), [sci_reviewer](agents/core/sci_reviewer.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [data_steward](agents/core/data_steward.yaml), [engineer](agents/core/engineer.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
 | 외부 MCP | PubMed | 생의학 논문 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://pubmed.mcp.claude.com/mcp) · [직원 설정](agents/core/) |
 | 외부 MCP | bioRxiv / medRxiv | preprint 검색 | [lit_scout](agents/core/lit_scout.yaml) | [Claude for Life Sciences](https://www.anthropic.com/news/healthcare-life-sciences) · [MCP](https://hcls.mcp.claude.com/biorxiv/mcp) · [직원 설정](agents/core/) |
@@ -298,6 +299,7 @@ flowchart LR
 | 11 | **명확화 질문 루프** | CSO의 `clarifying_questions`를 폰으로 받고 답한 뒤 재계획 (지금은 이벤트만) | 부분 |
 | 12 | **킬 스위치 · 감사** | 태스크 취소 API, 전체 이벤트 로그 | 부분 |
 | 13 | **워크플로 엔진 우선** | 분석가·엔지니어는 nf-core/Snakemake, 버전·컨테이너 고정을 기본 정책으로 | 프롬프트 정책 |
+| 14 | **직원 질의 `labhq_ask`** | CSO·시설팀·동료에게 묻고, hard stop만 PI 폰으로 올린 뒤 같은 session을 resume | 구현 |
 
 ---
 
@@ -341,7 +343,7 @@ flowchart LR
   G --- O[CSO 오케스트레이터<br/>DAG · 리뷰 · 예산]
   R[Runner 데몬<br/>워크스테이션 / HPC 로그인 노드] -->|outbound /ws/runner| G
   R --> E1[claude -p] & E2[codex exec] & E3[gemini -p] & E4[agy -p]
-  E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · 파견직 논문 MCP]
+  E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · labhq_ask · 파견직 논문 MCP]
   T --> B[로컬 브로커 127.0.0.1] --> R
   T --> H[(SGE / PBS)]
 ```
@@ -376,8 +378,10 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 - **데이터 구역** (`policy.data_zones`): 통제 원본은 절대경로로 지정. 권장: Linux 러너 전용 계정, 데이터 계정 소유·권한 `0700`인 구역, `hpc.submit_prefix: ["sudo", "-n", "-u", "data-account"]`, 필수 설정 `hpc.user: data-account`·`hpc.job_group: lab-jobs`. 러너·data-account를 같은 그룹에 넣습니다. `sudoers`는 잡 제출·취소용 `qsub`와 `qdel`만 허용합니다. 전환된 잡의 상대 출력은 반환값의 `output_dir`(`hpc_out/`)에 쓰며, 공유 폴더에는 집계 결과만 둡니다. 구역이 설정되면 Windows 러너는 시작을 거부하며, POSIX 러너 계정이 원본을 읽거나 통과할 수 있어도 거부합니다. `policy.allow_runner_read_restricted: true`는 경고를 남기는 명시적 예외입니다.
 - **전환 잡 작업공간**: 러너가 private umask(`077`)로 입력을 만들고, 제출 전에 기존 입력에서도 group·other 권한을 제거합니다. 제출 시 `workspace_root`와 날짜 폴더에만 group traverse를 주며, 그 밖의 상위 경로는 data-account가 통과할 수 있어야 합니다. 데이터 계정은 잡 스크립트·`hpc_out/`·로그만 사용합니다.
 - **승인·예산** (`policy.approvals`, `policy.budget`): `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 비용이 보고되지 않으면 `비용 미집계`로 표시하며 달러 예산에 0으로 더합니다.
+- resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 누적값은 runner run 기록에 남기며, 재개 기준값이 없으면 해당 증분은 미집계로 표시합니다.
 - **직원** (`agents/core/*.yaml`): `engine`, `model`, `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
   `permission_mode`, `project_dirs`.
+  `labhq_ask`는 모든 MCP 지원 직원에게 자동으로 붙습니다. 대상은 `cso`, `facilities`, `colleague:<agent_id>`, `pi`입니다.
 - **엔진 실행 파일** (`engines`): `claude_code`, `codex`, `gemini`, `antigravity`의 `bin`, `prefix_args`, `extra_args`, `env`.
   Claude·Codex의 `isolate_user_config`(기본 켜짐)는 PI 개인 CLI 설정을 직원 세션에서 뺍니다(§10). Gemini·Antigravity에는 이 옵션이 없습니다. Codex의 `windows_sandbox`는 Windows에서 다시 넣는 샌드박스 모드입니다. 모르는 키는 오류로 거부합니다.
   Antigravity는 MCP가 없고 `permission_mode: default`는 `--sandbox`, `auto`는 `--sandbox --dangerously-skip-permissions`입니다.
@@ -431,7 +435,7 @@ labhq/
   integrations/ github (프로젝트 이슈·보고서 커밋·공개 가드·@codex 리뷰)
   adapters/     base · claude_code · codex · gemini · antigravity · cli (자체 에이전트) · mock
   runner/       daemon (게이트웨이 연결·실행·잡 감시) · approvals (로컬 브로커) · workspace (실험노트)
-  tools/        scheduler (SGE/PBS) · hpc_mcp · approval_mcp · _mcpcompat (mcp 1.x/2.x 호환)
+  tools/        scheduler (SGE/PBS) · hpc_mcp · approval_mcp · ask_mcp · _mcpcompat (mcp 1.x/2.x 호환)
   gateway/      server (FastAPI · WS · REST)
   orchestrator/ cso (브리핑 → 계획 → DAG → 리뷰 → 보고)
   recruit/      paper2agent (채용 → 수습 → 계약)

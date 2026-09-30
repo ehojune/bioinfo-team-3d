@@ -39,6 +39,22 @@
 - 미해결: 실제 유료 CLI는 실행하지 않았다. 네 arm의 비용·token·과학 결과는 PI 머신에서 측정한다. Codex 비용은 `미집계`로 남긴다. `.git` 쓰기 제한으로 이번 변경의 커밋 계획만 `.pr-drafts/commits.json`에 남겼다.
 - 근거: `labhq/bench.py`, `labhq/settings.py`, `labhq/cli.py`, `config/labhq.example.yaml`, `tests/test_bench.py`.
 
+## 2026-10-01 · #39 labhq_ask 질의 경로
+
+- 결론: 직원은 `labhq_ask`로 CSO·시설팀·동료에게 묻고, 코드가 판정한 hard stop만 PI에게 올린다. 답이 늦으면 step을 hibernate하고 같은 session·workdir에서 재개한다.
+- 바뀐 것: 5/20/15분 대기, task/대상/요청 3/2/12회 상한, 시설팀→CSO fallback, 동료 read-only consult, 메신저 질문·답변 이벤트, task별 capability token과 다른 task 사칭 403을 넣었다. #38의 묻고 멈추는 게이트도 이 경로를 쓴다.
+- 실행한 것: 수정 전 새 테스트가 `AskRequest` import에서 실패함을 확인했다. 수정 후 대상 10 passed, 전체 504 passed/17 skipped, 공개 검사를 통과했다. 실제 직원 CLI는 실행하지 않았다.
+- 미해결: 실제 PI 폰·직원 CLI 연동은 mock engine과 fake MCP client로 대신했다. commit 뒤 `patch_notes/README.md` 행을 만들고 amend해야 한다.
+- 근거: `labhq/tools/ask_mcp.py`, `labhq/orchestrator/cso.py`, `labhq/runner/approvals.py`, `tests/test_ask.py`, `tests/test_e2e_mock.py`.
+
+## 2026-10-01 · HPC 도구 실패 표시·제출 후 재시도 차단 #80
+
+- 결론: HPC 운영 실패를 MCP 오류로 전달하고, 알려진 pending job이 있는 실패 시도는 자동으로 재실행하지 않는다.
+- 바뀐 것: compat `ToolError`, submit·cancel·status·queue 오류 상세, qstat 반환 코드 검사, qacct·PBS 조회 실패와 job 부재 구분, Codex `isError`·`is_error` 처리. PI 거절은 정상 결과에 재제출 금지 안내를 붙인다.
+- 실행한 것: 수정 전 회귀 18건 실패(두 번 실행), job 부재 2건 통과. 수정 후 대상 127 passed/9 skipped, 전체 `pytest -q -p no:cacheprovider` 540 passed/17 skipped, `bash scripts/check_public.sh`, `git diff --check` 통과. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
+- 미해결: PI 거절을 오류로 올릴지와 제출 후 실패의 재개 정책은 보류한다. job 추적 등록 실패·러너 단절로 pending job을 모르는 경우의 중복 방지는 범위 밖이다. 실제 클러스터·직원 CLI·MCP 1.x는 검증하지 않았다. `.git` 읽기 전용이라 커밋·PR 발행 대신 초안을 남겼다. patch_notes와 작업 범위 밖 로컬 인계·수확 파일은 수정하지 않았다.
+- 근거: `tests/test_hpc_failures.py`, `tests/fixtures/hpc_failure_server.py`, `tests/test_cso.py::test_failed_attempt_with_submitted_job_does_not_resubmit`.
+
 ## 2026-10-01 · 연결된 도구 목록·배지 #63
 
 - 결론: README §2의 연결된 도구 표와 shields.io 배지를 정규직 YAML에서 생성한다.
