@@ -151,15 +151,40 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
 }
 
 export function syncDecisionHistory(container, history, options = {}) {
-  const list = doc().createElement('ol'); list.className = 'decision-history';
-  for (const item of history || []) {
-    const approval = item.approval || {};
-    const row = add(list, 'li');
-    const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' : '거절';
-    add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
-    add(row, 'span', approval.summary || approval.id || '');
-    if (item.note) add(row, 'small', item.note);
+  const items = Array.from(history || []);
+  const pageSize = Math.max(1, Number(options.pageSize) || 10);
+  if (!Number.isFinite(container._historyShown) || container._historyShown < pageSize) container._historyShown = pageSize;
+  const visible = items.slice(0, container._historyShown);
+  const root = doc().createElement('div'); root.className = 'decision-history';
+  const groups = new Map();
+  for (const item of visible) {
+    const approval = item.approval || {}, requestId = approval.request_id || item.request_id || 'other';
+    if (!groups.has(requestId)) groups.set(requestId, []);
+    groups.get(requestId).push(item);
   }
-  if (!(history || []).length) add(list, 'li', '아직 결정 이력이 없어요.', 'empty-note');
-  container.replaceChildren(list);
+  for (const [requestId, values] of groups) {
+    const group = doc().createElement('section'); group.className = 'decision-history-group'; group.dataset.requestId = requestId;
+    const request = options.requests?.get?.(requestId);
+    const label = request?.text ? String(request.text).replace(/\s+/g, ' ').slice(0, 44) : requestId === 'other' ? '기타 요청' : `요청 ${requestId}`;
+    add(group, 'h3', label);
+    const list = add(group, 'ol');
+    for (const item of values) {
+      const approval = item.approval || {};
+      const row = add(list, 'li', '', 'decision-history-item');
+      const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' : '거절';
+      add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
+      add(row, 'span', approval.summary || approval.id || '');
+      if (item.note) add(row, 'small', item.note);
+    }
+    root.append(group);
+  }
+  if (!items.length) add(root, 'p', '아직 결정 이력이 없어요.', 'empty-note');
+  const children = [root];
+  if (visible.length < items.length) {
+    const more = doc().createElement('button'); more.type = 'button'; more.className = 'btn decision-history-more';
+    more.textContent = `더 보기 (${items.length - visible.length}건)`;
+    more.onclick = () => { container._historyShown += pageSize; syncDecisionHistory(container, items, options); };
+    children.push(more);
+  }
+  container.replaceChildren(...children);
 }
