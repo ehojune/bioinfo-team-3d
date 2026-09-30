@@ -25,8 +25,10 @@ REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
 CASES_ROOT = BENCH_ROOT / "cases"
 ARMS = ("labhq", "sonnet-max", "sol-ultra", "astra-ultra")
-REQUIRED = {"id", "title", "request", "references", "scripted_pi_answers", "check", "budget_usd",
-            "mock_answer"}
+REQUIRED = {"id", "title", "request", "references", "scripted_pi_answers", "check", "result_fields",
+            "budget_usd", "mock_answer"}
+RESULT_START = "<!-- LABHQ_BENCH_RESULT -->"
+RESULT_END = "<!-- /LABHQ_BENCH_RESULT -->"
 
 
 def _inside(root: Path, relative: str) -> Path:
@@ -66,6 +68,20 @@ def load_case(case_id: str, cases_root: Path | None = None) -> dict[str, Any]:
         raise ValueError(f"case {case_id} needs a deterministic check script")
     if not _inside(BENCH_ROOT, check["script"]).is_file():
         raise ValueError(f"case {case_id} check script is missing")
+    fields = data["result_fields"]
+    allowed_types = {"string", "integer", "boolean", "string_list", "integer_range"}
+    if not isinstance(fields, dict) or not fields:
+        raise ValueError(f"case {case_id} needs structured result fields")
+    for key, rule in fields.items():
+        if (not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", key) or
+                not isinstance(rule, dict) or rule.get("type") not in allowed_types):
+            raise ValueError(f"case {case_id} has an invalid result field: {key}")
+        if rule["type"] == "integer_range":
+            if (type(rule.get("minimum")) is not int or type(rule.get("maximum")) is not int or
+                    rule["minimum"] >= rule["maximum"]):
+                raise ValueError(f"case {case_id} has an invalid range field: {key}")
+        elif "equals" not in rule:
+            raise ValueError(f"case {case_id} result field lacks equals: {key}")
     return data
 
 
@@ -87,6 +103,21 @@ def _prompt(case: dict[str, Any]) -> str:
         sections.append(f"\n### {reference['label']}{source}\n{body.strip()}")
     sections.append("\n산출물은 근거와 검사 가능한 수치를 포함한 Markdown 보고서 하나로 작성한다. "
                     "작업 폴더의 answer.md에 저장하고, 저장하지 못하면 응답 본문에 보고서 전체를 제시한다.")
+    types = {
+        "string": "string", "integer": "integer", "boolean": "boolean",
+        "string_list": "array of strings", "integer_range": "[low integer, high integer]",
+    }
+    skeleton = {}
+    for key, rule in case["result_fields"].items():
+        skeleton[key] = {"string": "", "integer": 0, "boolean": False,
+                         "string_list": [], "integer_range": [0, 0]}[rule["type"]]
+    fields = "\n".join(f"- {key}: {types[rule['type']]}" for key, rule in case["result_fields"].items())
+    sections.append(
+        "\n수치·ID 채점은 문장 표현이 아니라 아래 구조화 결과 블록의 값으로 한다. "
+        "필수 key를 정확히 한 번씩 쓰고 계산값으로 예시 값을 바꾼다.\n"
+        f"{fields}\n\n보고서 맨 끝에 이 블록을 둔다:\n{RESULT_START}\n```json\n"
+        f"{json.dumps(skeleton, ensure_ascii=False)}\n```\n{RESULT_END}"
+    )
     return "\n".join(sections) + "\n"
 
 
@@ -125,8 +156,10 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
     claude_env = {**os.environ, **{k: os.path.expandvars(v) for k, v in settings.engines.claude_code.env.items()}}
     # Same expansion as AgentAdapter.run: configs write bins as ${LOCALAPPDATA}/... or ~/...
     expand = lambda value: os.path.expandvars(os.path.expanduser(value))
-    claude = [expand(a) for a in (settings.engines.claude_code.bin, *settings.engines.claude_code.prefix_args)]
-    codex = [expand(a) for a in (settings.engines.codex.bin, *settings.engines.codex.prefix_args)]
+    claude_bin = settings.engines.claude_code
+    codex_bin = settings.engines.codex
+    claude = [expand(a) for a in (claude_bin.bin, *claude_bin.prefix_args)]
+    codex = [expand(a) for a in (codex_bin.bin, *codex_bin.prefix_args)]
     commands = {}
     for arm in _selected_arms(settings, arms):
         if arm == "labhq":
@@ -159,7 +192,8 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
                              "--model", definition.model, "--effort", definition.effort,
                              "--max-budget-usd", budget, "--setting-sources", "local",
                              "--disable-slash-commands", "--settings", claude_settings,
-                             "--permission-mode", "acceptEdits", "--allowedTools", edit_rule,
+                             "--permission-mode", "acceptEdits", *claude_bin.extra_args,
+                             "--allowedTools", edit_rule,
                              "Bash(pwd)", "Bash(wc -l *)",
                              "--disallowedTools", "Agent", "Task", "SendMessage", "TeamCreate"]
         else:
@@ -167,7 +201,7 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
                              str(case_dir / arm), "-s", "workspace-write", "--ephemeral",
                              "--ignore-user-config", "--ignore-rules", "-m", definition.model,
                              "-c", f'model_reasoning_effort="{definition.effort}"',
-                             "-o", str(case_dir / arm / "answer.md"), prompt]
+                             "-o", str(case_dir / arm / "answer.md"), *codex_bin.extra_args, prompt]
     return commands
 
 
@@ -430,6 +464,85 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
     return run
 
 
+def _structured_result(case: dict[str, Any], text: str) -> dict[str, Any]:
+    pattern = re.compile(re.escape(RESULT_START) + r"(.*?)" + re.escape(RESULT_END), re.DOTALL)
+    blocks = list(pattern.finditer(text))
+    if len(blocks) != 1:
+        count = "missing" if not blocks else "multiple"
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": f"{count} structured result block", "content_detail": None}
+    match = blocks[0]
+    if text[match.end():].strip():
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": "structured result block is not last", "content_detail": None}
+    body = match.group(1).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*\n?(.*?)\n?```", body, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        body = fenced.group(1).strip()
+    elif "```" in body:
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": "broken JSON fence", "content_detail": None}
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        values = json.loads(body, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": f"invalid JSON: {exc}", "content_detail": None}
+    expected_keys = list(case["result_fields"])
+    if not isinstance(values, dict):
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": "result JSON must be an object", "content_detail": None}
+    missing = [key for key in expected_keys if key not in values]
+    extra = [key for key in values if key not in case["result_fields"]]
+    if missing or extra:
+        detail = "; ".join(part for part in (
+            "missing keys: " + ", ".join(missing) if missing else "",
+            "extra keys: " + ", ".join(extra) if extra else "",
+        ) if part)
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": detail, "content_detail": None}
+
+    invalid_types = []
+    wrong = []
+    for key, rule in case["result_fields"].items():
+        value = values[key]
+        kind = rule["type"]
+        valid_type = {
+            "string": isinstance(value, str),
+            "integer": type(value) is int,
+            "boolean": type(value) is bool,
+            "string_list": (isinstance(value, list) and
+                            all(isinstance(item, str) for item in value)),
+            "integer_range": (isinstance(value, list) and len(value) == 2 and
+                              all(type(item) is int for item in value) and value[0] < value[1]),
+        }[kind]
+        if not valid_type:
+            invalid_types.append(key)
+            continue
+        if kind == "integer_range":
+            matches = rule["minimum"] <= value[0] < value[1] <= rule["maximum"]
+        elif kind == "string_list":
+            matches = sorted(value) == sorted(rule["equals"])
+        else:
+            matches = value == rule["equals"]
+        if not matches:
+            wrong.append(key)
+    if invalid_types:
+        return {"format_passed": False, "content_passed": None,
+                "format_detail": "wrong JSON types: " + ", ".join(invalid_types),
+                "content_detail": None}
+    return {"format_passed": True, "content_passed": not wrong, "format_detail": "ok",
+            "content_detail": "ok" if not wrong else "wrong values: " + ", ".join(wrong)}
+
+
 async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> dict[str, Any]:
     answer = arm_dir / "answer.md"
     command = [sys.executable, str(_inside(BENCH_ROOT, case["check"]["script"])), str(arm_dir),
@@ -439,6 +552,18 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
                                       env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     if checked.returncode not in {0, 1}:
         raise ValueError("benchmark checker error: " + (checked.stdout + checked.stderr).strip())
+    answer_text = answer.read_text(encoding="utf-8") if answer.is_file() else ""
+    structured = _structured_result(case, answer_text)
+    narrative_output = (checked.stdout + checked.stderr).strip()
+    check_output = "; ".join((
+        "format: " + ("PASS" if structured["format_passed"] else
+                       "FAIL (" + structured["format_detail"] + ")"),
+        "content: " + ("N/A" if structured["content_passed"] is None else
+                        "PASS" if structured["content_passed"] else
+                        "FAIL (" + structured["content_detail"] + ")"),
+        "narrative supplemental: " + ("PASS" if checked.returncode == 0 else
+                                      "FAIL (" + narrative_output + ")"),
+    ))
     usage = run.get("usage") or {}
     if isinstance(usage.get("total_tokens"), int):
         token_total = usage["total_tokens"]
@@ -450,8 +575,14 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "model": run.get("model"), "effort": run.get("effort"), "mode": run.get("mode"),
         "cli_engine": run.get("cli_engine"),
         "staff_model": run.get("staff_model"), "staff_models": run.get("staff_models"),
-        "artifact_exists": answer.is_file() and bool(answer.read_text(encoding="utf-8").strip()),
-        "checks_passed": checked.returncode == 0, "check_output": (checked.stdout + checked.stderr).strip(),
+        "artifact_exists": answer.is_file() and bool(answer_text.strip()),
+        "checks_passed": bool(structured["format_passed"] and structured["content_passed"]),
+        "format_passed": structured["format_passed"],
+        "content_passed": structured["content_passed"],
+        "narrative_passed": checked.returncode == 0,
+        "format_detail": structured["format_detail"],
+        "content_detail": structured["content_detail"],
+        "check_output": check_output,
         "check": case["check"],
         "pi_interventions": int(run.get("pi_interventions") or 0), "cost_usd": run.get("cost_usd"),
         "pi_questions_observable": bool(run.get("pi_questions_observable", run["engine"] == "labhq")),
@@ -470,8 +601,8 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| arm | model | effort | mode | 상태 | 산출물 | 검사 | PI 개입 | PI 질문 | 미스크립트 승인 | 예산 승인(회) | 비용(USD) | 최종 비용/예산(배) | 상한 | tokens | 경과(초) |",
-             "|---|---|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+             "| arm | model | effort | mode | 상태 | 산출물 | 형식 | 값 | 서술(보조) | PI 개입 | PI 질문 | 미스크립트 승인 | 예산 승인(회) | 비용(USD) | 최종 비용/예산(배) | 상한 | tokens | 경과(초) |",
+             "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
         ratio = row.get("cost_budget_ratio")
@@ -480,11 +611,13 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
         ratio_text = "미집계" if ratio is None else f"{ratio:.3f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
+        status = lambda value: "N/A" if value is None else "PASS" if value else "FAIL"
         model = row.get("model") or "; ".join(
             f"{staff['id']}={staff.get('model') or 'default'}" for staff in row.get("staff_models") or []) or "—"
         lines.append(f"| {row['engine']} | {model} | {row.get('effort') or 'staff config'} | "
                      f"{row.get('mode') or result['mode']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
-                     f"{'PASS' if row['checks_passed'] else 'FAIL'} | {row['pi_interventions']} | "
+                     f"{status(row.get('format_passed'))} | {status(row.get('content_passed'))} | "
+                     f"{status(row.get('narrative_passed'))} | {row['pi_interventions']} | "
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
@@ -565,8 +698,9 @@ async def rescore_case(case_id: str, output_root: Path, run_id: str | None = Non
             if old is None:
                 row.update(checked)
             else:
-                row.update({key: checked[key] for key in
-                            ("artifact_exists", "checks_passed", "check_output", "check")})
+                row.update({key: checked[key] for key in (
+                    "artifact_exists", "checks_passed", "format_passed", "content_passed",
+                    "narrative_passed", "format_detail", "content_detail", "check_output", "check")})
             row["run_id"] = run_dir.name
             row["rescored_at"] = datetime.now(timezone.utc).isoformat()
             history = list(row.get("score_history") or [])
@@ -662,13 +796,20 @@ async def run_test_agent(output_root: Path, engines: str = "real", settings=None
         passed = all(row["status"] == "done" and row["artifact_exists"] and row["checks_passed"] and
                      row["within_budget"] is not False and not row.get("unscripted_approvals")
                      for row in result["rows"])
-        cases.append({"case_id": case["id"], "run_id": result["run_id"], "passed": passed})
+        cases.append({
+            "case_id": case["id"], "run_id": result["run_id"], "passed": passed,
+            "format_failed": sum(row.get("format_passed") is False for row in result["rows"]),
+            "content_failed": sum(row.get("content_passed") is False for row in result["rows"]),
+        })
     summary = {"schema_version": 1, "mode": engines, "passed": sum(c["passed"] for c in cases),
-               "failed": sum(not c["passed"] for c in cases), "cases": cases}
+               "failed": sum(not c["passed"] for c in cases),
+               "format_failed": sum(c["format_failed"] for c in cases),
+               "content_failed": sum(c["content_failed"] for c in cases), "cases": cases}
     (output_root / "test-agent-summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
                                                           encoding="utf-8")
-    lines = ["# Bench test agent", "", "| case | 결과 |", "|---|---|"]
-    lines += [f"| {case['case_id']} | {'PASS' if case['passed'] else 'FAIL'} |" for case in cases]
+    lines = ["# Bench test agent", "", "| case | 결과 | 형식 실패 | 값 오답 |", "|---|---|---:|---:|"]
+    lines += [f"| {case['case_id']} | {'PASS' if case['passed'] else 'FAIL'} | "
+              f"{case['format_failed']} | {case['content_failed']} |" for case in cases]
     (output_root / "test-agent-summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return summary
 

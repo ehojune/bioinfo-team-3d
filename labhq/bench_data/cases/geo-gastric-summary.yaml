@@ -21,8 +21,21 @@ check:
     - 're:(?<![A-Za-z0-9_])COL1A1(?![A-Za-z0-9_])'
     - 're:(?<![A-Za-z0-9_])HALLMARK_(?:EMT|EPITHELIAL_MESENCHYMAL_TRANSITION)(?![A-Za-z0-9_])'
     - 're:(?<![A-Za-z0-9_])9606\s*\.\s*ENSP(?![A-Za-z_])'
+result_fields:
+  dataset_id: {type: string, equals: GSE79973}
+  tumor_samples: {type: integer, equals: 10}
+  normal_samples: {type: integer, equals: 10}
+  down_gene: {type: string, equals: GKN1}
+  up_gene: {type: string, equals: COL1A1}
+  hallmark: {type: string, equals: HALLMARK_EMT}
+  string_id_prefix: {type: string, equals: 9606.ENSP}
 budget_usd: 2.0
 mock_answer: |
   # GSE79973 계획
   GSE79973의 tumor 10과 paired normal 10을 GPL570에서 비교한다. GKN1 down, COL1A1 up을
   방향성 대조로 쓰고 HALLMARK_EMT를 GSEA에서 확인한다. STRING은 9606.ENSP ID를 기록한다.
+  <!-- LABHQ_BENCH_RESULT -->
+  ```json
+  {"dataset_id": "GSE79973", "tumor_samples": 10, "normal_samples": 10, "down_gene": "GKN1", "up_gene": "COL1A1", "hallmark": "HALLMARK_EMT", "string_id_prefix": "9606.ENSP"}
+  ```
+  <!-- /LABHQ_BENCH_RESULT -->

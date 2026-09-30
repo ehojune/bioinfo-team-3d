@@ -19,8 +19,21 @@ check:
     - 're:(?<![A-Za-z0-9_])P01116(?![A-Za-z0-9_])[^\n.;]{0,25}(?:중복|duplicat)|(?:중복|duplicat)[^\n.;]{0,25}(?<![A-Za-z0-9_])P01116(?![A-Za-z0-9_])'
     - 'num:1863:(?:BRCA1(?:_HUMAN)?|(?<![·가-힣])(?:최대|최댓값|가장\s*긴|maximum|max|longest))[^\d\n.;·]{0,25}(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?:aa|amino\s*acids?)?'
     - 're:(?:모든\s*길이|길이(?:는|가)?\s*모두)[^\n.;]{0,15}(?:양수|양의\s*정수|0\s*초과)|all\s*(?:declared\s*)?lengths?\s*(?:are\s*)?(?:positive|>\s*0)|길이\s*양수\s*검사는\s*모든\s*행이\s*통과|길이\s*(?:필드는\s*)?전수\s*양수'
+result_fields:
+  row_count: {type: integer, equals: 4}
+  unique_accession_count: {type: integer, equals: 3}
+  duplicate_accessions:
+    type: string_list
+    equals: [P01116]
+  maximum_length_aa: {type: integer, equals: 1863}
+  all_lengths_positive: {type: boolean, equals: true}
 budget_usd: 0.5
 mock_answer: |
   # 공개 단백질 manifest QC
   원본은 4행이고 unique 3 accession이다. P01116이 중복이며 모든 길이는 양수다.
   가장 긴 선언값은 BRCA1_HUMAN의 1863 aa다.
+  <!-- LABHQ_BENCH_RESULT -->
+  ```json
+  {"row_count": 4, "unique_accession_count": 3, "duplicate_accessions": ["P01116"], "maximum_length_aa": 1863, "all_lengths_positive": true}
+  ```
+  <!-- /LABHQ_BENCH_RESULT -->
