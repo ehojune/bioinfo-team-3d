@@ -92,7 +92,8 @@ def build_record(hub: "Hub", rid: str) -> dict:
         matching = [t for t in tasks if t.get("step_id") == sid]
         if sid == "direct":
             matching = [t for t in tasks if t.get("kind") == "direct"]
-        manifest = _manifest(result.get("workdir"))
+        # A remote runner's workdir is not on this disk: prefer what the runner sent with the result.
+        manifest = result.get("provenance") or _manifest(result.get("workdir"))
         runs = manifest.get("runs") or {}
         if manifest:
             for run in runs.values():
@@ -124,14 +125,16 @@ def build_record(hub: "Hub", rid: str) -> dict:
                       "output_paths": [str(Path(result.get("workdir") or result.get("workdir_id") or "") / p)
                                        for p in result.get("outputs") or []],
                       "missing_outputs": result.get("missing_outputs") or [],
-                      "revision_failed": result.get("revision_failed")})
+                      "revision_failed": result.get("revision_failed"),
+                      "engine_cli_version": next((run.get("engine_cli_version") for run in runs.values()
+                                                  if isinstance(run, dict) and run.get("engine_cli_version")), None)})
     for ev in events:
         data = ev.get("data") or {}
         for key in ("model", "model_id"):
             if isinstance(data.get(key), str) and data[key]:
                 models.add(data[key])
     for t in tasks:
-        manifest = _manifest((t.get("result") or {}).get("workdir"))
+        manifest = (t.get("result") or {}).get("provenance") or _manifest((t.get("result") or {}).get("workdir"))
         if manifest.get("model"):
             models.add(manifest["model"])
         for run in (manifest.get("runs") or {}).values():

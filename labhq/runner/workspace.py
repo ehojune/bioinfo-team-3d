@@ -74,6 +74,17 @@ class TaskWorkspace:
         data.update(fields)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
 
+    def provenance(self) -> dict[str, Any]:
+        """The manifest fields round records need, sent with the result instead of read from this disk."""
+        try:
+            data = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        keep = ("started_at", "ended_at", "engine", "model", "engine_cli_version", "plugins", "turns")
+        runs = {tid: {k: run[k] for k in keep if k in run}
+                for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
+        return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
+
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
         p = self.dir / "manifest.json"

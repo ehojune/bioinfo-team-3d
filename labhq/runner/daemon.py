@@ -20,6 +20,7 @@ import websockets
 from ..adapters import get_adapter
 from ..adapters.base import RunContext
 from ..models import AgentSpec, ApprovalRequest, Engine, Event, McpServerSpec, Task, TaskResult
+from .versions import engine_cli_versions
 from ..policy import claude_settings
 from ..registry import Registry
 from ..settings import Settings
@@ -56,6 +57,7 @@ class Runner:
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
+        self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
         self._finish_interrupted_tasks()
 
     def _finish_interrupted_tasks(self) -> None:
@@ -182,6 +184,9 @@ class Runner:
     async def _connection_loop(self) -> None:
         url = f"{self.s.gateway.url.rstrip('/')}/ws/runner?token={self.s.gateway.runner_token}"
         backoff = 1.0
+        if self.engine_versions is None:
+            engines = {a["engine"] for a in self.roster()}  # effective engines (force_engine applies)
+            self.engine_versions = await asyncio.to_thread(engine_cli_versions, self.s, engines)
         while not self._stopping:
             try:
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
@@ -232,7 +237,8 @@ class Runner:
         return {"scheduler": self.s.hpc.scheduler,
                 "compute_backends": ["local CLI"] + ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                     (["external labhq_hpc MCP"] if external_hpc else []),
-                "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc}
+                "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc,
+                "engine_cli_versions": dict(self.engine_versions or {})}
 
     def hello(self) -> dict:
         return {"type": "runner.hello", "runner_id": self.s.runner.id,
@@ -375,6 +381,7 @@ class Runner:
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
             )
             ws.update_run(task.id, started_at=time.time(), engine=agent.engine.value, model=agent.model,
+                          engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                           resume_of=task.resume_session_id, kind=task.meta.get("kind"))
             result = await get_adapter(agent.engine, self.s).run(ctx)
 
@@ -400,6 +407,7 @@ class Runner:
                       cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
                       usage=result.usage,
                       session_id=result.session_id, pending_jobs=pending)
+        result.provenance = ws.provenance()
         state = "hibernating" if pending else ("done" if result.ok else "error")
         extra = {"jobs": pending} if pending else ({"error": short(result.error, 200)} if result.error else {})
         await emit("agent.status", {"state": state, **extra})

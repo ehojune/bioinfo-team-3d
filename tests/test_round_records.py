@@ -228,3 +228,37 @@ async def test_legacy_request_takes_its_environment_from_the_first_record(tmp_pa
     hub.rounds.recover()
     rebuilt = json.loads((hub.rounds.directory / "req-old.json").read_text(encoding="utf-8"))["environment"]
     assert rebuilt["labhq_version"] != "99.0.0"
+
+
+@pytest.mark.asyncio
+async def test_record_uses_the_provenance_a_remote_runner_sent(tmp_path):
+    hub = Hub(settings(tmp_path))
+    round_request(hub, "req-remote", "done")
+    hub.requests["req-remote"]["results"]["a"].update(
+        workdir="/runner-only/disk/task-a",  # not on the gateway's disk
+        provenance={"engine": "codex", "model": "model-remote", "runs": {"t1": {
+            "started_at": 10.0, "ended_at": 25.0, "turns": 3, "engine_cli_version": "2.0.1",
+            "plugins": [{"name": "remote-plugin", "version": "1.0"}]}}})
+    record = hub.rounds.write("req-remote")
+    step = next(s for s in record["steps"] if s["id"] == "a")
+    assert (step["duration_s"], step["turns"], step["engine_cli_version"]) == (15.0, 3, "2.0.1")
+    assert "model-remote" in record["environment"]["model_ids"]
+    assert record["environment"]["plugin_provenance"][0]["name"] == "remote-plugin"
+
+
+def test_runner_probes_engine_versions_and_sends_the_manifest_summary(tmp_path):
+    import sys
+    from labhq.models import AgentSpec, Engine, Task
+    from labhq.runner.versions import engine_cli_versions
+    from labhq.runner.workspace import TaskWorkspace
+    fake = tmp_path / "fake_cli.py"
+    fake.write_text("import sys\nprint('codex-cli 9.8.7' if '--version' in sys.argv else 'hi')\n", encoding="utf-8")
+    cfg = Settings()
+    cfg.engines.codex.bin, cfg.engines.codex.prefix_args = sys.executable, [str(fake)]
+    assert engine_cli_versions(cfg, {"codex", "mock"}) == {"codex": "9.8.7"}
+    agent = AgentSpec(id="a", name="A", role="r", engine=Engine.codex, builtin_mcp=[])
+    ws = TaskWorkspace(tmp_path / "runs", Task(agent_id="a", prompt="x"), agent)
+    ws.update_run("t1", started_at=1.0, ended_at=4.0, engine_cli_version="9.8.7", usage={"secret": 1})
+    prov = ws.provenance()
+    assert prov["engine"] == "codex" and prov["runs"]["t1"] == {"started_at": 1.0, "ended_at": 4.0,
+                                                              "engine_cli_version": "9.8.7"}

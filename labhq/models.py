@@ -162,6 +162,7 @@ class TaskResult(BaseModel):
     workdir_id: str | None = None
     outputs: list[str] = []  # paths relative to workdir
     missing_outputs: list[str] = []
+    provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     partial_results: bool = False
     revision_failed: str | None = None
     error_kind: str | None = None
