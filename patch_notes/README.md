@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:13 | [`227b6cf`](https://github.com/ehojune/bioinfo-team-3d/pull/76/commits/227b6cf) | README 연결 도구 표에 질의 도구 `labhq_ask`를 넣었습니다. 직원 설정이 아니라 러너가 모든 직원(Antigravity 제외)에게 붙이는 내장 MCP라서 생성 스크립트에 따로 적었습니다 |
+| 04:10 | [`1a5239c`](https://github.com/ehojune/bioinfo-team-3d/pull/76/commits/1a5239c) | **세션을 이어 쓸 수 없는 직원도 어느 경로로 깨어나든 원래 지시를 받습니다** (Codex 리뷰). 같은 결함이 경로만 바꿔 두 번 나와서(질의 뒤 재개, 막힌 단계 재실행) 경로마다 막지 않고, 단계를 이어 가는 prompt를 한 함수로 모았습니다. HPC 기상, 질의 뒤 재개, 막힌 단계 재실행, 리뷰 수정, 재시도·마무리가 모두 이 함수를 쓰고, 세션을 못 이어 쓰는 엔진이면 원래 요청·단계 지시·context·직전 결과를 늘 함께 줍니다. 이 함수를 거치지 않는 경로가 생기면 테스트가 실패합니다 |
 | 03:50 | [`3befbb1`](https://github.com/ehojune/bioinfo-team-3d/pull/76/commits/3befbb1) | **질의 답을 받고 재개한 직원이 HPC job을 내도 끝까지 기다립니다** (Codex 리뷰). 질의 대기와 HPC 대기가 따로 돌아서, 답을 받고 이어 간 turn에서 job을 내면 DAG가 그 job을 기다리지 않고 다음 단계로 넘어갈 수 있었습니다. 이제 깨어날 때마다 남은 job과 남은 질문을 함께 다시 봅니다. 세션을 이어 쓸 수 없는 직원이 질의 뒤 새 세션으로 깨어나면 원래 지시가 사라지던 것도 고쳐서, 원래 지시와 context, 직전 결과를 함께 줍니다 |
 | 03:47 | [`ad60e0a`](https://github.com/ehojune/bioinfo-team-3d/pull/89/commits/ad60e0a) | **README에 연결된 도구 목록과 배지를 달았습니다.** PI가 붙인 plugin·skill·MCP(Claude for Life Sciences의 PubMed·bioRxiv 등)를 README에서 한눈에 보고 싶다고 해서 넣었습니다. 손으로 쓰면 곧 낡으니 `scripts/integrations.py`가 직원 설정(agents/core)에서 표와 배지를 만들고, 설정이 바뀌었는데 README가 그대로면 테스트가 실패합니다. 내장 MCP(승인·HPC), 외부 MCP(PubMed·bioRxiv), Claude Code plugin(bioinfo-agent), skill(Paper2Agent, bioinfo-analyze), 엔진 기능(Codex 웹 검색)이 쓰는 직원과 출처 링크와 함께 나옵니다 |
 | 03:44 | [`5d66b1e`](https://github.com/ehojune/bioinfo-team-3d/pull/85/commits/5d66b1e) | HANDOFF의 PR 흐름에서 패치노트를 PR보다 먼저 쓰라고 적었던 순서를 바로잡았습니다 (Codex 리뷰). 패치노트 링크에는 PR 번호가 들어가서, PR을 먼저 열어야 줄을 쓸 수 있습니다 |
