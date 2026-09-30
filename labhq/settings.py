@@ -69,6 +69,41 @@ class EnginesSettings(BaseModel):
     antigravity: EngineBin = EngineBin(bin="agy")
 
 
+class BenchArm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    engine: Literal["claude_code", "codex"]
+    model: str = Field(min_length=1)
+    effort: str = Field(min_length=1)
+
+
+class BenchSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    arms: dict[str, BenchArm] = Field(default_factory=lambda: {
+        "sonnet-max": BenchArm(engine="claude_code", model="sonnet", effort="max"),
+        "sol-ultra": BenchArm(engine="codex", model="gpt-5.6-sol", effort="ultra"),
+        "astra-ultra": BenchArm(engine="codex", model="gpt-6-astra", effort="ultra"),
+    })
+    staff_model: dict[str, str] = Field(default_factory=lambda: {"opus": "sonnet"})
+
+    @field_validator("arms")
+    @classmethod
+    def safe_arm_names(cls, value: dict[str, BenchArm]) -> dict[str, BenchArm]:
+        import re
+
+        if any(name == "labhq" or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) for name in value):
+            raise ValueError("bench arm names must be safe slugs; labhq is reserved")
+        return value
+
+    @field_validator("staff_model")
+    @classmethod
+    def nonempty_models(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not source.strip() or not target.strip() for source, target in value.items()):
+            raise ValueError("staff models must not be empty")
+        return value
+
+
 class SgeSettings(BaseModel):
     pe: str = "smp"  # parallel environment name differs per cluster (smp, threads, openmp, make…)
     mem_resource: str = "h_vmem"  # or mem_free
@@ -214,6 +249,7 @@ class Settings(BaseModel):
     gateway: GatewaySettings = GatewaySettings()
     runner: RunnerSettings = RunnerSettings()
     engines: EnginesSettings = EnginesSettings()
+    bench: BenchSettings = BenchSettings()
     hpc: HpcSettings = HpcSettings()
     policy: PolicySettings = PolicySettings()
     recruit: RecruitSettings = RecruitSettings()
