@@ -975,15 +975,14 @@ def _advisory(p: Projection, consumer: str, query: dict[str, Any], result: dict[
 
 
 def _derived_from(p: Projection, art: str, target: str) -> str:
-    """yes when generated_by -> used reaches target; unknown when the walk hits an unknown first."""
-    seen: set[str] = set()
-    stack = [(art, 0)]
+    """yes when generated_by -> used reaches target; unknown when the walk hits an unknown first.
+
+    Breadth first, so a node is expanded at its least depth: a longer path into a merge never hides the
+    shorter one behind the depth limit (#157)."""
+    seen = {art}
+    todo = [(art, 0)]   # a queue: read in order, appended at the end
     unknown = False
-    while stack:
-        node, depth = stack.pop()
-        if node in seen:
-            continue
-        seen.add(node)
+    for node, depth in todo:
         if depth > p.model.spec.traversal.depth_limit:
             unknown = True
             continue
@@ -999,8 +998,9 @@ def _derived_from(p: Projection, art: str, target: str) -> str:
                 return "yes"
             if dst == UNKNOWN:
                 unknown = True
-            elif dst.startswith("art:"):
-                stack.append((dst, depth + 1))
+            elif dst.startswith("art:") and dst not in seen:
+                seen.add(dst)
+                todo.append((dst, depth + 1))
     return UNKNOWN if unknown else "no"
 
 
@@ -1102,9 +1102,9 @@ def _cycles(steps: Mapping[str, Iterable[str]]) -> list[list[str]]:
 
 
 def _walk(p: Projection, root: str) -> _Walk:
+    """Breadth first from the root, so every node is expanded at its least depth (#157)."""
     walk = _Walk()
     seen_edges: set[int] = set()
-    done: set[str] = set()
     steps: dict[str, list[str]] = {}   # node -> the nodes its followed edges lead to
     limit = p.model.spec.traversal.depth_limit
     relations = p.model.spec.relations
@@ -1114,13 +1114,7 @@ def _walk(p: Projection, root: str) -> _Walk:
             seen_edges.add(id(edge))
             into.append(edge)
 
-    def visit(node: str, depth: int) -> None:
-        if node in done:
-            return
-        if depth > limit:
-            walk.cautions.append({"code": "depth_limit", "nodes": [node]})
-            return
-        done.add(node)
+    def expand(node: str) -> None:
         concept = p.model.concept_of(node)
         if concept in ("artifact", "external_source"):
             walk.nodes.add(node)
@@ -1152,10 +1146,18 @@ def _walk(p: Projection, root: str) -> _Walk:
                 if other != UNKNOWN:
                     nexts.append(other)
         steps[node] = nexts
-        for other in nexts:
-            visit(other, depth + 1)
 
-    visit(root, 0)
+    depth = {root: 0}
+    todo = [root]   # a queue: read in order, appended at the end
+    for node in todo:
+        if depth[node] > limit:
+            walk.cautions.append({"code": "depth_limit", "nodes": [node]})
+            continue
+        expand(node)
+        for other in steps.get(node, []):
+            if other not in depth:
+                depth[other] = depth[node] + 1
+                todo.append(other)
     walk.cautions.extend({"code": "cycle", "nodes": nodes} for nodes in _cycles(steps))
     return walk
 

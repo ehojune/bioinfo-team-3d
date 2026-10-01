@@ -210,6 +210,40 @@ def test_a_cycle_with_two_entries_is_one_caution_naming_its_component(inputs):
     assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
 
 
+DETOUR, UPSTREAM = 20, 45
+
+
+def detour_merge(direct_first):
+    """#157: x uses m directly and through a detour of DETOUR steps; m sits on a chain of UPSTREAM steps.
+
+    A walk that keeps the depth of its first visit reaches m deep through the detour and cuts the chain above
+    it, though the direct path leaves the whole chain inside the depth limit."""
+    steps = [(f"u{j}", [f"step:u{j - 1}/outputs/o.tsv"] if j else ["synth:DS-9000@r1"], ["outputs/o.tsv"])
+             for j in range(UPSTREAM + 1)]
+    steps.append(("m", [f"step:u{UPSTREAM}/outputs/o.tsv"], ["outputs/o.tsv"]))
+    steps += [(f"l{k}", [f"step:{'m' if k == 0 else f'l{k - 1}'}/outputs/o.tsv"], ["outputs/o.tsv"])
+              for k in range(DETOUR)]
+    refs = ["step:m/outputs/o.tsv", f"step:l{DETOUR - 1}/outputs/o.tsv"]
+    steps.append(("x", refs if direct_first else refs[::-1], ["outputs/x.tsv"]))
+    return _records("req_m", steps, [(f"t{sid}", sid) for sid, _refs, _outs in steps])
+
+
+@pytest.mark.parametrize("direct_first", [True, False], ids=["direct_first", "detour_first"])
+def test_a_shorter_path_into_a_merge_is_walked_at_its_own_depth(direct_first):
+    """#157: derived_from and audit_lineage use each node's least depth, not the depth of the first visit."""
+    root, target = "art:req_m/tx_ws/outputs/x.tsv", "art:req_m/tu0_ws/outputs/o.tsv"
+    outs = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(detour_merge(direct_first))
+        found = pilot.result_of(impl.find_reusable(p, derived_from=target))
+        assert found["candidates"][root]["match"]["derived_from"] == "yes", name
+        outs[name] = pilot.result_of(impl.audit_lineage(p, artifact=root))
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
+    walked = {(e["src"], e["dst"]) for e in outs["B"]["edges"] if e["rel"] == "used"}
+    assert ("run:tu28_ws/tu28", "art:req_m/tu27_ws/outputs/o.tsv") in walked   # depth 39 by the direct path, 79 by the detour
+
+
 def test_diamond_lineage_is_walked_by_node_not_by_path():
     """#140: 20 layers that each split into two outputs and merge in the next run (2^19 paths, 60 nodes)."""
     checks = {name: pilot.diamond_check(pilot.IMPLS[name](), 20) for name in ("B", "A")}
