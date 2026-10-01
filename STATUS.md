@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 PR A 후속 8건 — 참고 자료 정보 경계와 폴더 링크 검사를 판정 하나로
+
+- 결론: 참고 자료의 경로·URL이 공개 보고·라운드 기록·prompt로 새는 길과, 참고·upstream·project 폴더의 링크·통제 구역 검사를 각각 공통 함수로 모았다. #123 #124 #130 #131 #132 #133 #134를 고쳤다. #125의 확인 조건은 #122에서 이미 테스트와 함께 들어가 있어 판정만 공통 함수로 옮겼다.
+- 바뀐 것: `intake.path_pattern`·`url_pattern`(구분자 run, drive·Git Bash, JSON `\\`·`\/`·`\uXXXX`, 기본 포트, 대소문자)을 prompt 지우기(#133)와 게시 가림이 함께 쓴다. 프로젝트 보고와 라운드 기록은 `github.publish_clean` 하나를 쓴다(#130). 가림 대상은 `published_reference_masks`가 정한다: 모든 path 참고, PI 기본 github(URL·`owner/repo`)·url(#123). `~` 참고는 적은 그대로 저장하고 러너가 자기 home으로 푼다(#124). 공개 가드는 webhook path·session·code도 가린다(#134). 실경로 게이트는 후보 256개를 넘으면 셸·MCP·Glob을 ask로 보낸다(#131). `intake._walk`·`overlaps_zone` 위에 참고(엄격)·upstream(구역 링크가 있으면 열지 않음)·project(열되 Claude 거부 규칙) 검사를 얹었다(#132). README §4·§8·§10을 맞췄다.
+- 실행한 것: issue마다 회귀 test를 먼저 썼고 수정 전 코드에서 모두 실패함을 확인했다(새 test 11개·12건, 기존 루트 검사 1건 강화). 링크 훑기 비용을 쟀다: Windows 11에서 항목 20,200개가 1,078 ms에서 33 ms로 줄었다(ismount를 POSIX에서만 부름). 전체 pytest 1550 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 자체 호스팅 webhook처럼 이름 없이 path에 든 비밀값은 못 가린다(README §10). PI 기본 url이 공개 사이트면 그 host URL도 보고에서 가려진다. project 링크 거부 규칙은 Claude만 따르고 Codex·셸은 막지 못한다. Windows에서 대소문자만 다른 유지 참고가 거부 경로와 함께 지워질 수 있다. 패치노트는 PR 번호가 생긴 뒤 쓴다. Codex 리뷰는 돌리지 않았다.
+- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `labhq/integrations/rounds.py`, `labhq/policy.py`, `labhq/runner/daemon.py`, `tests/test_intake_references.py`, `tests/test_github_reporter.py`, `tests/test_round_records.py`.
+
 ## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot (PR A: opt-in으로 main에)
 
 - 결론: 중단 기준은 충족했다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). 그러나 PI 결정(2026-10-01)으로 접지 않고 opt-in·실행 경로 미연결로 유지한다. 그림자 모드로 실데이터를 모아 #121에서 재평가한다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
