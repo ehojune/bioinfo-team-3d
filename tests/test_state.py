@@ -129,7 +129,7 @@ async def test_runner_job_recovery_outbox_and_gateway_dedup(tmp_path):
     s = settings(tmp_path)
     runner = Runner(s)
     runner.task_req["t1"] = "r1"
-    await runner._on_track({"job_id": "42", "task_id": "t1", "agent_id": "a", "name": "job"})
+    await runner._track_job({"job_id": "42", "task_id": "t1", "agent_id": "a", "name": "job"})
     runner.store.close()
     restored = Runner(s)
     assert restored.jobs["42"]["scheduler"] == "mock"
@@ -975,7 +975,7 @@ async def test_runner_restart_with_tracked_hpc_job_wakes_without_resubmitting(tm
             pass
 
     first.workspaces[task.id] = Workspace()
-    await first._on_track({"job_id": "42", "task_id": task.id, "agent_id": "a", "name": "analysis"})
+    await first._track_job({"job_id": "42", "task_id": task.id, "agent_id": "a", "name": "analysis"})
     first.store.close()
 
     restored = Runner(s)

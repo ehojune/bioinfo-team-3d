@@ -8,6 +8,7 @@ import pytest
 
 from labhq.policy import evaluate_tool
 from labhq.runner.daemon import Runner
+from labhq.runner.hpc_jobs import submit_job
 from labhq.settings import HpcSettings, PolicySettings, Settings
 from labhq.tools.scheduler import (
     Scheduler, build_script, parse_slurm_sacct, parse_slurm_squeue, slurm_cluster_directive, slurm_job,
@@ -191,7 +192,7 @@ async def test_runner_hibernates_until_slurm_job_finishes_then_wakes_once(tmp_pa
     fake = FakeSlurm()
     runner.scheduler._run = fake
     job_id = runner.scheduler.submit("/w/j.sh", "align")
-    await runner._on_track({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+    await runner._track_job({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
 
     def woke():
         return [e for e in runner.store.pending() if e["type"] == "jobs.finished"]
@@ -233,9 +234,14 @@ async def test_hpc_submit_asks_pi_before_sbatch_and_never_after_denial(tmp_path,
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(body, encoding="utf-8")
 
+    async def approve(payload):
+        order.append("/approval")
+        return decision
+
     async def broker(path, payload, timeout):
         order.append(path)
-        return decision if path == "/approval" else {}
+        assert path == "/jobs/submit"  # the runner asks the PI and runs sbatch (fixture: same fake backend)
+        return await submit_job(settings, backend, tmp_path, payload, approve)
 
     monkeypatch.setattr(hpc, "S", settings)
     monkeypatch.setattr(hpc, "WORKDIR", tmp_path)
@@ -244,12 +250,12 @@ async def test_hpc_submit_asks_pi_before_sbatch_and_never_after_denial(tmp_path,
     monkeypatch.setattr(hpc, "_broker", broker)
     denied = json.loads(await hpc.hpc_submit("#SBATCH --gres=gpu:1\necho ok", "align", cores=2))
     assert denied["submitted"] is False and "Do not resubmit" in denied["note"]
-    assert order == ["/approval"] and fake.calls == []
+    assert order == ["/jobs/submit", "/approval"] and fake.calls == []
 
     decision = {"approved": True}
     result = json.loads(await hpc.hpc_submit("#SBATCH --gres=gpu:1\necho ok", "align", cores=2))
     assert result["submitted"] and result["job_id"] == "4100"
-    assert order == ["/approval", "/approval", "/jobs/track"]
+    assert order == ["/jobs/submit", "/approval", "/jobs/submit", "/approval"]
     (call,) = fake.calls
     assert call[:5] == [*PREFIX, "sbatch"] and "--partition=short" in call and "--cpus-per-task=2" in call
     script = (tmp_path / "jobs").glob("align_*.sh")
@@ -396,7 +402,7 @@ async def test_runner_wakes_once_after_a_revoked_job(tmp_path):
     runner, fake = _runner(tmp_path)
     try:
         job_id = runner.scheduler.submit("/w/j.sh", "align")
-        await runner._on_track({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+        await runner._track_job({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
         fake.set(job_id, "REVOKED")
         fake.account(job_id)
         fake.purge(job_id)

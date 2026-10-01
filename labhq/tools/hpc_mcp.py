@@ -15,11 +15,10 @@ from pathlib import Path
 
 import httpx
 
-from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
 from ._mcpcompat import ToolError, make_server
 from .scheduler import (
-    Scheduler, build_script, checked_job_id, sanitize_job_name, script_directives, slurm_cluster_directive,
+    MAYBE_SUBMITTED, Scheduler, build_script, checked_job_id, sanitize_job_name, slurm_cluster_directive,
 )
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -167,41 +166,23 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                            S.hpc.user if S.hpc.submit_prefix else None)
     except (OSError, KeyError, RuntimeError) as e:
         raise ToolError(f"job file permissions: {e}") from e
-    ch = core_hours(cores, walltime)
-    # Directives (#SBATCH --array, #$ -pe, #PBS -J, …) can ask for more than cores × walltime and the command
-    # line does not override all of them, so any directive sends the job to the PI whatever the threshold (#172).
-    directives = script_directives(script)
-
-    if hpc_needs_approval(cores, walltime, S.policy) or directives:
-        preview = "\n".join(spath.read_text(encoding="utf-8").splitlines()[:40])
-        outside = f" · 스크립트 지시 {len(directives)}개는 core-h 계산 밖" if directives else ""
-        try:
-            dec = await _broker("/approval", {
-                "task_id": TASK, "agent_id": AGENT, "kind": "hpc_submit",
-                "summary": f"HPC 제출: {name} · {cores} cores · {mem} · {walltime} (~{ch:.1f} core-h){outside}",
-                "detail": {"reason": reason, "script_path": str(spath), "script_preview": preview, "queue": queue,
-                           "script_directives": directives[:50]},
-                "timeout_s": S.policy.approvals.timeout_s,
-            }, timeout=S.policy.approvals.timeout_s + 30)
-        except Exception as e:  # fail closed
-            raise ToolError(f"approval broker unreachable: {e}") from e
-        if not dec.get("approved"):
-            return json.dumps({"submitted": False, "reason": dec.get("note") or "denied by the PI",
-                               "note": "Do not resubmit this job unless the PI explicitly requests it."})
-
+    # The runner asks the PI when needed and runs the submit command itself: the id its own call returns is the
+    # only record hpc_cancel trusts later, and a broker call from the agent cannot skip the approval (#214 review).
     try:
-        job_id = await asyncio.to_thread(
-            SCHED.submit, str(spath), name, cores, mem, walltime, queue or S.hpc.default_queue,
-            str(logs / f"{name}_{stamp}.out"), str(logs / f"{name}_{stamp}.err"),
-        )
-    except Exception as e:
-        raise ToolError(str(e)) from e
-
-    try:
-        await _broker("/jobs/track", {"task_id": TASK, "agent_id": AGENT, "job_id": job_id,
-                                      "name": name, "script": str(spath), "core_hours": ch}, timeout=30)
-    except Exception:
-        pass
+        out = await _broker("/jobs/submit", {
+            "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
+            "walltime": walltime, "queue": queue, "reason": reason,
+        }, timeout=S.policy.approvals.timeout_s + S.hpc.command_timeout_s + 60)
+    except (httpx.ConnectError, ConnectionError) as e:  # fail closed
+        raise ToolError(f"labhq broker unreachable; the job was not submitted: {e}") from e
+    except Exception as e:  # the runner may have submitted before the answer was lost
+        raise ToolError(f"labhq broker failed: {e!r}{MAYBE_SUBMITTED}") from e
+    if out.get("error"):
+        raise ToolError(str(out["error"]))
+    if not out.get("submitted"):
+        return json.dumps({"submitted": False, "reason": out.get("reason") or "denied by the PI",
+                           "note": "Do not resubmit this job unless the PI explicitly requests it."})
+    job_id = out["job_id"]
     return json.dumps({
         "submitted": True, "job_id": job_id, "script": str(spath), "logs": str(logs),
         "output_dir": str(output_dir),

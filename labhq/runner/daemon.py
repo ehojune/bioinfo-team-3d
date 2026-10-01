@@ -7,6 +7,7 @@ task.dispatch, runs the agent's CLI in a per-task workspace, and streams normali
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
 from .approvals import Broker
+from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .workspace import TaskWorkspace
 
@@ -117,11 +119,12 @@ class Runner:
         self.ended_roots: list[tuple[float, str, bool, list[Path]]] = []
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
+        self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
-                             self._on_track, self._on_ask, self._owns_job)
+                             self._on_submit, self._on_ask, self._owns_job)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -706,6 +709,9 @@ class Runner:
                     result = rejected_step(result, outcome["reason"])
             finally:
                 ended = self.active_roots.pop(task.id, None)
+                # A submit command already running for this run lands in pending_jobs below; later ones are refused.
+                if in_flight := list(self.submitting.pop(task.id, ())):
+                    await asyncio.gather(*in_flight)
                 now = time.time()
                 if ended is not None:
                     self.ended_roots.append((now, task.id, *ended))
@@ -765,14 +771,49 @@ class Runner:
         await self.emit(Event(type=body.get("type", "agent.log"), task_id=tid, agent_id=body.get("agent_id"),
                               request_id=self.task_req.get(tid or ""), data=body.get("data") or {}))
 
-    async def _on_track(self, body: dict) -> None:
+    async def _on_submit(self, body: dict) -> dict:
+        """hpc_submit runs here (#214 review): the id the runner's own scheduler call printed is the record."""
+        tid, aid = body.get("task_id"), body.get("agent_id")
+        ws, running = self.workspaces.get(tid or ""), self.active_roots.get(tid or "")
+        if ws is None or running is None:
+            return {"error": "this task is not running on the runner; the job was not submitted"}
+        if running[0]:  # read-only tasks get a broker token too, but no HPC (read_only_profile)
+            return {"error": "a read-only task cannot submit HPC jobs; the job was not submitted"}
+
+        async def approve(payload: dict) -> dict:
+            return await self.broker.request_approval(ApprovalRequest.model_validate(
+                {**payload, "task_id": tid, "agent_id": aid, "request_id": body.get("request_id")}))
+
+        @contextlib.asynccontextmanager
+        async def gate():
+            # Same run as the call: a task that ended (or resumed as a new run) while the PI decided gets no job.
+            if self.active_roots.get(tid or "") is not running:
+                yield False
+                return
+            done = asyncio.get_running_loop().create_future()
+            self.submitting.setdefault(tid or "", set()).add(done)
+            try:
+                yield True  # run_task waits for this before it lists the task's pending jobs
+            finally:
+                self.submitting.get(tid or "", set()).discard(done)
+                done.set_result(None)
+
+        async def record(result: dict) -> None:
+            await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
+                                   "name": result["name"], "script": result["script"],
+                                   "core_hours": result["core_hours"]})
+
+        return await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record)
+
+    async def _track_job(self, body: dict) -> None:
+        """Watch a job the runner submitted. No broker endpoint reaches this with a caller's id."""
         jid, tid = str(body["job_id"]), body.get("task_id")
         ws = self.workspaces.get(tid or "")
         self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
                            "exit_status": None, "submitted_at": time.time(),
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
-                           "workdir": str(ws.dir) if ws else None}
+                           "workdir": str(ws.dir) if ws else None, "submitted_by_runner": True}
         self.store.put("job", jid, self.jobs[jid])
         if ws:
             ws.append_job({**body, "submitted_at": time.time()})
@@ -781,10 +822,14 @@ class Runner:
                               data={"job_id": jid, "name": body.get("name"), "core_hours": body.get("core_hours")}))
 
     async def _owns_job(self, identity: dict) -> bool:
-        """hpc_cancel scope (#172): a job this agent submitted through labhq in this task or request."""
+        """hpc_cancel scope (#172): a job the runner submitted for this agent in this task or request.
+
+        A record without the runner's mark came from an older broker that stored ids a task reported (#214 review).
+        """
         job_id = str(identity.get("job_id") or "")
         for tracked, j in self.jobs.items():
-            if not job_in_family(tracked, job_id) or j.get("agent_id") != identity.get("agent_id"):
+            if (not j.get("submitted_by_runner") or not job_in_family(tracked, job_id)
+                    or j.get("agent_id") != identity.get("agent_id")):
                 continue
             if j.get("task_id") == identity.get("task_id") or (
                     identity.get("request_id") and j.get("request_id") == identity.get("request_id")):

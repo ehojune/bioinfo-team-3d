@@ -3,6 +3,7 @@
 import json
 import subprocess
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from labhq.policy import evaluate_tool
 from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
+from labhq.runner.hpc_jobs import submit_job
 from labhq.settings import HpcSettings, PolicySettings, Settings
 from labhq.tools.scheduler import Scheduler, script_directives, slurm_cluster_directive
 from tests.fixtures.fake_slurm import FakeSlurm
@@ -41,10 +43,16 @@ def _mcp(monkeypatch, tmp_path, scheduler, *, threshold, broker_reply=None):
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(body, encoding="utf-8")
 
+    async def approve(payload):
+        seen.append(("/approval", payload))
+        return (broker_reply or {}).get("/approval", {})
+
     async def broker(path, payload, timeout):
         seen.append((path, payload))
         if isinstance(broker_reply, Exception):
             raise broker_reply
+        if path == "/jobs/submit":  # the runner's side of the call, with this fake scheduler
+            return await submit_job(settings, backend, tmp_path, payload, approve)
         return (broker_reply or {}).get(path, {})
 
     monkeypatch.setattr(hpc, "S", settings)
@@ -68,8 +76,9 @@ async def test_scheduler_directives_force_pi_approval_below_the_threshold(monkey
                           broker_reply={"/approval": {"approved": False, "note": "fixture PI denied"}})
     denied = json.loads(await hpc.hpc_submit(f"{directive}\nsleep 1", "array", cores=1, walltime="01:00:00"))
     assert denied["submitted"] is False and run.calls == []
-    (path, payload), = seen
-    assert path == "/approval" and payload["detail"]["script_directives"] == [directive]
+    assert [path for path, _ in seen] == ["/jobs/submit", "/approval"]
+    payload = seen[1][1]
+    assert payload["kind"] == "hpc_submit" and payload["detail"]["script_directives"] == [directive]
     assert "core-h 계산 밖" in payload["summary"]
 
 
@@ -82,7 +91,7 @@ def test_pbs_directive_prefix_from_the_environment_counts(monkeypatch):
 async def test_plain_script_below_the_threshold_still_needs_no_approval(monkeypatch, tmp_path):
     hpc, run, seen = _mcp(monkeypatch, tmp_path, "slurm", threshold=100)
     result = json.loads(await hpc.hpc_submit("# just a comment\nsleep 1", "plain", cores=1, walltime="01:00:00"))
-    assert result["submitted"] and [path for path, _ in seen] == ["/jobs/track"] and len(run.calls) == 1
+    assert result["submitted"] and [path for path, _ in seen] == ["/jobs/submit"] and len(run.calls) == 1
 
 
 # ---------- 2. cancel only jobs labhq tracks for this agent ----------
@@ -129,9 +138,9 @@ async def test_broker_owns_only_this_agents_tracked_jobs_and_their_tasks(tmp_pat
     runner = _runner(tmp_path)
     try:
         runner.task_req.update({"t1": "r1", "t2": "r1", "t9": "r9"})
-        await runner._on_track({"job_id": "4100", "task_id": "t1", "agent_id": "analyst", "name": "align"})
-        await runner._on_track({"job_id": "123[].pbs", "task_id": "t1", "agent_id": "analyst", "name": "qc"})
-        await runner._on_track({"job_id": "5200", "task_id": "t9", "agent_id": "other", "name": "theirs"})
+        await runner._track_job({"job_id": "4100", "task_id": "t1", "agent_id": "analyst", "name": "align"})
+        await runner._track_job({"job_id": "123[].pbs", "task_id": "t1", "agent_id": "analyst", "name": "qc"})
+        await runner._track_job({"job_id": "5200", "task_id": "t9", "agent_id": "other", "name": "theirs"})
         transport = httpx.ASGITransport(app=runner.broker.app)
 
         async def owned(token, job_id):
@@ -163,6 +172,245 @@ async def test_broker_without_ownership_handler_owns_nothing():
         assert r.json() == {"owned": False}
         bad = await c.post("/jobs/owned", headers={"X-Labhq-Token": "wrong"}, json={"job_id": "4100"})
         assert bad.status_code == 401
+
+
+# ---------- PR #214 review: ownership comes from the runner's own submission, never from a task's report ----------
+
+def _submit_runner(tmp_path, *, threshold=100):
+    runner = _runner(tmp_path)
+    runner.s.policy.approvals.hpc_core_hours_threshold = threshold
+    runner.scheduler._run = _Recorder("4100\n")
+    workdir = tmp_path / "runs" / "t1"
+    (workdir / "jobs").mkdir(parents=True)
+    appended = []
+    runner.workspaces["t1"] = SimpleNamespace(dir=workdir, append_job=appended.append,
+                                              append_event=lambda _: None)
+    runner.task_req["t1"] = "r1"
+    runner.active_roots["t1"] = (False, [workdir])  # set by run_task while the CLI runs
+    return runner, workdir, runner.broker.issue_task_token("t1", "analyst", "r1")
+
+
+async def _post(runner, token, path, body):
+    transport = httpx.ASGITransport(app=runner.broker.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
+        return await client.post(path, headers={"X-Labhq-Token": token}, json=body)
+
+
+async def test_a_job_id_the_task_reports_never_becomes_cancellable(tmp_path):
+    runner, _, token = _submit_runner(tmp_path)
+    try:
+        # Shared data account: the agent sees someone else's 5200 in hpc_queue and reports it with its own token.
+        await _post(runner, token, "/jobs/track", {"job_id": "5200", "name": "theirs"})
+        assert "5200" not in runner.jobs
+        assert (await _post(runner, token, "/jobs/owned", {"job_id": "5200"})).json() == {"owned": False}
+    finally:
+        runner.store.close()
+
+
+async def test_a_stored_job_without_the_runners_mark_is_not_owned(tmp_path):
+    runner, _, token = _submit_runner(tmp_path)
+    try:  # a record an older broker stored from a task's report
+        runner.jobs["5200"] = {"job_id": "5200", "task_id": "t1", "agent_id": "analyst", "request_id": "r1",
+                               "terminal": False}
+        assert (await _post(runner, token, "/jobs/owned", {"job_id": "5200"})).json() == {"owned": False}
+    finally:
+        runner.store.close()
+
+
+async def test_runner_submit_owns_the_id_its_own_scheduler_call_returned(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path)
+    try:
+        script = workdir / "jobs" / "align_1.sh"
+        script.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align", "cores": 1,
+                                                        "walltime": "01:00:00", "job_id": "5200"})
+        assert r.json()["submitted"] and r.json()["job_id"] == "4100"
+        (call,) = runner.scheduler._run.calls
+        assert call[0] == "sbatch" and call[-1] == str(script)
+        assert runner.jobs["4100"]["submitted_by_runner"] and "5200" not in runner.jobs
+        for job_id, owned in (("4100", True), ("4100_2", True), ("5200", False)):
+            assert (await _post(runner, token, "/jobs/owned", {"job_id": job_id})).json() == {"owned": owned}
+        stranger = runner.broker.issue_task_token("t3", "analyst", "r3")
+        assert (await _post(runner, stranger, "/jobs/owned", {"job_id": "4100"})).json() == {"owned": False}
+    finally:
+        runner.store.close()
+
+
+async def test_runner_submit_cannot_skip_the_pi(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path, threshold=0)
+    asked = []
+
+    async def deny(req):
+        asked.append(req)
+        return {"approved": False, "note": "fixture PI denied"}
+
+    runner.broker.request_approval = deny
+    try:
+        script = workdir / "jobs" / "align_1.sh"
+        script.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align", "cores": 1})
+        assert r.json() == {"submitted": False, "reason": "fixture PI denied"}
+        (req,) = asked
+        assert (req.kind, req.task_id, req.agent_id, req.request_id) == ("hpc_submit", "t1", "analyst", "r1")
+        assert runner.scheduler._run.calls == [] and runner.jobs == {}
+    finally:
+        runner.store.close()
+
+
+async def test_runner_submit_refuses_a_script_changed_after_the_pi_saw_it(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path, threshold=0)
+    script = workdir / "jobs" / "align_1.sh"
+    script.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+
+    async def approve_then_edit(req):
+        script.write_text("#!/bin/bash\n#SBATCH --array=1-1000\nsleep 1\n", encoding="utf-8")
+        return {"approved": True}
+
+    runner.broker.request_approval = approve_then_edit
+    try:
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align"})
+        assert "changed while waiting for the PI" in r.json()["error"]
+        assert runner.scheduler._run.calls == [] and runner.jobs == {}
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("after", ["ended", "resumed"])
+async def test_no_late_job_when_the_task_ends_while_the_pi_decides(tmp_path, after):
+    runner, workdir, token = _submit_runner(tmp_path, threshold=0)
+    script = workdir / "jobs" / "align_1.sh"
+    script.write_text("#!/bin/bash" + chr(10) + "sleep 1" + chr(10), encoding="utf-8")
+
+    async def approve_after_the_run(req):
+        runner.active_roots.pop("t1")  # cancelled or timed out: run_task's finally
+        if after == "resumed":  # the same task id runs again as a new session
+            runner.active_roots["t1"] = (False, [workdir])
+        return {"approved": True}
+
+    runner.broker.request_approval = approve_after_the_run
+    try:
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align"})
+        assert "task ended while waiting for the PI" in r.json()["error"]
+        assert runner.scheduler._run.calls == [] and runner.jobs == {}
+    finally:
+        runner.store.close()
+
+
+async def test_a_submit_still_running_when_the_cli_exits_lands_in_pending_jobs(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    from labhq.models import AgentSpec, Engine, Task, TaskResult
+
+    runner = _runner(tmp_path)
+    runner.s.policy.approvals.hpc_core_hours_threshold = 100
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def slow_sbatch(args):  # sbatch is still running when the agent CLI exits
+        calls.append(args)
+        started.set()
+        release.wait(10)
+        return CompletedProcess(args, 0, "4100\n", "")
+
+    runner.scheduler._run = slow_sbatch
+    agent = AgentSpec(id="analyst", name="Analyst", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    posted = []
+
+    class ExitsDuringSubmit:
+        async def run(self, ctx):
+            script = ctx.workdir / "jobs" / "align_1.sh"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("#!/bin/bash" + chr(10) + "sleep 1" + chr(10), encoding="utf-8")
+            posted.append(asyncio.create_task(_post(runner, ctx.env["LABHQ_BROKER_TOKEN"], "/jobs/submit",
+                                                    {"script": str(script), "name": "align"})))
+            await asyncio.to_thread(started.wait, 10)
+            threading.Timer(0.2, release.set).start()
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done", session_id="s1")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: ExitsDuringSubmit())
+    try:
+        result = await runner.run_task(Task(id="t1", agent_id=agent.id, prompt="align"))
+        assert result.pending_jobs == ["4100"] and len(calls) == 1
+        assert (await posted[0]).json()["job_id"] == "4100"
+        assert runner.jobs["4100"]["session_id"] == "s1"  # the wake-up resumes this session
+    finally:
+        release.set()
+        runner.store.close()
+
+
+def test_a_linked_jobs_folder_is_refused(tmp_path):
+    from labhq.runner.hpc_jobs import _script
+
+    workdir, outside = tmp_path / "w", tmp_path / "outside"
+    workdir.mkdir()
+    outside.mkdir()
+    (outside / "theirs.sh").write_text("echo theirs", encoding="utf-8")
+    try:
+        (workdir / "jobs").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks need privileges on this host")
+    assert _script(workdir, str(workdir / "jobs" / "theirs.sh")) is None
+
+
+async def test_runner_submit_takes_only_scripts_in_the_tasks_jobs_folder(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path)
+    elsewhere = tmp_path / "other.sh"
+    elsewhere.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+    try:
+        for raw in (str(elsewhere), "jobs/align_1.sh", str(workdir / "jobs" / "missing.sh"), None):
+            r = await _post(runner, token, "/jobs/submit", {"script": raw, "name": "align"})
+            assert "jobs folder" in r.json()["error"], raw
+        no_workspace = runner.broker.issue_task_token("t9", "analyst", "r9")
+        r = await _post(runner, no_workspace, "/jobs/submit", {"script": str(elsewhere), "name": "align"})
+        assert "not running" in r.json()["error"]
+        assert runner.scheduler._run.calls == [] and runner.jobs == {}
+    finally:
+        runner.store.close()
+
+
+async def test_read_only_task_cannot_submit_through_the_broker(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path)
+    runner.active_roots["t1"] = (True, [workdir])  # a consult reusing a workspace with an old jobs/*.sh
+    try:
+        script = workdir / "jobs" / "align_1.sh"
+        script.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align"})
+        assert "read-only task cannot submit" in r.json()["error"]
+        runner.active_roots.pop("t1")  # the task has ended; its token is no use either
+        r = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align"})
+        assert "not running" in r.json()["error"]
+        assert runner.scheduler._run.calls == [] and runner.jobs == {}
+    finally:
+        runner.store.close()
+
+
+async def test_task_tokens_cannot_post_runner_facts_or_pick_ids():
+    events, approvals = [], []
+
+    async def record(body):
+        events.append(body)
+
+    broker = Broker(0, None, record, None)
+
+    async def on_approval(req):
+        approvals.append(req)
+        broker.resolve(req.id, False, "fixture")
+
+    broker._on_approval = on_approval
+    token = broker.issue_task_token("t1", "analyst", "r1")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=broker.app), base_url="http://broker") as c:
+        for forged in ("task.result", "jobs.finished", "job.submitted", "approval.requested"):
+            r = await c.post("/event", headers={"X-Labhq-Token": token}, json={"type": forged, "data": {}})
+            assert r.status_code == 403, forged
+        assert (await c.post("/event", headers={"X-Labhq-Token": token},
+                             json={"type": "agent.log", "data": {"text": "hi"}})).status_code == 200
+        r = await c.post("/approval", headers={"X-Labhq-Token": token},
+                         json={"id": "appr_other_task", "kind": "tool_permission", "summary": "x", "timeout_s": 5})
+        assert r.json()["approved"] is False
+    assert [e["type"] for e in events] == ["agent.log"]
+    (req,) = approvals
+    assert req.id != "appr_other_task" and req.id.startswith("appr")
 
 
 # ---------- 3. -V / -v cannot export the MCP process environment ----------
@@ -261,7 +509,7 @@ async def test_runner_wakes_with_unknown_finished_when_accounting_is_disabled(tm
     runner.scheduler._run = fake
     try:
         job_id = runner.scheduler.submit("/w/j.sh", "align")
-        await runner._on_track({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+        await runner._track_job({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
         fake.purge(job_id)
         fake.fail["sacct"] = (1, "", DISABLED)
         for _ in range(3):

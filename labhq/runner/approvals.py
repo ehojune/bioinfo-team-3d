@@ -2,6 +2,10 @@
 
 MCP tools (hpc_submit, approval_prompt) POST here and block until the PI answers on the phone.
 The runner relays approval.requested → gateway → clients, and approval.resolved back here.
+
+A task token is held by the agent's own process, so every body is a claim. The broker sets identity and ids
+itself, passes on log lines only, and keeps no job record from a caller: jobs are submitted by the runner
+(/jobs/submit), which records the id its own scheduler call returned.
 """
 
 from __future__ import annotations
@@ -18,11 +22,12 @@ from ..ask_results import ask_result, read_ask_results
 from ..security import token_matches
 
 Handler = Callable[[Any], Awaitable[None]]
+Submit = Callable[[dict], Awaitable[dict]]
 Predicate = Callable[[dict], Awaitable[bool]]
 
 
 class Broker:
-    def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_track: Handler,
+    def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
                  on_ask: Handler | None = None, owns_job: Predicate | None = None):
         self.port = port
         self.pending: dict[str, asyncio.Future] = {}
@@ -30,9 +35,9 @@ class Broker:
         self.hibernate_asks: dict[str, str] = {}
         self.task_ask_results: dict[str, list[dict]] = {}
         self.identities: dict[str, dict[str, str | None]] = {}
-        self._on_approval, self._on_event, self._on_track = on_approval, on_event, on_track
+        self._on_approval, self._on_event, self._on_submit = on_approval, on_event, on_submit
         self._on_ask = on_ask
-        self._owns_job = owns_job  # without it no job counts as tracked, so hpc_cancel refuses all
+        self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -56,7 +61,8 @@ class Broker:
             supplied = body.get(field)
             if supplied is not None and supplied != identity[field]:
                 raise HTTPException(403, f"broker token does not grant {field}")
-        return {**body, **identity}
+        # Approval and ask ids key the runner's pending futures: the broker makes them, a caller cannot pick one.
+        return {**{key: value for key, value in body.items() if key != "id"}, **identity}
 
     def _build_app(self) -> FastAPI:
         app = FastAPI(title="labhq-broker")
@@ -72,13 +78,16 @@ class Broker:
 
         @app.post("/event")
         async def event(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            await self._on_event(self._identity(x_labhq_token, body))
+            identity = self._identity(x_labhq_token, body)
+            if identity.get("type", "agent.log") != "agent.log":
+                # task.result, jobs.finished, approval.* … are the runner's facts, never a task's report.
+                raise HTTPException(403, "task tokens may send agent.log events only")
+            await self._on_event(identity)
             return {"ok": True}
 
-        @app.post("/jobs/track")
-        async def track(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            await self._on_track(self._identity(x_labhq_token, body))
-            return {"ok": True}
+        @app.post("/jobs/submit")
+        async def submit(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            return await self._on_submit(self._identity(x_labhq_token, body))
 
         @app.post("/jobs/owned")
         async def owned(body: dict, x_labhq_token: str = Header(default="")) -> dict:

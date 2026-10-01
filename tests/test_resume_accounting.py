@@ -71,7 +71,7 @@ def setup_runner(tmp_path, monkeypatch, engine, groups=None, flow=None):
                         event.update(subtype="error_max_turns", is_error=True, result="turn limit")
                 await adapter.handle_line(json.dumps(event), state, ctx)
             if flow == "wake" and index < 2:
-                await runner._on_track({"job_id": f"j{index}", "task_id": ctx.task.id,
+                await runner._track_job({"job_id": f"j{index}", "task_id": ctx.task.id,
                                         "agent_id": agent.id})
             if ctx.task.meta.get("kind") == "wrap_up":
                 (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text("fixture", encoding="utf-8")
