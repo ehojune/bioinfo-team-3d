@@ -215,6 +215,64 @@ async def test_the_listing_reads_the_manifest_only_through_the_owned_file_check(
     assert result.outputs == ["outputs/RESULT_x.md"]
 
 
+def _workspace(tmp_path: Path) -> workspace_module.TaskWorkspace:
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    return workspace_module.TaskWorkspace(tmp_path / "root", _direct("task-h"), agent, override=tmp_path / "ws")
+
+
+def _swap_for_link(folder: Path, target: Path) -> bool:
+    """Move `folder` away and leave a link to `target` in its place, as a process the agent left running would.
+    False when the folder cannot be moved: on Windows a folder labhq holds open stays where it is."""
+    try:
+        folder.rename(folder.with_name(folder.name + ".moved"))
+    except OSError:
+        return False
+    _junction(folder, target)
+    return True
+
+
+def test_a_subfolder_swapped_for_a_link_after_its_check_is_not_followed(tmp_path, monkeypatch):
+    # Codex review P1 (PR #230): outputs/sub passed the no-follow check, then a leftover process replaced it with a
+    # link to a restricted folder before it was listed. Listing it by its path again followed the link.
+    vault = tmp_path / "vault"
+    _files(vault, {"secret.tsv": "controlled"})
+    ws = _workspace(tmp_path)
+    _files(ws.dir, {"outputs/top.tsv": "t", "outputs/sub/mine.tsv": "m"})
+    real = workspace_module.overlaps_zone
+    swapped: dict[str, bool] = {}
+
+    def check(path, zones):  # the zone check runs once the entry is known to be a plain folder
+        if Path(path).name == "sub" and not swapped:
+            swapped["done"] = _swap_for_link(ws.dir / "outputs" / "sub", vault)
+        return real(path, zones)
+
+    monkeypatch.setattr(workspace_module, "overlaps_zone", check)
+    found, note = ws.scan_outputs([vault.resolve()], max_entries=100, max_depth=4)
+    assert swapped == {"done": True}
+    assert found == ["outputs/top.tsv"]
+    assert note and "outputs/sub" in note
+
+
+def test_outputs_swapped_for_a_link_after_its_check_is_not_followed(tmp_path, monkeypatch):
+    # Codex review P1 (PR #230): the same for outputs/ itself, swapped between its check and its listing.
+    vault = tmp_path / "vault"
+    _files(vault, {"secret.tsv": "controlled"})
+    ws = _workspace(tmp_path)
+    _files(ws.dir, {"outputs/mine.tsv": "m"})
+    real = workspace_module.read_owned
+    swapped: dict[str, bool] = {}
+
+    def read(root, relative):  # the manifest is read after the outputs check, before the listing
+        if not swapped:
+            swapped["done"] = _swap_for_link(ws.dir / "outputs", vault)
+        return real(root, relative)
+
+    monkeypatch.setattr(workspace_module, "read_owned", read)
+    found, _note = ws.scan_outputs([vault.resolve()], max_entries=100, max_depth=4)
+    assert swapped  # moved and replaced (POSIX), or kept in place by the open handle (Windows)
+    assert found == ["outputs/mine.tsv"]
+
+
 def _release(fifo: Path | None) -> None:
     """Give a reader stuck on the FIFO its end of file, so a failing run does not hang the test session."""
     if fifo is None or not stat.S_ISFIFO(os.lstat(fifo).st_mode):
