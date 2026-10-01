@@ -448,10 +448,10 @@ class Orchestrator:
             payload = entry.get("payload") or {}
             if entry.get("completed") or payload.get("agent_id") != agent_id:
                 continue
-            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight.
+            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight. Unfinished
+            # consults count too: the in-memory consult lock does not survive a gateway restart,
+            # while the runner keeps running the consult it already accepted (#93).
             meta = payload.get("meta") or {}
-            if meta.get("kind") == "consult":
-                continue
             active_workdir = meta.get("workdir")
             if ((session_id and payload.get("resume_session_id") == session_id) or
                     (workdir and active_workdir and Path(workdir).resolve() == Path(active_workdir).resolve())):
@@ -523,6 +523,12 @@ class Orchestrator:
                 **{"from": "pi", "routed_to": "pi", "hard_stop": stop}))
             return
 
+        wait_online = getattr(self.hub, "wait_agent_online", None)
+        if (routed not in self.hub.agents and wait_online and
+                self.hub.requests.get(ask.request_id or "", {}).get("status") == "waiting_for_runner"):
+            # Resume approval re-routes asks before runners reconnect, and the roster is empty
+            # until they do. The target's runner may also still hold this ask's consult (#93).
+            await wait_online(routed, self.hub.s.gateway.resume_wait_s)
         if routed not in self.hub.agents:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
@@ -539,21 +545,26 @@ class Orchestrator:
         overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
                      "builtin_tools": "Read,Glob,Grep", "tools": []}
         async with self._consult_lock(ask.request_id, routed):
-            session_id, workdir = self._last_agent_session(ask.request_id, routed)
-            if requested.startswith("colleague:"):
-                session_id, workdir = None, None
-            if routed == self.cfg.cso_agent:
-                session_id = request.get("cso_session_id") or session_id
-                workdir = request.get("cso_workdir") or workdir
-            if self._consult_resource_busy(routed, session_id, workdir):
-                session_id, workdir = None, None
-            consult = Task(
-                agent_id=routed, request_id=ask.request_id, prompt=prompt,
-                resume_session_id=session_id if self.hub.supports_resume(routed) else None,
-                meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
-                      "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
-            )
-            result = await self.run_step(consult)
+            # After a gateway restart the runner may still be running this ask's consult.
+            # Adopt its result; when its outcome is unknown, isolate the new consult.
+            adopt = getattr(self.hub, "adopt_consult", None)
+            prior, result = await adopt(ask.id, routed) if adopt else (False, None)
+            if result is None:
+                session_id, workdir = self._last_agent_session(ask.request_id, routed)
+                if requested.startswith("colleague:"):
+                    session_id, workdir = None, None
+                if routed == self.cfg.cso_agent:
+                    session_id = request.get("cso_session_id") or session_id
+                    workdir = request.get("cso_workdir") or workdir
+                if prior or self._consult_resource_busy(routed, session_id, workdir):
+                    session_id, workdir = None, None
+                consult = Task(
+                    agent_id=routed, request_id=ask.request_id, prompt=prompt,
+                    resume_session_id=session_id if self.hub.supports_resume(routed) else None,
+                    meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
+                          "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+                )
+                result = await self.run_step(consult)
             if routed == self.cfg.cso_agent and result.session_id:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
