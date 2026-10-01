@@ -513,6 +513,101 @@ def test_reader_does_not_miss_a_writer_that_starts_around_the_open(tmp_path, mon
             writer.close()
 
 
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _RacedRead:
+    """A read-only connection whose query is followed, before _read_state checks again, by ``after()``."""
+
+    def __init__(self, db, after):
+        self.db, self.after = db, after
+
+    def execute(self, sql):
+        rows = self.db.execute(sql).fetchall()
+        self.after()
+        return _Rows(rows)
+
+    def close(self):
+        self.db.close()
+
+
+def _wrap_reader(monkeypatch, wrap):
+    """Wrap the first ``times`` opens of _open_state_readonly; record each open's immutable flag."""
+    from labhq.research import semantics
+    real, opened = semantics._open_state_readonly, []
+
+    def opener(path, *, immutable=None):
+        db = real(path, immutable=immutable)
+        opened.append(immutable)
+        return wrap(db, len(opened))
+
+    monkeypatch.setattr(semantics, "_open_state_readonly", opener)
+    return opened
+
+
+def _commit_and_close(path, key):
+    """A writer that commits and closes: its -wal is checkpointed and removed, the main file grows."""
+    import sqlite3
+    writer = sqlite3.connect(path)
+    writer.execute("INSERT INTO state VALUES ('task', ?, ?)", (key, json.dumps({"pad": "x" * 20000})))
+    writer.commit()
+    writer.close()
+
+
+def test_reader_reads_again_when_a_writer_commits_and_closes_after_the_immutable_read(tmp_path, monkeypatch):
+    """#156: no -wal is left to see, only the changed main file; the stamp check sends the read round again."""
+    from labhq.research.semantics import read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _RacedRead(db, lambda: _commit_and_close(path, "u"))
+                          if n == 1 else db)
+    assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t", "u"]
+    assert opened == [True, True] and sorted(p.name for p in tmp_path.iterdir()) == ["state.db"]
+
+
+def test_reader_gives_up_when_a_writer_keeps_changing_the_file(tmp_path, monkeypatch):
+    from labhq.research.semantics import RecordsError, read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _RacedRead(db, lambda: _commit_and_close(path, f"u{n}")))
+    with pytest.raises(RecordsError, match="kept changing"):
+        read_records(tmp_path, state_db=path)
+    assert opened == [True, True, True]
+
+
+class _TornRead(_RacedRead):
+    def execute(self, sql):
+        import sqlite3
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+
+def test_reader_retries_an_immutable_read_that_fails_and_reports_a_shared_one(tmp_path, monkeypatch):
+    """#156: an sqlite error in an immutable read may be a page torn by a writer that started meanwhile, so
+    the read is redone; the same error with a writer's -wal shared is reported at once."""
+    from labhq.research.semantics import RecordsError, read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _TornRead(db, None) if n == 1 else db)
+    assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t"]
+    assert opened == [True, True]
+    import sqlite3
+    writer = sqlite3.connect(path)
+    writer.execute("INSERT INTO state VALUES ('task', 'w', '{}')")
+    writer.commit()   # kept open: its -wal is beside the file, so the read shares it (not immutable)
+    try:
+        opened = _wrap_reader(monkeypatch, lambda db, n: _TornRead(db, None))
+        with pytest.raises(RecordsError, match="cannot read state rows"):
+            read_records(tmp_path, state_db=path)
+        assert opened == [False]
+    finally:
+        writer.close()
+
+
 # ---------------------------------------------------------------- isolation from the execution path
 
 ROOT = FIXTURE.parents[2]
