@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #126 #184 — 웹 화면 후속: snapshot 답 길이, 승인 알림·이름표·하단 줄
+
+- 결론: snapshot의 이어 묻기 답은 앞 2,000자만 싣고 전문은 펼칠 때 받는다(#126). 승인 알림은 승인이 끝나는 모든 경로에서 지우고, 3D 이름표는 자기 머리 위에 두고, 2.5D 데스크톱은 사무실·Command Center·직원 줄·입력창이 겹치지 않게 화면을 나눴다(#184).
+- 바뀐 것: gateway `snapshot_followup` 하나가 요청 followups와 replay 이벤트를 함께 자른다. 공용 reducer에 `fillFollowups`, 승인 종료 공통 `endApproval`(resolved·timeout·expired·stale, snapshot에서 사라진 승인)과 `toast.clear` effect를 넣었다. 3D는 skin별 label anchor 대신 head anchor 기준 `labelPoint`를 쓴다. mock 승인 예시는 `Rscript scripts/qc_plots.R`로 바꿨다. README §6을 맞췄고 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 실행한 것: 확인 조건마다 회귀를 먼저 썼고 수정 전 모두 실패했다. 긴 답 25개 snapshot은 2,644,490에서 276,687 bytes. 1200×750 브라우저 측정에서 사무실·Command Center 87–527px, 직원 줄 541–677px, 입력창 685–750px로 겹침 0, 페이지 스크롤 없이 마지막 행과 메신저 끝이 각자 안쪽 스크롤로 보인다. 전체 pytest 1928 passed/23 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 가로 621–999px 단일 열에서는 직원 줄이 sticky라 스크롤 중 내용을 덮는다. snapshot 크기는 여전히 요청 수에 비례한다. README 움직이는 화면은 다시 녹화하지 않았다.
+- 근거: `labhq/gateway/server.py`, `labhq/web/state.js`, `labhq/web/index.html`, `labhq/web/lab3d/src/{live,skins,main}.js`, `tests/test_followup.py`, `tests/web_issue126.cjs`, `tests/web_issue184.cjs`.
+
 ## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
 
 - 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.

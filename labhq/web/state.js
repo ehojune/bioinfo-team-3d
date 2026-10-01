@@ -67,6 +67,12 @@ function stripPrompt(p) {
   const m = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(p || '');
   return m ? `${m[1]}: ${m[2]}` : (p || '');
 }
+// #184: every way an approval ends (승인·거절·timeout, gateway restart, decided elsewhere) drops it and
+// tells the page to clear the notice it raised for that approval.
+function endApproval(id, effects) {
+  S.approvals.delete(id);
+  effects.push({ type: 'toast.clear', approval_id: id });
+}
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   S.current = (all.find(r => r.status === 'running') || all[0] || {}).id || null;
@@ -103,6 +109,7 @@ function apply(ev, replay = false) {
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   switch (t) {
     case 'snapshot': {
+      const pendingBefore = [...S.approvals.keys()];
       resetSnapshotState();
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
@@ -137,6 +144,7 @@ function apply(ev, replay = false) {
       S.cost = (d.requests || []).reduce((total, r) => total + (Number(r.cost_usd) || 0), 0);
       S.approvals.clear();
       (d.approvals || []).forEach(x => S.approvals.set(x.id, x));
+      for (const id of pendingBefore) if (!S.approvals.has(id)) effects.push({ type: 'toast.clear', approval_id: id });
       for (const a of S.agents.values()) if (a.state === 'done' || a.state === 'error' || a.state === 'queued') a.state = 'idle';
       pickCurrent();
       break;
@@ -207,10 +215,11 @@ function apply(ev, replay = false) {
     case 'approval.requested': {
       S.approvals.set(d.id, { ...d, agent_id: d.agent_id || id, request_id: d.request_id || rid });
       feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
-      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}` });
+      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
       break;
     }
-    case 'approval.resolved': S.approvals.delete(d.id); feed({ who: 'pi', text: d.approved ? '승인했어요' : `거절했어요${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
+    case 'approval.expired': case 'approval.stale': endApproval(d.id, effects); break;
+    case 'approval.resolved': endApproval(d.id, effects); feed({ who: 'pi', text: d.approved ? '승인했어요' : `거절했어요${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };

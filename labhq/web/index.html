@@ -273,6 +273,15 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .fu-q{margin:0;font-weight:500;overflow-wrap:anywhere}.fu-a{white-space:pre-wrap;font:14px/1.6 var(--ui);margin:4px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:260px;overflow:auto}
 .fu-wait,.fu-more{margin:4px 0 0;color:var(--muted);font-size:13px}.fu-more .btn{min-height:32px;margin-left:6px}.fu-err{margin:4px 0 0;color:var(--error-ink);font-size:13px}
 .fu-in{display:flex;gap:8px;align-items:flex-end;margin-top:8px}.fu-in textarea{flex:1;min-width:0;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--panel);color:var(--ink);resize:vertical}
+@media (min-width:1000px){/* #184: office, Command Center, staff strip and composer each get a band; the strip no longer covers the floor or the messenger */
+  body{height:100vh;height:100dvh;min-height:560px;display:flex;flex-direction:column;padding-bottom:0}
+  .top{flex:none}
+  .layout{flex:1 1 auto;min-height:0;width:100%;grid-template-rows:minmax(0,1fr)}
+  .office{max-height:100%;overflow:auto}
+  .panels{max-height:100%}
+  .staff-wrap{position:static;flex:none;width:100%}
+  .composer{position:relative;flex:none}
+}
 @media (max-width:620px){
   body{padding-bottom:160px}
   .panels{max-height:none;overflow:visible;padding:10px}
@@ -530,7 +539,8 @@ const officeState = LabHQState.createOfficeState({mode: MODE, now});
 const { S, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
-    if (effect.type === 'toast') toast(effect.text);
+    if (effect.type === 'toast') toast(effect.text, effect.approval_id);
+    if (effect.type === 'toast.clear' && toastApproval && toastApproval === effect.approval_id) hideToast();
     if (effect.type === 'renderAfter') setTimeout(schedule, effect.ms);
   }
   if (!replay && ev.type === 'approval.resolved') setTimeout(refreshHistory, 100);
@@ -767,16 +777,17 @@ function renderTargets() {
 
 /* ---------------- interactions ---------------- */
 let api = null;
-let toastTimer = 0;
+let toastTimer = 0, toastApproval = null;  // #184: a toast raised by an approval goes when that approval ends
 function refreshHistory() {
   if (!api?.history) return;
   api.history().then(items => { decisionHistory = items; schedule(); }).catch(() => {});
 }
-function toast(text) {
+function toast(text, approvalId = null) {
   const t = $('#toast');
-  t.textContent = text; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  t.textContent = text; t.classList.add('show'); toastApproval = approvalId;
+  clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, 2600);
 }
+function hideToast() { clearTimeout(toastTimer); toastApproval = null; $('#toast').classList.remove('show'); }
 /* reference pointers (#36): chips go with the next request; the gateway checks kinds and runner paths */
 const refs = { items: [], useDefaults: true };
 let refsKey = '';
