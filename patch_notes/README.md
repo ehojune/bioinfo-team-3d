@@ -12,6 +12,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:18 | [`8d92fd2`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/8d92fd2) | **`prefix_args`에 CLI 옵션이 있으면 이어 묻기·상담을 시작하지 않습니다** (#36). 읽기 전용 실행은 `extra_args`를 빼지만 `prefix_args`는 모든 인자 앞에 그대로 붙어서, Codex 실측에서 `exec` 앞의 sandbox 우회 옵션이 `-s read-only`를 넘어 파일을 썼습니다. `prefix_args`에는 script 경로만 두고 옵션은 `extra_args`에 두세요. |
+| 12:59 | [`93b7ab2`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/93b7ab2) | **README §10에 읽기 전용 profile과 사후 파일 비교를 적었습니다** (#36). Claude·Codex 각각 무엇을 끄는지, 사후 비교가 무엇을 못 보는지(Windows ctime, 감시 폴더 밖, managed hook)를 한계로 남겼습니다. |
+| 12:58 | [`abdbae8`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/abdbae8) | **이어 묻기·상담이 파일을 바꾸면 결과를 실패로 하고 알립니다** (#36, Codex 리뷰). 러너가 실행 전후로 작업 폴더와 쓰기 가능한 폴더를 비교해, 바뀌면 피드에 경고를 띄우고 manifest `read_only_changes`에 남깁니다. 되돌리지는 않고, 항목이 50,000개를 넘으면 실행하지 않습니다. |
+| 12:55 | [`b4d0815`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/b4d0815) | **이어 묻기·상담은 직원 설정에서 지우는 대신 읽기 전용 허용 목록으로 돕니다** (#36, Codex 리뷰). 직원 plugin의 SessionStart·Stop hook이 plan 모드 밖에서 shell을 돌릴 수 있었습니다. 이제 직원의 이름·역할·지침·모델·한도만 가져오고 plugin·hook·MCP·PI `extra_args`는 쓰지 않습니다. |
 | 12:17 | [`dfa94ce`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/dfa94ce) | **main 병합에서 consult 재시작 복구와 이 PR의 읽기 전용 지침을 함께 살렸습니다.** #93의 재시도 시작 번호와 이 PR의 읽기 전용 작업 wrap-up 건너뛰기를 둘 다 두고, 이어 묻기와 adopt 비용 합산 함수도 모두 남겼습니다. 연구 규약 import와 README 설명도 양쪽 내용을 합쳤습니다 |
 | 12:09 | [`ff5ee4a`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/ff5ee4a) | **공개 가드가 URL의 userinfo와 인코딩된 credential 이름도 가립니다** (#36). 요청 본문에 붙여 넣은 `https://user:password@host`·`https://TOKEN@host`와 `X%2DAmz%2DSignature`처럼 이름을 인코딩한 parameter가 그대로 게시될 수 있었습니다. `ssh://git@host` 같은 계정 이름은 그대로 둡니다. |
 | 12:08 | [`15fae4b`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/15fae4b) | **이어 묻기·상담에서는 직원 자신의 MCP 서버도 뺍니다** (#36, Codex 리뷰). MCP 서버는 Codex sandbox나 Claude plan 모드 밖에서 돌아, 쓰기 도구가 있는 서버를 단 직원은 읽기 전용 질의에서도 파일을 바꿀 수 있었습니다. 읽기 전용 제한은 이제 보낸 쪽이 아니라 러너가 직접 적용합니다. |
