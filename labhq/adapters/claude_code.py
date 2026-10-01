@@ -25,6 +25,12 @@ ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-comman
 # Skill-enabled staff drop the project source too: with project,local a stray `.claude/skills/*` left in a reused
 # workspace loads next to the plugin skill; with local only the plugin skill loads (probe 2026-09-28, Claude 2.1.282).
 SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
+# A read-only task loads no settings file at all: a reused workspace can hold a `.claude/settings.json` (hooks,
+# enabledPlugins, helper commands) that an earlier writable run left. The --settings JSON still applies, with
+# disableAllHooks on. Probed on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_read_only_*.jsonl): with
+# `--setting-sources project,local` and --plugin-dir, project and plugin SessionStart/Stop hooks ran under plan
+# mode and Read,Glob,Grep; with this profile none ran and the --settings deny rules still held.
+READ_ONLY_FLAGS = ["--setting-sources", "", "--disable-slash-commands"]
 WORKSPACE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -137,6 +143,7 @@ def plugin_provenance(name: str, path: Path) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
+    enforces_read_only = True  # plan mode, --tools Read,Glob,Grep, no settings file, disableAllHooks, no plugin
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
@@ -210,7 +217,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         deny = list(permissions.get("deny") or [])
         permissions["deny"] = list(dict.fromkeys([*deny, "SendMessage", "ListAgents"]))
         settings["permissions"] = permissions
-        if b.isolate_user_config:
+        if ctx.read_only:  # isolation is not optional here, and no hook of any source runs
+            cmd += READ_ONLY_FLAGS
+            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            settings["disableAllHooks"] = True
+        elif b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
             settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
             if a.allow_skills:
@@ -225,11 +236,12 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--tools", a.builtin_tools]
         if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):
             cmd += ["--permission-prompt-tool", PERMISSION_TOOL]
-        cmd += b.extra_args
-        for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
-            cmd += ["--plugin-dir", directory]
+        if not ctx.read_only:  # PI extra_args could load a plugin or lift plan mode; a read-only run takes none
+            cmd += b.extra_args
+            for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
+                cmd += ["--plugin-dir", directory]
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
-        for d in ctx.extra_dirs:
+        for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings
             cmd += ["--add-dir", d]
         allowed = [*a.tools, *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:

@@ -53,11 +53,78 @@ function renderResearchPlan(list, canonical) {
   });
 }
 
+const LETTERS = 'abcd';
+// Structured CSO questions (#36): options become buttons; the composed answer is the approval note (#34).
+function clarifyQuestions(approval) {
+  const list = approval?.kind === 'clarify' && Array.isArray(approval.detail?.questions) ? approval.detail.questions : [];
+  return list.filter(q => q && typeof q.question === 'string' && q.question.trim()).map(q => {
+    const options = Array.isArray(q.options) ? q.options.filter(o => typeof o === 'string' && o.trim()).slice(0, 4) : [];
+    return { question: q.question.trim(), options: options.length >= 2 ? options : [],
+      allow_free_text: options.length < 2 || q.allow_free_text !== false, depth: [30, 60, 90].includes(q.depth) ? q.depth : null };
+  });
+}
+
+function renderQuestions(container, approval) {
+  const questions = clarifyQuestions(approval);
+  const signature = JSON.stringify(questions);
+  // Live renders must keep the PI's half-finished choices.
+  if (container._questionSignature === signature) return;
+  container._questionSignature = signature;
+  container.replaceChildren();
+  container.hidden = questions.length === 0;
+  container._questions = questions;
+  container._answers = questions.map((question, index) => {
+    const answer = { choice: null, free: null };
+    const block = add(container, 'fieldset', '', 'clarify-q');
+    add(block, 'legend', `${index + 1}. ${question.question}`);
+    if (question.depth) add(block, 'small', `깊이 약 ${question.depth}분`, 'clarify-depth');
+    if (question.options.length) {
+      const group = add(block, 'div', '', 'clarify-options');
+      const buttons = question.options.map((option, choice) => {
+        const button = add(group, 'button', `${LETTERS[choice]}) ${option}`, 'btn opt');
+        button.type = 'button'; button.ariaPressed = 'false';
+        button.onclick = () => {
+          answer.choice = answer.choice === choice ? null : choice;
+          buttons.forEach((other, i) => { other.ariaPressed = String(answer.choice === i); other.className = answer.choice === i ? 'btn opt on' : 'btn opt'; });
+        };
+        return button;
+      });
+    }
+    if (question.allow_free_text) {
+      answer.free = add(block, 'input', '', 'clarify-free');
+      answer.free.type = 'text';
+      answer.free.placeholder = question.options.length ? '직접 답하기(선택)' : '답을 적어 주세요';
+    }
+    return answer;
+  });
+}
+
+// The note to send: for structured questions every question needs a choice or text, otherwise ''.
+export function decisionNote(row, approved = true) {
+  const parts = row?._decisionParts;
+  if (!parts) return '';
+  const note = String(parts.note.value || '').trim();
+  const questions = parts.questions?._questions || [];
+  if (!approved || !questions.length) return note;
+  const lines = [];
+  for (const [index, question] of questions.entries()) {
+    const answer = parts.questions._answers[index], picked = [];
+    if (answer.choice !== null) picked.push(`${LETTERS[answer.choice]}) ${question.options[answer.choice]}`);
+    const free = answer.free ? String(answer.free.value || '').trim() : '';
+    if (free) picked.push(free);
+    if (!picked.length) return '';
+    lines.push(`Q${index + 1}. ${picked.join(' — ')}`);
+  }
+  if (note) lines.push(`메모: ${note}`);
+  return lines.join('\n');
+}
+
 function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] : [];
+  const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
-    [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key))]
+    [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
       .map(key => [key, detailValue(detail[key])]) : detail == null ? [] : [['detail', detailValue(detail)]];
   const signature = JSON.stringify(entries);
   // Live renders must preserve the PI's expanded values while the detail is unchanged.
@@ -89,6 +156,8 @@ function createCard(item, options) {
   const who = add(kind, 'span');
   const summary = add(body, 'p', '', 'sum');
   const detail = add(body, 'div', '', 'why');
+  const questions = add(body, 'div', '', 'clarify');
+  questions.hidden = true;
   const timing = add(body, 'p', '', 'decision-meta');
   const note = add(body, 'textarea', '', 'ans');
   note.rows = item.value.kind === 'clarify' ? 3 : 2;
@@ -97,7 +166,7 @@ function createCard(item, options) {
   approve.type = 'button';
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, summary, detail, timing, note, approve, deny };
+  row._decisionParts = { title, who, summary, detail, questions, timing, note, approve, deny };
   return row;
 }
 
@@ -141,8 +210,10 @@ function updateCard(row, item, options) {
   p.who.textContent = options.nick ? options.nick(value.agent_id) || 'CSO' : value.agent_id || 'CSO';
   p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : value.summary || value.id;
   renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail);
+  renderQuestions(p.questions, item.type === 'approval' ? value : null);
   p.timing.textContent = item.type === 'approval' ? timingText(value, options) : '';
-  p.note.placeholder = value.kind === 'clarify' ? '답을 적어 주세요. 거절하면 요청을 멈춥니다.' : '메모(선택)';
+  p.note.placeholder = value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
+    ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : value.kind === 'clarify' ? '답하고 진행' : '승인';
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : '거절';
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
@@ -150,8 +221,8 @@ function updateCard(row, item, options) {
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
   p.approve.disabled = disabled; p.deny.disabled = disabled;
   if (options.onDecision) {
-    p.approve.onclick = () => options.onDecision(value, true, p.note.value.trim(), item.type);
-    p.deny.onclick = () => options.onDecision(value, false, p.note.value.trim(), item.type);
+    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type);
+    p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type);
   }
 }
 

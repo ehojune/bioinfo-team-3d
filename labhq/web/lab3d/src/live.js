@@ -28,7 +28,8 @@ export function startLiveOffice(onState) {
       emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onDecision:(a, approved, note) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
-        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = '답을 적어 주세요.'; return; }
+        // Structured questions compose their answer in decide.js; an unanswered one yields ''.
+        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'; return; }
         ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
@@ -41,6 +42,9 @@ export function startLiveOffice(onState) {
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
+      for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
+        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+      }
     }
     onState(S, visual);
   }

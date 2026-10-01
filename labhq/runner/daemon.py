@@ -17,18 +17,20 @@ from pathlib import Path
 
 import websockets
 
-from ..adapters import get_adapter
+from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
-from ..policy import claude_settings
+from ..intake import overlaps_restricted, reference_roots, scan_reference_dir, withhold_reference_paths
+from ..policy import claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler
 from ..util import output_relpath, short
 from .approvals import Broker
+from .integrity import ReadOnlyWatch, watch_roots
 from .workspace import TaskWorkspace
 
 log = logging.getLogger("labhq.runner")
@@ -102,9 +104,15 @@ class Runner:
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
+        self.reference_write_warned: set[str] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
+        # Folders each running task may write (read-only tasks: only labhq's own result files in their workspace),
+        # and those of tasks that ended recently, as (ended_at, task_id, read_only, roots): a read-only check
+        # leaves out what another task wrote while it ran.
+        self.active_roots: dict[str, tuple[bool, list[Path]]] = {}
+        self.ended_roots: list[tuple[float, str, bool, list[Path]]] = []
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
         self.jobs: dict[str, dict] = self.store.all("job")
@@ -342,7 +350,8 @@ class Runner:
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
-        if task.meta.get("agent_overrides"):
+        # A read-only task takes nothing from the sender: run_task rebuilds it as read_only_profile.
+        if task.meta.get("agent_overrides") and not is_read_only_task(task.meta):
             agent = agent.model_copy(update=task.meta["agent_overrides"])
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
@@ -394,8 +403,109 @@ class Runner:
                     latest, latest_at = run, timestamp
         return latest
 
+    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """Re-check path references with resolved paths on this runner (#36).
+
+        Returns (read-only dirs, skip notes, refused values). A refused value is also withheld from the prompt.
+        """
+        roots = [Path(root).resolve() for root in reference_roots(self.s)]
+        open_dirs = [Path(d).resolve() for d in writable]
+        # Zones are compared lexically and resolved: a zone written through a symlink or junction
+        # (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at.
+        zones: list[Path] = []
+        for zone in self.s.policy.data_zones:
+            if zone.level == "restricted":
+                try:
+                    zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
+                except (OSError, RuntimeError, ValueError):
+                    continue
+        kept: list[str] = []
+        skipped: list[str] = []
+        refused: list[str] = []
+        for raw in task.meta.get("reference_dirs") or []:
+            reason = None
+            try:
+                path = Path(os.path.expanduser(str(raw))).resolve()
+            except (OSError, RuntimeError, ValueError):
+                reason = "경로를 읽을 수 없음"
+            else:
+                directory = path if path.is_dir() else path.parent
+                if not path.exists():
+                    reason = "없음"
+                elif not any(directory == root or directory.is_relative_to(root) for root in roots):
+                    reason = "runner.reference_roots 밖"
+                elif overlaps_restricted(str(directory), self.s) or any(
+                        directory == zone or directory.is_relative_to(zone) or zone.is_relative_to(directory)
+                        for zone in zones):
+                    reason = "통제 데이터 구역"
+                else:
+                    # A link or mount below the folder can still lead into a zone (reference/link/raw.tsv).
+                    reason = scan_reference_dir(directory, zones, self.s.runner.reference_scan_max_entries,
+                                                self.s.runner.reference_scan_max_depth)
+                if reason is None:
+                    if any(directory == d or directory.is_relative_to(d) for d in open_dirs):
+                        continue  # already reachable through a writable project dir; keep that dir writable
+                    if any(d.is_relative_to(directory) for d in open_dirs):
+                        # Edit/Write deny rules on this folder would also cover the task's own workspace or project.
+                        reason = "작업·프로젝트 폴더를 품고 있어 읽기 전용으로 열 수 없음"
+                    elif str(directory) not in kept:
+                        kept.append(str(directory))
+            if reason is not None:
+                skipped.append(f"{raw} ({reason})")
+                refused.append(str(raw))
+        return kept, skipped, refused
+
+    def _busy_roots(self, task_id: str, since: float | None = None) -> list[Path]:
+        """Folders other tasks are writing now (or wrote after `since`), and workspaces of unfinished HPC jobs."""
+        entries = [(ro, roots) for tid, (ro, roots) in self.active_roots.items() if tid != task_id]
+        if since is not None:
+            entries += [(ro, roots) for ended, tid, ro, roots in self.ended_roots if ended >= since and tid != task_id]
+        # A read-only task still gets labhq's result files in its own workspace.
+        busy = [path for ro, roots in entries for path in (roots[:1] if ro else roots)]
+        return busy + [Path(j["workdir"]).resolve() for j in self.jobs.values()
+                       if not j.get("terminal") and j.get("workdir")]
+
+    def _read_only_watch(self, task: Task, ws: TaskWorkspace, dirs: list[str]) -> tuple[ReadOnlyWatch, list[str]]:
+        """The folders a read-only run is checked against, minus those another task is writing right now (#36)."""
+        roots, skip, notes = watch_roots(ws.dir, dirs, self._busy_roots(task.id))
+        owned = {Path(w.dir).resolve() for w in self.workspaces.values()}
+        base = self.ws_root.resolve()
+        owned |= {Path(d).resolve() for d in task.meta.get("upstream_dirs", [])
+                  if Path(d).resolve().is_relative_to(base)}
+        return ReadOnlyWatch(roots, self.s.runner.read_only_check_max_entries, owned, skip), notes
+
+    async def _read_only_verdict(self, result: TaskResult, watch: ReadOnlyWatch, emit, ws: TaskWorkspace,
+                                 task_id: str) -> TaskResult:
+        """A read-only run that changed files fails, and the PI is told what changed. Nothing is undone."""
+        changed, left_out = watch.changed(self._busy_roots(task_id, since=watch.started))
+        if left_out:
+            await emit("agent.log", {"level": "warn", "text": (
+                f"읽기 전용 쓰기 확인에서 제외: 바뀐 항목 {left_out}개 (실행 중 다른 작업이 쓰던 폴더)")})
+        if not changed:
+            return result
+        # Labels stand in for local paths in the error and the alert; this local manifest maps them back.
+        ws.update_run(task_id, read_only_changes=changed,
+                      read_only_roots={label: str(path) for label, path in watch.roots})
+        shown = ", ".join(changed[:8]) + (f" 외 {len(changed) - 8}개" if len(changed) > 8 else "")
+        await emit("agent.log", {"level": "alert", "text": (
+            f"읽기 전용 실행이 파일을 바꿨습니다: {shown}. 되돌리지 않았으니 확인하세요. "
+            "전체 목록과 폴더 이름은 작업 폴더 manifest.json의 read_only_changes·read_only_roots")})
+        return result.model_copy(update={
+            "ok": False, "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
+                                  "(read-only policy)"})
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
+        read_only = is_read_only_task(task.meta)
+        refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
+        if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
+            await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
+            return result
+        if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
+            agent = read_only_profile(agent)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         ws = TaskWorkspace(self.ws_root, task, agent, override)
         self.workspaces[task.id] = ws
@@ -409,15 +519,35 @@ class Runner:
         semaphore = self.consult_sem if consult else self.sem
         async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
-            prompt = ws.write_task_md()
-            if agent.contract and agent.contract.skill_dir:
-                ws.install_skill(Path(agent.contract.skill_dir))
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     extra_dirs.append(str(upstream))
+            # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
+            for note in skipped:
+                await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
+            if refused:  # before TASK.md is written: a refused reference must not stay named in the prompt
+                kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
+                task = ws.task = task.model_copy(update={
+                    "prompt": withhold_reference_paths(task.prompt, refused, kept),
+                    "context": withhold_reference_paths(task.context, refused, kept)})
+            prompt = ws.write_task_md()
+            if agent.contract and agent.contract.skill_dir:
+                ws.install_skill(Path(agent.contract.skill_dir))
+            for directory in read_dirs:
+                # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
+                # make a reference truly read-only. Say so once per directory instead of implying a guarantee.
+                if directory not in self.reference_write_warned and os.access(directory, os.W_OK):
+                    self.reference_write_warned.add(directory)
+                    await emit("agent.log", {"level": "warn", "text": (
+                        f"참고 경로가 러너 계정에 쓰기 가능합니다: {directory}. labhq는 쓰기 권한을 주지 않지만 "
+                        "미리 허용된 셸 명령은 막지 못하니 OS 권한으로 읽기 전용으로 두세요")})
+            watch, notes = self._read_only_watch(task, ws, [*extra_dirs, *read_dirs]) if read_only else (None, [])
+            for note in notes:
+                await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
@@ -428,26 +558,51 @@ class Runner:
                 env["LABHQ_CONFIG"] = self.s.config_path
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                mcp_servers=self._mcp_servers(agent, env, allow_ask=not consult),
+                # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
+                # MCP server at all (the profile has none, and labhq_ask would be one).
+                mcp_servers=[] if read_only else self._mcp_servers(agent, env),
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
-                emit=emit, prompt=prompt, extra_dirs=extra_dirs,
-                claude_settings=claude_settings(self.s.policy),
+                emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
+                claude_settings=claude_read_only(claude_settings(self.s.policy), read_dirs),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
+                read_only=read_only,
+                # Again after prepare(): the adapter's own files (Codex AGENTS.md) are not the agent's writes.
+                before_spawn=watch.take_baseline if watch else None,
             )
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
-                          resume_of=task.resume_session_id, kind=task.meta.get("kind"))
+                          resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                          **({"reference_dirs": read_dirs} if read_dirs else {}))
+            self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             try:
-                result = await get_adapter(agent.engine, self.s).run(ctx)
+                refused = watch.take_baseline() if watch else None
+                if refused:  # fail closed: a run whose writes cannot be checked does not start
+                    result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
+                else:
+                    try:
+                        result = await get_adapter(agent.engine, self.s).run(ctx)
+                    except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
+                        if watch and watch.baseline is not None:
+                            await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
+                                                          watch, emit, ws, task.id)
+                        raise
+                    if watch and watch.baseline is not None:
+                        result = await self._read_only_verdict(result, watch, emit, ws, task.id)
                 result.pending_asks = self.broker.pending_for_task(task.id)
                 outcome = read_ask_results(self.broker.task_ask_results.get(task.id, []))
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
+                ended = self.active_roots.pop(task.id, None)
+                now = time.time()
+                if ended is not None:
+                    self.ended_roots.append((now, task.id, *ended))
+                horizon = now - self.s.runner.task_timeout_s - 60  # no read-only run is older than this
+                self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
                 self.broker.finish_task(task.id)
 

@@ -21,6 +21,11 @@ from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, Run
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
 WEB_TOOLS = {"WebSearch", "WebFetch"}
+# Features a read-only task turns off: each runs code or acts outside the `-s read-only` sandbox (hooks run shell
+# commands, plugins bring hooks and MCP servers, apps are remote connector tools, computer/browser use drive the
+# desktop). Names checked against `codex features list` on codex-cli 0.159.2; an unknown name is a CLI error, so a
+# Codex that lacks one fails the read-only run instead of running it with that feature on.
+READ_ONLY_DISABLED_FEATURES = ("hooks", "plugins", "apps", "computer_use", "browser_use")
 
 
 def _toml(v: object) -> str:
@@ -35,6 +40,7 @@ def _is_windows() -> bool:
 
 class CodexAdapter(AgentAdapter):
     engine = "codex"
+    enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
 
     def prepare(self, ctx: RunContext) -> None:
         (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
@@ -59,7 +65,7 @@ class CodexAdapter(AgentAdapter):
 
     def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
         b = self.settings.engines.codex
-        if not b.isolate_user_config or b.allow_global_agents_md:
+        if not (b.isolate_user_config or ctx.read_only) or b.allow_global_agents_md:
             return None
         found = [n for home in child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")
                  for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
@@ -73,12 +79,15 @@ class CodexAdapter(AgentAdapter):
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
         flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), "-s", a.sandbox,
                  "-o", str(ctx.meta_dir / "last_message.txt")]
-        if b.isolate_user_config:
+        if b.isolate_user_config or ctx.read_only:
             # config.toml carries the PI's plugins, notify hook and MCP servers. The global AGENTS.md in
             # CODEX_HOME still loads; set engines.codex.env.CODEX_HOME to a separate staff login to drop it.
             flags += ["--ignore-user-config", "--ignore-rules"]
             if _is_windows() and b.windows_sandbox:
                 flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
+        if ctx.read_only:
+            for feature in READ_ONLY_DISABLED_FEATURES:
+                flags += ["--disable", feature]
         if a.model:
             flags += ["-m", a.model]
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
@@ -103,7 +112,8 @@ class CodexAdapter(AgentAdapter):
                     flags += ["-c", f"{key}.env={_toml(expand_env(s.env))}"]
             else:
                 flags += ["-c", f"{key}.url={_toml(s.url)}"]
-        flags += b.extra_args
+        if not ctx.read_only:  # PI extra_args could widen the sandbox; a read-only run takes none
+            flags += b.extra_args
         prompt = self.compose_prompt(ctx)
         if t.resume_session_id:
             return [b.bin, "exec", *flags, "resume", t.resume_session_id, prompt]

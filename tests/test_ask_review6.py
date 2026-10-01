@@ -216,3 +216,20 @@ async def test_4149114513_retry_preserves_in_session_answers(hub, engine, raises
         assert retry.resume_session_id == ("attempt-session" if resumable else None)
         if not resumable:
             assert task.prompt in retry.prompt and task.context in retry.prompt
+
+
+@pytest.mark.parametrize("engine", ["cli", "gemini"])
+async def test_consult_is_refused_when_the_target_engine_cannot_stay_read_only(hub, engine):
+    hub.agents["facilities"] = {"engine": engine}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="facilities", ok=True, text="edited the pipeline")
+
+    hub.dispatch = dispatch
+    ask = question(0, "facilities")
+    await hub.orchestrator.answer_ask(ask, "origin")
+    assert calls == []
+    answer = hub.store.get("ask", ask.id)["answer"]
+    assert answer["status"] == "rejected" and "읽기 전용" in answer["reason"] and engine in answer["reason"]

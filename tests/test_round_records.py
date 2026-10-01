@@ -497,3 +497,21 @@ async def test_every_write_directly_follows_a_visibility_check_even_after_paging
     before = len([c for c in remote.calls if c[0] in {"POST", "PATCH"}])
     assert not await hub.rounds.publish("req-a")
     assert len([c for c in remote.calls if c[0] in {"POST", "PATCH"}]) == before
+
+
+@pytest.mark.asyncio
+async def test_round_records_drop_url_reference_queries_before_posting(tmp_path):
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-url", "done")
+    legacy = "https://share.example.org/f/cohort.tsv?dl=opaqueSHAREcode99&token=tok123456"
+    hub.requests["req-url"].update(references=[{"kind": "url", "value": legacy, "source": "request"}],
+                                   report=f"Finished from {legacy}")
+    hub.save_request("req-url")
+    hub.rounds.write("req-url")
+    assert await hub.rounds.publish("req-url")
+    body = remote.issue["body"]
+    assert "opaqueSHAREcode99" not in body and "tok123456" not in body
+    assert "https://share.example.org/f/cohort.tsv" in body
