@@ -121,6 +121,8 @@ Contract rules:
 - Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
 - For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
   a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
+  Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
+  the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
 - PR 1 pilot stops after CP1 approval. Research steps will not run in this PR.
 
