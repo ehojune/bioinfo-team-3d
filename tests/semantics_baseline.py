@@ -303,8 +303,8 @@ def run_row(reg: Registry, run: str) -> dict:
     elif resume_of is None:
         resumes = NONE
     elif resumes is None or resumes == UNKNOWN:
-        found = resume_candidates(reg, run)
-        resumes, unknown["resumes"] = UNKNOWN, "shared_session" if found else "no_matching_session"
+        reason, found = resume_unknown(reg, run)
+        resumes, unknown["resumes"] = UNKNOWN, reason
         if found:
             candidates["resumes"] = found
     wake = one(db, "SELECT dst FROM relation WHERE src = ? AND rel = 'wake_of'", run)
@@ -325,10 +325,21 @@ def run_row(reg: Registry, run: str) -> dict:
     return row
 
 
-def resume_candidates(reg: Registry, run: str) -> list[str]:
+def resume_candidates(reg: Registry, run: str, *, untimed: bool = False) -> list[str]:
+    """Other runs in the workspace on the resumed session: started earlier, or (untimed) with either start NULL."""
+    order = "(o.started_at IS NULL OR r.started_at IS NULL)" if untimed else "o.started_at < r.started_at"
     return [r[0] for r in reg.db.execute(
         "SELECT o.id FROM run o JOIN run r ON r.id = ? WHERE o.workspace = r.workspace AND o.id != r.id "
-        "AND o.session_id = r.resume_of AND o.started_at < r.started_at ORDER BY o.id", (run,))]
+        f"AND o.session_id = r.resume_of AND {order} ORDER BY o.id", (run,))]
+
+
+def resume_unknown(reg: Registry, run: str) -> tuple[str, list[str]]:
+    """Why a resume parent is unknown, and its candidates (#155: a matching run with an unknown start)."""
+    found = resume_candidates(reg, run)
+    if found:
+        return "shared_session", found
+    untimed = resume_candidates(reg, run, untimed=True)
+    return ("start_unknown", untimed) if untimed else ("no_matching_session", [])
 
 
 def artifact_row(reg: Registry, aid: str) -> dict:
@@ -420,8 +431,8 @@ def edge_dict(reg: Registry, rowid: int) -> dict:
     if value:
         edge["value"] = value
     if dst == UNKNOWN and kind == "resumes":
-        found = resume_candidates(reg, src)
-        edge["unknown"] = {"dst": "shared_session" if found else "no_matching_session"}
+        reason, found = resume_unknown(reg, src)
+        edge["unknown"] = {"dst": reason}
         if found:
             edge["candidates"] = {"dst": found}
     elif dst == UNKNOWN:

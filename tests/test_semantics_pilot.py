@@ -40,7 +40,9 @@ def test_fixture_records_are_the_pinned_version():
 # ---------------------------------------------------------------- model B
 
 
-MODEL_SHA256 = "8fd9860f5f480831ce2794ee585b513e1da8ad5f7c1bc8e4c49d6c06d0548159"
+# Model revision for #155 (reason start_unknown). The pilot measurement in docs/reference/semantics_pilot.md
+# ran on the previous hash 8fd9860f…8159.
+MODEL_SHA256 = "9ed9aa1eecdb41e9dc062e1184cdaacd7d94b2f7d4c335354eeb99ea7b561b42"
 
 
 @pytest.fixture(scope="module")
@@ -283,30 +285,39 @@ def test_models_agree_on_edge_cases_outside_the_17_queries():
     assert outs["B"]["art"]["node"]["reported_by"] == ["run:t0_ws/t0"]
 
 
-def resume_in_one_workspace(peer_started: bool):
-    """t1 resumes t0's session in t0's workspace; without peer_started t0 left no started_at anywhere (#137)."""
+def resume_in_one_workspace(peer_started: bool, own_started: bool = True):
+    """t1 resumes t0's session in t0's workspace; without peer_started t0 left no started_at anywhere (#137),
+    without own_started t1 did not."""
     records = pilot.chain_records(2)
     t0, t1 = copy.deepcopy(records.tasks["t0"]), copy.deepcopy(records.tasks["t1"])
     if not peer_started:
         t0["result"]["provenance"] = {"runs": {}}
+    if not own_started:
+        t1["result"]["provenance"] = {"runs": {}}
     t1["payload"]["resume_session_id"] = "sess_t0"
     t1["result"].update(workdir=t0["result"]["workdir"], workdir_id="t0_ws", outputs=["outputs/o1.tsv"])
     return type(records)(**{**records.__dict__, "tasks": {"t0": t0, "t1": t1}})
 
 
-@pytest.mark.parametrize("peer_started, resumes, reason", [
-    (True, "run:t0_ws/t0", None),
-    (False, "unknown", "no_matching_session"),
+@pytest.mark.parametrize("peer_started, own_started, resumes, reason", [
+    (True, True, "run:t0_ws/t0", None),
+    (False, True, "unknown", "start_unknown"),
+    (True, False, "unknown", "start_unknown"),
 ])
-def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started, resumes, reason):
-    """#137: a peer run whose started_at is unknown drops out of the comparison instead of raising TypeError."""
+def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started, own_started, resumes, reason):
+    """#137: a run whose started_at is unknown drops out of the comparison instead of raising TypeError.
+    #155: a matching session whose order cannot be judged says so, never "no matching session"."""
     outs = {}
     for name in ("B", "A"):
         impl = pilot.IMPLS[name]()
-        p = impl.project(resume_in_one_workspace(peer_started))
+        p = impl.project(resume_in_one_workspace(peer_started, own_started))
         outs[name] = pilot.result_of(impl.audit_lineage(p, run="run:t0_ws/t1"))
     node = outs["B"]["node"]
     assert (node["resumes"], (node.get("unknown") or {}).get("resumes")) == (resumes, reason)
+    if reason:
+        assert node["candidates"]["resumes"] == ["run:t0_ws/t0"]
+        gap = next(g for g in outs["B"]["gaps"] if g["field"] == "resumes")
+        assert (gap["reason"], gap["candidates"]) == ("start_unknown", ["run:t0_ws/t0"])
     assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
 
 

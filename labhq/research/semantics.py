@@ -528,17 +528,20 @@ def judge_resume(resume_of: str | None, started_at: float | None, peers: Iterabl
                  ) -> Judged:
     """peers: (run id, session_id, started_at) of the other runs in the same workspace.
 
-    A run whose start is unknown, this one or a peer, is never earlier or later: it drops out.
+    A run whose start is unknown, this one or a peer, is never earlier or later: it drops out. When no known
+    earlier run is left but a run on the session dropped out that way, the reason is start_unknown (#155).
     """
     if resume_of is None:
         return Judged(NONE)
     mine = _instant(started_at)
-    earlier = tuple(sorted(run for run, session, start in peers
-                           if session == resume_of and mine is not None and _instant(start) is not None
-                           and _instant(start) < mine))
+    same = [(run, _instant(start)) for run, session, start in peers if session == resume_of]
+    earlier = tuple(sorted(run for run, start in same if mine is not None and start is not None and start < mine))
     if len(earlier) == 1:
         return Judged(earlier[0])
-    return Judged(UNKNOWN, "shared_session", earlier) if earlier else Judged(UNKNOWN, "no_matching_session")
+    if earlier:
+        return Judged(UNKNOWN, "shared_session", earlier)
+    untimed = tuple(sorted(run for run, start in same if mine is None or start is None))
+    return Judged(UNKNOWN, "start_unknown", untimed) if untimed else Judged(UNKNOWN, "no_matching_session")
 
 
 def judge_retry(attempt: Any) -> Judged:

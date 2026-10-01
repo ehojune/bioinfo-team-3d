@@ -69,7 +69,7 @@ traversal:
 
 reasons:
   unknown: [multiple_reporters, no_reported_output, not_observed, multiple_hashes, manifest_missing, shared_session,
-            no_matching_session, parent_missing, no_data_type_source, not_declared, generator_unknown,
+            no_matching_session, start_unknown, parent_missing, no_data_type_source, not_declared, generator_unknown,
             no_contract_record, unresolved_input_ref, no_plan_hash]
   cautions: [shared_ancestor_review, resume_parent_ambiguous, cycle, depth_limit]
 
@@ -80,7 +80,7 @@ constraints:
   reuse_from_declared_use:  {judge: judge_reuse, rule: reuse,
                              says: "use comes only from declared input_refs; reuse depends on the reporting scope, unknown without a reporter"}
   resume_by_session:        {judge: judge_resume, rule: [resume, session],
-                             says: "resume_of names one earlier run's session in the same workspace; several such runs leave the parent unknown with a caution; resume is not the same run"}
+                             says: "resume_of names one earlier run's session in the same workspace; several such runs leave the parent unknown with a caution; a run on that session whose start or own start is unknown leaves it unknown as start_unknown; resume is not the same run"}
   retry_by_attempt:         {judge: judge_retry, rule: retry,
                              says: "retry is SQLite attempt > 1, judged apart from resume"}
   wake_by_parent:           {judge: judge_wake, rule: wake,
