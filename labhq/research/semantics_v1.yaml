@@ -48,9 +48,9 @@ field_basis:
   verification_scope: reported
 
 reuse:
-  scope: request          # a use is reuse only when the reporting request differs from the using run's request
-  kinds: [reused_cross_request, same_request, unknown]
-  reuse_kinds: [reused_cross_request]
+  scope: run              # a use is reuse when another run reported the artifact (pilot change 1; was: request)
+  kinds: [reused_cross_request, reused_same_request, same_request, unknown]
+  reuse_kinds: [reused_cross_request, reused_same_request]
 
 data_type:
   source: none            # v1 records hold no per-artifact data meaning

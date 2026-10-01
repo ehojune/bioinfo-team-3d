@@ -39,7 +39,7 @@ def test_fixture_records_are_the_pinned_version():
 # ---------------------------------------------------------------- model B
 
 
-MODEL_SHA256 = "7e26aa271226c7027e606346f995154ead095ce1c105d5907ec2a678a59ca909"
+MODEL_SHA256 = "0308ed44c1bd80f2d7750d5ca4f97c5040547b5a1bc6ca0565463365926828ce"
 
 
 @pytest.fixture(scope="module")
@@ -128,9 +128,9 @@ def test_defects_are_counted_by_cause_not_by_query(fixture_paths, expected):
     a8 = "art:req_q3/task_q3scan_ag_seqtool/outputs/scan_extra.tsv"
     p.artifacts[a8]["generated_by"] = "run:task_q3scan_ag_seqtool/task_q3scan"
     p.artifacts[a8]["unknown"].pop("generated_by")
-    scored = pilot.score_queries(expected, "base", pilot.run_queries(impl, p, expected))
+    scored = pilot.score_queries(expected, impl.state, pilot.run_queries(impl, p, expected))
     assert sorted(q for q, v in scored.items() if not v["ok"]) == ["q04", "q05", "q10", "q11", "q17"]
-    assert sorted(pilot.defect_causes(impl, p, expected, "base", scored)) == ["gen"]
+    assert sorted(pilot.defect_causes(impl, p, expected, impl.state, scored)) == ["gen"]
     assert pilot.forbidden_violations(impl, p, expected) == ["F11"]
 
 
@@ -159,13 +159,17 @@ def edge_case_records():
 
 
 def test_models_agree_on_edge_cases_outside_the_17_queries():
-    outs = {}
+    outs, states = {}, set()
     for name in ("B", "A"):
         impl = pilot.IMPLS[name]()
+        states.add(impl.state)
         p = impl.project(edge_case_records())
         outs[name] = {"run": pilot.result_of(impl.audit_lineage(p, run="run:t1_ws/t1")),
                       "art": pilot.result_of(impl.audit_lineage(p, artifact="art:req_c/t0_ws/outputs/o.tsv"))}
     for key in ("run", "art"):
+        if len(states) > 1:   # mid-change the two answer different reuse scopes; compare the rest
+            for out in (outs["B"][key], outs["A"][key]):
+                out.pop("uses", None)
         assert pilot.canon(outs["B"][key]) == pilot.canon(outs["A"][key])
     node = outs["B"]["run"]["node"]
     assert (node["resumes"], node["unknown"]["resumes"]) == ("unknown", "no_matching_session")
