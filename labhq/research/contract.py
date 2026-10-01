@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from ..intake import ClarifyingQuestion
+from ..vocab.declare import MAX_ENTRIES, MAX_KEY, MAX_NAME
 from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
 
 
@@ -153,9 +154,9 @@ class OutputTypeEntry(StrictModel):
     labhq.vocab.declare builds these from the CSO's raw entries before validation, so a malformed declaration is
     dropped there and never fails the contract. ``vocab`` freezes the meaning the PI approves at CP1."""
 
-    name: str = Field(min_length=1, max_length=256)
-    data_type: str | None = Field(default=None, max_length=64)
-    format: str | None = Field(default=None, max_length=64)
+    name: str = Field(min_length=1, max_length=MAX_NAME)
+    data_type: str | None = Field(default=None, max_length=MAX_KEY)
+    format: str | None = Field(default=None, max_length=MAX_KEY)
     vocab: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_serializer(mode="wrap")
@@ -175,7 +176,7 @@ class ResearchStep(StrictModel):
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
-    output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=64)
+    output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=MAX_ENTRIES)
 
     @model_serializer(mode="wrap")
     def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
@@ -262,7 +263,7 @@ class ArtifactRef(StrictModel):
     @field_validator("data_type", "format", mode="before")
     @classmethod
     def _short_key(cls, value: Any) -> str | None:
-        return value.strip() if isinstance(value, str) and 0 < len(value.strip()) <= 64 else None
+        return value.strip() if isinstance(value, str) and 0 < len(value.strip()) <= MAX_KEY else None
 
     @model_serializer(mode="wrap")
     def _drop_missing(self, handler: Any) -> dict[str, Any]:

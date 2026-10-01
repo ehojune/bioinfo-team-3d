@@ -765,8 +765,7 @@ def project(model: SemanticModel, records: Records, *, types_vocab: Any = _CURRE
         row["_packs"] = packs
         row["_meta"] = meta
         research = records.results.get(tid)
-        staff = {normalize_artifact_path(ref.path): {"data_type": ref.data_type, "format": ref.format}
-                 for ref in (research.artifact_refs if research else []) if ref.data_type or ref.format}
+        staff = output_types.staff_declarations(research.artifact_refs if research else [], normalize_artifact_path)
         row["_types"] = output_types.read((task.get("payload") or {}).get("meta"), result, types_vocab,
                                           normalize=normalize_artifact_path, staff=staff)
         p.runs[run] = row

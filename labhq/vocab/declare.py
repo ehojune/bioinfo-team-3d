@@ -38,6 +38,8 @@ MAX_NAME = 256          # characters of one declared name
 MAX_KEY = 64            # characters of one declared key
 MAX_STEP_BYTES = 8192   # JSON bytes of one step's raw output_types
 MAX_RECORDS = 1000      # declarations or records read from one task row
+MAX_ENTRIES = 64        # entries of one step: the research contract (ResearchStep.output_types) has the same cap
+CONFLICT = "\x00conflict"  # a staff field declared more than once for one file; never a vocabulary key
 _ENTRY_KEYS = {"name", *FIELDS}
 
 
@@ -73,7 +75,7 @@ def normalize_entries(outputs: Iterable[str], raw: Any, vocab: Vocab) -> tuple[l
         issues["over_budget"] += 1
         return [], issues
     declared = {rel for rel in map(output_relpath, outputs) if rel and rel != "outputs"}
-    if len(raw) > len(declared):  # never more entries than outputs; dropping all keeps the result order-free
+    if len(raw) > min(len(declared), MAX_ENTRIES):  # dropping all keeps the result order-free
         issues["too_many"] += 1
         return [], issues
     found: dict[str, dict[str, list[str | None]]] = {}
@@ -259,6 +261,22 @@ def _from_meta(given: Any, field: str, version: Any, vocab: Vocab | None) -> Fie
     return Field(value, "declared", source="plan") if vocab.is_key(BRANCH[field], value) else unknown("invalid_declaration")
 
 
+def staff_declarations(refs: Iterable[Any], normalize: Callable[[str], str]) -> dict[str, dict[str, str]]:
+    """Staff declarations of validated research artifact refs, per normalized path. A field declared by more than
+    one ref for the same file is CONFLICT whatever the values and their order (as plan duplicates are)."""
+    seen: dict[str, dict[str, list[str]]] = {}
+    for ref in refs:
+        path = getattr(ref, "path", None)
+        if not isinstance(path, str) or not path.strip():
+            continue
+        for field in FIELDS:
+            value = getattr(ref, field, None)
+            if isinstance(value, str):
+                seen.setdefault(normalize(path), {}).setdefault(field, []).append(value)
+    return {path: {f: (vs[0] if len(vs) == 1 else CONFLICT) for f, vs in fields.items()}
+            for path, fields in seen.items()}
+
+
 def _by_path(value: Any, normalize: Callable[[str], str]) -> dict[str, Any]:
     """Normalized path -> entry; two spellings of one file make that file conflicting (None)."""
     out: dict[str, Any] = {}
@@ -308,7 +326,9 @@ def read(meta: Mapping[str, Any] | None, result: Mapping[str, Any] | None, vocab
             if value is None:
                 continue
             current = fields[field]
-            if current.basis in ("declared", "inferred") and current.value != value:
+            if value == CONFLICT:
+                fields[field] = unknown("declaration_conflict")
+            elif current.basis in ("declared", "inferred") and current.value != value:
                 fields[field] = unknown("declaration_conflict")
             elif current.basis == "unknown" and current.reason == "not_declared":
                 # a staff key counts under the version the task was dispatched with, never under today's

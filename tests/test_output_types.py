@@ -290,3 +290,39 @@ def test_staff_declarations_count_only_under_the_dispatch_version_and_conflicts_
     assert fields["outputs/a.tsv"]["data_type"].reason == "declaration_conflict"
     assert (fields["outputs/b.tsv"]["data_type"].value, fields["outputs/b.tsv"]["data_type"].source) == ("table", "staff")
     assert read({}, staff=staff)["outputs/b.tsv"]["data_type"].reason == "vocab_changed"
+
+
+# ---------------------------------------------------------------- review follow-ups (one cap, staff duplicates)
+
+def test_one_entry_cap_for_the_normalizer_and_the_research_contract():
+    from labhq.research.contract import OutputTypeEntry, ResearchStep
+
+    outputs = [f"outputs/o{i}.tsv" for i in range(declare.MAX_ENTRIES + 1)]
+    raw = [{"name": o, "format": "tsv"} for o in outputs]
+    assert declare.normalize_entries(outputs, raw, V) == ([], {"too_many": 1})
+    entries, issues = declare.normalize_entries(outputs[:-1], raw[:-1], V)
+    assert len(entries) == declare.MAX_ENTRIES and issues == {}
+    step = {"id": "s1", "agent_id": "worker", "instruction": "x", "phase": "analysis", "claim_ids": [],
+            "input_refs": [], "outputs": outputs[:-1], "checks": ["qc"], "evidence_slots": [], "depends_on": [],
+            "output_types": entries}
+    assert len(ResearchStep.model_validate(step).output_types) == declare.MAX_ENTRIES
+    assert OutputTypeEntry.model_fields["name"].metadata[-1].max_length == declare.MAX_NAME
+
+
+class Ref:
+    def __init__(self, path, data_type=None, format=None):
+        self.path, self.data_type, self.format = path, data_type, format
+
+
+def test_staff_duplicates_for_one_file_conflict_in_any_order():
+    refs = [Ref("outputs/a.tsv", "raw_counts"), Ref("./outputs/a.tsv", "normalized_counts"),
+            Ref("outputs/b.tsv", "table", "tsv"), Ref("outputs/b.tsv", "table")]
+    outcomes = {json.dumps(declare.staff_declarations(order, normalize_artifact_path), sort_keys=True)
+                for order in itertools.permutations(refs)}
+    assert len(outcomes) == 1
+    staff = declare.staff_declarations(refs, normalize_artifact_path)
+    assert staff["outputs/a.tsv"]["data_type"] == declare.CONFLICT and staff["outputs/b.tsv"]["format"] == "tsv"
+    assert staff["outputs/b.tsv"]["data_type"] == declare.CONFLICT  # the same value twice is still two declarations
+    fields = read({"output_types_vocab": V.sha256}, staff=staff)
+    assert fields["outputs/a.tsv"]["data_type"].reason == "declaration_conflict"
+    assert fields["outputs/b.tsv"]["format"].value == "tsv"

@@ -64,7 +64,8 @@ def test_the_view_has_no_actions():
     imported |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert imported <= {"__future__", "hashlib", "re", "collections.abc", "dataclasses", "typing",
                         "evidence.claims",  # normalize_artifact_path: one spelling per path, as the model uses
-                        "vocab.declare"}  # the one declaration reader both models use; pure, no file read (#221)
+                        "vocab.declare",  # the one declaration reader both models use; pure, no file read (#221)
+                        "contract"}  # validate_research_result: staff declarations as the provenance model reads them
     calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not calls & {"open", "exec", "eval", "__import__"}
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
@@ -143,6 +144,7 @@ import json  # noqa: E402
 
 from labhq import vocab as output_vocab  # noqa: E402
 from labhq.research import semantics as sem  # noqa: E402
+from labhq.research.semantics_objects import type_artifacts  # noqa: E402
 from labhq.research.semantics_shadow import ShadowConfig, read_rows, take_snapshot  # noqa: E402
 from labhq.vocab import declare  # noqa: E402
 
@@ -189,3 +191,47 @@ def test_the_line_s_object_type_counts_hold_no_key_or_id(tmp_path):
     objects = line_for(hub, "req_a")["objects"]
     assert objects["artifact_types"]["data_type"] == {"declared": 1, "unknown": 1}
     assert "raw_counts" not in json.dumps(objects) and "tsv" not in json.dumps(objects)
+
+
+def _research_snapshot(tmp_path, refs):
+    from labhq.research.contract import plan_sha256
+    from tests.test_research_evidence import minimal_plan, result as research_result
+
+    plan = minimal_plan()
+    plan["steps"][0]["outputs"] = ["outputs/a.tsv", "outputs/b.tsv"]
+    wd, _ = workspace(tmp_path, "task_r1", "analyst", {"outputs/a.tsv": b"x", "outputs/b.tsv": b"y"})
+    row = task_row("req_r", "task_r1", "s1", "analyst", wd, ["outputs/a.tsv", "outputs/b.tsv"])
+    row["payload"]["meta"].update({"output_types_vocab": V.sha256,
+                                   "output_types": {"outputs/a.tsv": {"data_type": "raw_counts"}}})
+    row["result"]["structured"] = research_result(plan_sha256=plan_sha256(plan), artifact_refs=refs)
+    request = {**request_row("req_r", [("s1", "analyst")]), "plan": plan,
+               "research_contract": {"plan_sha256": plan_sha256(plan)}, "intake": {"work_kind": "research"}}
+    hub = fake_hub(tmp_path, {"req_r": request}, {"task_r1": row})
+    snap = take_snapshot(hub, "req_r", ShadowConfig())
+    read_rows(snap, lambda: None)
+    return snap
+
+
+def _both_models(snap):
+    objects = {a["data_type"] for a in type_artifacts(build_view(snap), snap, V).objects["Artifact"].values()}
+    records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"])
+    assert invalid == 0
+    provenance = {row["data_type"] for row in sem.project(sem.load_model(), records, types_vocab=V).artifacts.values()}
+    return objects, provenance
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_both_models_read_staff_declarations_and_their_conflicts_alike(tmp_path, reverse):
+    refs = [{"artifact_id": "a1", "path": "outputs/a.tsv", "data_type": "normalized_counts"},
+            {"artifact_id": "a2", "path": "outputs/b.tsv", "data_type": "table"},
+            {"artifact_id": "a3", "path": "./outputs/b.tsv", "data_type": "de_table"}]
+    objects, provenance = _both_models(_research_snapshot(tmp_path, refs[::-1] if reverse else refs))
+    # a.tsv: the plan said raw_counts, the staff normalized_counts; b.tsv: two staff refs disagree
+    assert objects == provenance == {sem.UNKNOWN}
+
+
+def test_a_staff_only_declaration_counts_in_both_models(tmp_path):
+    refs = [{"artifact_id": "a1", "path": "outputs/a.tsv"}, {"artifact_id": "a2", "path": "outputs/b.tsv",
+                                                              "data_type": "table"}]
+    objects, provenance = _both_models(_research_snapshot(tmp_path, refs))
+    assert objects == provenance == {"raw_counts", "table"}

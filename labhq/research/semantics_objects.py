@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..evidence.claims import normalize_artifact_path
-from ..vocab.declare import FIELDS, UNKNOWN, read, unknown
+from ..vocab.declare import FIELDS, UNKNOWN, read, staff_declarations, unknown
+from .contract import validate_research_result
 
 OBJECT_TYPES = ("Staff", "Request", "Step", "Task", "Job", "DataAsset", "Approval", "Artifact")
 # link type -> (source object type, allowed target types)
@@ -91,13 +92,22 @@ def type_artifacts(view: ObjectView, snap: Mapping[str, Any], vocab: Any) -> Obj
     under the ``vocab`` the caller loaded (None: every declaration reads as unknown). Read-only attributes: no
     link, approval or action depends on them. A file several tasks reported with different types is unknown."""
     rid = snap["rid"]
+    req = (snap.get("requests") or {}).get(rid) or {}
+    plan = req.get("plan") if req.get("research_contract") and isinstance(req.get("plan"), dict) else None
     seen: dict[str, list[dict[str, Any]]] = {}
     for _, task in sorted((snap.get("tasks") or {}).items()):
         if task.get("request_id") != rid:
             continue
         result = task.get("result") if isinstance(task.get("result"), dict) else {}
         payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
-        typed = read(payload.get("meta"), result, vocab, normalize=normalize_artifact_path)
+        staff: dict[str, dict[str, str]] = {}
+        if plan is not None and task.get("step_id") and result.get("structured"):
+            try:  # the provenance model's own check, so both models read the same staff declarations
+                refs = validate_research_result(result["structured"], plan=plan).artifact_refs
+                staff = staff_declarations(refs, normalize_artifact_path)
+            except (ValueError, TypeError):
+                staff = {}
+        typed = read(payload.get("meta"), result, vocab, normalize=normalize_artifact_path, staff=staff)
         for out in result.get("outputs") or []:
             path = normalize_artifact_path(str(out))
             art = f"artifact:{opaque(rid, result.get('workdir_id'), path)}"
