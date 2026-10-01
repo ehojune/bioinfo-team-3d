@@ -119,8 +119,16 @@ function apply(ev, replay = false) {
         if (r.review) q.review = r.review;
         if (r.status !== 'running') q.phase = 'done';
       }
+      const restored = new Map();
       for (const task of d.running_tasks || []) {
         if (!task.request_id || !task.step_id) continue;
+        const key = `${task.request_id}:${task.step_id}`, previous = restored.get(key);
+        const rank = [task.state === 'running' ? 1 : 0, Number(task.dispatched_at) || 0];
+        if (previous && (previous.rank[0] > rank[0] ||
+            (previous.rank[0] === rank[0] && previous.rank[1] > rank[1]))) continue;
+        restored.set(key, { task, rank });
+      }
+      for (const { task } of restored.values()) {
         const q = S.requests.get(task.request_id);
         if (!q) continue;
         q.steps[task.step_id] = task.state === 'running' ? 'working' : task.state;

@@ -93,14 +93,14 @@ class GitHubHTTPError(RuntimeError):
         super().__init__(f"GitHub {method} {path} → {response.status_code}: {response.text[:300]}")
         self.status_code = response.status_code
         self.retry_after = response.headers.get("retry-after")
-        self.rate_limit_reset = response.headers.get("x-ratelimit-reset")
-        self.rate_limited = (response.status_code == 429 or
-                             response.status_code == 403 and
-                             (response.headers.get("x-ratelimit-remaining") == "0" or
-                              self.retry_after is not None or self.rate_limit_reset is not None))
+        remaining = response.headers.get("x-ratelimit-remaining")
+        self.rate_limit_reset = (response.headers.get("x-ratelimit-reset")
+                                 if response.status_code == 403 and remaining == "0" else None)
+        self.rate_limited = (response.status_code == 429 or self.retry_after is not None or
+                             response.status_code == 403 and remaining == "0")
 
     def retry_delay_s(self, now: float | None = None) -> float:
-        """Server-provided lower bound for the next request, in seconds."""
+        """Return the server-provided lower bound before another request."""
         current = time.time() if now is None else now
         delays: list[float] = []
         if self.retry_after:
