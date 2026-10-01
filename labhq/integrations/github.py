@@ -51,8 +51,9 @@ QUERY_PARAM = re.compile(r"[?&;#]([^=&#;?\s\"'<>)\]]+)=")
 QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
 # `scheme://user:password@host` or `https://TOKEN@host`: the whole userinfo is a credential. `ssh://git@host`
 # names only an account and stays.
-# JSON-escaped slashes (`https:\/\/user:pw@host`) count (#134).
-URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})([^/\\?#\s@\"'<>]+)@")
+# JSON-escaped slashes (`https:\/\/user:pw@host`) count (#134); a backslash that escapes no slash stays part
+# of the userinfo, as in a Windows domain account (`CORP\alice:pw@proxy`).
+URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})((?:[^/\\?#\s@\"'<>]|\\(?!/))+)@")
 USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
 # Webhook URLs carry the credential in the path, under no parameter name (#134). Only these hosts are known;
 # a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count.

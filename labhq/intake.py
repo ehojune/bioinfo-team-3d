@@ -423,19 +423,24 @@ def overlaps_zone(path: Path, zones: list[Path]) -> bool:
     return any(_within(path, zone) or _within(zone, path) for zone in zones)
 
 
-def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: bool = False):
+def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: bool = False,
+          zones: list[Path] | tuple[Path, ...] = ()):
     """Entries below `directory` that can lead elsewhere, as (kind, path, info), listed without following links.
 
     kind is "link" (info: the resolved target, or None when it cannot be resolved), "mount", or a stop:
     "limit" (info: why) or "unreadable". With `follow_outward`, a directory link whose target lies outside
     `directory` is listed through the link path, sharing the caps, so a second link behind it is seen too.
+    With `zones`, nothing inside a restricted zone is listed and no link is followed into a folder holding
+    one: listing a zone reads its entries on the runner, and only the way into it is this check's concern.
     """
     real_root = directory.resolve()
+    if any(_within(real_root, zone) for zone in zones):
+        return
     visited = {real_root}
     seen = 0
-    stack: list[tuple[Path, int]] = [(directory, 0)]
+    stack: list[tuple[Path, Path, int]] = [(directory, real_root, 0)]  # (as listed, real path, depth)
     while stack:
-        current, depth = stack.pop()
+        current, real, depth = stack.pop()
         try:
             with os.scandir(current) as iterator:
                 entries = list(itertools.islice(iterator, max_entries - seen + 1))
@@ -452,14 +457,17 @@ def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: boo
                         target = None
                     yield "link", path, target
                     if (follow_outward and target is not None and target not in visited
-                            and not _within(target, real_root) and target.is_dir()):
+                            and not _within(target, real_root) and target.is_dir() and not overlaps_zone(target, zones)):
                         visited.add(target)
                         if depth + 1 > max_depth:
                             yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
                             return
-                        stack.append((path, depth + 1))
+                        stack.append((path, target, depth + 1))
                     continue  # otherwise the target is listed where it really lives
                 if entry.is_dir(follow_symlinks=False):
+                    child = real / entry.name
+                    if any(_within(child, zone) for zone in zones):
+                        continue  # a zone inside the folder: not listed; the zone's own deny rules name it
                     # On Windows a mount point is a reparse point (caught above); ismount costs ~3 ms a folder there.
                     if os.name != "nt" and os.path.ismount(entry.path):
                         yield "mount", path, None
@@ -467,7 +475,7 @@ def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: boo
                     if depth + 1 > max_depth:
                         yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
                         return
-                    stack.append((path, depth + 1))
+                    stack.append((path, child, depth + 1))
         except OSError:
             yield "unreadable", current, None
             return
@@ -511,25 +519,64 @@ def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: 
     shared cache), so only the zone is judged, with the same `overlaps_zone` as references. A directory link
     leaving the folder is listed through, so a zone two links away is found as well. Returns the offending
     link paths and, when the listing could not finish, why; the caller decides whether that is fatal.
+
+    Deny rules match the path as written, so every other link that leads to an offending one is returned
+    too: `b` naming the same folder as `a`, `c` naming the subfolder that holds it, `loop` naming the folder
+    itself. A folder listed once is not listed again through each alias; its links are matched by real path.
     """
     found: list[Path] = []
-    for kind, path, info in _walk(directory, max_entries, max_depth, follow_outward=True):
+    links: list[tuple[Path, Path]] = []
+    incomplete = None
+    for kind, path, info in _walk(directory, max_entries, max_depth, follow_outward=True, zones=zones):
         if kind == "link":
             if info is None or overlaps_zone(info, zones):
                 found.append(path)
+            else:
+                links.append((path, info))
         elif kind == "mount":
-            return found, f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
+            incomplete = f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
+            break
         elif kind == "unreadable":
-            return found, f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
+            incomplete = f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
+            break
         else:
-            return found, info
-    return found, None
+            incomplete = info
+            break
+    return found + _links_leading_to(found, links), incomplete
+
+
+def _location(path: Path) -> Path | None:
+    """Where a directory entry really is: its folder resolved, the entry itself not followed."""
+    try:
+        return path.parent.resolve() / path.name
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _links_leading_to(found: list[Path], links: list[tuple[Path, Path]]) -> list[Path]:
+    """Links (path, target) whose target holds one of `found`, or a link already taken, until none is added.
+
+    A taken link is denied whole: whatever route reaches a zone link through it is below its path.
+    """
+    reached = [loc for loc in map(_location, found) if loc is not None]
+    taken: list[Path] = []
+    pending = list(links)
+    while reached and pending:
+        hits = [(path, target) for path, target in pending if any(_within(loc, target) for loc in reached)]
+        if not hits:
+            break
+        pending = [link for link in pending if link not in hits]
+        taken += [path for path, _target in hits]
+        reached = [loc for loc in (_location(path) for path, _target in hits) if loc is not None]
+    return taken
 
 
 # ---------- how a reference may be echoed in text: one rule for prompts and published texts ----------
 
 # Either separator, or a run of them: JSON doubles a backslash (`C:\\refs`) and may escape a slash (`\/srv`).
-SEPARATOR = r"[\\/]+"
+# Every repeat in these patterns is bounded: they run over whole reports and published files, where an
+# unbounded run (`/////`, `a,a,a`, a long `+` chain) was rescanned from every position, quadratic in its length.
+SEPARATOR = r"[\\/]{1,8}"
 _PATH_END = r"(?![\w-]|\.[\w-])"  # `/srv/refs/a` is not `/srv/refs/atlas` or `a.bak`, but ends a sentence
 
 
@@ -547,8 +594,10 @@ def _text(value: str) -> str:
 
 
 # Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
-_ANY_HOME = (r"(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|[\\/]+root"
-             r"|(?:[A-Za-z]:|[\\/]+[A-Za-z](?=[\\/]))?(?:[\\/]+[^\\/\s\"'<>|]+)*?[\\/]+(?:home|Users)[\\/]+[^\\/\s\"'<>|]+)")
+# Up to eight folders may come before the home folder (`/BiO/home/u01`, `/mnt/c/Users/pi`).
+_ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{SEPARATOR}root"
+             rf"|(?:[A-Za-z]:|{SEPARATOR}[A-Za-z](?=[\\/]))?(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?"
+             rf"{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
@@ -588,7 +637,8 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
     port_re = (rf":{port}" if port and port != {"http": 80, "https": 443}.get(parts.scheme.lower())
                else r"(?::(?:80|443))?")
     path = "".join(_SLASH + _text(segment) for segment in parts.path.rstrip("/").split("/")[1:])
-    return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]*:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]+@)?"
+    # Scheme and userinfo are bounded (see SEPARATOR); a longer userinfo is left to the credential guard.
+    return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]{{0,31}}:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]{{1,256}}@)?"
             rf"(?:www\.)?{_text(host)}{port_re}{path}" + (rf"(?:{_SLASH})?" if trailing_slash else ""))
 
 

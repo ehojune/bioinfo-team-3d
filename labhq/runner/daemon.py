@@ -436,7 +436,7 @@ class Runner:
         return incomplete
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit) -> list[str]:
-        """Links in a writable project folder that lead into a zone, for Claude deny rules (#132).
+        """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
 
         The folder itself stays open: the task works there, and refusing it would stop every step of the
         project. A listing that cannot finish (a large clone) is said once instead of refused.
@@ -458,7 +458,7 @@ class Runner:
                 if links:
                     names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
                     await emit("agent.log", {"level": "warn", "text": (
-                        f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역을 가리키거나 풀 수 없습니다: "
+                        f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역으로 이어지거나 풀 수 없습니다: "
                         f"{names}. Claude는 그 경로를 읽고 쓰지 못하게 막지만 다른 엔진과 미리 허용된 셸 명령은 막지 못합니다")})
                 if incomplete:
                     await emit("agent.log", {"level": "warn", "text": (
