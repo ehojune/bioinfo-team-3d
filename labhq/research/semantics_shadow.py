@@ -76,7 +76,8 @@ LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX en
 INTRODUCED = date(2026, 10, 1)   # B1 shadow PR; the PI's removal review falls due 90 days later
 REVIEW_DAYS, MIDPOINT_DAYS = 90, 30
 VERDICTS = ("ok", "wrong_identity", "wrong_other", "irrelevant")
-REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
+REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete",
+           "input_unknown", "input_mismatch", "target_type_unknown", "target_type_mismatch")
 SAFE_TOKEN = re.compile(r"[A-Za-z0-9_.:@#+-]{0,96}")
 VOCABULARY = frozenset({"general", "research", "direct", "orchestrate", "plan_only", "done", "failed", "rejected",
                         "cancelled", "interrupted", "running", "ok", "error", "timeout", "request", "auto_off",
@@ -790,6 +791,7 @@ class Reader:
         self.budget = HashBudget()
         self.manifests: dict[str, dict | None] = {}
         self.workspace_state: dict[str, str] = {}
+        self.reference_cache: dict[str, tuple[str, dict | None]] = {}
 
     def workspace(self, workdir: Any) -> str:
         """`ok`, or why this workspace is not read: remote, zone_excluded, not_regular, missing."""
@@ -858,6 +860,37 @@ class Reader:
             st = os.lstat(path)
         except FileNotFoundError:
             return "missing", None
+        return self._hash_file(path, st)
+
+    def reference_file(self, root: Any, name: str) -> tuple[str, dict | None]:
+        """Hash one named file under an explicit path reference, without recording either spelling.
+
+        The request text supplies only a basename. The structured reference supplies the root. No recursion,
+        wildcard, parent traversal, link/junction traversal or path guess outside that exact root is allowed.
+        """
+        if (not isinstance(root, str) or not isinstance(name, str) or _unc(root) or not os.path.isabs(root)
+                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", name)):
+            return "not_regular", None
+        try:
+            root_st = os.lstat(root)
+        except FileNotFoundError:
+            return "missing", None
+        if _is_link(root_st) or not stat.S_ISDIR(root_st.st_mode) or _norm(os.path.realpath(root)) != _norm(root):
+            return "not_regular", None
+        path = os.path.join(root, name)
+        if path in self.reference_cache:
+            status, seen = self.reference_cache[path]
+            return ("cached" if status == "hashed" else status), seen
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            answer = ("missing", None)
+        else:
+            answer = self._hash_file(path, st)
+        self.reference_cache[path] = answer
+        return answer
+
+    def _hash_file(self, path: str, st: os.stat_result) -> tuple[str, dict | None]:
         if _is_link(st) or not stat.S_ISREG(st.st_mode):
             return "not_regular", None
         if not zone_allows(path, self.zones, self.visibility, forms=self.zone_forms or []):
@@ -961,6 +994,94 @@ def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) ->
     return round(unknown / total, 4) if total else None
 
 
+_INPUT_NAME = re.compile(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]{1,120}(?:\.[A-Za-z0-9_-]{1,120})*"
+                         r"\.[A-Za-z0-9]{1,12})(?![A-Za-z0-9_-])")
+
+
+def _mentioned_names(req: Mapping[str, Any]) -> set[str]:
+    text = req.get("text")
+    if not isinstance(text, str):
+        return set()
+    return {m.group(1).casefold() for m in _INPUT_NAME.finditer(text[:100_000])}
+
+
+def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
+    """Declared types of outputs the PI named, not incidental plan-added reports or QC files."""
+    if vocab is None:
+        return set()
+    named = _mentioned_names(req)
+    found: set[str] = set()
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    for step in plan.get("steps") or []:
+        if not isinstance(step, Mapping):
+            continue
+        for entry in step.get("output_types") or []:
+            if not isinstance(entry, Mapping) or entry.get("vocab") != vocab.sha256:
+                continue
+            name, key = entry.get("name"), entry.get("data_type")
+            if (isinstance(name, str) and Path(name.replace("\\", "/")).name.casefold() in named
+                    and vocab.is_key("data", key)):
+                found.add(key)
+    return found
+
+
+def _request_input_hashes(req: Mapping[str, Any], reader: Reader, hashes: dict) -> set[str]:
+    """Opaque identities for explicit public links and named files below explicit path references."""
+    names = _mentioned_names(req)
+    found: set[str] = set()
+    for ref in req.get("references") or []:
+        if not isinstance(ref, Mapping):
+            continue
+        kind, value = ref.get("kind"), ref.get("value")
+        if not isinstance(kind, str) or not isinstance(value, str) or not value:
+            continue
+        if kind != "path":
+            try:
+                normalized = (sem.normalize_uri(value) if kind in ("url", "uri")
+                              else sem.normalize_id(kind, value))
+            except (TypeError, ValueError):
+                continue
+            found.add("link:" + hashlib.sha256(f"{kind.casefold()}:{normalized}".encode("utf-8")).hexdigest())
+            continue
+        for name in sorted(names):
+            status, seen = reader.reference_file(value, name)
+            if status not in ("hashed", "cached") or seen is None:
+                continue
+            found.add("file:" + seen["sha256"])
+            if status == "hashed":
+                hashes["hashed"] += 1
+                hashes["bytes"] += seen["size"]
+    return found
+
+
+def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mapping[str, set[str]],
+                 cache: dict[str, set[str] | None], stack: frozenset[str] = frozenset()) -> set[str] | None:
+    """Replace an explicitly linked earlier artifact with that artifact's root request inputs."""
+    if request in cache:
+        return cache[request]
+    if request in stack or not direct.get(request):
+        cache[request] = None
+        return None
+    roots: set[str] = set()
+    for identity in direct[request]:
+        producers = artifacts.get(identity)
+        if not producers:
+            roots.add(identity)
+            continue
+        earlier = sorted(rid for rid in producers if rid != request)
+        if not earlier:
+            roots.add(identity)
+            continue
+        resolved = [_root_inputs(rid, direct, artifacts, cache, stack | {request}) for rid in earlier]
+        known = [value for value in resolved if value]
+        if not known or any(value != known[0] for value in known[1:]):
+            cache[request] = None
+            return None
+        roots.update(known[0])
+    cache[request] = roots or None
+    return cache[request]
+
+
 def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
                        check: Callable[[], None]) -> tuple[dict, dict]:
     """(provenance summary, hash summary). ``observed`` (opaque artifact key -> first observation) is updated."""
@@ -1031,6 +1152,17 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                                            observed=seen_now)
         p = sem.project(model, records)
         check()
+        direct_inputs = {request: _request_input_hashes(req, reader, hashes)
+                         for request, req in snap["requests"].items()}
+        artifact_inputs: dict[str, set[str]] = {}
+        for row in p.artifacts.values():
+            if row["sha256"] != sem.UNKNOWN and isinstance(row.get("request"), str):
+                artifact_inputs.setdefault("file:" + row["sha256"], set()).add(row["request"])
+        input_cache: dict[str, set[str] | None] = {}
+        current_inputs = _root_inputs(rid, direct_inputs, artifact_inputs, input_cache)
+        vocab = output_vocab.current()
+        targets = _target_types(snap["requests"].get(rid) or {}, vocab)
+        check()
         incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
                           or len(p.edges) > MAX_EDGES or reader.budget.exhausted)
         advisory = sem.find_reusable(p)
@@ -1049,6 +1181,15 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                 reasons.append("not_generated")
             if row["data_type"] == sem.UNKNOWN:
                 reasons.append("type_unknown")
+            if not targets:
+                reasons.append("target_type_unknown")
+            elif row["data_type"] != sem.UNKNOWN and row["data_type"] not in targets:
+                reasons.append("target_type_mismatch")
+            candidate_inputs = _root_inputs(row["request"], direct_inputs, artifact_inputs, input_cache)
+            if current_inputs is None or candidate_inputs is None:
+                reasons.append("input_unknown")
+            elif current_inputs != candidate_inputs:
+                reasons.append("input_mismatch")
             state = hash_state.get(art)
             if state == "zone_excluded":
                 reasons.append("zone_excluded")

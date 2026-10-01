@@ -316,7 +316,7 @@ async def test_a_step_run_still_reports_only_its_declared_outputs(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_two_direct_requests_give_the_second_a_candidate_only_when_a_type_is_declared(tmp_path):
+async def test_two_direct_requests_need_input_and_target_declarations_beyond_a_source_type(tmp_path):
     lab = await run_lab(tmp_path, "shadow", ["표 만들기 [artifact]", "앞 표로 비율 [artifact]"],
                         project_id="shadowproj", request={"mode": "direct", "agent_id": "data_steward"})
     hub, (first, second) = lab["hub"], lab["rids"]
@@ -328,7 +328,7 @@ async def test_two_direct_requests_give_the_second_a_candidate_only_when_a_type_
     live = lines[second]["provenance"]
     assert live["history_artifacts"] == 1 and live["candidates"] == 0
     assert live["excluded"]["type_unknown"] == 1
-    # With a declaration on the first run, the same rows give the second request one candidate.
+    # A source type alone is insufficient: direct mode has neither a target type nor an input identity.
     tid, row = next((k, v) for k, v in hub.store.all("task").items() if v.get("request_id") == first)
     row["payload"]["meta"]["output_types"] = {"outputs/artifact.txt": "raw_counts"}
     hub.store.put("task", tid, row)
@@ -336,4 +336,6 @@ async def test_two_direct_requests_give_the_second_a_candidate_only_when_a_type_
     assert line_for(hub, first, observed)["hash"]["observed_new"] == 1
     declared = line_for(hub, second, observed)
     assert declared["hash"]["verified"] == 1
-    assert declared["provenance"]["candidates"] == 1 and declared["provenance"]["excluded"]["type_unknown"] == 0
+    prov = declared["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["type_unknown"] == 0
+    assert prov["excluded"]["input_unknown"] == prov["excluded"]["target_type_unknown"] == 1

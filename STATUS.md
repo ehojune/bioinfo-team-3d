@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
+
+- 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
+- 바뀐 것: 명시된 path reference 아래 요청문에 적힌 파일만 기존 hash 예산·zone·link guard로 읽어 입력 정체성을 만들고, 공개 accession·URL은 정규화한 link hash로 비교한다. PI가 이름을 적은 산출의 #249 선언 data type과 둘 다 일치해야 후보가 된다. 선언이 없으면 `input_unknown`·`target_type_unknown`, 불일치는 `input_mismatch`·`target_type_mismatch` 개수로만 남기고 필터 뒤에 순위를 매긴다.
+- 실행한 것: 회귀 3건이 수정 전 실패했다. 관련 121건(1 skipped), 의미 모델 419건(2 skipped), 전체 pytest 2442 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다. #264 정보 경계 검사는 새 고정 사유만 허용하고 경로·파일명을 기록하지 않는 회귀로 확인했다.
+- 미해결: 2차 원본에서 #261 자동 off 뒤 네 live 요청은 정답표가 없어 혼동행렬에서 제외했다. 15건 전체 replay의 최종 후보도 같은 3개였으며, B2 전환 근거로 쓰지 않는다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_provenance.py`, `tests/test_semantics_shadow_hash.py`, `tests/test_direct_outputs.py`.
+
 ## 2026-10-02 · #261 — 연구 계획의 어휘 판본 hash가 정보 경계에 걸린 오판
 
 - 결론: 2차 실행의 연구 요청을 최신 main에서 다시 계산했다. 걸린 칸은 `vocab_sha256`, 부류는 검증된 산출 어휘 판본 hash였다. 연구 계획의 같은 판본을 자유 입력처럼 민감값에 넣어, 줄의 공개 판본 칸이 자기 자신과 일치하자 차단한 오판이다.
