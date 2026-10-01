@@ -188,6 +188,8 @@ def main(argv: list[str]) -> int:
         print("2.9.9 (fake claude for labhq tests)")
         return 0
     sys.stdout.reconfigure(encoding="utf-8")
+    with Path(".labhq", "fake_cli_prompts.jsonl").open("a", encoding="utf-8") as calls:  # what `-p` carried
+        calls.write(json.dumps(argv[argv.index("-p") + 1][:200], ensure_ascii=False) + "\n")
     prompt = _prompt(argv)
     schema = json.loads(argv[argv.index("--json-schema") + 1])
     request = _section(prompt, "PI's request:", "\0")

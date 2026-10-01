@@ -160,7 +160,13 @@ def _write_agents(root: Path) -> Path:
     return root / "agents"
 
 
-async def test_public_research_request_reaches_cp1_card_through_the_claude_schema_path(tmp_path):
+@pytest.mark.parametrize("command_limit", [None, 20_000], ids=["inline", "over-command-line-limit"])
+async def test_public_research_request_reaches_cp1_card_through_the_claude_schema_path(tmp_path, monkeypatch,
+                                                                                      command_limit):
+    # The live rerun's CSO re-plan was 33,091 characters, past the Windows limit; a lowered limit takes that path.
+    from labhq.adapters import base
+    if command_limit:
+        monkeypatch.setattr(base, "command_line_limit", lambda: command_limit, raising=False)
     s = _research_settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
     gport = free_port()
@@ -222,6 +228,12 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
             assert cards[0]["detail"]["packs"] == _refs(selected)
             assert json.loads(cards[0]["detail"]["plan_canonical"]) == request["plan"]
             assert request["research_contract"]["approval"]["approved"] is True
+            carried = [json.loads(line) for task in plans for line in
+                       (Path(task["result"]["workdir"]) / ".labhq" / "fake_cli_prompts.jsonl")
+                       .read_text(encoding="utf-8").splitlines()]
+            assert len(carried) >= plan_calls
+            pointer = [prompt.startswith("Read TASK") for prompt in carried[-plan_calls:]]
+            assert pointer == [bool(command_limit)] * plan_calls, carried
     finally:
         runner.stop()
         server.should_exit = True
