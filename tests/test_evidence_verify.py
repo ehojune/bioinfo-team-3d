@@ -1,6 +1,7 @@
 """#90 R06 / #58: source resolver and evidence verifier. Offline only; live lookup stays off."""
 
 import asyncio
+import time
 
 import pytest
 from pydantic import ValidationError
@@ -288,3 +289,199 @@ def test_artifact_paths_match_the_manifest_across_separators():
     clash = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "c" * 64,
                                                                    "out\\de.tsv": "d" * 64}))
     assert clash.evidence[0].resolution.status == "conflicting" and clash.ok is False
+
+
+def searched(eid, scheme, value):
+    """A completed search with no hits: the source is where it searched, the query what it searched for."""
+    found_nothing = row(eid, scheme, value)
+    found_nothing["status"] = "not_found"
+    found_nothing["source"]["query"] = "gene == IL6, all samples"
+    return found_nothing
+
+
+def test_a_zero_result_search_still_resolves_where_it_searched():
+    # #129: unlike a failed lookup, a finished search names a real place; a made-up or malformed one is a defect.
+    result = build([claim("c1")], [row("e1", "doi", DOI), searched("e2", "geo", "GSE99999999"),
+                                   searched("e3", "dbsnp", "rs-12")], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    assert {c.evidence_id: c.resolution.status for c in report.evidence} == {
+        "e1": "found", "e2": "not_found", "e3": "insufficient"}
+    assert report.defective_evidence == ["e2", "e3"] and report.ok is False
+    real_scope = build([claim("c1")], [row("e1", "doi", DOI), searched("e2", "refseq", "NM_004985")],
+                       [link("c1", "e1")])
+    assert asyncio.run(verify_sources(real_scope, resolver())).ok is True
+
+
+def test_failed_and_unavailable_retrievals_are_still_not_resolved():
+    rows = [row("e1", "doi", DOI)]
+    for eid, status in (("e2", "failed"), ("e3", "unavailable")):
+        attempt = row(eid, "geo", "GSE99999999", group="mirror")
+        attempt.update(status=status, status_detail="the GEO mirror returned 503")
+        rows.append(attempt)
+    report = asyncio.run(verify_sources(build([claim("c1")], rows, [link("c1", "e1")]), resolver()))
+    assert [c.evidence_id for c in report.evidence] == ["e1"] and report.ok is True
+
+
+class PacedResolver:
+    """Answers after ``delay`` seconds, or never for ``hang``; records how many lookups ran at once."""
+
+    name = "paced"
+
+    def __init__(self, delay, hang=()):
+        self.delay, self.hang = delay, set(hang)
+        self.active = self.peak = 0
+        self.calls = []
+
+    def supports(self, scheme):
+        return True
+
+    async def lookup(self, scheme, value):
+        self.calls.append(value)
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        try:
+            await asyncio.sleep(3600 if value in self.hang else self.delay)
+        finally:
+            self.active -= 1
+        return [SourceRecord(id_scheme=scheme, id_value=value)]
+
+
+def many_sources(n):
+    return build([claim("c1")], [row(f"e{i}", "geo", f"GSE{1000 + i}") for i in range(n)],
+                 [link("c1", f"e{i}") for i in range(n)])
+
+
+def test_lookups_run_concurrently_under_a_cap_and_finish_within_the_deadline():
+    # #116: eight 0.2 s lookups one by one would take 1.6 s, past the deadline.
+    paced = PacedResolver(0.2)
+    start = time.monotonic()
+    report = asyncio.run(verify_sources(many_sources(8), paced, concurrency=4, deadline_s=1.5))
+    assert time.monotonic() - start < 1.5
+    assert {c.resolution.status for c in report.evidence} == {"found"} and report.ok is True
+    assert paced.peak == 4
+
+
+def test_lookups_past_the_report_deadline_are_unverified_not_absent():
+    # Two lookups hang and hold both slots; the per-lookup timeout (20 s) is not what ends the report.
+    paced = PacedResolver(0.05, hang={"GSE1001", "GSE1002"})
+    start = time.monotonic()
+    report = asyncio.run(verify_sources(many_sources(6), paced, concurrency=2, deadline_s=0.5, timeout_s=20))
+    assert time.monotonic() - start < 2
+    resolutions = {c.evidence_id: c.resolution for c in report.evidence}
+    assert resolutions["e0"].status == "found"
+    for eid in ("e1", "e2", "e3", "e4", "e5"):
+        assert (resolutions[eid].lookup, resolutions[eid].status, resolutions[eid].error_kind) == (
+            "failed", "requires_verification", "timeout")
+        assert "deadline" in resolutions[eid].detail
+    assert paced.calls == ["GSE1000", "GSE1001", "GSE1002"]  # nothing is sent after the deadline
+    check = by_claim(report)["c1@1"]
+    assert check.state == "unverified" and not check.defects and not report.defective_evidence
+    assert report.lookup_failures == ["e1", "e2", "e3", "e4", "e5"] and report.ok is False
+
+
+def test_concurrency_must_allow_at_least_one_lookup():
+    with pytest.raises(ValueError, match="concurrency"):
+        asyncio.run(verify_sources(many_sources(1), PacedResolver(0), concurrency=0))
+
+
+def cited_with_uri(eid, scheme, value, uri, **extra):
+    both = row(eid, scheme, value, **extra)
+    both["source"]["uri"] = uri
+    return both
+
+
+def test_an_id_with_a_registry_url_naming_another_record_is_conflicting():
+    # #117: the DOI resolves, but the URL beside it names a different DOI.
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, "https://doi.org/10.1000/elsewhere")],
+                   [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(result, fixed))
+    check = report.evidence[0]
+    assert [(r.id_scheme, r.status) for r in check.resolutions] == [("doi", "found"), ("uri", "conflicting")]
+    assert check.resolution.resolver == "registry_url" and "doi:10.1000/elsewhere" in check.resolution.detail
+    assert by_claim(report)["c1@1"].state == "defective" and report.ok is False
+    # The URL of the cited DOI itself adds nothing to check and costs no extra lookup.
+    same = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, f"https://doi.org/{DOI.upper()}")],
+                 [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(same, fixed))
+    assert [r.status for r in report.evidence[0].resolutions] == ["found"] and report.ok is True
+    assert fixed.calls == [("doi", DOI.casefold())]
+
+
+@pytest.mark.parametrize("answer, status", [
+    ([{"id_scheme": "doi", "id_value": "10.1000/elsewhere"}], "conflicting"),
+    ([{"id_scheme": "doi", "id_value": DOI.upper()}], "found"),
+    ([], "not_found"),
+    ([{"id_scheme": "uri", "id_value": "https://example.org/paper.html"}], "requires_verification"),
+])
+def test_a_resolver_that_maps_uris_checks_any_url_against_the_cited_id(answer, status):
+    url = "https://example.org/paper.html"
+    mapping = StaticResolver({("doi", DOI): [{"id_scheme": "doi", "id_value": DOI}], ("uri", url): answer})
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    uri_check = report.evidence[0].resolutions[1]
+    assert (uri_check.id_scheme, uri_check.status) == ("uri", status)
+    assert report.ok is (status == "found")
+
+
+def test_an_unchecked_url_beside_an_id_leaves_the_source_unverified():
+    # Without URI lookup nobody knows where the URL points, so the row cannot be verified.
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, "https://example.org/paper.html")],
+                   [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    uri_check = report.evidence[0].resolutions[1]
+    assert (uri_check.status, uri_check.error_kind) == ("requires_verification", "unsupported_scheme")
+    assert by_claim(report)["c1@1"].state == "unverified" and report.ok is False
+
+
+@pytest.mark.parametrize("scheme, value, uri", [
+    ("doi", DOI, "https://pubmed.ncbi.nlm.nih.gov/32939066/"),  # the same paper under another scheme
+    ("pmid", "32939066", "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7759461/"),
+    ("ensembl", "ENSG00000141510.17", "https://www.ensembl.org/id/ENSG00000141510"),  # version left off
+    ("clinvar", "VCV000012375", "https://www.ncbi.nlm.nih.gov/clinvar/variation/12375/"),  # two spellings
+    ("uniprot", "P04637-2", "https://www.uniprot.org/uniprotkb/P04637/entry"),  # an isoform of the entry
+])
+def test_a_registry_url_that_may_name_the_same_record_is_not_a_conflict(scheme, value, uri):
+    # Only the authority knows whether a DOI and a PubMed URL are one paper; a guess must not become a defect.
+    result = build([claim("c1")], [cited_with_uri("e1", scheme, value, uri)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    uri_check = report.evidence[0].resolutions[-1]
+    assert (uri_check.id_scheme, uri_check.status) == ("uri", "requires_verification")
+    assert not report.defective_evidence and by_claim(report)["c1@1"].state == "unverified"
+
+
+@pytest.mark.parametrize("answer, status", [
+    ([{"id_scheme": "pmid", "id_value": "32939066"}, {"id_scheme": "doi", "id_value": DOI}], "found"),
+    ([{"id_scheme": "doi", "id_value": "10.1000/elsewhere"}], "conflicting"),
+])
+def test_a_registry_url_under_another_scheme_is_compared_through_the_resolver(answer, status):
+    url = "https://pubmed.ncbi.nlm.nih.gov/32939066/"
+    mapping = StaticResolver({("doi", DOI): [{"id_scheme": "doi", "id_value": DOI}], ("uri", url): answer})
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert [(r.id_scheme, r.status) for r in report.evidence[0].resolutions] == [("doi", "found"), ("uri", status)]
+    assert report.ok is (status == "found")
+
+
+def test_a_search_url_of_a_zero_result_row_is_not_a_malformed_record():
+    # #129 resolves where a zero-result search looked; a registry search endpoint is not a made-up accession.
+    search = searched("e2", "geo", "GSE1")
+    search["source"] = {"uri": "https://rest.uniprot.org/uniprotkb/search?query=gene:IL6", "accessed_at": "2026-10-01",
+                        "locator": "result page", "query": "gene:IL6 AND organism_id:9606"}
+    result = build([claim("c1")], [row("e1", "doi", DOI), search], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    resolutions = {c.evidence_id: c.resolution for c in report.evidence}
+    assert (resolutions["e2"].id_scheme, resolutions["e2"].status) == ("uri", "requires_verification")
+    assert not report.defective_evidence and report.ok is True
+
+
+def test_a_registry_url_alone_is_looked_up_as_its_identifier():
+    geo = StaticResolver({("geo", "GSE79973"): [{"id_scheme": "geo", "id_value": "GSE79973"}]})
+    source = {"uri": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973", "accessed_at": "2026-10-01",
+              "locator": "series matrix"}
+    result = build([claim("c1")], [{**row("e1", "geo", "GSE79973"), "source": source}], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, geo))
+    resolution = report.evidence[0].resolution
+    assert (resolution.id_scheme, resolution.id_value, resolution.status) == ("geo", "GSE79973", "found")
+    assert geo.calls == [("geo", "gse79973")] and report.ok is True

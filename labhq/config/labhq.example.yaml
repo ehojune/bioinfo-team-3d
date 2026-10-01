@@ -34,14 +34,16 @@ bench:
   staff_model: {opus: sonnet}  # bench roster 사본에만 적용; {}이면 치환 없음
 
 hpc:
-  scheduler: sge              # sge | pbs | mock | none
-  ssh_host: null              # 로그인 노드에서 qsub을 돌려야 하면 호스트 지정 (작업공간은 공유 FS에)
+  scheduler: sge              # sge | pbs | slurm | mock | none
+  ssh_host: null              # 로그인 노드에서 qsub·sbatch를 돌려야 하면 호스트 지정 (작업공간은 공유 FS에)
   user: null                  # null → 현재 계정
-  default_queue: null
+  default_queue: null         # Slurm은 partition
   sge: {pe: smp, mem_resource: h_vmem, mem_per_slot: true, runtime_resource: h_rt}
   pbs:
     resource_template: "nodes=1:ppn={cores},mem={mem},walltime={walltime}"   # Torque
     pro: false                # PBS Pro면 true + "select=1:ncpus={cores}:mem={mem}" 템플릿
+  slurm:                      # 계정·QOS가 필요하면 "--account=lab", "--qos=normal"을 더한다
+    sbatch_args: ["--nodes=1", "--ntasks=1", "--cpus-per-task={cores}", "--mem={mem}", "--time={walltime}", "--export=NONE"]
 
 policy:
   data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: data_zones: []
@@ -102,4 +104,8 @@ pi_profile:
 # 연구 계약 pilot은 opt-in입니다. PR 1에서는 계획·승인까지만 하고 연구 step은 실행하지 않습니다.
 research:
   enabled: false              # pilot을 켜려면 true 한 줄로 변경
-  active_packs: []            # 예: [single_cell_de@1]
+  active_packs: []            # 예: [single_cell_de@2]
+
+# 의미 모델 그림자 기록(#150): off | shadow. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
+# gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
+semantics: off

@@ -6,7 +6,9 @@ timeout, or disabled lookup is ``requires_verification`` and never ``not_found``
 is neither evidence nor proof of absence. Resolving an ID also says nothing about whether the
 source supports the sentence; that stays with the reviewer (``support_review``).
 
-Live network resolvers are not part of this PR. ``resolver=None`` means live lookup is off.
+Live network resolvers are not part of this PR. ``resolver=None`` means live lookup is off. Lookups run
+concurrently under a cap and a report deadline, so a slow authority leaves sources unverified instead of
+holding the report for minutes (#116).
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .claims import STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id
+from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
+    ID_FORMATS, STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id, registry_id)
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -28,26 +31,8 @@ LookupState = Literal["succeeded", "failed", "skipped"]
 IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "requires_verification"]
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
                            "resolver_error"})
-SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable"})
-
-# Format checks run before any lookup so a malformed ID is reported, not guessed at or "corrected".
-ID_FORMATS: dict[str, str] = {
-    "doi": r"10\.\d{4,9}/\S+",
-    "pmid": r"[1-9]\d{0,8}",
-    "pmcid": r"PMC\d+",
-    "geo": r"G(?:SE|SM|PL|DS)\d+",
-    "sra": r"[SED]R[APRSX]\d{6,}",
-    "bioproject": r"PRJ[DEN][A-Z]\d+",
-    "biosample": r"SAM[DEN][A-Z]?\d+",
-    "refseq": r"[A-Z]{2}_(?:[A-Z]{2,6})?\d{6,}(?:\.\d+)?",  # NM_004985.5, WP_000000001.1, NZ_CP012345.1
-    "ensembl": r"ENS[A-Z]*[EGPTR]\d{11}(?:\.\d+)?",
-    "uniprot": r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?",
-    "dbsnp": r"rs[1-9]\d*",
-    "clinvar": r"(?:[RSV]CV\d{9}(?:\.\d+)?|[1-9]\d*)",
-    "pdb": r"[1-9][A-Za-z0-9]{3}",
-    "chembl": r"CHEMBL\d+",
-    "hgnc": r"HGNC:\d+",
-}
+SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
+                        "uri_unmapped"})
 
 
 class StrictModel(BaseModel):
@@ -195,27 +180,61 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
     return Resolution(**base, status="found", record=matching[0])
 
 
-async def _lookup(resolver: SourceResolver, scheme: str, value: str, version: str | None,
-                  timeout_s: float) -> Resolution:
-    def failed(kind: str, detail: str) -> Resolution:
-        return Resolution(id_scheme=scheme, id_value=value, lookup="failed", status="requires_verification",
-                          resolver=resolver.name, error_kind=kind, detail=detail)
+def _failed(scheme: str, value: str, resolver: str, kind: str, detail: str) -> Resolution:
+    return Resolution(id_scheme=scheme, id_value=value, lookup="failed", status="requires_verification",
+                      resolver=resolver, error_kind=kind, detail=detail)
 
-    try:
-        raw = await asyncio.wait_for(resolver.lookup(scheme, value), timeout_s)
-    except (asyncio.TimeoutError, TimeoutError):
-        return failed("timeout", f"no answer within {timeout_s:g}s")
-    except LookupFailed as error:
-        return failed(error.kind, error.detail or error.kind)
-    except Exception as error:  # noqa: BLE001 - any resolver crash means the lookup did not complete
-        return failed("resolver_error", f"{type(error).__name__}: {error}")
-    try:
-        if not isinstance(raw, list):
-            raise TypeError(f"expected a list of records, got {type(raw).__name__}")
-        records = [SourceRecord.model_validate(r if isinstance(r, dict) else r.model_dump()) for r in raw]
-    except (TypeError, AttributeError, ValidationError) as error:
-        return failed("invalid_response", str(error)[:300])
-    return _judge(scheme, value, version, records, resolver.name)
+
+class _Lookups:
+    """Every authority call of one report: one per identifier, at most ``concurrency`` at once, none after
+    the report deadline. A lookup the deadline cuts off is ``failed/timeout``, never ``not_found``."""
+
+    def __init__(self, resolver: SourceResolver | None, *, timeout_s: float, deadline_s: float,
+                 concurrency: int) -> None:
+        self.resolver = resolver
+        self.timeout_s = timeout_s
+        self.deadline_s = deadline_s
+        self._loop = asyncio.get_running_loop()
+        self._deadline = self._loop.time() + deadline_s
+        self._gate = asyncio.Semaphore(concurrency)
+        self._calls: dict[tuple[str, str], asyncio.Future[list[SourceRecord] | Resolution]] = {}
+
+    async def fetch(self, scheme: str, value: str) -> list[SourceRecord] | Resolution:
+        """The authority's records for one identifier, or the failed resolution when the lookup did not end."""
+        key = (scheme, normalize_id(scheme, value))
+        if key not in self._calls:
+            self._calls[key] = asyncio.ensure_future(self._call(scheme, value))
+        outcome = await self._calls[key]
+        if isinstance(outcome, Resolution):
+            return outcome.model_copy(update={"id_value": value})
+        return outcome
+
+    async def _call(self, scheme: str, value: str) -> list[SourceRecord] | Resolution:
+        assert self.resolver is not None
+        name = self.resolver.name
+        async with self._gate:
+            remaining = self._deadline - self._loop.time()
+            if remaining <= 0:
+                return _failed(scheme, value, name, "timeout",
+                               f"the report deadline of {self.deadline_s:g}s passed before this lookup started")
+            limit = min(self.timeout_s, remaining)
+            try:
+                raw = await asyncio.wait_for(self.resolver.lookup(scheme, value), limit)
+            except (asyncio.TimeoutError, TimeoutError):
+                if limit < self.timeout_s:
+                    return _failed(scheme, value, name, "timeout",
+                                   f"no answer before the report deadline of {self.deadline_s:g}s")
+                return _failed(scheme, value, name, "timeout", f"no answer within {self.timeout_s:g}s")
+            except LookupFailed as error:
+                return _failed(scheme, value, name, error.kind, error.detail or error.kind)
+            except Exception as error:  # noqa: BLE001 - any resolver crash means the lookup did not complete
+                return _failed(scheme, value, name, "resolver_error", f"{type(error).__name__}: {error}")
+        try:
+            if not isinstance(raw, list):
+                raise TypeError(f"expected a list of records, got {type(raw).__name__}")
+            return [SourceRecord.model_validate(r if isinstance(r, dict) else r.model_dump()) for r in raw]
+        except (TypeError, AttributeError, ValidationError) as error:
+            return _failed(scheme, value, name, "invalid_response", str(error)[:300])
 
 
 DEFECT_STATUSES = frozenset({"not_found", "conflicting", "insufficient"})
@@ -249,43 +268,90 @@ def _resolve_artifact(artifact_id: str, cited_sha256: str | None, artifact_paths
     return Resolution(**base, status="found", record=records[0])
 
 
-async def _resolve_external(scheme: str, value: str, version: str | None, resolver: SourceResolver | None,
-                            timeout_s: float, cache: dict[tuple[str, str, str | None], Resolution]) -> Resolution:
-    key = (scheme, normalize_id(scheme, value), version)
-    if key in cache:
-        return cache[key]
+async def _resolve_external(scheme: str, value: str, version: str | None, lookups: _Lookups) -> Resolution:
+    resolver = lookups.resolver
     pattern = ID_FORMATS.get(scheme)
     if pattern and not re.fullmatch(pattern, value, re.IGNORECASE):
-        resolution = _skipped(scheme, value, resolver.name if resolver else "none", "insufficient",
-                              "malformed_id", f"{value!r} is not a valid {scheme} identifier")
-    elif resolver is None:
-        resolution = _skipped(scheme, value, "none", "requires_verification", "disabled",
-                              "live source lookup is off")
-    elif not resolver.supports(scheme):
-        resolution = _skipped(scheme, value, resolver.name, "requires_verification", "unsupported_scheme",
-                              f"{resolver.name} cannot look up {scheme}")
-    else:
-        resolution = await _lookup(resolver, scheme, value, version, timeout_s)
-    cache[key] = resolution
-    return resolution
+        return _skipped(scheme, value, resolver.name if resolver else "none", "insufficient",
+                        "malformed_id", f"{value!r} is not a valid {scheme} identifier")
+    if resolver is None:
+        return _skipped(scheme, value, "none", "requires_verification", "disabled", "live source lookup is off")
+    if not resolver.supports(scheme):
+        return _skipped(scheme, value, resolver.name, "requires_verification", "unsupported_scheme",
+                        f"{resolver.name} cannot look up {scheme}")
+    outcome = await lookups.fetch(scheme, value)
+    if isinstance(outcome, Resolution):
+        return outcome
+    return _judge(scheme, value, version, outcome, resolver.name)
 
 
-async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_paths: Mapping[str, str],
-                   observed: Mapping[str, set[str]] | None, timeout_s: float,
-                   cache: dict[tuple[str, str, str | None], Resolution]) -> list[Resolution]:
+# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
+# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
+_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
+
+
+async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tuple[str, str],
+                              lookups: _Lookups) -> Resolution | None:
+    """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address.
+
+    Code alone calls a registry URL ``conflicting`` only when it names another accession of the same scheme,
+    and that scheme spells each record one way. A DOI beside its PubMed URL, or ``ENSG...17`` beside
+    ``/id/ENSG...``, may be one record: only the authority can tell, so those go to the resolver like any URL.
+    """
+    scheme, value = cited
+    if named is not None and named[0] == scheme:
+        if normalize_id(*named) == normalize_id(scheme, value):
+            return None  # already checked as the ID itself
+        if scheme not in _SEVERAL_SPELLINGS:
+            return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
+                              resolver="registry_url",
+                              candidates=[SourceRecord(id_scheme=named[0], id_value=named[1], url=uri)],
+                              detail=f"the uri names {named[0]}:{named[1]}, not the cited {scheme}:{value}")
+    resolver = lookups.resolver
+    if resolver is None:
+        return _skipped("uri", uri, "none", "requires_verification", "disabled", "live source lookup is off")
+    if not resolver.supports("uri"):
+        return _skipped("uri", uri, resolver.name, "requires_verification", "unsupported_scheme",
+                        f"{resolver.name} cannot resolve the uri to compare it with {scheme}:{value}")
+    outcome = await lookups.fetch("uri", uri)
+    if isinstance(outcome, Resolution):
+        return outcome
+    base = {"id_scheme": "uri", "id_value": uri, "lookup": "succeeded", "resolver": resolver.name}
+    if not outcome:
+        return Resolution(**base, status="not_found", detail="the uri does not resolve")
+    named_records = [record for record in outcome if record.id_scheme == scheme]
+    if not named_records:
+        return _skipped("uri", uri, resolver.name, "requires_verification", "uri_unmapped",
+                        f"{resolver.name} resolved the uri but did not say which {scheme} it is")
+    same = [r for r in named_records if normalize_id(scheme, r.id_value) == normalize_id(scheme, value)]
+    if not same:
+        return Resolution(**base, status="conflicting", candidates=named_records,
+                          detail=f"the uri resolves to a different {scheme} than the cited {value}")
+    return Resolution(**base, status="found", record=same[0])
+
+
+async def _resolve(source: SourceRef, lookups: _Lookups, artifact_paths: Mapping[str, str],
+                   observed: Mapping[str, set[str]] | None) -> list[Resolution]:
     """Check every identifier the source carries; skipping one would let it stand unchecked.
 
-    ``version`` describes the external record when there is one; on an artifact-only source it is the
-    cited sha256.
+    A registry URL is checked as the identifier it names. A URI beside an external ID must point at that
+    ID (#117). ``version`` describes the external record when there is one; on an artifact-only source it
+    is the cited sha256.
     """
     resolutions: list[Resolution] = []
+    uri = (source.uri or "").strip() or None
+    named = registry_id(uri) if uri else None
     external: tuple[str, str] | None = None
     if source.id_scheme and source.id_value and source.id_value.strip():
         external = (source.id_scheme, source.id_value.strip())
-    elif source.uri and source.uri.strip():
-        external = ("uri", source.uri.strip())
-    if external:
-        resolutions.append(await _resolve_external(*external, source.version, resolver, timeout_s, cache))
+        resolutions.append(await _resolve_external(*external, source.version, lookups))
+        if uri:
+            uri_check = await _resolve_uri_for_id(uri, named, external, lookups)
+            if uri_check is not None:
+                resolutions.append(uri_check)
+    elif uri:
+        external = named or ("uri", uri)
+        resolutions.append(await _resolve_external(*external, source.version, lookups))
     if source.artifact_id:
         resolutions.append(_resolve_artifact(source.artifact_id, None if external else source.version,
                                              artifact_paths, observed))
@@ -294,27 +360,32 @@ async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_
 
 async def verify_sources(result: "ResearchResult", resolver: SourceResolver | None = None, *,
                          observed_artifacts: Mapping[str, str] | None = None,
-                         timeout_s: float = 20.0) -> VerificationReport:
+                         timeout_s: float = 20.0, deadline_s: float = 120.0,
+                         concurrency: int = 4) -> VerificationReport:
     """Resolve every cited source in a result and judge each claim's declared status.
 
     ``observed_artifacts`` maps artifact paths to the SHA-256 the runner observed; without it artifact
     evidence stays ``requires_verification``. ``ok`` needs every asserted claim verified and no defective
     source anywhere in the result, context and reasoning rows included.
+
+    Lookups run ``concurrency`` at a time, each within ``timeout_s`` and all within ``deadline_s`` of the
+    call. A resolver that blocks the event loop or ignores cancellation is bounded by neither.
     """
+    if concurrency < 1:
+        raise ValueError("concurrency must allow at least one lookup")
     artifact_paths = {ref.artifact_id: normalize_artifact_path(ref.path) for ref in result.artifact_refs}
     observed: dict[str, set[str]] | None = None
     if observed_artifacts is not None:
         observed = {}
         for path, digest in observed_artifacts.items():
             observed.setdefault(normalize_artifact_path(path), set()).add(digest)
-    cache: dict[tuple[str, str, str | None], Resolution] = {}
+    lookups = _Lookups(resolver, timeout_s=timeout_s, deadline_s=deadline_s, concurrency=concurrency)
+    # Every row that relied on its source is checked: context, reasoning and zero-result rows included.
+    # A made-up ID is a defect anywhere; only a retrieval that never reached its source is skipped.
+    rows = [row for row in result.evidence if row.cites_source]
+    resolved = await asyncio.gather(*(_resolve(row.source, lookups, artifact_paths, observed) for row in rows))
     checks: dict[str, EvidenceCheck] = {}
-    for row in result.evidence:
-        # A failed, empty or unavailable retrieval is not cited as a source of anything. Every other row
-        # with a source is checked, context and reasoning rows included: a made-up ID is a defect anywhere.
-        if row.source is None or (row.countable and row.status != "observed"):
-            continue
-        resolutions = await _resolve(row.source, resolver, artifact_paths, observed, timeout_s, cache)
+    for row, resolutions in zip(rows, resolved):
         if not resolutions:
             continue
         worst = max(resolutions, key=_severity)  # max keeps the first of equal severity

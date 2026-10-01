@@ -1030,7 +1030,8 @@
                 "directness": "direct",
                 "source_level": "primary",
                 "independence_group": "g_q1_de",
-                "assessment_reason": "synthetic assessment"
+                "assessment_reason": "synthetic assessment",
+                "slots": ["slot_de"]
               }
             ],
             "links": [
@@ -1187,7 +1188,8 @@
                 "directness": "direct",
                 "source_level": "primary",
                 "independence_group": "g_q2_de",
-                "assessment_reason": "synthetic assessment"
+                "assessment_reason": "synthetic assessment",
+                "slots": ["slot_de2"]
               },
               {
                 "id": "E1r",
@@ -1534,7 +1536,8 @@
                 "directness": "indirect",
                 "source_level": "secondary",
                 "independence_group": "g_lit_0003",
-                "assessment_reason": "synthetic assessment"
+                "assessment_reason": "synthetic assessment",
+                "slots": ["slot_scan"]
               },
               {
                 "id": "E4",
@@ -2103,7 +2106,8 @@
                 "directness": "direct",
                 "source_level": "primary",
                 "independence_group": "g_q4",
-                "assessment_reason": "synthetic assessment"
+                "assessment_reason": "synthetic assessment",
+                "slots": ["slot_report"]
               }
             ],
             "links": [

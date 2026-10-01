@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import ntpath
 from pathlib import Path
+from typing import Any  # semantics-hook
 from typing import Literal
 
 import yaml
@@ -126,15 +127,44 @@ class PbsSettings(BaseModel):
     pro: bool = False  # PBS Pro: finished jobs need `qstat -x`; use "select=1:ncpus={cores}:mem={mem}" template
 
 
+def _default_sbatch_args() -> list[str]:
+    # --export=NONE: like SGE/PBS without -V, the runner's environment (tokens) stays out of the job.
+    return ["--nodes=1", "--ntasks=1", "--cpus-per-task={cores}", "--mem={mem}", "--time={walltime}",
+            "--export=NONE"]
+
+
+class SlurmSettings(BaseModel):
+    # sbatch options; {cores} {mem} {walltime} are filled per job. Partition comes from queue/default_queue.
+    sbatch_args: list[str] = Field(default_factory=_default_sbatch_args)
+
+    @field_validator("sbatch_args")
+    @classmethod
+    def options_with_known_fields(cls, value: list[str]) -> list[str]:
+        import re
+
+        for arg in value:
+            if not arg.startswith("-"):
+                raise ValueError("hpc.slurm.sbatch_args entries must be sbatch options")
+            if re.match(r"-M|--clusters(?:=|$)", arg):
+                # squeue/sacct/scancel would look the bare id up on the local cluster: wrong or no job.
+                raise ValueError("hpc.slurm.sbatch_args must not submit to another cluster (-M/--clusters)")
+            try:
+                arg.format(cores=1, mem="1G", walltime="01:00:00")
+            except (KeyError, IndexError, ValueError) as e:
+                raise ValueError("hpc.slurm.sbatch_args may only use {cores}, {mem} and {walltime}") from e
+        return value
+
+
 class HpcSettings(BaseModel):
-    scheduler: Literal["sge", "pbs", "mock", "none"] = "sge"
+    scheduler: Literal["sge", "pbs", "slurm", "mock", "none"] = "sge"
     ssh_host: str | None = None  # run qsub/qstat on a login node via ssh (workspace must be on shared FS)
     user: str | None = None  # None → current account
     default_queue: str | None = None
     sge: SgeSettings = SgeSettings()
     pbs: PbsSettings = PbsSettings()
+    slurm: SlurmSettings = SlurmSettings()
     command_timeout_s: int = 60
-    submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub; status commands stay unchanged
+    submit_prefix: list[str] = Field(default_factory=list)  # argv before qsub/sbatch and qdel/scancel only
     job_group: str | None = None  # shared POSIX group for scripts and scheduler logs
 
     @model_validator(mode="after")
@@ -160,13 +190,18 @@ class DataZone(BaseModel):
         return expanded
 
 
+# Commands that create or cancel scheduler jobs outside the approval-gated hpc_* tools
+# (SGE/PBS batch and interactive, Slurm batch, step and allocation). Bash and PowerShell share it.
+SCHEDULER_JOB_COMMANDS = r"\b(?:qsub|qrsh|qlogin|qdel|sbatch|srun|salloc|scancel)\b"
+
+
 def _default_bash_ask() -> list[str]:
     return [
         r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r",  # rm -rf / -fr
         r"\bsudo\b",
         r"curl[^|]*\|\s*(ba|z)?sh",
         r"wget[^|]*\|\s*(ba|z)?sh",
-        r"\bqsub\b|\bsbatch\b|\bqdel\b",  # use the approval-gated hpc_* tools instead
+        SCHEDULER_JOB_COMMANDS,  # use the approval-gated hpc_* tools instead
         r"\bmkfs|\bdd\s+if=",
         r"\bchmod\s+-R\s+777",
         r"git\s+push\s+.*--force",
@@ -286,6 +321,7 @@ class Settings(BaseModel):
     github: GitHubSettings = GitHubSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
+    semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
 
     def project(self, project_id: str | None) -> ProjectSettings | None:

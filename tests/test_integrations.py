@@ -50,12 +50,13 @@ def test_repository_badges_name_exact_targets_at_readme_top():
     top = labels(badges(ROOT))
     names = [label.split(": ", 1)[0] for label in top]
     assert names[:2] == ["Claude Code", "Codex"]  # engines first, most staff first
-    for target in ("SGE", "PBS", "labhq MCP", "PubMed", "bioRxiv / medRxiv", "bioinfo-agent",
+    for target in ("SGE", "PBS", "SLURM", "labhq MCP", "PubMed", "bioRxiv / medRxiv", "bioinfo-agent",
                    "Paper2Agent", "test", "Python"):
         assert names.count(target) == 1, target
-    # Slurm is unsupported (#120), no staff uses Gemini/Antigravity, mock/none are not schedulers,
+    assert names.index("SGE") < names.index("PBS") < names.index("SLURM") < names.index("labhq MCP")
+    # No staff uses Gemini/Antigravity, mock/none are not schedulers,
     # the repository has no LICENSE, and plugin skills / engine features are not separate targets.
-    for absent in ("SLURM", "Slurm", "Gemini", "Antigravity", "MOCK", "mock", "NONE", "license",
+    for absent in ("Gemini", "Antigravity", "MOCK", "mock", "NONE", "license",
                    "Codex 웹 검색", "bioinfo:bioinfo-analyze", "PR gate"):
         assert all(absent not in label for label in top), absent
     assert "Codex: 직원 3명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol" in top
@@ -173,6 +174,9 @@ def test_non_identifier_staff_values_fail_without_writing(tmp_path, field, value
     f"{BADGES_END}\n{BADGES_START}\n{START}\n{END}",
     f"{BADGES_START}\n{BADGES_START}\n{BADGES_END}\n{START}\n{END}",
     f"{START}\n{BADGES_START}\n{END}\n{BADGES_END}",  # overlapping pairs
+    f"{BADGES_START}\n{START}\n{BADGES_END}\n{END}",
+    f"{START}\n{BADGES_START}\n{BADGES_END}\n{END}",  # badges nested in integrations (#153)
+    f"{BADGES_START}\n{START}\n{END}\n{BADGES_END}",  # integrations nested in badges
 ])
 def test_bad_markers_fail_without_writing(tmp_path, markers):
     staff(tmp_path, "one.yaml", id="one")
@@ -180,6 +184,7 @@ def test_bad_markers_fail_without_writing(tmp_path, markers):
     path.write_text(markers, encoding="utf-8")
     assert main(["--root", str(tmp_path), "--write"]) == 1
     assert path.read_text(encoding="utf-8") == markers
+    assert main(["--root", str(tmp_path), "--check"]) == 1
 
 
 def test_removed_configuration_removes_badges_and_rows(tmp_path):

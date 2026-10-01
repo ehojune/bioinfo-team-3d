@@ -502,6 +502,16 @@ def main(argv: list[str] | None = None) -> None:
     rescoring.add_argument("--run-id", help="saved run to rescore (default: latest run)")
     rescoring.add_argument("--all", action="store_true", help="rescore every saved run of this case")
     bs.add_argument("--output", help="result directory (default: $LABHQ_BENCH_DIR or ~/.labhq/bench)")
+    sem = sub.add_parser("semantics", help="shadow semantics records: report | enable | mark (local only)")  # semantics-hook
+    sem_sub = sem.add_subparsers(dest="semantics_cmd", required=True)  # semantics-hook
+    sem_report = sem_sub.add_parser("report", help="requests, both models, auto-off history, removal proposal")  # semantics-hook
+    sem_report.add_argument("--json", action="store_true")  # semantics-hook
+    sem_report.add_argument("--today", help="YYYY-MM-DD (default: today)")  # semantics-hook
+    sem_sub.add_parser("enable", help="show why semantics turned off and open a new epoch")  # semantics-hook
+    sem_mark = sem_sub.add_parser("mark", help="mark a reuse candidate ref (sem:<8 hex>)")  # semantics-hook
+    sem_mark.add_argument("request_id")  # semantics-hook
+    sem_mark.add_argument("ref")  # semantics-hook
+    sem_mark.add_argument("verdict", choices=["ok", "wrong_identity", "wrong_other", "irrelevant"])  # semantics-hook
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
@@ -625,6 +635,9 @@ def main(argv: list[str] | None = None) -> None:
 
         for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser()):
             print(f"installed → {d}")
+    elif args.cmd == "semantics":  # semantics-hook
+        from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
+        raise SystemExit(semantics_cli(args, s))  # semantics-hook
     elif args.cmd == "demo":
         logging.getLogger().setLevel(logging.WARNING)
         asyncio.run(_demo(args.web or args.phone, args.port, args.phone,

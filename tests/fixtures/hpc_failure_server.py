@@ -8,19 +8,21 @@ from labhq.tools import hpc_mcp as hpc
 from labhq.tools.scheduler import Scheduler
 
 scenario = sys.argv[1]
-hpc.S = Settings(hpc=HpcSettings(scheduler="pbs" if scenario.startswith("pbs") else "sge",
-                                user="fixture", submit_prefix=["sudo", "-n"],
+family = next((name for name in ("pbs", "slurm") if scenario.startswith(name)), "sge")
+hpc.S = Settings(hpc=HpcSettings(scheduler=family, user="fixture", submit_prefix=["sudo", "-n"],
                                 job_group="fixture-jobs"))
 hpc.S.policy.approvals.hpc_core_hours_threshold = 0 if scenario in {"broker", "denied"} else 1000
 
 
 def fake_run(args):
-    if "qsub" in args:
-        return CompletedProcess(args, 1, "", "qsub: fixture submission rejected")
-    if "qdel" in args:
-        return CompletedProcess(args, 1, "", "sudo: fixture qdel permission denied")
-    if scenario == "accounting" and args[0] == "qstat":
-        return CompletedProcess(args, 0, "", "")
+    for submit in ("qsub", "sbatch"):
+        if submit in args:
+            return CompletedProcess(args, 1, "", f"{submit}: fixture submission rejected")
+    for cancel in ("qdel", "scancel"):
+        if cancel in args:
+            return CompletedProcess(args, 1, "", f"sudo: fixture {cancel} permission denied")
+    if scenario.endswith("accounting") and args[0] in ("qstat", "squeue"):
+        return CompletedProcess(args, 0, "", "")  # the controller no longer lists the job
     return CompletedProcess(args, 255, "", "ssh: fixture connection refused")
 
 

@@ -74,7 +74,7 @@
 | 오케스트레이터 | `labhq/orchestrator/cso.py` | 브리핑 → 계획(JSON DAG) → 병렬 실행 → 리뷰 → 보고, HPC 수면/기상, 예산, 질의 라우팅 |
 | 러너 | `labhq/runner/daemon.py`, `versions.py` | 게이트웨이에 outbound 접속, 태스크 실행, MCP 배선, 잡 감시, CLI 버전 보고 |
 | 어댑터 | `labhq/adapters/*.py` | claude_code · codex · cli(자체 에이전트) · antigravity · gemini · mock |
-| 도구 | `labhq/tools/*.py` | SGE/PBS 스케줄러, hpc_mcp, approval_mcp(권한 프롬프트) |
+| 도구 | `labhq/tools/*.py` | SGE/PBS/Slurm 스케줄러, hpc_mcp, approval_mcp(권한 프롬프트) |
 | 파견직 | `labhq/recruit/paper2agent.py` | 채용 → 오퍼레터 → 수습 → 계약 → 인재풀 |
 | GitHub·기록 | `labhq/integrations/github.py`, `rounds.py` | 프로젝트 보고, 공개 가드, 개발 라운드 기록 |
 | 점검 | `labhq/doctor.py` | 실행 전 점검과 capability manifest |
