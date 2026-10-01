@@ -399,14 +399,23 @@ def judge_reuse(scope: str, user_run: str, user_request: str | None, reporters: 
     return Judged("same_request")
 
 
+def _instant(value: Any) -> float | None:
+    """A comparable start time, or None for unknown (the UNKNOWN marker, None or a non-number)."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
 def judge_resume(resume_of: str | None, started_at: float | None, peers: Iterable[tuple[str, str | None, float | None]]
                  ) -> Judged:
-    """peers: (run id, session_id, started_at) of the other runs in the same workspace."""
+    """peers: (run id, session_id, started_at) of the other runs in the same workspace.
+
+    A run whose start is unknown, this one or a peer, is never earlier or later: it drops out.
+    """
     if resume_of is None:
         return Judged(NONE)
+    mine = _instant(started_at)
     earlier = tuple(sorted(run for run, session, start in peers
-                           if session == resume_of and start is not None and started_at is not None
-                           and start < started_at))
+                           if session == resume_of and mine is not None and _instant(start) is not None
+                           and _instant(start) < mine))
     if len(earlier) == 1:
         return Judged(earlier[0])
     return Judged(UNKNOWN, "shared_session", earlier) if earlier else Judged(UNKNOWN, "no_matching_session")
@@ -642,13 +651,12 @@ def project(model: SemanticModel, records: Records) -> Projection:
         run = task_run[tid]
         row = p.runs[run]
         ws = run_ws.get(run)
-        peers = [(other, o["_meta"]["session_id"].value, o["_meta"]["started_at"].value)
+        peers = [(other, o["_meta"]["session_id"].value, _instant(o["_meta"]["started_at"].value))
                  for other, o in p.runs.items() if other != run and ws is not None and run_ws.get(other) == ws]
         meta = row["_meta"]
         resume_of = meta["resume_of"].value
         resumed = (Judged(UNKNOWN, meta["resume_of"].reason) if resume_of == UNKNOWN else
-                   judge_resume(resume_of, meta["started_at"].value if meta["started_at"].value != UNKNOWN else None,
-                                peers))
+                   judge_resume(resume_of, _instant(meta["started_at"].value), peers))
         _set_field(row, "resumes", resumed, p)
         if resumed.reason == "shared_session":
             p.run_cautions.setdefault(run, []).append({"code": "resume_parent_ambiguous", "nodes": [run],

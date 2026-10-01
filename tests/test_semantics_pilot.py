@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -188,6 +189,33 @@ def test_models_agree_on_edge_cases_outside_the_17_queries():
     node = outs["B"]["run"]["node"]
     assert (node["resumes"], node["unknown"]["resumes"]) == ("unknown", "no_matching_session")
     assert outs["B"]["art"]["node"]["reported_by"] == ["run:t0_ws/t0"]
+
+
+def resume_in_one_workspace(peer_started: bool):
+    """t1 resumes t0's session in t0's workspace; without peer_started t0 left no started_at anywhere (#137)."""
+    records = pilot.chain_records(2)
+    t0, t1 = copy.deepcopy(records.tasks["t0"]), copy.deepcopy(records.tasks["t1"])
+    if not peer_started:
+        t0["result"]["provenance"] = {"runs": {}}
+    t1["payload"]["resume_session_id"] = "sess_t0"
+    t1["result"].update(workdir=t0["result"]["workdir"], workdir_id="t0_ws", outputs=["outputs/o1.tsv"])
+    return type(records)(**{**records.__dict__, "tasks": {"t0": t0, "t1": t1}})
+
+
+@pytest.mark.parametrize("peer_started, resumes, reason", [
+    (True, "run:t0_ws/t0", None),
+    (False, "unknown", "no_matching_session"),
+])
+def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started, resumes, reason):
+    """#137: a peer run whose started_at is unknown drops out of the comparison instead of raising TypeError."""
+    outs = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(resume_in_one_workspace(peer_started))
+        outs[name] = pilot.result_of(impl.audit_lineage(p, run="run:t0_ws/t1"))
+    node = outs["B"]["node"]
+    assert (node["resumes"], (node.get("unknown") or {}).get("resumes")) == (resumes, reason)
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
 
 
 # ---------------------------------------------------------------- shared reader

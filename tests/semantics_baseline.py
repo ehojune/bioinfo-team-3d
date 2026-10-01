@@ -168,6 +168,8 @@ def project(records: Records) -> Registry:
         resume_of, resume_known = manifest_value(entry, "resume_of", payload, "resume_session_id")
         started, _ = manifest_value(entry, "started_at",
                                     ((result.get("provenance") or {}).get("runs") or {}).get(tid) or {}, "started_at")
+        if not isinstance(started, (int, float)) or isinstance(started, bool):
+            started = None   # an unknown start never compares (SQL NULL), like B
         plan_hash = ((records.requests.get(rid) or {}).get("research_contract") or {}).get("plan_sha256")
         packs = sorted(f"{p.get('id')}@{p.get('version')}"
                        for p in ((records.plans.get(rid) or {}).get("protocol") or {}).get("packs") or [])
