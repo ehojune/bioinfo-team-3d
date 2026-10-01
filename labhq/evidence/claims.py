@@ -289,9 +289,20 @@ class Evidence(StrictModel):
     # Evidence slots of the plan step this row fills. A failed or empty attempt still fills its slot, so
     # the gap shows as tried rather than silently absent.
     slots: list[str] = []
+    # How many records a search returned, when the row records one. Code cannot read "0 hits" in a sentence,
+    # but it can read this: a search that counted 0 is not_found, never an observation (#118).
+    result_count: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.result_count is not None:
+            if not self.countable:
+                raise ValueError(f"{self.kind} row {self.id} is not a retrieval and has no result_count")
+            if self.status == "observed" and self.result_count == 0:
+                raise ValueError(f"evidence {self.id} counted 0 results but is observed; record a zero-result "
+                                 "search as not_found with source.query")
+            if self.status == "not_found" and self.result_count:
+                raise ValueError(f"evidence {self.id} is not_found but counted {self.result_count} results")
         if self.slots and not self.countable:
             raise ValueError(f"{self.kind} row {self.id} is not evidence and cannot fill evidence slots {self.slots}")
         for slot in self.slots:

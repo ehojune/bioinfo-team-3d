@@ -236,6 +236,22 @@ def test_reasoning_rows_that_cite_an_external_source_keep_its_access_date(kind, 
     assert rc.ResearchResult.model_validate(result(evidence=[evidence("e1"), dated])).evidence[1].kind == kind
 
 
+def test_a_search_that_counted_zero_results_is_not_an_observation():
+    # #118: when the row states how many records the search returned, code can tell 0 hits from a finding.
+    rejects(result(evidence=[evidence("e1", result_count=0)]),
+            "evidence e1 counted 0 results but is observed; record a zero-result search as not_found")
+    rejects(result(evidence=[evidence("e1"), evidence("e2", status="not_found", result_count=3)],
+                   links=[link("c1", "e1")]), "evidence e2 is not_found but counted 3 results")
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind="inference", result_count=1)]),
+            "inference row e2 is not a retrieval")
+    rejects(result(evidence=[evidence("e1", result_count=-1)]), "greater than or equal to 0")
+    counted = rc.ResearchResult.model_validate(result(evidence=[evidence("e1", result_count=12)]))
+    assert counted.evidence[0].result_count == 12
+    empty = result(evidence=[evidence("e1"), evidence("e2", status="not_found", result_count=0)],
+                   links=[link("c1", "e1")])
+    assert rc.ResearchResult.model_validate(empty).evidence[1].result_count == 0
+
+
 # --- R05: directness, independence, source level and reasons ------------------------------------
 
 @pytest.mark.parametrize("field", ["directness", "source_level", "independence_group", "assessment_reason"])

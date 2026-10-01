@@ -64,6 +64,7 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 | `supported`·`partially_supported`·`contradicted`인데 관찰된 근거 link가 없음. `supported`인데 반대 근거가 있음 | R04 |
 | 추론·가설, 또는 `unavailable`·`not_found`·`failed` 행으로 지지·반박 | R04 |
 | 추론·가설 행이 `derived_from`을 따라가도 관찰·조회 행에 닿지 않음(순환 포함) | R04 |
+| 검색 행의 `result_count`가 0인데 `observed`, `not_found`인데 1 이상. 0건 검색은 `not_found`이며 근거가 아니다 | R04 |
 | 근거 행의 `directness`·`source_level`·`independence_group`·`assessment_reason` 누락, link `rationale`·claim `status_reason` 누락 | R05 |
 | 같은 출처를 다른 independence group으로 적음(재인용을 독립 근거로 셈). ID, 그 ID의 레지스트리 URL(doi.org·identifiers.org·PubMed·PMC·GEO·NCBI·UniProt·RCSB·ChEMBL·Ensembl), 같은 파일을 가리키는 artifact를 모두 같은 출처로 본다 | R05 |
 | 외부 출처의 `accessed_at`(YYYY-MM-DD, 추론·가설 행 포함), 관찰 행의 `locator`, 0건 행의 `query`, 실패 행의 `status_detail` 누락 | R06 |
@@ -95,6 +96,8 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 - 근거나 방법 revision이 바뀌면 종속 claim·분석·감사·승인을 stale 처리한다. 옛 결과는 이력으로만 둔다.
 
 작성자와 다른 reviewer가 ID·인용 지지·조건·통계·반례·과장·재현 범위를 claim별로 감사한다. reviewer 정체성과 실제 model/vendor를 기록한다. 중대 결함이 남으면 accept할 수 없다.
+
+연구 결과 검토는 REVIEW v2(`labhq/research/review.py`, R13의 앞부분)로 받는다. claim마다 인용 지지, 부재를 근거로 씀, 직접성, 독립성, 비교 가능성을 모두 판정한다. 관찰 문장에 "0 hits"라고만 적은 0건 검색처럼 코드가 읽지 못하는 것은 reviewer가 본다. 부재를 근거로 쓴 것은 늘 중대 결함이다. countable 근거를 단 claim은 앞의 네 항목을, quantity를 비교한 claim은 비교 가능성을 `not_applicable`로 넘길 수 없다. 검토는 결과의 plan hash·step·claim 전부에 묶이고, 결과를 쓴 직원은 검토하지 못한다. 아직 실행 경로에 연결하지 않았고 일반 요청의 `REVIEW_SCHEMA`는 그대로다.
 
 ## 5. PI checkpoint와 완료
 
