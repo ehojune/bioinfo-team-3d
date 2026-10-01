@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from .util import atomic_write_text, free_port, strip_parent_claude_env
+from .util import atomic_write_text, free_port, strip_parent_session_env
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
@@ -414,7 +414,7 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
 
         engine_name = settings.bench.arms[arm].engine
         engine = getattr(settings.engines, engine_name)
-        env = strip_parent_claude_env({**os.environ, **{k: os.path.expandvars(v) for k, v in engine.env.items()}})
+        env = strip_parent_session_env({**os.environ, **{k: os.path.expandvars(v) for k, v in engine.env.items()}})
         if engine_name == "codex":
             from .adapters.base import child_config_dirs
 
