@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import fnmatch
 import os
+import sys
 from pathlib import Path, PurePath
 
 from ..models import AgentSpec
@@ -66,6 +67,13 @@ WORKSPACE_INSTRUCTION_RULES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 # Where TaskWorkspace.install_skill copies a contract staff member's paper skill.
 SKILL_DIRS = (".claude/skills", ".agents/skills")
+# Windows and macOS file systems ignore letter case by default: there `claude.md` is the CLAUDE.md an engine opens
+# and `.Agents/` is `.agents/` (#190). Names are then compared case-insensitively; Linux compares them exactly.
+CASE_INSENSITIVE = os.name == "nt" or sys.platform == "darwin"
+
+
+def _folded(text: str) -> str:
+    return text.casefold() if CASE_INSENSITIVE else text
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -149,12 +157,12 @@ def labhq_workspace_paths(agent: AgentSpec, engine: str, workdir: Path | None = 
 def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
     """Return `exclude` or `refuse` for one engine-read workspace path, independent of depth."""
     rules = WORKSPACE_INSTRUCTION_RULES.get(engine, {})
-    parts = relative.parts
+    parts = [_folded(part) for part in relative.parts]
     name = parts[-1] if parts else ""
     for action in ("refuse", "exclude"):
-        if any(part in rules.get(f"{action}_dirs", ()) for part in parts):
+        if any(part in {_folded(d) for d in rules.get(f"{action}_dirs", ())} for part in parts):
             return action
-        if any(fnmatch.fnmatchcase(name, pattern) for pattern in rules.get(f"{action}_files", ())):
+        if any(fnmatch.fnmatchcase(name, _folded(pattern)) for pattern in rules.get(f"{action}_files", ())):
             return action
     return None
 
@@ -162,6 +170,7 @@ def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
 def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], action: str) -> list[str]:
     """Find matching paths at every depth without following symlinks or Windows junctions."""
     found: list[str] = []
+    owned = [_folded(mine) for mine in owned]
     pending = [Path(workdir)]
     while pending:
         path = pending.pop()
@@ -175,9 +184,10 @@ def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], ac
                 linked = _is_link(entry)
             except OSError:
                 linked = True
-            if any(relative == mine or relative.startswith(mine + "/") for mine in owned):
+            key = _folded(relative)
+            if any(key == mine or key.startswith(mine + "/") for mine in owned):
                 continue
-            owns_below = any(mine.startswith(relative + "/") for mine in owned)
+            owns_below = any(mine.startswith(key + "/") for mine in owned)
             matches = workspace_instruction_action(engine, PurePath(relative)) == action
             is_dir = False if linked else entry.is_dir()
             if matches and (not is_dir or action == "refuse") and (not owns_below or linked):

@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import platform
 import shutil
 import time
@@ -24,28 +23,12 @@ from typing import Any
 
 from .. import __version__
 from ..adapters.owned import OwnedPathError, append_owned, plain_directory, write_owned
-from ..adapters.owned import is_link as _is_link, remove_entry as _remove_entry
+from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
 from ..models import AgentSpec, Task
 
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
 log = logging.getLogger("labhq.runner")
-
-
-def _plain_directory(root: Path, relative: PurePath) -> Path | None:
-    """Create plain directory components, replacing links without traversing their targets."""
-    current = root
-    for part in relative.parts:
-        current /= part
-        if os.path.lexists(current):
-            if _is_link(current):
-                _remove_entry(current)
-                current.mkdir()
-            elif not current.is_dir():
-                return None
-        else:
-            current.mkdir()
-    return current
 
 
 class TaskWorkspace:
@@ -72,16 +55,22 @@ class TaskWorkspace:
                 f"Instruction summary: {t.prompt[:2000]}")
 
     def install_skill(self, skill_dir: Path) -> str | None:
-        """Install a fresh contract skill copy for this run, without traversing workspace links."""
+        """Install a fresh contract skill copy for this run, without traversing workspace links.
+
+        A link at the copy itself is replaced. A link above it (`.agents`, `.claude/skills`) refuses the run and
+        stays as it is (#190): replacing it would delete what an earlier step put there, and labhq cannot tell
+        whether that link was the PI's.
+        """
         skill_dir = Path(skill_dir)
         if not skill_dir.name:
             return "contract skill source has no directory name; execution refused"
         destinations = []
         for base in SKILL_DIRS:
             dst = self.dir / base / skill_dir.name
-            parent = _plain_directory(self.dir, PurePath(base))
+            parent = plain_directory(self.dir, PurePath(base))
             if parent is None:
-                return "contract skill destination is not a directory; execution refused"
+                return (f"contract skill destination {base} is a link or not a directory in the workspace; "
+                        "execution refused")
             destinations.append((parent, dst))
         if not (skill_dir / "SKILL.md").is_file():
             for _, dst in destinations:
