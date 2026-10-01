@@ -13,6 +13,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 02:32 | [`db89121`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/db89121) | **main 병합에서 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** direct 산출 등록(#230)의 줄과 이 PR의 두 줄을 모두 두고 시간 역순으로 맞췄습니다. 동작 변경은 없습니다 |
+| 02:22 | [`5b47008`](https://github.com/ehojune/bioinfo-team-3d/pull/243/commits/5b47008) | 열린 issue 작업 큐를 실제 PR과 후속 작업 기준으로 동기화 |
 | 02:16 | [`c67eec7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/c67eec7) | direct 산출 목록이 검사한 outputs 폴더를 열린 핸들로만 읽어, 검사 뒤 링크로 바뀐 폴더를 따라가지 않게 함 (#221 검증) |
 | 02:01 | [`2341a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/2341a0c) | **POSIX timeout test가 SIGTERM을 무시하는 손자가 준비된 뒤에만 판정합니다** (#227). 손자가 SIG_IGN을 설치한 뒤 ready를 알리고 leader는 그 뒤에 pids 파일을 씁니다. 1초 안에 준비되지 않으면 5초 timeout으로 한 번 더 돌립니다 |
 | 02:01 | [`8fde4df`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/8fde4df) | **POSIX timeout test가 좀비 회수 순간을 '살아 있음'으로 읽지 않습니다** (#227). 대기 loop가 좀비를 보고 끝난 뒤 assert가 다시 확인하는 사이 init이 좀비를 거두면, kill(0)은 성공하고 /proc 읽기는 실패해 assert False가 났습니다. 이제 마지막 확인으로 판정하고 /proc 읽기가 실패하면 kill(0)을 다시 묻습니다. 회귀 test는 수정 전 실패했습니다 |
