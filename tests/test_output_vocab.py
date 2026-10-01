@@ -162,7 +162,9 @@ def test_package_data_ships_the_vocabulary():
     patterns = ast.literal_eval(re.search(r'labhq = (\[[\s\S]*?\])', config)[1])
     included = {p for pattern in patterns for p in PACKAGE.glob(pattern) if p.is_file()}
     needed = {p for p in (PACKAGE / "vocab").iterdir() if p.suffix in {".yaml", ".md"}}
-    assert vocab.VOCAB_DIR / vocab.LOCAL_FILE in needed and needed <= included
+    # Windows may import this copy through its 8.3 TEMP alias (RUNNER~1) while ROOT uses the long path.
+    local = vocab.VOCAB_DIR / vocab.LOCAL_FILE
+    assert any(path.samefile(local) for path in needed) and needed <= included
 
 
 def _scanned():
