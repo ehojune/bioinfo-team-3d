@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #221 할 일 1 — direct 요청 산출을 결과 outputs로
+
+- 결론: direct 요청도 작업 폴더 `outputs/`의 산출을 결과 outputs로 남겨, 그림자 출처 모델이 artifact로 보고 hash를 잰다. 할 일 2(산출 데이터 종류 선언 자리)는 PI 판단(#149·#151) 대기라 하지 않았고 #221은 열어 둔다.
+- 바뀐 것: runner가 `kind: direct` 실행 뒤 `TaskWorkspace.scan_outputs`로 `outputs/` 아래 정규 파일을 센다. symlink·junction·mount·통제 구역은 따라가지 않고(`outputs/` 자체 포함) labhq의 `RESULT*.md`는 빼며, 최대 200개(그림자 `HASH_MAX_FILES`)와 `runner.reference_scan_max_entries`·`reference_scan_max_depth` 안에서만 센다. 상한에 닿으면 작업 로그에 경고가 남는다. 계획 단계는 그대로 선언한 산출만 보고한다. direct 이어 묻기는 orchestrate처럼 산출이 있는 작업 폴더를 읽기 전용 upstream으로 받는다. mock 직원은 direct `[artifact]`에도 파일을 쓴다. README 그림자 절을 맞췄고 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 10건이 수정 전 실패하고 수정 뒤 통과했다(step 선언 산출 guard 1건은 전후 통과). 로컬 Codex 리뷰 P2 1건(`outputs/` 자체가 mount거나 통제 구역 안이면 그대로 순회)을 고치고 회귀에 넣었다. run log의 c1·c2를 실제 Claude Code CLI(data_steward=Sonnet, 공개 palmerpenguins 발췌, 별도 state)로 다시 돌렸다. c1은 outputs 2개·`observed_new 2`(이전 0), c2는 `history_artifacts 2`·`candidates 0`·`type_unknown 2`. 전체 pytest 2133 passed/25 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 할 일 2 전이라 live 후보는 여전히 0이다(`type_unknown`). 같은 폴더를 다시 쓰는 재시도·wake는 같은 파일을 여러 run이 보고해 `not_generated`가 된다(선언 산출과 같은 규칙). hard link는 경로로 구별하지 못한다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/adapters/mock.py`, `tests/test_direct_outputs.py`, `tests/semantics_shadow_lab.py`.
+
 ## 2026-10-01 · PR #136·#158 후속 12건 — 계보 순회·resume 이유·그림자 breaker·hash·mark
 
 - 결론: #154 #155 #156 #157 #159 #160 #161 #163 #173 #174 #175를 issue별 커밋으로 고쳤다. #162는 이미 main(dc01c50)에 고쳐져 있어 issue의 두 모양만 test에 더했다. #163과 #174는 같은 결함이라 한 커밋이다.
