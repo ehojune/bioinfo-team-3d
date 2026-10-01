@@ -36,6 +36,8 @@ def prepare(workdir, script_path, logs, body, *args):
 async def broker(path, payload, timeout):
     if scenario == "broker":
         raise ConnectionError("fixture approval broker unavailable")
+    if path == "/jobs/owned":  # the runner tracks job 123 for this agent unless the scenario says otherwise
+        return {"owned": scenario != "cancel_unowned"}
     return {"approved": False, "note": "fixture PI denied"}
 
 

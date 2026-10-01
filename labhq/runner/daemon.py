@@ -28,7 +28,7 @@ from ..policy import claude_deny_links, claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
-from ..tools.scheduler import TERMINAL, Scheduler
+from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
 from .approvals import Broker
 from .integrity import ReadOnlyWatch, watch_roots
@@ -121,7 +121,7 @@ class Runner:
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
-                             self._on_track, self._on_ask)
+                             self._on_track, self._on_ask, self._owns_job)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -779,6 +779,17 @@ class Runner:
         await self.emit(Event(type="job.submitted", task_id=tid, agent_id=body.get("agent_id"),
                               request_id=self.task_req.get(tid or ""),
                               data={"job_id": jid, "name": body.get("name"), "core_hours": body.get("core_hours")}))
+
+    async def _owns_job(self, identity: dict) -> bool:
+        """hpc_cancel scope (#172): a job this agent submitted through labhq in this task or request."""
+        job_id = str(identity.get("job_id") or "")
+        for tracked, j in self.jobs.items():
+            if not job_in_family(tracked, job_id) or j.get("agent_id") != identity.get("agent_id"):
+                continue
+            if j.get("task_id") == identity.get("task_id") or (
+                    identity.get("request_id") and j.get("request_id") == identity.get("request_id")):
+                return True
+        return False
 
     # ---------------- HPC job watcher ----------------
     async def _job_watch_loop(self) -> None:

@@ -151,7 +151,8 @@ def test_submit_timeout_warns_that_the_job_may_exist():
     ("squeue", (1, "", "slurm_load_jobs error: Unable to contact slurm controller"), r"squeue failed \(1\)"),
     ("squeue", (0, "squeue: warning: unexpected banner\n", ""), "squeue returned unexpected output"),
     ("sacct", (1, "", "sacct: error: Problem talking to the database: Connection refused"), r"sacct failed \(1\)"),
-    ("sacct", (0, "Slurm accounting storage is disabled\n", ""), "sacct returned unexpected output"),
+    # "accounting storage is disabled" is no longer a lookup failure (#172, tests/test_hpc_followups.py).
+    ("sacct", (0, "sacct: warning: unexpected banner\n", ""), "sacct returned unexpected output"),
 ])
 def test_failed_lookup_is_not_missing(command, stub, match):
     backend, fake = slurm()

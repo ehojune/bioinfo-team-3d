@@ -7,6 +7,7 @@ Cluster specifics (PE name, memory resource, PBS resource syntax, sbatch options
 from __future__ import annotations
 
 import getpass
+import os
 import re
 import shlex
 import subprocess
@@ -49,6 +50,16 @@ SACCT_FIELDS = "JobID,State,ExitCode,JobName"
 # an option ("-u x", "--user=x") nor a selector of many jobs (Torque "all", SGE job names) gets through.
 JOB_ID = re.compile(r"[0-9][A-Za-z0-9_.\[\]+-]{0,127}")
 MAYBE_SUBMITTED = "; the job may have been submitted, check hpc_queue before resubmitting"
+# Script lines a scheduler reads as options. sbatch also reads #PBS and #BSUB unless --ignore-pbs is given.
+DIRECTIVE_PREFIXES = ("#SBATCH", "#PBS", "#BSUB", "#$")
+# The only variables scheduler commands receive (#172). A job submitted with -V or -v (SGE, PBS) copies qsub's
+# environment, and the MCP process holding qsub also holds the broker token and engine credentials.
+COMMAND_ENV = re.compile(
+    r"PATH|HOME|USER|LOGNAME|USERNAME|SHELL|LANG|LANGUAGE|TZ|TMPDIR|TEMP|TMP|TERM|LD_LIBRARY_PATH|KRB5CCNAME"
+    r"|SSH_AUTH_SOCK|SYSTEMROOT|SYSTEMDRIVE|WINDIR|COMSPEC|PATHEXT|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA"
+    r"|LOCALAPPDATA|PROGRAMDATA|(?:LC|SGE|PBS|SLURM|SBATCH|SQUEUE|SACCT|SCANCEL)_\w+"
+)
+ACCOUNTING_DISABLED = re.compile(r"accounting storage is disabled", re.I)
 
 
 @dataclass
@@ -102,10 +113,33 @@ def checked_job_id(job_id: str) -> str:
     return job_id
 
 
+def job_in_family(tracked: str, job_id: str) -> bool:
+    """`job_id` is the tracked job or one of its array tasks, het components or steps."""
+    if job_id == tracked:
+        return True
+    if "[]" in tracked:  # PBS array "123[].server" → element "123[4].server"
+        head, tail = tracked.split("[]", 1)
+        return bool(re.fullmatch(re.escape(head) + r"\[\d+\]" + re.escape(tail), job_id))
+    return job_id.startswith((f"{tracked}_", f"{tracked}+", f"{tracked}."))
+
+
+def command_env(environ: dict[str, str] | None = None) -> dict[str, str]:
+    environ = os.environ if environ is None else environ
+    return {key: value for key, value in environ.items() if COMMAND_ENV.fullmatch(key.upper())}
+
+
+def script_directives(body: str, prefixes: tuple[str, ...] | None = None) -> list[str]:
+    """Scheduler directive lines anywhere in an agent script; the core-hour estimate cannot see what they ask."""
+    if prefixes is None:
+        extra = os.environ.get("PBS_DPREFIX")  # PBS takes its directive prefix from the submitting environment
+        prefixes = (*DIRECTIVE_PREFIXES, extra) if extra else DIRECTIVE_PREFIXES
+    return [line.strip() for line in body.splitlines() if line.lstrip().startswith(prefixes)]
+
+
 def slurm_cluster_directive(body: str) -> str | None:
-    """First -M/--clusters option in an #SBATCH line, or None."""
-    for line in body.splitlines():
-        if line.startswith("#SBATCH") and (option := slurm_cluster_option(line[len("#SBATCH"):].split())):
+    """First option in an #SBATCH line that picks another cluster, or None."""
+    for line in script_directives(body, ("#SBATCH",)):
+        if option := slurm_cluster_option(line[len("#SBATCH"):].split()):
             return option
     return None
 
@@ -260,7 +294,8 @@ class Scheduler:
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
         if self.cfg.ssh_host:
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
-        return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s)
+        return subprocess.run(args, capture_output=True, text=True, timeout=self.cfg.command_timeout_s,
+                              env=command_env())
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
@@ -388,6 +423,13 @@ class Scheduler:
         elif not re.fullmatch(r"slurm_load_jobs error: Invalid job id specified", _detail(p), re.I):
             raise RuntimeError(f"squeue failed ({p.returncode}): {_detail(p)}")
         p = self._run(["sacct", "-n", "-P", "-X", "-j", job_id, "-o", SACCT_FIELDS])
+        if ACCOUNTING_DISABLED.search(p.stderr or "") or (not _slurm_rows(p.stdout or "")
+                                                           and ACCOUNTING_DISABLED.search(p.stdout or "")):
+            # No slurmdbd: squeue's final state is all there is. Once it is gone too, "missing" lets the
+            # watcher retry a few polls and then wake the agent with unknown_finished (#172).
+            return live or JobInfo(job_id=job_id, state="missing",
+                                   detail="squeue no longer lists the job and Slurm accounting storage is "
+                                          "disabled; its final state is unknown")
         if p.returncode != 0:
             raise RuntimeError(f"sacct failed ({p.returncode}): {_detail(p)}")
         records = parse_slurm_sacct(p.stdout)

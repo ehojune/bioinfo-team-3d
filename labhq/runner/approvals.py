@@ -18,11 +18,12 @@ from ..ask_results import ask_result, read_ask_results
 from ..security import token_matches
 
 Handler = Callable[[Any], Awaitable[None]]
+Predicate = Callable[[dict], Awaitable[bool]]
 
 
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_track: Handler,
-                 on_ask: Handler | None = None):
+                 on_ask: Handler | None = None, owns_job: Predicate | None = None):
         self.port = port
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
@@ -31,6 +32,7 @@ class Broker:
         self.identities: dict[str, dict[str, str | None]] = {}
         self._on_approval, self._on_event, self._on_track = on_approval, on_event, on_track
         self._on_ask = on_ask
+        self._owns_job = owns_job  # without it no job counts as tracked, so hpc_cancel refuses all
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -77,6 +79,11 @@ class Broker:
         async def track(body: dict, x_labhq_token: str = Header(default="")) -> dict:
             await self._on_track(self._identity(x_labhq_token, body))
             return {"ok": True}
+
+        @app.post("/jobs/owned")
+        async def owned(body: dict, x_labhq_token: str = Header(default="")) -> dict:
+            identity = self._identity(x_labhq_token, body)
+            return {"owned": bool(self._owns_job and await self._owns_job(identity))}
 
         return app
 
