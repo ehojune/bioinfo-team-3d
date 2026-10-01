@@ -60,7 +60,8 @@ def test_the_view_has_no_actions():
     tree = ast.parse(MODULE.read_text(encoding="utf-8"))
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imported |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
-    assert imported <= {"__future__", "hashlib", "re", "collections.abc", "dataclasses", "typing"}
+    assert imported <= {"__future__", "hashlib", "re", "collections.abc", "dataclasses", "typing",
+                        "evidence.claims"}  # normalize_artifact_path: one spelling per path, as the model uses
     calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not calls & {"open", "exec", "eval", "__import__"}
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
@@ -77,3 +78,13 @@ def test_the_shadow_line_carries_the_view_counts(tmp_path):
     assert objects["status"] == "ok" and objects["unresolved"] == 0
     assert objects["objects"]["Staff"] == 3 and objects["objects"]["Approval"] == 1
     assert objects["links"]["task_artifact"] == 1 and objects["links"]["approval_target"] == 1
+
+
+def test_one_file_under_two_spellings_is_one_artifact():
+    snap = _snapshot()
+    snap["tasks"]["task_1"]["result"]["outputs"] = ["outputs\\a.tsv", "outputs/a.tsv", "./outputs/a.tsv"]
+    snap["requests"]["req_o"]["plan"]["steps"][1]["input_refs"] = ["step:s1/outputs\\a.tsv"]
+    snap["tasks"].pop("task_1w")  # one workspace reports s1, so the step reference resolves
+    summary = summarize(build_view(snap))
+    assert summary["objects"]["Artifact"] == 1 and summary["links"]["task_artifact"] == 1
+    assert summary["links"]["step_input"] == 1 and "step_input" not in summary["unresolved_by"]

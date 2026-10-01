@@ -283,3 +283,20 @@ def test_a_state_dir_linked_into_a_git_work_tree_is_refused(tmp_path):
     hub.s.gateway.state_dir = str(link / "state")
     assert shadow.ShadowService.start(hub) is None
     assert not (repo / "inside" / "state").exists()
+
+
+@pytest.mark.parametrize("failure", ["timeout", "error"])
+def test_a_job_stopped_before_the_models_still_leaves_a_line(tmp_path, monkeypatch, failure):
+    service = _service(tmp_path)
+
+    def stopped(snap, check):
+        raise shadow.ShadowTimeout("time cap") if failure == "timeout" else KeyError("x")
+
+    monkeypatch.setattr(shadow, "read_rows", stopped)
+    _run(service, ["req_001"])
+    (line,) = _lines(tmp_path, "request")
+    assert line["request_id"] == "req_001" and line["status"] == "done"
+    assert line["provenance"]["status"] == line["objects"]["status"] == failure
+    assert service.counts["failures"] == 1
+    rep = shadow.build_report(service.paths)
+    assert rep["requests"] == 1 and rep["provenance"][failure] == 1

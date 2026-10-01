@@ -849,6 +849,18 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         return _failed("error", exc, started), hashes
 
 
+def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
+    """A request whose job stopped before the models ran: ids and the failure only, so the report counts it."""
+    rid = snap["rid"]
+    req = (snap.get("requests") or {}).get(rid) or {}
+    project = req.get("project_id")
+    model = {"status": status, "error_kind": type(exc).__name__, "ms": 0.0}
+    return {"v": 1, "type": "request", "ts": round(time.time(), 3), "epoch": epoch, "request_id": rid,
+            "project": opaque("project", project)[:12] if project else None, "lane": req.get("lane"),
+            "mode": req.get("mode"), "status": req.get("status"), "provenance": dict(model), "objects": dict(model),
+            "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"), "ms": ms}
+
+
 def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Callable[[], None], *,
                  epoch: int) -> dict:
     """One request line: both models side by side, ids, kinds, hashes and counts only."""
@@ -1083,20 +1095,12 @@ class ShadowService:
             known = len(observed)
             line = compute_line(snap, observed, check, epoch=self.epoch)
             self.observed_dirty = self.observed_dirty or len(observed) != known
-        except ShadowTimeout:
-            line = None
-            if self.gen == gen:
-                log.warning("semantics shadow job timeout (ShadowTimeout)")
-                self.outcome(failed=True)
-                return
+        except ShadowTimeout as exc:  # stopped before the models ran: still one line, so the report counts it
+            line = failed_line(snap, "timeout", exc, epoch=self.epoch, ms=round((time.monotonic() - started) * 1000, 2))
         except ShadowStop:
             line = None
         except Exception as exc:  # noqa: BLE001
-            log.warning("semantics shadow job failed (%s)", type(exc).__name__)
-            line = None
-            if self.gen == gen:
-                self.outcome(failed=True)
-                return
+            line = failed_line(snap, "error", exc, epoch=self.epoch, ms=round((time.monotonic() - started) * 1000, 2))
         finally:
             watchdog.cancel()
             with self.lock:

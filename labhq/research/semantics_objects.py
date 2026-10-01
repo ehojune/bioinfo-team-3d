@@ -14,6 +14,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..evidence.claims import normalize_artifact_path
+
 OBJECT_TYPES = ("Staff", "Request", "Step", "Task", "Job", "DataAsset", "Approval", "Artifact")
 # link type -> (source object type, allowed target types)
 LINK_TYPES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -118,7 +120,8 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
             job = view.add("Job", f"job:{tid}/{job_id}", state=finished.get(job_id, "pending"))
             view.link("task_job", node, job)
         for out in result.get("outputs") or []:
-            art = view.add("Artifact", f"artifact:{opaque(rid, result.get('workdir_id'), out)}")
+            path = normalize_artifact_path(str(out))  # one spelling per file, as the provenance model reads it
+            art = view.add("Artifact", f"artifact:{opaque(rid, result.get('workdir_id'), path)}")
             view.link("task_artifact", node, art)
 
     for ref in req.get("references") or []:
@@ -138,7 +141,8 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
                 source, _, path = ref[len("step:"):].partition("/")
                 runs = [t for t in tasks.values() if t.get("step_id") == source]
                 workdirs = {(t.get("result") or {}).get("workdir_id") for t in runs}
-                target = f"artifact:{opaque(rid, next(iter(workdirs)), path)}" if len(workdirs) == 1 else None
+                target = (f"artifact:{opaque(rid, next(iter(workdirs)), normalize_artifact_path(path))}"
+                          if len(workdirs) == 1 else None)
                 view.link("step_input", sid, target)
             else:
                 view.link("step_input", sid, None)
