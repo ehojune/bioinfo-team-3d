@@ -299,6 +299,21 @@ def claude_settings(policy: PolicySettings) -> dict:
     return {"permissions": {"deny": deny}} if deny else {}
 
 
+def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
+    """Read/Edit/Write deny rules for link paths inside an open folder that lead into a zone (#132).
+
+    Claude compares rules with the path as written, so the link itself (a file) and anything below it (a
+    directory) are both named; the zone rules only cover the zone's own spelling.
+    """
+    rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
+             for tool in ("Read", "Edit", "Write") for tail in ("", "/**")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
     """Add Edit/Write deny rules for directories a task may only read (reference paths, #36)."""
     rules = [f"{tool}(/{claude_rule_path(d)}/**)" for d in directories for tool in ("Edit", "Write")]

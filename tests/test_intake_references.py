@@ -462,6 +462,80 @@ async def test_runner_fails_closed_when_a_reference_is_too_big_to_check(tmp_path
     assert any("상한" in t for t in _log_texts(runner) if t.startswith("참고 경로 제외"))
 
 
+def _upstream(runner, name):
+    directory = runner.ws_root / "r1" / name
+    (directory / "outputs").mkdir(parents=True)
+    (directory / "outputs" / "summary.tsv").write_text("gene\tlog2fc", encoding="utf-8")
+    return directory
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_steps_folder_linking_into_a_zone_is_not_opened_to_the_next_step(tmp_path, monkeypatch):
+    # #132: `outputs/link -> zone` made by an earlier agent reached the next step through --add-dir, where
+    # Claude reads without asking the gate. Links elsewhere (a shared genome) are fine; two hops are found.
+    settings = _vault_settings(tmp_path)
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    direct, chained, clean, genome = (_upstream(runner, n) for n in ("task-a", "task-b", "task-c", "task-d"))
+    _link_dir(direct / "outputs" / "link", tmp_path / "vault")
+    (tmp_path / "elsewhere" / "hop").mkdir()
+    _link_dir(tmp_path / "elsewhere" / "hop" / "raw", tmp_path / "vault")
+    _link_dir(chained / "outputs" / "cache", tmp_path / "elsewhere")
+    (tmp_path / "genome").mkdir()
+    _link_dir(genome / "outputs" / "hg38", tmp_path / "genome")
+    await runner.run_task(Task(id="task-n", request_id="r1", agent_id="worker", prompt="next step",
+                               meta={"upstream_dirs": [str(d) for d in (direct, chained, clean, genome)]}))
+    ctx = seen["ctx"]
+    opened = [str(clean.resolve()), str(genome.resolve())]
+    assert ctx.extra_dirs == opened and ctx.env["LABHQ_EXTRA_ROOTS"].split(os.pathsep) == opened
+    refused = [t for t in _log_texts(runner) if t.startswith("이전 단계 폴더 제외")]
+    assert len(refused) == 2 and all("통제 데이터 구역" in t for t in refused)
+    assert "task-a" in refused[0] and "outputs/link" in refused[0] and "cache" in refused[1]
+    assert str(tmp_path / "vault") not in " ".join(refused), "the zone path is not echoed into logs"
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_steps_folder_too_big_to_check_is_not_opened(tmp_path, monkeypatch):
+    settings = _vault_settings(tmp_path)
+    settings.runner.reference_scan_max_entries = 3
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    upstream = _upstream(runner, "task-a")
+    for i in range(5):
+        (upstream / "outputs" / f"f{i}.tsv").write_text("x", encoding="utf-8")
+    await runner.run_task(Task(id="task-n", request_id="r1", agent_id="worker", prompt="next",
+                               meta={"upstream_dirs": [str(upstream)]}))
+    assert seen["ctx"].extra_dirs == []
+    assert any("상한" in t for t in _log_texts(runner) if t.startswith("이전 단계 폴더 제외"))
+
+
+@pytest.mark.asyncio
+async def test_a_project_folder_stays_open_but_claude_is_denied_its_links_into_a_zone(tmp_path, monkeypatch):
+    # #132: refusing a project clone would stop every step of the project, so its zone links get deny rules.
+    from labhq.policy import claude_rule_path
+
+    settings = _vault_settings(tmp_path)
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    _link_dir(project / "data", tmp_path / "vault")
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    for task_id in ("task-p1", "task-p2"):
+        await runner.run_task(Task(id=task_id, request_id="r1", agent_id="worker", prompt="work",
+                                   meta={"project_dirs": [str(project)]}))
+    ctx = seen["ctx"]
+    assert ctx.extra_dirs == [str(project)]
+    deny = ctx.claude_settings["permissions"]["deny"]
+    link = claude_rule_path(str(project / "data"))
+    for tool in ("Read", "Edit", "Write"):
+        assert f"{tool}(/{link})" in deny and f"{tool}(/{link}/**)" in deny
+    warned = [t for t in _log_texts(runner) if t.startswith("프로젝트 폴더")]
+    assert len(warned) == 1 and "data" in warned[0], "said once, not on every task"
+    # Without restricted zones nothing is listed: a large clone costs nothing.
+    plain = Settings()
+    runner2, seen2 = _reference_runner(tmp_path / "plain", monkeypatch, plain)
+    await runner2.run_task(Task(id="task-p3", request_id="r1", agent_id="worker", prompt="work",
+                                meta={"project_dirs": [str(project)]}))
+    assert "permissions" not in seen2["ctx"].claude_settings
+
+
 def test_withholding_a_refused_path_leaves_kept_paths_that_share_its_prefix_intact():
     from labhq.intake import render_references, withhold_reference_paths
 

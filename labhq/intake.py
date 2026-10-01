@@ -7,6 +7,7 @@ and an optional depth (about 30/60/90 minutes of work). Older plans used plain s
 from __future__ import annotations
 
 import functools
+import itertools
 import os
 import posixpath
 import re
@@ -413,46 +414,116 @@ def _is_link(entry: os.DirEntry) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
-def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> str | None:
-    """Why `directory` must not be exposed, or None (#36).
+def _within(path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
 
-    Checking only the directory itself lets `reference/link/raw.tsv` reach a restricted zone through a
-    symlink or junction below it. Every entry is listed without following links; a link must resolve inside
-    the directory, and a mount point below it is refused because its contents live elsewhere. A directory
-    too large or too deep to list within the caps, or one that cannot be listed, is refused (fail closed).
-    Links made after this check and hard links are not seen; README §10 says so.
+
+def overlaps_zone(path: Path, zones: list[Path]) -> bool:
+    """The one judgement for a real path against resolved restricted zones: inside one, or holding one."""
+    return any(_within(path, zone) or _within(zone, path) for zone in zones)
+
+
+def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: bool = False):
+    """Entries below `directory` that can lead elsewhere, as (kind, path, info), listed without following links.
+
+    kind is "link" (info: the resolved target, or None when it cannot be resolved), "mount", or a stop:
+    "limit" (info: why) or "unreadable". With `follow_outward`, a directory link whose target lies outside
+    `directory` is listed through the link path, sharing the caps, so a second link behind it is seen too.
     """
+    real_root = directory.resolve()
+    visited = {real_root}
     seen = 0
     stack: list[tuple[Path, int]] = [(directory, 0)]
     while stack:
         current, depth = stack.pop()
         try:
-            with os.scandir(current) as entries:
-                for entry in entries:
-                    seen += 1
-                    if seen > max_entries:
-                        return f"하위 항목이 상한 {max_entries}개를 넘어 링크를 다 확인할 수 없음"
-                    name = Path(entry.path).relative_to(directory).as_posix()
-                    if _is_link(entry):
-                        try:
-                            target = Path(entry.path).resolve()
-                        except (OSError, RuntimeError, ValueError):
-                            return f"하위 링크 {name}을 풀 수 없음"
-                        if any(target == zone or target.is_relative_to(zone) or zone.is_relative_to(target)
-                               for zone in zones):
-                            return f"하위 링크 {name}이 통제 데이터 구역을 가리킴"
-                        if not (target == directory or target.is_relative_to(directory)):
-                            return f"하위 링크 {name}이 참고 폴더 밖을 가리킴"
-                        continue  # the target is listed where it really lives
-                    if entry.is_dir(follow_symlinks=False):
-                        if os.path.ismount(entry.path):
-                            return f"하위 {name}에 다른 파일 시스템이 mount되어 있음"
+            with os.scandir(current) as iterator:
+                entries = list(itertools.islice(iterator, max_entries - seen + 1))
+            for entry in entries:
+                seen += 1
+                path = Path(entry.path)
+                if seen > max_entries:
+                    yield "limit", path, f"하위 항목이 상한 {max_entries}개를 넘어 링크를 다 확인할 수 없음"
+                    return
+                if _is_link(entry):
+                    try:
+                        target: Path | None = path.resolve()
+                    except (OSError, RuntimeError, ValueError):
+                        target = None
+                    yield "link", path, target
+                    if (follow_outward and target is not None and target not in visited
+                            and not _within(target, real_root) and target.is_dir()):
+                        visited.add(target)
                         if depth + 1 > max_depth:
-                            return f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
-                        stack.append((Path(entry.path), depth + 1))
+                            yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
+                            return
+                        stack.append((path, depth + 1))
+                    continue  # otherwise the target is listed where it really lives
+                if entry.is_dir(follow_symlinks=False):
+                    # On Windows a mount point is a reparse point (caught above); ismount costs ~3 ms a folder there.
+                    if os.name != "nt" and os.path.ismount(entry.path):
+                        yield "mount", path, None
+                        continue
+                    if depth + 1 > max_depth:
+                        yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
+                        return
+                    stack.append((path, depth + 1))
         except OSError:
-            return f"하위 폴더 {Path(current).relative_to(directory).as_posix() or '.'}를 읽을 수 없음"
+            yield "unreadable", current, None
+            return
+
+
+def _name(path: Path, directory: Path) -> str:
+    return path.relative_to(directory).as_posix() or "."
+
+
+def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> str | None:
+    """Why reference `directory` must not be exposed, or None (#36).
+
+    Checking only the directory itself lets `reference/link/raw.tsv` reach a restricted zone through a
+    symlink or junction below it. A reference is a promise about what the task reads, so a link must resolve
+    inside the directory, and a mount point below it is refused because its contents live elsewhere. A
+    directory too large or too deep to list within the caps, or one that cannot be listed, is refused (fail
+    closed). Links made after this check and hard links are not seen; README §10 says so.
+    """
+    for kind, path, info in _walk(directory, max_entries, max_depth):
+        name = _name(path, directory)
+        if kind == "link":
+            if info is None:
+                return f"하위 링크 {name}을 풀 수 없음"
+            if overlaps_zone(info, zones):
+                return f"하위 링크 {name}이 통제 데이터 구역을 가리킴"
+            if not _within(info, directory):
+                return f"하위 링크 {name}이 참고 폴더 밖을 가리킴"
+        elif kind == "mount":
+            return f"하위 {name}에 다른 파일 시스템이 mount되어 있음"
+        elif kind == "unreadable":
+            return f"하위 폴더 {name}를 읽을 수 없음"
+        else:
+            return info
     return None
+
+
+def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> tuple[list[Path], str | None]:
+    """Links below a folder a task can write to that lead into a restricted zone or cannot be resolved (#132).
+
+    Unlike a reference, an earlier step's workspace or a project clone may link outside itself (a genome, a
+    shared cache), so only the zone is judged, with the same `overlaps_zone` as references. A directory link
+    leaving the folder is listed through, so a zone two links away is found as well. Returns the offending
+    link paths and, when the listing could not finish, why; the caller decides whether that is fatal.
+    """
+    found: list[Path] = []
+    for kind, path, info in _walk(directory, max_entries, max_depth, follow_outward=True):
+        if kind == "link":
+            if info is None or overlaps_zone(info, zones):
+                found.append(path)
+        elif kind == "mount":
+            return found, f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
+        elif kind == "unreadable":
+            return found, f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
+        else:
+            return found, info
+    return found, None
 
 
 # ---------- how a reference may be echoed in text: one rule for prompts and published texts ----------
