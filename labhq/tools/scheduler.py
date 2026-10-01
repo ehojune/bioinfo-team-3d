@@ -44,8 +44,11 @@ SLURM_STATE = {
 # Name last: other users' job names may contain the delimiter.
 SQUEUE_FORMAT = "%i|%T|%r|%j"
 SACCT_FIELDS = "JobID,State,ExitCode,JobName"
-# Agent-supplied ids reach qdel/scancel argv: "-u x" or "--user=x" must never be read as an option.
-JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\[\]+-]{0,127}")
+# Agent-supplied ids reach qdel/scancel argv. Every SGE/PBS/Slurm id starts with a digit, so neither
+# an option ("-u x", "--user=x") nor a selector of many jobs (Torque "all", SGE job names) gets through.
+JOB_ID = re.compile(r"[0-9][A-Za-z0-9_.\[\]+-]{0,127}")
+# sbatch options that send the job to another cluster; squeue/sacct/scancel would then find the wrong job.
+SLURM_CLUSTER_OPTION = re.compile(r"-M|--clusters?(?:=|$)")
 MAYBE_SUBMITTED = "; the job may have been submitted, check hpc_queue before resubmitting"
 
 
@@ -98,6 +101,16 @@ def checked_job_id(job_id: str) -> str:
     if not isinstance(job_id, str) or not JOB_ID.fullmatch(job_id):
         raise RuntimeError(f"invalid job id: {job_id!r}")
     return job_id
+
+
+def slurm_cluster_directive(body: str) -> str | None:
+    """First -M/--clusters option in an #SBATCH line, or None."""
+    for line in body.splitlines():
+        if line.startswith("#SBATCH"):
+            for token in line[len("#SBATCH"):].split():
+                if SLURM_CLUSTER_OPTION.match(token):
+                    return token
+    return None
 
 
 def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
@@ -302,7 +315,13 @@ class Scheduler:
         if self.cfg.scheduler == "sge":
             m = re.search(r"(\d+)", out)  # -terse → "12345" or "12345.1-10:1"
         elif self.cfg.scheduler == "slurm":
-            m = re.fullmatch(r"(\d+)(?:;\S+)?", out)  # --parsable → "12345" or "12345;cluster"
+            m = re.fullmatch(r"(\d+)(?:;(\S+))?", out)  # --parsable → "12345", or "12345;cluster" under -M
+            if m and m.group(2):
+                # The bare id names a different job (or none) on the cluster squeue/sacct/scancel query.
+                raise RuntimeError(f"sbatch submitted job {m.group(1)} to cluster {m.group(2)} (-M/--clusters or "
+                                   "SBATCH_CLUSTERS); labhq tracks the default cluster only, so this job is not "
+                                   f"tracked. Ask the PI before resubmitting; to stop it: scancel -M {m.group(2)} "
+                                   f"{m.group(1)}")
         else:
             return out  # PBS → "12345.server"
         if not m:
@@ -328,9 +347,9 @@ class Scheduler:
         return parse_sge_qstat(p.stdout) if self.cfg.scheduler == "sge" else parse_pbs_qstat_table(p.stdout)
 
     def status(self, job_id: str) -> JobInfo:
-        checked_job_id(job_id)
-        if self.cfg.scheduler == "mock":
+        if self.cfg.scheduler == "mock":  # ids are "mock-…" and nothing is run
             return JobInfo(job_id=job_id, state="completed", exit_status=0)
+        checked_job_id(job_id)
         if self.cfg.scheduler == "slurm":
             return self._slurm_status(job_id)
         if self.cfg.scheduler == "sge":
@@ -381,9 +400,9 @@ class Scheduler:
         return slurm_job(job_id, records) or live or JobInfo(job_id=job_id, state="missing")
 
     def cancel(self, job_id: str) -> str:
-        checked_job_id(job_id)
         if self.cfg.scheduler == "mock":
             return "cancelled (mock)"
+        checked_job_id(job_id)
         cmd = "scancel" if self.cfg.scheduler == "slurm" else "qdel"
         p = self._run([*self.cfg.submit_prefix, cmd, job_id])
         if p.returncode != 0:

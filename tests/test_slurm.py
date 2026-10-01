@@ -10,7 +10,7 @@ from labhq.policy import evaluate_tool
 from labhq.runner.daemon import Runner
 from labhq.settings import HpcSettings, PolicySettings, Settings
 from labhq.tools.scheduler import (
-    Scheduler, build_script, parse_slurm_sacct, parse_slurm_squeue, slurm_job,
+    Scheduler, build_script, parse_slurm_sacct, parse_slurm_squeue, slurm_cluster_directive, slurm_job,
 )
 from tests.fixtures.fake_slurm import INVALID, FakeSlurm
 
@@ -107,7 +107,7 @@ def test_ssh_host_wraps_every_slurm_command(monkeypatch):
 
     def run(args, **kw):
         seen.append(args)
-        return CompletedProcess(args, 0, "4100;cluster\n" if "sbatch" in args[-1] else "", "")
+        return CompletedProcess(args, 0, "4100\n" if "sbatch" in args[-1] else "", "")
 
     monkeypatch.setattr(subprocess, "run", run)
     backend = Scheduler(HpcSettings(scheduler="slurm", user="fixture", ssh_host="login1"))
@@ -324,3 +324,42 @@ def test_direct_scheduler_job_commands_ask(tool, command):
     policy = PolicySettings()
     assert evaluate_tool(tool, {"command": command}, policy).action == "ask"
     assert evaluate_tool(tool, {"command": "squeue -u me; sacct -j 4100"}, policy).action == "allow"
+
+
+@pytest.mark.parametrize("scheduler", ["sge", "pbs", "slurm"])
+@pytest.mark.parametrize("job_id", ["all", "ALL", "align", "j_qc"])
+def test_one_job_id_never_names_many_jobs(scheduler, job_id):
+    # Torque `qdel all` and SGE `qdel <job name>` act on every matching job of the (shared) account.
+    backend = Scheduler(HpcSettings(scheduler=scheduler, user="fixture"))
+    calls = []
+    backend._run = lambda args: calls.append(args) or CompletedProcess(args, 0, "", "")
+    for operation in (backend.cancel, backend.status):
+        with pytest.raises(RuntimeError, match="invalid job id"):
+            operation(job_id)
+    assert calls == []
+
+
+def test_submission_to_another_cluster_is_never_tracked_as_a_local_id():
+    # SBATCH_CLUSTERS or a directive the pre-check missed: "4100;other" is not job 4100 here.
+    backend, fake = slurm()
+    fake.cluster = "other"
+    with pytest.raises(RuntimeError, match=r"job 4100 to cluster other.*not tracked.*scancel -M other 4100"):
+        backend.submit("/w/j.sh", "align")
+    assert fake.commands() == ["sbatch"]
+
+
+@pytest.mark.parametrize("body,option", [
+    ("#!/bin/bash\n#SBATCH --clusters=other\necho hi", "--clusters=other"),
+    ("#SBATCH --mem=4G -M other\necho hi", "-M"),
+    ("# step 1\n#SBATCH -Mother\necho hi", "-Mother"),
+    ("#SBATCH --cluster=other\necho hi", "--cluster=other"),
+    ("#SBATCH --clusters other\necho hi", "--clusters"),
+])
+def test_cluster_directive_is_found_before_submission(body, option):
+    assert slurm_cluster_directive(body) == option
+
+
+@pytest.mark.parametrize("body", ["#SBATCH --mem=4G\n#SBATCH --mail-type=END\necho -M", "echo hi",
+                                  "#SBATCH --cluster-constraint=fast\necho hi"])
+def test_other_directives_are_not_cluster_choices(body):
+    assert slurm_cluster_directive(body) is None

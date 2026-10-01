@@ -50,6 +50,9 @@ async def call_fixture(tmp_path, scenario, tool, arguments):
     ("slurm_status", "hpc_status", {"job_id": "123"}, "squeue failed (255)"),
     ("slurm_accounting", "hpc_status", {"job_id": "123"}, "sacct failed (255)"),
     ("slurm_cancel", "hpc_cancel", {"job_id": "--user=fixture"}, "invalid job id: '--user=fixture'"),
+    ("slurm_cancel", "hpc_cancel", {"job_id": "all"}, "invalid job id: 'all'"),
+    ("slurm_submit", "hpc_submit", {"script": "#SBATCH -M other\necho fixture", "job_name": "fixture"},
+     "#SBATCH -M: labhq tracks jobs on the default cluster only"),
 ])
 async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, args, detail):
     response = await call_fixture(tmp_path, scenario, tool, args)

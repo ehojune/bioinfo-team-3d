@@ -15,7 +15,7 @@ INVALID = "slurm_load_jobs error: Invalid job id specified"
 
 class FakeSlurm:
     def __init__(self, cluster: str | None = None):
-        self.cluster = cluster  # sbatch --parsable prints "id;cluster" on multi-cluster sites
+        self.cluster = cluster  # sbatch --parsable prints "id;cluster" when -M/--clusters chose a cluster
         self.calls: list[list[str]] = []
         self.jobs: dict[str, dict] = {}
         self.next_id = 4100
