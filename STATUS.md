@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 PR A 리뷰 1회차 — 읽기 전용 wrap-up, 링크로 적힌 통제 구역
+
+- 결론: 이어 묻기·상담이 턴 한도에 걸려도 읽기 전용이 풀리지 않는다. 링크(symlink·junction)로 적힌 통제 구역은 러너가 실제 경로로 막는다. P1 두 건을 고쳤고 P2 다섯 건은 고쳤으며 네 건은 후속 issue로 넘긴다.
+- 바뀐 것: read-only 작업은 wrap-up을 건너뛰고, 다른 작업의 wrap-up은 기존 override에 `max_turns`만 더한다. 러너가 통제 구역도 resolve해 비교한다. 질문 `options`가 list가 아니면 자유 입력 질문으로 읽고 list 밖의 질문 하나도 버리지 않는다. 참고 값의 NEL·DEL·U+2028/2029를 거부한다. 게이트웨이 루트 비교는 OS와 무관한 글자 비교다(Windows 게이트웨이의 POSIX 루트). 작업·프로젝트 폴더를 품은 참고는 뺀다. 프로젝트 보고의 경로 가림은 대소문자·구분자와 무관하다.
+- 실행한 것: 로컬 Codex 리뷰(origin/main 대비) P1 1·P2 1 모두 고침. 새 테스트 13개 중 12개가 수정 전 실패함을 확인했다(1개는 이미 막히던 url 줄바꿈을 고정). 전체 pytest 1234 passed/19 skipped, `node tests/*.cjs` 10개, `bash scripts/check_public.sh` 통과.
+- 미해결: PI 기본 참고의 github·url 가림, `~` 경로를 러너 계정 기준으로 풀기, 참고 폴더 안의 링크가 통제 구역을 가리키는 경우(project_dirs와 같은 한계), snapshot의 이어 묻기 답 길이. 실제 Claude·Codex CLI는 돌리지 않았다.
+- 근거: `labhq/orchestrator/cso.py`(run_step wrap-up), `labhq/runner/daemon.py`(`_reference_dirs`), `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_followup.py`, `tests/test_intake_references.py`, `tests/test_intake_questions.py`.
+
 ## 2026-10-01 · #36 접수·참고 자료 PR A — 구조화 확인 질문, 참고 포인터, 이어 묻기
 
 - 결론: CSO 확인 질문이 선택지 버튼·자유 입력·깊이(약 30/60/90분)로 폰에 뜨고, 답은 #34 경로로 재계획에 들어간다. 요청에 GitHub·DOI·PMID·URL·러너 경로 포인터를 붙이면 브리핑·계획·단계 prompt에 들어가며 경로는 쓰기 권한 없이 열린다. 끝난 요청은 같은 CSO 세션에 이어 물을 수 있다.
