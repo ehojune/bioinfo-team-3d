@@ -33,6 +33,23 @@ from ..util import short
 
 log = logging.getLogger(__name__)
 TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
+# #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
+# The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
+SNAPSHOT_ANSWER_CHARS = 2000
+
+
+def snapshot_followup(entry: dict) -> dict:
+    """The snapshot copy of a follow-up or of its `request.followup_done` data: one rule for both (#126)."""
+    answer = entry.get("answer")
+    if not isinstance(answer, str) or len(answer) <= SNAPSHOT_ANSWER_CHARS:
+        return entry
+    return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
+
+
+def snapshot_event(event: dict) -> dict:
+    if event.get("type") != "request.followup_done" or not isinstance(event.get("data"), dict):
+        return event
+    return {**event, "data": snapshot_followup(event["data"])}
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
@@ -1024,7 +1041,8 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "usage", "usage_known", "agent_id", "references")},
-                          "followups": (r.get("followups") or [])[-20:],  # the full list stays on the request
+                          # the full list and full answers stay on the request (GET /api/requests/{id})
+                          "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
@@ -1034,7 +1052,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
-            "recent_events": list(self.events)[-200:],
+            "recent_events": [snapshot_event(e) for e in list(self.events)[-200:]],
         }}
 
     def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:

@@ -2,7 +2,7 @@ import {syncDecisionCards} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, fillFollowups, KIND_KO} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
@@ -16,7 +16,18 @@ export function startLiveOffice(onState) {
   $('live-panel').hidden = false; $('demo-2d').hidden = true;
   document.querySelector('.demo').textContent = 'LIVE';
   $('state').disabled = true; $('randomize').hidden = true;
-  const pending = new Set();
+  const pending = new Set(), loadingAnswers = new Set();
+  // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
+  async function loadFullAnswers(rid) {
+    if (loadingAnswers.has(rid)) return;
+    loadingAnswers.add(rid); render();
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) throw new Error(String(response.status));
+      if (!fillFollowups(rid, await response.json())) $('live-notice').textContent = '전문을 찾지 못했어요.';
+    } catch (error) { $('live-notice').textContent = `전문을 불러오지 못했어요: ${error.message}`; }
+    finally { loadingAnswers.delete(rid); render(); }
+  }
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
@@ -43,7 +54,11 @@ export function startLiveOffice(onState) {
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
-        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer + (f.answer_truncated ? '…' : '') : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        if (f.status === 'done' && f.answer_truncated) {
+          const more = text(row, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
       }
     }
     onState(S, visual);

@@ -292,6 +292,8 @@ function apply(ev, replay = false) {
     case 'request.followup_done': {
       const q = req(rid), prev = q.followups.find(f => f.id === d.id);
       const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      delete entry.answer_truncated; delete entry.answer_chars;
+      if (d.answer_truncated) Object.assign(entry, { answer_truncated: true, answer_chars: d.answer_chars });  // a snapshot replay (#126)
       q.followups = prev ? q.followups.map(f => (f.id === d.id ? entry : f)) : [...q.followups, entry];
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
@@ -305,6 +307,21 @@ function apply(ev, replay = false) {
   }
   return effects;
 }
+// #126: a snapshot carries only the head of a long follow-up answer. The full request
+// (GET /api/requests/{id}, fetched by the page) fills the answers in; returns how many it filled.
+function fillFollowups(rid, request) {
+  const q = S.requests.get(rid), full = new Map(((request && request.followups) || []).map(f => [f && f.id, f]));
+  if (!q) return 0;
+  let filled = 0;
+  q.followups = q.followups.map(f => {
+    const whole = full.get(f.id);
+    if (!f.answer_truncated || !whole || typeof whole.answer !== 'string') return f;
+    filled++;
+    const { answer_truncated, answer_chars, ...rest } = f;
+    return { ...rest, answer: whole.answer };
+  });
+  return filled;
+}
 function toolLabel(name) {
   const n = String(name || '').split('__').pop();
   return ({ hpc_submit: 'HPC 제출', hpc_status: 'HPC 확인', WebSearch: '웹 검색', WebFetch: '문헌 읽기', google_web_search: '웹 검색',
@@ -312,7 +329,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState };
 })(globalThis);

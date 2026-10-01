@@ -123,6 +123,7 @@ def test_package_data_includes_office_assets():
     ('web_live.cjs', 'reconnect and replay gap: OK'),
     ('web_command_center.cjs', 'keyed decisions, staff strip and tabs: OK'),
     ('web_decision_detail.cjs', 'fail 0'),
+    ('web_issue126.cjs', 'full answer on demand in 2.5D and 3D: OK'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

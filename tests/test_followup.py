@@ -1,6 +1,7 @@
 """#36 PR A: a finished request takes follow-up questions in the same CSO session and workspace."""
 
 import asyncio
+import json
 import shutil
 import time
 from pathlib import Path
@@ -211,6 +212,35 @@ def test_gateway_restart_marks_a_running_followup_interrupted(tmp_path):
                                             for i in range(25)]
     shown = restarted.snapshot()["data"]["requests"][0]["followups"]
     assert [f["id"] for f in shown] == [f"fu_{i}" for i in range(5, 25)], "snapshots stay bounded"
+
+
+def test_snapshot_carries_only_the_head_of_long_followup_answers(tmp_path):
+    """#126: 25 long answers must not make every WebSocket connect carry megabytes; the full answer stays fetchable."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    full = "답" * 20000  # what run_followup keeps at most, 3 bytes each in UTF-8
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate",
+                         "followups": [{"id": f"fu_{i}", "text": "q", "status": "done", "answer": full}
+                                       for i in range(24)] + [{"id": "fu_24", "text": "q", "status": "done", "answer": "짧은 답"}]}
+    for i in range(25):  # the same answers also sit in the replayed events
+        hub.events.append({"type": "request.followup_done", "seq": i + 1, "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full}})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # whole answers would be about 2.6 MB
+    shown = snap["data"]["requests"][0]["followups"]
+    assert len(shown) == 20 and shown[0]["answer"] == full[:2000]
+    assert shown[0]["answer_truncated"] is True and shown[0]["answer_chars"] == 20000
+    assert shown[-1] == hub.requests["r"]["followups"][-1], "a short answer is sent unchanged"
+    replayed = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "request.followup_done"]
+    assert len(replayed) == 25 and all(len(d["answer"]) <= 2000 for d in replayed)
+    assert replayed[0]["answer_truncated"] is True
+    assert len(hub.requests["r"]["followups"][0]["answer"]) == 20000, "the stored request keeps the full answer"
+    assert len(hub.events[0]["data"]["answer"]) == 20000, "the live event buffer keeps the full answer"
+    detail = TestClient(app).get("/api/requests/r", headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert detail.status_code == 200 and detail.json()["followups"][0]["answer"] == full
 
 
 @pytest.mark.asyncio
