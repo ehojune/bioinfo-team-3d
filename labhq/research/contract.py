@@ -369,9 +369,30 @@ def validate_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any])
     parsed = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
     if result.plan_sha256 != plan_sha256(parsed):
         raise ValueError("research result plan_sha256 does not match the frozen plan")
-    if result.step_id not in {step.id for step in parsed.steps}:
+    step = next((step for step in parsed.steps if step.id == result.step_id), None)
+    if step is None:
         raise ValueError(f"research result step_id {result.step_id} is not in the frozen plan")
+    errors = step_binding_errors(result, step)
+    if errors:
+        raise ValueError("; ".join(errors))
     return result
+
+
+def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
+    """What the step declared is what its result answers: only its claims, and every required slot addressed."""
+    errors = [f"claim {claim.id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+              for claim in result.claims if claim.id not in step.claim_ids]
+    declared = {slot.id for slot in step.evidence_slots}
+    filled: set[str] = set()
+    for row in result.evidence:
+        for slot in row.slots:
+            if slot not in declared:
+                errors.append(f"evidence {row.id} fills slot {slot} that step {step.id} does not declare")
+            filled.add(slot)
+    errors += [f"required evidence slot {slot.id} of step {step.id} has no evidence row; list it in evidence.slots "
+               "of the row that tried it, even when the attempt failed or found nothing"
+               for slot in step.evidence_slots if slot.required and slot.id not in filled]
+    return errors
 
 
 def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:

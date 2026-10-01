@@ -1,6 +1,6 @@
 schema_version: 1
 id: single_cell_de
-version: "1"
+version: "2"
 title: Single-cell differential expression across donors
 core_contract: extend_only
 applies_when: Conditions are compared across biological donors using single-cell expression data.
@@ -26,7 +26,7 @@ fields:
     description: Scale of the expression values that enter donor aggregation or the donor-level model.
     required: true
     value_type: string
-    allowed_values: [raw_counts, normalized_counts, log_transformed]
+    allowed_values: [raw_counts, log_transformed]
   - name: independent_replicates
     description: Number of independent biological replicates.
     required: true
