@@ -125,7 +125,7 @@ class MockAdapter(AgentAdapter):
         if kind == "wrap_up":
             (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text(
                 "Partial results saved; main step unfinished.\n", encoding="utf-8")
-        if kind == "step" and "[artifact]" in own:
+        if kind in ("step", "direct") and "[artifact]" in own:  # a direct run declares none; the runner lists it
             (ctx.workdir / "outputs" / "artifact.txt").write_text("mock artifact\n", encoding="utf-8")
         if kind == "step" and "[revision-fail]" in own and t.meta.get("revision", 0):
             return TaskResult(task_id=t.id, agent_id=a.id, ok=False, error="revision failed",
