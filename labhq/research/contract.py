@@ -6,7 +6,7 @@ import re
 import time
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from ..intake import ClarifyingQuestion
 from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
@@ -147,6 +147,22 @@ class EvidenceSlot(StrictModel):
     description: str = Field(min_length=1)
 
 
+class OutputTypeEntry(StrictModel):
+    """One normalized output type declaration (#221 todo 2): keys only, under the vocabulary version it names.
+
+    labhq.vocab.declare builds these from the CSO's raw entries before validation, so a malformed declaration is
+    dropped there and never fails the contract. ``vocab`` freezes the meaning the PI approves at CP1."""
+
+    name: str = Field(min_length=1, max_length=256)
+    data_type: str | None = Field(default=None, max_length=64)
+    format: str | None = Field(default=None, max_length=64)
+    vocab: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_serializer(mode="wrap")
+    def _drop_missing(self, handler: Any) -> dict[str, Any]:
+        return {k: v for k, v in handler(self).items() if v is not None}
+
+
 class ResearchStep(StrictModel):
     id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
@@ -158,6 +174,16 @@ class ResearchStep(StrictModel):
     checks: list[str] = Field(min_length=1)
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
+    # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
+    output_types: list[OutputTypeEntry] = Field(default_factory=list, max_length=64)
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
+        # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
+        data = handler(self)
+        if not data.get("output_types"):
+            data.pop("output_types", None)
+        return data
 
     @model_validator(mode="after")
     def unique_slot_ids(self) -> "ResearchStep":
@@ -229,6 +255,22 @@ class ResearchPlan(StrictModel):
 class ArtifactRef(StrictModel):
     artifact_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
+    # Optional staff declarations (#221). A value that is not a short string is dropped, never a failed result.
+    data_type: str | None = None
+    format: str | None = None
+
+    @field_validator("data_type", "format", mode="before")
+    @classmethod
+    def _short_key(cls, value: Any) -> str | None:
+        return value.strip() if isinstance(value, str) and 0 < len(value.strip()) <= 64 else None
+
+    @model_serializer(mode="wrap")
+    def _drop_missing(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        for key in ("data_type", "format"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class MethodChange(StrictModel):
@@ -263,8 +305,29 @@ class ResearchResult(StrictModel):
         return self
 
 
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = ResearchPlan.model_json_schema()
-RESEARCH_RESULT_SCHEMA: dict[str, Any] = ResearchResult.model_json_schema()
+def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], drop: tuple[str, ...] = ()) -> dict[str, Any]:
+    out = json.loads(json.dumps(schema))
+    for name in fields:
+        out["$defs"][definition]["properties"].pop(name, None)
+    for name in drop:
+        out["$defs"].pop(name, None)
+    return out
+
+
+# The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
+                                                ("OutputTypeEntry",))
+RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
+                                                  ("data_type", "format"))
+
+
+def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    """RESEARCH_PLAN_SCHEMA, or with ``declare`` a copy whose steps take optional ``output_types`` entries."""
+    if not declare:
+        return RESEARCH_PLAN_SCHEMA
+    out = json.loads(json.dumps(RESEARCH_PLAN_SCHEMA))
+    out["$defs"]["ResearchStep"]["properties"]["output_types"] = json.loads(json.dumps(entry_schema))
+    return out
 
 
 def _present(value: Any) -> bool:

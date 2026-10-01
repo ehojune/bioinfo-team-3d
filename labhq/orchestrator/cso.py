@@ -21,8 +21,8 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
-                                 refresh_plan_approval, validate_research_plan)
+from ..research.contract import (canonical_plan_json, classify_intake, freeze_plan, refresh_plan_approval,
+                                 research_plan_schema, validate_research_plan)
 from ..research.packs import configured_packs, pack_snapshot, render_pack_catalog
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
@@ -134,7 +134,7 @@ Contract rules:
   Exploratory/technical work uses its purpose and does not invent H0/H1.
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
-- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
+- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.{output_types_rule}
 - Put QC after data generation. {question_rule}
 - For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
   a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
@@ -412,6 +412,27 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if visited != len(steps):
         raise ValueError("plan has a dependency cycle")
     return steps, warnings
+
+
+def prepare_research_declarations(plan: Any, vocab: output_vocab.Vocab | None, stats: dict) -> Any:
+    """A copy of a fresh research PLAN whose steps carry normalized ``output_types`` (or none when off).
+
+    Only plans the CSO just returned go through here; a stored plan keeps the declarations it was approved with."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return plan
+    plan = {**plan, "steps": [dict(step) if isinstance(step, dict) else step for step in plan["steps"]]}
+    for step in plan["steps"]:
+        if not isinstance(step, dict):
+            continue
+        raw = step.pop("output_types", None)
+        if vocab is None:
+            continue
+        outputs = [str(o) for o in step.get("outputs") or []] if isinstance(step.get("outputs"), list) else []
+        entries, issues = output_types.normalize_entries(outputs, raw, vocab)
+        if entries:
+            step["output_types"] = entries
+        stats.update(output_types.add_stats(stats, output_types.stats(outputs, entries, issues)))
+    return plan
 
 
 class BudgetExceeded(RuntimeError):
@@ -1331,13 +1352,15 @@ class Orchestrator:
                         self.cfg.cso_agent, req.get("cso_session_id") if continuation else None,
                         req.get("cso_workdir") if continuation else None, rid=rid, step="plan")
                     if research_lane:
+                        vocab = self._output_vocab()
                         prompt = RESEARCH_PLAN_PROMPT.format(
                             request=plan_request, roster=format_roster(roster),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE)
-                        schema = RESEARCH_PLAN_SCHEMA
+                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
+                            output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                        schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
                         vocab = self._output_vocab()
                         prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
@@ -1401,7 +1424,12 @@ class Orchestrator:
                             return
                 if research_lane:
                     invalid = ""
+                    vocab = self._output_vocab()
                     for attempt in (1, 2):
+                        type_stats = {}
+                        # Declarations are normalized (or, when off, removed) before the contract sees them,
+                        # so a malformed one is dropped and counted instead of failing the plan or asking again.
+                        plan = prepare_research_declarations(plan, vocab, type_stats)
                         try:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                active_packs=active_pack_hashes,
@@ -1428,6 +1456,8 @@ class Orchestrator:
                             plan = (plan_res.structured if isinstance(plan_res.structured, dict)
                                     else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
+                    if vocab is not None:
+                        req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     warnings: list[str] = []
                     steps = req["plan"]["steps"]
                 else:
