@@ -11,12 +11,15 @@ import pytest
 from labhq.cli import main
 from labhq.research import semantics_shadow as shadow
 
+REF = "sem:0a1b2c3d"
+
 
 def _line(i, *, ms=5.0, lane="general", candidates=0, unknown=0.5, prov="ok", objects="ok", epoch=1):
     return {"v": 1, "type": "request", "ts": time.time() - 3600 + i, "epoch": epoch, "request_id": f"req_r{i:04d}",
             "lane": lane, "status": "done", "ms": ms, "snapshot_ms": 1.0, "busy_skipped": 0,
             "provenance": {"status": prov, "ms": ms / 2, "candidates": candidates, "unknown_ratio": unknown,
-                           "incomplete": False, "excluded": {"type_unknown": 2}, "lineage": {"gaps": 1}},
+                           "incomplete": False, "excluded": {"type_unknown": 2}, "lineage": {"gaps": 1},
+                           "candidate_refs": [REF]},
             "objects": {"status": objects, "ms": ms / 4, "objects": {"Task": 4, "Step": 2}, "link_total": 6,
                         "unresolved": 1},
             "hash": {"hashed": 1, "observed_new": 1, "verified": 0, "changed": 0, "workspaces": {"ok": 1}}}
@@ -99,6 +102,7 @@ def test_enable_shows_the_reason_and_opens_a_new_epoch(tmp_path, config, capsys)
 
 
 def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_path, config, capsys):
+    _write(tmp_path, [{**_line(1), "request_id": "req_abc"}])
     code, out = _cli(capsys, config, "mark", "req_abc", "outputs/x.tsv", "ok")
     assert code == 1 and "sem:<8 hex>" in out
     code, out = _cli(capsys, config, "mark", "req_abc", "sem:0a1b2c3d", "wrong_identity")
@@ -107,6 +111,22 @@ def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_pa
     assert shadow.read_disabled(paths)["reason"] == "wrong_identity"
     rep = shadow.build_report(paths)
     assert rep["state"]["on"] is False and rep["marks"] == {"reviewed": 1, "wrong": 1}
+
+
+@pytest.mark.parametrize("rid, ref", [("req_nope", REF), ("req_abc", "sem:deadbeef"), ("req_r0001", REF)],
+                         ids=["unknown_request", "unknown_ref", "ref_of_another_request"])
+def test_mark_refuses_a_candidate_the_shadow_never_recorded(tmp_path, config, capsys, rid, ref):
+    """#175: a typo in the request id or ref is refused before anything is written, so it cannot turn the shadow
+    off (wrong_identity) or skew the wrong ratio."""
+    paths = _write(tmp_path, [{**_line(1), "request_id": "req_abc"},
+                              {**_line(2), "request_id": "req_r0001",
+                               "provenance": {**_line(2)["provenance"], "candidate_refs": ["sem:11112222"]}}])
+    shadow.read_state(paths)
+    before = {f.name: f.read_bytes() for f in paths.root.iterdir()}
+    code, out = _cli(capsys, config, "mark", rid, ref, "wrong_identity")
+    assert code == 1 and "no recorded candidate" in out and "nothing written" in out
+    assert {f.name: f.read_bytes() for f in paths.root.iterdir()} == before
+    assert shadow.read_disabled(paths) is None and shadow.build_report(paths)["marks"]["reviewed"] == 0
 
 
 @pytest.mark.parametrize("text,setting", [("", "off"), ("semantics: {mode: advisory}\n", "invalid")])

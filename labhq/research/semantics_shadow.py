@@ -1547,6 +1547,17 @@ def enable(paths: ShadowPaths) -> str:
     return head + f"새 epoch {epoch}을 엽니다. 설정 mode가 shadow인 gateway는 다음 요청부터 기록합니다."
 
 
+def recorded_candidate(paths: ShadowPaths, rid: str, ref: str) -> bool:
+    """True when a recorded request line of ``rid`` listed ``ref`` among its candidate refs (#175)."""
+    lines, _ = read_lines(paths)
+    for line in lines:
+        prov = line.get("provenance")
+        refs = prov.get("candidate_refs") if isinstance(prov, Mapping) else None
+        if line.get("type") == "request" and line.get("request_id") == rid and isinstance(refs, list) and ref in refs:
+            return True
+    return False
+
+
 def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
     if not re.fullmatch(r"req_[A-Za-z0-9]{1,64}", rid):
         raise ValueError("request id must look like req_<id>")
@@ -1554,6 +1565,8 @@ def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
         raise ValueError("ref must be sem:<8 hex>")
     if verdict not in VERDICTS:
         raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}")
+    if not recorded_candidate(paths, rid, ref):  # a typo must not turn the shadow off or skew the wrong ratio
+        raise ValueError(f"{rid} has no recorded candidate {ref}; nothing written")
     state = read_state(paths)
     append_line(paths, {"v": 1, "type": "mark", "ts": round(time.time(), 3), "epoch": state["epoch"],
                         "request_id": rid, "ref": ref, "verdict": verdict})

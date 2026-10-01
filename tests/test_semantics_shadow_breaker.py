@@ -47,6 +47,12 @@ def _wait_for_shadow_state(service, tmp_path, predicate, description, timeout=10
         time.sleep(0.02)
 
 
+def _recorded(paths, rid, ref="sem:0a1b2c3d"):
+    """A request line that listed ``ref`` as a candidate, so `labhq semantics mark` accepts it (#175)."""
+    shadow.append_line(paths, {"v": 1, "type": "request", "ts": time.time(), "epoch": 1, "request_id": rid,
+                               "provenance": {"status": "ok", "candidate_refs": [ref]}})
+
+
 def _run(service, rids):
     for rid in rids:
         service.after_request(rid)
@@ -158,9 +164,10 @@ def test_the_boundary_check_refuses_paths_free_text_and_known_values(value):
 def test_wrong_identity_marked_from_the_cli_turns_the_running_shadow_off(tmp_path):
     service = _service(tmp_path)
     _run(service, ["req_001"])
+    _recorded(service.paths, "req_001")
     print(shadow.mark(service.paths, "req_001", "sem:0a1b2c3d", "wrong_identity"))
     _run(service, ["req_002"])
-    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 1
+    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 2
     assert _disabled(tmp_path)["reason"] == "wrong_identity"
 
 
@@ -334,6 +341,7 @@ def test_enable_after_a_stuck_worker_starts_a_fresh_one(tmp_path, monkeypatch):
 
 def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monkeypatch):
     service = _service(tmp_path)
+    _recorded(service.paths, "req_000")
     started, release = threading.Event(), threading.Event()
     real = shadow.compute_objects
 
@@ -349,7 +357,7 @@ def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monk
     shadow.mark(service.paths, "req_000", "sem:0a1b2c3d", "wrong_identity")
     release.set()
     assert service.drain(10)
-    assert service.latched == "wrong_identity" and _lines(tmp_path, "request") == []
+    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 1  # only the _recorded one
 
 
 def test_a_state_dir_linked_into_a_git_work_tree_is_refused(tmp_path):
