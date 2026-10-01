@@ -69,15 +69,16 @@ CREATE VIEW lineage_step AS
   WHERE r.rel = 'reported_output';
 """
 
+# Nodes with their least depth from the root. Rows are (node, depth) pairs, not paths, so the work grows
+# with nodes times the depth limit instead of with the number of paths (#140); cycles are found apart.
 WALK = """
-WITH RECURSIVE walk(node, depth, path, edge) AS (
-  SELECT :root, 0, '|' || :root || '|', NULL
+WITH RECURSIVE walk(node, depth) AS (
+  SELECT :root, 0
   UNION
-  SELECT s.b, w.depth + 1, w.path || s.b || '|', s.edge
-  FROM walk w JOIN lineage_step s ON s.a = w.node
-  WHERE w.depth <= :limit AND instr(w.path, '|' || s.b || '|') = 0
+  SELECT s.b, w.depth + 1 FROM walk w JOIN lineage_step s ON s.a = w.node
+  WHERE w.depth <= :limit
 )
-SELECT node, depth, path, edge FROM walk
+SELECT node, MIN(depth) FROM walk GROUP BY node
 """
 
 UPSTREAM = """
@@ -477,24 +478,32 @@ def concept(node: str) -> str:
         node.split(":", 1)[0], "")
 
 
+def closes_cycle(steps: dict[str, list[tuple[str, int]]], depth: dict[str, int], src: str, dst: str) -> bool:
+    """A walked step src -> dst closes a cycle when dst is no deeper than src and reaches src again."""
+    if depth[dst] > depth[src]:
+        return False
+    seen, todo = {dst}, [dst]
+    while todo:
+        for nxt, _edge in steps.get(todo.pop(), []):
+            if nxt == src:
+                return True
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    return False
+
+
 def walk(reg: Registry, root: str) -> dict[str, Any]:
     db = reg.db
-    rows = db.execute(WALK, {"root": root, "limit": DEPTH_LIMIT}).fetchall()
-    expanded = {node for node, depth, _path, _edge in rows if depth <= DEPTH_LIMIT}
-    reached = {node for node, *_ in rows}
-    edges = {edge for *_, edge in rows if edge is not None}
-    cautions = []
-    # a step from a walked node back onto its own path closes a cycle
-    for node, depth, path, _edge in rows:
-        if depth > DEPTH_LIMIT:
-            if {"code": "depth_limit", "nodes": [node]} not in cautions:
-                cautions.append({"code": "depth_limit", "nodes": [node]})
-            continue
-        for nxt, edge in db.execute("SELECT b, edge FROM lineage_step WHERE a = ?", (node,)):
-            if f"|{nxt}|" in path:
-                edges.add(edge)
-                if {"code": "cycle", "nodes": [nxt]} not in cautions:
-                    cautions.append({"code": "cycle", "nodes": [nxt]})
+    depth = dict(db.execute(WALK, {"root": root, "limit": DEPTH_LIMIT}).fetchall())
+    expanded = sorted(node for node, d in depth.items() if d <= DEPTH_LIMIT)
+    reached = set(depth)
+    steps = {node: db.execute("SELECT b, edge FROM lineage_step WHERE a = ? ORDER BY b", (node,)).fetchall()
+             for node in expanded}
+    edges = {edge for out in steps.values() for _nxt, edge in out}
+    cautions = [{"code": "depth_limit", "nodes": [node]} for node in sorted(reached) if depth[node] > DEPTH_LIMIT]
+    for node in sorted({nxt for src, out in steps.items() for nxt, _edge in out if closes_cycle(steps, depth, src, nxt)}):
+        cautions.append({"code": "cycle", "nodes": [node]})
     runs = sorted(n for n in expanded if concept(n) == "run")
     artifacts = sorted(n for n in expanded if concept(n) == "artifact")
     marks = ",".join("?" * len(runs))

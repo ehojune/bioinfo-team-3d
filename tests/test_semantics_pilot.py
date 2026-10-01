@@ -162,6 +162,16 @@ def test_depth_limit_ends_with_a_caution(name):
     assert check["edges"] < 70 * 4
 
 
+def test_diamond_lineage_is_walked_by_node_not_by_path():
+    """#140: 20 layers that each split into two outputs and merge in the next run (2^19 paths, 60 nodes)."""
+    checks = {name: pilot.diamond_check(pilot.IMPLS[name](), 20) for name in ("B", "A")}
+    for check in checks.values():
+        assert check["seconds"] < 1.0
+        # per run: performs, uses_method, two used (one at the first layer); two reported_output per layer below
+        assert (check["edges"], check["cautions"]) == (6 * 20 - 2, [])
+    assert pilot.canon(checks["B"]["result"]) == pilot.canon(checks["A"]["result"])
+
+
 def edge_case_records():
     """A resume of a session no earlier run used, and one output reported under two spellings."""
     records = pilot.chain_records(2)

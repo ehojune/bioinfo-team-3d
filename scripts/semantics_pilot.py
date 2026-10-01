@@ -446,6 +446,37 @@ def traversal_check(impl: Impl, length: int, cycle: bool) -> dict:
     return {"terminated": True, "cautions": sorted({c["code"] for c in out["cautions"]}), "edges": len(out["edges"])}
 
 
+def diamond_records(layers: int) -> Any:
+    """In-memory records: run i reports x and y and uses both outputs of run i-1, so the lineage of the
+    last x has 2^(layers-1) paths through layers*3 nodes (a DAG, no cycle)."""
+    from labhq.research.semantics import Records
+    steps, tasks, manifests = [], {}, {}
+    outs = ["outputs/x.tsv", "outputs/y.tsv"]
+    for i in range(layers):
+        refs = [f"step:d{i - 1}/{o}" for o in outs] if i else ["synth:DS-9000@r1"]
+        steps.append({"id": f"d{i}", "input_refs": refs, "outputs": outs})
+        workdir = f"workspaces/d/t{i}_ws"
+        tasks[f"t{i}"] = {"request_id": "req_d", "step_id": f"d{i}", "kind": "step", "attempt": 1, "revision": 0,
+                          "parent_task": None, "payload": {"agent_id": "ag_d", "resume_session_id": None, "meta": {}},
+                          "result": {"workdir": workdir, "workdir_id": f"t{i}_ws", "outputs": list(outs),
+                                     "session_id": f"sess_t{i}", "pending_jobs": [], "pending_asks": [],
+                                     "provenance": {"runs": {f"t{i}": {"started_at": float(i)}}}}}
+        manifests[workdir] = None
+    request = {"plan": {"steps": steps, "protocol": {"packs": []}}, "research_contract": {"plan_sha256": "0" * 64}}
+    return Records(requests={"req_d": request}, tasks=tasks, plans={"req_d": request["plan"]}, results={},
+                   manifests=manifests, observed={}, contracts={})
+
+
+def diamond_check(impl: Impl, layers: int) -> dict:
+    """Walk the last x of ``diamond_records``; seconds cover audit_lineage only."""
+    import time
+    p = impl.project(diamond_records(layers))
+    start = time.perf_counter()
+    out = result_of(impl.audit_lineage(p, artifact=f"art:req_d/t{layers - 1}_ws/outputs/x.tsv"))
+    return {"seconds": time.perf_counter() - start, "edges": len(out["edges"]),
+            "cautions": sorted({c["code"] for c in out["cautions"]}), "result": out}
+
+
 # ---------------------------------------------------------------- scale and timing
 
 def scaled_transform(k: int) -> Callable[[str], str]:
