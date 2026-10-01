@@ -5,6 +5,7 @@ hash follow: regular files only, nothing through a link or junction, nothing in 
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -172,6 +173,27 @@ async def test_a_name_that_is_not_utf8_is_left_out_and_the_run_still_reports(tmp
     sent = [e for e in runner.store.pending() if e["type"] == "task.result"]
     assert [e["data"]["outputs"] for e in sent] == [["outputs/ok.tsv"]] and sent[0]["data"]["ok"]
     assert any("UTF-8로 읽을 수 없는 이름" in text for text in _warnings(runner))
+
+
+@pytest.mark.asyncio
+async def test_a_manifest_swapped_for_a_link_is_not_read_for_the_listing(tmp_path, monkeypatch):
+    # #165: labhq never reads its manifest through a link the agent made (a FIFO there would hang the run).
+    # Read through the link, the outside runs would hide the agent's own RESULT_x.md as labhq's copy.
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"runs": {"x": {}}}), encoding="utf-8")
+
+    def write(wd: Path) -> None:
+        _files(wd, {"outputs/RESULT_x.md": "the agent's own"})
+        (wd / "manifest.json").unlink()
+        try:
+            os.symlink(outside, wd / "manifest.json")
+        except (OSError, NotImplementedError):
+            pytest.skip("this account cannot make a file symlink")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_direct("task-f"))
+    assert result.outputs == ["outputs/RESULT_x.md"]
+    assert json.loads(outside.read_text(encoding="utf-8")) == {"runs": {"x": {}}}
 
 
 def test_the_file_cap_is_the_shadow_hash_cap():

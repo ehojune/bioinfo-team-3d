@@ -173,10 +173,12 @@ class TaskWorkspace:
                 return [], "outputs 폴더가 다른 파일 시스템이거나 통제 구역 안이라 산출 목록을 만들지 않았습니다"
         except (OSError, RuntimeError, ValueError):
             return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
-        try:
-            runs = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8")).get("runs") or {}
-        except (OSError, ValueError, AttributeError):
-            runs = {}
+        try:  # never through a link or FIFO the agent put in its place (#165): no runs read then
+            text = read_owned(self.dir, "manifest.json")
+            runs = json.loads(text).get("runs") if text is not None else None
+        except (ValueError, AttributeError):
+            runs = None
+        runs = runs if isinstance(runs, dict) else {}
         max_files = OUTPUT_SCAN_MAX_FILES if max_files is None else max_files
         own = {"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
         found: list[str] = []
