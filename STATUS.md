@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 증거 원장 R04–R07
+
+- 결론: 연구 결과 schema가 claim·evidence·link를 따로 받는다. 끊긴 참조, 근거 없는 supported/contradicted, 실패·0건 조회로 지지한 link, 평가·출처·정량 필수값 누락을 한 번에 거부한다. 출처 verifier는 조회 실패와 ID 부재를 나눠 남긴다. 연구 실행은 여전히 opt-in·기본 꺼짐이고 원장·verifier는 실행 경로에 아직 연결하지 않았다.
+- 바뀐 것: `labhq/evidence/claims.py`(R04 inco 6종 evidence·revision·참조, R05 directness·source_level·independence_group·판정 이유, R06 조회일·원문 위치·검색 범위, R07 quantity·comparison), `labhq/evidence/verify.py`(lookup succeeded/failed/skipped와 found·not_found·insufficient·conflicting·requires_verification, 고정 응답 `StaticResolver`). result v2의 `findings`를 `claims`·`evidence`·`links`로 바꾸고 `validate_research_result`로 동결 계획에 묶었다. #58의 결과 계약·claim ledger·도구 실패 의미 항목을 이 원장으로 합쳤다. 규약 문서 §3·§4(7,741→10,359 bytes)와 README 한 줄을 고쳤다.
+- 실행한 것: 기능 커밋마다 그 테스트를 직전 커밋 코드에서 돌려 실패를 확인했다(R04 23/23, R05 8/8, R06 schema 8/8·verifier 모듈 없음, R07 7/7, 리뷰 보강 4/4). 사전 Codex 리뷰의 P2 3건(scheme 혼동, artifact hash 변경, RefSeq 형식)을 고쳤다. 수정 후 전체 pytest 1230 passed/19 skipped, `node tests/*.cjs` 7개, `bash scripts/check_public.sh` 통과. pytest 임시 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: live resolver가 없고 기본은 조회 꺼짐이다. artifact 근거는 runner manifest(R10)가 생겨야 `found`가 된다. R08–R13, reviewer bundle, 실행 경로 연결은 다음 PR이다. 로컬에 Python 3.10이 없어 3.10은 CI로 확인한다. patch notes는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/evidence/claims.py`, `labhq/evidence/verify.py`, `labhq/research/contract.py`, `tests/test_research_evidence.py`, `tests/test_evidence_verify.py`, `docs/research_protocol.md`.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
 
 - 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
