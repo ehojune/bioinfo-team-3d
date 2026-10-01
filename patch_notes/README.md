@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:01 | [`1ad77e8`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/1ad77e8) | 외부 절대·home·drive 입력을 산출 치환과 workspace artifact dependency 추론에서 제외 |
 | 07:45 | [`87de545`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/87de545) | 같은 basename의 모호한 절대·home 참조는 교정하고 중첩 home 산출 경로는 전체 치환 |
 | 07:28 | [`1abc618`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/1abc618) | 같은 basename 입력을 산출 경로로 바꾸지 않고 모호한 지시문은 계획 교정을 요구 |
 | 07:18 | [`f2f447d`](https://github.com/ehojune/bioinfo-team-3d/pull/277/commits/f2f447d) | PR #277의 검증 결과와 남은 범위를 STATUS에 기록했다. |
