@@ -862,20 +862,10 @@ class Reader:
             return "missing", None
         return self._hash_file(path, st)
 
-    def reference_file(self, root: Any, name: str) -> tuple[str, dict | None]:
-        """Hash one named file under an explicit path reference, without recording either spelling.
-
-        The request text supplies only a basename. The structured reference supplies the root. No recursion,
-        wildcard, parent traversal, link/junction traversal or path guess outside that exact root is allowed.
-        """
-        if (not isinstance(root, str) or not isinstance(name, str) or _unc(root) or not os.path.isabs(root)
-                or not re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", name)):
-            return "not_regular", None
-        try:
-            root_st = os.lstat(root)
-        except FileNotFoundError:
-            return "missing", None
-        if _is_link(root_st) or not stat.S_ISDIR(root_st.st_mode) or _norm(os.path.realpath(root)) != _norm(root):
+    def accepted_reference_file(self, root: str, name: str) -> tuple[str, dict | None]:
+        """Hash a named file only below a same-host reference directory recorded by the runner."""
+        if (not os.path.isabs(root) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", name)
+                or _norm(os.path.realpath(root)) != _norm(root)):
             return "not_regular", None
         path = os.path.join(root, name)
         if path in self.reference_cache:
@@ -1002,14 +992,14 @@ def _mentioned_names(req: Mapping[str, Any]) -> set[str]:
     text = req.get("text")
     if not isinstance(text, str):
         return set()
-    return {m.group(1).casefold() for m in _INPUT_NAME.finditer(text[:100_000])}
+    return {m.group(1) for m in _INPUT_NAME.finditer(text[:100_000])}
 
 
 def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
     """Declared types of outputs the PI named, not incidental plan-added reports or QC files."""
     if vocab is None:
         return set()
-    named = _mentioned_names(req)
+    named = {name.casefold() for name in _mentioned_names(req)}
     found: set[str] = set()
     plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
     for step in plan.get("steps") or []:
@@ -1025,9 +1015,19 @@ def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
     return found
 
 
-def _request_input_hashes(req: Mapping[str, Any], reader: Reader, hashes: dict) -> set[str]:
-    """Opaque identities for explicit public links and named files below explicit path references."""
-    names = _mentioned_names(req)
+def _input_identity(kind: str, value: str) -> str | None:
+    """Opaque identity for an already recorded public link or accession; URI paths keep their case."""
+    folded = kind.casefold()
+    try:
+        normalized = (sem.normalize_uri(value) if folded in ("url", "uri") or "://" in value
+                      else sem.normalize_id(folded, value))
+    except (TypeError, ValueError):
+        return None
+    return "link:" + hashlib.sha256(f"{folded}:{normalized}".encode("utf-8")).hexdigest()
+
+
+def _request_input_hashes(req: Mapping[str, Any]) -> set[str]:
+    """Opaque identities from structured public links only; path references provide no runner evidence."""
     found: set[str] = set()
     for ref in req.get("references") or []:
         if not isinstance(ref, Mapping):
@@ -1035,22 +1035,49 @@ def _request_input_hashes(req: Mapping[str, Any], reader: Reader, hashes: dict) 
         kind, value = ref.get("kind"), ref.get("value")
         if not isinstance(kind, str) or not isinstance(value, str) or not value:
             continue
-        if kind != "path":
-            try:
-                normalized = (sem.normalize_uri(value) if kind in ("url", "uri")
-                              else sem.normalize_id(kind, value))
-            except (TypeError, ValueError):
-                continue
-            found.add("link:" + hashlib.sha256(f"{kind.casefold()}:{normalized}".encode("utf-8")).hexdigest())
+        identity = None if kind.casefold() == "path" else _input_identity(kind, value)
+        if identity is not None:
+            found.add(identity)
+    return found
+
+
+def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader,
+                          hashes: dict) -> dict[str, set[str]]:
+    """Hash named files only under same-host reference directories the runner recorded as accepted."""
+    found: dict[str, set[str]] = {}
+    for task_id, task in records.tasks.items():
+        request = task.get("request_id")
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        manifest = records.manifests.get(result.get("workdir") or "")
+        run = ((manifest or {}).get("runs") or {}).get(task_id)
+        if not isinstance(request, str) or not isinstance(run, Mapping):
             continue
-        for name in sorted(names):
-            status, seen = reader.reference_file(value, name)
-            if status not in ("hashed", "cached") or seen is None:
+        names = _mentioned_names(requests.get(request) or {})
+        for root in run.get("reference_dirs") or []:
+            if not isinstance(root, str) or not root:
                 continue
-            found.add("file:" + seen["sha256"])
-            if status == "hashed":
-                hashes["hashed"] += 1
-                hashes["bytes"] += seen["size"]
+            for name in sorted(names, key=str.casefold):
+                status, seen = reader.accepted_reference_file(root, name)
+                if status not in ("hashed", "cached") or seen is None:
+                    continue
+                found.setdefault(request, set()).add("file:" + seen["sha256"])
+                if status == "hashed":
+                    hashes["hashed"] += 1
+                    hashes["bytes"] += seen["size"]
+    return found
+
+
+def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
+    """Existing #249 plan edges become input hashes only when the referenced artifact was already hashed."""
+    found: dict[str, set[str]] = {}
+    for row in p.runs.values():
+        request = row.get("request")
+        if not isinstance(request, str):
+            continue
+        for artifact in row.get("_used") or []:
+            art = p.artifacts.get(artifact)
+            if art is not None and art.get("sha256") != sem.UNKNOWN:
+                found.setdefault(request, set()).add("file:" + art["sha256"])
     return found
 
 
@@ -1152,8 +1179,12 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                                            observed=seen_now)
         p = sem.project(model, records)
         check()
-        direct_inputs = {request: _request_input_hashes(req, reader, hashes)
+        direct_inputs = {request: _request_input_hashes(req)
                          for request, req in snap["requests"].items()}
+        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, hashes),
+                         _declared_artifact_inputs(p)):
+            for request, identities in evidence.items():
+                direct_inputs.setdefault(request, set()).update(identities)
         artifact_inputs: dict[str, set[str]] = {}
         for row in p.artifacts.values():
             if row["sha256"] != sem.UNKNOWN and isinstance(row.get("request"), str):
