@@ -537,3 +537,44 @@ def test_an_id_lookup_answered_with_the_base_accession_is_unverified(cited, answ
     result = build([claim("c1")], [row("e1", scheme, cited)], [link("c1", "e1")])
     resolution = asyncio.run(verify_sources(result, mapping)).evidence[0].resolution
     assert (resolution.id_scheme, resolution.status) == (scheme, status)
+
+
+PMID = "32939066"
+PMCID = "PMC7759461"
+
+
+def paper(scheme, value, same_as):
+    return [{"id_scheme": scheme, "id_value": value,
+             "same_as": [{"id_scheme": s, "id_value": v} for s, v in same_as]}]
+
+
+@pytest.mark.parametrize("records", [
+    {("doi", DOI): paper("doi", DOI, [("pmid", PMID)]), ("pmid", PMID): paper("pmid", PMID, [])},
+    {("doi", DOI): paper("doi", DOI, []), ("pmid", PMID): paper("pmid", PMID, [("doi", DOI.upper())])},
+])
+def test_one_paper_cited_by_doi_and_pmid_in_two_groups_is_a_recitation(records):
+    # #168: the ledger keys rows by what they spell; only the authority says a DOI and a PMID are one paper.
+    mapping = StaticResolver(records)
+    rows = [row("e1", "doi", DOI, kind="literature_claim", group="paper_a"),
+            row("e2", "pmid", PMID, kind="literature_claim", group="paper_b")]
+    result = build([claim("c1")], rows, [link("c1", "e1"), link("c1", "e2")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert by_claim(report)["c1@1"].state == "verified"  # both IDs exist
+    assert len(report.recitations) == 1 and report.ok is False
+    message = report.recitations[0]
+    assert "e1" in message and "e2" in message and "paper_a" in message and "paper_b" in message
+    # One group for one paper is what the rows should have said.
+    rows[1]["independence_group"] = "paper_a"
+    report = asyncio.run(verify_sources(build([claim("c1")], rows, [link("c1", "e1"), link("c1", "e2")]), mapping))
+    assert report.recitations == [] and report.ok is True
+
+
+def test_a_shared_alias_links_pmcid_and_doi_rows_and_unchecked_rows_stay_unjudged():
+    mapping = StaticResolver({("doi", DOI): paper("doi", DOI, [("pmid", PMID)]),
+                              ("pmcid", PMCID): paper("pmcid", PMCID, [("pmid", PMID)])})
+    rows = [row("e1", "doi", DOI, kind="literature_claim", group="g1"),
+            row("e2", "pmcid", PMCID, kind="literature_claim", group="g2")]
+    result = build([claim("c1")], rows, [link("c1", "e1"), link("c1", "e2")])
+    assert len(asyncio.run(verify_sources(result, mapping)).recitations) == 1
+    # Without an authority answer the verifier cannot know; it does not guess a correspondence.
+    assert asyncio.run(verify_sources(result)).recitations == []

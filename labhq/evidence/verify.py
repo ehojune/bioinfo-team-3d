@@ -39,12 +39,20 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RecordId(StrictModel):
+    id_scheme: str
+    id_value: str
+
+
 class SourceRecord(StrictModel):
     id_scheme: str
     id_value: str
     version: str | None = None
     title: str | None = None
     url: str | None = None
+    # The authority's own mapping to the same work under other schemes (DOI <-> PMID <-> PMCID). The ledger
+    # cannot know a DOI row and a PMID row are one paper; the verifier reads it here (#168).
+    same_as: list[RecordId] = []
 
 
 class Resolution(StrictModel):
@@ -89,7 +97,8 @@ class LookupFailed(Exception):
 
 class SourceResolver(Protocol):
     """Looks an identifier up at its authority. Raise ``LookupFailed`` when the lookup did not complete;
-    return ``[]`` only when the authority answered that no such record exists."""
+    return ``[]`` only when the authority answered that no such record exists. A record lists in ``same_as``
+    the identifiers the authority maps to the same work, such as a paper's PMID and PMCID beside its DOI."""
 
     name: str
 
@@ -150,6 +159,8 @@ class VerificationReport(StrictModel):
     claims: list[ClaimCheck]
     lookup_failures: list[str]  # evidence ids whose lookup did not complete; not absence
     defective_evidence: list[str]  # evidence ids citing a not_found, malformed or conflicting source
+    # R05 across schemes: rows the authority maps to one work but that declare different independence groups.
+    recitations: list[str] = []
     ok: bool
 
 
@@ -484,11 +495,44 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
             independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
 
     defective = [eid for eid, check in checks.items() if check.resolution.status in DEFECT_STATUSES]
+    recitations = _recitations(result, checks, artifact_paths)
     return VerificationReport(
         plan_sha256=result.plan_sha256, step_id=result.step_id,
         resolver=resolver.name if resolver else "none",
         evidence=list(checks.values()), claims=claim_checks,
         lookup_failures=[eid for eid, check in checks.items()
                          if any(r.lookup == "failed" for r in check.resolutions)],
-        defective_evidence=defective,
-        ok=not defective and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+        defective_evidence=defective, recitations=recitations,
+        ok=not defective and not recitations
+        and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+
+
+def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
+                 artifact_paths: Mapping[str, str]) -> list[str]:
+    """The ledger's re-citation rule with the identifiers the authority added (#168).
+
+    The ledger keys each row by the spellings it writes (``SourceRef.identities``) and already rejects two
+    groups on one key. A found record adds the identifiers it is ``same_as``, so a DOI row and a PMID row of
+    one paper share a key here. Only found records count: an unchecked row keeps the keys it wrote.
+    """
+    errors: list[str] = []
+    first: dict[str, tuple[str, str]] = {}
+    for row in result.evidence:
+        if not (row.countable and row.source and row.independence_group):
+            continue
+        keys = row.source.identities(artifact_paths)
+        check = checks.get(row.id)
+        for resolution in check.resolutions if check else []:
+            record = resolution.record
+            if resolution.status != "found" or record is None or record.id_scheme == "artifact":
+                continue
+            for alias in (record, *record.same_as):
+                keys.append(f"{alias.id_scheme}:{normalize_id(alias.id_scheme, alias.id_value)}")
+        for key in dict.fromkeys(keys):
+            seen = first.setdefault(key, (row.id, row.independence_group))
+            if seen[1] != row.independence_group:
+                errors.append(f"evidence {seen[0]} and {row.id} cite one source ({key}, per the resolver) but "
+                              f"declare independence groups {seen[1]} and {row.independence_group}; re-citation "
+                              "is not independent")
+                break
+    return errors
