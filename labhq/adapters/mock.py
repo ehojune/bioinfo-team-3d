@@ -74,7 +74,8 @@ class MockAdapter(AgentAdapter):
                 recruit.append({"paper": "https://doi.org/10.1186/s13059-017-1382-0",
                                 "repo": "https://github.com/scverse/scanpy",
                                 "focus": "Preprocessing and clustering", "reason": "mock: 팀에 scRNA 전문가 없음"})
-            questions = ["Which sample group should be analyzed?"] if (
+            questions = [{"question": "Which sample group should be analyzed?",
+                          "options": ["cases", "controls", "both"], "allow_free_text": True, "depth": 60}] if (
                 "[question]" in request and "PI clarification (questions and answer):" not in request) else []
             structured = {"clarifying_questions": questions, "steps": steps, "recruit": recruit, "notes": "mock plan"}
         elif kind == "review":

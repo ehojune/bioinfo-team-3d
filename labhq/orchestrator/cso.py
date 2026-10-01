@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
+                      question_detail_lines, questions_summary)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
                                  refresh_plan_approval, validate_research_plan)
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
-        "clarifying_questions": {"type": "array", "items": {"type": "string"}},
+        "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
@@ -89,7 +91,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- Ask clarifying_questions only if the ambiguity would change the plan.
+- {question_rule}
 
 PI's request: {request}"""
 
@@ -118,7 +120,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
-- Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
+- Put QC after data generation. {question_rule}
 - For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
   a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
@@ -240,7 +242,11 @@ def qa_text(entry: Any) -> str:
     """A PI answer together with what it answers (older records stored the answer alone)."""
     if isinstance(entry, dict):
         qs = entry.get("questions") or ([entry["question"]] if entry.get("question") else [])
-        asked = "\n".join(f"Q{i}. {q}" for i, q in enumerate(qs, 1))
+        details = entry.get("question_details") or []
+        asked = "\n".join("\n".join([f"Q{i}. {q}", *(question_detail_lines(details[i - 1])
+                                                    if i <= len(details) and isinstance(details[i - 1], dict)
+                                                    else [])])
+                          for i, q in enumerate(qs, 1))
         return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
     return f"PI answer: {entry}"
 
@@ -1066,13 +1072,13 @@ class Orchestrator:
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs))
+                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE)
                         schema = RESEARCH_PLAN_SCHEMA
                     else:
                         prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
-                                                    max_steps=self.cfg.max_steps)
+                                                    max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE)
                         schema = PLAN_SCHEMA
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -1095,21 +1101,28 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-                questions = [q for q in plan.get("clarifying_questions") or [] if isinstance(q, str) and q.strip()]
+                details = normalize_questions(plan.get("clarifying_questions"))
+                questions = [q["question"] for q in details]
                 if questions:
                     req["pending_questions"] = questions
+                    if has_structure(details):
+                        req["pending_question_details"] = details
                     self.hub.save_request(rid)
-                    await self._emit(rid, "request.questions", {"questions": questions})
+                    await self._emit(rid, "request.questions", {"questions": questions, "details": details})
                     if self.cfg.wait_for_clarification:
+                        # The card shows options as buttons and returns the composed answer as the note (#34).
                         dec = await self.hub.request_approval(kind="clarify", request_id=rid,
-                            summary="Please answer before work begins:\n" +
-                                    "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1)))
+                                                              summary=questions_summary(details),
+                                                              detail={"questions": details})
                         if not dec.get("approved") or not str(dec.get("note") or "").strip():
                             self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
                             return
                         entry = {"questions": questions, "answer": str(dec["note"]).strip()}
+                        if has_structure(details):
+                            entry["question_details"] = details
                         req.setdefault("clarifications", []).append(entry)
                         req["pending_questions"] = []
+                        req.pop("pending_question_details", None)
                         self.hub.save_request(rid)  # a restart must not lose the PI's answer
                         text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
                         plan_res = await make_plan(text)
@@ -1117,8 +1130,9 @@ class Orchestrator:
                             self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
                             return
                         plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-                        if plan.get("clarifying_questions"):
-                            req["pending_questions"] = plan["clarifying_questions"]
+                        still = normalize_questions(plan.get("clarifying_questions"))
+                        if still:
+                            req["pending_questions"] = [q["question"] for q in still]
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 if research_lane:

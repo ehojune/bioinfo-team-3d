@@ -28,7 +28,8 @@ export function startLiveOffice(onState) {
       emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onDecision:(a, approved, note) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
-        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = '답을 적어 주세요.'; return; }
+        // Structured questions compose their answer in decide.js; an unanswered one yields ''.
+        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'; return; }
         ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
