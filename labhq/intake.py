@@ -649,13 +649,33 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
             rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
 
 
+# A code forge known by its first host label (`github.example.edu`, `gitlab.lab.org`, `git-hpc.inst.kr`). A PI default
+# URL there names a repository just as a github reference does, so its `owner/name` is identity too (#181).
+_FORGE_HOST = re.compile(r"(?:github|gitlab|gitea|forgejo|bitbucket|git|ghe)(?:-[a-z0-9-]+)?\..+", re.IGNORECASE)
+
+
+def _repository(kind: str, value: str) -> tuple[str, str, str] | None:
+    """(repository URL, owner, name) when a reference names a repository on github.com or another forge.
+
+    The first two path segments are taken, whichever branch or file the reference pointed at. On a forge with nested
+    groups (`gitlab.example.edu/group/sub/repo`) that is the group and the next level, still hidden as identity.
+    """
+    parts = urlsplit(value)
+    segments = [segment for segment in parts.path.split("/") if segment]
+    host = (parts.hostname or "").removeprefix("www.")
+    if len(segments) < 2 or not (kind == "github" or kind == "url" and _FORGE_HOST.fullmatch(host)):
+        return None
+    owner, repo = segments[0], segments[1].removesuffix(".git")
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/{owner}/{repo}", owner, repo
+
+
 def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[str]]:
     """URL patterns and repository-identity patterns for one private PI reference."""
-    github = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)", value, re.IGNORECASE)
-    if kind != "github" or not github:
+    repository = _repository(kind, value)
+    if repository is None:
         return [url_pattern(value, trailing_slash=False) + _URL_REST], []
-    owner, repo = github.groups()  # the repository, whichever branch the reference named
-    url = url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST
+    base, owner, repo = repository  # the repository, whichever branch the reference named
+    url = url_pattern(base, trailing_slash=False) + r"(?:\.git)?" + _URL_REST
     # `SEPARATOR` accepts POSIX, drive, UNC, native backslash and JSON-escaped clone paths. The clone folder
     # alone is also repository identity: an agent may shorten `C:\src\owner\repo` to `C:\src\repo` or `repo`.
     identities = [rf"(?<![\w.-]){_text(owner)}{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}",
@@ -673,7 +693,8 @@ def mask_published_references(text: str, settings: Any, requests: Any) -> str:
     - path references from any source: a runner path names a private folder (#36);
     - github and url references from the PI's defaults (#123): a private repository name or a personal wiki
       that the PI set once for every request, not something this request chose to point at. DOI and PMID
-      name published literature and stay.
+      name published literature and stay. A url on a self-hosted forge (`github.example.edu/o/r`) is a
+      repository too, and its `o/r` and clone folder are hidden as for github.com (#181).
     Path spellings accept POSIX, drive, extended/UNC prefixes, either separator, case variants and expanded
     homes. GitHub spellings include URLs, `owner/name` with either separator and the local clone folder name.
     Project reports and round records call this one rule (#130).
