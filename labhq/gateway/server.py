@@ -36,6 +36,8 @@ TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
+# A step card shows this much of a task's result text; a replayed task.result needs no more.
+SNAPSHOT_RESULT_CHARS = 500
 
 
 def snapshot_followup(entry: dict) -> dict:
@@ -47,9 +49,19 @@ def snapshot_followup(entry: dict) -> dict:
 
 
 def snapshot_event(event: dict) -> dict:
-    if event.get("type") != "request.followup_done" or not isinstance(event.get("data"), dict):
+    """The snapshot copy of a replayed event. A follow-up's answer is also the text of its task's `task.result`,
+    sent by the runner unclipped, so that text is cut too. A replay never shows it whole: the web keeps
+    task.result text only for plan steps, and the snapshot's `step_details` replace it with the same head."""
+    data = event.get("data")
+    if not isinstance(data, dict):
         return event
-    return {**event, "data": snapshot_followup(event["data"])}
+    if event.get("type") == "request.followup_done":
+        return {**event, "data": snapshot_followup(data)}
+    text = data.get("text")
+    if event.get("type") == "task.result" and isinstance(text, str) and len(text) > SNAPSHOT_RESULT_CHARS:
+        return {**event, "data": {**data, "text": text[:SNAPSHOT_RESULT_CHARS], "text_truncated": True,
+                                  "text_chars": len(text)}}
+    return event
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
@@ -1070,7 +1082,7 @@ class Hub:
                 "attempts": max((int(entry.get("attempt") or 1) for _, entry in matches), default=0),
                 "outputs": result.get("outputs") or [],
                 "missing_outputs": result.get("missing_outputs") or [],
-                "text": short(result.get("text") or "", 500),
+                "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }

@@ -244,6 +244,34 @@ def test_snapshot_carries_only_the_head_of_long_followup_answers(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_snapshot_cuts_the_same_answer_in_the_runners_task_result(tmp_path):
+    """#126: the runner's task.result for a follow-up carries the answer again, unclipped; a snapshot cuts it too."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    full = "답" * 25000  # the runner's text is not clipped to 20,000 like the stored answer
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate", "followups": []}
+    for i in range(25):  # the events the gateway records for each answered follow-up, through its own paths
+        result = TaskResult(task_id=f"t_{i}", agent_id="cso", ok=True, text=full)
+        await hub.on_runner_message("runner", {"type": "task.result", "task_id": f"t_{i}", "agent_id": "cso",
+                                               "request_id": "r", "data": result.model_dump(mode="json")})
+        await hub.publish({"type": "request.followup_done", "ts": time.time(), "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full[:20000]}})
+    short_result = TaskResult(task_id="t_short", agent_id="cso", ok=True, text="짧은 결과").model_dump(mode="json")
+    await hub.on_runner_message("runner", {"type": "task.result", "task_id": "t_short", "agent_id": "cso",
+                                           "request_id": "r", "data": short_result})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # the task.result copies alone would be about 1.9 MB
+    results = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "task.result"]
+    assert len(results) == 26 and results[0]["text"] == full[:500]
+    assert results[0]["text_truncated"] is True and results[0]["text_chars"] == 25000
+    assert results[-1] == short_result, "a short result is sent unchanged"
+    assert all(len(e["data"]["text"]) == 25000 for e in list(hub.events)[:-1] if e["type"] == "task.result"), \
+        "the live event buffer keeps the whole text"
+
+
+@pytest.mark.asyncio
 async def test_runner_gives_followups_no_ask_tool(tmp_path, monkeypatch):
     settings = Settings()
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
