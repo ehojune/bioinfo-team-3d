@@ -1,6 +1,7 @@
 """Provenance and reuse semantics pilot (#127): model B. Advisory only.
 
-Nothing on the CLI, gateway, runner or orchestrator path imports this module. It reads records it is
+The CLI, gateway, runner and orchestrator never import this module themselves; only the shadow worker of
+#150 does, after a request ends, when ``semantics: shadow``. It reads records it is
 handed (read-only), projects them in memory onto the concepts and relations of ``semantics_v1.yaml``
 and answers two consumers, ``find_reusable`` and ``audit_lineage``, through the same ``judge_*``
 functions. Answers are ``SemanticsAdvisory`` values; nothing is written back anywhere.
@@ -261,6 +262,74 @@ def read_records(root: Path, *, state_db: Path, observed: Path | None = None, re
     return Records(requests=requests, tasks=tasks, plans=plans, results=results, manifests=manifests,
                    observed={ws: {p: tuple(sorted(h)) for p, h in paths.items()} for ws, paths in seen.items()},
                    contracts=contracts)
+
+
+# semantics-shadow: begin (#150 B1 live rows; scripts/semantics_shadow_remove.py deletes this block)
+_TASK_LISTS = ("outputs", "missing_outputs", "pending_jobs", "pending_asks")
+
+
+def _row_shape_ok(body: Any) -> bool:
+    """A task row whose fields have the types ``project`` reads; anything else is skipped as invalid."""
+    if not isinstance(body, dict):
+        return False
+    result, payload = body.get("result") or {}, body.get("payload") or {}
+    if not isinstance(result, dict) or not isinstance(payload, dict) or not isinstance(payload.get("meta") or {}, dict):
+        return False
+    if any(not isinstance(result.get(k) or [], list) or not all(isinstance(v, str) for v in result.get(k) or [])
+           for k in _TASK_LISTS):
+        return False
+    return all(isinstance(result.get(k), (str, type(None))) for k in ("workdir", "workdir_id", "session_id"))
+
+
+def records_from_rows(requests: Mapping[str, Any], tasks: Mapping[str, Any], *,
+                      manifests: Mapping[str, dict | None] | None = None,
+                      observed: Mapping[str, Mapping[str, str]] | None = None) -> tuple[Records, int]:
+    """Records from copies of gateway rows (#150 shadow), and how many rows were left out.
+
+    Unlike ``read_records`` this reads no file and never stops on one bad row: a request, task or research
+    result that does not parse is skipped and counted, together with the tasks of a skipped request. A count
+    above zero means the records are incomplete; the caller must then make no reuse recommendation, because
+    a dropped row can turn several reporters into one.
+    """
+    invalid = 0
+    kept_requests: dict[str, dict] = {}
+    plans: dict[str, dict] = {}
+    for rid, body in sorted(requests.items()):
+        if not isinstance(body, dict):
+            invalid += 1
+            continue
+        if body.get("research_contract") and isinstance(body.get("plan"), dict):
+            try:
+                ResearchPlan.model_validate(body["plan"])
+            except ValidationError:
+                invalid += 1
+                continue
+            plans[rid] = body["plan"]
+        kept_requests[rid] = body
+    kept_tasks: dict[str, dict] = {}
+    results: dict[str, ResearchResult] = {}
+    for tid, body in sorted(tasks.items()):
+        if not _row_shape_ok(body) or body.get("request_id") not in kept_requests:
+            invalid += 1
+            continue
+        structured = (body.get("result") or {}).get("structured")
+        rid = body.get("request_id")
+        if structured and rid in plans and body.get("step_id"):
+            try:
+                results[tid] = validate_research_result(structured, plan=plans[rid])
+            except (ValidationError, ValueError):
+                invalid += 1
+                continue
+        kept_tasks[tid] = body
+    seen: dict[str, dict[str, set[str]]] = {}
+    for ws, paths in (observed or {}).items():
+        for spelling, digest in paths.items():
+            seen.setdefault(ws, {}).setdefault(normalize_artifact_path(spelling), set()).add(digest)
+    return Records(requests=kept_requests, tasks=kept_tasks, plans=plans, results=results,
+                   manifests=dict(manifests or {}),
+                   observed={ws: {p: tuple(sorted(h)) for p, h in paths.items()} for ws, paths in seen.items()},
+                   contracts={}), invalid
+# semantics-shadow: end
 
 
 # ---------------------------------------------------------------- model
