@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:29 | [`ce4b36e`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/ce4b36e) | **main 병합에서 README 연구 규약 줄에 두 변경을 합쳤습니다.** #109의 pack 규칙 설명과 이 PR의 claim·evidence 원장 설명을 함께 둡니다 |
 | 10:52 | [`e72ad9c`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/e72ad9c) | **main 병합에서 STATUS.md의 두 항목을 함께 살렸습니다.** 이 PR의 연구 규약 증거 원장 항목과 main의 후속 #104·#106·#107·#108 항목을 둘 다 둡니다 |
 | 10:49 | [`433a8b6`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/433a8b6) | **출처 확인기가 확인 못 한 출처와 배경 행의 가짜 ID도 놓치지 않습니다** (#90 R06, 리뷰 보강). 전에는 배경으로만 이었거나 아예 잇지 않은 행, 추론 행에 든 가짜 ID를 검사하지 않아 '통과'가 나왔습니다. 이제 결함 행을 모아 보고 전체를 실패로 보고, 출처 하나라도 확인되지 않으면 그 주장은 '확인됨'이 아닙니다. URI는 도메인만 대소문자를 무시합니다 |
 | 10:49 | [`17cc50b`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/17cc50b) | **연구 규약 문서·STATUS에 verifier 판정 보강을 반영했습니다** (#90). 재인용 별칭, 추론 행의 근거 사슬, 측정 방법 비교, 주장이 '확인됨'이 되는 조건을 적었습니다 |
