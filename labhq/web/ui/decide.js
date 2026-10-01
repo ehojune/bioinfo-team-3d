@@ -20,6 +20,39 @@ function detailValue(value) {
   return JSON.stringify(value, null, 2) ?? String(value);
 }
 
+function detailEntry(list, key, value, options = {}) {
+  add(list, 'dt', key);
+  const cell = add(list, 'dd');
+  const text = options.raw ? String(value) : detailValue(value);
+  if (options.fold || text.length > 500 || text.split('\n').length > 8) {
+    const fold = add(cell, 'details');
+    fold.open = Boolean(options.open);
+    add(fold, 'summary', options.summary || `전체 보기 (${text.length}자) · ${text.slice(0, 120)}…`);
+    add(fold, 'pre', text);
+  } else add(cell, 'pre', text);
+}
+
+function renderResearchPlan(list, canonical) {
+  let plan;
+  try { plan = JSON.parse(canonical); } catch { detailEntry(list, '동결 PLAN 전체', canonical, {raw: true}); return; }
+  const brief = plan.brief || {}, protocol = plan.protocol || {};
+  detailEntry(list, '질문', brief.question ?? '');
+  detailEntry(list, '가설', {
+    primary: brief.primary_hypothesis,
+    alternatives: brief.null_or_alternatives || [],
+    distinguishing_observations: brief.distinguishing_observations || [],
+  });
+  detailEntry(list, '완료 조건', brief.completion_conditions || []);
+  detailEntry(list, '중단 조건', protocol.stop_conditions || []);
+  detailEntry(list, '자원 상한', protocol.resource_limits || []);
+  detailEntry(list, 'data boundary', protocol.data_boundaries || []);
+  detailEntry(list, 'pack 값', plan.pack_values || {});
+  detailEntry(list, 'protocol', protocol, {fold: true, open: true, summary: 'protocol 전체'});
+  detailEntry(list, '동결 PLAN 전체', canonical, {
+    raw: true, fold: true, summary: `hash 입력 canonical JSON · ${canonical.length}자`,
+  });
+}
+
 function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] : [];
@@ -35,13 +68,8 @@ function renderDetail(container, kind, detail) {
   if (!entries.length) return;
   const list = add(container, 'dl', '', 'approval-detail');
   for (const [key, value] of entries) {
-    add(list, 'dt', key);
-    const cell = add(list, 'dd');
-    if (value.length > 500 || value.split('\n').length > 8) {
-      const fold = add(cell, 'details');
-      add(fold, 'summary', `전체 보기 (${value.length}자) · ${value.slice(0, 120)}…`);
-      add(fold, 'pre', value);
-    } else add(cell, 'pre', value);
+    if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    else detailEntry(list, key, value, {raw: true});
   }
 }
 

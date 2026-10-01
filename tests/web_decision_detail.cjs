@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const {test} = require('node:test');
 
 // Native textContent semantics; any HTML insertion is a test failure.
@@ -68,4 +69,27 @@ test('other approval kinds preserve every key/value and legacy detail strings',a
   assert.match(c.detail.textContent,/\n  "nested": \[/);assert.match(c.detail.textContent,/null/);
   const legacy=await card('clarify','Question <example>');assert.match(legacy.detail.textContent,/Question <example>/);
   assert.equal((await card('clarify',null)).detail.hidden,true);
+});
+
+test('research plan card shows the full canonical PLAN in readable sections',async()=>{
+  const plan={schema_version:2,intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
+    primary_hypothesis:'Condition changes expression',null_or_alternatives:['batch explains the change'],
+    completion_conditions:['QC and effect interval reported']},protocol:{revision:1,
+    stop_conditions:['design not identifiable'],resource_limits:['one local planning call'],
+    data_boundaries:['public counts only'],packs:[{id:'single_cell_de',version:'1',sha256:'a'.repeat(64)}]},
+    pack_values:{'single_cell_de@1':{fields:{donor_id:'metadata.donor_id',batch:'library_batch',count_scale:'raw_counts'},
+      validators:{'single_cell_de.donor_unit':'donor-level pseudobulk'},acceptance:{'single_cell_de.donor_model':'accepted'}}},
+    clarifying_questions:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
+  // Use Python-compatible recursively sorted canonical JSON for the approval payload.
+  const sortValue=value=>Array.isArray(value)?value.map(sortValue):value&&typeof value==='object'?
+    Object.fromEntries(Object.keys(value).sort().map(key=>[key,sortValue(value[key])])):value;
+  const canonicalPlan=JSON.stringify(sortValue(plan));
+  const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
+  const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
+  assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
+  for (const label of ['질문','가설','완료 조건','중단 조건','자원 상한','data boundary','pack 값','동결 PLAN 전체'])
+    assert.ok(c.detail.textContent.includes(label),label+' must be visible');
+  for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
+    'public counts only','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
+  assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
 });

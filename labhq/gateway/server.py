@@ -12,7 +12,7 @@ import mimetypes
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
@@ -42,8 +42,10 @@ WEB = Path(__file__).resolve().parents[1] / "web"
 
 class RequestIn(BaseModel):
     text: str
-    mode: str = "orchestrate"  # orchestrate | direct
+    mode: Literal["orchestrate", "direct", "plan_only"] = "orchestrate"
     agent_id: str | None = None
+    work_kind: Literal["auto", "simple", "research"] = "auto"
+    scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     project_dirs: list[str] = []
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
@@ -831,7 +833,8 @@ class Hub:
         await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": request_id,
                             "data": req.model_dump(mode="json")})
         try:
-            return await asyncio.wait_for(fut, req.timeout_s)
+            decision = await asyncio.wait_for(fut, req.timeout_s)
+            return {**decision, "approval_id": req.id, "decided_at": time.time()}
         except asyncio.TimeoutError:
             self.approvals.pop(req.id, None)
             self.store.delete("approval", req.id)
@@ -839,9 +842,10 @@ class Hub:
                            {"approval": req.model_dump(mode="json"), "approved": False,
                             "note": "timed out", "state": "timed_out", "decided_at": time.time()})
             await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": request_id,
-                                "data": {"id": req.id, "approved": False, "note": "timed out",
-                                         "state": "timed_out"}})
-            return {"approved": False, "note": "timed out", "state": "timed_out"}
+                               "data": {"id": req.id, "approved": False, "note": "timed out",
+                                        "state": "timed_out"}})
+            return {"approved": False, "note": "timed out", "state": "timed_out", "approval_id": req.id,
+                    "decided_at": time.time()}
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
         entry = self.approvals.pop(approval_id, None)

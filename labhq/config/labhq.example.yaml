@@ -92,3 +92,8 @@ orchestrator:
   max_revisions: 1
   max_steps: 12
   max_parallel_steps: 4
+
+# 연구 계약 pilot은 opt-in입니다. PR 1에서는 계획·승인까지만 하고 연구 step은 실행하지 않습니다.
+research:
+  enabled: false              # pilot을 켜려면 true 한 줄로 변경
+  active_packs: []            # 예: [single_cell_de@1]

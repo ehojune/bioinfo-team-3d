@@ -1,0 +1,116 @@
+schema_version: 1
+id: single_cell_de
+version: "1"
+title: Single-cell differential expression across donors
+core_contract: extend_only
+applies_when: Conditions are compared across biological donors using single-cell expression data.
+sources:
+  - title: labhq research protocol R08 and R18
+    url: docs/research_protocol.md
+    revision: "v0.1"
+    license: repository-local protocol; no external text copied
+fields:
+  - name: donor_id
+    description: Biological donor identifier used as the independent experimental unit.
+    required: true
+    value_type: string
+  - name: condition
+    description: Condition assigned to each donor or paired donor sample.
+    required: true
+    value_type: string
+  - name: batch
+    description: Technical batch or a documented reason that batch is not applicable.
+    required: true
+    value_type: string
+  - name: count_scale
+    description: Raw-count or transformed scale used by the selected model.
+    required: true
+    value_type: string
+    allowed_values: [raw_counts, normalized_counts, log_transformed]
+  - name: independent_replicates
+    description: Number of independent biological replicates.
+    required: true
+    value_type: integer
+    minimum: 2
+  - name: replicate_definition
+    description: Definition of the independent biological replicate.
+    required: true
+    value_type: string
+  - name: model
+    description: Donor-level statistical model fixed before approval.
+    required: true
+    value_type: string
+    allowed_values: [pseudobulk, donor_dependent]
+  - name: model_rationale
+    description: Why the model matches the count scale and donor structure.
+    required: true
+    value_type: string
+  - name: batch_design
+    description: Whether condition and batch are identifiable or fully confounded and not identifiable.
+    required: true
+    value_type: string
+    allowed_values: [identifiable, fully_confounded_not_identifiable]
+  - name: conclusion_mode
+    description: Whether the plan may estimate a condition effect or is limited to descriptive reporting.
+    required: true
+    value_type: string
+    allowed_values: [condition_effect, descriptive_only]
+validators:
+  - id: single_cell_de.donor_unit
+    requirement: Cells must not be treated as independent donor replicates.
+    required_fields: [donor_id, independent_replicates, replicate_definition, model]
+  - id: single_cell_de.model_assumption
+    requirement: The plan must state why the selected model matches the count scale and donor structure.
+    required_fields: [count_scale, model, model_rationale]
+reviewer_questions:
+  - Does the model preserve donor-level independence and pairing?
+  - Are batch and condition distinguishable in the design?
+fixtures:
+  - id: donor_batch_confounded
+    purpose: Detect cell-level pseudoreplication and complete donor-batch confounding.
+rules:
+  - id: single_cell_de.donor_model
+    description: Use a donor-level model fixed in the approved plan.
+    require:
+      field: model
+      in: [pseudobulk, donor_dependent]
+  - id: single_cell_de.confounded_conclusion_mode
+    description: A fully confounded design is limited to descriptive reporting.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: conclusion_mode
+      value: descriptive_only
+  - id: single_cell_de.confounded_study_type
+    description: A fully confounded design may only support a descriptive conclusion.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    forbid:
+      field: brief.study_type
+      in: [explanatory, comparative]
+  - id: single_cell_de.confounded_hypothesis
+    description: A fully confounded design cannot carry a condition-effect hypothesis.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: brief.primary_hypothesis
+      value: null
+  - id: single_cell_de.confounded_statistics
+    description: Inferential condition-effect statistics are disabled under full confounding.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: protocol.statistics.applicable
+      value: false
+  - id: single_cell_de.confounded_estimand
+    description: A condition-effect estimand is absent under full confounding.
+    when:
+      field: batch_design
+      value: fully_confounded_not_identifiable
+    require:
+      field: protocol.statistics.estimand
+      value: null
