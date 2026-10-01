@@ -103,6 +103,7 @@ class Runner:
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
+        self.reference_write_warned: set[str] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
@@ -449,6 +450,14 @@ class Runner:
             read_dirs, skipped = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
+            for directory in read_dirs:
+                # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
+                # make a reference truly read-only. Say so once per directory instead of implying a guarantee.
+                if directory not in self.reference_write_warned and os.access(directory, os.W_OK):
+                    self.reference_write_warned.add(directory)
+                    await emit("agent.log", {"level": "warn", "text": (
+                        f"참고 경로가 러너 계정에 쓰기 가능합니다: {directory}. labhq는 쓰기 권한을 주지 않지만 "
+                        "미리 허용된 셸 명령은 막지 못하니 OS 권한으로 읽기 전용으로 두세요")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,

@@ -166,6 +166,7 @@ async def test_briefing_plan_and_step_prompts_carry_pointers_and_read_only_paths
         assert "[url] https://example.org/protocol" in prompt
         assert "[path] /srv/refs/yuan (read-only on the runner) — Yuan lessons" in prompt
         assert kinds[kind].meta["reference_dirs"] == ["/srv/refs/yuan"], kind
+        assert "Never write, move or delete anything under a [path] reference" in prompt
     assert "Reference pointers" not in hub.requests["r"]["text"]
 
 
@@ -218,10 +219,28 @@ async def test_runner_adds_reference_paths_read_only_and_drops_unsafe_ones(tmp_p
     for directory in expected:
         from labhq.policy import claude_rule_path
         assert f"Edit(/{claude_rule_path(directory)}/**)" in deny and f"Write(/{claude_rule_path(directory)}/**)" in deny
-    logs = [e for e in runner.store.pending() if e["type"] == "agent.log" and "참고 경로" in e["data"].get("text", "")]
-    assert len(logs) == 2  # outside the roots, and missing
+    texts = [e["data"].get("text", "") for e in runner.store.pending() if e["type"] == "agent.log"]
+    assert len([t for t in texts if t.startswith("참고 경로 제외")]) == 2  # outside the roots, and missing
+    # Pre-approved shell commands are not sandboxed: a writable reference gets one honest warning per directory.
+    writable = [t for t in texts if "쓰기 가능" in t]
+    assert len(writable) == 2 and all("OS 권한" in t for t in writable)
     manifest = json.loads((runner.workspaces[task.id].dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["runs"][task.id]["reference_dirs"] == expected
+    await runner.run_task(Task(id="task-2", request_id="r1", agent_id=agent.id, prompt="again",
+                               meta={"reference_dirs": refs[:1]}))
+    texts = [e["data"].get("text", "") for e in runner.store.pending() if e["type"] == "agent.log"]
+    assert len([t for t in texts if "쓰기 가능" in t]) == 2, "warned once per directory"
+
+
+def test_shell_writes_into_a_reference_dir_go_to_the_pi_when_the_gate_sees_them(tmp_path):
+    from labhq.policy import evaluate_tool
+
+    workdir, reference = str(tmp_path / "ws"), str(tmp_path / "refs" / "yuan")
+    decision = evaluate_tool("Bash", {"command": f"python make.py > {reference}/cache.tsv"}, Settings().policy,
+                             allowed_roots=[workdir], workdir=workdir)
+    assert decision.action == "ask"  # reference dirs are never write roots (LABHQ_EXTRA_ROOTS)
+    assert evaluate_tool("Write", {"file_path": f"{reference}/x.md"}, Settings().policy,
+                         allowed_roots=[workdir], workdir=workdir).action == "ask"
 
 
 def test_claude_adds_reference_dirs_but_codex_gets_no_write_access(tmp_path):
