@@ -97,7 +97,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 
 작성자와 다른 reviewer가 ID·인용 지지·조건·통계·반례·과장·재현 범위를 claim별로 감사한다. reviewer 정체성과 실제 model/vendor를 기록한다. 중대 결함이 남으면 accept할 수 없다.
 
-연구 결과 검토는 REVIEW v2(`labhq/research/review.py`, R13의 앞부분)로 받는다. claim마다 인용 지지, 부재를 근거로 씀, 직접성, 독립성, 비교 가능성을 모두 판정한다. 관찰 문장에 "0 hits"라고만 적은 0건 검색처럼 코드가 읽지 못하는 것은 reviewer가 본다. 부재를 근거로 쓴 것은 늘 중대 결함이다. countable 근거를 단 claim은 앞의 네 항목을, quantity를 비교한 claim은 비교 가능성을 `not_applicable`로 넘길 수 없다. 검토는 결과의 plan hash·step·claim 전부에 묶이고, 결과를 쓴 직원은 검토하지 못한다. 아직 실행 경로에 연결하지 않았고 일반 요청의 `REVIEW_SCHEMA`는 그대로다.
+연구 결과 검토는 REVIEW v2(`labhq/research/review.py`, R13의 앞부분)로 받는다. claim마다 인용 지지, 부재를 근거로 씀, 직접성, 독립성, 비교 가능성을 모두 판정한다. 관찰 문장에 "0 hits"라고만 적은 0건 검색처럼 코드가 읽지 못하는 것은 reviewer가 본다. 부재를 근거로 쓴 것은 늘 중대 결함이다. countable 근거를 단 claim은 앞의 네 항목을, quantity를 비교한 claim은 비교 가능성을 `not_applicable`로 넘길 수 없다. 검토는 결과의 plan hash·step·claim 전부에 묶이고, 결과를 쓴 직원은 검토하지 못한다. 결과에는 작성자 field가 없으므로 검증할 때 작성자(task의 agent id)를 꼭 넘겨야 하며, 빠지면 독립성을 확인하지 않은 검토로 보고 거부한다(#169, #188). 아직 실행 경로에 연결하지 않았고 일반 요청의 `REVIEW_SCHEMA`는 그대로다.
 
 ## 5. PI checkpoint와 완료
 
