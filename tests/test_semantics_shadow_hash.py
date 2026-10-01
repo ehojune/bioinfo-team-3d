@@ -253,3 +253,72 @@ def test_a_public_alias_of_an_internal_folder_is_not_read_for_a_public_project(t
     line = line_for(hub, "req_a", observed)
     assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
     assert reads == [] and observed == {}
+
+
+def test_hashing_stops_at_its_share_and_the_models_still_finish(tmp_path, monkeypatch):
+    """#159: an output too big to hash in time ends the hash step, not the job: incomplete, never a timeout."""
+    from labhq.research.semantics_shadow import ShadowConfig, take_snapshot
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 1)
+    hub, _ = _lab(tmp_path, files={"outputs/counts.tsv": b"x" * 400})
+    calls = [0]
+
+    def check():   # the whole job's cap: 200 looks
+        calls[0] += 1
+        if calls[0] > 200:
+            raise shadow.ShadowTimeout("time cap")
+
+    snap = take_snapshot(hub, "req_a", ShadowConfig())
+    line = shadow.compute_line(snap, {}, check, epoch=1, hash_over=lambda: calls[0] > 100)
+    assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
+    assert line["hash"]["skipped"] == {"hash_time": 1} and line["hash"]["hashed"] == 0
+    assert line["objects"]["status"] == "ok"
+
+
+def test_the_worker_gives_hashing_its_share_of_the_time_cap(tmp_path, monkeypatch):
+    """#159 through the worker: a file that takes longer than the whole cap to hash leaves an ok line.
+
+    The share is shrunk to 0.5 s of a 10 s cap so the models keep 9.5 s on a slow CI machine; with the default
+    half of a 2 s cap the margin would be about 1 s of wall clock."""
+    from tests.test_semantics_shadow_breaker import _lines, _service
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 1)
+    monkeypatch.setattr(shadow, "HASH_SHARE", 0.05)
+    service = _service(tmp_path)
+    service.cfg = shadow.ShadowConfig(timeout_s=10.0)
+    target = tmp_path / "runs" / "2026-10-01" / "task_a1_analyst" / "outputs" / "counts.tsv"
+    target.write_bytes(b"x" * (64 * 1024 ** 2))   # one byte per read: far more than 10 s to hash
+    service.after_request("req_000")
+    assert service.drain(30)
+    (line,) = _lines(tmp_path, "request")
+    assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
+    assert line["hash"]["skipped"] == {"hash_time": 1} and service.counts["failures"] == 0
+    assert line["ms"] < 5000   # ended at the share, not at the cap
+
+
+@pytest.mark.parametrize("change", ["remove", "rename"])
+def test_a_runner_can_delete_or_move_a_file_while_it_is_hashed(tmp_path, monkeypatch, change):
+    """#161: the shadow's read never blocks a runner. On Windows the file is opened with FILE_SHARE_DELETE, so
+    deleting it or renaming it away mid-hash succeeds; the hash is then unstable, never an error."""
+    from labhq.research.semantics_shadow import ShadowConfig, take_snapshot
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 2)
+    hub, wd = _lab(tmp_path)
+    target = os.path.join(wd, "outputs", "counts.tsv")
+    real, opened, runner = builtins.open, [], []
+
+    def watching(path, *args, **kwargs):
+        handle = real(path, *args, **kwargs)
+        if str(path) == target:
+            opened.append(path)
+        return handle
+
+    def check():
+        if opened and not runner:   # the runner acts while the shadow holds the file open
+            try:
+                os.remove(target) if change == "remove" else os.replace(target, target + ".moved")
+                runner.append("ok")
+            except OSError as exc:
+                runner.append(type(exc).__name__)
+
+    monkeypatch.setattr(shadow, "open", watching, raising=False)
+    line = shadow.compute_line(take_snapshot(hub, "req_a", ShadowConfig()), {}, check, epoch=1)
+    assert runner == ["ok"]
+    assert line["provenance"]["status"] == "ok" and line["hash"]["skipped"] == {"unstable": 1}

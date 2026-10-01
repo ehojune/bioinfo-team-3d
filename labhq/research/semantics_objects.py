@@ -64,11 +64,11 @@ class ObjectView:
             self.links.append((rel, src, dst))
 
 
-def _task_state(task: Mapping[str, Any]) -> str:
+def _task_state(task: Mapping[str, Any], woken: bool) -> str:
     result = task.get("result")
     if not isinstance(result, dict) or not task.get("completed"):
         return "running" if task.get("accepted") else "dispatched"
-    if result.get("pending_jobs") or result.get("pending_asks"):
+    if (result.get("pending_jobs") or result.get("pending_asks")) and not woken:
         return "waiting"
     return "done" if result.get("ok") else "failed"
 
@@ -98,8 +98,11 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
             view.link("step_depends_on", sid, f"step:{rid}/{dep}" if dep in step_ids else None)
 
     tasks = {tid: t for tid, t in (snap.get("tasks") or {}).items() if t.get("request_id") == rid}
+    # The CSO dispatches a wake-up only after the parent's jobs finished and its asks were answered, and that row
+    # stays after saving the step result clears the jobs_done checkpoint (#163). A wrap-up turn waits for nothing.
+    woken = {t.get("parent_task") for t in tasks.values() if t.get("parent_task") and t.get("kind") != "wrap_up"}
     for tid, task in sorted(tasks.items()):
-        view.add("Task", f"task:{tid}", kind=task.get("kind"), state=_task_state(task))
+        view.add("Task", f"task:{tid}", kind=task.get("kind"), state=_task_state(task, tid in woken))
     jobs_done = snap.get("jobs_done") or {}
     for tid, task in sorted(tasks.items()):
         node = f"task:{tid}"
@@ -117,7 +120,8 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
         finished = {str(j.get("job_id")): j.get("state") for j in (jobs_done.get(tid) or {}).get("jobs") or []
                     if isinstance(j, dict) and j.get("job_id") is not None}
         for job_id in [*map(str, result.get("pending_jobs") or []), *finished]:
-            job = view.add("Job", f"job:{tid}/{job_id}", state=finished.get(job_id, "pending"))
+            state = finished[job_id] if job_id in finished else "finished" if tid in woken else "pending"
+            job = view.add("Job", f"job:{tid}/{job_id}", state=state)  # finished: ended, final state not kept
             view.link("task_job", node, job)
         for out in result.get("outputs") or []:
             path = normalize_artifact_path(str(out))  # one spelling per file, as the provenance model reads it
@@ -158,7 +162,7 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
 
 
 def summarize(view: ObjectView) -> dict[str, Any]:
-    """Counts only: objects and links by type, unresolved links by type."""
+    """Counts only: objects and links by type, unresolved links by type, pending approvals and jobs."""
     links: dict[str, int] = {rel: 0 for rel in LINK_TYPES}
     for rel, _, _ in view.links:
         links[rel] += 1
@@ -168,4 +172,5 @@ def summarize(view: ObjectView) -> dict[str, Any]:
     pending = sum(1 for a in view.objects["Approval"].values() if a.get("state") == "pending")
     return {"objects": {t: len(view.objects[t]) for t in OBJECT_TYPES}, "links": links,
             "link_total": len(view.links), "unresolved": len(view.unresolved),
-            "unresolved_by": dict(sorted(unresolved.items())), "pending_approvals": pending}
+            "unresolved_by": dict(sorted(unresolved.items())), "pending_approvals": pending,
+            "pending_jobs": sum(1 for j in view.objects["Job"].values() if j.get("state") == "pending")}

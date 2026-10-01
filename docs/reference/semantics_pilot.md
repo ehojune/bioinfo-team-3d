@@ -42,6 +42,7 @@
 - B의 앞 두 결함은 A를 쓰면서, 나머지는 구현 뒤 독립 리뷰(Codex)와 검증에서 찾았다. 같은 작업자가 B를 먼저 쓴 순서 효과가 있다.
 - 고친 뒤 A와 B는 반례 넷(resume 시각 unknown, claim 반복 보고, 20층 diamond, cycle·깊이 70)에서 같은 답을 낸다. A의 노드 단위 순회는 고정 fixture 계보 루트 35개 전부에서 고치기 전과 출력이 같다.
 - 공유 부분 두 건도 고쳤다(모델 비교에는 안 센다): reader의 immutable 읽기가 열기 전후에 시작한 writer의 commit을 놓치던 것(#141), LLM 0 차단이 `os.spawn*`·`os.exec*`·`os.posix_spawn*`을 막지 않고 import 검사가 script를 안 보던 것(#142).
+- pilot 뒤 후속(17문항·판정 변화 없음): cycle 경고는 강연결 요소마다 한 건(#154), 계보 순회는 노드별 최소 깊이(#157), 맞는 세션이 있는데 시각을 모르는 resume은 이유 `start_unknown`(#155). #155는 모델 개정이라 hash가 `9ed9aa1eecdb41e9dc062e1184cdaacd7d94b2f7d4c335354eeb99ea7b561b42`로 바뀌었다. 위 측정은 이전 hash 기준이다.
 - 원인 단위 집계는 변형 test로 확인했다. A8.generated_by 하나를 틀리면 질의 다섯 개가 틀려도 결함은 `gen` 1건이다.
 
 ## 시간(Pilot-Minutes, 에이전트 작업 시간)
