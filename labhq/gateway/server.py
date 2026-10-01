@@ -914,8 +914,13 @@ class Hub:
             req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
         # Fixed at creation: a later config edit must not change what a running or resumed request points at.
         req["references"] = effective_references(body.references, body.default_references, self.s)
+        # A dropped query may be a credential: kept only in this internal store, never in the request record,
+        # snapshot, prompts or reports.
+        originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
         self.requests[rid] = req
+        if originals:
+            self.store.put("reference_original", rid, {"references": originals})
         self.save_request(rid)
         asyncio.get_running_loop().create_task(self._start_request(rid))
         return rid

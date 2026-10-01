@@ -12,9 +12,9 @@ import stat
 import unicodedata
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 QUESTION_DEPTHS = (30, 60, 90)
 OPTION_LETTERS = "abcd"
@@ -148,13 +148,20 @@ def _github(value: str) -> str:
     return f"{base}/tree/{branch}" if branch else base
 
 
+def public_url(value: str) -> str:
+    """Scheme, host and path only. Signed URLs carry credentials in the query or fragment
+    (`?token=`, `X-Amz-Signature=`, `#access_token=`), so neither is stored, shown, prompted or published."""
+    parts = urlsplit(value)
+    return urlunsplit((parts.scheme, parts.netloc.rpartition("@")[2], parts.path, "", ""))
+
+
 def _url(value: str) -> str:
     parts = urlsplit(value)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError("url reference must be an http(s) URL with a host")
     if parts.username or parts.password:
         raise ValueError("url reference must not embed credentials")
-    return value
+    return public_url(value)
 
 
 def _breaks_line(char: str) -> bool:
@@ -179,6 +186,12 @@ class Reference(BaseModel):
     kind: Literal["github", "doi", "pmid", "url", "path"]
     value: str = Field(min_length=1, max_length=2000)
     note: str | None = Field(default=None, max_length=300)
+    # The URL as given when its query or fragment was dropped; only the gateway's internal store keeps it.
+    _original: str | None = PrivateAttr(default=None)
+
+    @property
+    def original(self) -> str | None:
+        return self._original
 
     @field_validator("note")
     @classmethod
@@ -206,7 +219,9 @@ class Reference(BaseModel):
             if not re.fullmatch(r"[1-9]\d{0,8}", value):
                 raise ValueError("pmid reference must be a PubMed id")
         elif self.kind == "url":
-            value = _url(value)
+            clean = _url(value)
+            self._original = value if clean != value else None
+            value = clean
         else:
             value = _path(value)
         self.value = value
@@ -291,6 +306,8 @@ def effective_references(requested: list[Reference], use_defaults: bool, setting
     for source, items in (("request", requested), ("pi_profile", defaults)):
         for item in items:
             entry = {**item.model_dump(), "source": source}
+            if item.original:
+                entry["query_removed"] = True
             if item.kind == "path":
                 try:
                     entry["value"] = check_reference_path(item.value, settings)
@@ -316,6 +333,11 @@ def _reference_line(ref: dict[str, Any]) -> str:
         line = f"[pmid] {value} — https://pubmed.ncbi.nlm.nih.gov/{value}/"
     elif kind == "path":
         line = f"[path] {value} (read-only on the runner)"
+    elif kind == "url":
+        # Requests saved before the query was dropped at intake still hold it.
+        line = f"[url] {public_url(value)}"
+        if ref.get("query_removed") or public_url(value) != value:
+            line += " (query removed: ask the PI if the link needs it)"
     else:
         line = f"[{kind}] {value}"
     if ref.get("note"):

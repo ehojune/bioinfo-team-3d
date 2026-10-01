@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
+from ..intake import public_url
 from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -37,6 +38,20 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"xox[abpr]-[A-Za-z0-9-]{10,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 ]
+# A credential carried as a URL query or fragment parameter (signed S3/GCS/Azure/CloudFront URLs, API keys,
+# OAuth tokens): the parameter name stays, its value is dropped.
+QUERY_SECRET = re.compile(
+    r"([?&;#](?:[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
+    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy)=)[^&#\s\"'<>)\]]+", re.IGNORECASE)
+
+
+def strip_reference_url_queries(text: str, requests: Any) -> str:
+    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it."""
+    bases = {public_url(str(ref.get("value") or "")) for req in requests
+             for ref in (req.get("references") or []) if ref.get("kind") == "url"}
+    for base in sorted((b for b in bases if b), key=len, reverse=True):
+        text = re.sub(re.escape(base) + r"[?#][^\s\"'<>)\]]*", lambda _m, b=base: b, text, flags=re.IGNORECASE)
+    return text
 
 
 NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
@@ -77,6 +92,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
+    out = QUERY_SECRET.sub(lambda m: m.group(1) + "<redacted-secret>", out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
@@ -296,7 +312,8 @@ class ProjectReporter:
         return self.s.project((self.hub.requests.get(rid) or {}).get("project_id"))
 
     def _clean(self, text: str) -> str:
-        out = sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
+        out = strip_reference_url_queries(text or "", self.hub.requests.values())  # before sanitize rewrites it
+        out = sanitize(out, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
         for pattern in self._reference_path_patterns():
             out = pattern.sub("<reference-path>", out)
         return out

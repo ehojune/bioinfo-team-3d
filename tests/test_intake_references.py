@@ -33,7 +33,10 @@ def ref(kind, value, note=None):
     ("doi", "doi:10.1038/nature12373", "10.1038/nature12373"),
     ("doi", "https://doi.org/10.1186/s13059-017-1382-0", "10.1186/s13059-017-1382-0"),
     ("pmid", "PMID: 29409532", "29409532"),
-    ("url", "https://example.org/protocol?v=2#s3", "https://example.org/protocol?v=2#s3"),
+    # Signed URLs carry credentials in the query or fragment: only scheme, host and path are kept.
+    ("url", "https://example.org/protocol?v=2#s3", "https://example.org/protocol"),
+    ("url", "https://lab.s3.amazonaws.com/a.bam?X-Amz-Signature=ab12&X-Amz-Credential=AKID", "https://lab.s3.amazonaws.com/a.bam"),
+    ("url", "https://example.org:8443/share/x.tsv?token=t0k3n#access_token=z", "https://example.org:8443/share/x.tsv"),
     ("path", "/srv/refs/notes/", "/srv/refs/notes"),
     ("path", "C:\\refs\\notes", "C:\\refs\\notes"),
 ])
@@ -524,3 +527,56 @@ def test_project_reports_mask_reference_paths_in_any_case_or_separator(tmp_path)
     assert "yuan" not in cleaned.casefold() and "llm-wiki" not in cleaned
     assert cleaned.count("<reference-path>") == 5
     assert hub.reporter._clean(r"C:\Users\pi\Yuanist and /home/pi/llm-wikis").count("<reference-path>") == 2
+
+
+SIGNED = "https://data.example.org/share/cohort.tsv?token=SECRETtoken123&sig=Zm9vYmFy#part"
+
+
+def test_url_references_are_stored_shown_and_prompted_without_query_or_fragment(tmp_path):
+    from labhq.intake import render_references
+
+    s = settings_with_roots(tmp_path)
+    client = TestClient(create_app(s))
+    hub = client.app.state.hub
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    rid = client.post("/api/requests", json={"text": "t", "mode": "plan_only", "references": [
+        {"kind": "url", "value": SIGNED, "note": "shared cohort"}]}, headers=auth).json()["request_id"]
+    stored = hub.requests[rid]["references"][0]
+    assert stored["value"] == "https://data.example.org/share/cohort.tsv" and stored["query_removed"] is True
+    for shown in (json.dumps(hub.requests[rid]), json.dumps(hub.snapshot()),
+                  client.get(f"/api/requests/{rid}", headers=auth).text, render_references([stored])):
+        assert "SECRETtoken123" not in shown and "Zm9vYmFy" not in shown and "#part" not in shown
+    assert "query removed" in render_references([stored])
+    # The original stays only in the gateway's internal store, never in the request, snapshot or prompts.
+    assert hub.store.get("reference_original", rid) == {"references": [
+        {"value": "https://data.example.org/share/cohort.tsv", "original": SIGNED}]}
+    # Requests saved before this fix still hold the raw URL; prompts render it without the query.
+    legacy = render_references([{"kind": "url", "value": SIGNED, "source": "request"}])
+    assert "SECRETtoken123" not in legacy and "https://data.example.org/share/cohort.tsv" in legacy
+
+
+def test_publish_guard_redacts_query_credentials_but_keeps_plain_parameters():
+    from labhq.integrations.github import sanitize
+
+    text = ("see https://h.example/x?v=2&token=abc123XYZ and "
+            "https://lab.s3.amazonaws.com/a.bam?X-Amz-Algorithm=AWS4&X-Amz-Credential=AKIDEXAMPLE%2F2026&"
+            "X-Amz-Signature=deadbeef01&X-Amz-Security-Token=FwoGZX; "
+            "https://acct.blob.core.windows.net/c/f?sv=2024&sig=SASsig%3D&se=2026 "
+            "https://app.example/cb#access_token=ya29.secret&state=s1 "
+            "https://maps.example/api?key=AIzaFAKEkey&api_key=k2&Signature=cfSig&Key-Pair-Id=APKA1&Policy=eyJ")
+    out = sanitize(text, Settings().policy)
+    for secret in ("abc123XYZ", "AKIDEXAMPLE", "deadbeef01", "FwoGZX", "SASsig", "ya29.secret", "AIzaFAKEkey",
+                   "=k2", "cfSig", "APKA1", "eyJ"):
+        assert secret not in out, secret
+    assert "?v=2&token=<redacted-secret>" in out and "sv=2024" in out and "state=s1" in out
+    assert "https://lab.s3.amazonaws.com/a.bam?" in out
+
+
+def test_project_reports_drop_the_query_of_legacy_url_references(tmp_path):
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    legacy = "https://share.example.org/f/cohort.tsv?dl=opaqueSHAREcode99"  # no credential-like name
+    hub.requests["r"] = {"references": [{"kind": "url", "value": legacy, "source": "request"}]}
+    cleaned = hub.reporter._clean(f"Downloaded {legacy} for the summary")
+    assert "opaqueSHAREcode99" not in cleaned
+    assert "https://share.example.org/f/cohort.tsv" in cleaned
