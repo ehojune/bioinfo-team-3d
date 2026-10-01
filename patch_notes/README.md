@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:25 | [`946d103`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/946d103) | **참고 자료를 어떤 표기로 적어도 공개 보고에서 가립니다** (Codex 리뷰, 같은 부류를 한 함수로). Windows clone 경로에 든 private 저장소 이름이 빠져나갔습니다. 이제 공개 게시 전에 경로를 POSIX·Windows·UNC·홈 표기와 무관하게 정규화하고, 경로와 저장소 정체성(owner/name, clone 폴더명)을 함께 가립니다. README의 중복 설명도 하나로 합쳤습니다 |
 | 19:00 | [`aeb6a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/aeb6a6e) | **경로·통제 구역을 찾는 함수들이 모두 하나의 선형 scanner를 씁니다** (Codex 리뷰, 같은 부류를 한 번에). 아주 긴 입력에서 가림 검사가 제곱 시간으로 느려지는 경로가 `mentions_zone` 등에도 남아 있었습니다 |
 | 18:45 | [`5c77784`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/5c77784) | **읽기 전용 실행이 작업 폴더의 지시·memory·skill 파일을 어디에 있든 받지 않게 했습니다** (Codex 리뷰, 같은 부류를 한 판정으로). 숨김·중첩 폴더의 `CLAUDE.md` 같은 지시 파일은 한 판정 함수로 제외하거나 실행을 거부합니다. 계약 skill은 매번 원본에서 새로 복사하고, 원본이 없거나 symlink·junction이면 실행하지 않습니다 |
 | 18:24 | [`f817653`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/f817653) | **main 병합에서 README 설정 절과 한계 절의 두 변경을 함께 살렸습니다.** pack v2 설명(#114)과 그림자 한계(#150)를 이 PR의 링크 검사 설명과 함께 둡니다 |
