@@ -26,10 +26,12 @@ import platform
 import queue
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from . import semantics as sem
 
 log = logging.getLogger("labhq.semantics")
 
@@ -41,8 +43,15 @@ DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
 MAX_TASK_ROWS = 20_000
+MAX_EDGES = 50_000
+MAX_LINEAGE_ROOTS = 200
+MAX_CANDIDATE_REFS = 5
 RETENTION_DAYS = 90
 LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX entries) stay under 50 MiB
+REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
+RUN_FIELDS = ("agent_spec_sha256", "kind", "attempt", "retry", "revision", "session_id", "method", "resumes",
+              "wake_of")
+ART_FIELDS = ("generated_by", "generator_inputs", "method", "packs", "sha256", "data_type")
 
 
 # ---------------------------------------------------------------- settings
@@ -300,9 +309,16 @@ class ShadowTimeout(ShadowStop):
     pass
 
 
-# ---------------------------------------------------------------- the request line
+# ---------------------------------------------------------------- the two models
 
+_MODEL: list[Any] = []
 _SERVICES = itertools.count(1)
+
+
+def _model() -> Any:
+    if not _MODEL:
+        _MODEL.append(sem.load_model())
+    return _MODEL[0]
 
 
 def _ms(started: float) -> float:
@@ -314,9 +330,86 @@ def opaque(*parts: Any) -> str:
     return hashlib.sha256("\x1f".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:16]
 
 
+def _failed(status: str, exc: BaseException, started: float) -> dict:
+    return {"status": status, "error_kind": type(exc).__name__, "ms": _ms(started)}
+
+
+def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) -> float | None:
+    total = unknown = 0
+    for row, fields in rows:
+        total += sum(1 for f in fields if f in row)
+        unknown += sum(1 for f in fields if f in (row.get("unknown") or {}))
+    return round(unknown / total, 4) if total else None
+
+
+def compute_provenance(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
+    """Provenance summary. No file is read yet, so no earlier output has a confirmed version (hash_unknown)."""
+    started = time.perf_counter()
+    try:
+        rid = snap["rid"]
+        model = _model()
+        records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"])
+        check()
+        p = sem.project(model, records)
+        check()
+        incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
+                          or len(p.edges) > MAX_EDGES)
+        task_ok = {tid: bool((t.get("result") or {}).get("ok")) for tid, t in records.tasks.items()
+                   if isinstance(t.get("result"), dict)}
+
+        def generator_ok(row: Mapping[str, Any]) -> bool:
+            run = p.runs.get(row.get("generated_by")) if row.get("generated_by") != sem.UNKNOWN else None
+            return bool(run) and task_ok.get(run["task_id"], False)
+
+        advisory = sem.find_reusable(p)
+        excluded = {reason: 0 for reason in REASONS}
+        population = 0
+        for art, row in advisory.result["candidates"].items():
+            if row["request"] == rid:
+                continue
+            population += 1
+            reasons = []
+            if incomplete:
+                reasons.append("incomplete")
+            eligible = row["generated_by"] != sem.UNKNOWN and generator_ok(row)
+            if not eligible:
+                reasons.append("not_generated")
+            if row["data_type"] == sem.UNKNOWN:
+                reasons.append("type_unknown")
+            if eligible and row["data_type"] != sem.UNKNOWN:
+                reasons.append("hash_unknown")  # the version check needs a hash; none is read here
+            for reason in reasons:
+                excluded[reason] += 1
+        check()
+        lineage = {"roots": 0, "edges": 0, "cites": 0, "gaps": 0, "cautions": 0}
+        roots = [("artifact", a) for a, row in sorted(p.artifacts.items()) if row["request"] == rid]
+        roots += [("claim", c) for c, row in sorted(p.claims.items()) if row["request"] == rid]
+        for kind, root in roots[:MAX_LINEAGE_ROOTS]:
+            result = sem.audit_lineage(p, **{kind: root}).result
+            lineage["roots"] += 1
+            for key in ("edges", "cites", "gaps", "cautions"):
+                lineage[key] += len(result.get(key) or [])
+            check()
+        own_runs = [(row, RUN_FIELDS) for row in p.runs.values() if row["request"] == rid]
+        own_arts = [(row, ART_FIELDS) for row in p.artifacts.values() if row["request"] == rid]
+        return {
+            "status": "ok", "ms": _ms(started), "model_sha256": model.sha256, "rows_invalid": invalid,
+            "runs": len(own_runs), "artifacts": len(own_arts), "edges": len(p.edges),
+            "unknown_ratio": _unknown_ratio(own_runs + own_arts), "incomplete": incomplete,
+            "history_artifacts": population, "candidates": 0, "candidate_refs": [],
+            "excluded": excluded, "lineage": lineage,
+        }
+    except ShadowTimeout as exc:
+        return _failed("timeout", exc, started)
+    except ShadowStop:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
+        return _failed("error", exc, started)
+
+
 def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Callable[[], None], *,
                  epoch: int) -> dict:
-    """One request line: ids, kinds and counts only. The models are added to it in turn."""
+    """One request line: both models side by side, ids, kinds, hashes and counts only."""
     started = time.perf_counter()
     rid = snap["rid"]
     req = snap["requests"][rid]
@@ -330,6 +423,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
                  "tasks_truncated": bool(snap.get("tasks_truncated"))},
         "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"),
     }
+    line["provenance"] = compute_provenance(snap, check)
     line["ms"] = _ms(started)
     return line
 

@@ -31,6 +31,7 @@ async def test_shadow_writes_one_line_per_finished_request(tmp_path):
     lines = [line for line in lab["lines"] if line["type"] == "request"]
     assert [(line["request_id"], line["status"]) for line in lines] == [(done, "done"), (failed, "failed")]
     for line in lines:
+        assert line["provenance"]["status"] == "ok"
         assert line["epoch"] == 1 and line["lane"] == "general" and line["project"] and line["ms"] >= 0
     workers = [t for t in threading.enumerate() if t.name == hub.semantics_shadow.thread_name]
     assert len(workers) <= 1 and all(t.daemon for t in workers)
@@ -114,7 +115,7 @@ def _as_recorded(hub, rid, root):
                        "stored": hub.store.get("request", rid)}, roots)
 
 
-@pytest.mark.parametrize("stage", ["snapshot", "write", "queue"])
+@pytest.mark.parametrize("stage", ["snapshot", "provenance", "write", "queue"])
 async def test_a_failure_in_any_stage_leaves_the_request_as_off(tmp_path, monkeypatch, caplog, stage):
     from labhq.research import semantics_shadow as shadow
     off, hub = _hub(tmp_path / "off", None), _hub(tmp_path / "on")
@@ -135,10 +136,9 @@ async def test_a_failure_in_any_stage_leaves_the_request_as_off(tmp_path, monkey
     assert all("/data/cohort" not in r.getMessage() for r in caplog.records)  # class names only
     log_file = tmp_path / "on" / "state" / "semantics" / "shadow.jsonl"
     lines = [json.loads(x) for x in log_file.read_text(encoding="utf-8").splitlines()] if log_file.exists() else []
-    if stage in ("objects", "provenance"):
-        model, other = ("objects", "provenance") if stage == "objects" else ("provenance", "objects")
+    if stage == "provenance":
+        model = "provenance"
         assert lines[-1][model] == {"status": "error", "error_kind": "RuntimeError", "ms": lines[-1][model]["ms"]}
-        assert lines[-1][other]["status"] == "ok"
     else:
         assert not [line for line in lines if line.get("type") == "request"]
     assert hub.semantics_shadow.counts["failures"] == 1
