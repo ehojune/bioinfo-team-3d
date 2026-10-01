@@ -17,6 +17,7 @@ ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can tak
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import itertools
 import json
@@ -26,11 +27,13 @@ import platform
 import queue
 import re
 import stat
+import statistics
 import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,8 @@ MAX_CANDIDATE_REFS = 5
 OBSERVED_MAX = 20_000
 RETENTION_DAYS = 90
 LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX entries) stay under 50 MiB
+INTRODUCED = date(2026, 10, 1)   # B1 shadow PR; the PI's removal review falls due 90 days later
+REVIEW_DAYS, MIDPOINT_DAYS = 90, 30
 VERDICTS = ("ok", "wrong_identity", "wrong_other", "irrelevant")
 REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
 SAFE_TOKEN = re.compile(r"[A-Za-z0-9_.:@#+-]{0,96}")
@@ -1059,7 +1064,139 @@ class ShadowService:
         return False
 
 
-# ---------------------------------------------------------------- enable, mark (local)
+# ---------------------------------------------------------------- report, enable, mark (local, no network)
+
+def _pct(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    return round(ordered[min(len(ordered) - 1, max(0, int(round(q * (len(ordered) - 1)))))], 2)
+
+
+def _day(ts: Any) -> str:
+    try:
+        return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "?"
+
+
+def build_report(paths: ShadowPaths, today: date | None = None) -> dict:
+    today = today or date.today()
+    lines, broken = read_lines(paths)
+    requests = [l for l in lines if l.get("type") == "request"]
+    try:
+        disabled = read_disabled(paths)
+    except (OSError, ValueError):
+        disabled = {"reason": "breaker_storage"}
+    try:
+        state = read_state(paths) if paths.state.exists() else {"epoch": 1}
+    except (OSError, ValueError):
+        state = {"epoch": None}
+
+    def model_stats(name: str) -> dict:
+        rows = [r.get(name) or {} for r in requests]
+        status = {s: sum(1 for r in rows if r.get("status") == s) for s in ("ok", "timeout", "error")}
+        ok = [r for r in rows if r.get("status") == "ok"]
+        out = {"n": len(rows), **status, "p50_ms": _pct([float(r.get("ms") or 0) for r in rows], 0.5),
+               "p95_ms": _pct([float(r.get("ms") or 0) for r in rows], 0.95)}
+        if name == "provenance":
+            ratios = [float(r["unknown_ratio"]) for r in ok if isinstance(r.get("unknown_ratio"), (int, float))]
+            excluded: dict[str, int] = {k: 0 for k in REASONS}
+            for r in ok:
+                for k, v in (r.get("excluded") or {}).items():
+                    excluded[k] = excluded.get(k, 0) + int(v or 0)
+            out.update(with_candidates=sum(1 for r in ok if (r.get("candidates") or 0) > 0),
+                       candidates=sum(int(r.get("candidates") or 0) for r in ok),
+                       unknown_ratio_median=round(statistics.median(ratios), 4) if ratios else None,
+                       incomplete=sum(1 for r in ok if r.get("incomplete")), excluded=excluded,
+                       lineage_gaps=sum(int((r.get("lineage") or {}).get("gaps") or 0) for r in ok))
+        else:
+            out.update(objects_mean=round(statistics.mean(sum((r.get("objects") or {}).values()) for r in ok), 2)
+                       if ok else None,
+                       links_mean=round(statistics.mean(int(r.get("link_total") or 0) for r in ok), 2) if ok else None,
+                       unresolved=sum(int(r.get("unresolved") or 0) for r in ok),
+                       with_unresolved=sum(1 for r in ok if (r.get("unresolved") or 0) > 0))
+        return out
+
+    research_with_candidates = sum(1 for r in requests if r.get("lane") == "research"
+                                   and ((r.get("provenance") or {}).get("candidates") or 0) > 0)
+    marks = [l for l in lines if l.get("type") == "mark"]
+    wrong = sum(1 for m in marks if str(m.get("verdict", "")).startswith("wrong"))
+    total_ms = [float(r.get("ms") or 0) for r in requests]
+    unknown_median = model_stats("provenance")["unknown_ratio_median"]
+    deadline = INTRODUCED + timedelta(days=REVIEW_DAYS)
+    proposals = []
+    if today >= deadline:
+        proposals.append(f"판정 기한 도달(도입 {INTRODUCED.isoformat()} + {REVIEW_DAYS}일)")
+        if research_with_candidates < 10:
+            proposals.append(f"효용 미입증: 후보 있는 연구 요청 {research_with_candidates}건 < 10, 판정 불가 — 접기 제안")
+    if len(requests) >= 15 and (_pct(total_ms, 0.95) or 0) > 1000:
+        proposals.append("지연: 계산 p95 > 1초")
+    if len(requests) >= 15 and unknown_median is not None and unknown_median >= 0.9:
+        proposals.append("기록 공백: unknown 비율 중앙값 ≥ 0.9, 병목은 기록(#58·#115)")
+    if len(marks) >= 5 and wrong / len(marks) >= 0.2:
+        proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
+    return {
+        "state": {"on": disabled is None, "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch")},
+        "requests": len(requests), "broken_lines": broken,
+        "period": [_day(requests[0].get("ts")), _day(requests[-1].get("ts"))] if requests else None,
+        "busy_skipped": sum(int(r.get("busy_skipped") or 0) for r in requests),
+        "total_p95_ms": _pct(total_ms, 0.95),
+        "snapshot_p95_ms": _pct([float(r.get("snapshot_ms") or 0) for r in requests], 0.95),
+        "provenance": model_stats("provenance"), "objects": model_stats("objects"),
+        "hash": {k: sum(int((r.get("hash") or {}).get(k) or 0) for r in requests)
+                 for k in ("hashed", "observed_new", "verified", "changed")},
+        "workspaces": {k: sum(int(((r.get("hash") or {}).get("workspaces") or {}).get(k) or 0) for r in requests)
+                       for k in ("ok", "remote", "zone_excluded", "not_regular", "missing")},
+        "research_with_candidates": research_with_candidates,
+        "marks": {"reviewed": len(marks), "wrong": wrong},
+        "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason")}
+                     for l in lines if l.get("type") == "auto_off"],
+        "deadline": deadline.isoformat(), "midpoint": (INTRODUCED + timedelta(days=MIDPOINT_DAYS)).isoformat(),
+        "propose_removal": proposals,
+    }
+
+
+def render_report(rep: Mapping[str, Any]) -> str:
+    st = rep["state"]
+    p, o = rep["provenance"], rep["objects"]
+
+    def v(x: Any) -> str:
+        return "-" if x is None else str(x)
+
+    out = [
+        "semantics shadow report (로컬 기록, 네트워크 없음)",
+        f"상태: {'on' if st['on'] else 'off — ' + v(st['reason'])} · epoch {v(st['epoch'])}",
+        f"요청 {rep['requests']}건 · 기간 {' ~ '.join(rep['period']) if rep['period'] else '-'} · "
+        f"busy로 건너뜀 {rep['busy_skipped']} · 깨진 줄 {rep['broken_lines']}",
+        f"계산 p95 {v(rep['total_p95_ms'])} ms · snapshot p95 {v(rep['snapshot_p95_ms'])} ms",
+        "",
+        "| 모델 | n | ok | timeout | error | p50 ms | p95 ms | 지표 |",
+        "|---|---|---|---|---|---|---|---|",
+        f"| 출처 의미 모델 | {p['n']} | {p['ok']} | {p['timeout']} | {p['error']} | {v(p['p50_ms'])} | {v(p['p95_ms'])} | "
+        f"후보 있는 요청 {p['with_candidates']} · 후보 {p['candidates']} · unknown 중앙값 {v(p['unknown_ratio_median'])} · "
+        f"incomplete {p['incomplete']} |",
+        f"| 객체·링크 뷰 | {o['n']} | {o['ok']} | {o['timeout']} | {o['error']} | {v(o['p50_ms'])} | {v(o['p95_ms'])} | "
+        f"객체 평균 {v(o['objects_mean'])} · 링크 평균 {v(o['links_mean'])} · unresolved {o['unresolved']} "
+        f"({o['with_unresolved']}건) |",
+        "",
+        "후보 제외 이유: " + ", ".join(f"{k} {n}" for k, n in p["excluded"].items()),
+        "hash: " + ", ".join(f"{k} {n}" for k, n in rep["hash"].items()) + " · 작업 폴더: "
+        + ", ".join(f"{k} {n}" for k, n in rep["workspaces"].items()),
+        f"후보 있는 연구 요청 {rep['research_with_candidates']} · 검토 표시 {rep['marks']['reviewed']}"
+        f"(wrong {rep['marks']['wrong']})",
+        "",
+        "자동 off 이력:" + ("" if rep["auto_off"] else " 없음"),
+    ]
+    out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}" for a in rep["auto_off"]]
+    out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
+    if rep["propose_removal"]:
+        out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]
+        out.append("제거: semantics: off → scripts/semantics_shadow_remove.py → state_dir/semantics 삭제(선택)")
+    else:
+        out.append("제거 제안: 없음")
+    return "\n".join(out)
+
 
 def enable(paths: ShadowPaths) -> str:
     try:
@@ -1098,3 +1235,20 @@ def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
     append_line(paths, {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": state["epoch"],
                         "reason": "wrong_identity", "counts": {}})
     return ("자동 off: wrong_identity. 총괄이 원천 ID·판본을 확인한 뒤 `labhq semantics enable`로 다시 켤지 정합니다.")
+
+
+def run_cli(args: argparse.Namespace, settings: Any) -> int:
+    paths = ShadowPaths(shadow_root(settings))
+    try:
+        if args.semantics_cmd == "report":
+            today = date.fromisoformat(args.today) if args.today else None
+            rep = build_report(paths, today)
+            print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_report(rep))
+        elif args.semantics_cmd == "enable":
+            print(enable(paths))
+        else:
+            print(mark(paths, args.request_id, args.ref, args.verdict))
+    except (OSError, ValueError) as exc:
+        print(f"semantics {args.semantics_cmd}: {exc if isinstance(exc, ValueError) else type(exc).__name__}")
+        return 1
+    return 0
