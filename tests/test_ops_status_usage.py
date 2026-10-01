@@ -36,6 +36,9 @@ def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
         assert item["id"] == "r1" and item["text"].startswith("한글")
         assert item["step_progress"] == {"done": 1, "total": 2,
                                          "steps": {"s1": "done", "s2": "running"}}
+        assert hub.snapshot()["data"]["running_tasks"] == [{
+            "id": "t2", "request_id": "r1", "state": "running", "step_id": "s2", "agent_id": "worker",
+        }]
         assert "report" not in item and len(item["text"]) <= 120
         assert [r["id"] for r in client.get("/api/requests?status=done", headers=headers).json()] == ["r2"]
         assert len(client.get("/api/requests?status=all&limit=1", headers=headers).json()) == 1

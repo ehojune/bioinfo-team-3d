@@ -29,6 +29,14 @@ def strip_parent_claude_env(env: dict[str, str]) -> dict[str, str]:
     return {key: value for key, value in env.items() if key not in blocked}
 
 
+def merge_staff_env(parent: dict[str, str], *overrides: dict[str, str]) -> dict[str, str]:
+    """Drop inherited session markers before applying operator-provided overrides."""
+    merged = strip_parent_claude_env(parent)
+    for override in overrides:
+        merged.update(override)
+    return merged
+
+
 def atomic_write_text(path: str | Path, text: str) -> None:
     """Replace a text file from a same-directory temporary file."""
     target = Path(path)

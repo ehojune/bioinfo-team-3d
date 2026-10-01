@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 07:11 | [`c0c516c`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/c0c516c) | **관측한 범위는 양 끝이 정확해야 맞음으로 채점합니다** (Codex 리뷰). 펭귄 case의 지느러미 길이처럼 실제 최솟값·최댓값을 묻는 문항에서 `[200, 210]` 같은 오답이 범위 안에 든다는 이유로 통과했습니다. 관측 범위(`equals`)와 설계 허용 범위(`minimum`/`maximum`, 엽록체 IR·SSC)를 나눴습니다 |
 | 07:03 | [`ffb0c24`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/ffb0c24) | **bench를 모든 arm이 같은 구조화 결과 블록으로 채점합니다** (#92, #101). 전에는 답 문장을 정규식으로 읽어서 같은 뜻을 다르게 쓴 맞는 답이 FAIL이 됐습니다. 이제 답 끝의 JSON 결과 블록을 case의 기대값과 비교하고, 문장 검사는 참고용(`narrative_passed`)으로 따로 남깁니다. 기준선 명령에도 설정의 `extra_args`(proxy·profile 등)를 넣어 labhq arm과 같은 조건에서 돌립니다 |
+| 06:58 | [`4dc1419`](https://github.com/ehojune/bioinfo-team-3d/pull/103/commits/4dc1419) | **라운드 기록 게시가 GitHub rate limit과 토큰 누락을 이겨 냅니다** (#97). `Retry-After`·reset 시각만큼 기다렸다 다시 하고, 토큰이 없어서 실패한 기록은 토큰을 넣고 재시작하면 다시 게시합니다 |
+| 06:58 | [`6dea51c`](https://github.com/ehojune/bioinfo-team-3d/pull/103/commits/6dea51c) | **직원 CLI 환경변수의 우선순위를 바로잡고, Linux·macOS에서 직원이 띄운 하위 프로세스까지 정리합니다** (#83). 설정한 `CLAUDE_CODE_*` 값은 지키고 부모 세션 표식만 뺍니다. 종료 때 process group 전체를 끝냅니다 |
+| 06:56 | [`db0d1dd`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/db0d1dd) | **재접속하거나 이벤트가 끊긴 뒤에도 실행 중인 단계가 그대로 보입니다** (#87). gateway snapshot에서 진행 중 단계 상태를 되살립니다 |
+| 06:56 | [`d54d267`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/d54d267) | **직원 카드에 완료·오류가 표시되고, 3D 승인 카드의 대기 시간이 계속 갱신됩니다** (#88) |
+| 06:55 | [`5e14d87`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/5e14d87) | **폰에서 직원 줄이 화면 절반을 차지하지 않고, 결정 이력이 끝없이 늘어나지 않습니다** (#75). 좁은 화면에서는 직원 줄을 접고, 결정 이력은 최근 것부터 나눠 보여 줍니다 |
 | 06:46 | [`82f267b`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/82f267b) | **package에 든 설정 template을 저장소 예시와 다시 맞췄습니다.** main의 bench 설정이 예시에만 들어가 있던 것을 동일성 테스트가 잡았습니다 |
 | 06:44 | [`dbc0e79`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/dbc0e79) | **main 병합에서 init과 bench를 함께 살렸습니다.** CLI에 `init`·`bench` 명령을 둘 다 두고, package data에 설정 template과 bench 자료를 함께 넣었습니다 |
 | 06:39 | [`191dd34`](https://github.com/ehojune/bioinfo-team-3d/pull/94/commits/191dd34) | **init이 클러스터 종류를 추측하지 않게 했습니다** (Codex 리뷰). PBS에도 `qsub`·`qstat`이 있어서 전에는 SGE 설정이 저장돼 첫 PBS job부터 실패했습니다. 이제 SGE·PBS 관리 도구와 환경변수로 종류를 판별하고, 모르면 대화형에서는 묻고 `--yes`에서는 실패합니다 |
