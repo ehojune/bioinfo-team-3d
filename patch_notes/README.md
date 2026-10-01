@@ -12,6 +12,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:18 | [`1b33366`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/1b33366) | **STATUS에 #36 접수 PR A 리뷰 1회차 보고를 남겼습니다** |
+| 11:18 | [`de33f3b`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/de33f3b) | **참고 경로 검사와 보고 가림의 좁은 빈틈을 막았습니다** (#36, Codex 리뷰). 목록이 아닌 질문 선택지는 자유 입력 질문으로 읽고, 줄바꿈 계열 문자가 든 참고 값은 거부합니다. Windows 게이트웨이에서 POSIX 루트가 모두 거부되던 것과, 작업 폴더를 품은 참고 폴더가 직원 자신의 쓰기를 막던 것을 고쳤고, 프로젝트 보고의 경로 가림은 대소문자·구분자와 상관없이 동작합니다. |
+| 11:12 | [`64cca85`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/64cca85) | **링크로 적힌 통제 구역도 러너가 실제 경로로 막습니다** (#36, Codex 리뷰). 통제 구역을 symlink·junction 경로로 적으면 그 실제 폴더가 참고 폴더로 열리던 빈틈을, 구역 경로도 실제 경로로 풀어 비교해 닫았습니다. |
+| 11:12 | [`241fa6e`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/241fa6e) | **턴 한도에 걸린 이어 묻기·상담이 읽기 전용 제한을 풀지 않습니다** (#36, Codex 리뷰). 한도에 걸린 뒤 마무리 작업이 제한을 덮어써 쓰기 권한이 되살아나던 것을, 읽기 전용 작업은 마무리를 건너뛰고 나머지는 기존 제한에 턴 수만 더하도록 고쳤습니다. |
+| 11:03 | [`30d2e6d`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/30d2e6d) | **STATUS에 #36 접수 PR A 보고를 남겼습니다** (구조화 확인 질문, 참고 포인터, 이어 묻기) |
+| 11:00 | [`c449710`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/c449710) | **참고 경로가 셸 쓰기까지 막는다고 약속하지 않습니다** (#36, Codex 리뷰). 미리 허용된 셸 명령은 승인 게이트를 거치지 않아 참고 경로에 쓸 수 있어서, prompt에 쓰기 금지 규칙을 넣고 러너가 쓰기 가능한 참고 경로를 한 번 경고하게 했습니다. 최종 경계는 OS 권한이라고 README에 적었습니다. |
+| 11:00 | [`91e0516`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/91e0516) | **이어 묻기 초안이 다른 요청으로 옮겨 가지 않습니다** (#36, Codex 리뷰). 요청 A에서 쓰던 질문이 요청 B를 고르면 B의 세션으로 나가던 문제를 요청별 초안으로 고쳤습니다. 저장하는 답은 20,000자, snapshot에는 요청마다 최근 20개까지만 싣습니다. |
+| 10:53 | [`55f34a1`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/55f34a1) | **끝난 요청에 같은 CSO 세션으로 이어 물을 수 있습니다** (#36). 새 요청을 만들지 않고 그 요청의 작업 폴더와 세션을 읽기 전용으로 이어서 보고서와 산출물에 대해 답합니다. 한 번에 하나만 받고, 게이트웨이가 재시작되면 진행 중이던 질문은 중단됨으로 남습니다. 2.5D 작업판과 3D 요청 목록에서 질문과 답을 볼 수 있습니다. |
+| 10:42 | [`91c8ed1`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/91c8ed1) | **요청에 참고 자료를 포인터로 붙일 수 있습니다** (#36). GitHub·DOI·PMID·URL·러너 경로를 `labhq send --ref`나 웹 참고 칩으로 붙이면 업로드·clone 없이 브리핑·계획·단계 prompt에 들어갑니다. 경로는 허용 루트 안·통제 구역 밖만 받고, 러너가 실제 경로로 다시 확인해 읽기 전용으로 엽니다. PI 기본 참고는 요청마다 끌 수 있고, 프로젝트 GitHub 보고에서는 경로가 가려집니다. |
+| 10:28 | [`f7bfdf7`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/f7bfdf7) | **CSO가 확인 질문을 선택지 버튼과 자유 입력으로 묻습니다** (#36). 질문마다 선택지 2~4개, 직접 쓸 수 있는지, 깊이(약 30·60·90분)를 함께 받아 결정 카드에 버튼으로 보이고, 모든 질문에 답해야 재계획으로 갑니다. 예전 문자열 질문은 자유 입력으로 읽어 기존 계획이 그대로 동작합니다. |
 | 10:09 | [`3b23239`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/3b23239) | **main 병합에서 bench report 표에 legacy 결과 열을 남겼습니다** (#105의 구조화 열과 함께) |
 | 10:03 | [`79580f0`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/79580f0) | **main 병합에서 #103의 GitHub 재시도 구조 위에 #107 판정 규칙을 얹었습니다.** 토큰 누락 뒤 재시작 복구는 그대로 둡니다 |
 | 10:02 | [`5c8747d`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/5c8747d) | **main 병합에서 README 설정 절의 두 변경을 함께 살렸습니다.** 연구 규약 pilot 줄과 #103의 라운드 기록 rate limit 설명을 둘 다 둡니다 |
