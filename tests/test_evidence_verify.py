@@ -435,6 +435,47 @@ def test_an_unchecked_url_beside_an_id_leaves_the_source_unverified():
     assert by_claim(report)["c1@1"].state == "unverified" and report.ok is False
 
 
+@pytest.mark.parametrize("scheme, value, uri", [
+    ("doi", DOI, "https://pubmed.ncbi.nlm.nih.gov/32939066/"),  # the same paper under another scheme
+    ("pmid", "32939066", "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7759461/"),
+    ("ensembl", "ENSG00000141510.17", "https://www.ensembl.org/id/ENSG00000141510"),  # version left off
+    ("clinvar", "VCV000012375", "https://www.ncbi.nlm.nih.gov/clinvar/variation/12375/"),  # two spellings
+    ("uniprot", "P04637-2", "https://www.uniprot.org/uniprotkb/P04637/entry"),  # an isoform of the entry
+])
+def test_a_registry_url_that_may_name_the_same_record_is_not_a_conflict(scheme, value, uri):
+    # Only the authority knows whether a DOI and a PubMed URL are one paper; a guess must not become a defect.
+    result = build([claim("c1")], [cited_with_uri("e1", scheme, value, uri)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    uri_check = report.evidence[0].resolutions[-1]
+    assert (uri_check.id_scheme, uri_check.status) == ("uri", "requires_verification")
+    assert not report.defective_evidence and by_claim(report)["c1@1"].state == "unverified"
+
+
+@pytest.mark.parametrize("answer, status", [
+    ([{"id_scheme": "pmid", "id_value": "32939066"}, {"id_scheme": "doi", "id_value": DOI}], "found"),
+    ([{"id_scheme": "doi", "id_value": "10.1000/elsewhere"}], "conflicting"),
+])
+def test_a_registry_url_under_another_scheme_is_compared_through_the_resolver(answer, status):
+    url = "https://pubmed.ncbi.nlm.nih.gov/32939066/"
+    mapping = StaticResolver({("doi", DOI): [{"id_scheme": "doi", "id_value": DOI}], ("uri", url): answer})
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert [(r.id_scheme, r.status) for r in report.evidence[0].resolutions] == [("doi", "found"), ("uri", status)]
+    assert report.ok is (status == "found")
+
+
+def test_a_search_url_of_a_zero_result_row_is_not_a_malformed_record():
+    # #129 resolves where a zero-result search looked; a registry search endpoint is not a made-up accession.
+    search = searched("e2", "geo", "GSE1")
+    search["source"] = {"uri": "https://rest.uniprot.org/uniprotkb/search?query=gene:IL6", "accessed_at": "2026-10-01",
+                        "locator": "result page", "query": "gene:IL6 AND organism_id:9606"}
+    result = build([claim("c1")], [row("e1", "doi", DOI), search], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    resolutions = {c.evidence_id: c.resolution for c in report.evidence}
+    assert (resolutions["e2"].id_scheme, resolutions["e2"].status) == ("uri", "requires_verification")
+    assert not report.defective_evidence and report.ok is True
+
+
 def test_a_registry_url_alone_is_looked_up_as_its_identifier():
     geo = StaticResolver({("geo", "GSE79973"): [{"id_scheme": "geo", "id_value": "GSE79973"}]})
     source = {"uri": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973", "accessed_at": "2026-10-01",

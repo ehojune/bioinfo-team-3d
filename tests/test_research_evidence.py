@@ -355,7 +355,13 @@ def test_registry_urls_are_the_same_source_as_their_identifier(uri, scheme, valu
 
 @pytest.mark.parametrize("uri", ["https://pubmed.ncbi.nlm.nih.gov/?term=IL6", "https://www.ncbi.nlm.nih.gov/geo/",
                                  "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=",
-                                 "https://example.org/geo/query/acc.cgi?acc=GSE79973"])
+                                 "https://example.org/geo/query/acc.cgi?acc=GSE79973",
+                                 # Endpoints and help pages under a record path are not accessions.
+                                 "https://rest.uniprot.org/uniprotkb/search?query=gene:IL6",
+                                 "https://rest.uniprot.org/uniprotkb/stream?query=gene:IL6&format=tsv",
+                                 "https://www.ncbi.nlm.nih.gov/sra/docs/",
+                                 "https://www.ncbi.nlm.nih.gov/bioproject/browse",
+                                 "https://doi.org/help"])
 def test_search_pages_and_other_hosts_are_not_read_as_identifiers(uri):
     from labhq.evidence.claims import registry_id
     assert registry_id(uri) is None

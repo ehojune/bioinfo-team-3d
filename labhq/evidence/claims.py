@@ -44,6 +44,26 @@ STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "con
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DOI_HOSTS = frozenset({"doi.org", "dx.doi.org"})
+# Accession formats. The verifier checks them before any lookup so a malformed ID is reported, not guessed
+# at or "corrected"; registry_id uses them to tell a record page from a search or help page.
+ID_FORMATS: dict[str, str] = {
+    "doi": r"10\.\d{4,9}/\S+",
+    "pmid": r"[1-9]\d{0,8}",
+    "pmcid": r"PMC\d+",
+    "geo": r"G(?:SE|SM|PL|DS)\d+",
+    "sra": r"[SED]R[APRSX]\d{6,}",
+    "bioproject": r"PRJ[DEN][A-Z]\d+",
+    "biosample": r"SAM[DEN][A-Z]?\d+",
+    "refseq": r"[A-Z]{2}_(?:[A-Z]{2,6})?\d{6,}(?:\.\d+)?",  # NM_004985.5, WP_000000001.1, NZ_CP012345.1
+    "ensembl": r"ENS[A-Z]*[EGPTR]\d{11}(?:\.\d+)?",
+    "uniprot": r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?",
+    "dbsnp": r"rs[1-9]\d*",
+    "clinvar": r"(?:[RSV]CV\d{9}(?:\.\d+)?|[1-9]\d*)",
+    "pdb": r"[1-9][A-Za-z0-9]{3}",
+    "chembl": r"CHEMBL\d+",
+    "hgnc": r"HGNC:\d+",
+}
+
 _NCBI = "ncbi.nlm.nih.gov"
 # Registry pages whose path names exactly one record: (host without www., path pattern, scheme).
 _REGISTRY_PATHS: tuple[tuple[str, re.Pattern[str], str], ...] = tuple(
@@ -89,8 +109,9 @@ def registry_id(uri: str) -> tuple[str, str] | None:
     """The (scheme, value) a major registry URL names, or None for any other URL, search page or listing.
 
     doi.org, identifiers.org, PubMed, PMC, GEO, NCBI BioProject/BioSample/SRA/dbSNP/ClinVar, UniProt, RCSB
-    PDB, ChEMBL and Ensembl. The value is not format-checked here; a malformed one is reported by the
-    verifier, never corrected.
+    PDB, ChEMBL and Ensembl. A path segment that is not an accession of that registry (``/search``,
+    ``/stream``, ``/docs``, ``/help``) is not a record page, so the URL stays an ordinary URI: reading an
+    endpoint name as a malformed accession would turn a correct citation into a defect.
     """
     try:
         parts = urlsplit(uri.strip())
@@ -118,7 +139,10 @@ def registry_id(uri: str) -> tuple[str, str] | None:
             if match:
                 found = (scheme, match[1])
                 break
-    return (found[0], found[1].strip()) if found and found[1].strip() else None
+    if not found:
+        return None
+    scheme, value = found[0], found[1].strip()
+    return (scheme, value) if re.fullmatch(ID_FORMATS[scheme], value, re.IGNORECASE) else None
 
 
 def normalize_artifact_path(path: str) -> str:

@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .claims import STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id, registry_id
+from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
+    ID_FORMATS, STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id, registry_id)
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -32,25 +33,6 @@ FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server
                            "resolver_error"})
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
                         "uri_unmapped"})
-
-# Format checks run before any lookup so a malformed ID is reported, not guessed at or "corrected".
-ID_FORMATS: dict[str, str] = {
-    "doi": r"10\.\d{4,9}/\S+",
-    "pmid": r"[1-9]\d{0,8}",
-    "pmcid": r"PMC\d+",
-    "geo": r"G(?:SE|SM|PL|DS)\d+",
-    "sra": r"[SED]R[APRSX]\d{6,}",
-    "bioproject": r"PRJ[DEN][A-Z]\d+",
-    "biosample": r"SAM[DEN][A-Z]?\d+",
-    "refseq": r"[A-Z]{2}_(?:[A-Z]{2,6})?\d{6,}(?:\.\d+)?",  # NM_004985.5, WP_000000001.1, NZ_CP012345.1
-    "ensembl": r"ENS[A-Z]*[EGPTR]\d{11}(?:\.\d+)?",
-    "uniprot": r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?",
-    "dbsnp": r"rs[1-9]\d*",
-    "clinvar": r"(?:[RSV]CV\d{9}(?:\.\d+)?|[1-9]\d*)",
-    "pdb": r"[1-9][A-Za-z0-9]{3}",
-    "chembl": r"CHEMBL\d+",
-    "hgnc": r"HGNC:\d+",
-}
 
 
 class StrictModel(BaseModel):
@@ -303,17 +285,28 @@ async def _resolve_external(scheme: str, value: str, version: str | None, lookup
     return _judge(scheme, value, version, outcome, resolver.name)
 
 
+# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
+# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
+_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
+
+
 async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tuple[str, str],
                               lookups: _Lookups) -> Resolution | None:
-    """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address."""
+    """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address.
+
+    Code alone calls a registry URL ``conflicting`` only when it names another accession of the same scheme,
+    and that scheme spells each record one way. A DOI beside its PubMed URL, or ``ENSG...17`` beside
+    ``/id/ENSG...``, may be one record: only the authority can tell, so those go to the resolver like any URL.
+    """
     scheme, value = cited
-    if named is not None:
-        if named[0] == scheme and normalize_id(*named) == normalize_id(scheme, value):
+    if named is not None and named[0] == scheme:
+        if normalize_id(*named) == normalize_id(scheme, value):
             return None  # already checked as the ID itself
-        return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
-                          resolver="registry_url", candidates=[SourceRecord(id_scheme=named[0], id_value=named[1],
-                                                                            url=uri)],
-                          detail=f"the uri names {named[0]}:{named[1]}, not the cited {scheme}:{value}")
+        if scheme not in _SEVERAL_SPELLINGS:
+            return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
+                              resolver="registry_url",
+                              candidates=[SourceRecord(id_scheme=named[0], id_value=named[1], url=uri)],
+                              detail=f"the uri names {named[0]}:{named[1]}, not the cited {scheme}:{value}")
     resolver = lookups.resolver
     if resolver is None:
         return _skipped("uri", uri, "none", "requires_verification", "disabled", "live source lookup is off")
