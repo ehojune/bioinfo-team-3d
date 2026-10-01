@@ -127,6 +127,18 @@ class PbsSettings(BaseModel):
     pro: bool = False  # PBS Pro: finished jobs need `qstat -x`; use "select=1:ncpus={cores}:mem={mem}" template
 
 
+# sbatch options that send the job to another cluster; squeue/sacct/scancel would then find the wrong job.
+# The config load check and the job script check share it so the two never disagree (#185).
+SLURM_CLUSTER_OPTION = r"-M|--clusters?(?:=|$)"
+
+
+def slurm_cluster_option(tokens: list[str]) -> str | None:
+    """First sbatch option among `tokens` that picks another cluster, or None."""
+    import re
+
+    return next((token for token in tokens if re.match(SLURM_CLUSTER_OPTION, token)), None)
+
+
 def _default_sbatch_args() -> list[str]:
     # --export=NONE: like SGE/PBS without -V, the runner's environment (tokens) stays out of the job.
     return ["--nodes=1", "--ntasks=1", "--cpus-per-task={cores}", "--mem={mem}", "--time={walltime}",
@@ -145,7 +157,7 @@ class SlurmSettings(BaseModel):
         for arg in value:
             if not arg.startswith("-"):
                 raise ValueError("hpc.slurm.sbatch_args entries must be sbatch options")
-            if re.match(r"-M|--clusters(?:=|$)", arg):
+            if slurm_cluster_option([arg]):
                 # squeue/sacct/scancel would look the bare id up on the local cluster: wrong or no job.
                 raise ValueError("hpc.slurm.sbatch_args must not submit to another cluster (-M/--clusters)")
             try:

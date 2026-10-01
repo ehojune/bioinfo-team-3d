@@ -12,7 +12,7 @@ import shlex
 import subprocess
 from dataclasses import asdict, dataclass
 
-from ..settings import HpcSettings
+from ..settings import HpcSettings, slurm_cluster_option
 
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
 
@@ -48,8 +48,6 @@ SACCT_FIELDS = "JobID,State,ExitCode,JobName"
 # Agent-supplied ids reach qdel/scancel argv. Every SGE/PBS/Slurm id starts with a digit, so neither
 # an option ("-u x", "--user=x") nor a selector of many jobs (Torque "all", SGE job names) gets through.
 JOB_ID = re.compile(r"[0-9][A-Za-z0-9_.\[\]+-]{0,127}")
-# sbatch options that send the job to another cluster; squeue/sacct/scancel would then find the wrong job.
-SLURM_CLUSTER_OPTION = re.compile(r"-M|--clusters?(?:=|$)")
 MAYBE_SUBMITTED = "; the job may have been submitted, check hpc_queue before resubmitting"
 
 
@@ -107,10 +105,8 @@ def checked_job_id(job_id: str) -> str:
 def slurm_cluster_directive(body: str) -> str | None:
     """First -M/--clusters option in an #SBATCH line, or None."""
     for line in body.splitlines():
-        if line.startswith("#SBATCH"):
-            for token in line[len("#SBATCH"):].split():
-                if SLURM_CLUSTER_OPTION.match(token):
-                    return token
+        if line.startswith("#SBATCH") and (option := slurm_cluster_option(line[len("#SBATCH"):].split())):
+            return option
     return None
 
 

@@ -418,3 +418,14 @@ def test_unrecognized_state_is_finished_only_after_the_controller_forgets_the_jo
     gone = backend.status(job_id)
     assert (gone.state, gone.raw_state, gone.terminal) == ("unknown_finished", "FUTURE_STATE", True)
     assert "FUTURE_STATE" in gone.detail
+
+
+@pytest.mark.parametrize("sbatch_args", [["--cluster=x"], ["--clusters=x"], ["-M", "x"], ["--cluster", "x"]])
+def test_every_cluster_spelling_is_refused_at_load(tmp_path, sbatch_args):
+    # #185: load and the script check must agree; "--cluster=x" passed load and sent jobs elsewhere.
+    config = tmp_path / "config.yaml"
+    config.write_text(f"hpc:\n  scheduler: slurm\n  slurm:\n    sbatch_args: {json.dumps(sbatch_args)}\n",
+                      encoding="utf-8")
+    with pytest.raises(ValueError, match="another cluster"):
+        Settings.load(str(config))
+    assert slurm_cluster_directive("#SBATCH " + " ".join(sbatch_args) + "\necho hi") == sbatch_args[0]
