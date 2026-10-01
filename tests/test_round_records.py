@@ -162,6 +162,65 @@ async def test_transient_publication_retries_without_restart(tmp_path, method, m
 
 
 @pytest.mark.asyncio
+async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_path, monkeypatch):
+    class PositiveRemainingThenSuccess(FakeGitHub):
+        def __call__(self, request):
+            if not self.calls:
+                self.calls.append((request.method, request.url.path, None))
+                return httpx.Response(403, headers={"X-RateLimit-Remaining": "3",
+                                                    "X-RateLimit-Reset": "4102444800"},
+                                      json={"message": "forbidden"})
+            return super().__call__(request)
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    forbidden = PositiveRemainingThenSuccess()
+    hub = Hub(cfg, httpx.MockTransport(forbidden))
+    round_request(hub, "req-forbidden", "done")
+    hub.rounds.write("req-forbidden")
+    hub.rounds.submit("req-forbidden")
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        delivery = hub.store.get("round_delivery", "req-forbidden")
+        assert delivery["state"] == "failed" and delivery["attempts"] == 1
+        assert len(forbidden.calls) == 1
+    finally:
+        hub.rounds.worker.cancel()
+        await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+    class ExhaustedOnce(FakeGitHub):
+        limited = False
+
+        def __call__(self, request):
+            if not self.limited:
+                self.limited = True
+                return httpx.Response(403, headers={"X-RateLimit-Remaining": "0",
+                                                    "X-RateLimit-Reset": "4102444800"},
+                                      json={"message": "rate limited"})
+            return super().__call__(request)
+
+    waited = []
+
+    async def fake_sleep(seconds):
+        waited.append(seconds)
+
+    remote = ExhaustedOnce()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    monkeypatch.setattr(hub.rounds, "_sleep", fake_sleep, raising=False)
+    round_request(hub, "req-limited", "done")
+    hub.rounds.write("req-limited")
+    hub.rounds.submit("req-limited")
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert waited and waited[0] > 1_000_000_000
+        assert remote.issue is not None
+        assert hub.store.get("round_delivery", "req-limited") is None
+    finally:
+        hub.rounds.worker.cancel()
+        await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_retry_after_is_a_lower_bound_and_does_not_exhaust_attempts(tmp_path, monkeypatch):
     class RateLimitedOnce(FakeGitHub):
         limited = False

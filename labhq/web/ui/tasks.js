@@ -1,7 +1,7 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
-const COLUMN = { pending:'waiting', queued:'waiting', working:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
+const STATUS = { pending:'대기', queued:'대기', working:'진행 중', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+const COLUMN = { pending:'waiting', queued:'waiting', working:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 function list(parent, title, values, className = '') {
   if (!values?.length) return;
