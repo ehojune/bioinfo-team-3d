@@ -235,7 +235,8 @@ async def hpc_queue() -> str:
 async def hpc_cancel(job_id: str) -> str:
     """Cancel a job you submitted with hpc_submit (or one of its array tasks)."""
     try:
-        checked_job_id(job_id)
+        if S.hpc.scheduler != "mock":  # mock ids ("mock-…") never reach a scheduler command
+            checked_job_id(job_id)
     except RuntimeError as e:
         raise ToolError(str(e)) from e
     # The account may be shared (submit_prefix data account): a bare id could name someone else's job (#172).

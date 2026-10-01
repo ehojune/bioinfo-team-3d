@@ -109,6 +109,12 @@ async def test_cancel_of_a_tracked_job_reaches_scancel(monkeypatch, tmp_path):
     assert run.calls == [["scancel", "4100_3"]]
 
 
+async def test_mock_job_ids_stay_cancellable_after_the_ownership_check(monkeypatch, tmp_path):
+    hpc, _, seen = _mcp(monkeypatch, tmp_path, "mock", threshold=0, broker_reply={"/jobs/owned": {"owned": True}})
+    assert json.loads(await hpc.hpc_cancel("mock-123"))["result"] == "cancelled (mock)"
+    assert [path for path, _ in seen] == ["/jobs/owned"]
+
+
 def _runner(tmp_path) -> Runner:
     s = Settings()
     s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
