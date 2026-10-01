@@ -125,6 +125,7 @@ def test_bench_baseline_drops_the_parent_codex_session_too(tmp_path, monkeypatch
     for key, value in CODEX_SESSION.items():
         monkeypatch.setenv(key, value)
     settings = _settings(tmp_path)
+    settings.engines.codex.env["CODEX_SQLITE_HOME"] = "staff-sqlite"
     child_env = {}
 
     class Process:
@@ -143,6 +144,7 @@ def test_bench_baseline_drops_the_parent_codex_session_too(tmp_path, monkeypatch
                                    "real", ["fake-cli"], settings))
     assert child_env and not CODEX_SESSION.keys() & child_env.keys()
     assert child_env["CODEX_HOME"] == str(tmp_path / "codex-home")
+    assert child_env["CODEX_SQLITE_HOME"] == "staff-sqlite", "as in a staff run, engines.codex.env is applied after"
 
 
 # ---------------- #145: engines.<engine>.env in a read-only run ----------------
