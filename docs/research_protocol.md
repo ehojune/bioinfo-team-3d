@@ -131,6 +131,10 @@ active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acc
 | `donor_dependent` | `negative_binomial`, `poisson` | `raw_counts` |
 | `donor_dependent` | `linear` | `log_transformed` |
 
+`count_scale`의 허용값은 `raw_counts`·`log_transformed`다. `single_cell_de@2`에서 `normalized_counts`를 뺐다. 받아 주는 조합이 없어서 field 검사는 통과하고 rule에서만 막혔기 때문이다(#114). 이제 field 단계에서 한 가지 이유로 거절한다.
+
+pack 내용을 바꾸면 version을 올린다. 승인된 계획은 `id@version`과 hash로 pack을 가리키므로, 같은 version의 내용이 바뀌면 그 계획이 무엇을 승인했는지 알 수 없다. 내장 pack hash는 `tests/test_research_protocol.py`에 고정했다. 설정에 없어진 version을 적으면 남아 있는 version을 함께 알린다.
+
 `conclusion_mode: condition_effect`는 적용된 통계 계획을 요구한다. `descriptive_only`는 batch 혼동이 없어도 설명·비교 study type, 주가설, 추론 통계, estimand를 금지한다. `model_rationale` 같은 설명 문장은 판정에 쓰지 않는다.
 
 이 규약은 라이선스가 확인되지 않은 inco 저장소에서 문구·표·template을 가져오지 않았다. 여러 연구 workflow의 구조만 비교 대상으로 참고했고, labhq 계약과 표현은 새로 작성했다.
