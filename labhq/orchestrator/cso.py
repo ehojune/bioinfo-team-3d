@@ -412,6 +412,21 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
     return "terminal"
 
 
+def holds_session(entry: dict, agent_id: str, session_id: str | None, workdir: str | None) -> bool:
+    """Whether a task-ledger entry may still use this agent's session or workdir (#93, #112, #144).
+
+    A task holds them until its result is recorded. That includes dispatched-but-not-yet-accepted
+    tasks (delivery can be in flight) and tasks a previous gateway started, because the runner keeps
+    running what it accepted. An abandoned task has no reported outcome, so it still holds them.
+    """
+    payload = entry.get("payload") or {}
+    if payload.get("agent_id") != agent_id or (entry.get("completed") and not entry.get("abandoned")):
+        return False
+    held = (payload.get("meta") or {}).get("workdir")
+    return bool((session_id and payload.get("resume_session_id") == session_id) or
+                (workdir and held and Path(workdir).resolve() == Path(held).resolve()))
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -473,19 +488,24 @@ class Orchestrator:
                 self.consult_locks[key] = (lock, users - 1)
 
     def _consult_resource_busy(self, agent_id: str, session_id: str | None, workdir: str | None) -> bool:
-        for entry in self.hub.store.all("task").values():
-            payload = entry.get("payload") or {}
-            if entry.get("completed") or payload.get("agent_id") != agent_id:
-                continue
-            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight. Unfinished
-            # consults count too: the in-memory consult lock does not survive a gateway restart,
-            # while the runner keeps running the consult it already accepted (#93).
-            meta = payload.get("meta") or {}
-            active_workdir = meta.get("workdir")
-            if ((session_id and payload.get("resume_session_id") == session_id) or
-                    (workdir and active_workdir and Path(workdir).resolve() == Path(active_workdir).resolve())):
-                return True
-        return False
+        # The in-memory consult lock does not survive a gateway restart; the durable ledger does (#93).
+        store = getattr(self.hub, "store", None)
+        return store is not None and any(holds_session(entry, agent_id, session_id, workdir)
+                                         for entry in store.all("task").values())
+
+    async def _free_session(self, agent_id: str, session_id: str | None, workdir: str | None, *,
+                            rid: str, step: str) -> tuple[str | None, str | None]:
+        """The session and workdir a CSO plan, synthesis or follow-up may resume (#112, #144).
+
+        A consult isolates at once because its asker is blocked. These wait for an earlier task
+        that still holds them, and start a new session and workdir when its outcome is unknown.
+        """
+        if not (session_id or workdir):
+            return session_id, workdir
+        wait = getattr(self.hub, "wait_session_free", None)
+        if wait is not None:
+            return await wait(agent_id, session_id, workdir, request_id=rid, step_id=step)
+        return (None, None) if self._consult_resource_busy(agent_id, session_id, workdir) else (session_id, workdir)
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
@@ -1193,6 +1213,9 @@ class Orchestrator:
 
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
+                    session_id, workdir = await self._free_session(
+                        self.cfg.cso_agent, req.get("cso_session_id") if continuation else None,
+                        req.get("cso_workdir") if continuation else None, rid=rid, step="plan")
                     if research_lane:
                         prompt = RESEARCH_PLAN_PROMPT.format(
                             request=plan_request, roster=format_roster(roster),
@@ -1209,11 +1232,9 @@ class Orchestrator:
                         schema = PLAN_SCHEMA
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
-                        resume_session_id=req.get("cso_session_id") if continuation else None,
-                        prompt=prompt,
+                        resume_session_id=session_id, prompt=prompt,
                         meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
-                              "title": "업무 분해·배정 계획 수립",
-                              **({"workdir": req["cso_workdir"]} if continuation and req.get("cso_workdir") else {})}))
+                              "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {})}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -1411,14 +1432,17 @@ class Orchestrator:
                              serialized_results(), ok=False, review=review)
                 return
 
+            resumable = self.hub.supports_resume(self.cfg.cso_agent)
+            # After a restart a consult the gateway lost can still run in this session and workdir (#112).
+            session_id, workdir = await self._free_session(
+                self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
+                req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
             final = await self.run_step(Task(
-                agent_id=self.cfg.cso_agent, request_id=rid,
-                resume_session_id=req.get("cso_session_id") if self.hub.supports_resume(self.cfg.cso_agent) else None,
+                agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
-                      **({"workdir": req["cso_workdir"]} if self.hub.supports_resume(self.cfg.cso_agent)
-                         and req.get("cso_workdir") else {})}))
+                      **({"workdir": workdir} if workdir else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
