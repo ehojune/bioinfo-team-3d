@@ -10,6 +10,14 @@
 - 미해결: 연구 lane은 요청마다 모든 active pack 값을 채워야 한다. d2(엽록체 IR 가설에 `single_cell_de@2`)처럼 대상이 다르면 여전히 CP1에 못 가고, 보고서는 설정된 pack과 그 적용 대상을 알려 줄 뿐이다(README §10). 요청별 pack 선택은 범위 밖이다.
 - 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/base.py`, `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `tests/test_research_cp1.py`, `tests/fixtures/fake_claude_cso.py`, `tests/test_adapters_fake_cli.py`.
 
+## 2026-10-01 · #220 — CSO 계획의 산출 경로를 실행 전에 outputs/ 안으로
+
+- 결론: 단계 결과 계약은 작업 폴더 `outputs/` 아래만 센다. penguins 계획은 `answer.md`를 선언하고 지시문에 `./answer.md`(작업 폴더 루트)를 적어, analyst가 만든 파일을 찾지 못해 INCOMPLETE가 됐다. 이제 계획 검증이 dispatch 전에 고치거나 다시 받는다.
+- 바뀐 것: `validate_steps`가 단계 자기 산출을 가리키는 루트 경로(`./answer.md`, `.\answer.md`)를 `./outputs/answer.md`로 고치고 선언도 `outputs/answer.md`로 바꿔 경고를 남긴다. 절대 경로·드라이브·`..`는 `PlanOutputsError`로 CSO 교정 계획을 한 번 받고, 그래도 틀리거나 교정 계획이 새 질문을 내면 단계 없이 실패한다. PLAN_PROMPT 산출 규칙에 `outputs/<name>`과 루트·절대 경로 금지를 적었고, 단계 prompt 끝에 선언 산출 경로를 싣는다. README §7에 한 문단.
+- 실행한 것: penguins 재현 fixture(`tests/fixtures/plans/penguins_outputs_root.json`)를 포함한 회귀 test 10건이 수정 전 실패함을 봤다. 전체 pytest 2132 passed/25 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. Codex 리뷰 P2 1건(교정 계획의 새 질문이 PI 확인 없이 dispatch됨)을 고치고 test를 더했다. 실제 CLI(Sonnet 대체) penguins 재실행: 요청 done, CSO가 `outputs/answer.md`로 선언, analyst·qc_reviewer 단계 모두 done($0.65, 309초).
+- 미해결: 같은 재실행에서 bench 형식은 FAIL이다. 최종 보고서 끝에 붙는 "Step status and output paths" 감사 줄이 결과 블록 뒤에 와서 "structured result block is not last"가 된다. qc_reviewer의 `labhq_ask`가 `wait: none`으로 broker 500, tool_permission 미스크립트 거절 2건(Temp/claude 경로)도 별도 문제다. 연구 lane 계획은 산출 경로를 검사하지 않는다(PR 1 pilot은 단계를 실행하지 않음). 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/fixtures/plans/penguins_outputs_root.json`, `README.md`.
+
 ## 2026-10-01 · #165 #177 #178 #180 #181 #182 #183 #190 #193 — 작업 폴더 쓰기·Claude 규칙 경로·공개 가드 후속
 
 - 결론: 부류마다 공통 판정 하나로 닫았다. 러너가 작업 폴더에 쓰는 경로(#165·#190·#193), Claude 거부 규칙을 붙일 수 없는 경로(#177·#182), 공개 가드의 표기 빈틈(#180·#181·#183)이다. #165는 1–3번만, #178은 문서만 고쳤다(둘 다 실측이 남아 Refs).

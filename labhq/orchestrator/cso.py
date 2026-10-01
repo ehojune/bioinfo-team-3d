@@ -87,7 +87,10 @@ Chief of staff briefing:
 
 Rules:
 - At most {max_steps} steps. Express order with depends_on; independent steps run in parallel.
-- Declare each step's expected output names in outputs so dependencies can be checked.
+- Declare each step's expected output files in outputs so dependencies can be checked. Each one is a
+  path inside that step's own workspace outputs/ folder, written as outputs/<name> (for example
+  outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
+  or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -141,6 +144,9 @@ Your step ({step_id}): {instruction}
 Teammates' upstream results are in the context section. Deliver: what you did, key results with file
 paths, caveats and open questions. If you cannot proceed without a PI decision, return JSON with
 "blocking_decision": "the specific question and choices". Do not proceed with the blocked work."""
+
+STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
+                     "labhq collects only these: {paths}")
 
 REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
@@ -275,6 +281,46 @@ def qa_text(entry: Any) -> str:
     return f"PI answer: {entry}"
 
 
+class PlanOutputsError(ValueError):
+    """A declared step output that no normalization can bring under the step's outputs/ folder (#220)."""
+
+
+def _root_reference(inner: str) -> re.Pattern[str]:
+    """`./<inner>` or `.\\<inner>` at the workspace root, not inside `../<inner>` or a longer path name."""
+    body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
+    return re.compile(r"(?<![A-Za-z0-9_.\-/\\])\.[/\\]" + body + r"(?![A-Za-z0-9_\-/\\]|\.[A-Za-z0-9_])")
+
+
+def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
+    """Keep every declared output under outputs/ before dispatch (#220).
+
+    The runner collects a declared output only from the workspace outputs/ folder (`output_relpath`). A plan
+    that declares `answer.md` but tells the agent to write `./answer.md` gets an INCOMPLETE step even though
+    the file exists. A root reference to the step's own output is rewritten to `./outputs/...` and the
+    declaration made explicit. An output that leaves outputs/ (absolute, drive, `..`) cannot be fixed here;
+    it comes back as a problem for the caller to reject.
+    """
+    warnings, bad, outputs = [], [], []
+    for name in step["outputs"]:
+        rel = output_relpath(name)
+        if rel is None:
+            bad.append(name)
+            continue
+        if rel == "outputs":
+            outputs.append(name)
+            continue
+        declared_root = re.match(r"\.[/\\](?!outputs[/\\])", name.strip()) is not None
+        instruction, refs = _root_reference(rel[len("outputs/"):]).subn(f"./{rel}", step["instruction"])
+        if refs or declared_root:
+            step["instruction"] = instruction
+            warnings.append(f"step {step['id']}: output {name!r} moved under outputs/ as {rel}")
+            outputs.append(rel)
+        else:
+            outputs.append(name)
+    step["outputs"] = outputs + bad
+    return warnings, f"step {step['id']}: outputs {bad} are outside its outputs/ folder" if bad else None
+
+
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES) -> tuple[list[dict], list[str]]:
     warnings, steps, seen = [], [], set()
@@ -317,6 +363,14 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     for s in steps:
         if s["agent_id"] not in known:
             warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
+    problems = []
+    for s in steps:
+        contained, problem = _contain_outputs(s)
+        warnings.extend(contained)
+        problems += [problem] if problem else []
+    if problems:
+        raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
+                               "step's own workspace and save it at that path.")
     # Reject cycles before dispatch.
     indeg = {s["id"]: len(s["depends_on"]) for s in steps}
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
@@ -954,6 +1008,9 @@ class Orchestrator:
 
         async def run_one(step: dict) -> TaskResult:
             prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
+            declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
+            if declared:
+                prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
             decision = decisions.get(step["id"])
             ctx = upstream(step)
             updates = []
@@ -1374,7 +1431,31 @@ class Orchestrator:
                     warnings: list[str] = []
                     steps = req["plan"]["steps"]
                 else:
-                    steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
+                    for attempt in (1, 2):
+                        try:
+                            steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
+                                                             orchestration)
+                            break
+                        except PlanOutputsError as error:
+                            if attempt == 2:
+                                raise ValueError(f"plan invalid after correction: {error}") from error
+                            # Before any step runs: one corrected plan, as the research lane does (#220).
+                            plan_res = await make_plan(text + "\n\nThe previous PLAN failed validation: " +
+                                                       str(error) + "\nReturn a complete corrected PLAN.")
+                            if not plan_res.ok:
+                                self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
+                                return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
+                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
+                                    else extract_json(plan_res.text) or {})
+                            still = normalize_questions(plan.get("clarifying_questions"))
+                            if still:  # questions the PI has not answered never reach dispatch
+                                req["pending_questions"] = [q["question"] for q in still]
+                                self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
+                                return
                     req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                 await self._emit(rid, "request.plan", req["plan"])
                 for rec in plan.get("recruit") or []:
