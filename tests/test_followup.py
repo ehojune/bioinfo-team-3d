@@ -110,6 +110,40 @@ async def test_failed_followup_is_recorded_and_request_stays_done():
 
 
 @pytest.mark.asyncio
+async def test_followup_hitting_the_turn_limit_gets_no_writable_wrap_up():
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="max turns",
+                          error_kind="error_max_turns", session_id="cso-2", workdir="/w/cso")
+
+    hub = FakeHub(reply)
+    hub.ask("Why?")
+    await Orchestrator(hub).run_followup("r", "fu_1")
+    # The wrap-up asks to save PARTIAL_STATUS.md; on a read-only question it would replace the read-only
+    # overrides with {"max_turns": 2} and hand back write tools and MCP servers.
+    assert [t.meta["kind"] for t in hub.calls] == ["followup"]
+    assert all(t.meta["agent_overrides"]["sandbox"] == "read-only" for t in hub.calls)
+    assert hub.requests["r"]["followups"][0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_writable_step_wrap_up_keeps_its_other_overrides():
+    async def reply(task):
+        if task.meta["kind"] == "wrap_up":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="saved",
+                              outputs=["outputs/PARTIAL_STATUS.md"])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="max turns",
+                          error_kind="error_max_turns", session_id="w-1", workdir="/w/s1")
+
+    hub = FakeHub(reply)
+    task = Task(agent_id="worker", request_id="r", prompt="work",
+                meta={"kind": "step", "step_id": "s1", "agent_overrides": {"tools": ["Read"]}})
+    await Orchestrator(hub).run_step(task)
+    wrap = hub.calls[-1]
+    assert wrap.meta["kind"] == "wrap_up"
+    assert wrap.meta["agent_overrides"] == {"tools": ["Read"], "max_turns": 2}
+
+
+@pytest.mark.asyncio
 async def test_direct_request_followup_resumes_that_agents_last_session(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")

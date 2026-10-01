@@ -714,14 +714,17 @@ class Orchestrator:
             raise AssertionError("unreachable")
 
         res = await dispatch_with_retry(task)
-        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
+        overrides = task.meta.get("agent_overrides") or {}
+        # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
+        read_only = overrides.get("sandbox") == "read-only"
+        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
                         prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir, "agent_overrides": {"max_turns": 2},
+                              "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
                               "outputs": ["PARTIAL_STATUS.md"]})
             try:
                 partial = await dispatch_with_retry(wrap, max_attempts=1)
