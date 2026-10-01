@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 PR A 리뷰 2회차 — 읽기 전용 허용 목록 profile, 사후 파일 비교
+
+- 결론: 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 허용 목록 profile로 돈다. plugin·hook·MCP·PI extra_args가 빠지고, 그래도 실행 중 파일이 바뀌면 결과를 실패로 하고 PI에게 알린다. 1회차 MCP 우회와 2회차 plugin hook 우회는 같은 부류(지우기 목록에 남은 새 통로)라 구조로 닫았다.
+- 바뀐 것: `labhq/adapters/read_only.py`의 `read_only_profile`이 직원의 이름·역할·지침·모델·한도·`project_dirs`·`disallowed_tools`만 가져온다. 분류되지 않은 AgentSpec 필드가 생기면 만들기를 거부한다. 러너는 보낸 쪽 override를 보지 않는다. Claude는 `--setting-sources ""`·`disableAllHooks`·plugin 없음, Codex는 `--disable hooks·plugins·apps·computer_use·browser_use`이고, 둘 다 `isolate_user_config`와 상관없이 격리한다. 러너가 실행 전후로 작업 폴더와 쓰기 가능한 project·upstream·참고 폴더를 비교한다(상한 `runner.read_only_check_max_entries` 50,000을 넘으면 실행 거부). 바뀐 목록은 manifest `read_only_changes`, 피드 경고는 `agent.log` level `alert`.
+- 실행한 것: Claude 2.1.282로 실측했다. 수정 전 명령에서 작업 폴더·plugin의 SessionStart·Stop hook 4개가 plan 모드와 `Read,Glob,Grep`을 거치지 않고 돌았고 새 명령에서는 하나도 돌지 않았다(fixture `claude_read_only_*.jsonl`). Codex feature 이름은 codex-cli 0.159.2 `features list`로 확인했다. 새 테스트 22개 중 18개가 수정 전 코드에서 실패했다(나머지 4개는 기존 금지 목록 유지·오탐 방지·fixture 고정), Node 1개도 수정 전 실패를 확인했다. 로컬 Codex 리뷰 P1 1(profile이 `disallowed_tools`를 지움)·P2 2(폴더 ctime 오탐, 취소 때 비교 누락)를 모두 고쳤다. 전체 pytest 1402 passed/20 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과.
+- 미해결: Windows에는 ctime이 없어 크기를 두고 mtime을 되돌린 수정은 못 본다. 다른 러너·프로세스가 같은 폴더를 쓰면 실패로 잡힌다. 감시 폴더 밖 쓰기와 Claude managed settings hook은 범위 밖이다. 옛 Codex에 `--disable` 이름이 없으면 읽기 전용 실행이 CLI 오류로 실패한다. Codex 실측 probe는 하지 않았다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/codex.py`, `labhq/runner/integrity.py`, `labhq/runner/daemon.py`, `tests/test_read_only_profile.py`, `tests/fixtures/real/claude_code/claude_read_only_*.jsonl`.
+
 ## 2026-10-01 · #36 PR A 리뷰 1회차 — 읽기 전용 wrap-up, 링크로 적힌 통제 구역
 
 - 결론: 이어 묻기·상담이 턴 한도에 걸려도 읽기 전용이 풀리지 않는다. 링크(symlink·junction)로 적힌 통제 구역은 러너가 실제 경로로 막는다. P1 두 건을 고쳤고 P2 다섯 건은 고쳤으며 네 건은 후속 issue로 넘긴다.
