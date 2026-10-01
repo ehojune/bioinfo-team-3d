@@ -114,7 +114,12 @@ def impl_b() -> Impl:
                 semantics.find_reusable, semantics.audit_lineage, state=semantics.PILOT_STATE)
 
 
-IMPLS: dict[str, Callable[[], Impl]] = {"B": impl_b}
+def impl_a() -> Impl:
+    baseline = importlib.import_module("tests.semantics_baseline")
+    return Impl("A", baseline.project, baseline.find_reusable, baseline.audit_lineage, state=baseline.PILOT_STATE)
+
+
+IMPLS: dict[str, Callable[[], Impl]] = {"B": impl_b, "A": impl_a}
 
 
 def result_of(answer: Any) -> dict:

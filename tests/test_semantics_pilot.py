@@ -92,8 +92,9 @@ def test_model_rejects_an_edge_the_model_does_not_declare(fixture_paths):
 
 
 @pytest.mark.parametrize("qid", [f"q{n:02d}" for n in range(1, 18)])
-def test_model_b_answers(qid, fixture_paths, expected):
-    impl, outputs = outputs_of("B", fixture_paths, expected)
+@pytest.mark.parametrize("name", ["B", "A"])
+def test_answers(name, qid, fixture_paths, expected):
+    impl, outputs = outputs_of(name, fixture_paths, expected)
     scored = pilot.score_queries(expected, impl.state, outputs)
     assert scored[qid]["ok"], scored[qid]["diff"]
 
