@@ -15,6 +15,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from ..policy import claude_allowed_tools
 from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
                    record_model_id, wrap_cwd)
@@ -260,7 +261,9 @@ class ClaudeCodeAdapter(AgentAdapter):
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
         for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings
             cmd += ["--add-dir", d]
-        allowed = [*a.tools, *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
+        # Bare Write/Edit become Edit rules for the task's write roots, so an outside write reaches the gate (#219).
+        allowed = [*claude_allowed_tools(a.tools, [ctx.workdir, *ctx.extra_dirs]),
+                   *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]
         if a.disallowed_tools:
