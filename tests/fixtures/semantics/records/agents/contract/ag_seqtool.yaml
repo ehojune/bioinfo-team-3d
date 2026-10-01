@@ -1,0 +1,33 @@
+id: ag_seqtool
+name: Seqtool contractor
+role: synthetic sequence scan tool
+engine: claude_code
+model: model-a
+system_prompt: ''
+tools: []
+disallowed_tools: []
+builtin_mcp:
+- approval
+mcp: []
+project_dirs: []
+plugin_dirs: []
+allow_skills: false
+required_skills: []
+permission_mode: default
+sandbox: workspace-write
+employment: contract
+contract:
+  paper: https://doi.org/10.5555/synth.0901
+  repo: https://example.invalid/seqtool
+  kind: technician
+  hired_at: 1788220800.0
+  expires_at: 1796083200.0
+  status: active
+  verification:
+    offer_status: self_reported
+    probe_tools:
+    - seqtool_scan
+    probe_error: null
+    limitations: []
+can_orchestrate: false
+tags: []

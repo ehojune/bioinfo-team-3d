@@ -1,0 +1,722 @@
+# 출처·재사용 의미 모델 pilot의 기대 답 (#127). 구현보다 먼저, 아래 규칙에서 손으로 적었다.
+# 모든 기록은 합성이다. 실제 요청 기록을 복사하지 않았다.
+# 독립 검토 1회 뒤 EXPECTED_SHA256으로 고정한다. 그 뒤 수정은 사유를 적은 별도 커밋(보정 1회)뿐이다.
+# 보정 1은 검토 직후 고정 전에 썼다(revisions). 답은 바꾸지 않았다.
+schema: semantics-expected/1
+synthetic: true
+issue: 127
+records: records/
+revisions:
+- {n: 1, kind: 보정, date: 2026-10-01,
+   reason: "독립 검토 1회 반영. 17문항 답·변경 diff·forbidden_merges는 그대로다. wake·manifest 누락 규칙을 이 fixture의 공식 규칙으로 채택하고 원천 우선순위를 적었다(rules.wake·runmeta, design_deviations). independent_groups 호출 꼴을 고정했다(rules.indep). 결함을 원인 단위로 세게 하고 측정 규약(measurement)과 출력 칸(interface.output)을 넣었다"}
+
+conventions:
+  ids:
+    run: "run:<workdir_id>/<task_id>"                      # workspace 하나에 run 여럿(재시도·wake)
+    artifact: "art:<request_id>/<workdir_id>/<path>"       # path는 normalize_artifact_path 결과
+    external_source: "ext:<scheme>:<normalize_id 값>[@<version>]"   # DOI URI는 doi:<값>
+    claim: "claim:<request_id>/<claim id>@<revision>"
+    evidence: "ev:<workdir_id>/<task_id>/<evidence id>"    # ResearchResult를 실은 run 범위
+    method: "method:<research_contract.plan_sha256>#<step_id>"
+    agent: "agent:<agent_id>"
+    data_type: "type:<name>"
+  sources:
+    state: "records/state_rows.json. gateway SQLite state(kind, key, body) 행. test가 임시 DB로 옮겨 mode=ro로 연다"
+    manifest: "records/<result.workdir>/manifest.json. 없으면 manifest_missing"
+    observed: "records/observed.json. workdir_id별 경로 철자 → sha256 (verify_sources의 observed_artifacts)"
+    registry: "records/agents/contract/<agent_id>.yaml (contract 직원만)"
+    overlay2: "records/change2_overlay.json. 변경 2에서만 payload.meta.output_types로 합친다"
+  row_notation: "state.task[<task_id>].<body 경로> · state.request[<rid>].<경로> · manifest[<workdir_id>].<경로> · observed[<workdir_id>][\"<철자>\"] · registry[<agent_id>].<경로> · overlay2[<task_id>].<경로>"
+  input_refs:   # plan schema는 input_refs를 자유 문자열로 둔다. fixture가 쓰는 세 꼴만 푼다
+    external: "<scheme>:<value>@<version> → external_source"
+    same_request_step: "step:<step_id>/<path> → 같은 요청 그 step의 run들이 쓴 workspace가 하나일 때 그 artifact"
+    artifact: "art:<request_id>/<workdir_id>/<path> → 그 요청의 run이 쓴 workspace일 때 그 artifact"
+    otherwise: "used dst unknown(unresolved_input_ref). 이 fixture에는 없다"
+  evidence_artifact: "artifact_refs[artifact_id].path를 기록한 run의 result.workdir 기준으로 풀어 알려진 workspace 안의 경로가 되면 그 artifact"
+  ordering: "id 목록은 문자열 정렬, edge 목록은 edge id 정렬, gap은 (node, field) 정렬"
+  unknown: "값 자리에 unknown, 이유는 unknown.<field>, 후보가 있으면 candidates.<field>"
+  field_basis:   # 칸마다 그 사실을 어디서 아는지. unknown이어도 basis는 같다
+    generated_by: reported
+    sha256: reported
+    resumes: reported
+    wake_of: reported
+    agent_spec_sha256: reported
+    session_id: reported
+    method: declared
+    generator_inputs: declared
+    reuse_kind: declared
+    data_type: {base: none, change2: declared}
+    verification_scope: reported
+
+labels:
+  # runs
+  R1: &R1 "run:task_q1fetch_ag_fetch/task_q1fetch"
+  R2: &R2 "run:task_q1de_ag_scde/task_q1de"
+  R2w: &R2w "run:task_q1de_ag_scde/task_q1dew"
+  R3: &R3 "run:task_q2de_ag_scde/task_q2de"
+  R3f: &R3f "run:task_q2flt_ag_stats/task_q2flt"
+  R4: &R4 "run:task_q3fetch_ag_fetch/task_q3fetch"
+  R5: &R5 "run:task_q3scan_ag_seqtool/task_q3scan"
+  Q4a1: &Q4a1 "run:task_q4qc_ag_scde/task_q4qc"
+  Q4a2: &Q4a2 "run:task_q4qc_ag_scde/task_q4qc2"
+  Q4w: &Q4w "run:task_q4qc_ag_scde/task_q4qcw"
+  Q4rm: &Q4rm "run:task_q4rm_ag_stats/task_q4rm"
+  Q4rep: &Q4rep "run:task_q4rep_ag_scde/task_q4rep"
+  # artifacts
+  A1: &A1 "art:req_q1/task_q1fetch_ag_fetch/outputs/raw_counts.tsv"
+  A2: &A2 "art:req_q1/task_q1de_ag_scde/outputs/norm_counts.tsv"
+  A3: &A3 "art:req_q1/task_q1de_ag_scde/outputs/de_table.tsv"
+  A5: &A5 "art:req_q2/task_q2de_ag_scde/outputs/de_table.tsv"
+  A5f: &A5f "art:req_q2/task_q2flt_ag_stats/outputs/de_filtered.tsv"
+  A6: &A6 "art:req_q3/task_q3fetch_ag_fetch/outputs/raw_counts.tsv"
+  A7: &A7 "art:req_q3/task_q3scan_ag_seqtool/outputs/scan_hits.tsv"
+  A8: &A8 "art:req_q3/task_q3scan_ag_seqtool/outputs/scan_extra.tsv"
+  Q4qc: &Q4qc "art:req_q4/task_q4qc_ag_scde/outputs/qc_table.tsv"
+  Q4qs: &Q4qs "art:req_q4/task_q4qc_ag_scde/outputs/qc_summary.tsv"
+  Q4st: &Q4st "art:req_q4/task_q4rm_ag_stats/outputs/stats.tsv"
+  Q4de: &Q4de "art:req_q4/task_q4rep_ag_scde/outputs/de_table.tsv"
+  # external sources
+  D1: &D1 "ext:synth:ds-0001@r1"
+  D2: &D2 "ext:synth:ds-0001@r2"
+  D3: &D3 "ext:synth:ds-0002@r1"
+  L3: &L3 "ext:doi:10.5555/synth.0003"
+  # claims and evidence
+  K1: &K1 "claim:req_q1/K1@1"
+  K2: &K2 "claim:req_q2/K2@1"
+  K3: &K3 "claim:req_q3/K3@1"
+  K1q4: &K1q4 "claim:req_q4/K1@1"
+  E1: &E1 "ev:task_q1de_ag_scde/task_q1dew/E1"
+  E2: &E2 "ev:task_q2de_ag_scde/task_q2de/E2"
+  E1r: &E1r "ev:task_q2de_ag_scde/task_q2de/E1r"
+  E3: &E3 "ev:task_q3scan_ag_seqtool/task_q3scan/E3"
+  E4: &E4 "ev:task_q3scan_ag_seqtool/task_q3scan/E4"
+  E5: &E5 "ev:task_q3scan_ag_seqtool/task_q3scan/E5"
+  E1q4: &E1q4 "ev:task_q4rep_ag_scde/task_q4rep/E1"
+  # agents
+  ag_fetch: &ag_fetch "agent:ag_fetch"
+  ag_scde: &ag_scde "agent:ag_scde"
+  ag_stats: &ag_stats "agent:ag_stats"
+  ag_seqtool: &ag_seqtool "agent:ag_seqtool"
+  # methods (plan_sha256는 state.request[*].research_contract.plan_sha256)
+  M1fetch: &M1fetch "method:efbfb1dccc7ca40f388905abde34eef4cb5c190cc1c3691bab31439bf93ced39#fetch"
+  M1de: &M1de "method:efbfb1dccc7ca40f388905abde34eef4cb5c190cc1c3691bab31439bf93ced39#de"
+  M2de2: &M2de2 "method:cc3107b8c24496168f1b8a68f41a4baf019f725402c1111e840a03de3e0d6366#de2"
+  M2filter: &M2filter "method:cc3107b8c24496168f1b8a68f41a4baf019f725402c1111e840a03de3e0d6366#filter"
+  M3fetch: &M3fetch "method:af273fa90b8cb0d5fb863acaf83a9455e38de7442563f6ae4cdc4580c1daa9b3#fetch"
+  M3scan: &M3scan "method:af273fa90b8cb0d5fb863acaf83a9455e38de7442563f6ae4cdc4580c1daa9b3#scan"
+  M4qc: &M4qc "method:82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5#qc"
+  M4remote: &M4remote "method:82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5#remote"
+  M4report: &M4report "method:82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5#report"
+  # observed sha256
+  h1: &h1 "0d9bafaa1bebc02b611b954fc63ab51dd24d7aa12965fe1a462cdab4625d0b42"
+  h2: &h2 "29e1e808400dfc420e883d7fdccc634e52f9fb86546bff52cb2b044c192095c4"
+  h3: &h3 "9a672d63bb6c3475e5e8e45b58aa934b698fa02a4fe47e009585d63ad238c3d5"
+  h5: &h5 "f81198ea75e0fca984641d38bc4dd2c5db69e1c46dc04682aad9f636777c4ec0"
+  h5f: &h5f "d9c74c709fbf0fa0f953e8e2012f645bab3f5b1e54855542795262538f8c1bb7"
+  h7: &h7 "44d38dbcaa85ca049429c1120e4dc2d6e34bf1c95cdf60c00c82c6432e95d8e9"
+  hq: &hq "a44dc0fc5416310b81acb38475c52704e7462eab6f387f05f325066f101ad37a"
+  hqs: &hqs "67e957c9d36d40acaaffefedc0fab18307eae352f4b2eba0367f93a454322100"
+  hR1: &hR1 "67bfbfe1f927024719cc68ce53d9fb2ad845b2e21fb3de019785500594bf6012"
+  hR2: &hR2 "dd0abadf18d3afff57d58a079fc5be9b691f471110fc4bbd64005a2d57ac67be"
+  # agent_spec_sha256 (manifest)
+  H_fetch: &H_fetch "c04115a0f0803a9e44ec562a678d55d8b5ce17a93fb12b714d1f3d45bd0107c8"
+  H_scde: &H_scde "a5473b3b385004ed7dfa09d980d1101d9435dcb2030807f923ae49aa042629f0"
+  H_stats: &H_stats "0cf99d66398244c4c97922ccc8eedd7fcd8e2c92201621998ee683d087ff3c56"
+  H_seqtool: &H_seqtool "690ea1e61c4d45617f754b2eb45be9e41e79547fe5eb824ee2a2782aedfac028"
+
+# 의미 규칙. 질의마다 rules에 여기 id를 적는다. 독립 결함 유형은 질의가 아니라 원인 단위로 센다(measurement.defects).
+rules:
+  gen: "result.outputs는 reported_output이다. 같은 workspace·경로를 보고한 run이 하나면 generated_by, 둘 이상이면 unknown(multiple_reporters)+후보, 없으면 unknown(no_reported_output). daemon은 이미 있는 선언 파일도 outputs에 넣는다(labhq/runner/daemon.py)"
+  reuse: "use는 plan step input_refs(declared)에서만 나온다. artifact를 보고한 요청이 사용 run과 다르면 reused_cross_request, 같으면 same_request(재사용 아님), 보고한 run이 없으면 unknown(no_reported_output)"
+  resume: "resumes는 resume_of(manifest runs[t].resume_of, 없으면 payload.resume_session_id)가 같은 workspace에서 먼저 시작한(started_at: manifest runs, 없으면 result.provenance.runs) 다른 run 하나의 session_id와 같을 때만. resume은 같은 run이 아니다"
+  session: "그런 run이 둘 이상이면 resumes unknown(shared_session)+후보, caution resume_parent_ambiguous"
+  retry: "retry = SQLite task.attempt > 1. resume 여부와 따로 판정한다. 재시도도 이전 session을 resume한다(labhq/orchestrator/cso.py)"
+  wake: "wake_of = SQLite task.parent_task, 부모 run 결과에 pending_jobs·pending_asks가 있을 때. wake task의 meta.kind는 원래 kind를 물려받아(cso.py run_step) wake를 가리키지 않는다"
+  runmeta: "attempt·revision·kind·parent_task는 task_id로 SQLite task 행에서 읽는다. manifest 최상위 task는 첫 task뿐이다(labhq/runner/workspace.py). agent_spec_sha256은 manifest에만 있어 없으면 unknown(manifest_missing). session_id·resume_of는 SQLite 행(result.session_id, payload.resume_session_id)에도 있어 manifest가 없어도 읽는다. 우선순위: manifest runs[t]에 칸이 있으면 그 값, 없을 때만 SQLite 행. null은 '기록상 없음'(resumes none)이고, 어느 원천에도 칸이 없을 때만 unknown(manifest_missing)이다"
+  cite: "evidence.source → refers_to. run 결과의 evidence가 그 run이 보고하지 않은 대상을 가리키면 cites(basis cited). 계보 순회는 cites를 넘지 않는다"
+  support: "bears_on 값은 links.relation 그대로다. context는 지지가 아니다"
+  scope: "ID는 conventions.ids 범위를 따른다. 같은 claim id·evidence id·artifact_id·경로라도 범위가 다르면 다른 개체. 누락값끼리 같다고 하지 않는다(sha256 unknown끼리 same_content 아님)"
+  hash: "observed[ws]의 철자를 normalize_artifact_path로 모아 hash가 둘 이상이면 sha256 unknown(multiple_hashes)+후보. 같은 hash는 same_content_as만 채우고 개체·run·판본을 합치지 않는다"
+  unknown: "원천 칸이 없거나 풀리지 않으면 unknown+reason. 같은 폴더·가까운 run·같은 agent의 다른 기록으로 채우지 않는다"
+  type: "v1에는 artifact별 자료 의미 칸이 없어 data_type unknown(no_data_type_source). pack 값(count_scale)·broader로 채우지 않는다. 변경 2 뒤에는 생성 run의 declared output_types만 쓴다. 생성 run이 unknown이면 generator_unknown, 선언이 없으면 not_declared"
+  probe: "contract.verification.probe_tools는 연결 확인(connection_only)이다. method_validation은 not_established"
+  method: "run의 method = research_contract.plan_sha256 # step_id, packs = plan.protocol.packs. 생성 run이 unknown이면 method도 unknown(generator_unknown)"
+  traverse: "claim→bears_on→evidence→refers_to→artifact→(보고 run이 하나면) run→used→… 를 방문 집합·깊이 64로 따른다. performs·uses_method·resumes·wake_of는 edge로 싣고 넘어가지 않는다. means는 싣지 않는다. cites는 cites 칸에만 싣는다. 보고 run이 여럿이면 그 reported_output edge만 싣고 멈춘다. cycle은 caution(이 fixture엔 없음)"
+  indep: "공통 조상(shared_ancestors)은 검토 단서다(caution shared_ancestor_review). 독립성 값은 claim을 기록한 run의 ResearchResult로 labhq.evidence.independent_groups(claim.id, result.evidence, result.links)를 부른 반환값(relation 기본값 supports) 그대로다. 보정 1에서 이 fixture로 직접 불러 q09·q10·q17 값과 같음을 확인했다"
+
+# 설계 문서와 다르게 적은 곳. 독립 검토에서 확인할 것.
+design_deviations:
+  - "wake: 설계 표는 'wake=kind'. 코드에서 wake task는 meta.kind를 물려받아 kind=step이다(labhq/orchestrator/cso.py run_step의 wake meta). parent_task와 부모 결과의 pending_jobs·pending_asks로 판정한다(rule wake). 보정 1에서 공식 규칙으로 채택: kind만으로는 이 fixture에서도 실제 기록에서도 wake를 알 수 없다. kind=wrap_up도 parent_task를 갖지만 부모 결과에 pending이 없어 wake가 아니다"
+  - "manifest 누락: 설계는 session·resume도 unknown이라 했다. SQLite task 행에 result.session_id·payload.resume_session_id가 있어 known으로 두고 agent_spec_sha256만 unknown이다(rule runmeta, 질의 16). 보정 1에서 공식 규칙으로 채택: 설계가 말한 공백은 gateway로 가는 result.provenance(labhq/runner/workspace.py)이고, TaskResult.session_id·Task.resume_session_id는 SQLite 행에 따로 있다(labhq/models.py)"
+  - "Q2: 설계의 리뷰 revision R3r→A5r 대신 같은 요청의 다음 step(filter, R3f→A5f)을 쓴다. 실제 revision은 같은 workspace에서 같은 선언 경로를 다시 보고하므로 A5r이 따로 생기지 않는다. 그 모양은 Q4 질의 13이 맡는다"
+  - "input_refs의 세 꼴(conventions.input_refs)은 fixture 규약이다. 현 schema는 자유 문자열이다"
+generated_elsewhere:   # 이 파일 밖에서 만든다
+  reader_errors: "tests/test_semantics_pilot.py가 임시 폴더에 깨진 기록을 만들어 read_records 거부를 본다"
+  cycle_and_depth: "scripts/semantics_pilot.py가 메모리에서 cycle·깊이 70 사슬 기록을 만든다. 종료와 caution(cycle·depth_limit)만 본다"
+  scale_50x: "scripts/semantics_pilot.py가 ID 접미 복제로 임시 폴더에 만든다. 성능만 보고 채점하지 않는다"
+  hashes: "EXPECTED_SHA256·fixture hash 상수는 tests/test_semantics_pilot.py에 둔다"
+
+reasons:
+  unknown: [multiple_reporters, no_reported_output, not_observed, multiple_hashes, manifest_missing, shared_session,
+            no_data_type_source, not_declared, generator_unknown, no_contract_record, unresolved_input_ref]
+  cautions: [shared_ancestor_review, resume_parent_ambiguous, cycle, depth_limit]
+  reuse_kind: [reused_cross_request, same_request, reused_same_request, unknown]   # reused_same_request는 변경 1 뒤에만
+  basis: [reported, declared, cited, none]                                       # none: 그런 칸이 어느 원천에도 없음
+
+interface:   # A·B가 같은 꼴로 낸다. 정답 비교는 아래 queries.answer 꼴로 정규화해서 한다
+  find_reusable:
+    selectors: "key(path 일치), method(pack id@version), derived_from(조상 artifact·external id), used_by_request(그 요청 run의 재사용 use)"
+    selector_values: "yes|no|unknown. 모두 yes → selected, 하나라도 no → 제외, no 없이 unknown → excluded_unknown"
+    check: "data_type은 걸러내지 않고 match.data_type(yes|no|unknown)만 낸다. 요청하지 않으면 match에 없다"
+    derived_from: "generated_by→used를 따라 대상에 닿으면 yes. 닿지 않고 도중에 generated_by unknown·풀리지 않은 used가 있으면 unknown, 아니면 no. cites는 넘지 않는다"
+    candidate: "nodes.artifacts의 그 행 + uses(nodes.uses에서 그 artifact 행) + match + recommend"
+    recommend: "generated_by·sha256이 known이고 모든 selector가 yes이며 match.data_type이 없거나 yes일 때만 true"
+  audit_lineage:
+    roots: "claim | evidence | artifact | run | step(<request_id>/<step_id>)"
+    answer: "edges(traverse로 닿은 edge id), cites, gaps(닿은 artifact의 generated_by·sha256, 닿은 run의 agent_spec_sha256·resumes), cautions, claim 루트는 bears_on·shared_ancestors·independent_groups, run 루트는 agent_verification"
+    shared_ancestors: "supports·contradicts로 걸린 evidence 쌍마다 양쪽 계보에 다 있는 artifact·external_source. evidence가 하나면 []"
+  output:   # 보정 1. 소비자 일치와 forbidden_merges 판정이 쓰는 칸
+    extra: "두 소비자 출력에는 answer 칸 외에 root를 싣는다. artifact·run 루트면 node(nodes의 그 행, rows 제외), run 루트면 uses(그 run이 쓴 nodes.uses 행)도 싣는다"
+    edge: "edge는 {src, rel, dst, basis[, value][, unknown][, candidates]}로 낸다. 채점은 (src, rel, dst, value)로 edges 표의 id에 대응시키고 basis·unknown·candidates까지 같아야 맞은 것으로 센다. 표에 없는 edge는 오답이다"
+    candidate: "find_reusable 후보도 nodes 행(rows 제외)·uses(edge 칸 제외)·match·recommend 전부를 비교한다"
+  agreement: "소비자 불일치는 find_reusable()(selector 없음, 12개 전부)의 후보와 audit_lineage(artifact=각각)·audit_lineage(run=각각)의 루트 칸을 nodes와 대조해 센다: generated_by(+reason), sha256(+reason), use별 reuse_kind"
+
+nodes:
+  artifacts:
+  - {id: *A1, request: req_q1, workspace: task_q1fetch_ag_fetch, path: outputs/raw_counts.tsv,
+     reported_by: [*R1], generated_by: *R1, generator_inputs: [*D1], method: *M1fetch, packs: [single_cell_de@1],
+     sha256: *h1, same_content_as: [*A6], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q1fetch_ag_fetch]["outputs/raw_counts.tsv"]']}}
+  - {id: *A2, request: req_q1, workspace: task_q1de_ag_scde, path: outputs/norm_counts.tsv,
+     reported_by: [*R2w], generated_by: *R2w, generator_inputs: [*A1], method: *M1de, packs: [single_cell_de@1],
+     sha256: *h2, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q1de_ag_scde]["outputs/norm_counts.tsv"]']}}
+  - {id: *A3, request: req_q1, workspace: task_q1de_ag_scde, path: outputs/de_table.tsv,
+     reported_by: [*R2w], generated_by: *R2w, generator_inputs: [*A1], method: *M1de, packs: [single_cell_de@1],
+     sha256: *h3, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q1de_ag_scde]["outputs/de_table.tsv"]']}}
+  - {id: *A5, request: req_q2, workspace: task_q2de_ag_scde, path: outputs/de_table.tsv,
+     reported_by: [*R3], generated_by: *R3, generator_inputs: [*A2], method: *M2de2, packs: [single_cell_de@2],
+     sha256: *h5, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q2de_ag_scde]["outputs/de_table.tsv"]']}}
+  - {id: *A5f, request: req_q2, workspace: task_q2flt_ag_stats, path: outputs/de_filtered.tsv,
+     reported_by: [*R3f], generated_by: *R3f, generator_inputs: [*A5], method: *M2filter, packs: [single_cell_de@2],
+     sha256: *h5f, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q2flt_ag_stats]["outputs/de_filtered.tsv"]']}}
+  - {id: *A6, request: req_q3, workspace: task_q3fetch_ag_fetch, path: outputs/raw_counts.tsv,
+     reported_by: [*R4], generated_by: *R4, generator_inputs: [*D2], method: *M3fetch, packs: [],
+     sha256: *h1, same_content_as: [*A1], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q3fetch_ag_fetch]["outputs/raw_counts.tsv"]']}}
+  - {id: *A7, request: req_q3, workspace: task_q3scan_ag_seqtool, path: outputs/scan_hits.tsv,
+     reported_by: [*R5], generated_by: *R5, generator_inputs: [*A6], method: *M3scan, packs: [],
+     sha256: *h7, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q3scan_ag_seqtool]["outputs/scan_hits.tsv"]']}}
+  # E4의 artifact_refs와 Q4 report의 input_refs만 이 경로를 말한다. R5 workspace 안이지만 R5는 보고하지 않았다.
+  - {id: *A8, request: req_q3, workspace: task_q3scan_ag_seqtool, path: outputs/scan_extra.tsv,
+     reported_by: [], generated_by: unknown, generator_inputs: unknown, method: unknown, packs: unknown,
+     sha256: unknown, same_content_as: [], data_type: unknown,
+     unknown: {generated_by: no_reported_output, generator_inputs: generator_unknown, method: generator_unknown,
+               packs: generator_unknown, sha256: not_observed, data_type: no_data_type_source},
+     rows: {exists: ["state.task[task_q3scan].result.structured.artifact_refs[1]",
+                     "state.request[req_q4].plan.steps[2].input_refs[1]"],
+            not_reported: ["state.task[task_q3scan].result.outputs"]}}
+  # 실패한 1차 시도, 재시도, wake가 같은 선언 파일을 모두 보고했다. 내용(hq)은 하나다.
+  - {id: *Q4qc, request: req_q4, workspace: task_q4qc_ag_scde, path: outputs/qc_table.tsv,
+     reported_by: [*Q4a1, *Q4a2, *Q4w], generated_by: unknown, generator_inputs: unknown, method: unknown, packs: unknown,
+     sha256: *hq, same_content_as: [], data_type: unknown,
+     unknown: {generated_by: multiple_reporters, generator_inputs: generator_unknown, method: generator_unknown,
+               packs: generator_unknown, data_type: no_data_type_source},
+     candidates: {generated_by: [*Q4a1, *Q4a2, *Q4w]},
+     rows: {sha256: ['observed[task_q4qc_ag_scde]["outputs/qc_table.tsv"]']}}
+  - {id: *Q4qs, request: req_q4, workspace: task_q4qc_ag_scde, path: outputs/qc_summary.tsv,
+     reported_by: [*Q4w], generated_by: *Q4w, generator_inputs: [*D3], method: *M4qc, packs: [],
+     sha256: *hqs, same_content_as: [], data_type: unknown,
+     unknown: {data_type: no_data_type_source}, rows: {sha256: ['observed[task_q4qc_ag_scde]["outputs/qc_summary.tsv"]']}}
+  - {id: *Q4st, request: req_q4, workspace: task_q4rm_ag_stats, path: outputs/stats.tsv,
+     reported_by: [*Q4rm], generated_by: *Q4rm, generator_inputs: [*D3], method: *M4remote, packs: [],
+     sha256: unknown, same_content_as: [], data_type: unknown,
+     unknown: {sha256: not_observed, data_type: no_data_type_source}}
+  - {id: *Q4de, request: req_q4, workspace: task_q4rep_ag_scde, path: outputs/de_table.tsv,
+     reported_by: [*Q4rep], generated_by: *Q4rep, generator_inputs: [*Q4qc, *A8], method: *M4report, packs: [],
+     sha256: unknown, same_content_as: [], data_type: unknown,
+     unknown: {sha256: multiple_hashes, data_type: no_data_type_source}, candidates: {sha256: [*hR1, *hR2]},
+     rows: {sha256: ['observed[task_q4rep_ag_scde]["outputs/de_table.tsv"]', 'observed[task_q4rep_ag_scde]["./outputs/de_table.tsv"]']}}
+
+  external_sources:
+  - {id: *D1, used_by: [*R1]}
+  - {id: *D2, used_by: [*R4]}
+  - {id: *D3, used_by: [*Q4a1, *Q4a2, *Q4w, *Q4rm]}
+  - {id: *L3, used_by: [], referred_by: [*E3], cited_by: [*R5]}
+
+  # run 칸의 원천(rule runmeta): attempt·kind·revision·parent_task = state.task[t].<같은 이름>,
+  # session_id = manifest[ws].runs.<t>.session_id 와 state.task[t].result.session_id (둘이 같다),
+  # agent_spec_sha256 = manifest[ws].agent_spec_sha256, agent = state.task[t].payload.agent_id
+  runs:
+  - {id: *R1, request: req_q1, step: fetch, task_id: task_q1fetch, workspace: task_q1fetch_ag_fetch, agent: *ag_fetch,
+     agent_spec_sha256: *H_fetch, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q1fetch,
+     resumes: none, wake_of: none, method: *M1fetch}
+  - {id: *R2, request: req_q1, step: de, task_id: task_q1de, workspace: task_q1de_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q1de,
+     resumes: none, wake_of: none, method: *M1de}
+  - {id: *R2w, request: req_q1, step: de, task_id: task_q1dew, workspace: task_q1de_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q1de,
+     resumes: *R2, wake_of: *R2, method: *M1de}
+  - {id: *R3, request: req_q2, step: de2, task_id: task_q2de, workspace: task_q2de_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q2de,
+     resumes: none, wake_of: none, method: *M2de2}
+  - {id: *R3f, request: req_q2, step: filter, task_id: task_q2flt, workspace: task_q2flt_ag_stats, agent: *ag_stats,
+     agent_spec_sha256: *H_stats, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q2flt,
+     resumes: none, wake_of: none, method: *M2filter}
+  - {id: *R4, request: req_q3, step: fetch, task_id: task_q3fetch, workspace: task_q3fetch_ag_fetch, agent: *ag_fetch,
+     agent_spec_sha256: *H_fetch, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q3fetch,
+     resumes: none, wake_of: none, method: *M3fetch}
+  - {id: *R5, request: req_q3, step: scan, task_id: task_q3scan, workspace: task_q3scan_ag_seqtool, agent: *ag_seqtool,
+     agent_spec_sha256: *H_seqtool, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q3scan,
+     resumes: none, wake_of: none, method: *M3scan}
+  - {id: *Q4a1, request: req_q4, step: qc, task_id: task_q4qc, workspace: task_q4qc_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q4qc,
+     resumes: none, wake_of: none, method: *M4qc}
+  - {id: *Q4a2, request: req_q4, step: qc, task_id: task_q4qc2, workspace: task_q4qc_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 2, retry: true, revision: 0, session_id: sess_q4qc,
+     resumes: *Q4a1, wake_of: none, method: *M4qc}
+  - {id: *Q4w, request: req_q4, step: qc, task_id: task_q4qcw, workspace: task_q4qc_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q4qc,
+     resumes: unknown, wake_of: *Q4a2, method: *M4qc,
+     unknown: {resumes: shared_session}, candidates: {resumes: [*Q4a1, *Q4a2]}}
+  - {id: *Q4rm, request: req_q4, step: remote, task_id: task_q4rm, workspace: task_q4rm_ag_stats, agent: *ag_stats,
+     agent_spec_sha256: unknown, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q4rm,
+     resumes: none, wake_of: none, method: *M4remote,
+     unknown: {agent_spec_sha256: manifest_missing},
+     rows: {session_id: ["state.task[task_q4rm].result.session_id"], resumes: ["state.task[task_q4rm].payload.resume_session_id"],
+            agent_spec_sha256: ["manifest[task_q4rm_ag_stats] (파일 없음)"]}}
+  - {id: *Q4rep, request: req_q4, step: report, task_id: task_q4rep, workspace: task_q4rep_ag_scde, agent: *ag_scde,
+     agent_spec_sha256: *H_scde, kind: step, attempt: 1, retry: false, revision: 0, session_id: sess_q4rep,
+     resumes: none, wake_of: none, method: *M4report}
+
+  uses:   # artifact를 입력으로 쓴 used edge 전부. external 입력은 edges에만 있다
+  - {edge: e07, run: *R2, artifact: *A1, reuse_kind: same_request}
+  - {edge: e10, run: *R2w, artifact: *A1, reuse_kind: same_request}
+  - {edge: e19, run: *R3, artifact: *A2, reuse_kind: reused_cross_request}
+  - {edge: e28, run: *R3f, artifact: *A5, reuse_kind: same_request}
+  - {edge: e36, run: *R5, artifact: *A6, reuse_kind: same_request}
+  - {edge: e68, run: *Q4rep, artifact: *Q4qc, reuse_kind: same_request}      # 생성 run은 unknown이어도 보고 요청은 req_q4 하나
+  - {edge: e69, run: *Q4rep, artifact: *A8, reuse_kind: unknown, unknown: {reuse_kind: no_reported_output}}
+
+  claims:
+  - {id: *K1, request: req_q1, recorded_by: *R2w, status: supported}
+  - {id: *K2, request: req_q2, recorded_by: *R3, status: supported}
+  - {id: *K3, request: req_q3, recorded_by: *R5, status: supported}
+  - {id: *K1q4, request: req_q4, recorded_by: *Q4rep, status: supported}
+  evidence:
+  - {id: *E1, run: *R2w, kind: observation, counts: true, independence_group: g_q1_de, refers_to: *A3}
+  - {id: *E2, run: *R3, kind: observation, counts: true, independence_group: g_q2_de, refers_to: *A5}
+  - {id: *E1r, run: *R3, kind: observation, counts: true, independence_group: g_q1_de, refers_to: *A3}
+  - {id: *E3, run: *R5, kind: literature_claim, counts: true, independence_group: g_lit_0003, refers_to: *L3}
+  - {id: *E4, run: *R5, kind: observation, counts: true, independence_group: g_q3_extra, refers_to: *A8}
+  - {id: *E5, run: *R5, kind: observation, counts: true, independence_group: g_q3_scan, refers_to: *A7}
+  - {id: *E1q4, run: *Q4rep, kind: observation, counts: true, independence_group: g_q4, refers_to: *Q4de}
+  agents:
+  - {id: *ag_fetch, contract_status: none, verification_scope: unknown, method_validation: not_established,
+     unknown: {verification_scope: no_contract_record}}
+  - {id: *ag_scde, contract_status: none, verification_scope: unknown, method_validation: not_established,
+     unknown: {verification_scope: no_contract_record}}
+  - {id: *ag_stats, contract_status: none, verification_scope: unknown, method_validation: not_established,
+     unknown: {verification_scope: no_contract_record}}
+  - {id: *ag_seqtool, contract_status: active, verification_scope: connection_only, method_validation: not_established,
+     rows: {contract_status: ["registry[ag_seqtool].contract.status"],
+            verification_scope: ["registry[ag_seqtool].contract.verification.probe_tools"]}}
+  methods:
+  - {id: *M1fetch, request: req_q1, step: fetch, packs: [single_cell_de@1]}
+  - {id: *M1de, request: req_q1, step: de, packs: [single_cell_de@1]}
+  - {id: *M2de2, request: req_q2, step: de2, packs: [single_cell_de@2]}
+  - {id: *M2filter, request: req_q2, step: filter, packs: [single_cell_de@2]}
+  - {id: *M3fetch, request: req_q3, step: fetch, packs: []}
+  - {id: *M3scan, request: req_q3, step: scan, packs: []}
+  - {id: *M4qc, request: req_q4, step: qc, packs: []}
+  - {id: *M4remote, request: req_q4, step: remote, packs: []}
+  - {id: *M4report, request: req_q4, step: report, packs: []}
+
+# 모든 edge와 그 원천 행. uses_method의 원천은 공통: state.task[t].step_id,
+# state.request[rid].research_contract.plan_sha256, state.request[rid].plan.protocol.packs
+edges:
+  # Q1: 다운로드 → HPC 대기 → wake
+  e01: {src: *ag_fetch, rel: performs, dst: *R1, basis: reported, rows: ["state.task[task_q1fetch].payload.agent_id", "manifest[task_q1fetch_ag_fetch].agent_id"]}
+  e02: {src: *R1, rel: uses_method, dst: *M1fetch, basis: declared, rows: ["state.task[task_q1fetch].step_id"]}
+  e03: {src: *R1, rel: used, dst: *D1, basis: declared, rows: ["state.request[req_q1].plan.steps[0].input_refs[0]"]}
+  e04: {src: *R1, rel: reported_output, dst: *A1, basis: reported, rows: ["state.task[task_q1fetch].result.outputs[0]", "state.task[task_q1fetch].result.workdir"]}
+  e05: {src: *ag_scde, rel: performs, dst: *R2, basis: reported, rows: ["state.task[task_q1de].payload.agent_id", "manifest[task_q1de_ag_scde].agent_id"]}
+  e06: {src: *R2, rel: uses_method, dst: *M1de, basis: declared, rows: ["state.task[task_q1de].step_id"]}
+  e07: {src: *R2, rel: used, dst: *A1, basis: declared, rows: ["state.request[req_q1].plan.steps[1].input_refs[0]", "state.task[task_q1fetch].result.workdir"]}
+  e08: {src: *ag_scde, rel: performs, dst: *R2w, basis: reported, rows: ["state.task[task_q1dew].payload.agent_id", "manifest[task_q1de_ag_scde].agent_id"]}
+  e09: {src: *R2w, rel: uses_method, dst: *M1de, basis: declared, rows: ["state.task[task_q1dew].step_id"]}
+  e10: {src: *R2w, rel: used, dst: *A1, basis: declared, rows: ["state.request[req_q1].plan.steps[1].input_refs[0]", "state.task[task_q1fetch].result.workdir"]}
+  e11: {src: *R2w, rel: resumes, dst: *R2, basis: reported, rows: ["manifest[task_q1de_ag_scde].runs.task_q1dew.resume_of", "manifest[task_q1de_ag_scde].runs.task_q1de.session_id", "manifest[task_q1de_ag_scde].runs.task_q1de.started_at"]}
+  e12: {src: *R2w, rel: wake_of, dst: *R2, basis: reported, rows: ["state.task[task_q1dew].parent_task", "state.task[task_q1de].result.pending_jobs"]}
+  e13: {src: *R2w, rel: reported_output, dst: *A2, basis: reported, rows: ["state.task[task_q1dew].result.outputs[0]", "state.task[task_q1dew].result.workdir"]}
+  e14: {src: *R2w, rel: reported_output, dst: *A3, basis: reported, rows: ["state.task[task_q1dew].result.outputs[1]", "state.task[task_q1dew].result.workdir"]}
+  e15: {src: *E1, rel: refers_to, dst: *A3, basis: cited, rows: ["state.task[task_q1dew].result.structured.evidence[0].source", "state.task[task_q1dew].result.structured.artifact_refs[1]"]}
+  e16: {src: *K1, rel: bears_on, dst: *E1, value: supports, basis: reported, rows: ["state.task[task_q1dew].result.structured.links[0]"]}
+  # Q2: 다른 요청의 A2를 선언 입력으로 재사용, Q1의 A3를 다시 인용
+  e17: {src: *ag_scde, rel: performs, dst: *R3, basis: reported, rows: ["state.task[task_q2de].payload.agent_id", "manifest[task_q2de_ag_scde].agent_id"]}
+  e18: {src: *R3, rel: uses_method, dst: *M2de2, basis: declared, rows: ["state.task[task_q2de].step_id"]}
+  e19: {src: *R3, rel: used, dst: *A2, basis: declared, rows: ["state.request[req_q2].plan.steps[0].input_refs[0]", "state.task[task_q1dew].result.workdir_id"]}
+  e20: {src: *R3, rel: reported_output, dst: *A5, basis: reported, rows: ["state.task[task_q2de].result.outputs[0]", "state.task[task_q2de].result.workdir"]}
+  e21: {src: *E2, rel: refers_to, dst: *A5, basis: cited, rows: ["state.task[task_q2de].result.structured.evidence[0].source", "state.task[task_q2de].result.structured.artifact_refs[0]"]}
+  e22: {src: *E1r, rel: refers_to, dst: *A3, basis: cited, rows: ["state.task[task_q2de].result.structured.evidence[1].source", "state.task[task_q2de].result.structured.artifact_refs[1]", "state.task[task_q2de].result.workdir", "state.task[task_q1dew].result.workdir"]}
+  e23: {src: *R3, rel: cites, dst: *A3, basis: cited, rows: ["state.task[task_q2de].result.structured.evidence[1].source", "state.task[task_q2de].result.outputs"]}
+  e24: {src: *K2, rel: bears_on, dst: *E2, value: supports, basis: reported, rows: ["state.task[task_q2de].result.structured.links[0]"]}
+  e25: {src: *K2, rel: bears_on, dst: *E1r, value: supports, basis: reported, rows: ["state.task[task_q2de].result.structured.links[1]"]}
+  e26: {src: *ag_stats, rel: performs, dst: *R3f, basis: reported, rows: ["state.task[task_q2flt].payload.agent_id", "manifest[task_q2flt_ag_stats].agent_id"]}
+  e27: {src: *R3f, rel: uses_method, dst: *M2filter, basis: declared, rows: ["state.task[task_q2flt].step_id"]}
+  e28: {src: *R3f, rel: used, dst: *A5, basis: declared, rows: ["state.request[req_q2].plan.steps[1].input_refs[0]", "state.task[task_q2de].result.workdir"]}
+  e29: {src: *R3f, rel: reported_output, dst: *A5f, basis: reported, rows: ["state.task[task_q2flt].result.outputs[0]", "state.task[task_q2flt].result.workdir"]}
+  # Q3: 같은 파일(h1)의 r2 판본, 문헌 context, 보고되지 않은 A8, probe만 있는 contract 직원
+  e30: {src: *ag_fetch, rel: performs, dst: *R4, basis: reported, rows: ["state.task[task_q3fetch].payload.agent_id", "manifest[task_q3fetch_ag_fetch].agent_id"]}
+  e31: {src: *R4, rel: uses_method, dst: *M3fetch, basis: declared, rows: ["state.task[task_q3fetch].step_id"]}
+  e32: {src: *R4, rel: used, dst: *D2, basis: declared, rows: ["state.request[req_q3].plan.steps[0].input_refs[0]"]}
+  e33: {src: *R4, rel: reported_output, dst: *A6, basis: reported, rows: ["state.task[task_q3fetch].result.outputs[0]", "state.task[task_q3fetch].result.workdir"]}
+  e34: {src: *ag_seqtool, rel: performs, dst: *R5, basis: reported, rows: ["state.task[task_q3scan].payload.agent_id", "manifest[task_q3scan_ag_seqtool].agent_id"]}
+  e35: {src: *R5, rel: uses_method, dst: *M3scan, basis: declared, rows: ["state.task[task_q3scan].step_id"]}
+  e36: {src: *R5, rel: used, dst: *A6, basis: declared, rows: ["state.request[req_q3].plan.steps[1].input_refs[0]", "state.task[task_q3fetch].result.workdir"]}
+  e37: {src: *R5, rel: reported_output, dst: *A7, basis: reported, rows: ["state.task[task_q3scan].result.outputs[0]", "state.task[task_q3scan].result.workdir"]}
+  e38: {src: *E3, rel: refers_to, dst: *L3, basis: cited, rows: ["state.task[task_q3scan].result.structured.evidence[0].source.uri"]}
+  e39: {src: *E4, rel: refers_to, dst: *A8, basis: cited, rows: ["state.task[task_q3scan].result.structured.evidence[1].source", "state.task[task_q3scan].result.structured.artifact_refs[1]"]}
+  e40: {src: *E5, rel: refers_to, dst: *A7, basis: cited, rows: ["state.task[task_q3scan].result.structured.evidence[2].source", "state.task[task_q3scan].result.structured.artifact_refs[0]"]}
+  e41: {src: *R5, rel: cites, dst: *L3, basis: cited, rows: ["state.task[task_q3scan].result.structured.evidence[0].source.uri"]}
+  e42: {src: *R5, rel: cites, dst: *A8, basis: cited, rows: ["state.task[task_q3scan].result.structured.evidence[1].source", "state.task[task_q3scan].result.outputs"]}
+  e43: {src: *K3, rel: bears_on, dst: *E3, value: context, basis: reported, rows: ["state.task[task_q3scan].result.structured.links[0]"]}
+  e44: {src: *K3, rel: bears_on, dst: *E4, value: supports, basis: reported, rows: ["state.task[task_q3scan].result.structured.links[1]"]}
+  e45: {src: *K3, rel: bears_on, dst: *E5, value: supports, basis: reported, rows: ["state.task[task_q3scan].result.structured.links[2]"]}
+  # Q4 반례: 재보고, resume 재시도, 같은 session의 wake, 원격 run(manifest 없음), ID 충돌·복수 hash
+  e46: {src: *ag_scde, rel: performs, dst: *Q4a1, basis: reported, rows: ["state.task[task_q4qc].payload.agent_id", "manifest[task_q4qc_ag_scde].agent_id"]}
+  e47: {src: *Q4a1, rel: uses_method, dst: *M4qc, basis: declared, rows: ["state.task[task_q4qc].step_id"]}
+  e48: {src: *Q4a1, rel: used, dst: *D3, basis: declared, rows: ["state.request[req_q4].plan.steps[0].input_refs[0]"]}
+  e49: {src: *Q4a1, rel: reported_output, dst: *Q4qc, basis: reported, rows: ["state.task[task_q4qc].result.outputs[0]", "state.task[task_q4qc].result.workdir"]}
+  e50: {src: *ag_scde, rel: performs, dst: *Q4a2, basis: reported, rows: ["state.task[task_q4qc2].payload.agent_id", "manifest[task_q4qc_ag_scde].agent_id"]}
+  e51: {src: *Q4a2, rel: uses_method, dst: *M4qc, basis: declared, rows: ["state.task[task_q4qc2].step_id"]}
+  e52: {src: *Q4a2, rel: used, dst: *D3, basis: declared, rows: ["state.request[req_q4].plan.steps[0].input_refs[0]"]}
+  e53: {src: *Q4a2, rel: resumes, dst: *Q4a1, basis: reported, rows: ["manifest[task_q4qc_ag_scde].runs.task_q4qc2.resume_of", "manifest[task_q4qc_ag_scde].runs.task_q4qc.session_id", "manifest[task_q4qc_ag_scde].runs.task_q4qc.started_at"]}
+  e54: {src: *Q4a2, rel: reported_output, dst: *Q4qc, basis: reported, rows: ["state.task[task_q4qc2].result.outputs[0]", "state.task[task_q4qc2].result.workdir"]}
+  e55: {src: *ag_scde, rel: performs, dst: *Q4w, basis: reported, rows: ["state.task[task_q4qcw].payload.agent_id", "manifest[task_q4qc_ag_scde].agent_id"]}
+  e56: {src: *Q4w, rel: uses_method, dst: *M4qc, basis: declared, rows: ["state.task[task_q4qcw].step_id"]}
+  e57: {src: *Q4w, rel: used, dst: *D3, basis: declared, rows: ["state.request[req_q4].plan.steps[0].input_refs[0]"]}
+  e58: {src: *Q4w, rel: resumes, dst: unknown, basis: reported, unknown: {dst: shared_session}, candidates: {dst: [*Q4a1, *Q4a2]},
+        rows: ["manifest[task_q4qc_ag_scde].runs.task_q4qcw.resume_of", "manifest[task_q4qc_ag_scde].runs.task_q4qc.session_id", "manifest[task_q4qc_ag_scde].runs.task_q4qc2.session_id"]}
+  e59: {src: *Q4w, rel: wake_of, dst: *Q4a2, basis: reported, rows: ["state.task[task_q4qcw].parent_task", "state.task[task_q4qc2].result.pending_jobs"]}
+  e60: {src: *Q4w, rel: reported_output, dst: *Q4qc, basis: reported, rows: ["state.task[task_q4qcw].result.outputs[0]", "state.task[task_q4qcw].result.workdir"]}
+  e61: {src: *Q4w, rel: reported_output, dst: *Q4qs, basis: reported, rows: ["state.task[task_q4qcw].result.outputs[1]", "state.task[task_q4qcw].result.workdir"]}
+  e62: {src: *ag_stats, rel: performs, dst: *Q4rm, basis: reported, rows: ["state.task[task_q4rm].payload.agent_id"]}
+  e63: {src: *Q4rm, rel: uses_method, dst: *M4remote, basis: declared, rows: ["state.task[task_q4rm].step_id"]}
+  e64: {src: *Q4rm, rel: used, dst: *D3, basis: declared, rows: ["state.request[req_q4].plan.steps[1].input_refs[0]"]}
+  e65: {src: *Q4rm, rel: reported_output, dst: *Q4st, basis: reported, rows: ["state.task[task_q4rm].result.outputs[0]", "state.task[task_q4rm].result.workdir"]}
+  e66: {src: *ag_scde, rel: performs, dst: *Q4rep, basis: reported, rows: ["state.task[task_q4rep].payload.agent_id", "manifest[task_q4rep_ag_scde].agent_id"]}
+  e67: {src: *Q4rep, rel: uses_method, dst: *M4report, basis: declared, rows: ["state.task[task_q4rep].step_id"]}
+  e68: {src: *Q4rep, rel: used, dst: *Q4qc, basis: declared, rows: ["state.request[req_q4].plan.steps[2].input_refs[0]", "state.task[task_q4qc].result.workdir", "state.task[task_q4qc2].result.workdir", "state.task[task_q4qcw].result.workdir"]}
+  e69: {src: *Q4rep, rel: used, dst: *A8, basis: declared, rows: ["state.request[req_q4].plan.steps[2].input_refs[1]", "state.task[task_q3scan].result.workdir_id"]}
+  e70: {src: *Q4rep, rel: reported_output, dst: *Q4de, basis: reported, rows: ["state.task[task_q4rep].result.outputs[0]", "state.task[task_q4rep].result.workdir"]}
+  e71: {src: *E1q4, rel: refers_to, dst: *Q4de, basis: cited, rows: ["state.task[task_q4rep].result.structured.evidence[0].source", "state.task[task_q4rep].result.structured.artifact_refs[0]"]}
+  e72: {src: *K1q4, rel: bears_on, dst: *E1q4, value: supports, basis: reported, rows: ["state.task[task_q4rep].result.structured.links[0]"]}
+
+queries:
+  # ---------- 재사용 소비자 (1–6, 13) ----------
+  q01:
+    ask: "raw_counts.tsv 확보 기록을 D 판본별로"
+    rules: [scope, hash]
+    call: {consumer: find_reusable, key: outputs/raw_counts.tsv}
+    answer:
+      selected: [*A1, *A6]          # A1은 D1(r1), A6은 D2(r2)에서. 같은 hash(h1)여도 둘 다 낸다
+      excluded_unknown: []
+      candidates:
+        *A1 : {match: {key: "yes"}, recommend: true}
+        *A6 : {match: {key: "yes"}, recommend: true}
+  q02:
+    ask: "Q2가 재사용한 artifact와 생성 run"
+    rules: [reuse, gen, cite]
+    call: {consumer: find_reusable, used_by_request: req_q2}
+    answer:
+      selected: [*A2]               # R3가 declared로 쓴 다른 요청 산출물. 생성 R2w(req_q1). A3는 인용(e23)이라 use가 아니다. A5→R3f는 같은 요청
+      excluded_unknown: []
+      candidates:
+        *A2 : {match: {used_by_request: "yes"}, recommend: true}
+  q03:
+    ask: "A6은 A1의 재사용인가 (raw_counts.tsv 중 D1에서 나온 것)"
+    rules: [hash, reuse]
+    call: {consumer: find_reusable, key: outputs/raw_counts.tsv, derived_from: *D1}
+    answer:
+      selected: [*A1]               # A6은 R4가 D2만 선언해 no. 같은 내용은 same_content_as 단서뿐이고 A1의 use에 R4는 없다
+      excluded_unknown: []
+      candidates:
+        *A1 : {match: {key: "yes", derived_from: "yes"}, recommend: true}
+  q04:
+    ask: "single_cell_de@2로 D1(r1)에서 낸 결과"
+    rules: [method, unknown]
+    call: {consumer: find_reusable, method: single_cell_de@2, derived_from: *D1}
+    answer:
+      selected: [*A5, *A5f]         # A2·A3는 @1, A6·A7은 D2 계보, Q4 산출물은 pack 없음
+      excluded_unknown: [*A8, *Q4qc]   # 생성 run이 unknown이라 method·계보를 판정할 수 없다
+      candidates:
+        *A5 : {match: {method: "yes", derived_from: "yes"}, recommend: true}
+        *A5f : {match: {method: "yes", derived_from: "yes"}, recommend: true}
+        *A8 : {match: {method: unknown, derived_from: unknown}, recommend: false}
+        *Q4qc : {match: {method: unknown, derived_from: unknown}, recommend: false}
+  q05:
+    ask: "scan_extra.tsv(A8) 재사용 후보"
+    rules: [unknown, gen]
+    call: {consumer: find_reusable, key: outputs/scan_extra.tsv}
+    answer:
+      selected: [*A8]               # 후보로 내되 generated_by·sha256 unknown이라 권고하지 않는다. R5 workspace라고 R5로 채우지 않는다
+      excluded_unknown: []
+      candidates:
+        *A8 : {match: {key: "yes"}, recommend: false}
+  q06:
+    ask: "A2를 raw_counts 입력으로 쓸 수 있나"
+    rules: [type]
+    call: {consumer: find_reusable, key: outputs/norm_counts.tsv, data_type: raw_counts}
+    answer:
+      selected: [*A2]               # Q1 pack count_scale=raw_counts는 계획 조건이라 A2 타입이 아니다. 판정 unknown
+      excluded_unknown: []
+      candidates:
+        *A2 : {match: {key: "yes", data_type: unknown}, recommend: false}
+  # ---------- 감사 소비자 (7–12) ----------
+  q07:
+    ask: "A3를 보고한 run"
+    rules: [gen, resume, wake]
+    call: {consumer: audit_lineage, artifact: *A3}
+    answer:
+      edges: [e01, e02, e03, e04, e08, e09, e10, e11, e12, e14]   # 생성 R2w. R2w는 R2를 resume·wake했지만 R2와 같은 run이 아니다
+      cites: []
+      gaps: []
+      cautions: []
+  q08:
+    ask: "Q1 de step의 run 수와 재시도 수"
+    rules: [retry, resume, wake, runmeta]
+    call: {consumer: audit_lineage, step: req_q1/de}
+    answer:
+      runs: [*R2, *R2w]
+      run_count: 2
+      retry_count: 0                # R2w는 attempt 1의 wake다. resume·wake는 재시도가 아니다
+      resumes: [e11]
+      wake_of: [e12]
+  q09:
+    ask: "K2@1 지지 근거의 원자료"
+    rules: [indep, cite, traverse]
+    call: {consumer: audit_lineage, claim: *K2}
+    answer:
+      edges: [e01, e02, e03, e04, e08, e09, e10, e11, e12, e13, e14, e17, e18, e19, e20, e21, e22, e24, e25]
+      cites: [e23]                  # R3가 A3를 인용. 계보로 따라가지 않고 여기만 싣는다
+      gaps: []
+      bears_on: {supports: [*E1r, *E2], contradicts: [], context: []}
+      shared_ancestors:
+      - {evidence: [*E1r, *E2], nodes: [*A1, *D1]}
+      independent_groups: [g_q1_de, g_q2_de]   # #115 판정 그대로. 공통 조상은 검토 단서일 뿐 자동 판정이 아니다
+      cautions:
+      - {code: shared_ancestor_review, evidence: [*E1r, *E2], nodes: [*A1, *D1]}
+  q10:
+    ask: "E3가 K3를 지지하나"
+    rules: [support, cite]
+    call: {consumer: audit_lineage, claim: *K3}
+    answer:
+      edges: [e30, e31, e32, e33, e34, e35, e36, e37, e38, e39, e40, e43, e44, e45]
+      cites: [e41, e42]
+      gaps:
+      - {node: *A8, field: generated_by, reason: no_reported_output, basis: reported}
+      - {node: *A8, field: sha256, reason: not_observed, basis: reported}
+      bears_on: {supports: [*E4, *E5], contradicts: [], context: [*E3]}   # E3은 context라 지지가 아니다
+      shared_ancestors: []          # E4 계보가 A8에서 끊겨 있다. 빈 목록이 독립의 증거는 아니다
+      independent_groups: [g_q3_extra, g_q3_scan]
+      cautions: []
+  q11:
+    ask: "E4의 계보"
+    rules: [unknown, gen]
+    call: {consumer: audit_lineage, evidence: *E4}
+    answer:
+      edges: [e39]                  # A8을 보고한 run이 없어 여기서 멈춘다
+      cites: []
+      gaps:
+      - {node: *A8, field: generated_by, reason: no_reported_output, basis: reported}
+      - {node: *A8, field: sha256, reason: not_observed, basis: reported}
+      cautions: []
+  q12:
+    ask: "R5 직원이 이 방법에 검증됐나"
+    rules: [probe]
+    call: {consumer: audit_lineage, run: *R5}
+    answer:
+      edges: [e30, e31, e32, e33, e34, e35, e36]
+      cites: [e41, e42]
+      gaps: []
+      cautions: []
+      agent_verification: {agent: *ag_seqtool, contract_status: active, verification_scope: connection_only,
+                           method_validation: not_established}   # probe_tools는 연결 확인뿐
+  # ---------- Q4 반례 (13–17) ----------
+  q13:
+    ask: "qc_table.tsv를 생성한 run (이미 있는 파일 재보고)"
+    rules: [gen]
+    call: {consumer: find_reusable, key: outputs/qc_table.tsv}
+    answer:
+      selected: [*Q4qc]             # 실패한 1차·재시도·wake가 모두 보고했다. 생성 run unknown, 후보 셋. hash가 하나여도 생성자를 정하지 않는다
+      excluded_unknown: []
+      candidates:
+        *Q4qc : {match: {key: "yes"}, recommend: false}
+  q14:
+    ask: "task_q4qc2는 재시도인가 재개인가"
+    rules: [retry, resume, runmeta]
+    call: {consumer: audit_lineage, run: *Q4a2}
+    answer:
+      edges: [e50, e51, e52, e53]   # 둘 다다. attempt 2(SQLite)라 retry, resume_of로 Q4a1을 resume. manifest 최상위 task는 attempt 1이라 쓰면 틀린다
+      cites: []
+      gaps: []
+      cautions: []
+      agent_verification: {agent: *ag_scde, contract_status: none, verification_scope: unknown,
+                           method_validation: not_established, unknown: {verification_scope: no_contract_record}}
+  q15:
+    ask: "task_q4qcw가 resume한 run (같은 session 복수 run)"
+    rules: [session, wake]
+    call: {consumer: audit_lineage, run: *Q4w}
+    answer:
+      edges: [e55, e56, e57, e58, e59]   # session sess_q4qc를 Q4a1·Q4a2가 다 썼다. resume 부모 unknown. wake 부모는 parent_task로 Q4a2
+      cites: []
+      gaps:
+      - {node: *Q4w, field: resumes, reason: shared_session, basis: reported, candidates: [*Q4a1, *Q4a2]}
+      cautions:
+      - {code: resume_parent_ambiguous, nodes: [*Q4w], candidates: [*Q4a1, *Q4a2]}
+      agent_verification: {agent: *ag_scde, contract_status: none, verification_scope: unknown,
+                           method_validation: not_established, unknown: {verification_scope: no_contract_record}}
+  q16:
+    ask: "원격 run task_q4rm의 실행 메타 (manifest 누락)"
+    rules: [runmeta, unknown]
+    call: {consumer: audit_lineage, run: *Q4rm}
+    answer:
+      edges: [e62, e63, e64]
+      cites: []
+      gaps:                         # session_id·resumes(none)는 SQLite 행에 있어 known. R3f manifest의 ag_stats hash로 채우지 않는다
+      - {node: *Q4rm, field: agent_spec_sha256, reason: manifest_missing, basis: reported}
+      cautions: []
+      agent_verification: {agent: *ag_stats, contract_status: none, verification_scope: unknown,
+                           method_validation: not_established, unknown: {verification_scope: no_contract_record}}
+  q17:
+    ask: "req_q4 K1@1의 근거와 판본 (ID 충돌·복수 hash)"
+    rules: [scope, hash, gen, unknown]
+    call: {consumer: audit_lineage, claim: *K1q4}
+    answer:
+      edges: [e49, e54, e60, e66, e67, e68, e69, e70, e71, e72]   # req_q1의 K1·E1·A3(같은 id·artifact_id)은 닿지 않는다
+      cites: []
+      gaps:
+      - {node: *A8, field: generated_by, reason: no_reported_output, basis: reported}
+      - {node: *A8, field: sha256, reason: not_observed, basis: reported}
+      - {node: *Q4qc, field: generated_by, reason: multiple_reporters, basis: reported, candidates: [*Q4a1, *Q4a2, *Q4w]}
+      - {node: *Q4de, field: sha256, reason: multiple_hashes, basis: reported, candidates: [*hR1, *hR2]}
+      bears_on: {supports: [*E1q4], contradicts: [], context: []}
+      shared_ancestors: []
+      independent_groups: [g_q4]
+      cautions: []
+
+# 변경 뒤 전체 출력 = 직전 상태에 아래 diff를 적용한 것. 여기 없는 칸은 그대로다.
+# 후보의 uses·data_type 칸은 nodes를 따르므로 nodes diff가 q01·q03·q04·q13 후보 칸에도 그대로 들어간다.
+changes:
+  change1:
+    what: "재사용 범위를 요청 간에서 run 간으로 넓힌다. 같은 요청의 다른 run이 보고한 artifact use도 재사용(reused_same_request)"
+    order: [B, A]
+    applies_on: base
+    nodes:
+      uses:
+      - {edge: e07, reuse_kind: reused_same_request}
+      - {edge: e10, reuse_kind: reused_same_request}
+      - {edge: e28, reuse_kind: reused_same_request}
+      - {edge: e36, reuse_kind: reused_same_request}
+      - {edge: e68, reuse_kind: reused_same_request}
+      # e19는 reused_cross_request, e69는 unknown(no_reported_output) 그대로
+    edges_added: []
+    queries:
+      q02:
+        selected: [*A2, *A5]
+        excluded_unknown: []
+        candidates:
+          *A2 : {match: {used_by_request: "yes"}, recommend: true}
+          *A5 : {match: {used_by_request: "yes"}, recommend: true}
+  change2:
+    what: "task meta output_types 선언(records/change2_overlay.json)으로 data_type을 basis declared로 채운다. broader 상속 금지는 유지"
+    order: [A, B]
+    applies_on: change1
+    vocabulary_needed: {raw_counts: {broader: expression_counts}, normalized_counts: {broader: expression_counts}, de_table: {}}
+    nodes:
+      artifacts:
+      - {id: *A1, data_type: raw_counts, unknown: {}, rows: {data_type: ['overlay2[task_q1fetch].output_types["outputs/raw_counts.tsv"]']}}
+      - {id: *A2, data_type: normalized_counts, unknown: {}, rows: {data_type: ['overlay2[task_q1dew].output_types["outputs/norm_counts.tsv"]']}}
+      - {id: *A3, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q1dew].output_types["outputs/de_table.tsv"]']}}
+      - {id: *A5, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q2de].output_types["outputs/de_table.tsv"]']}}
+      - {id: *A5f, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q2flt].output_types["outputs/de_filtered.tsv"]']}}
+      - {id: *A6, data_type: raw_counts, unknown: {}, rows: {data_type: ['overlay2[task_q3fetch].output_types["outputs/raw_counts.tsv"]']}}
+      - {id: *A7, data_type: unknown, unknown: {data_type: not_declared}}
+      - {id: *A8, data_type: unknown, unknown: {data_type: generator_unknown}}
+      - {id: *Q4qc, data_type: unknown, unknown: {data_type: generator_unknown}}
+      - {id: *Q4qs, data_type: unknown, unknown: {data_type: not_declared}}
+      - {id: *Q4st, data_type: unknown, unknown: {data_type: not_declared}}
+      - {id: *Q4de, data_type: unknown, unknown: {data_type: not_declared}}
+      # unknown 칸은 data_type 이유만 바뀐다. 다른 칸의 이유(generated_by·sha256 등)는 그대로다
+    edges_added:
+      e73: {src: *A1, rel: means, dst: "type:raw_counts", basis: declared, rows: ['overlay2[task_q1fetch].output_types["outputs/raw_counts.tsv"]']}
+      e74: {src: *A2, rel: means, dst: "type:normalized_counts", basis: declared, rows: ['overlay2[task_q1dew].output_types["outputs/norm_counts.tsv"]']}
+      e75: {src: *A3, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q1dew].output_types["outputs/de_table.tsv"]']}
+      e76: {src: *A5, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q2de].output_types["outputs/de_table.tsv"]']}
+      e77: {src: *A5f, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q2flt].output_types["outputs/de_filtered.tsv"]']}
+      e78: {src: *A6, rel: means, dst: "type:raw_counts", basis: declared, rows: ['overlay2[task_q3fetch].output_types["outputs/raw_counts.tsv"]']}
+    queries:
+      q06:
+        selected: [*A2]
+        excluded_unknown: []
+        candidates:
+          *A2 : {match: {key: "yes", data_type: "no"}, recommend: false}   # normalized_counts ≠ raw_counts. 공통 broader로 호환되지 않는다
+
+# 측정 규약(M7). 구현 전에 고정한다(보정 1).
+measurement:
+  order: "B를 먼저 만든다. 상태 base → change1(B→A) → change2(A→B). 각 구현은 자기 상태의 답으로 채점한다"
+  shared_reader: "read_records는 파일·SQLite를 읽어 파싱·정규화만 한다(JSON 중복 키 거부, ResearchResult 검증, overlay 합치기). 생성·재사용·동일성·조상 판정은 A·B가 각자 한다"
+  score:
+    query: "질의 하나는 answer의 모든 칸(interface.output 포함)이 같을 때만 정답이다"
+    wrong_identification: "forbidden_merges를 어긴 항목 수. 세 상태 모두에서 본다"
+    disagreement: "interface.agreement의 사실마다 두 소비자 값이 다르면 1"
+  defects:
+    unit: "원인. 틀린 질의 수가 아니라 소비자 출력의 nodes·edges 칸 차이를 아래 cause로 묶어 서로 다른 cause 수를 센다. 한 칸(예: A8.generated_by)이 q05·q11을 함께 틀리게 해도 1건이다. unknown 이유만 달라도 그 칸의 cause로 센다"
+    node_field_cause: {generated_by: gen, reported_by: gen, generator_inputs: reuse, method: method, packs: method, sha256: hash,
+                       same_content_as: hash, data_type: type, reuse_kind: reuse, resumes: resume, wake_of: wake, retry: retry,
+                       attempt: runmeta, kind: runmeta, revision: runmeta, agent_spec_sha256: runmeta, session_id: runmeta, agent: runmeta,
+                       contract_status: probe, verification_scope: probe, method_validation: probe}
+    edge_rel_cause: {performs: runmeta, uses_method: method, used: reuse, reported_output: gen, resumes: resume, wake_of: wake,
+                     refers_to: cite, cites: cite, bears_on: support, means: type}
+    answer_field_cause: {bears_on: support, shared_ancestors: indep, independent_groups: indep, agent_verification: probe,
+                         runs: runmeta, run_count: runmeta, retry_count: retry, selected: traverse, excluded_unknown: traverse}
+    residual: "칸 차이 없이 질의만 틀리면 그 답 칸의 answer_field_cause, 그것도 없으면 traverse로 센다"
+  time: "커밋 trailer Pilot-Minutes = 설계·구현·test·수정·리뷰 대응을 모두 넣은 에이전트 작업 시간. A가 0분이면 B 우위를 인정하지 않는다. 변경 커밋의 비 test hunk 수는 보조 지표"
+  adapter: "외부 출력 꼴로 바꾸는 코드 줄 수를 A·B마다 의미 처리와 따로 적는다. 출력 꼴이 한쪽 내부 표현과 닮아 생기는 비용을 모델 효용으로 세지 않기 위해서다"
+  performance: "cold = 모델 load + read_records + projection + 질의 1회. warm = 같은 projection에서 질의만. 질의마다 warm-up 20회 뒤 200회 perf_counter_ns의 p95와 B/A. A·B를 번갈아 5 batch 돌려 batch별 p95 최소~최대를 적는다. tracemalloc peak. 크기 1×와 50×. cycle·깊이 fixture는 종료와 caution만 본다"
+  llm_zero: "semantics.py import는 stdlib·yaml·pydantic·labhq.evidence·labhq.research.contract뿐(AST). 측정 중 socket·subprocess·os.system·asyncio subprocess를 막는다"
+  gate: "채택·중단 기준은 issue #127 그대로다. 합성 fixture 결과를 실제 요청의 효과로 적지 않는다"
+
+# 잘못된 동일시·추론. base·변경 1·변경 2 어느 상태에서도 나오면 안 된다. lineage_not은 answer.edges만 본다(cites 칸 제외).
+forbidden_merges:
+- {id: F01, kind: same_entity, nodes: [*A1, *A6], rule: hash}
+- {id: F02, kind: edge_absent, edge: [*R4, used, *A1], rule: hash}
+- {id: F03, kind: same_entity, nodes: [*D1, *D2], rule: scope}
+- {id: F04, kind: same_entity, nodes: [*R2, *R2w], rule: resume}
+- {id: F05, kind: value_not, node: *R2w, field: retry, values: [true], rule: wake}
+- {id: F06, kind: same_entity, nodes: [*Q4a1, *Q4a2], rule: retry}
+- {id: F07, kind: value_not, node: *Q4a2, field: retry, values: [false], rule: retry}
+- {id: F08, kind: value_not, node: *Q4a2, field: attempt, values: [1], rule: runmeta}
+- {id: F09, kind: value_not, node: *Q4w, field: resumes, values: [*Q4a1, *Q4a2], rule: session}
+- {id: F10, kind: value_not, node: *Q4qc, field: generated_by, values: [*Q4a1, *Q4a2, *Q4w], rule: gen}
+- {id: F11, kind: value_not, node: *A8, field: generated_by, values: [*R5], rule: unknown}
+- {id: F12, kind: value_not, node: *A8, field: method, values: [*M3scan], rule: unknown}
+- {id: F13, kind: value_not, node: *Q4rm, field: agent_spec_sha256, values: [*H_stats], rule: unknown}
+- {id: F14, kind: support_not, claim: *K3, evidence: *E3, rule: support}
+- {id: F15, kind: edge_absent, edge: [*R3, used, *A3], rule: cite}
+- {id: F16, kind: lineage_not, root: *A5, nodes: [*A3], rule: cite}
+- {id: F17, kind: same_entity, nodes: [*K1, *K1q4], rule: scope}
+- {id: F18, kind: same_entity, nodes: [*E1, *E1q4], rule: scope}
+- {id: F19, kind: same_entity, nodes: [*E1, *E1r], rule: cite}
+- {id: F20, kind: same_entity, nodes: [*A3, *A5, *Q4de], rule: scope}
+- {id: F21, kind: value_not, node: *Q4de, field: sha256, values: [*hR1, *hR2], rule: hash}
+- {id: F22, kind: same_content_not, nodes: [*A8, *Q4st], rule: scope}
+- {id: F23, kind: value_not, node: *A2, field: data_type, values: [raw_counts, expression_counts], rule: type}
+- {id: F24, kind: match_not, query: q06, candidate: *A2, field: data_type, values: ["yes"], rule: type}
+- {id: F25, kind: value_not, node: *ag_seqtool, field: method_validation, values: [established], rule: probe}
+- {id: F26, kind: lineage_not, root: *K1q4, nodes: [*K1, *E1, *A3, *A5], rule: scope}

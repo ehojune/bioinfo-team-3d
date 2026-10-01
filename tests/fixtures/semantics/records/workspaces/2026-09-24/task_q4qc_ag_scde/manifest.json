@@ -1,0 +1,91 @@
+{
+  "labhq_version": "0.2.1",
+  "host": "synth-host-a",
+  "task": {
+    "id": "task_q4qc",
+    "request_id": "req_q4",
+    "agent_id": "ag_scde",
+    "prompt": "Synthetic prompt for task_q4qc.",
+    "output_schema": null,
+    "resume_session_id": null,
+    "budget_usd": null,
+    "created_at": 1790208099.0,
+    "meta": {
+      "kind": "step",
+      "step_id": "qc",
+      "request": "Synthetic request req_q4.",
+      "instruction": "Synthetic step qc.",
+      "revision": 0,
+      "title": "qc: Synthetic step qc.",
+      "project_dirs": [],
+      "upstream_dirs": [],
+      "outputs": [
+        "outputs/qc_table.tsv",
+        "outputs/qc_summary.tsv"
+      ],
+      "attempt": 1
+    }
+  },
+  "agent_id": "ag_scde",
+  "engine": "claude_code",
+  "model": "model-a",
+  "agent_spec_sha256": "a5473b3b385004ed7dfa09d980d1101d9435dcb2030807f923ae49aa042629f0",
+  "runs": {
+    "task_q4qc": {
+      "started_at": 1790208100.0,
+      "runner_id": "runner-a",
+      "engine": "claude_code",
+      "model": "model-a",
+      "engine_cli_version": "0.0.0-synth",
+      "resume_of": null,
+      "kind": "step",
+      "ended_at": 1790208300.0,
+      "ok": false,
+      "error": "transient: connection reset by peer",
+      "cost_usd": 0.01,
+      "cost_known": true,
+      "usage": {},
+      "usage_known": true,
+      "session_id": "sess_q4qc",
+      "pending_jobs": []
+    },
+    "task_q4qc2": {
+      "started_at": 1790208400.0,
+      "runner_id": "runner-a",
+      "engine": "claude_code",
+      "model": "model-a",
+      "engine_cli_version": "0.0.0-synth",
+      "resume_of": "sess_q4qc",
+      "kind": "step",
+      "ended_at": 1790208600.0,
+      "ok": true,
+      "error": null,
+      "cost_usd": 0.01,
+      "cost_known": true,
+      "usage": {},
+      "usage_known": true,
+      "session_id": "sess_q4qc",
+      "pending_jobs": [
+        "job_q4qc_1"
+      ]
+    },
+    "task_q4qcw": {
+      "started_at": 1790212000.0,
+      "runner_id": "runner-a",
+      "engine": "claude_code",
+      "model": "model-a",
+      "engine_cli_version": "0.0.0-synth",
+      "resume_of": "sess_q4qc",
+      "kind": "step",
+      "ended_at": 1790212500.0,
+      "ok": true,
+      "error": null,
+      "cost_usd": 0.01,
+      "cost_known": true,
+      "usage": {},
+      "usage_known": true,
+      "session_id": "sess_q4qc",
+      "pending_jobs": []
+    }
+  }
+}

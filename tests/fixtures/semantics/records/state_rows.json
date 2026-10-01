@@ -1,0 +1,2163 @@
+{
+  "synthetic": true,
+  "note": "Rows of the gateway SQLite table state(kind, key, body). Tests copy them into a temporary database and open it read-only; the fixture holds no binary file.",
+  "rows": [
+    {
+      "kind": "request",
+      "key": "req_q1",
+      "body": {
+        "id": "req_q1",
+        "status": "done",
+        "created_at": 1789862400.0,
+        "cost_known": true,
+        "usage": {},
+        "text": "Synthetic request req_q1.",
+        "mode": "orchestrate",
+        "agent_id": null,
+        "work_kind": "research",
+        "scope_status": "in_scope",
+        "project_dirs": [],
+        "budget_usd": null,
+        "project_id": null,
+        "meta": {},
+        "plan": {
+          "schema_version": 2,
+          "intake": {
+            "work_kind": "research",
+            "reason": "PI specified work_kind=research",
+            "scope_status": "in_scope",
+            "confidence": "clear",
+            "source": "explicit"
+          },
+          "brief": {
+            "question": "Is synthetic gene G-01 higher in group B?",
+            "purpose": "Synthetic pilot fixture",
+            "subject": "synthetic dataset",
+            "scope": "synthetic records only",
+            "deliverables": [
+              "synthetic table"
+            ],
+            "completion_conditions": [
+              "synthetic result reported"
+            ],
+            "study_type": "comparative",
+            "primary_hypothesis": "group B differs from group A",
+            "null_or_alternatives": [
+              "no difference"
+            ],
+            "distinguishing_observations": [
+              "donor-level estimate"
+            ]
+          },
+          "protocol": {
+            "revision": 1,
+            "analysis_unit": "donor",
+            "selection_criteria": [
+              "synthetic donor"
+            ],
+            "exclusion_criteria": [
+              "failed QC"
+            ],
+            "comparators": [
+              "A",
+              "B"
+            ],
+            "primary_metrics": [
+              "synthetic metric"
+            ],
+            "validation_methods": [
+              "synthetic QC"
+            ],
+            "resource_limits": [
+              "synthetic limit"
+            ],
+            "stop_conditions": [
+              "synthetic stop"
+            ],
+            "approval_conditions": [
+              "CP1 before execution"
+            ],
+            "data_boundaries": [
+              "synthetic records only"
+            ],
+            "not_applicable": {},
+            "statistics": {
+              "applicable": true,
+              "reason": "group comparison",
+              "estimand": "group effect",
+              "analysis_unit": "donor",
+              "comparison_groups": [
+                "A",
+                "B"
+              ],
+              "primary_outcomes": [
+                "expression"
+              ],
+              "multiple_testing": "FDR",
+              "missing_and_exclusions": "pre-specified",
+              "effect_size_and_interval": "estimate and CI",
+              "sensitivity_analyses": [],
+              "not_applicable": {}
+            },
+            "packs": [
+              {
+                "id": "single_cell_de",
+                "version": "1",
+                "sha256": "11dfa32714b64f9593bbee43d6581662571c32efdccf81caf1edca6b6bc46f07"
+              }
+            ]
+          },
+          "pack_values": {
+            "single_cell_de@1": {
+              "fields": {
+                "donor_id": "metadata.donor_id",
+                "condition": "metadata.condition",
+                "batch": "metadata.batch",
+                "count_scale": "raw_counts",
+                "independent_replicates": 4,
+                "replicate_definition": "one synthetic donor",
+                "model": "pseudobulk",
+                "model_family": "negative_binomial",
+                "model_rationale": "The count model consumes raw counts and keeps donors independent.",
+                "batch_design": "identifiable",
+                "conclusion_mode": "condition_effect"
+              },
+              "validators": {
+                "single_cell_de.donor_unit": "Aggregate cells within each donor before inference.",
+                "single_cell_de.model_assumption": "Use a raw-count model with donor and batch terms."
+              },
+              "acceptance": {
+                "single_cell_de.donor_model": "Use donor-level pseudobulk fixed before CP1.",
+                "single_cell_de.confounded_conclusion_mode": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_study_type": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_hypothesis": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_statistics": "Not active because the design is identifiable.",
+                "single_cell_de.confounded_estimand": "Not active because the design is identifiable.",
+                "single_cell_de.pseudobulk_raw_counts": "Pseudobulk sums raw counts.",
+                "single_cell_de.count_likelihood_raw_counts": "The negative binomial model uses raw counts.",
+                "single_cell_de.donor_linear_log_scale": "Not active because the model is pseudobulk.",
+                "single_cell_de.condition_effect_statistics": "Statistics are fixed before CP1.",
+                "single_cell_de.descriptive_study_type": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_hypothesis": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_statistics": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_estimand": "Not active because a condition effect is estimated."
+              }
+            }
+          },
+          "clarifying_questions": [],
+          "steps": [
+            {
+              "id": "fetch",
+              "agent_id": "ag_fetch",
+              "instruction": "Synthetic step fetch.",
+              "phase": "evidence",
+              "claim_ids": [],
+              "input_refs": [
+                "synth:DS-0001@r1"
+              ],
+              "outputs": [
+                "outputs/raw_counts.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [],
+              "depends_on": []
+            },
+            {
+              "id": "de",
+              "agent_id": "ag_scde",
+              "instruction": "Synthetic step de.",
+              "phase": "analysis",
+              "claim_ids": [
+                "K1"
+              ],
+              "input_refs": [
+                "step:fetch/outputs/raw_counts.tsv"
+              ],
+              "outputs": [
+                "outputs/norm_counts.tsv",
+                "outputs/de_table.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [
+                {
+                  "id": "slot_de",
+                  "required": true,
+                  "description": "synthetic slot"
+                }
+              ],
+              "depends_on": [
+                "fetch"
+              ]
+            }
+          ],
+          "recruit": [],
+          "notes": "synthetic fixture plan"
+        },
+        "research_contract": {
+          "schema_version": 1,
+          "work_kind": "research",
+          "execution_enabled": true,
+          "plan_sha256": "efbfb1dccc7ca40f388905abde34eef4cb5c190cc1c3691bab31439bf93ced39",
+          "pack_snapshot": {
+            "single_cell_de@1": "11dfa32714b64f9593bbee43d6581662571c32efdccf81caf1edca6b6bc46f07"
+          },
+          "approval": {
+            "gate": "research_plan",
+            "target_sha256": "efbfb1dccc7ca40f388905abde34eef4cb5c190cc1c3691bab31439bf93ced39",
+            "approved": true,
+            "status": "approved",
+            "approval_id": "appr_req_q1",
+            "decider": "PI",
+            "delegation_scope": [],
+            "note": "",
+            "decided_at": 1789862450.0,
+            "request_id": "req_q1",
+            "protocol_revision": 1
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "key": "req_q2",
+      "body": {
+        "id": "req_q2",
+        "status": "done",
+        "created_at": 1790035200.0,
+        "cost_known": true,
+        "usage": {},
+        "text": "Synthetic request req_q2.",
+        "mode": "orchestrate",
+        "agent_id": null,
+        "work_kind": "research",
+        "scope_status": "in_scope",
+        "project_dirs": [],
+        "budget_usd": null,
+        "project_id": null,
+        "meta": {},
+        "plan": {
+          "schema_version": 2,
+          "intake": {
+            "work_kind": "research",
+            "reason": "PI specified work_kind=research",
+            "scope_status": "in_scope",
+            "confidence": "clear",
+            "source": "explicit"
+          },
+          "brief": {
+            "question": "Does G-01 stay higher under pack version 2?",
+            "purpose": "Synthetic pilot fixture",
+            "subject": "synthetic dataset",
+            "scope": "synthetic records only",
+            "deliverables": [
+              "synthetic table"
+            ],
+            "completion_conditions": [
+              "synthetic result reported"
+            ],
+            "study_type": "comparative",
+            "primary_hypothesis": "group B differs from group A",
+            "null_or_alternatives": [
+              "no difference"
+            ],
+            "distinguishing_observations": [
+              "donor-level estimate"
+            ]
+          },
+          "protocol": {
+            "revision": 1,
+            "analysis_unit": "donor",
+            "selection_criteria": [
+              "synthetic donor"
+            ],
+            "exclusion_criteria": [
+              "failed QC"
+            ],
+            "comparators": [
+              "A",
+              "B"
+            ],
+            "primary_metrics": [
+              "synthetic metric"
+            ],
+            "validation_methods": [
+              "synthetic QC"
+            ],
+            "resource_limits": [
+              "synthetic limit"
+            ],
+            "stop_conditions": [
+              "synthetic stop"
+            ],
+            "approval_conditions": [
+              "CP1 before execution"
+            ],
+            "data_boundaries": [
+              "synthetic records only"
+            ],
+            "not_applicable": {},
+            "statistics": {
+              "applicable": true,
+              "reason": "group comparison",
+              "estimand": "group effect",
+              "analysis_unit": "donor",
+              "comparison_groups": [
+                "A",
+                "B"
+              ],
+              "primary_outcomes": [
+                "expression"
+              ],
+              "multiple_testing": "FDR",
+              "missing_and_exclusions": "pre-specified",
+              "effect_size_and_interval": "estimate and CI",
+              "sensitivity_analyses": [],
+              "not_applicable": {}
+            },
+            "packs": [
+              {
+                "id": "single_cell_de",
+                "version": "2",
+                "sha256": "edb7e161c29e38a95662ea2b59119f5383bd530b85cee8eb03ea95404b8b7175"
+              }
+            ]
+          },
+          "pack_values": {
+            "single_cell_de@2": {
+              "fields": {
+                "donor_id": "metadata.donor_id",
+                "condition": "metadata.condition",
+                "batch": "metadata.batch",
+                "count_scale": "normalized_counts",
+                "independent_replicates": 4,
+                "replicate_definition": "one synthetic donor",
+                "model": "donor_dependent",
+                "model_family": "linear",
+                "model_rationale": "Fixture-only pack version; values are synthetic.",
+                "batch_design": "identifiable",
+                "conclusion_mode": "condition_effect"
+              },
+              "validators": {},
+              "acceptance": {}
+            }
+          },
+          "clarifying_questions": [],
+          "steps": [
+            {
+              "id": "de2",
+              "agent_id": "ag_scde",
+              "instruction": "Synthetic step de2.",
+              "phase": "analysis",
+              "claim_ids": [
+                "K2"
+              ],
+              "input_refs": [
+                "art:req_q1/task_q1de_ag_scde/outputs/norm_counts.tsv"
+              ],
+              "outputs": [
+                "outputs/de_table.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [
+                {
+                  "id": "slot_de2",
+                  "required": true,
+                  "description": "synthetic slot"
+                }
+              ],
+              "depends_on": []
+            },
+            {
+              "id": "filter",
+              "agent_id": "ag_stats",
+              "instruction": "Synthetic step filter.",
+              "phase": "analysis",
+              "claim_ids": [],
+              "input_refs": [
+                "step:de2/outputs/de_table.tsv"
+              ],
+              "outputs": [
+                "outputs/de_filtered.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [],
+              "depends_on": [
+                "de2"
+              ]
+            }
+          ],
+          "recruit": [],
+          "notes": "synthetic fixture plan"
+        },
+        "research_contract": {
+          "schema_version": 1,
+          "work_kind": "research",
+          "execution_enabled": true,
+          "plan_sha256": "cc3107b8c24496168f1b8a68f41a4baf019f725402c1111e840a03de3e0d6366",
+          "pack_snapshot": {
+            "single_cell_de@2": "edb7e161c29e38a95662ea2b59119f5383bd530b85cee8eb03ea95404b8b7175"
+          },
+          "approval": {
+            "gate": "research_plan",
+            "target_sha256": "cc3107b8c24496168f1b8a68f41a4baf019f725402c1111e840a03de3e0d6366",
+            "approved": true,
+            "status": "approved",
+            "approval_id": "appr_req_q2",
+            "decider": "PI",
+            "delegation_scope": [],
+            "note": "",
+            "decided_at": 1790035250.0,
+            "request_id": "req_q2",
+            "protocol_revision": 1
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "key": "req_q3",
+      "body": {
+        "id": "req_q3",
+        "status": "done",
+        "created_at": 1790121600.0,
+        "cost_known": true,
+        "usage": {},
+        "text": "Synthetic request req_q3.",
+        "mode": "orchestrate",
+        "agent_id": null,
+        "work_kind": "research",
+        "scope_status": "in_scope",
+        "project_dirs": [],
+        "budget_usd": null,
+        "project_id": null,
+        "meta": {},
+        "plan": {
+          "schema_version": 2,
+          "intake": {
+            "work_kind": "research",
+            "reason": "PI specified work_kind=research",
+            "scope_status": "in_scope",
+            "confidence": "clear",
+            "source": "explicit"
+          },
+          "brief": {
+            "question": "Which synthetic regions show signal in release r2?",
+            "purpose": "Synthetic pilot fixture",
+            "subject": "synthetic dataset",
+            "scope": "synthetic records only",
+            "deliverables": [
+              "synthetic table"
+            ],
+            "completion_conditions": [
+              "synthetic result reported"
+            ],
+            "study_type": "exploratory",
+            "primary_hypothesis": null,
+            "null_or_alternatives": [],
+            "distinguishing_observations": []
+          },
+          "protocol": {
+            "revision": 1,
+            "analysis_unit": "donor",
+            "selection_criteria": [
+              "synthetic donor"
+            ],
+            "exclusion_criteria": [
+              "failed QC"
+            ],
+            "comparators": [
+              "A",
+              "B"
+            ],
+            "primary_metrics": [
+              "synthetic metric"
+            ],
+            "validation_methods": [
+              "synthetic QC"
+            ],
+            "resource_limits": [
+              "synthetic limit"
+            ],
+            "stop_conditions": [
+              "synthetic stop"
+            ],
+            "approval_conditions": [
+              "CP1 before execution"
+            ],
+            "data_boundaries": [
+              "synthetic records only"
+            ],
+            "not_applicable": {},
+            "statistics": {
+              "applicable": false,
+              "reason": "synthetic exploratory fixture",
+              "estimand": null,
+              "analysis_unit": null,
+              "comparison_groups": [],
+              "primary_outcomes": [],
+              "multiple_testing": null,
+              "missing_and_exclusions": null,
+              "effect_size_and_interval": null,
+              "sensitivity_analyses": [],
+              "not_applicable": {}
+            },
+            "packs": []
+          },
+          "pack_values": {},
+          "clarifying_questions": [],
+          "steps": [
+            {
+              "id": "fetch",
+              "agent_id": "ag_fetch",
+              "instruction": "Synthetic step fetch.",
+              "phase": "evidence",
+              "claim_ids": [],
+              "input_refs": [
+                "synth:DS-0001@r2"
+              ],
+              "outputs": [
+                "outputs/raw_counts.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [],
+              "depends_on": []
+            },
+            {
+              "id": "scan",
+              "agent_id": "ag_seqtool",
+              "instruction": "Synthetic step scan.",
+              "phase": "analysis",
+              "claim_ids": [
+                "K3"
+              ],
+              "input_refs": [
+                "step:fetch/outputs/raw_counts.tsv"
+              ],
+              "outputs": [
+                "outputs/scan_hits.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [
+                {
+                  "id": "slot_scan",
+                  "required": true,
+                  "description": "synthetic slot"
+                }
+              ],
+              "depends_on": [
+                "fetch"
+              ]
+            }
+          ],
+          "recruit": [],
+          "notes": "synthetic fixture plan"
+        },
+        "research_contract": {
+          "schema_version": 1,
+          "work_kind": "research",
+          "execution_enabled": true,
+          "plan_sha256": "af273fa90b8cb0d5fb863acaf83a9455e38de7442563f6ae4cdc4580c1daa9b3",
+          "pack_snapshot": {},
+          "approval": {
+            "gate": "research_plan",
+            "target_sha256": "af273fa90b8cb0d5fb863acaf83a9455e38de7442563f6ae4cdc4580c1daa9b3",
+            "approved": true,
+            "status": "approved",
+            "approval_id": "appr_req_q3",
+            "decider": "PI",
+            "delegation_scope": [],
+            "note": "",
+            "decided_at": 1790121650.0,
+            "request_id": "req_q3",
+            "protocol_revision": 1
+          }
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "key": "req_q4",
+      "body": {
+        "id": "req_q4",
+        "status": "done",
+        "created_at": 1790208000.0,
+        "cost_known": true,
+        "usage": {},
+        "text": "Synthetic request req_q4.",
+        "mode": "orchestrate",
+        "agent_id": null,
+        "work_kind": "research",
+        "scope_status": "in_scope",
+        "project_dirs": [],
+        "budget_usd": null,
+        "project_id": null,
+        "meta": {},
+        "plan": {
+          "schema_version": 2,
+          "intake": {
+            "work_kind": "research",
+            "reason": "PI specified work_kind=research",
+            "scope_status": "in_scope",
+            "confidence": "clear",
+            "source": "explicit"
+          },
+          "brief": {
+            "question": "Does synthetic DS-0002 pass QC?",
+            "purpose": "Synthetic pilot fixture",
+            "subject": "synthetic dataset",
+            "scope": "synthetic records only",
+            "deliverables": [
+              "synthetic table"
+            ],
+            "completion_conditions": [
+              "synthetic result reported"
+            ],
+            "study_type": "exploratory",
+            "primary_hypothesis": null,
+            "null_or_alternatives": [],
+            "distinguishing_observations": []
+          },
+          "protocol": {
+            "revision": 1,
+            "analysis_unit": "donor",
+            "selection_criteria": [
+              "synthetic donor"
+            ],
+            "exclusion_criteria": [
+              "failed QC"
+            ],
+            "comparators": [
+              "A",
+              "B"
+            ],
+            "primary_metrics": [
+              "synthetic metric"
+            ],
+            "validation_methods": [
+              "synthetic QC"
+            ],
+            "resource_limits": [
+              "synthetic limit"
+            ],
+            "stop_conditions": [
+              "synthetic stop"
+            ],
+            "approval_conditions": [
+              "CP1 before execution"
+            ],
+            "data_boundaries": [
+              "synthetic records only"
+            ],
+            "not_applicable": {},
+            "statistics": {
+              "applicable": false,
+              "reason": "synthetic exploratory fixture",
+              "estimand": null,
+              "analysis_unit": null,
+              "comparison_groups": [],
+              "primary_outcomes": [],
+              "multiple_testing": null,
+              "missing_and_exclusions": null,
+              "effect_size_and_interval": null,
+              "sensitivity_analyses": [],
+              "not_applicable": {}
+            },
+            "packs": []
+          },
+          "pack_values": {},
+          "clarifying_questions": [],
+          "steps": [
+            {
+              "id": "qc",
+              "agent_id": "ag_scde",
+              "instruction": "Synthetic step qc.",
+              "phase": "validation",
+              "claim_ids": [],
+              "input_refs": [
+                "synth:DS-0002@r1"
+              ],
+              "outputs": [
+                "outputs/qc_table.tsv",
+                "outputs/qc_summary.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [],
+              "depends_on": []
+            },
+            {
+              "id": "remote",
+              "agent_id": "ag_stats",
+              "instruction": "Synthetic step remote.",
+              "phase": "analysis",
+              "claim_ids": [],
+              "input_refs": [
+                "synth:DS-0002@r1"
+              ],
+              "outputs": [
+                "outputs/stats.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [],
+              "depends_on": []
+            },
+            {
+              "id": "report",
+              "agent_id": "ag_scde",
+              "instruction": "Synthetic step report.",
+              "phase": "report",
+              "claim_ids": [
+                "K1"
+              ],
+              "input_refs": [
+                "step:qc/outputs/qc_table.tsv",
+                "art:req_q3/task_q3scan_ag_seqtool/outputs/scan_extra.tsv"
+              ],
+              "outputs": [
+                "outputs/de_table.tsv"
+              ],
+              "checks": [
+                "synthetic check"
+              ],
+              "evidence_slots": [
+                {
+                  "id": "slot_report",
+                  "required": true,
+                  "description": "synthetic slot"
+                }
+              ],
+              "depends_on": [
+                "qc"
+              ]
+            }
+          ],
+          "recruit": [],
+          "notes": "synthetic fixture plan"
+        },
+        "research_contract": {
+          "schema_version": 1,
+          "work_kind": "research",
+          "execution_enabled": true,
+          "plan_sha256": "82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5",
+          "pack_snapshot": {},
+          "approval": {
+            "gate": "research_plan",
+            "target_sha256": "82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5",
+            "approved": true,
+            "status": "approved",
+            "approval_id": "appr_req_q4",
+            "decider": "PI",
+            "delegation_scope": [],
+            "note": "",
+            "decided_at": 1790208050.0,
+            "request_id": "req_q4",
+            "protocol_revision": 1
+          }
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q1fetch",
+      "body": {
+        "request_id": "req_q1",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "fetch",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q1fetch",
+          "request_id": "req_q1",
+          "agent_id": "ag_fetch",
+          "prompt": "Synthetic prompt for task_q1fetch.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1789862499.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "fetch",
+            "request": "Synthetic request req_q1.",
+            "instruction": "Synthetic step fetch.",
+            "revision": 0,
+            "title": "fetch: Synthetic step fetch.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/raw_counts.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1789862499.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q1fetch",
+          "agent_id": "ag_fetch",
+          "ok": true,
+          "text": "Synthetic result text for task_q1fetch.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q1fetch",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-20/task_q1fetch_ag_fetch",
+          "workdir_id": "task_q1fetch_ag_fetch",
+          "outputs": [
+            "outputs/raw_counts.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q1fetch": {
+                "started_at": 1789862500.0,
+                "ended_at": 1789862800.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q1de",
+      "body": {
+        "request_id": "req_q1",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "de",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q1de",
+          "request_id": "req_q1",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q1de.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1789862899.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "de",
+            "request": "Synthetic request req_q1.",
+            "instruction": "Synthetic step de.",
+            "revision": 0,
+            "title": "de: Synthetic step de.",
+            "project_dirs": [],
+            "upstream_dirs": [
+              "workspaces/2026-09-20/task_q1fetch_ag_fetch"
+            ],
+            "outputs": [
+              "outputs/norm_counts.tsv",
+              "outputs/de_table.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1789862899.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q1de",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q1de.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q1de",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [
+            "job_q1de_1"
+          ],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-20/task_q1de_ag_scde",
+          "workdir_id": "task_q1de_ag_scde",
+          "outputs": [],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q1de": {
+                "started_at": 1789862900.0,
+                "ended_at": 1789863300.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q1dew",
+      "body": {
+        "request_id": "req_q1",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "de",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": "task_q1de",
+        "payload": {
+          "id": "task_q1dew",
+          "request_id": "req_q1",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q1dew.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": "sess_q1de",
+          "budget_usd": null,
+          "created_at": 1789867399.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "de",
+            "request": "Synthetic request req_q1.",
+            "instruction": "Synthetic step de.",
+            "revision": 0,
+            "title": "HPC 결과 확인 후 이어서 작업",
+            "project_dirs": [],
+            "upstream_dirs": [
+              "workspaces/2026-09-20/task_q1fetch_ag_fetch"
+            ],
+            "outputs": [
+              "outputs/norm_counts.tsv",
+              "outputs/de_table.tsv"
+            ],
+            "parent_task": "task_q1de",
+            "workdir": "workspaces/2026-09-20/task_q1de_ag_scde",
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1789867399.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q1dew",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q1dew.",
+          "structured": {
+            "schema_version": 2,
+            "plan_sha256": "efbfb1dccc7ca40f388905abde34eef4cb5c190cc1c3691bab31439bf93ced39",
+            "step_id": "de",
+            "claims": [
+              {
+                "id": "K1",
+                "revision": 1,
+                "statement": "Synthetic gene G-01 is higher in group B than in group A.",
+                "scope": "synthetic DS-0001 r1, donor level",
+                "kind": "finding",
+                "status": "supported",
+                "importance": "major",
+                "status_reason": "synthetic supporting row",
+                "limitations": [],
+                "supersedes": null,
+                "comparisons": []
+              }
+            ],
+            "evidence": [
+              {
+                "id": "E1",
+                "kind": "observation",
+                "observation": "DE table row G-01 shows a positive synthetic estimate.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "de_table",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row G-01",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "direct",
+                "source_level": "primary",
+                "independence_group": "g_q1_de",
+                "assessment_reason": "synthetic assessment"
+              }
+            ],
+            "links": [
+              {
+                "claim_id": "K1",
+                "claim_revision": 1,
+                "evidence_id": "E1",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              }
+            ],
+            "artifact_refs": [
+              {
+                "artifact_id": "norm_counts",
+                "path": "outputs/norm_counts.tsv"
+              },
+              {
+                "artifact_id": "de_table",
+                "path": "outputs/de_table.tsv"
+              }
+            ],
+            "not_established": [],
+            "failures": [],
+            "method_changes": []
+          },
+          "blocking_decision": null,
+          "session_id": "sess_q1de",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-20/task_q1de_ag_scde",
+          "workdir_id": "task_q1de_ag_scde",
+          "outputs": [
+            "outputs/norm_counts.tsv",
+            "outputs/de_table.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q1de": {
+                "started_at": 1789862900.0,
+                "ended_at": 1789863300.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              },
+              "task_q1dew": {
+                "started_at": 1789867400.0,
+                "ended_at": 1789868000.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q2de",
+      "body": {
+        "request_id": "req_q2",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "de2",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q2de",
+          "request_id": "req_q2",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q2de.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790035299.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "de2",
+            "request": "Synthetic request req_q2.",
+            "instruction": "Synthetic step de2.",
+            "revision": 0,
+            "title": "de2: Synthetic step de2.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/de_table.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790035299.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q2de",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q2de.",
+          "structured": {
+            "schema_version": 2,
+            "plan_sha256": "cc3107b8c24496168f1b8a68f41a4baf019f725402c1111e840a03de3e0d6366",
+            "step_id": "de2",
+            "claims": [
+              {
+                "id": "K2",
+                "revision": 1,
+                "statement": "Synthetic gene G-01 stays higher in group B under pack version 2.",
+                "scope": "synthetic DS-0001 r1, donor level",
+                "kind": "finding",
+                "status": "supported",
+                "importance": "major",
+                "status_reason": "synthetic supporting row",
+                "limitations": [],
+                "supersedes": null,
+                "comparisons": []
+              }
+            ],
+            "evidence": [
+              {
+                "id": "E2",
+                "kind": "observation",
+                "observation": "Pack v2 DE table row G-01 shows a positive synthetic estimate.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "de_table",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row G-01",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "direct",
+                "source_level": "primary",
+                "independence_group": "g_q2_de",
+                "assessment_reason": "synthetic assessment"
+              },
+              {
+                "id": "E1r",
+                "kind": "observation",
+                "observation": "Request q1 DE table row G-01, cited again.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "q1_de_table",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row G-01",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "indirect",
+                "source_level": "secondary",
+                "independence_group": "g_q1_de",
+                "assessment_reason": "synthetic assessment"
+              }
+            ],
+            "links": [
+              {
+                "claim_id": "K2",
+                "claim_revision": 1,
+                "evidence_id": "E2",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              },
+              {
+                "claim_id": "K2",
+                "claim_revision": 1,
+                "evidence_id": "E1r",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              }
+            ],
+            "artifact_refs": [
+              {
+                "artifact_id": "de_table",
+                "path": "outputs/de_table.tsv"
+              },
+              {
+                "artifact_id": "q1_de_table",
+                "path": "../../2026-09-20/task_q1de_ag_scde/outputs/de_table.tsv"
+              }
+            ],
+            "not_established": [],
+            "failures": [],
+            "method_changes": []
+          },
+          "blocking_decision": null,
+          "session_id": "sess_q2de",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-22/task_q2de_ag_scde",
+          "workdir_id": "task_q2de_ag_scde",
+          "outputs": [
+            "outputs/de_table.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q2de": {
+                "started_at": 1790035300.0,
+                "ended_at": 1790035900.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q2flt",
+      "body": {
+        "request_id": "req_q2",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "filter",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q2flt",
+          "request_id": "req_q2",
+          "agent_id": "ag_stats",
+          "prompt": "Synthetic prompt for task_q2flt.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790035999.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "filter",
+            "request": "Synthetic request req_q2.",
+            "instruction": "Synthetic step filter.",
+            "revision": 0,
+            "title": "filter: Synthetic step filter.",
+            "project_dirs": [],
+            "upstream_dirs": [
+              "workspaces/2026-09-22/task_q2de_ag_scde"
+            ],
+            "outputs": [
+              "outputs/de_filtered.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790035999.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q2flt",
+          "agent_id": "ag_stats",
+          "ok": true,
+          "text": "Synthetic result text for task_q2flt.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q2flt",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-22/task_q2flt_ag_stats",
+          "workdir_id": "task_q2flt_ag_stats",
+          "outputs": [
+            "outputs/de_filtered.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "codex",
+            "model": "model-b",
+            "runs": {
+              "task_q2flt": {
+                "started_at": 1790036000.0,
+                "ended_at": 1790036200.0,
+                "engine": "codex",
+                "model": "model-b",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q3fetch",
+      "body": {
+        "request_id": "req_q3",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "fetch",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q3fetch",
+          "request_id": "req_q3",
+          "agent_id": "ag_fetch",
+          "prompt": "Synthetic prompt for task_q3fetch.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790121699.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "fetch",
+            "request": "Synthetic request req_q3.",
+            "instruction": "Synthetic step fetch.",
+            "revision": 0,
+            "title": "fetch: Synthetic step fetch.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/raw_counts.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790121699.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q3fetch",
+          "agent_id": "ag_fetch",
+          "ok": true,
+          "text": "Synthetic result text for task_q3fetch.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q3fetch",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-23/task_q3fetch_ag_fetch",
+          "workdir_id": "task_q3fetch_ag_fetch",
+          "outputs": [
+            "outputs/raw_counts.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q3fetch": {
+                "started_at": 1790121700.0,
+                "ended_at": 1790122000.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q3scan",
+      "body": {
+        "request_id": "req_q3",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "scan",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q3scan",
+          "request_id": "req_q3",
+          "agent_id": "ag_seqtool",
+          "prompt": "Synthetic prompt for task_q3scan.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790122099.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "scan",
+            "request": "Synthetic request req_q3.",
+            "instruction": "Synthetic step scan.",
+            "revision": 0,
+            "title": "scan: Synthetic step scan.",
+            "project_dirs": [],
+            "upstream_dirs": [
+              "workspaces/2026-09-23/task_q3fetch_ag_fetch"
+            ],
+            "outputs": [
+              "outputs/scan_hits.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790122099.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q3scan",
+          "agent_id": "ag_seqtool",
+          "ok": true,
+          "text": "Synthetic result text for task_q3scan.",
+          "structured": {
+            "schema_version": 2,
+            "plan_sha256": "af273fa90b8cb0d5fb863acaf83a9455e38de7442563f6ae4cdc4580c1daa9b3",
+            "step_id": "scan",
+            "claims": [
+              {
+                "id": "K3",
+                "revision": 1,
+                "statement": "Synthetic region X-07 shows signal in DS-0001 release r2.",
+                "scope": "synthetic DS-0001 r2",
+                "kind": "finding",
+                "status": "supported",
+                "importance": "major",
+                "status_reason": "synthetic supporting row",
+                "limitations": [],
+                "supersedes": null,
+                "comparisons": []
+              }
+            ],
+            "evidence": [
+              {
+                "id": "E3",
+                "kind": "literature_claim",
+                "observation": "A synthetic paper reports X-07 in another cohort.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": "https://doi.org/10.5555/synth.0003",
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": null,
+                  "version": null,
+                  "accessed_at": "2026-09-23",
+                  "locator": "Table 2",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "indirect",
+                "source_level": "secondary",
+                "independence_group": "g_lit_0003",
+                "assessment_reason": "synthetic assessment"
+              },
+              {
+                "id": "E4",
+                "kind": "observation",
+                "observation": "Extra scan file lists X-07.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "scan_extra",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row X-07",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "direct",
+                "source_level": "primary",
+                "independence_group": "g_q3_extra",
+                "assessment_reason": "synthetic assessment"
+              },
+              {
+                "id": "E5",
+                "kind": "observation",
+                "observation": "Scan hits list X-07.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "scan_hits",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row X-07",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "direct",
+                "source_level": "primary",
+                "independence_group": "g_q3_scan",
+                "assessment_reason": "synthetic assessment"
+              }
+            ],
+            "links": [
+              {
+                "claim_id": "K3",
+                "claim_revision": 1,
+                "evidence_id": "E3",
+                "relation": "context",
+                "rationale": "synthetic context link"
+              },
+              {
+                "claim_id": "K3",
+                "claim_revision": 1,
+                "evidence_id": "E4",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              },
+              {
+                "claim_id": "K3",
+                "claim_revision": 1,
+                "evidence_id": "E5",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              }
+            ],
+            "artifact_refs": [
+              {
+                "artifact_id": "scan_hits",
+                "path": "outputs/scan_hits.tsv"
+              },
+              {
+                "artifact_id": "scan_extra",
+                "path": "outputs/scan_extra.tsv"
+              }
+            ],
+            "not_established": [],
+            "failures": [],
+            "method_changes": []
+          },
+          "blocking_decision": null,
+          "session_id": "sess_q3scan",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-23/task_q3scan_ag_seqtool",
+          "workdir_id": "task_q3scan_ag_seqtool",
+          "outputs": [
+            "outputs/scan_hits.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q3scan": {
+                "started_at": 1790122100.0,
+                "ended_at": 1790122500.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q4qc",
+      "body": {
+        "request_id": "req_q4",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "qc",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q4qc",
+          "request_id": "req_q4",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q4qc.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790208099.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "qc",
+            "request": "Synthetic request req_q4.",
+            "instruction": "Synthetic step qc.",
+            "revision": 0,
+            "title": "qc: Synthetic step qc.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/qc_table.tsv",
+              "outputs/qc_summary.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790208099.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q4qc",
+          "agent_id": "ag_scde",
+          "ok": false,
+          "text": "Synthetic result text for task_q4qc.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q4qc",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-24/task_q4qc_ag_scde",
+          "workdir_id": "task_q4qc_ag_scde",
+          "outputs": [
+            "outputs/qc_table.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q4qc": {
+                "started_at": 1790208100.0,
+                "ended_at": 1790208300.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": "transient: connection reset by peer"
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q4qc2",
+      "body": {
+        "request_id": "req_q4",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "qc",
+        "kind": "step",
+        "attempt": 2,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q4qc2",
+          "request_id": "req_q4",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q4qc2.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": "sess_q4qc",
+          "budget_usd": null,
+          "created_at": 1790208399.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "qc",
+            "request": "Synthetic request req_q4.",
+            "instruction": "Synthetic step qc.",
+            "revision": 0,
+            "title": "qc: Synthetic step qc.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/qc_table.tsv",
+              "outputs/qc_summary.tsv"
+            ],
+            "attempt": 2,
+            "workdir": "workspaces/2026-09-24/task_q4qc_ag_scde"
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790208399.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q4qc2",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q4qc2.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q4qc",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [
+            "job_q4qc_1"
+          ],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-24/task_q4qc_ag_scde",
+          "workdir_id": "task_q4qc_ag_scde",
+          "outputs": [
+            "outputs/qc_table.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q4qc": {
+                "started_at": 1790208100.0,
+                "ended_at": 1790208300.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              },
+              "task_q4qc2": {
+                "started_at": 1790208400.0,
+                "ended_at": 1790208600.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q4qcw",
+      "body": {
+        "request_id": "req_q4",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "qc",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": "task_q4qc2",
+        "payload": {
+          "id": "task_q4qcw",
+          "request_id": "req_q4",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q4qcw.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": "sess_q4qc",
+          "budget_usd": null,
+          "created_at": 1790211999.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "qc",
+            "request": "Synthetic request req_q4.",
+            "instruction": "Synthetic step qc.",
+            "revision": 0,
+            "title": "HPC 결과 확인 후 이어서 작업",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/qc_table.tsv",
+              "outputs/qc_summary.tsv"
+            ],
+            "parent_task": "task_q4qc2",
+            "workdir": "workspaces/2026-09-24/task_q4qc_ag_scde",
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790211999.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q4qcw",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q4qcw.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q4qc",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-24/task_q4qc_ag_scde",
+          "workdir_id": "task_q4qc_ag_scde",
+          "outputs": [
+            "outputs/qc_table.tsv",
+            "outputs/qc_summary.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q4qc": {
+                "started_at": 1790208100.0,
+                "ended_at": 1790208300.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              },
+              "task_q4qc2": {
+                "started_at": 1790208400.0,
+                "ended_at": 1790208600.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              },
+              "task_q4qcw": {
+                "started_at": 1790212000.0,
+                "ended_at": 1790212500.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q4rm",
+      "body": {
+        "request_id": "req_q4",
+        "runner_id": "runner-b",
+        "runner_incarnation": "inc_runner-b",
+        "step_id": "remote",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q4rm",
+          "request_id": "req_q4",
+          "agent_id": "ag_stats",
+          "prompt": "Synthetic prompt for task_q4rm.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790208099.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "remote",
+            "request": "Synthetic request req_q4.",
+            "instruction": "Synthetic step remote.",
+            "revision": 0,
+            "title": "remote: Synthetic step remote.",
+            "project_dirs": [],
+            "upstream_dirs": [],
+            "outputs": [
+              "outputs/stats.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790208099.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q4rm",
+          "agent_id": "ag_stats",
+          "ok": true,
+          "text": "Synthetic result text for task_q4rm.",
+          "structured": null,
+          "blocking_decision": null,
+          "session_id": "sess_q4rm",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-24/task_q4rm_ag_stats",
+          "workdir_id": "task_q4rm_ag_stats",
+          "outputs": [
+            "outputs/stats.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "codex",
+            "model": "model-b",
+            "runs": {
+              "task_q4rm": {
+                "started_at": 1790208100.0,
+                "ended_at": 1790208500.0,
+                "engine": "codex",
+                "model": "model-b",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    },
+    {
+      "kind": "task",
+      "key": "task_q4rep",
+      "body": {
+        "request_id": "req_q4",
+        "runner_id": "runner-a",
+        "runner_incarnation": "inc_runner-a",
+        "step_id": "report",
+        "kind": "step",
+        "attempt": 1,
+        "revision": 0,
+        "parse_attempt": 0,
+        "parent_task": null,
+        "payload": {
+          "id": "task_q4rep",
+          "request_id": "req_q4",
+          "agent_id": "ag_scde",
+          "prompt": "Synthetic prompt for task_q4rep.",
+          "context": "",
+          "output_schema": null,
+          "resume_session_id": null,
+          "budget_usd": null,
+          "created_at": 1790212999.0,
+          "meta": {
+            "kind": "step",
+            "step_id": "report",
+            "request": "Synthetic request req_q4.",
+            "instruction": "Synthetic step report.",
+            "revision": 0,
+            "title": "report: Synthetic step report.",
+            "project_dirs": [],
+            "upstream_dirs": [
+              "workspaces/2026-09-24/task_q4qc_ag_scde"
+            ],
+            "outputs": [
+              "outputs/de_table.tsv"
+            ],
+            "attempt": 1
+          }
+        },
+        "accepted": true,
+        "dispatched_at": 1790212999.0,
+        "completed": true,
+        "result": {
+          "task_id": "task_q4rep",
+          "agent_id": "ag_scde",
+          "ok": true,
+          "text": "Synthetic result text for task_q4rep.",
+          "structured": {
+            "schema_version": 2,
+            "plan_sha256": "82864d49af2187fb0a51807f8970494304d86357beba57a8d1c251db7cd2ccb5",
+            "step_id": "report",
+            "claims": [
+              {
+                "id": "K1",
+                "revision": 1,
+                "statement": "Synthetic QC table passes for every donor in DS-0002 r1.",
+                "scope": "synthetic DS-0002 r1",
+                "kind": "finding",
+                "status": "supported",
+                "importance": "major",
+                "status_reason": "synthetic supporting row",
+                "limitations": [],
+                "supersedes": null,
+                "comparisons": []
+              }
+            ],
+            "evidence": [
+              {
+                "id": "E1",
+                "kind": "observation",
+                "observation": "Report table row QC shows pass.",
+                "status": "observed",
+                "status_detail": null,
+                "source": {
+                  "uri": null,
+                  "id_scheme": null,
+                  "id_value": null,
+                  "artifact_id": "de_table",
+                  "version": null,
+                  "accessed_at": null,
+                  "locator": "row QC",
+                  "query": null
+                },
+                "derived_from": [],
+                "method": null,
+                "conditions": [],
+                "quantities": [],
+                "directness": "direct",
+                "source_level": "primary",
+                "independence_group": "g_q4",
+                "assessment_reason": "synthetic assessment"
+              }
+            ],
+            "links": [
+              {
+                "claim_id": "K1",
+                "claim_revision": 1,
+                "evidence_id": "E1",
+                "relation": "supports",
+                "rationale": "synthetic supports link"
+              }
+            ],
+            "artifact_refs": [
+              {
+                "artifact_id": "de_table",
+                "path": "outputs/de_table.tsv"
+              }
+            ],
+            "not_established": [],
+            "failures": [],
+            "method_changes": []
+          },
+          "blocking_decision": null,
+          "session_id": "sess_q4rep",
+          "cost_usd": 0.01,
+          "cost_known": true,
+          "usage": {},
+          "usage_known": true,
+          "pending_jobs": [],
+          "pending_asks": [],
+          "workdir": "workspaces/2026-09-24/task_q4rep_ag_scde",
+          "workdir_id": "task_q4rep_ag_scde",
+          "outputs": [
+            "outputs/de_table.tsv"
+          ],
+          "missing_outputs": [],
+          "provenance": {
+            "engine": "claude_code",
+            "model": "model-a",
+            "runs": {
+              "task_q4rep": {
+                "started_at": 1790213000.0,
+                "ended_at": 1790213400.0,
+                "engine": "claude_code",
+                "model": "model-a",
+                "engine_cli_version": "0.0.0-synth"
+              }
+            }
+          },
+          "partial_results": false,
+          "revision_failed": null,
+          "error_kind": null,
+          "error": null
+        }
+      }
+    }
+  ]
+}

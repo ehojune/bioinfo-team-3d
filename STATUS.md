@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot (PR A: opt-in으로 main에)
+
+- 결론: 중단 기준은 충족했다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). 그러나 PI 결정(2026-10-01)으로 접지 않고 opt-in·실행 경로 미연결로 유지한다. 그림자 모드로 실데이터를 모아 #121에서 재평가한다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
+- 바뀐 것: 새 파일 `labhq/research/semantics_v1.yaml`·`semantics.py`(B, 공유 read_records), `tests/semantics_baseline.py`(A), `tests/test_semantics_pilot.py`·`test_semantics_public.py`, `scripts/semantics_pilot.py`, `docs/reference/semantics_pilot.md`. 후속 6건을 고쳤다: B resume 시각 unknown(#137), A claim 반복 보고(#138), B independent_groups(#139), A 노드 단위 순회(#140), reader immutable 경쟁(#141), LLM 0 차단·script import 검사(#142). `expected.yaml`·hash·모델 YAML은 그대로다. `pyproject.toml` package-data 1줄. 설정·실행 경로·CSO·state_dir은 그대로다.
+- 실행한 것: 후속마다 수정 전 실패하던 회귀 test(#137 TypeError, #138 IntegrityError, #139 group 누락, #140 16층 1.83초, #141 writer 행 놓침, #142 os 함수 실제 실행 시도). 측정 다시 실행(1× warm 200회·5 batch, 50× 복제, 20층 diamond A 1.9 ms·B 0.2 ms). Codex 리뷰 1회(새 결함 없음). 전체 pytest 1401 passed/20 skipped, `node tests/*.cjs` 8개, `bash scripts/check_public.sh`, `git diff --check` 통과. 격리 test(설정 키 0, 실행 경로 import 0, settings.py diff 0, CSO prompt 동일)도 그대로 통과한다.
+- 미해결: #143(접는 커밋 순서)은 접지 않으므로 닫는다. 변경 내용을 구현 전에 알아 B에 분기를 미리 넣었으므로 변경 시간 지표는 변경 비용을 재지 못했다. A의 N+1 SQL 탓에 성능 비교는 근거가 약하다. 그림자 모드·팔란티어식 운영 객체 뷰는 다음 PR.
+- 근거: `docs/reference/semantics_pilot.md`, `tests/fixtures/semantics/expected.yaml`, `scripts/semantics_pilot.py`, `tests/test_semantics_pilot.py`.
+
 ## 2026-10-01 · #63 README 맨 위 배지 — 종류별 개수 대신 대상 하나씩
 
 - 결론: README 제목 바로 아래 배지가 "builtin MCP 3" 같은 개수가 아니라 대상 이름과 역할을 보여 준다. 누르면 그 대상의 공식 페이지나 README 해당 절로 간다. 없는 대상(Slurm #120, Gemini·Antigravity 직원, LICENSE)은 배지를 만들지 않는다.
