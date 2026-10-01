@@ -19,6 +19,7 @@ import websockets
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
+from ..adapters.owned import OwnedPathError, owned_link_error, write_owned
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
@@ -600,6 +601,8 @@ class Runner:
                     reason = "폴더 자체가 통제 데이터 구역과 겹침"
                 if reason is None:
                     _links, reason = await self._project_links([str(workspace_dir)], zones, emit, fail_closed=True)
+                if reason is None:  # labhq writes these from outside every sandbox (#165)
+                    reason = owned_link_error(workspace_dir)
                 if reason:
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
@@ -730,8 +733,13 @@ class Runner:
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
                 found.append(relative)
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
-        (ws.dir / "outputs" / f"RESULT_{task.id}.md").write_text(result.text or "", encoding="utf-8")
-        (ws.dir / "outputs" / "RESULT.md").write_text(result.text or "", encoding="utf-8")
+        try:
+            for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
+                write_owned(ws.dir, f"outputs/{name}", result.text or "")
+        except OwnedPathError:
+            error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
+            await emit("agent.log", {"level": "alert", "text": error})
+            result = result.model_copy(update={"ok": False, "error": error})
         ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error, cost_usd=result.cost_usd,
                       cost_known=result.cost_known if result.cost_known is not None else result.cost_usd is not None,
                       usage=result.usage, usage_known=result.usage_known,

@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..util import extract_json, merge_staff_env, short
+from .owned import OwnedPathError, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
 
@@ -174,9 +175,14 @@ class RunContext:
 
     @property
     def meta_dir(self) -> Path:
-        d = self.workdir / ".labhq"
-        d.mkdir(exist_ok=True)
+        d = plain_directory(self.workdir, ".labhq")  # never a link an earlier run left (#165)
+        if d is None:
+            raise OwnedPathError("labhq does not write in .labhq: it is a link or not a folder in the workspace")
         return d
+
+    def write_meta(self, name: str, text: str) -> Path:
+        """Write one file in the adapter's scratch folder `.labhq/`, never through a link (#165)."""
+        return write_owned(self.workdir, f".labhq/{name}", text)
 
 
 @dataclass
@@ -349,7 +355,7 @@ class AgentAdapter(ABC):
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
         refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
                     or read_only_workspace_error(
-                        self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine)))
+                        self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine, ctx.workdir)))
                    if ctx.read_only else None) or self.preflight_error(ctx, env)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
@@ -367,7 +373,7 @@ class AgentAdapter(ABC):
             cmd = _resolve_command(cmd, env, self.engine)
         except ValueError as exc:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
-        (ctx.meta_dir / "command.txt").write_text(shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd), encoding="utf-8")
+        ctx.write_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
@@ -421,7 +427,11 @@ class AgentAdapter(ABC):
             await self._kill(proc)
             await asyncio.shield(drain)
             raise
-        (ctx.meta_dir / "stderr_tail.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
+        try:
+            ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))
+        except OwnedPathError:  # the agent replaced .labhq with a link while it ran: keep the result, drop the tail
+            await ctx.emit("agent.log", {"level": "warn", "text": (
+                "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)

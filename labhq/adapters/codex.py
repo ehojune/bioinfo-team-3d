@@ -15,9 +15,10 @@ import json
 import os
 from pathlib import Path
 
-from ..util import atomic_write_text, short
+from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
+from .owned import write_owned
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
 WEB_TOOLS = {"WebSearch", "WebFetch"}
@@ -43,9 +44,9 @@ class CodexAdapter(AgentAdapter):
     enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
 
     def prepare(self, ctx: RunContext) -> None:
-        atomic_write_text(ctx.workdir / "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
         if ctx.task.output_schema:
-            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
+            ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
 
     def compose_prompt(self, ctx: RunContext) -> str:
         t = ctx.task
