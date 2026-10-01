@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import copy
 import fnmatch
-import stat
+import os
+import sys
 from pathlib import Path, PurePath
 
 from ..models import AgentSpec
+from .owned import is_link as _is_link
 
 # Consults and follow-ups answer from existing work; they never write or submit. Their run is an allowlist, not
 # the staff spec minus a list of risky fields: MCP servers, plugins (and their hooks), pre-approved tools and CLI
@@ -28,15 +30,21 @@ READ_ONLY_OVERRIDES = copy.deepcopy(READ_ONLY_FIELDS)
 # of disableAllHooks and --strict-mcp-config, and CLAUDE_CODE_MANAGED_SETTINGS_PATH, CLAUDE_CODE_SYNC_PLUGINS,
 # NODE_OPTIONS or a CODEX_* variable mean whatever the next CLI release makes them mean. The parent session's own
 # CLAUDE_*/CODEX_* are already gone (util.merge_staff_env). Names compare case-insensitively, as Windows does.
+# Bedrock and Vertex logins name their credential files and endpoints too (#165): without them a follow-up signs in
+# differently from the step it follows, or not at all.
 READ_ONLY_ENV_KEEP = frozenset({
     "PATH", "HOME", "USERPROFILE", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "AWS_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_VERTEX_PROJECT_ID",
-    "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CONFIG_FILE", "ANTHROPIC_BEDROCK_BASE_URL", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "ANTHROPIC_VERTEX_PROJECT_ID",
+    "ANTHROPIC_VERTEX_BASE_URL", "CLAUDE_CODE_SKIP_VERTEX_AUTH", "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS",
+    "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL",
     "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
     "CODEX_CA_CERTIFICATE",
 })
+# Per-model Vertex regions (`VERTEX_REGION_CLAUDE_3_5_HAIKU`): a family of names, matched by prefix.
+READ_ONLY_ENV_KEEP_PREFIXES = ("VERTEX_REGION_",)
 # Workspace names the adapters say their engines load as instructions, memory, skills or configuration. This is the
 # single policy list and `workspace_instruction_action` is the single matcher: depth and dot-prefixed ancestors do
 # not change the answer. Claude can exclude its own project sources with flags/settings; agents-md has no measured
@@ -59,6 +67,13 @@ WORKSPACE_INSTRUCTION_RULES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 # Where TaskWorkspace.install_skill copies a contract staff member's paper skill.
 SKILL_DIRS = (".claude/skills", ".agents/skills")
+# Windows and macOS file systems ignore letter case by default: there `claude.md` is the CLAUDE.md an engine opens
+# and `.Agents/` is `.agents/` (#190). Names are then compared case-insensitively; Linux compares them exactly.
+CASE_INSENSITIVE = os.name == "nt" or sys.platform == "darwin"
+
+
+def _folded(text: str) -> str:
+    return text.casefold() if CASE_INSENSITIVE else text
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -89,14 +104,51 @@ def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
 
 def read_only_engine_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     """The part of `engines.<engine>.env` a read-only run keeps, and the names it leaves out (never the values)."""
-    kept = {key: value for key, value in env.items() if key.upper() in READ_ONLY_ENV_KEEP}
+    kept = {key: value for key, value in env.items()
+            if key.upper() in READ_ONLY_ENV_KEEP or key.upper().startswith(READ_ONLY_ENV_KEEP_PREFIXES)}
     return kept, sorted(set(env) - set(kept))
 
 
-def labhq_workspace_paths(agent: AgentSpec, engine: str) -> list[str]:
-    """Instruction paths labhq replaces immediately before this engine starts."""
+def _tree(root: Path, follow: bool) -> dict[str, bytes] | None:
+    """Every file below `root` by relative name and content; None when `follow` is off and a link is found."""
+    files: dict[str, bytes] = {}
+    pending = [Path(root)]
+    while pending:
+        folder = pending.pop()
+        for entry in os.scandir(folder):
+            path = Path(entry.path)
+            if not follow and _is_link(path):
+                return None
+            if path.is_dir():
+                pending.append(path)
+            else:
+                files[path.relative_to(root).as_posix()] = path.read_bytes()
+    return files
+
+
+def installed_skill_matches(source: Path, copy: Path) -> bool:
+    """Whether `copy` holds exactly what TaskWorkspace.install_skill copies from `source` (#165).
+
+    install_skill copies nothing when the source has no SKILL.md, and an earlier run may have written its own skill
+    under the same name; only a copy equal to the source, with no link in it, is labhq's.
+    """
+    try:
+        if not (Path(source) / "SKILL.md").is_file() or not os.path.lexists(copy) or _is_link(copy):
+            return False
+        return _tree(Path(source), follow=True) == _tree(Path(copy), follow=False)
+    except OSError:
+        return False
+
+
+def labhq_workspace_paths(agent: AgentSpec, engine: str, workdir: Path | None = None) -> list[str]:
+    """Instruction paths labhq replaces immediately before this engine starts.
+
+    With `workdir`, a contract skill copy counts only while it still equals its source (#165).
+    """
     skill = agent.contract.skill_dir if agent.contract else None
     paths = [f"{base}/{PurePath(skill).name}" for base in SKILL_DIRS] if skill else []
+    if skill and workdir is not None:
+        paths = [path for path in paths if installed_skill_matches(Path(skill), Path(workdir) / path)]
     if engine == "codex":
         paths.append("AGENTS.md")
     return paths
@@ -105,25 +157,20 @@ def labhq_workspace_paths(agent: AgentSpec, engine: str) -> list[str]:
 def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
     """Return `exclude` or `refuse` for one engine-read workspace path, independent of depth."""
     rules = WORKSPACE_INSTRUCTION_RULES.get(engine, {})
-    parts = relative.parts
+    parts = [_folded(part) for part in relative.parts]
     name = parts[-1] if parts else ""
     for action in ("refuse", "exclude"):
-        if any(part in rules.get(f"{action}_dirs", ()) for part in parts):
+        if any(part in {_folded(d) for d in rules.get(f"{action}_dirs", ())} for part in parts):
             return action
-        if any(fnmatch.fnmatchcase(name, pattern) for pattern in rules.get(f"{action}_files", ())):
+        if any(fnmatch.fnmatchcase(name, _folded(pattern)) for pattern in rules.get(f"{action}_files", ())):
             return action
     return None
-
-
-def _is_link(path: Path) -> bool:
-    info = path.lstat()
-    return stat.S_ISLNK(info.st_mode) or bool(
-        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
 def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], action: str) -> list[str]:
     """Find matching paths at every depth without following symlinks or Windows junctions."""
     found: list[str] = []
+    owned = [_folded(mine) for mine in owned]
     pending = [Path(workdir)]
     while pending:
         path = pending.pop()
@@ -137,9 +184,10 @@ def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], ac
                 linked = _is_link(entry)
             except OSError:
                 linked = True
-            if any(relative == mine or relative.startswith(mine + "/") for mine in owned):
+            key = _folded(relative)
+            if any(key == mine or key.startswith(mine + "/") for mine in owned):
                 continue
-            owns_below = any(mine.startswith(relative + "/") for mine in owned)
+            owns_below = any(mine.startswith(key + "/") for mine in owned)
             matches = workspace_instruction_action(engine, PurePath(relative)) == action
             is_dir = False if linked else entry.is_dir()
             if matches and (not is_dir or action == "refuse") and (not owns_below or linked):
