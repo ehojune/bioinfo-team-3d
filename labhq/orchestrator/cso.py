@@ -136,7 +136,9 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.{output_types_rule}
+- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
+  inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
+  path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
 - Put QC after data generation. {question_rule}
 - For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
@@ -296,10 +298,26 @@ class PlanOutputsError(ValueError):
     """A declared step output that no normalization can bring under the step's outputs/ folder (#220)."""
 
 
-def _root_reference(inner: str) -> re.Pattern[str]:
-    """`./<inner>` or `.\\<inner>` at the workspace root, not inside `../<inner>` or a longer path name."""
+def _append_report_metadata(report: str, sections: list[str]) -> str:
+    """Add LabHQ audit text without moving a sole trailing benchmark result block from last place (#229)."""
+    if not sections:
+        return report
+    metadata = "\n\n".join(section.strip() for section in sections if section.strip())
+    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
+    blocks = list(marker.finditer(report))
+    if len(blocks) == 1 and not report[blocks[0].end():].strip():
+        before = report[:blocks[0].start()].rstrip()
+        return ((before + "\n\n") if before else "") + metadata + "\n\n" + blocks[0].group(0)
+    return report.rstrip() + "\n\n" + metadata
+
+
+def _output_reference(inner: str) -> re.Pattern[str]:
+    """A root, absolute, home, or bare instruction reference to one declared output (#229)."""
     body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
-    return re.compile(r"(?<![A-Za-z0-9_.\-/\\])\.[/\\]" + body + r"(?![A-Za-z0-9_\-/\\]|\.[A-Za-z0-9_])")
+    prefix = (r"(?:\.[/\\]|~[/\\]|[A-Za-z]:[/\\](?:[^\s\"'`/\\]+[/\\])*|"
+              r"[/\\](?:[^\s\"'`/\\]+[/\\])*)?")
+    return re.compile(r"(?<![A-Za-z0-9_.\-/\\])" + prefix + body +
+                      r"(?![A-Za-z0-9_\-/\\]|\.[A-Za-z0-9_])", re.IGNORECASE)
 
 
 def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
@@ -311,25 +329,45 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     declaration made explicit. An output that leaves outputs/ (absolute, drive, `..`) cannot be fixed here;
     it comes back as a problem for the caller to reject.
     """
-    warnings, bad, outputs = [], [], []
+    warnings, bad, outputs, seen = [], [], [], set()
     for name in step["outputs"]:
         rel = output_relpath(name)
         if rel is None:
             bad.append(name)
             continue
-        if rel == "outputs":
-            outputs.append(name)
+        if rel in seen:
+            warnings.append(f"step {step['id']}: duplicate output {name!r} removed as {rel}")
             continue
-        declared_root = re.match(r"\.[/\\](?!outputs[/\\])", name.strip()) is not None
-        instruction, refs = _root_reference(rel[len("outputs/"):]).subn(f"./{rel}", step["instruction"])
-        if refs or declared_root:
+        seen.add(rel)
+        inner = rel[len("outputs/"):] if rel.startswith("outputs/") else rel
+        instruction, refs = _output_reference(inner).subn(f"./{rel}", step["instruction"])
+        if refs or name.strip().replace("\\", "/") != rel:
             step["instruction"] = instruction
             warnings.append(f"step {step['id']}: output {name!r} moved under outputs/ as {rel}")
-            outputs.append(rel)
-        else:
-            outputs.append(name)
+        outputs.append(rel)
     step["outputs"] = outputs + bad
     return warnings, f"step {step['id']}: outputs {bad} are outside its outputs/ folder" if bad else None
+
+
+def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
+    """Copy and contain structurally valid-looking step outputs before any lane consumes the plan."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return plan, []
+    normalized = {**plan, "steps": [dict(step) if isinstance(step, dict) else step for step in plan["steps"]]}
+    warnings, problems = [], []
+    for step in normalized["steps"]:
+        if not (isinstance(step, dict) and isinstance(step.get("id"), str) and
+                isinstance(step.get("instruction"), str) and isinstance(step.get("outputs"), list) and
+                all(isinstance(name, str) for name in step["outputs"])):
+            continue
+        contained, problem = _contain_outputs(step)
+        warnings.extend(contained)
+        if problem:
+            problems.append(problem)
+    if problems:
+        raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
+                               "step's own workspace and save it at that path.")
+    return normalized, warnings
 
 
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
@@ -352,6 +390,14 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
                       "outputs": [str(o) for o in s.get("outputs") or []]})
         raw_types[sid] = s.get("output_types")
+    problems = []
+    for s in steps:
+        contained, problem = _contain_outputs(s)
+        warnings.extend(contained)
+        problems += [problem] if problem else []
+    if problems:
+        raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
+                               "step's own workspace and save it at that path.")
     ids = {s["id"] for s in steps}
     producers: dict[str, list[str]] = {}
     for s in steps:
@@ -367,10 +413,14 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
         for other in steps:
             if other["id"] == s["id"] or other["id"] in s["depends_on"]:
                 continue
-            names = [other["id"]] + [o for o in other["outputs"]
-                                     if producers.get(o) == [other["id"]] and o not in s["outputs"]]
-            if not any(name and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", s["instruction"])
-                       for name in names):
+            own = set(s["outputs"])
+            output_names = [o for o in other["outputs"] if producers.get(o) == [other["id"]] and o not in own]
+            id_referenced = bool(other["id"] and re.search(
+                r"(?<![\w])" + re.escape(other["id"]) + r"(?![\w])", s["instruction"]))
+            output_referenced = any(_output_reference(
+                o[len("outputs/"):] if o.startswith("outputs/") else o).search(s["instruction"])
+                                    for o in output_names)
+            if not id_referenced and not output_referenced:
                 continue
             if _reaches(steps, other["id"], s["id"]):
                 warnings.append(f"step {s['id']}: reference to {other['id']} not added (would create a cycle)")
@@ -380,14 +430,6 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     for s in steps:
         if s["agent_id"] not in known:
             warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
-    problems = []
-    for s in steps:
-        contained, problem = _contain_outputs(s)
-        warnings.extend(contained)
-        problems += [problem] if problem else []
-    if problems:
-        raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
-                               "step's own workspace and save it at that path.")
     if vocab is not None:  # after _contain_outputs, so names pair with the outputs the runner will collect
         for s in steps:
             entries, issues = output_types.normalize_entries(s["outputs"], raw_types.get(s["id"]), vocab)
@@ -1346,13 +1388,21 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
+                    req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
                                                        active_packs=active_pack_hashes,
                                                        expected_intake=intake, pack_definitions=packs)
                     req["plan"] = validated.model_dump(mode="json")
                     await finish_research_plan(req["plan"])
                     return
-                steps = req["plan"]["steps"]
+                type_stats: dict = {}
+                vocab = self._output_vocab()
+                steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
+                                                 orchestration, vocab=vocab, stats=type_stats)
+                req["plan"] = {**req["plan"], "steps": steps, "warnings": warnings}
+                if vocab is not None:
+                    req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
+                self.hub.save_request(rid)
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(req.get("results") or {})
                 pending_revisions = req.get("pending_revisions") or {}
@@ -1481,12 +1531,17 @@ class Orchestrator:
 
                     for attempt in (1, 2):
                         type_stats = {}
-                        # Declarations are normalized (or, when off, removed) before the contract sees them,
-                        # so a malformed one is dropped and counted instead of failing the plan or asking again.
-                        plan = prepare_research_declarations(plan, vocab, type_stats)
                         # The pack snapshot is configuration, so labhq writes protocol.packs, not the CSO (#222).
                         plan = with_pack_refs(plan, pack_refs(packs))
-                        problems = plan_problems(plan)
+                        output_problems = []
+                        try:
+                            plan, _ = _normalize_plan_outputs(plan)
+                        except PlanOutputsError as error:
+                            output_problems = [str(error)]
+                        # Declarations are normalized (or, when off, removed) after output paths, so names pair
+                        # with the exact artifacts the runner will collect.
+                        plan = prepare_research_declarations(plan, vocab, type_stats)
+                        problems = output_problems + plan_problems(plan)
                         if not problems:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                active_packs=active_pack_hashes,
@@ -1537,10 +1592,16 @@ class Orchestrator:
                             plan = (plan_res.structured if isinstance(plan_res.structured, dict)
                                     else extract_json(plan_res.text) or {})
                             still = normalize_questions(plan.get("clarifying_questions"))
-                            if still:  # questions the PI has not answered never reach dispatch
+                            if still:
                                 req["pending_questions"] = [q["question"] for q in still]
-                                self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
-                                return
+                                if has_structure(still):
+                                    req["pending_question_details"] = still
+                                self.hub.save_request(rid)
+                                await self._emit(rid, "request.questions",
+                                                 {"questions": req["pending_questions"], "details": still})
+                                if self.cfg.wait_for_clarification:
+                                    self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
+                                    return
                     req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
@@ -1696,6 +1757,7 @@ class Orchestrator:
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
+        metadata = []
         if req.get("plan", {}).get("steps") and results:
             audit = []
             for step in req["plan"]["steps"]:
@@ -1712,17 +1774,18 @@ class Orchestrator:
                 if entry.get("error"):
                     line += f"; cause: {entry.get('error_kind') or 'terminal'}: {entry['error']}"
                 audit.append(line)
-            report += "\n\nStep status and output paths:\n" + "\n".join(audit)
+            metadata.append("Step status and output paths:\n" + "\n".join(audit))
         if req.get("pending_questions"):
-            report += "\n\nPending PI decisions/questions:\n" + "\n".join(
-                f"- {question}" for question in req["pending_questions"])
+            metadata.append("Pending PI decisions/questions:\n" + "\n".join(
+                f"- {question}" for question in req["pending_questions"]))
         if req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
-            report += f"\n\n비용: {f'${known:.2f} + ' if known else ''}비용 미집계"
+            metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
         for outcome in self.budget_outcomes.get(rid, []):
             decision = "approved" if outcome["approved"] else "denied"
-            report += (f"\n\nBudget: ${outcome['spent_usd']:.2f} > "
-                       f"${outcome['limit_usd']:.2f}; {decision}.")
+            metadata.append(f"Budget: ${outcome['spent_usd']:.2f} > "
+                            f"${outcome['limit_usd']:.2f}; {decision}.")
+        report = _append_report_metadata(report, metadata)
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
         data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],

@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
+
+- 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.
+- 바뀐 것: 공백은 제거하고 원문 `..`·home·절대 경로는 정규화 전에 거부한다. 중복 선언은 합치고, 자기 산출의 루트·절대·home·bare 지시 경로는 대소문자와 무관하게 canonical 경로로 고친다. producer를 만든 뒤 dependency를 추론하던 순서를 바꿨고, 저장 계획 resume와 연구 CP1도 같은 검사를 다시 탄다. `wait_for_clarification: false`는 교정 계획 질문도 첫 계획처럼 기록한 뒤 진행한다. main에 이미 있던 단순 `./<name>` 교정은 기존 회귀로 유지했다.
+- 실행한 것: 새 확인 조건 10건이 수정 전 실패했다. 관련 308건, 전체 pytest 2459 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `scripts/patch_notes.py check`, `git diff --check`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/util.py`, `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/test_research_protocol.py`, `tests/test_output_types_research.py`.
+
 ## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
 
 - 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
