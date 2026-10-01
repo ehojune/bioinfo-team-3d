@@ -547,12 +547,16 @@ class Orchestrator:
 
         stop = hard_stop_kind(ask)
         requested = ask.to
+        # Who this ask went to before a gateway restart. The roster lacks that employee until its
+        # runner reconnects, and the runner may still be answering it (#113).
+        previous = current.get("routed_to")
         if stop:
             routed = "pi"
         elif requested == "pi":
             routed = "cso"
-        elif requested == "facilities" and "facilities" not in self.hub.agents:
-            routed = "cso"
+        elif requested == "facilities":
+            routed = (previous if previous in {"facilities", "cso"} else
+                      "facilities" if "facilities" in self.hub.agents else "cso")
         else:
             routed = requested.removeprefix("colleague:") if requested.startswith("colleague:") else requested
 
@@ -573,11 +577,14 @@ class Orchestrator:
             return
 
         wait_online = getattr(self.hub, "wait_agent_online", None)
-        if (routed not in self.hub.agents and wait_online and
-                self.hub.requests.get(ask.request_id or "", {}).get("status") == "waiting_for_runner"):
+        status = self.hub.requests.get(ask.request_id or "", {}).get("status")
+        if routed not in self.hub.agents and wait_online and (status == "waiting_for_runner" or routed == previous):
             # Resume approval re-routes asks before runners reconnect, and the roster is empty
-            # until they do. The target's runner may also still hold this ask's consult (#93).
+            # until they do. The target's runner may also still hold this ask's consult (#93, #113).
             await wait_online(routed, self.hub.s.gateway.resume_wait_s)
+        if requested == "facilities" and routed == "facilities" and routed not in self.hub.agents:
+            routed = "cso"  # its runner did not come back; the CSO answers in its own session
+            self.hub.store.put("ask", ask.id, {**(self.hub.store.get("ask", ask.id) or {}), "routed_to": routed})
         if routed not in self.hub.agents:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",

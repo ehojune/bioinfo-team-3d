@@ -512,3 +512,120 @@ async def test_a_reported_result_releases_an_abandoned_tasks_session(tmp_path):
             "shared-session", workdir)
     finally:
         hub.store.close()
+
+
+# ---- #113: a re-routed facilities ask keeps the employee it went to before the restart ----
+
+FACILITIES = [{"id": "facilities", "engine": "claude_code"}]
+
+
+def facilities_question():
+    return AskRequest(task_id="source", agent_id="worker", request_id="r", to="facilities",
+                      question="Which bay is free?", why_blocked="bay unknown")
+
+
+def record_runner_waits(hub):
+    waits, original = [], hub.wait_agent_online
+
+    async def recording(agent_id, timeout_s):
+        waits.append(agent_id)
+        return await original(agent_id, timeout_s)
+
+    hub.wait_agent_online = recording
+    return waits
+
+
+async def start_facilities_ask_then_crash(s, *, with_facilities):
+    """Gateway 1 routes a facilities ask, the runner accepts its consult, and the gateway dies."""
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running", "mode": "direct",
+                           "agent_id": "worker"}
+    first.save_request("r")
+    local = CaptureSocket()
+    first.register_runner("local", local, ROSTER, "inc-1")
+    facilities = CaptureSocket()
+    if with_facilities:
+        first.register_runner("fac", facilities, FACILITIES, "inc-f")
+    ask = facilities_question()
+    await first.on_runner_message("local", {"type": "ask.requested", "data": ask.model_dump(mode="json")})
+    target = facilities if with_facilities else local
+    await eventually(lambda: consults(target))
+    running = consults(target)[0]
+    assert running["agent_id"] == ("facilities" if with_facilities else "cso")
+    await first.on_runner_message("fac" if with_facilities else "local",
+                                  {"type": "task.accepted", "task_id": running["id"], "request_id": "r"})
+    tasks = list(first.ask_tasks.values())
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    first.store.close()
+    return ask, running
+
+
+async def test_restart_keeps_a_facilities_ask_with_facilities_across_a_late_reconnect(tmp_path):
+    s = settings(tmp_path)
+    ask, running = await start_facilities_ask_then_crash(s, with_facilities=True)
+    second = Hub(s)
+    waits = record_runner_waits(second)
+    local, facilities = CaptureSocket(), CaptureSocket()
+    try:
+        await approve_resume(second)
+        await eventually(lambda: waits)
+        assert waits == ["facilities"], "the ask waits for the employee it went to, not for the CSO"
+        # The CSO's runner comes back first; the roster still lacks facilities.
+        second.register_runner("local", local, ROSTER, "inc-1")
+        second.register_runner("fac", facilities, FACILITIES, "inc-f")
+        done = TaskResult(task_id=running["id"], agent_id="facilities", ok=True, text="Bay 3 is free")
+        await second.on_runner_message("fac", {"type": "task.result", "task_id": running["id"], "request_id": "r",
+                                               "data": done.model_dump(mode="json")})
+        await settle(second)
+        entry = second.store.get("ask", ask.id)
+        assert entry["answer"]["answer"] == "Bay 3 is free" and entry["answer"]["from"] == "facilities"
+        assert consults(local) == [], "the CSO must not take over the facilities ask"
+        assert consults(facilities) == [], "the running facilities consult is adopted, not rerun"
+    finally:
+        second.store.close()
+
+
+async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 30  # a wait for facilities would outlast every bound below
+    ask, running = await start_facilities_ask_then_crash(s, with_facilities=False)
+    second = Hub(s)
+    waits = record_runner_waits(second)
+    local = CaptureSocket()
+    try:
+        second.register_runner("local", local, ROSTER, "inc-1")
+        await approve_resume(second)
+        await second.on_runner_message("local", result_frame(running["id"], "Use bay 2", "cso-next"))
+        await asyncio.wait_for(settle(second), 2)
+        answer = second.store.get("ask", ask.id)["answer"]
+        assert answer["answer"] == "Use bay 2" and answer["from"] == "cso"
+        assert consults(local) == [] and "facilities" not in waits
+    finally:
+        second.store.close()
+
+
+async def test_facilities_ask_falls_back_to_the_cso_when_facilities_never_returns(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.2
+    hub = Hub(s)
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        ask = facilities_question()
+        hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "origin": "local",
+                                      "state": "working", "routed_to": "facilities"})
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use bay 2")
+
+        hub.dispatch = dispatch
+        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 2)
+        assert [task.agent_id for task in calls] == ["cso"]
+        entry = hub.store.get("ask", ask.id)
+        assert entry["routed_to"] == "cso" and entry["answer"]["answer"] == "Use bay 2"
+    finally:
+        hub.store.close()
