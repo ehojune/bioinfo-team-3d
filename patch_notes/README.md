@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:10 | [`9a1de18`](https://github.com/ehojune/bioinfo-team-3d/pull/194/commits/9a1de18) | **Windows CI에서 가끔 실패하던 테스트 셋을 안정화했습니다** (#189). bench 취소 테스트, e2e mock의 HPC 기상 테스트, 그림자 breaker의 멈춘 worker 테스트가 고정 시간에 기대고 있어 느린 runner에서 PR과 무관하게 실패했습니다. 이제 상한 있는 조건 대기로 같은 성질을 확인하고, 실패하면 남은 상태를 메시지에 싣습니다. 각 test를 20회 반복해 실패 0을 확인했습니다 |
 | 19:25 | [`946d103`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/946d103) | **참고 자료를 어떤 표기로 적어도 공개 보고에서 가립니다** (Codex 리뷰, 같은 부류를 한 함수로). Windows clone 경로에 든 private 저장소 이름이 빠져나갔습니다. 이제 공개 게시 전에 경로를 POSIX·Windows·UNC·홈 표기와 무관하게 정규화하고, 경로와 저장소 정체성(owner/name, clone 폴더명)을 함께 가립니다. README의 중복 설명도 하나로 합쳤습니다 |
 | 19:00 | [`aeb6a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/aeb6a6e) | **경로·통제 구역을 찾는 함수들이 모두 하나의 선형 scanner를 씁니다** (Codex 리뷰, 같은 부류를 한 번에). 아주 긴 입력에서 가림 검사가 제곱 시간으로 느려지는 경로가 `mentions_zone` 등에도 남아 있었습니다 |
 | 18:45 | [`5c77784`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/5c77784) | **읽기 전용 실행이 작업 폴더의 지시·memory·skill 파일을 어디에 있든 받지 않게 했습니다** (Codex 리뷰, 같은 부류를 한 판정으로). 숨김·중첩 폴더의 `CLAUDE.md` 같은 지시 파일은 한 판정 함수로 제외하거나 실행을 거부합니다. 계약 skill은 매번 원본에서 새로 복사하고, 원본이 없거나 symlink·junction이면 실행하지 않습니다 |
