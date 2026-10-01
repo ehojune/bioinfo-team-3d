@@ -416,10 +416,22 @@ def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max
     return None
 
 
-def withhold_reference_paths(text: str, values: list[str]) -> str:
-    """Remove refused path references from a prompt: any engine would otherwise still open what it names."""
-    for value in sorted({v for v in values if v}, key=len, reverse=True):
-        text = text.replace(f"[path] {value} (read-only on the runner)", f"[path] {WITHHELD_PATH}")
+def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tuple[str, ...] = ()) -> str:
+    """Remove refused path references from a prompt: any engine would otherwise still open what it names.
+
+    Only the path itself or a path below it is replaced, and kept references are shielded first, longest
+    first, so refusing `/srv/refs/a` leaves `/srv/refs/atlas` and `/srv/refs/a b` intact.
+    """
+    shielded: dict[str, str] = {}
+    refused_set = {v for v in refused if v}
+    for value in sorted(refused_set | {v for v in kept if v}, key=len, reverse=True):
+        if value in refused_set:
+            text = text.replace(f"[path] {value} (read-only on the runner)", f"[path] {WITHHELD_PATH}")
+            replacement = "<withheld reference path>"
+        else:
+            replacement = shielded.setdefault(value, f"\x00kept{len(shielded)}\x00")
         for form in {value, value.replace("\\", "/"), value.replace("/", "\\")}:
-            text = text.replace(form, "<withheld reference path>")
+            text = re.sub(re.escape(form) + r"(?![\w.-])", lambda _m, r=replacement: r, text)
+    for value, token in shielded.items():
+        text = text.replace(token, value)
     return text

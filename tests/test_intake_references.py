@@ -409,6 +409,17 @@ async def test_runner_fails_closed_when_a_reference_is_too_big_to_check(tmp_path
     assert any("상한" in t for t in _log_texts(runner) if t.startswith("참고 경로 제외"))
 
 
+def test_withholding_a_refused_path_leaves_kept_paths_that_share_its_prefix_intact():
+    from labhq.intake import render_references, withhold_reference_paths
+
+    refs = [{"kind": "path", "value": v} for v in ("/srv/refs/a", "/srv/refs/atlas", "/srv/refs/a b", "/srv/refs/a/sub")]
+    prompt = render_references(refs) + "\nRead /srv/refs/atlas/summary.md, /srv/refs/a b/x.md and /srv/refs/a/y.md."
+    out = withhold_reference_paths(prompt, ["/srv/refs/a", "/srv/refs/a/sub"], kept=["/srv/refs/atlas", "/srv/refs/a b"])
+    assert "[path] /srv/refs/atlas (read-only on the runner)" in out and "/srv/refs/atlas/summary.md" in out
+    assert "[path] /srv/refs/a b (read-only on the runner)" in out and "/srv/refs/a b/x.md" in out
+    assert "/srv/refs/a/" not in out and "/srv/refs/a (" not in out and out.count("withheld by the runner") == 2
+
+
 def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path(tmp_path):
     from labhq.policy import evaluate_tool
 

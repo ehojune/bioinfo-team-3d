@@ -483,8 +483,10 @@ class Runner:
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
             if refused:  # before TASK.md is written: a refused reference must not stay named in the prompt
-                task = ws.task = task.model_copy(update={"prompt": withhold_reference_paths(task.prompt, refused),
-                                                         "context": withhold_reference_paths(task.context, refused)})
+                kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
+                task = ws.task = task.model_copy(update={
+                    "prompt": withhold_reference_paths(task.prompt, refused, kept),
+                    "context": withhold_reference_paths(task.context, refused, kept)})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
                 ws.install_skill(Path(agent.contract.skill_dir))
