@@ -523,6 +523,9 @@ def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: 
     Deny rules match the path as written, so every other link that leads to an offending one is returned
     too: `b` naming the same folder as `a`, `c` naming the subfolder that holds it, `loop` naming the folder
     itself. A folder listed once is not listed again through each alias; its links are matched by real path.
+
+    A mount below the folder is not opened and makes the listing incomplete, but the rest is still listed: a
+    project keeps running with that warning, and a link after the mount still needs its deny rule (#182).
     """
     found: list[Path] = []
     links: list[tuple[Path, Path]] = []
@@ -534,8 +537,7 @@ def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: 
             else:
                 links.append((path, info))
         elif kind == "mount":
-            incomplete = f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
-            break
+            incomplete = incomplete or f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
         elif kind == "unreadable":
             incomplete = f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
             break

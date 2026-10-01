@@ -366,3 +366,65 @@ async def test_a_refused_reused_workspace_gets_no_local_events(tmp_path, monkeyp
     sent = [e["data"].get("state") for e in runner.store.pending() if e.get("task_id") == task.id
             and e["type"] == "agent.status"]
     assert sent == ["queued", "working", "error"], "the gateway still sees every event"
+
+
+# ---------------- #182: a mount below a project folder does not end the link scan ----------------
+
+def test_zone_links_keeps_listing_after_a_mount(tmp_path, monkeypatch):
+    """The scan records the mount and goes on; a zone link listed after it is still returned (any OS)."""
+    from labhq import intake
+
+    project, zone = tmp_path / "project", tmp_path / "zone"
+    listed = [("link", project / "early", zone), ("mount", project / "scratch", None),
+              ("link", project / "sub" / "late", zone), ("link", project / "genome", tmp_path / "genome")]
+    monkeypatch.setattr(intake, "_walk", lambda *_args, **_kwargs: iter(listed))
+    links, incomplete = intake.zone_links(project, [zone], 100, 10)
+    assert links == [project / "early", project / "sub" / "late"]
+    assert incomplete and "scratch" in incomplete and "mount" in incomplete
+
+
+def _capture_runner(tmp_path, monkeypatch, settings, engine=Engine.claude_code):
+    """A runner whose adapter only records the RunContext it was given."""
+    from labhq.models import TaskResult
+
+    runner = _runner(settings, monkeypatch, _staff(engine))
+    seen = {}
+
+    class Adapter:
+        async def run(self, ctx):
+            seen["ctx"] = ctx
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    return runner, seen
+
+
+def _zone_settings(tmp_path, zone):
+    from labhq.settings import DataZone
+
+    settings = _settings(tmp_path)
+    settings.policy.data_zones = [DataZone(path=str(zone))]
+    return settings
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mount points; on Windows a mount point is a reparse point (a link)")
+@pytest.mark.asyncio
+async def test_a_zone_link_after_a_project_mount_still_gets_its_deny_rule(tmp_path, monkeypatch):
+    from labhq.policy import claude_rule_path
+
+    zone, project = tmp_path / "zone", tmp_path / "project"
+    zone.mkdir()
+    (project / "a_mount").mkdir(parents=True)
+    (project / "sub").mkdir()
+    os.symlink(zone, project / "sub" / "raw", target_is_directory=True)
+    real_ismount = os.path.ismount
+    monkeypatch.setattr("labhq.intake.os.path.ismount",
+                        lambda path: Path(path).name == "a_mount" or real_ismount(path))
+    runner, seen = _capture_runner(tmp_path, monkeypatch, _zone_settings(tmp_path, zone))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"project_dirs": [str(project)]}))
+    assert result.ok, result.error
+    deny = seen["ctx"].claude_settings["permissions"]["deny"]
+    assert f"Read(/{claude_rule_path(str(project / 'sub' / 'raw'))}/**)" in deny
+    warnings = _logs(runner, "warn")
+    assert any("a_mount" in text for text in warnings), "the mount is still reported"
