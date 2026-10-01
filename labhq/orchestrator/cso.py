@@ -18,6 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
+from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
+                                 refresh_plan_approval, validate_research_plan)
+from ..research.packs import configured_packs, pack_snapshot, render_pack_catalog
 from ..util import clip, extract_json, output_relpath, short
 
 if TYPE_CHECKING:
@@ -87,6 +90,39 @@ Rules:
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - Ask clarifying_questions only if the ambiguity would change the plan.
+
+PI's request: {request}"""
+
+RESEARCH_PLAN_PROMPT = """Create a frozen research contract for the PI's request. Do not execute or analyze.
+
+Team roster (use these agent ids exactly, never an orchestration role):
+{roster}
+
+Runner compute capabilities:
+{capabilities}
+
+Chief of staff briefing:
+{briefing}
+
+Authoritative intake decision (copy it into `intake`):
+{intake}
+
+Selected domain packs (copy their exact id, version, and sha256 into `protocol.packs`):
+{packs}
+
+Contract rules:
+- Return schema_version 2 and at most {max_steps} steps. Never silently drop a step to fit the limit.
+- The brief states question, purpose, subject, scope, deliverables, and observable completion conditions.
+- Explanatory/comparative work states a primary hypothesis, alternatives, and distinguishing observations.
+  Exploratory/technical work uses its purpose and does not invent H0/H1.
+- Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
+  conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
+- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
+- Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
+- For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
+  a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
+  Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
+- PR 1 pilot stops after CP1 approval. Research steps will not run in this PR.
 
 PI's request: {request}"""
 
@@ -920,7 +956,20 @@ class Orchestrator:
                                      for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
+            research_pilot = bool(self.hub.s.research.enabled)
+            intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
+                                      scope_status=req.get("scope_status", "in_scope"))
+                      if research_pilot else None)
+            research_lane = bool(intake and intake.work_kind == "research")
+            if intake:
+                req["intake"] = intake.model_dump(mode="json")
+                self.hub.save_request(rid)
             if req["mode"] == "direct":
+                if research_lane:
+                    req["outcome"] = "needs_research"
+                    self._finish(rid, "Research work cannot use direct mode in the PR 1 pilot. "
+                                 "Submit it as orchestrate or plan_only for a frozen, PI-approved plan.", {}, ok=False)
+                    return
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
                                                budget_usd=req.get("budget_usd"),
                                                meta={"kind": "direct", "title": text[:100],
@@ -936,7 +985,50 @@ class Orchestrator:
                                                                    self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
+            packs = configured_packs(self.hub.s) if research_lane else {}
+            active_pack_hashes = pack_snapshot(packs)
+
+            async def finish_research_plan(plan: dict[str, Any]) -> None:
+                previous = (req.get("research_contract") or {}).get("approval")
+                approval = refresh_plan_approval(plan, previous)
+                req["research_contract"] = {
+                    "schema_version": 1,
+                    "work_kind": "research",
+                    "execution_enabled": False,
+                    "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
+                    "pack_snapshot": active_pack_hashes,
+                    "approval": approval,
+                }
+                self.hub.save_request(rid)
+                if approval.get("status") != "approved":
+                    plan_hash = req["research_contract"]["plan_sha256"]
+                    summary = ("CP1 research plan approval: approve the frozen question, methods, completion/stop "
+                               f"conditions, data boundary, and selected packs. plan_sha256={plan_hash}")
+                    decision = await self.hub.request_approval(
+                        kind="research_plan", request_id=rid, summary=summary[:700],
+                        detail={"gate": "research_plan", "target_sha256": plan_hash,
+                                "plan_canonical": canonical_plan_json(plan),
+                                "protocol_revision": plan["protocol"]["revision"],
+                                "packs": plan["protocol"]["packs"],
+                                "scope_status": plan["intake"]["scope_status"]})
+                    approval = freeze_plan(plan, decision)
+                    approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
+                    req["research_contract"]["approval"] = approval
+                    self.hub.save_request(rid)
+                approved = bool(approval.get("approved"))
+                req["outcome"] = "plan_approved" if approved else "plan_rejected"
+                report = ("Research plan frozen and approved. PR 1 pilot stops before employee dispatch."
+                          if approved else "Research plan was not approved; no employee research step was dispatched.")
+                self._finish(rid, report, {}, ok=approved)
+
             if resume and req.get("plan", {}).get("steps"):
+                if research_lane:
+                    validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
+                                                       active_packs=active_pack_hashes,
+                                                       expected_intake=intake, pack_definitions=packs)
+                    req["plan"] = validated.model_dump(mode="json")
+                    await finish_research_plan(req["plan"])
+                    return
                 steps = req["plan"]["steps"]
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(req.get("results") or {})
@@ -968,13 +1060,24 @@ class Orchestrator:
 
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
+                    if research_lane:
+                        prompt = RESEARCH_PLAN_PROMPT.format(
+                            request=plan_request, roster=format_roster(roster),
+                            capabilities=capabilities or "No workers available",
+                            briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
+                            intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
+                            packs=render_pack_catalog(packs))
+                        schema = RESEARCH_PLAN_SCHEMA
+                    else:
+                        prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
+                                                    capabilities=capabilities or "No workers available",
+                                                    briefing=clip(briefing, 4000) or "(none)",
+                                                    max_steps=self.cfg.max_steps)
+                        schema = PLAN_SCHEMA
                     planned = await self.run_step(Task(
-                        agent_id=self.cfg.cso_agent, request_id=rid, output_schema=PLAN_SCHEMA,
+                        agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=req.get("cso_session_id") if continuation else None,
-                        prompt=PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
-                                                  capabilities=capabilities or "No workers available",
-                                                  briefing=clip(briefing, 4000) or "(none)",
-                                                  max_steps=self.cfg.max_steps),
+                        prompt=prompt,
                         meta={"kind": "plan", "roster": roster, "request": plan_request,
                               "title": "업무 분해·배정 계획 수립",
                               **({"workdir": req["cso_workdir"]} if continuation and req.get("cso_workdir") else {})}))
@@ -1018,14 +1121,53 @@ class Orchestrator:
                             req["pending_questions"] = plan["clarifying_questions"]
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
-                steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
-                req["plan"] = {**plan, "steps": steps, "warnings": warnings}
+                if research_lane:
+                    invalid = ""
+                    for attempt in (1, 2):
+                        try:
+                            validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
+                                                               active_packs=active_pack_hashes,
+                                                               expected_intake=intake, pack_definitions=packs)
+                            bad_agents = [step.agent_id for step in validated.steps
+                                          if step.agent_id not in known or step.agent_id in orchestration]
+                            if bad_agents:
+                                raise ValueError(f"research plan uses unavailable or orchestration agents: {bad_agents}")
+                            break
+                        except (ValueError, TypeError) as error:
+                            invalid = str(error)
+                            if attempt == 2:
+                                raise ValueError(f"research plan invalid after correction: {invalid}") from error
+                            correction = (text + "\n\nThe previous research PLAN failed validation: " + invalid +
+                                          "\nReturn a complete corrected PLAN. Do not remove steps by truncation.")
+                            plan_res = await make_plan(correction)
+                            if not plan_res.ok:
+                                self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
+                                return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
+                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
+                                    else extract_json(plan_res.text) or {})
+                    req["plan"] = validated.model_dump(mode="json")
+                    warnings: list[str] = []
+                    steps = req["plan"]["steps"]
+                else:
+                    steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps, orchestration)
+                    req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                 await self._emit(rid, "request.plan", req["plan"])
                 for rec in plan.get("recruit") or []:
                     if rec.get("repo") or rec.get("paper"):
                         await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
                 if not steps:
                     self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False)
+                    return
+                if research_lane:
+                    await finish_research_plan(req["plan"])
+                    return
+                if req["mode"] == "plan_only":
+                    req["outcome"] = "plan_only"
+                    self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True)
                     return
                 results = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(results)

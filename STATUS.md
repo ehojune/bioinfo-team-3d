@@ -11,6 +11,22 @@
 - 테스트: 수정 전 회귀 5건 실패 확인. 전체 pytest 연속 3회 각 1131 passed/18 skipped, Node 8개, `bash scripts/check_public.sh`, diff 검사가 통과했다.
 - 한계: 실제 GitHub rate limit 응답은 호출하지 않았고 MockTransport로 header·대기·재시도를 검증했다. 기존 FastAPI deprecation warning 196건은 남아 있다.
 
+## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
+
+- 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
+- 변경: pack `rules`는 `when`과 `require|forbid`, predicate의 `value|in|not_in`을 쓴다. loader가 모르는 field·연산자와 충돌하는 rule을 거부한다. acceptance 문자열은 설명으로만 남긴다. `single_cell_de@1`은 완전 혼동 시 비교·설명 가설, inferential statistics, condition-effect estimand을 금지한다.
+- 검증: 수정 전 confounded PLAN·잘못된 rule 문법·correction 뒤 budget 거절 회귀가 실패함을 확인했다. 수정 뒤 연구 규약 14 passed, 전체 pytest 1108 passed/18 skipped, `tests/*.cjs` 5개와 `bash scripts/check_public.sh`가 통과했다. `PYTHONPATH`는 clone 루트, state·basetemp는 저장소 밖 임시 폴더를 썼다.
+- 한계·인계: claim/evidence 원장·artifact manifest·감사·후행 무효화·CP2–4·연구 E2E 실행은 후속 PR 범위다. 실제 직원 CLI·HPC·live 연구 case는 실행하지 않았다. patch notes는 수정하지 않았다.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/research/packs/single_cell_de.yaml`, `labhq/orchestrator/cso.py`, `tests/test_research_protocol.py`, `docs/research_protocol.md`.
+
+## 2026-10-01 · bench 구조화 채점·baseline 설정 #92 #101
+
+- 결론: 모든 arm이 같은 case별 JSON 결과 블록을 내고, 문장 표현 대신 그 값으로 채점한다. 형식 실패와 값 오답은 따로 기록·집계한다.
+- 바뀐 것: 다섯 case에 key·type·기대값 규칙을 넣고 공통 prompt·mock 답을 갱신했다. 기존 문장 검사는 근거·한계의 보조 판정으로 남겼다. Claude·Codex baseline은 `extra_args`를 일반 adapter와 같은 위치에 넣는다. README에 사용자 동작을 반영했다.
+- 실행한 것: 수정 전 회귀 4건 실패. 수정 후 전체 pytest 1099 passed/18 skipped, Node `tests/*.cjs` 5개, `scripts/check_public.sh` 통과. 임시·상태 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: 실제 유료 CLI 실행은 하지 않았다. 구조화 블록 도입 전 저장된 답은 재채점하면 형식 실패이며, 기존 15개 fixture는 보조 문장 검사 근거로만 남겼다.
+- 근거: `labhq/bench.py`, `labhq/bench_data/cases/`, `tests/test_bench_structured.py`, `tests/test_bench_rescore.py`.
+
 ## 2026-10-01 · 러너 env·POSIX 종료 #83 · 라운드 게시 복구 #97
 
 - 결론: 부모 Claude session marker만 지우고 운영자가 지정한 engine·task env는 보존한다. POSIX timeout은 leader가 먼저 끝나도 남은 process group을 SIGKILL한다. 라운드 기록은 GitHub의 rate-limit 대기 시각을 지키며, 토큰 누락은 재시작 때 다시 게시할 pending 상태로 둔다.

@@ -45,6 +45,34 @@ MISSING_ITEM = {
     "public-penguins-qc": "body_mass_g 결측치 1건",
     "public-protein-qc": "P01116 중복",
 }
+WRONG_FIELD = {
+    "inco-kras-g12c": "chembl_ids",
+    "plastome-structure": "nc_000932_1_length_bp",
+    "geo-gastric-summary": "tumor_samples",
+    "public-penguins-qc": "species_count",
+    "public-protein-qc": "row_count",
+}
+MISSING_FIELD = {
+    "inco-kras-g12c": "chembl_ids",
+    "plastome-structure": "ssc_bp",
+    "geo-gastric-summary": "up_gene",
+    "public-penguins-qc": "body_mass_missing_count",
+    "public-protein-qc": "duplicate_accessions",
+}
+
+
+def result_values(case):
+    values = {}
+    for key, rule in case["result_fields"].items():
+        values[key] = copy.deepcopy(rule.get("equals", [rule.get("minimum"), rule.get("maximum")]))
+    return values
+
+
+def with_result_block(case, answer, values=None):
+    values = result_values(case) if values is None else values
+    return (answer.rstrip() + "\n<!-- LABHQ_BENCH_RESULT -->\n```json\n" +
+            json.dumps(values, ensure_ascii=False) +
+            "\n```\n<!-- /LABHQ_BENCH_RESULT -->\n")
 
 
 def saved_run():
@@ -60,11 +88,19 @@ def test_case_checks_accept_variants_and_reject_wrong_answers(case, variant, tmp
     if variant == "mock":
         answer = case["mock_answer"]
     elif variant == "wrong-number":
-        answer = VARIANTS[case_id][0].replace(*WRONG_NUMBER[case_id])
+        values = result_values(case)
+        field = WRONG_FIELD[case_id]
+        if isinstance(values[field], int):
+            values[field] += 1
+        else:
+            values[field][0] += "X"
+        answer = with_result_block(case, VARIANTS[case_id][0].replace(*WRONG_NUMBER[case_id]), values)
     elif variant == "missing-item":
-        answer = VARIANTS[case_id][0].replace(MISSING_ITEM[case_id], "")
+        values = result_values(case)
+        values.pop(MISSING_FIELD[case_id])
+        answer = with_result_block(case, VARIANTS[case_id][0].replace(MISSING_ITEM[case_id], ""), values)
     else:
-        answer = VARIANTS[case_id][variant]
+        answer = with_result_block(case, VARIANTS[case_id][variant])
     (tmp_path / "answer.md").write_text(answer, encoding="utf-8")
     row = asyncio.run(bench._score(case, tmp_path, saved_run()))
     assert row["checks_passed"] == (variant not in {"wrong-number", "missing-item"}), row["check_output"]
@@ -105,6 +141,8 @@ def store_run(root, run_id, answer=None, mode="real", status="done", arm="sol-ul
     run = {**saved_run(), "engine": arm, "mode": mode, "status": status}
     (directory / "run.json").write_text(json.dumps(run), encoding="utf-8")
     if answer is not None:
+        if bench.RESULT_START not in answer:
+            answer = with_result_block(case, answer)
         (directory / "answer.md").write_text(answer, encoding="utf-8")
     score = asyncio.run(bench._score(case, directory, run))
     # Simulate the literal-only historical checker rejecting a correct answer.
@@ -183,5 +221,5 @@ def test_rescore_rechecks_current_case_and_cannot_turn_failed_execution_into_suc
     monkeypatch.setattr(bench, "load_case", lambda _: case)
     asyncio.run(bench.rescore_case(case_id, tmp_path))
     score = read_json(directory / "score.json")
-    assert score["status"] == "failed" and not score["checks_passed"]
+    assert score["status"] == "failed" and score["checks_passed"] and not score["narrative_passed"]
     assert "unavailable required item" in score["check_output"]

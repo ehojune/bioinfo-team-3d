@@ -38,7 +38,8 @@ def test_real_answers_match_independent_verdict(case_id, arm, verdict, expected,
     report = (FIXTURES.parents[2] / "bench" / "calibration.md").read_text(encoding="utf-8")
     assert f"| {case_id} | {arm} | {verdict} | {'PASS' if expected else 'FAIL'} |" in report
     result = score(case_id, read_answer(case_id, arm), tmp_path)
-    assert result["checks_passed"] is expected, result["check_output"]
+    assert result["narrative_passed"] is expected, result["check_output"]
+    assert result["format_passed"] is False and result["checks_passed"] is False
 
 
 @pytest.mark.parametrize("case_id,arm,verdict,expected", VERDICTS)
@@ -59,7 +60,7 @@ def test_real_answer_with_wrong_required_fact_fails(case_id, arm, verdict, expec
         if arm == "sonnet-max":
             changed = answer.replace("총 행 수 (헤더 제외) | **4**", "총 행 수 (헤더 제외) | **5**")
     assert changed != answer
-    assert not score(case_id, changed, tmp_path)["checks_passed"]
+    assert not score(case_id, changed, tmp_path)["narrative_passed"]
 
 
 @pytest.mark.parametrize("case_id,arm,verdict,expected", VERDICTS)
@@ -71,7 +72,7 @@ def test_real_answer_missing_required_fact_fails(case_id, arm, verdict, expected
     # Penguins also repeats the range in Korean; remove that alternate label.
     if case_id == "public-penguins-qc":
         answer = answer.replace("지느러미 길이", "[omitted]")
-    assert not score(case_id, answer, tmp_path)["checks_passed"]
+    assert not score(case_id, answer, tmp_path)["narrative_passed"]
 
 
 @pytest.mark.parametrize("case_id,extra", [
@@ -90,7 +91,8 @@ def test_real_answer_missing_required_fact_fails(case_id, arm, verdict, expected
     ("plastome-structure", "SSC: 19–17 kb"),
 ])
 def test_correct_real_answer_cannot_hide_conflicting_overall_assertion(case_id, extra, tmp_path):
-    assert not score(case_id, read_answer(case_id, "astra-ultra") + "\n" + extra, tmp_path)["checks_passed"]
+    assert not score(case_id, read_answer(case_id, "astra-ultra") + "\n" + extra,
+                     tmp_path)["narrative_passed"]
 
 
 @pytest.mark.parametrize("case_id,text,index", [
