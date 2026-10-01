@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:52 | [`c9aec7d`](https://github.com/ehojune/bioinfo-team-3d/pull/228/commits/c9aec7d) | CSO 계획의 단계 산출 경로가 작업 폴더 루트면 outputs/ 안으로 고치고, 절대 경로·.. 선언은 교정 계획을 한 번 받은 뒤 실패 처리(#220) |
 | 23:29 | [`3ef8530`](https://github.com/ehojune/bioinfo-team-3d/pull/216/commits/3ef8530) | **main 병합에서 README 설정 절의 세 문단을 줄 단위로 합쳤습니다.** 연구 규약·참고 자료·그림자 문단에서 양쪽이 바꾼 줄을 각각 살렸습니다 |
 | 23:04 | [`e1975e5`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/e1975e5) | **main 병합에서 gateway import 충돌을 양쪽 모두 살려 풀었습니다.** 이 PR의 session 점유 판정과 main의 연구 팩 검사를 함께 가져옵니다. 동작 변경은 없습니다. |
 | 23:04 | [`60486a9`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/60486a9) | **runner 대기열에서 오래 기다린 이전 상담을 두고 CSO가 새 session으로 갈라지지 않게 했습니다** (#112 리뷰). runner는 대기열에 넣기 전에 수락을 알리고 시간 제한은 실제 실행이 시작될 때부터 셉니다. 그런데 보낸 시각부터 시간 제한을 재서 막 실행을 시작한 상담을 끝난 것으로 보고 계획·종합·이어 묻기를 새 session으로 열었습니다. 이제 지금 runner가 수락한 작업은 결과가 올 때까지 기다리고, runner 재접속 유예도 끊긴 때부터 셉니다. 회귀 테스트 2건은 수정 전 실패했습니다. |

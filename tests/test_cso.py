@@ -1,5 +1,8 @@
 import asyncio
+import json
+import re
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -959,3 +962,126 @@ def test_declared_outputs_normalize_like_the_runner(name, expected):
     from labhq.util import output_relpath
 
     assert output_relpath(name) == expected
+
+
+# ---- #220: declared step outputs stay under the step's outputs/ ----------------------------------
+
+PENGUINS_PLAN = Path(__file__).parent / "fixtures" / "plans" / "penguins_outputs_root.json"
+ROOT_REF = r"(?<![A-Za-z0-9_./\-])\./answer\.md"
+
+
+def literal_agent(task):
+    """Write exactly the `./path` files the step instruction names, then report what the runner collects.
+
+    The runner keeps a declared output only when it exists under the workspace outputs/ folder."""
+    from labhq.util import output_relpath
+
+    written = {p for p in re.findall(r"(?<![A-Za-z0-9_./\-])\./([A-Za-z0-9_./-]+\.[A-Za-z]+)",
+                                     task.meta["instruction"])}
+    found = [output_relpath(o) for o in task.meta.get("outputs", []) if output_relpath(o) in written]
+    return result(task, text=f"{task.meta['step_id']} done", workdir_id=task.meta["step_id"], outputs=found)
+
+
+def penguins_hub(plans):
+    fixture = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))
+    plans = [fixture["plan"] if p == "fixture" else p for p in plans]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured=plans[min(len([t for t in hub.calls if t.meta["kind"] == "plan"]),
+                                                      len(plans)) - 1])
+        if task.meta["kind"] == "synthesis":
+            return result(task, text="final report")
+        return literal_agent(task)
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"]["text"] = fixture["request"]
+    hub.s.orchestrator.reviewer_agent = None
+    for name in ("data_steward", "analyst", "qc_reviewer"):
+        hub.agents[name] = {"id": name, "name": name, "role": "test", "engine": "mock"}
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_penguins_plan_answer_at_workspace_root_is_moved_under_outputs():
+    hub = penguins_hub(["fixture"])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert [req["results"][s]["status"] for s in ("materialize_data", "compute_qc_metrics", "qc_review")] == [
+        "done", "done", "done"]
+    by = {s["id"]: s for s in req["plan"]["steps"]}
+    assert by["compute_qc_metrics"]["outputs"] == ["outputs/qc_calculations.md", "outputs/answer.md"]
+    assert "./outputs/answer.md" in by["compute_qc_metrics"]["instruction"]
+    assert not re.search(ROOT_REF, by["compute_qc_metrics"]["instruction"])
+    assert any("answer.md" in w and "outputs/answer.md" in w for w in req["plan"]["warnings"])
+    step = next(t for t in hub.calls if t.meta.get("step_id") == "compute_qc_metrics")
+    assert "./outputs/qc_calculations.md, ./outputs/answer.md" in step.prompt
+
+
+@pytest.mark.parametrize("bad", ["../answer.md", "/tmp/answer.md", "C:/work/answer.md", r"outputs\..\..\answer.md"])
+def test_output_outside_the_workspace_outputs_is_rejected(bad):
+    raw = [{"id": "a", "agent_id": "analyst", "instruction": "write the report", "outputs": ["outputs/ok.md", bad]},
+           {"id": "b", "agent_id": "analyst", "instruction": "write notes", "outputs": ["/srv/notes.md"]}]
+    with pytest.raises(ValueError, match="outside its outputs/") as error:
+        validate_steps(raw, {"analyst"}, 10)
+    assert type(error.value).__name__ == "PlanOutputsError"
+    assert f"step a: outputs [{bad!r}]" in str(error.value) and "step b: outputs ['/srv/notes.md']" in str(error.value)
+
+
+def test_output_normalization_touches_only_root_references_to_own_outputs():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["outputs/t.tsv", r".\notes.md"],
+            "instruction": r"Write ./t.tsv and .\notes.md. Keep ../t.tsv, ./outputs/t.tsv and ./other.tsv as they are."},
+           {"id": "b", "agent_id": "analyst", "outputs": ["table.tsv"], "instruction": "make table.tsv"},
+           {"id": "c", "agent_id": "analyst", "outputs": [], "instruction": "compare ./t.tsv with table.tsv"}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    by = {s["id"]: s for s in steps}
+    assert by["a"]["outputs"] == ["outputs/t.tsv", "outputs/notes.md"]
+    assert by["a"]["instruction"] == ("Write ./outputs/t.tsv and ./outputs/notes.md. "
+                                      "Keep ../t.tsv, ./outputs/t.tsv and ./other.tsv as they are.")
+    assert by["b"] == {**raw[1], "id": "b", "depends_on": []}  # a bare name with no root reference is unchanged
+    assert by["c"]["instruction"] == raw[2]["instruction"]  # another step's reference is not rewritten
+    assert by["c"]["depends_on"] == ["b"]  # inference still matches the declared name
+    assert sum("moved under outputs/" in w for w in warnings) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrected", [True, False])
+async def test_plan_with_output_outside_outputs_is_replanned_before_dispatch(corrected):
+    fixture = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))["plan"]
+    bad = json.loads(json.dumps(fixture))
+    bad["steps"][1]["outputs"] = ["outputs/qc_calculations.md", "../answer.md"]
+    hub = penguins_hub([bad, fixture if corrected else bad])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    plans = [t for t in hub.calls if t.meta["kind"] == "plan"]
+    assert len(plans) == 2
+    assert "failed validation" in plans[1].prompt and "../answer.md" in plans[1].prompt
+    steps = [t for t in hub.calls if t.meta["kind"] == "step"]
+    if corrected:
+        assert req["status"] == "done", req.get("report")
+        assert all(o.startswith("outputs/") for t in steps for o in t.meta["outputs"])
+    else:
+        assert req["status"] == "failed" and "after correction" in req["error"]
+        assert steps == []
+
+
+@pytest.mark.asyncio
+async def test_corrected_plan_with_new_questions_does_not_dispatch():
+    fixture = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))["plan"]
+    bad = json.loads(json.dumps(fixture))
+    bad["steps"][1]["outputs"] = ["/tmp/answer.md"]
+    asking = {**fixture, "clarifying_questions": ["Which species should the QC cover?"]}
+    hub = penguins_hub([bad, asking])
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert req["pending_questions"] == ["Which species should the QC cover?"]
+    assert [t for t in hub.calls if t.meta["kind"] == "step"] == []
+
+
+def test_cso_plan_prompt_states_the_outputs_rule():
+    from labhq.orchestrator.cso import PLAN_PROMPT
+
+    assert "outputs/<name>" in PLAN_PROMPT and "outputs/answer.md" in PLAN_PROMPT
+    assert "workspace root" in PLAN_PROMPT and "absolute" in PLAN_PROMPT
