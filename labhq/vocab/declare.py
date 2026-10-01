@@ -249,8 +249,13 @@ def _from_record(record: Any, field: str, vocab: Vocab | None) -> Field:
 
 
 def _from_meta(given: Any, field: str, version: Any, vocab: Vocab | None) -> Field:
-    if isinstance(given, str):  # legacy {path: key}: a data type only, judged by the reader's own vocabulary
-        return Field(given, "declared", source="plan", legacy=True) if field == "data_type" else unknown("not_declared")
+    if isinstance(given, str):  # legacy {path: key}: a data type only, judged once here for both shadow models
+        if field != "data_type":
+            return unknown("not_declared")
+        if vocab is None:
+            return unknown("no_vocab")
+        return (Field(given, "declared", source="plan", legacy=True)
+                if vocab.is_key("data", given) else unknown("not_declared"))
     if not isinstance(given, Mapping) or field not in given:
         return unknown("not_declared" if isinstance(given, Mapping) else "invalid_declaration")
     if vocab is None:
@@ -312,7 +317,7 @@ def read(meta: Mapping[str, Any] | None, result: Mapping[str, Any] | None, vocab
             planned = _from_meta(declared[path], field, version, vocab) if path in declared else None
             if path in records:
                 got = _from_record(records[path], field, vocab)
-                if (planned is not None and planned.basis == "declared" and got.basis == "declared"
+                if (planned is not None and planned.basis == "declared" and got.basis != "unknown"
                         and planned.value != got.value):
                     got = unknown("declaration_conflict")
                 fields[field] = got
@@ -332,7 +337,8 @@ def read(meta: Mapping[str, Any] | None, result: Mapping[str, Any] | None, vocab
                 fields[field] = unknown("declaration_conflict")
             elif current.basis == "unknown" and current.reason == "not_declared":
                 # a staff key counts under the version the task was dispatched with, never under today's
-                fields[field] = (unknown("vocab_changed") if vocab is None or version != vocab.sha256 else
-                                 Field(value, "declared", source="staff") if vocab.is_key(BRANCH[field], value)
-                                 else unknown("invalid_declaration"))
+                fields[field] = (unknown("no_vocab") if vocab is None else
+                                 unknown("vocab_changed") if version != vocab.sha256 else
+                                 Field(value, "declared", source="staff")
+                                 if vocab.is_key(BRANCH[field], value) else unknown("invalid_declaration"))
     return out

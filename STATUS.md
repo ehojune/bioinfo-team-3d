@@ -6,9 +6,17 @@
 
 - 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.
 - 바뀐 것: 공백은 제거하고 원문 `..`·home·절대 경로는 정규화 전에 거부한다. 중복 선언은 합치고, 자기 산출의 루트·절대·home·bare 지시 경로는 대소문자와 무관하게 canonical 경로로 고친다. 같은 basename 입력은 가까운 input 동작으로 구분하며 모호하면 계획 교정을 요구한다. producer를 만든 뒤 dependency를 추론하던 순서를 바꿨고, 저장 계획 resume와 연구 CP1도 같은 검사를 다시 탄다. `wait_for_clarification: false`는 교정 계획 질문도 첫 계획처럼 기록한 뒤 진행한다. main에 이미 있던 단순 `./<name>` 교정은 기존 회귀로 유지했다.
-- 실행한 것: 최초 확인 조건 10건과 봇 P1 회귀 2건이 수정 전 실패했다. 관련 310건, 전체 pytest 2461 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `scripts/patch_notes.py check`, `git diff --check`가 통과했다.
+- 실행한 것: 최초 확인 조건 10건과 봇 P1 회귀 2건이 수정 전 실패했다. 관련 310건, main 병합 뒤 전체 pytest 2469 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `scripts/patch_notes.py check`, `git diff --check`가 통과했다.
 - 미해결: 없음.
 - 근거: `labhq/util.py`, `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/test_research_protocol.py`, `tests/test_output_types_research.py`.
+
+## 2026-10-02 · PR #277 — 산출 종류 선언 reader 일치와 예외 격리
+
+- 결론: #249 후속 P2 네 건을 닫았다. legacy와 typed 선언은 공용 reader가 같은 local vocabulary로 판정하고, 계획 선언과 runner record가 다르면 basis와 무관하게 충돌로 남긴다. 기본값은 off이며 off의 prompt·schema·dispatch는 #249 main 계약 그대로다.
+- 바뀐 것: `no_vocab` 이유를 바로잡고, hash 불가 YAML key·어휘 loader·optional subset I/O·runner record 생성 예외를 선언 기능 안에 격리했다. EDAM 표가 없어도 local 38-key vocabulary는 동작하며 성공한 task 결과는 보존한다.
+- 실행한 것: 새 회귀는 수정 전 11 failed/91 passed, 수정 뒤 102 passed. 전체 pytest 2458 passed/44 skipped, Node 13개, `scripts/check_public.sh`, patch-notes·diff 검사가 통과했다.
+- 미해결: 없음. EDAM 표·NOTICE·생성 script는 draft #253 범위이며 이 PR에는 없다.
+- 근거: `labhq/vocab/{__init__.py,declare.py}`, `labhq/yaml_unique.py`, `labhq/runner/daemon.py`, `labhq/research/semantics.py`, `tests/test_output_{types,vocab}.py`, `tests/test_semantics_{objects,output_types}.py`.
 
 ## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
 
