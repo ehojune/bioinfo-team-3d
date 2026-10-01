@@ -274,17 +274,27 @@ def badges(root: Path) -> str:
     return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
 
 
-def replace_block(readme: str, start: str, end: str, content: str) -> str:
+def marker_span(readme: str, start: str, end: str) -> tuple[int, int]:
+    """Where one generated block sits, start marker through end marker."""
     if readme.count(start) != 1 or readme.count(end) != 1:
         raise ValueError("README needs exactly one marker pair")
-    before, tail = readme.split(start)
-    if end not in tail:
+    first, last = readme.index(start), readme.index(end)
+    if last < first:
         raise ValueError("README markers are out of order")
-    _, after = tail.split(end)
-    return before + start + "\n" + content + end + after
+    return first, last + len(end)
+
+
+def replace_block(readme: str, start: str, end: str, content: str) -> str:
+    first, last = marker_span(readme, start, end)
+    return readme[:first] + start + "\n" + content + end + readme[last:]
 
 
 def update_readme(readme: str, badge_block: str, inventory: str) -> str:
+    # Each block is replaced whole, so a pair nested in or crossing the other would be erased (#153).
+    (_, first_end), (second_start, _) = sorted([marker_span(readme, BADGES_START, BADGES_END),
+                                                marker_span(readme, START, END)])
+    if first_end > second_start:
+        raise ValueError("README marker blocks overlap")
     readme = replace_block(readme, BADGES_START, BADGES_END, badge_block)
     return replace_block(readme, START, END, inventory)
 
