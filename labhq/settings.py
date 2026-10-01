@@ -127,6 +127,30 @@ class PbsSettings(BaseModel):
     pro: bool = False  # PBS Pro: finished jobs need `qstat -x`; use "select=1:ncpus={cores}:mem={mem}" template
 
 
+# sbatch options that send the job to another cluster; squeue/sacct/scancel would then find the wrong job.
+# The config load check and the job script check share it so the two never disagree (#185).
+SLURM_CLUSTER_LONG = r"--clusters?(?:=|$)"
+# sbatch short options that take a value: in a bundle ("-vJM") the rest of the token is that value. Every
+# other letter counts as a flag, so an unlisted one cannot hide a following M (#172).
+SBATCH_VALUE_SHORT = frozenset("aAbBcCdDeFGiJLmnNopqStwx")
+
+
+def slurm_cluster_option(tokens: list[str]) -> str | None:
+    """First sbatch option among `tokens` that picks another cluster (-M, bundled -vM, --cluster(s)), or None."""
+    import re
+
+    for token in tokens:
+        if re.match(SLURM_CLUSTER_LONG, token):
+            return token
+        if token.startswith("-") and not token.startswith("--"):
+            for letter in token[1:]:
+                if letter == "M":
+                    return token
+                if letter in SBATCH_VALUE_SHORT:
+                    break
+    return None
+
+
 def _default_sbatch_args() -> list[str]:
     # --export=NONE: like SGE/PBS without -V, the runner's environment (tokens) stays out of the job.
     return ["--nodes=1", "--ntasks=1", "--cpus-per-task={cores}", "--mem={mem}", "--time={walltime}",
@@ -140,12 +164,10 @@ class SlurmSettings(BaseModel):
     @field_validator("sbatch_args")
     @classmethod
     def options_with_known_fields(cls, value: list[str]) -> list[str]:
-        import re
-
         for arg in value:
             if not arg.startswith("-"):
                 raise ValueError("hpc.slurm.sbatch_args entries must be sbatch options")
-            if re.match(r"-M|--clusters(?:=|$)", arg):
+            if slurm_cluster_option([arg]):
                 # squeue/sacct/scancel would look the bare id up on the local cluster: wrong or no job.
                 raise ValueError("hpc.slurm.sbatch_args must not submit to another cluster (-M/--clusters)")
             try:
@@ -190,9 +212,14 @@ class DataZone(BaseModel):
         return expanded
 
 
-# Commands that create or cancel scheduler jobs outside the approval-gated hpc_* tools
-# (SGE/PBS batch and interactive, Slurm batch, step and allocation). Bash and PowerShell share it.
-SCHEDULER_JOB_COMMANDS = r"\b(?:qsub|qrsh|qlogin|qdel|sbatch|srun|salloc|scancel)\b"
+# Commands that create, change or cancel scheduler jobs outside the approval-gated hpc_* tools: SGE/PBS
+# submit, interactive, resubmit, alter, hold/release, signal, move and rerun; Slurm batch, step, allocation,
+# crontab and triggers; and every scontrol call but the read-only ones (#172). Bash and PowerShell share it.
+SCHEDULER_JOB_COMMANDS = (
+    r"\b(?:qsub|qrsh|qsh|qlogin|qmake|qtcsh|qdel|qresub|qalter|qhold|qrls|qsig|qmod|qmove|qrerun|qorder|qrun"
+    r"|sbatch|srun|salloc|scancel|scrontab|strigger)\b"
+    r"|\bscontrol\b(?!(?:\s+-[\w-]+)*\s+(?:show|ping|listpids|version|help)\b)"
+)
 
 
 def _default_bash_ask() -> list[str]:

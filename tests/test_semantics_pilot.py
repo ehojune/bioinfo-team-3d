@@ -40,7 +40,9 @@ def test_fixture_records_are_the_pinned_version():
 # ---------------------------------------------------------------- model B
 
 
-MODEL_SHA256 = "8fd9860f5f480831ce2794ee585b513e1da8ad5f7c1bc8e4c49d6c06d0548159"
+# Model revision for #155 (reason start_unknown). The pilot measurement in docs/reference/semantics_pilot.md
+# ran on the previous hash 8fd9860f…8159.
+MODEL_SHA256 = "9ed9aa1eecdb41e9dc062e1184cdaacd7d94b2f7d4c335354eeb99ea7b561b42"
 
 
 @pytest.fixture(scope="module")
@@ -172,6 +174,78 @@ def test_models_agree_on_cycle_and_depth_limit(length, cycle):
     assert outs[0] == outs[1]
 
 
+def _records(rid, steps, tasks):
+    """In-memory records of one request: steps (id, input_refs, outputs) and their tasks (task id, step id)."""
+    from labhq.research.semantics import Records
+    plan = {"steps": [{"id": sid, "input_refs": refs, "outputs": outs} for sid, refs, outs in steps],
+            "protocol": {"packs": []}}
+    outputs = {sid: outs for sid, _refs, outs in steps}
+    rows = {tid: {"request_id": rid, "step_id": sid, "kind": "step", "attempt": 1, "revision": 0, "parent_task": None,
+                  "payload": {"agent_id": "ag_x", "resume_session_id": None, "meta": {}},
+                  "result": {"workdir": f"workspaces/{rid}/{tid}_ws", "workdir_id": f"{tid}_ws",
+                             "outputs": list(outputs[sid]), "session_id": f"sess_{tid}", "pending_jobs": [],
+                             "pending_asks": [], "provenance": {"runs": {tid: {"started_at": float(i)}}}}}
+            for i, (tid, sid) in enumerate(tasks)}
+    request = {"plan": plan, "research_contract": {"plan_sha256": "0" * 64}}
+    return Records(requests={rid: request}, tasks=rows, plans={rid: plan}, results={},
+                   manifests={row["result"]["workdir"]: None for row in rows.values()}, observed={}, contracts={})
+
+
+def two_entry_cycle(inputs):
+    """#154: run r uses s and a; run d reports s and a and uses s again (lineage_step r→s, r→a, a→d, d→s, s→d)."""
+    refs = {"s": "step:d/outputs/s.tsv", "a": "step:d/outputs/a.tsv"}
+    return _records("req_y", [("d", [refs["s"]], ["outputs/s.tsv", "outputs/a.tsv"]),
+                              ("r", [refs[n] for n in inputs], ["outputs/x.tsv"])], [("td", "d"), ("tr", "r")])
+
+
+@pytest.mark.parametrize("inputs", [("s", "a"), ("a", "s")], ids=["s_first", "a_first"])
+def test_a_cycle_with_two_entries_is_one_caution_naming_its_component(inputs):
+    """#154: one cycle caution per strongly connected component, whatever order the walk enters it from."""
+    outs = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(two_entry_cycle(inputs))
+        outs[name] = pilot.result_of(impl.audit_lineage(p, artifact="art:req_y/tr_ws/outputs/x.tsv"))
+    for out in outs.values():
+        assert [c for c in out["cautions"] if c["code"] == "cycle"] == [
+            {"code": "cycle", "nodes": ["art:req_y/td_ws/outputs/s.tsv", "run:td_ws/td"]}]
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
+
+
+DETOUR, UPSTREAM = 20, 45
+
+
+def detour_merge(direct_first):
+    """#157: x uses m directly and through a detour of DETOUR steps; m sits on a chain of UPSTREAM steps.
+
+    A walk that keeps the depth of its first visit reaches m deep through the detour and cuts the chain above
+    it, though the direct path leaves the whole chain inside the depth limit."""
+    steps = [(f"u{j}", [f"step:u{j - 1}/outputs/o.tsv"] if j else ["synth:DS-9000@r1"], ["outputs/o.tsv"])
+             for j in range(UPSTREAM + 1)]
+    steps.append(("m", [f"step:u{UPSTREAM}/outputs/o.tsv"], ["outputs/o.tsv"]))
+    steps += [(f"l{k}", [f"step:{'m' if k == 0 else f'l{k - 1}'}/outputs/o.tsv"], ["outputs/o.tsv"])
+              for k in range(DETOUR)]
+    refs = ["step:m/outputs/o.tsv", f"step:l{DETOUR - 1}/outputs/o.tsv"]
+    steps.append(("x", refs if direct_first else refs[::-1], ["outputs/x.tsv"]))
+    return _records("req_m", steps, [(f"t{sid}", sid) for sid, _refs, _outs in steps])
+
+
+@pytest.mark.parametrize("direct_first", [True, False], ids=["direct_first", "detour_first"])
+def test_a_shorter_path_into_a_merge_is_walked_at_its_own_depth(direct_first):
+    """#157: derived_from and audit_lineage use each node's least depth, not the depth of the first visit."""
+    root, target = "art:req_m/tx_ws/outputs/x.tsv", "art:req_m/tu0_ws/outputs/o.tsv"
+    outs = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(detour_merge(direct_first))
+        found = pilot.result_of(impl.find_reusable(p, derived_from=target))
+        assert found["candidates"][root]["match"]["derived_from"] == "yes", name
+        outs[name] = pilot.result_of(impl.audit_lineage(p, artifact=root))
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
+    walked = {(e["src"], e["dst"]) for e in outs["B"]["edges"] if e["rel"] == "used"}
+    assert ("run:tu28_ws/tu28", "art:req_m/tu27_ws/outputs/o.tsv") in walked   # depth 39 by the direct path, 79 by the detour
+
+
 def test_diamond_lineage_is_walked_by_node_not_by_path():
     """#140: 20 layers that each split into two outputs and merge in the next run (2^19 paths, 60 nodes)."""
     checks = {name: pilot.diamond_check(pilot.IMPLS[name](), 20) for name in ("B", "A")}
@@ -211,30 +285,39 @@ def test_models_agree_on_edge_cases_outside_the_17_queries():
     assert outs["B"]["art"]["node"]["reported_by"] == ["run:t0_ws/t0"]
 
 
-def resume_in_one_workspace(peer_started: bool):
-    """t1 resumes t0's session in t0's workspace; without peer_started t0 left no started_at anywhere (#137)."""
+def resume_in_one_workspace(peer_started: bool, own_started: bool = True):
+    """t1 resumes t0's session in t0's workspace; without peer_started t0 left no started_at anywhere (#137),
+    without own_started t1 did not."""
     records = pilot.chain_records(2)
     t0, t1 = copy.deepcopy(records.tasks["t0"]), copy.deepcopy(records.tasks["t1"])
     if not peer_started:
         t0["result"]["provenance"] = {"runs": {}}
+    if not own_started:
+        t1["result"]["provenance"] = {"runs": {}}
     t1["payload"]["resume_session_id"] = "sess_t0"
     t1["result"].update(workdir=t0["result"]["workdir"], workdir_id="t0_ws", outputs=["outputs/o1.tsv"])
     return type(records)(**{**records.__dict__, "tasks": {"t0": t0, "t1": t1}})
 
 
-@pytest.mark.parametrize("peer_started, resumes, reason", [
-    (True, "run:t0_ws/t0", None),
-    (False, "unknown", "no_matching_session"),
+@pytest.mark.parametrize("peer_started, own_started, resumes, reason", [
+    (True, True, "run:t0_ws/t0", None),
+    (False, True, "unknown", "start_unknown"),
+    (True, False, "unknown", "start_unknown"),
 ])
-def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started, resumes, reason):
-    """#137: a peer run whose started_at is unknown drops out of the comparison instead of raising TypeError."""
+def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started, own_started, resumes, reason):
+    """#137: a run whose started_at is unknown drops out of the comparison instead of raising TypeError.
+    #155: a matching session whose order cannot be judged says so, never "no matching session"."""
     outs = {}
     for name in ("B", "A"):
         impl = pilot.IMPLS[name]()
-        p = impl.project(resume_in_one_workspace(peer_started))
+        p = impl.project(resume_in_one_workspace(peer_started, own_started))
         outs[name] = pilot.result_of(impl.audit_lineage(p, run="run:t0_ws/t1"))
     node = outs["B"]["node"]
     assert (node["resumes"], (node.get("unknown") or {}).get("resumes")) == (resumes, reason)
+    if reason:
+        assert node["candidates"]["resumes"] == ["run:t0_ws/t0"]
+        gap = next(g for g in outs["B"]["gaps"] if g["field"] == "resumes")
+        assert (gap["reason"], gap["candidates"]) == ("start_unknown", ["run:t0_ws/t0"])
     assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
 
 
@@ -428,6 +511,101 @@ def test_reader_does_not_miss_a_writer_that_starts_around_the_open(tmp_path, mon
     finally:
         for writer in writers:
             writer.close()
+
+
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def fetchall(self):
+        return self.rows
+
+
+class _RacedRead:
+    """A read-only connection whose query is followed, before _read_state checks again, by ``after()``."""
+
+    def __init__(self, db, after):
+        self.db, self.after = db, after
+
+    def execute(self, sql):
+        rows = self.db.execute(sql).fetchall()
+        self.after()
+        return _Rows(rows)
+
+    def close(self):
+        self.db.close()
+
+
+def _wrap_reader(monkeypatch, wrap):
+    """Wrap the first ``times`` opens of _open_state_readonly; record each open's immutable flag."""
+    from labhq.research import semantics
+    real, opened = semantics._open_state_readonly, []
+
+    def opener(path, *, immutable=None):
+        db = real(path, immutable=immutable)
+        opened.append(immutable)
+        return wrap(db, len(opened))
+
+    monkeypatch.setattr(semantics, "_open_state_readonly", opener)
+    return opened
+
+
+def _commit_and_close(path, key):
+    """A writer that commits and closes: its -wal is checkpointed and removed, the main file grows."""
+    import sqlite3
+    writer = sqlite3.connect(path)
+    writer.execute("INSERT INTO state VALUES ('task', ?, ?)", (key, json.dumps({"pad": "x" * 20000})))
+    writer.commit()
+    writer.close()
+
+
+def test_reader_reads_again_when_a_writer_commits_and_closes_after_the_immutable_read(tmp_path, monkeypatch):
+    """#156: no -wal is left to see, only the changed main file; the stamp check sends the read round again."""
+    from labhq.research.semantics import read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _RacedRead(db, lambda: _commit_and_close(path, "u"))
+                          if n == 1 else db)
+    assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t", "u"]
+    assert opened == [True, True] and sorted(p.name for p in tmp_path.iterdir()) == ["state.db"]
+
+
+def test_reader_gives_up_when_a_writer_keeps_changing_the_file(tmp_path, monkeypatch):
+    from labhq.research.semantics import RecordsError, read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _RacedRead(db, lambda: _commit_and_close(path, f"u{n}")))
+    with pytest.raises(RecordsError, match="kept changing"):
+        read_records(tmp_path, state_db=path)
+    assert opened == [True, True, True]
+
+
+class _TornRead(_RacedRead):
+    def execute(self, sql):
+        import sqlite3
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+
+def test_reader_retries_an_immutable_read_that_fails_and_reports_a_shared_one(tmp_path, monkeypatch):
+    """#156: an sqlite error in an immutable read may be a page torn by a writer that started meanwhile, so
+    the read is redone; the same error with a writer's -wal shared is reported at once."""
+    from labhq.research.semantics import RecordsError, read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    opened = _wrap_reader(monkeypatch, lambda db, n: _TornRead(db, None) if n == 1 else db)
+    assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t"]
+    assert opened == [True, True]
+    import sqlite3
+    writer = sqlite3.connect(path)
+    writer.execute("INSERT INTO state VALUES ('task', 'w', '{}')")
+    writer.commit()   # kept open: its -wal is beside the file, so the read shares it (not immutable)
+    try:
+        opened = _wrap_reader(monkeypatch, lambda db, n: _TornRead(db, None))
+        with pytest.raises(RecordsError, match="cannot read state rows"):
+            read_records(tmp_path, state_db=path)
+        assert opened == [False]
+    finally:
+        writer.close()
 
 
 # ---------------------------------------------------------------- isolation from the execution path

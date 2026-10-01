@@ -211,6 +211,14 @@ def test_result_binds_to_the_selected_steps_claims_and_required_slots():
                                     plan=plan)
 
 
+def test_a_plan_step_with_two_slots_of_one_id_is_rejected_before_cp1():
+    # #187: binding reads the slots as a set, so two required slots of one id would need only one row.
+    plan, _ = _slotted_plan()
+    plan["steps"][0]["evidence_slots"].append({"id": "e1", "required": True, "description": "IL6 replication row"})
+    with pytest.raises(ValidationError, match=r"step s1 declares evidence slot e1 more than once"):
+        rc.validate_research_plan(plan, max_steps=2, active_packs={})
+
+
 def test_a_failed_attempt_still_addresses_a_required_slot():
     # The gap is recorded, not hidden: CP2 shows the slot as tried and failed instead of silently absent.
     plan, digest = _slotted_plan()

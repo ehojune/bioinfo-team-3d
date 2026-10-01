@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from labhq import cli, doctor, init_wizard as wizard
+from labhq import cli, doctor, hpc_consult, init_wizard as wizard
 from labhq.adapters import base
 from labhq.runner import versions
 from labhq.settings import Settings
+from labhq.tools.scheduler import Scheduler
+from tests.test_hpc_consult import SGE, Backend, Cluster
 
 
 @pytest.fixture(autouse=True)
@@ -28,8 +30,16 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(wizard.shutil, "which", lambda *a, **kw: None)
     monkeypatch.setattr(doctor, "_probe", lambda *a: (_ for _ in ()).throw(AssertionError("unexpected CLI")))
+    monkeypatch.setattr(wizard, "_hpc_query", lambda argv: None)  # the HPC consult never queries a real cluster
+    monkeypatch.setattr(wizard, "_hpc_backend", _no_cluster)
     monkeypatch.chdir(tmp_path)
     return home
+
+
+def _no_cluster(hpc):
+    backend = Scheduler(hpc)
+    backend._run = lambda args: pytest.fail(f"unexpected scheduler command {args}")
+    return backend
 
 
 def _data(path=Path("config/labhq.yaml")):
@@ -395,3 +405,64 @@ def test_init_propagates_doctor_failures(monkeypatch, capsys):
         cli.main(["init", "--yes"])
     assert exc.value.code == 1
     assert "fail 1" in capsys.readouterr().out
+
+
+def _sge_host(monkeypatch, backend):
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    tools = {"qsub", "qstat", "qconf"}
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in tools else None)
+    cluster = Cluster(SGE)
+    monkeypatch.setattr(wizard, "_hpc_query", cluster)
+    monkeypatch.setattr(wizard, "_hpc_backend", lambda hpc: backend)
+    return cluster
+
+
+@pytest.mark.parametrize("answer", ["n", ""])
+def test_init_consult_writes_the_draft_and_a_declined_trial_submits_nothing(monkeypatch, tmp_path, capsys,
+                                                                            answer):
+    # #119: read-only queries become the hpc: section; refusing the trial job submits nothing.
+    backend = Backend()
+    cluster = _sge_host(monkeypatch, backend)
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or (answer if "시험 잡" in prompt else ""))
+    wizard.run()
+    hpc = _data()["hpc"]
+    assert hpc["scheduler"] == "sge" and hpc["sge"] == {"pe": "smp", "mem_resource": "h_vmem",
+                                                        "mem_per_slot": True, "runtime_resource": "h_rt"}
+    assert all(call[0] == "qconf" for call in cluster.calls) and backend.calls == []
+    assert sum("시험 잡" in prompt for prompt in asked) == 1
+    output = capsys.readouterr().out
+    assert "HPC 설정 초안" in output and "아무것도 제출하지 않았습니다" in output and str(tmp_path) not in output
+
+
+def test_init_trial_runs_once_after_the_config_is_saved(monkeypatch, tmp_path, capsys):
+    backend = Backend(polls=1)
+    _sge_host(monkeypatch, backend)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y" if "시험 잡" in prompt else "")
+    wizard.run()
+    assert len(backend.submitted()) == 1 and Path("config/labhq.yaml").exists()
+    output = capsys.readouterr().out
+    assert "추적됐습니다. (job 777)" in output and str(tmp_path) not in output
+
+
+def test_init_yes_never_offers_the_trial_job(monkeypatch, capsys):
+    backend = Backend()
+    _sge_host(monkeypatch, backend)
+    monkeypatch.setattr("builtins.input", lambda *_: pytest.fail("prompt"))
+    wizard.run(yes=True)
+    assert backend.calls == [] and _data()["hpc"]["sge"]["pe"] == "smp"
+    assert "--yes에서는 묻지 않고" in capsys.readouterr().out
+
+
+def test_init_dry_run_skips_the_consult(monkeypatch, capsys):
+    backend = Backend()
+    cluster = _sge_host(monkeypatch, backend)
+    wizard.run(yes=True, dry_run=True)
+    assert cluster.calls == [] and backend.calls == []
+    assert "HPC 상담 조회와 시험 잡을 건너뜁니다" in capsys.readouterr().out
+
+
+def test_init_without_a_cluster_explains_local_only(capsys):
+    wizard.run(yes=True)
+    assert _data()["hpc"]["scheduler"] == "none" and hpc_consult.NO_CLUSTER in capsys.readouterr().out

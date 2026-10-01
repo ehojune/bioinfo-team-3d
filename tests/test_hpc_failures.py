@@ -40,6 +40,7 @@ async def call_fixture(tmp_path, scenario, tool, arguments):
     ("broker", "hpc_submit", SUBMIT, "fixture approval broker unavailable"),
     ("submit", "hpc_submit", SUBMIT, "qsub failed (1): qsub: fixture submission rejected"),
     ("cancel", "hpc_cancel", {"job_id": "123"}, "allow qdel in sudoers"),
+    ("cancel_unowned", "hpc_cancel", {"job_id": "123"}, "labhq cancels only jobs it tracks for you"),
     ("queue", "hpc_queue", {}, "qstat failed (255): ssh: fixture connection refused"),
     ("status", "hpc_status", {"job_id": "123"}, "qstat failed (255)"),
     ("accounting", "hpc_status", {"job_id": "123"}, "qacct failed (255)"),
@@ -60,7 +61,7 @@ async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, arg
     assert payload.get("isError") is True
     text = "\n".join(block.text for block in response.content if block.type == "text")
     assert detail in text
-    if tool == "hpc_cancel" and "invalid job id" not in detail:
+    if tool == "hpc_cancel" and "invalid job id" not in detail and scenario != "cancel_unowned":
         command = "scancel" if scenario.startswith("slurm") else "qdel"
         assert f"fixture {command} permission denied" in text
     assert '"state": "missing"' not in text

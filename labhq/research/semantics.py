@@ -528,17 +528,20 @@ def judge_resume(resume_of: str | None, started_at: float | None, peers: Iterabl
                  ) -> Judged:
     """peers: (run id, session_id, started_at) of the other runs in the same workspace.
 
-    A run whose start is unknown, this one or a peer, is never earlier or later: it drops out.
+    A run whose start is unknown, this one or a peer, is never earlier or later: it drops out. When no known
+    earlier run is left but a run on the session dropped out that way, the reason is start_unknown (#155).
     """
     if resume_of is None:
         return Judged(NONE)
     mine = _instant(started_at)
-    earlier = tuple(sorted(run for run, session, start in peers
-                           if session == resume_of and mine is not None and _instant(start) is not None
-                           and _instant(start) < mine))
+    same = [(run, _instant(start)) for run, session, start in peers if session == resume_of]
+    earlier = tuple(sorted(run for run, start in same if mine is not None and start is not None and start < mine))
     if len(earlier) == 1:
         return Judged(earlier[0])
-    return Judged(UNKNOWN, "shared_session", earlier) if earlier else Judged(UNKNOWN, "no_matching_session")
+    if earlier:
+        return Judged(UNKNOWN, "shared_session", earlier)
+    untimed = tuple(sorted(run for run, start in same if mine is None or start is None))
+    return Judged(UNKNOWN, "start_unknown", untimed) if untimed else Judged(UNKNOWN, "no_matching_session")
 
 
 def judge_retry(attempt: Any) -> Judged:
@@ -975,15 +978,14 @@ def _advisory(p: Projection, consumer: str, query: dict[str, Any], result: dict[
 
 
 def _derived_from(p: Projection, art: str, target: str) -> str:
-    """yes when generated_by -> used reaches target; unknown when the walk hits an unknown first."""
-    seen: set[str] = set()
-    stack = [(art, 0)]
+    """yes when generated_by -> used reaches target; unknown when the walk hits an unknown first.
+
+    Breadth first, so a node is expanded at its least depth: a longer path into a merge never hides the
+    shorter one behind the depth limit (#157)."""
+    seen = {art}
+    todo = [(art, 0)]   # a queue: read in order, appended at the end
     unknown = False
-    while stack:
-        node, depth = stack.pop()
-        if node in seen:
-            continue
-        seen.add(node)
+    for node, depth in todo:
         if depth > p.model.spec.traversal.depth_limit:
             unknown = True
             continue
@@ -999,8 +1001,9 @@ def _derived_from(p: Projection, art: str, target: str) -> str:
                 return "yes"
             if dst == UNKNOWN:
                 unknown = True
-            elif dst.startswith("art:"):
-                stack.append((dst, depth + 1))
+            elif dst.startswith("art:") and dst not in seen:
+                seen.add(dst)
+                todo.append((dst, depth + 1))
     return UNKNOWN if unknown else "no"
 
 
@@ -1060,10 +1063,52 @@ def _gap(p: Projection, row: Mapping[str, Any], name: str) -> dict:
     return gap
 
 
+def _cycles(steps: Mapping[str, Iterable[str]]) -> list[list[str]]:
+    """Strongly connected components of the walked steps that hold a cycle (#154), each sorted, in sorted order.
+
+    One caution per component, so the answer does not depend on which node the walk entered it from."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    found: list[list[str]] = []
+    for start in sorted(steps):
+        if start in index:
+            continue
+        index[start] = low[start] = len(index)
+        stack.append(start)
+        on_stack.add(start)
+        work = [(start, iter(sorted(set(steps.get(start, ())))))]
+        while work:
+            node, children = work[-1]
+            for child in children:
+                if child not in index:
+                    index[child] = low[child] = len(index)
+                    stack.append(child)
+                    on_stack.add(child)
+                    work.append((child, iter(sorted(set(steps.get(child, ()))))))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], index[child])
+            else:
+                work.pop()
+                if work:
+                    low[work[-1][0]] = min(low[work[-1][0]], low[node])
+                if low[node] == index[node]:
+                    members: list[str] = []
+                    while not members or members[-1] != node:
+                        members.append(stack.pop())
+                        on_stack.discard(members[-1])
+                    if len(members) > 1 or node in steps.get(node, ()):
+                        found.append(sorted(members))
+    return sorted(found)
+
+
 def _walk(p: Projection, root: str) -> _Walk:
+    """Breadth first from the root, so every node is expanded at its least depth (#157)."""
     walk = _Walk()
     seen_edges: set[int] = set()
-    done: set[str] = set()
+    steps: dict[str, list[str]] = {}   # node -> the nodes its followed edges lead to
     limit = p.model.spec.traversal.depth_limit
     relations = p.model.spec.relations
 
@@ -1072,16 +1117,7 @@ def _walk(p: Projection, root: str) -> _Walk:
             seen_edges.add(id(edge))
             into.append(edge)
 
-    def visit(node: str, depth: int, path: tuple[str, ...]) -> None:
-        if node in path:
-            walk.cautions.append({"code": "cycle", "nodes": [node]})
-            return
-        if node in done:
-            return
-        if depth > limit:
-            walk.cautions.append({"code": "depth_limit", "nodes": [node]})
-            return
-        done.add(node)
+    def expand(node: str) -> None:
         concept = p.model.concept_of(node)
         if concept in ("artifact", "external_source"):
             walk.nodes.add(node)
@@ -1112,10 +1148,20 @@ def _walk(p: Projection, root: str) -> _Walk:
                 other = edge["dst"] if at_src else edge["src"]
                 if other != UNKNOWN:
                     nexts.append(other)
-        for other in nexts:
-            visit(other, depth + 1, (*path, node))
+        steps[node] = nexts
 
-    visit(root, 0, ())
+    depth = {root: 0}
+    todo = [root]   # a queue: read in order, appended at the end
+    for node in todo:
+        if depth[node] > limit:
+            walk.cautions.append({"code": "depth_limit", "nodes": [node]})
+            continue
+        expand(node)
+        for other in steps.get(node, []):
+            if other not in depth:
+                depth[other] = depth[node] + 1
+                todo.append(other)
+    walk.cautions.extend({"code": "cycle", "nodes": nodes} for nodes in _cycles(steps))
     return walk
 
 

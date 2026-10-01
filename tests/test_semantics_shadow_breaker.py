@@ -47,6 +47,12 @@ def _wait_for_shadow_state(service, tmp_path, predicate, description, timeout=10
         time.sleep(0.02)
 
 
+def _recorded(paths, rid, ref="sem:0a1b2c3d"):
+    """A request line that listed ``ref`` as a candidate, so `labhq semantics mark` accepts it (#175)."""
+    shadow.append_line(paths, {"v": 1, "type": "request", "ts": time.time(), "epoch": 1, "request_id": rid,
+                               "provenance": {"status": "ok", "candidate_refs": [ref]}})
+
+
 def _run(service, rids):
     for rid in rids:
         service.after_request(rid)
@@ -158,9 +164,10 @@ def test_the_boundary_check_refuses_paths_free_text_and_known_values(value):
 def test_wrong_identity_marked_from_the_cli_turns_the_running_shadow_off(tmp_path):
     service = _service(tmp_path)
     _run(service, ["req_001"])
+    _recorded(service.paths, "req_001")
     print(shadow.mark(service.paths, "req_001", "sem:0a1b2c3d", "wrong_identity"))
     _run(service, ["req_002"])
-    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 1
+    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 2
     assert _disabled(tmp_path)["reason"] == "wrong_identity"
 
 
@@ -179,14 +186,86 @@ def test_off_survives_a_restart_and_enable_opens_a_new_epoch(tmp_path, monkeypat
     assert [line["type"] for line in _lines(tmp_path)] == ["auto_off", "enable", "request"]
 
 
-@pytest.mark.parametrize("broken", ["disabled.json", "state.json"])
-def test_an_unreadable_breaker_file_means_off(tmp_path, broken):
+@pytest.mark.parametrize("broken, text", [
+    ("disabled.json", "{not json"), ("state.json", "{not json"), ("breaker.json", "{not json"),
+    ("breaker.json", '{"epoch": 1, "recent": "TF", "consecutive": 0}'),
+    ("breaker.json", '{"epoch": 1, "recent": [true], "consecutive": -1}'),
+], ids=["disabled", "state", "breaker", "breaker_recent_shape", "breaker_negative"])
+def test_an_unreadable_breaker_file_means_off(tmp_path, broken, text):
     service = _service(tmp_path)
-    (service.paths.root / broken).write_text("{not json", encoding="utf-8")
+    (service.paths.root / broken).write_text(text, encoding="utf-8")
     again = shadow.ShadowService.start(service.hub)
     assert again.latched == "breaker_storage"
     _run(again, ["req_001"])
     assert _lines(tmp_path, "request") == []
+
+
+def _fail_on(monkeypatch, rids):
+    real = shadow.build_view
+
+    def sometimes(snap):
+        if snap["rid"] in rids:
+            raise RuntimeError("x")
+        return real(snap)
+
+    monkeypatch.setattr(shadow, "build_view", sometimes)
+
+
+def test_recent_failures_survive_a_restart(tmp_path, monkeypatch):
+    """#173: two failures, a gateway restart, then one more of the last twenty turns it off."""
+    service = _service(tmp_path, n=12)
+    _fail_on(monkeypatch, {"req_002", "req_004", "req_007"})
+    _run(service, ["req_001", "req_002", "req_003", "req_004", "req_005"])
+    assert service.latched is None
+    again = shadow.ShadowService.start(service.hub)
+    assert list(again.recent) == [False, True, False, True, False] and again.latched is None
+    _run(again, ["req_006", "req_007"])
+    assert again.latched == "recent_failures" and _disabled(tmp_path)["reason"] == "recent_failures"
+
+
+def test_consecutive_failures_survive_a_restart(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    _fail_on(monkeypatch, {"req_001", "req_002", "req_003"})
+    _run(service, ["req_001", "req_002"])
+    assert service.latched is None
+    again = shadow.ShadowService.start(service.hub)
+    assert again.consecutive == 2
+    _run(again, ["req_003"])
+    assert again.latched == "consecutive_failures"
+
+
+def test_a_new_epoch_does_not_count_the_failures_of_the_last_one(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    _fail_on(monkeypatch, {"req_001", "req_002", "req_003"})
+    _run(service, ["req_001", "req_002"])
+    shadow.enable(service.paths)
+    again = shadow.ShadowService.start(service.hub)
+    assert again.epoch == 2 and list(again.recent) == [] and again.consecutive == 0
+    _run(again, ["req_003"])
+    assert again.latched is None and again.consecutive == 1
+    third = shadow.ShadowService.start(service.hub)
+    assert (third.epoch, list(third.recent), third.consecutive) == (2, [True], 1)
+
+
+def test_a_saved_window_past_a_limit_turns_it_off_at_start(tmp_path):
+    """A process that stopped after saving its third failure but before writing disabled.json."""
+    service = _service(tmp_path)
+    service.paths.breaker.write_text(json.dumps({"epoch": 1, "recent": [True] * 3, "consecutive": 3}),
+                                     encoding="utf-8")
+    again = shadow.ShadowService.start(service.hub)
+    assert again.latched == "consecutive_failures"
+
+
+def test_a_window_that_cannot_be_saved_turns_it_off(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+
+    def full(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shadow, "write_breaker", full, raising=False)
+    monkeypatch.setattr(shadow, "atomic_write_text", full)
+    _run(service, ["req_001"])
+    assert service.latched == "breaker_storage"
 
 
 def test_a_state_dir_inside_a_git_work_tree_is_refused(tmp_path, caplog):
@@ -262,6 +341,7 @@ def test_enable_after_a_stuck_worker_starts_a_fresh_one(tmp_path, monkeypatch):
 
 def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monkeypatch):
     service = _service(tmp_path)
+    _recorded(service.paths, "req_000")
     started, release = threading.Event(), threading.Event()
     real = shadow.compute_objects
 
@@ -277,7 +357,7 @@ def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monk
     shadow.mark(service.paths, "req_000", "sem:0a1b2c3d", "wrong_identity")
     release.set()
     assert service.drain(10)
-    assert service.latched == "wrong_identity" and _lines(tmp_path, "request") == []
+    assert service.latched == "wrong_identity" and len(_lines(tmp_path, "request")) == 1  # only the _recorded one
 
 
 def test_a_state_dir_linked_into_a_git_work_tree_is_refused(tmp_path):
@@ -344,3 +424,45 @@ def test_a_boundary_check_that_raises_writes_nothing_and_counts(tmp_path, monkey
     assert _lines(tmp_path, "request") == []
     messages = [r.getMessage() for r in caplog.records]
     assert any("boundary check" in m for m in messages) and all("/data/cohort" not in m for m in messages)
+
+
+def test_a_sqlite_without_json1_turns_it_off_at_start_with_its_reason(tmp_path, monkeypatch):
+    """#160: the task query needs JSON1; without it the shadow is off with a reason the report shows, instead of
+    failing every job and ending as consecutive_failures."""
+    monkeypatch.setattr(shadow, "JSON1_PROBE", "SELECT no_such_json1_function('{}')", raising=False)
+    service = _service(tmp_path)
+    assert service.latched == "sqlite_json1_missing" and _disabled(tmp_path)["reason"] == "sqlite_json1_missing"
+    _run(service, ["req_001"])
+    assert _lines(tmp_path, "request") == [] and service.counts["failures"] == 0
+    rep = shadow.build_report(service.paths, setting="shadow")
+    assert rep["state"]["on"] is False and rep["state"]["reason"] == "sqlite_json1_missing"
+    assert [a["reason"] for a in rep["auto_off"]] == ["sqlite_json1_missing"]
+    assert "sqlite_json1_missing" in shadow.render_report(rep)
+
+
+def test_the_json1_probe_runs_the_functions_the_task_query_uses():
+    assert shadow.sqlite_json1() is True
+    for name in ("json_remove", "json_extract", "json_each"):
+        assert name in shadow._TASK_SQL + shadow._JOBS_SQL and name in shadow.JSON1_PROBE
+
+
+def test_a_failure_counted_on_the_event_loop_saves_its_window_off_the_loop(tmp_path, monkeypatch):
+    """#173: after_request runs on the gateway event loop; its failure is counted at once, the disk write is not
+    done there."""
+    service = _service(tmp_path)
+    writers, real = [], shadow.write_breaker
+
+    def recording(*args, **kwargs):
+        writers.append(threading.current_thread().name)
+        return real(*args, **kwargs)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("snapshot failed")
+
+    monkeypatch.setattr(shadow, "write_breaker", recording)
+    monkeypatch.setattr(shadow, "take_snapshot", broken)
+    service.after_request("req_001")
+    assert service.consecutive == 1
+    _wait_for_shadow_state(service, tmp_path, lambda: service.paths.breaker.exists(), "breaker.json written")
+    assert writers and threading.main_thread().name not in writers
+    assert json.loads(service.paths.breaker.read_text(encoding="utf-8"))["consecutive"] == 1

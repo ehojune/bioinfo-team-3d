@@ -1,7 +1,8 @@
-"""Consults that were running when the gateway restarted (#93)."""
+"""Consults that were running when the gateway restarted (#93, #112, #113)."""
 
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -344,5 +345,330 @@ async def test_adoption_never_takes_another_agents_consult_or_session(tmp_path):
         assert [task.agent_id for task in calls] == ["cso"]
         assert hub.requests["r"]["cso_session_id"] == "cso-next"
         assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use bay 2"
+    finally:
+        hub.store.close()
+
+
+# ---- #112: CSO plan and synthesis respect a consult the restarted gateway lost track of ----
+
+def synthesis_ready(workdir):
+    """A request whose steps and review are done; only the CSO synthesis remains."""
+    done = TaskResult(task_id="t-s1", agent_id="worker", ok=True, text="cohort table")
+    return {"id": "r", "text": "compare cohorts", "status": "running", "mode": "orchestrate",
+            "plan": {"steps": [{"id": "s1", "agent_id": "worker", "instruction": "compare", "depends_on": []}]},
+            "results": {"s1": done.model_dump(mode="json")}, "review_progress": {"phase": "synthesis"},
+            "cso_session_id": "shared-session", "cso_workdir": workdir}
+
+
+def orphan_consult(hub, workdir, *, tid="orphan"):
+    """The consult of an ask that ended unanswered; the CSO runner still runs it (#112)."""
+    task = Task(id=tid, agent_id="cso", request_id="r", prompt="answer the lost ask",
+                resume_session_id="shared-session",
+                meta={"kind": "consult", "ask_id": "lost-ask", "workdir": workdir})
+    hub.store.put("task", tid, {"request_id": "r", "kind": "consult", "attempt": 1, "accepted": True,
+                                "completed": False, "dispatched_at": time.time(), "runner_id": "local",
+                                "runner_incarnation": "inc-1", "payload": task.model_dump(mode="json")})
+
+
+def dispatched(socket, kind):
+    return [frame["task"] for frame in socket.sent
+            if frame["type"] == "task.dispatch" and frame["task"]["meta"].get("kind") == kind]
+
+
+def tap_events(hub):
+    seen, publish = [], hub.publish
+
+    async def tap(event, **kwargs):
+        seen.append(event)
+        await publish(event, **kwargs)
+
+    hub.publish = tap
+    return seen
+
+
+def waited_for_session(seen, step):
+    return any(e["type"] == "request.step_wait" and (e.get("data") or {}).get("step_id") == step for e in seen)
+
+
+async def restart_with_orphan_consult(s, workdir):
+    first = Hub(s)
+    first.requests["r"] = synthesis_ready(workdir)
+    first.save_request("r")
+    orphan_consult(first, workdir)
+    first.store.close()
+    second = Hub(s)
+    assert second.requests["r"]["status"] == "interrupted"
+    return second
+
+
+async def test_synthesis_after_restart_waits_for_the_consult_still_using_its_session(tmp_path):
+    s = settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    hub = await restart_with_orphan_consult(s, workdir)
+    socket = CaptureSocket()
+    seen = tap_events(hub)
+    try:
+        aid = next(aid for aid, entry in hub.approvals.items() if entry["approval"]["kind"] == "resume")
+        await hub.resolve_approval(aid, True)
+        # The CSO runner reconnects late, same generation: the consult it accepted is still running.
+        hub.register_runner("local", socket, ROSTER, "inc-1")
+        await eventually(lambda: dispatched(socket, "synthesis") or waited_for_session(seen, "synthesis"))
+        assert dispatched(socket, "synthesis") == [], "synthesis must not run beside the consult in its session"
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        await eventually(lambda: dispatched(socket, "synthesis"))
+        final = dispatched(socket, "synthesis")[0]
+        # The consult's turn is the latest one in that session, so synthesis continues from it.
+        assert final["resume_session_id"] == "after-consult" and final["meta"]["workdir"] == workdir
+        await hub.on_runner_message("local", result_frame(final["id"], "Final report", "final-session"))
+        await eventually(lambda: hub.requests["r"]["status"] == "done")
+        assert hub.requests["r"]["report"].startswith("Final report")
+    finally:
+        hub.store.close()
+
+
+async def test_synthesis_after_restart_isolates_when_the_consult_outcome_is_unknown(tmp_path):
+    s = settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    hub = await restart_with_orphan_consult(s, workdir)
+    socket = CaptureSocket()
+    try:
+        aid = next(aid for aid, entry in hub.approvals.items() if entry["approval"]["kind"] == "resume")
+        await hub.resolve_approval(aid, True)
+        # The runner restarted as well: the consult is abandoned, but its CLI may still hold the session.
+        hub.register_runner("local", socket, ROSTER, "inc-2")
+        await eventually(lambda: dispatched(socket, "synthesis"))
+        final = dispatched(socket, "synthesis")[0]
+        assert final["resume_session_id"] is None and "workdir" not in final["meta"]
+        await hub.on_runner_message("local", result_frame(final["id"], "Final report", "isolated"))
+        await eventually(lambda: hub.requests["r"]["status"] == "done")
+    finally:
+        hub.store.close()
+
+
+async def test_plan_continuation_isolates_from_a_task_whose_outcome_is_unknown(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        hub.agents = {aid["id"]: {**aid, "name": aid["id"], "role": "test"} for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running", "mode": "orchestrate",
+                             "cso_session_id": "shared-session", "cso_workdir": workdir}
+        orphan_consult(hub, workdir)
+        entry = hub.store.get("task", "orphan")
+        hub.store.put("task", "orphan", {**entry, "completed": True, "abandoned": True})
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="no steps")
+
+        hub.dispatch = dispatch
+        await hub.orchestrator.run_request("r")
+        assert calls[0].meta["kind"] == "plan"
+        assert calls[0].resume_session_id is None and "workdir" not in calls[0].meta
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("state", ["unaccepted", "accepted_by_an_offline_runner", "in_flight_to_an_offline_runner"])
+async def test_session_wait_is_bounded_when_no_connected_runner_runs_the_holder(tmp_path, state):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 30 if state == "unaccepted" else 0.3
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        if state == "unaccepted":  # this gateway gave up on its delivery; the connected runner never took it
+            hub.store.put("task", "orphan", {**hub.store.get("task", "orphan"), "accepted": False})
+            hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        elif state == "accepted_by_an_offline_runner":
+            hub.agent_runner["cso"] = "local"  # roster kept, runner disconnected
+        else:  # this gateway still awaits the result, but the runner dropped and does not come back
+            socket = CaptureSocket()
+            hub.register_runner("local", socket, ROSTER, "inc-1")
+            hub.futures["orphan"] = asyncio.get_running_loop().create_future()
+            hub.unregister_runner("local", socket)
+        started = time.monotonic()
+        freed = await asyncio.wait_for(hub.wait_session_free("cso", "shared-session", workdir, request_id="r",
+                                                             step_id="synthesis"), 5)
+        assert freed == (None, None)
+        assert time.monotonic() - started < (2 if state == "unaccepted" else 5)
+    finally:
+        hub.store.close()
+
+
+async def test_a_reported_result_releases_an_abandoned_tasks_session(tmp_path):
+    s = settings(tmp_path)
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-2")  # a new generation abandons it
+        assert hub.store.get("task", "orphan")["abandoned"]
+        assert await hub.wait_session_free("cso", "shared-session", workdir) == (None, None)
+        # The old generation's unacknowledged result still arrives: the consult did finish.
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        assert await asyncio.wait_for(hub.wait_session_free("cso", "shared-session", workdir), 2) == (
+            "shared-session", workdir)
+    finally:
+        hub.store.close()
+
+
+async def test_session_wait_keeps_an_accepted_task_that_sat_in_the_runner_queue(tmp_path):
+    """The runner accepts a task before its queue and starts task_timeout_s only at CLI spawn."""
+    s = settings(tmp_path)
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        # consult_parallel was saturated: dispatched longer ago than any timeout, it only now starts.
+        queued = time.time() - (s.runner.task_timeout_s + s.gateway.resume_wait_s + 60)
+        hub.store.put("task", "orphan", {**hub.store.get("task", "orphan"), "dispatched_at": queued})
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir))
+        await asyncio.sleep(0.5)
+        assert not wait.done(), "the connected generation still runs the consult in this session"
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        assert await asyncio.wait_for(wait, 2) == ("after-consult", workdir)
+    finally:
+        hub.store.close()
+
+
+async def test_session_wait_measures_the_reconnect_grace_from_the_disconnect(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.5
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        socket = CaptureSocket()
+        hub.register_runner("local", socket, ROSTER, "inc-1")
+        wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir))
+        await asyncio.sleep(0.8)  # the consult runs longer than resume_wait_s
+        hub.unregister_runner("local", socket)
+        await asyncio.sleep(0.15)  # a short drop, well inside resume_wait_s
+        assert not wait.done(), "the grace starts at the disconnect, not at the start of the wait"
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")  # same generation: still running
+        await asyncio.sleep(0.8)
+        assert not wait.done()
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        assert await asyncio.wait_for(wait, 2) == ("after-consult", workdir)
+    finally:
+        hub.store.close()
+
+
+# ---- #113: a re-routed facilities ask keeps the employee it went to before the restart ----
+
+FACILITIES = [{"id": "facilities", "engine": "claude_code"}]
+
+
+def facilities_question():
+    return AskRequest(task_id="source", agent_id="worker", request_id="r", to="facilities",
+                      question="Which bay is free?", why_blocked="bay unknown")
+
+
+def record_runner_waits(hub):
+    waits, original = [], hub.wait_agent_online
+
+    async def recording(agent_id, timeout_s):
+        waits.append(agent_id)
+        return await original(agent_id, timeout_s)
+
+    hub.wait_agent_online = recording
+    return waits
+
+
+async def start_facilities_ask_then_crash(s, *, with_facilities):
+    """Gateway 1 routes a facilities ask, the runner accepts its consult, and the gateway dies."""
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running", "mode": "direct",
+                           "agent_id": "worker"}
+    first.save_request("r")
+    local = CaptureSocket()
+    first.register_runner("local", local, ROSTER, "inc-1")
+    facilities = CaptureSocket()
+    if with_facilities:
+        first.register_runner("fac", facilities, FACILITIES, "inc-f")
+    ask = facilities_question()
+    await first.on_runner_message("local", {"type": "ask.requested", "data": ask.model_dump(mode="json")})
+    target = facilities if with_facilities else local
+    await eventually(lambda: consults(target))
+    running = consults(target)[0]
+    assert running["agent_id"] == ("facilities" if with_facilities else "cso")
+    await first.on_runner_message("fac" if with_facilities else "local",
+                                  {"type": "task.accepted", "task_id": running["id"], "request_id": "r"})
+    tasks = list(first.ask_tasks.values())
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    first.store.close()
+    return ask, running
+
+
+async def test_restart_keeps_a_facilities_ask_with_facilities_across_a_late_reconnect(tmp_path):
+    s = settings(tmp_path)
+    ask, running = await start_facilities_ask_then_crash(s, with_facilities=True)
+    second = Hub(s)
+    waits = record_runner_waits(second)
+    local, facilities = CaptureSocket(), CaptureSocket()
+    try:
+        await approve_resume(second)
+        await eventually(lambda: waits)
+        assert waits == ["facilities"], "the ask waits for the employee it went to, not for the CSO"
+        # The CSO's runner comes back first; the roster still lacks facilities.
+        second.register_runner("local", local, ROSTER, "inc-1")
+        second.register_runner("fac", facilities, FACILITIES, "inc-f")
+        done = TaskResult(task_id=running["id"], agent_id="facilities", ok=True, text="Bay 3 is free")
+        await second.on_runner_message("fac", {"type": "task.result", "task_id": running["id"], "request_id": "r",
+                                               "data": done.model_dump(mode="json")})
+        await settle(second)
+        entry = second.store.get("ask", ask.id)
+        assert entry["answer"]["answer"] == "Bay 3 is free" and entry["answer"]["from"] == "facilities"
+        assert consults(local) == [], "the CSO must not take over the facilities ask"
+        assert consults(facilities) == [], "the running facilities consult is adopted, not rerun"
+    finally:
+        second.store.close()
+
+
+async def test_facilities_ask_without_facilities_goes_to_the_cso_without_waiting(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 30  # a wait for facilities would outlast every bound below
+    ask, running = await start_facilities_ask_then_crash(s, with_facilities=False)
+    second = Hub(s)
+    waits = record_runner_waits(second)
+    local = CaptureSocket()
+    try:
+        second.register_runner("local", local, ROSTER, "inc-1")
+        await approve_resume(second)
+        await second.on_runner_message("local", result_frame(running["id"], "Use bay 2", "cso-next"))
+        await asyncio.wait_for(settle(second), 2)
+        answer = second.store.get("ask", ask.id)["answer"]
+        assert answer["answer"] == "Use bay 2" and answer["from"] == "cso"
+        assert consults(local) == [] and "facilities" not in waits
+    finally:
+        second.store.close()
+
+
+async def test_facilities_ask_falls_back_to_the_cso_when_facilities_never_returns(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.2
+    hub = Hub(s)
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        ask = facilities_question()
+        hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "origin": "local",
+                                      "state": "working", "routed_to": "facilities"})
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use bay 2")
+
+        hub.dispatch = dispatch
+        await asyncio.wait_for(hub.orchestrator.answer_ask(ask, "local"), 2)
+        assert [task.agent_id for task in calls] == ["cso"]
+        entry = hub.store.get("ask", ask.id)
+        assert entry["routed_to"] == "cso" and entry["answer"]["answer"] == "Use bay 2"
     finally:
         hub.store.close()

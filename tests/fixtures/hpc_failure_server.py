@@ -3,6 +3,7 @@
 import sys
 from subprocess import CompletedProcess
 
+from labhq.runner.hpc_jobs import submit_job
 from labhq.settings import HpcSettings, Settings
 from labhq.tools import hpc_mcp as hpc
 from labhq.tools.scheduler import Scheduler
@@ -33,10 +34,18 @@ def prepare(workdir, script_path, logs, body, *args):
     script_path.write_text(body, encoding="utf-8")
 
 
+async def deny(payload):
+    return {"approved": False, "note": "fixture PI denied"}
+
+
 async def broker(path, payload, timeout):
     if scenario == "broker":
         raise ConnectionError("fixture approval broker unavailable")
-    return {"approved": False, "note": "fixture PI denied"}
+    if path == "/jobs/owned":  # the runner tracks job 123 for this agent unless the scenario says otherwise
+        return {"owned": scenario != "cancel_unowned"}
+    if path == "/jobs/submit":  # the runner's side of hpc_submit, with the same fake scheduler
+        return await submit_job(hpc.S, hpc.SCHED, hpc.WORKDIR, payload, deny)
+    raise AssertionError(f"unexpected broker path {path}")
 
 
 hpc.SCHED = Scheduler(hpc.S.hpc)

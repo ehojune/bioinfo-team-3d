@@ -2,7 +2,7 @@ import {syncDecisionCards} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, fillFollowups, KIND_KO} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
@@ -16,7 +16,20 @@ export function startLiveOffice(onState) {
   $('live-panel').hidden = false; $('demo-2d').hidden = true;
   document.querySelector('.demo').textContent = 'LIVE';
   $('state').disabled = true; $('randomize').hidden = true;
-  const pending = new Set();
+  const pending = new Set(), loadingAnswers = new Set();
+  let noticeApproval = null;  // #184: the approval whose request the notice shows, cleared when it ends
+  const notice = (value, approvalId = null) => { $('live-notice').textContent = value; noticeApproval = approvalId; };
+  // #126: a snapshot holds the head of a long follow-up answer; the full request comes from the gateway on demand.
+  async function loadFullAnswers(rid) {
+    if (loadingAnswers.has(rid)) return;
+    loadingAnswers.add(rid); render();
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) throw new Error(String(response.status));
+      if (!fillFollowups(rid, await response.json())) notice('전문을 찾지 못했어요.');
+    } catch (error) { notice(`전문을 불러오지 못했어요: ${error.message}`); }
+    finally { loadingAnswers.delete(rid); render(); }
+  }
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
@@ -29,7 +42,7 @@ export function startLiveOffice(onState) {
       onDecision:(a, approved, note) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
-        if (a.kind === 'clarify' && approved && !note) { $('live-notice').textContent = a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'; return; }
+        if (a.kind === 'clarify' && approved && !note) { notice(a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'); return; }
         ws.send(JSON.stringify({type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
@@ -43,7 +56,11 @@ export function startLiveOffice(onState) {
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
-        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer + (f.answer_truncated ? '…' : '') : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+        if (f.status === 'done' && f.answer_truncated) {
+          const more = text(row, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
       }
     }
     onState(S, visual);
@@ -59,14 +76,12 @@ export function startLiveOffice(onState) {
       try {
         const ev = JSON.parse(event.data);
         if (ev.type !== 'snapshot' && ev.seq && ev.seq <= lastSeq) return;
-        if (ev.type === 'approval.stale') {
-          pending.delete(ev.data?.id); S.approvals.delete(ev.data?.id);
-          $('live-notice').textContent = '이미 끝난 승인 요청입니다.';
-        }
         for (const effect of apply(ev)) {
-          if (effect.type === 'toast') $('live-notice').textContent = effect.text;
+          if (effect.type === 'toast') notice(effect.text, effect.approval_id || null);
+          if (effect.type === 'toast.clear' && noticeApproval && noticeApproval === effect.approval_id) notice('');
           if (effect.type === 'renderAfter') setTimeout(render, effect.ms);
         }
+        if (ev.type === 'approval.stale') { pending.delete(ev.data?.id); notice('이미 끝난 승인 요청입니다.'); }
         if (ev.type === 'snapshot') { lastSeq = ev.seq || 0; pending.clear(); }
         else if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
         for (const id of pending) if (!S.approvals.has(id)) pending.delete(id);

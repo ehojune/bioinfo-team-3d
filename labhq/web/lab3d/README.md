@@ -21,7 +21,7 @@ P4 1단계. `/3d`에서 실제 게이트웨이에 연결하며 `?demo=1`은 기�
 - 정적 데모 실행: 저장소 루트에서 `python -m http.server 8765 --bind 127.0.0.1 --directory labhq/web`, 브라우저에서 `http://127.0.0.1:8765/lab3d/?demo=1`를 연다. 종료는 Ctrl+C.
 - 확인: 직원 탭·상태 선택·회전·줌·80px 도감·윤곽. 폰(≤480px)은 선택/승인 대기 이름표만 표시한다. 승인 칩은 대기 직원을 순회하며 확대한다.
 - 데모: `?skin=cso:placeholder`, `?contracts=3`, `?contracts=4&skin=c_b:placeholder`. 기본 12명은 모두 procedural이다.
-- 스킨 계약: `await buildSkin(ctx, entry) → {root: Object3D, anchors:{head,handL,handR,label}, budget:{triangles,drawCalls,shared}, setState(state), update(dt,t,options), dispose()}`.
+- 스킨 계약: `await buildSkin(ctx, entry) → {root: Object3D, anchors:{head,handL,handR}, budget:{triangles,drawCalls,shared}, setState(state), update(dt,t,options), dispose()}`.
 - `ctx={shapes,parent,def,index}`; 시간은 초, `options={reduced,silhouette}`. root는 좌석/도감 변환을 받는다. glTF 앵커는 scene-space proxy이며 procedural 앵커는 root의 자손이다. procedural drawCalls는 공유 배치 수이며 직원별로 더하지 않는다.
 - 스킨 선택은 [src/skins.js](src/skins.js) 한 곳. 여섯 상태는 queued·working·waiting·hibernating·done·error. 표지는 공용 head 레이어이며 스킨과 함께 해제한다.
 - 라이브: `/3d`에서 client token 입력. `../state.js` reducer·since 재연결·roster 변경·요청 보드·DOM 승인/거절을 쓴다. 요청 입력은 2.5D 링크로 이동한다.

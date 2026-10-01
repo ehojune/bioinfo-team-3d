@@ -61,6 +61,7 @@ HASH_MAX_FILES = 200
 HASH_MAX_TOTAL = 2 * 1024 ** 3
 HASH_MAX_FILE = 512 * 1024 ** 2
 HASH_CHUNK = 8 * 1024 ** 2
+HASH_SHARE = 0.5                 # of timeout_s: hashing stops there and the models get the rest (#159)
 MANIFEST_MAX = 1024 ** 2
 MAX_TASK_ROWS = 20_000
 MAX_EDGES = 50_000
@@ -162,6 +163,10 @@ class ShadowPaths:
     @property
     def observed(self) -> Path:
         return self.root / "observed.json"
+
+    @property
+    def breaker(self) -> Path:
+        return self.root / "breaker.json"
 
 
 def shadow_root(settings: Any) -> Path:
@@ -269,6 +274,25 @@ def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[
                                                   "counts": dict(counts or {})}, sort_keys=True))
 
 
+def write_breaker(paths: ShadowPaths, epoch: int, recent: Iterable[bool], consecutive: int) -> None:
+    paths.root.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(paths.breaker, json.dumps({"epoch": epoch, "recent": list(recent), "consecutive": consecutive}))
+
+
+def read_breaker(paths: ShadowPaths, epoch: int) -> tuple[list[bool], int] | None:
+    """The failure window an earlier process saved for ``epoch`` (#173): (recent, consecutive), or None when the
+    file is missing or belongs to another epoch. A file of the wrong shape raises, like the other breaker files."""
+    if not paths.breaker.exists():
+        return None
+    value = _read_json(paths.breaker)
+    whole = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0  # noqa: E731
+    recent = value.get("recent") if isinstance(value, dict) else None
+    if (not isinstance(recent, list) or len(recent) > RECENT_WINDOW or not all(isinstance(x, bool) for x in recent)
+            or not whole(value.get("epoch")) or not whole(value.get("consecutive"))):
+        raise ValueError("breaker.json")
+    return (recent, value["consecutive"]) if value["epoch"] == epoch else None
+
+
 def read_disabled(paths: ShadowPaths) -> dict | None:
     if not paths.disabled.exists():
         return None
@@ -333,6 +357,21 @@ _TASK_SQL = ("SELECT key, json_remove(body, '$.payload.prompt', '$.payload.conte
 _DECISION_SQL = ("SELECT key, body FROM state WHERE kind = 'approval_decision' "
                  "AND json_extract(body, '$.approval.request_id') = ?")
 _JOBS_SQL = "SELECT key, body FROM state WHERE kind = 'jobs_done' AND key IN (SELECT value FROM json_each(?))"
+JSON1_PROBE = ("SELECT json('{}'), json_remove('{}', '$.a'), json_extract('{}', '$.a'), "
+               "(SELECT count(*) FROM json_each('[]'))")
+
+
+def sqlite_json1() -> bool:
+    """True when this Python's SQLite has the JSON1 functions the row queries use (#160)."""
+    try:
+        db = sqlite3.connect(":memory:")
+        try:
+            db.execute(JSON1_PROBE).fetchone()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return False
+    return True
 
 
 def _rows_from_sql(execute: Callable[..., Any], rid: str, history: set, limit: int) -> list[dict]:
@@ -577,6 +616,37 @@ def _unc(path: str) -> bool:
     return path.startswith(("\\\\", "//"))
 
 
+_KERNEL32: list[Any] = []
+
+
+def _share_delete_opener(path: str, flags: int) -> int:
+    """Windows: open for reading with FILE_SHARE_DELETE as well, so a runner can still delete the file or rename
+    it away while the shadow reads it (#161). A plain open() there would make that runner fail."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    if not _KERNEL32:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        _KERNEL32.append(kernel)
+    kernel = _KERNEL32[0]
+    # GENERIC_READ; share read, write and delete; OPEN_EXISTING; FILE_ATTRIBUTE_NORMAL
+    handle = kernel.CreateFileW(path, 0x80000000, 0x7, None, 3, 0x80, None)
+    if handle is None or handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        kernel.CloseHandle(handle)
+        raise
+
+
+READ_OPENER = _share_delete_opener if os.name == "nt" else None  # POSIX: an open file never blocks a rename
+
+
 @dataclass
 class HashBudget:
     files: int = 0
@@ -587,13 +657,15 @@ class HashBudget:
 class Reader:
     """Read-only access to workspace files on this disk, inside allowed zones, within the budget."""
 
-    def __init__(self, snap: Mapping[str, Any], check: Callable[[], None]):
+    def __init__(self, snap: Mapping[str, Any], check: Callable[[], None],
+                 hash_over: Callable[[], bool] | None = None):
         self.zones = [tuple(z) for z in snap.get("zones") or []]
         self.zone_forms = zone_forms(self.zones)  # None: a zone did not resolve, so nothing is read
         self.visibility = (snap.get("project") or {}).get("visibility")
         self.root = snap.get("workspace_root") or ""
         self.host = snap.get("host")
         self.check = check
+        self.hash_over = hash_over or (lambda: False)  # True once hashing has used its share of the time cap
         self.budget = HashBudget()
         self.manifests: dict[str, dict | None] = {}
         self.workspace_state: dict[str, str] = {}
@@ -641,7 +713,7 @@ class Reader:
             st = os.lstat(path)
             if _is_link(st) or not stat.S_ISREG(st.st_mode) or st.st_size > MANIFEST_MAX:
                 return None
-            with open(path, "rb") as handle:
+            with open(path, "rb", opener=READ_OPENER) as handle:
                 return json.loads(handle.read(MANIFEST_MAX + 1).decode("utf-8"))
         except (OSError, ValueError):
             return None
@@ -675,22 +747,32 @@ class Reader:
         if self.budget.files >= HASH_MAX_FILES or self.budget.bytes + st.st_size > HASH_MAX_TOTAL:
             self.budget.exhausted = True
             return "budget", None
+        if self.hash_over():
+            self.budget.exhausted = True
+            return "hash_time", None
         self.budget.files += 1
         self.budget.bytes += st.st_size
         digest = hashlib.sha256()
-        with open(path, "rb", buffering=0) as handle:
+        with open(path, "rb", buffering=0, opener=READ_OPENER) as handle:
             opened = os.fstat(handle.fileno())
             if (opened.st_ino, opened.st_dev) != (st.st_ino, st.st_dev):
                 return "not_regular", None  # replaced between the check and the open
             while True:
                 self.check()
+                if self.hash_over():  # past the hash share: the request is incomplete, the models still run
+                    self.budget.exhausted = True
+                    return "hash_time", None
                 chunk = handle.read(HASH_CHUNK)
                 if not chunk:
                     break
                 digest.update(chunk)
-        after = os.stat(path)
-        if (after.st_size, after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+        try:
+            after = os.stat(path)
+        except OSError:  # deleted or moved away while hashed (#161)
             return "unstable", None
+        if (after.st_ino, after.st_dev, after.st_size, after.st_mtime_ns) != (st.st_ino, st.st_dev, st.st_size,
+                                                                             st.st_mtime_ns):
+            return "unstable", None  # changed, or another file now has this name
         return "hashed", {"sha256": digest.hexdigest(), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
@@ -892,8 +974,10 @@ def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epo
 
 
 def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Callable[[], None], *,
-                 epoch: int) -> dict:
-    """One request line: both models side by side, ids, kinds, hashes and counts only."""
+                 epoch: int, hash_over: Callable[[], bool] | None = None) -> dict:
+    """One request line: both models side by side, ids, kinds, hashes and counts only.
+
+    ``hash_over`` says when output hashing has used its share of the time cap (#159)."""
     started = time.perf_counter()
     read_rows(snap, check)
     rid = snap["rid"]
@@ -910,7 +994,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
         "rows_ms": snap.get("rows_ms"),
     }
     line["objects"] = compute_objects(snap, check)
-    reader = Reader(snap, check)
+    reader = Reader(snap, check, hash_over)
     line["provenance"], hashes = compute_provenance(snap, reader, observed, check)
     workspaces: dict[str, int] = {}
     for state in reader.workspace_state.values():
@@ -940,6 +1024,8 @@ class ShadowService:
         self.current: tuple[int, float] | None = None
         self.observed: dict[str, dict] | None = None
         self.observed_dirty = False
+        self.window_lock = threading.Lock()  # orders breaker.json writes without holding self.lock
+        self.window_seq = self.window_saved = 0
         self.state_mtime: float | None = None
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
@@ -958,6 +1044,8 @@ class ShadowService:
             service = cls(hub, cfg, ShadowPaths(root))
             prune(service.paths, time.time())
             service.load()
+            if not service.latched and not sqlite_json1():  # every job would fail on the row query
+                service.trip("sqlite_json1_missing")
             return service
         except Exception as exc:  # noqa: BLE001
             log.warning("semantics shadow could not start (%s); semantics stays off", type(exc).__name__)
@@ -969,11 +1057,16 @@ class ShadowService:
             self.epoch = int(read_state(self.paths)["epoch"])
             self.state_mtime = self.paths.state.stat().st_mtime
             disabled = read_disabled(self.paths)
+            window = read_breaker(self.paths, self.epoch)
         except (OSError, ValueError, TypeError) as exc:
             self.trip("breaker_storage", kind=type(exc).__name__)
             return
         if disabled is not None:
             self.latched = disabled["reason"]
+        elif window is not None:  # this epoch's failures before a restart still count (#173)
+            self.recent.extend(window[0])
+            self.consecutive = window[1]
+            self.check_window()
 
     def external_off(self) -> bool:
         """A disabled.json written elsewhere (`labhq semantics mark`, another process) latches this one too."""
@@ -1061,7 +1154,7 @@ class ShadowService:
                 self.trip("worker_busy")
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
-            self.outcome(failed=True)
+            self.outcome(failed=True, on_loop=True)
 
     def ensure_thread(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -1110,6 +1203,7 @@ class ShadowService:
         watchdog.start()
 
         next_look = [started + EXTERNAL_LOOK_S]
+        hash_until = started + self.cfg.timeout_s * HASH_SHARE
 
         def check() -> None:
             if self.gen != gen:
@@ -1126,7 +1220,8 @@ class ShadowService:
         try:
             observed = self.load_observed()
             known = len(observed)
-            line = compute_line(snap, observed, check, epoch=self.epoch)
+            line = compute_line(snap, observed, check, epoch=self.epoch,
+                                hash_over=lambda: time.monotonic() > hash_until)
             self.observed_dirty = self.observed_dirty or len(observed) != known
         except ShadowTimeout as exc:  # stopped before the models ran: still one line, so the report counts it
             line = failed_line(snap, "timeout", exc, epoch=self.epoch, ms=round((time.monotonic() - started) * 1000, 2))
@@ -1201,17 +1296,44 @@ class ShadowService:
             failed = True
         self.outcome(failed=failed)
 
-    def outcome(self, *, failed: bool) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False) -> None:
+        """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
+        daemon thread instead of there (#173)."""
         with self.lock:
             self.recent.append(failed)
             self.consecutive = self.consecutive + 1 if failed else 0
             if failed:
                 self.counts["failures"] += 1
+            self.window_seq += 1
+            window = (self.window_seq, self.epoch, list(self.recent), self.consecutive)
+        self.check_window()
+        if on_loop:
+            threading.Thread(target=self.keep_window, args=window, name=f"{self.thread_name}-breaker",
+                             daemon=True).start()
+        else:
+            self.keep_window(*window)
+
+    def keep_window(self, *window: Any) -> None:
+        try:
+            self.save_window(*window)
+        except OSError as exc:  # a window that cannot be kept would forget failures at the next restart
+            self.trip("breaker_storage", kind=type(exc).__name__)
+
+    def check_window(self) -> None:
+        with self.lock:
             consecutive, recent = self.consecutive, sum(self.recent)
         if consecutive >= CONSECUTIVE_FAILURES:
             self.trip("consecutive_failures")
         elif recent >= RECENT_FAILURES:
             self.trip("recent_failures")
+
+    def save_window(self, seq: int, epoch: int, recent: list[bool], consecutive: int) -> None:
+        """Write the failure window to breaker.json (#173). Outside self.lock, so the event loop never waits on the
+        disk; a later outcome that already wrote wins over an earlier one still on its way."""
+        with self.window_lock:
+            if seq > self.window_saved:
+                write_breaker(self.paths, epoch, recent, consecutive)
+                self.window_saved = seq
 
     def drain(self, timeout: float = 5.0) -> bool:
         """Tests and tools: wait until the queue is empty and no job runs."""
@@ -1267,7 +1389,8 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and all(_number(m.get("ms")) for m in (prov, objs))
             and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
             and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
-            and _counts(objs.get("objects")) and all(_number(objs.get(k)) for k in ("link_total", "unresolved"))
+            and _counts(objs.get("objects"))
+            and all(_number(objs.get(k)) for k in ("link_total", "unresolved", "pending_jobs"))
             and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES))
 
 
@@ -1316,7 +1439,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                        if ok else None,
                        links_mean=round(statistics.mean(int(r.get("link_total") or 0) for r in ok), 2) if ok else None,
                        unresolved=sum(int(r.get("unresolved") or 0) for r in ok),
-                       with_unresolved=sum(1 for r in ok if (r.get("unresolved") or 0) > 0))
+                       with_unresolved=sum(1 for r in ok if (r.get("unresolved") or 0) > 0),
+                       pending_jobs=sum(int(r.get("pending_jobs") or 0) for r in ok))
         return out
 
     research_with_candidates = sum(1 for r in requests if r.get("lane") == "research"
@@ -1381,7 +1505,7 @@ def render_report(rep: Mapping[str, Any]) -> str:
         f"incomplete {p['incomplete']} |",
         f"| 객체·링크 뷰 | {o['n']} | {o['ok']} | {o['timeout']} | {o['error']} | {v(o['p50_ms'])} | {v(o['p95_ms'])} | "
         f"객체 평균 {v(o['objects_mean'])} · 링크 평균 {v(o['links_mean'])} · unresolved {o['unresolved']} "
-        f"({o['with_unresolved']}건) |",
+        f"({o['with_unresolved']}건) · 대기 job {o['pending_jobs']} |",
         "",
         "후보 제외 이유: " + ", ".join(f"{k} {n}" for k, n in p["excluded"].items()),
         "hash: " + ", ".join(f"{k} {n}" for k, n in rep["hash"].items()) + " · 작업 폴더: "
@@ -1414,12 +1538,24 @@ def enable(paths: ShadowPaths) -> str:
                  "since": time.time()}
     epoch = int(state["epoch"]) + 1
     atomic_write_text(paths.state, json.dumps({**state, "epoch": epoch}))
-    if paths.disabled.exists():
-        paths.disabled.unlink()
+    for stale in (paths.disabled, paths.breaker):  # the new epoch starts with no failures
+        if stale.exists():
+            stale.unlink()
     append_line(paths, {"v": 1, "type": "enable", "ts": round(time.time(), 3), "epoch": epoch,
                         "previous_reason": (disabled or {}).get("reason")})
     head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
     return head + f"새 epoch {epoch}을 엽니다. 설정 mode가 shadow인 gateway는 다음 요청부터 기록합니다."
+
+
+def recorded_candidate(paths: ShadowPaths, rid: str, ref: str) -> bool:
+    """True when a recorded request line of ``rid`` listed ``ref`` among its candidate refs (#175)."""
+    lines, _ = read_lines(paths)
+    for line in lines:
+        prov = line.get("provenance")
+        refs = prov.get("candidate_refs") if isinstance(prov, Mapping) else None
+        if line.get("type") == "request" and line.get("request_id") == rid and isinstance(refs, list) and ref in refs:
+            return True
+    return False
 
 
 def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
@@ -1429,6 +1565,8 @@ def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
         raise ValueError("ref must be sem:<8 hex>")
     if verdict not in VERDICTS:
         raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}")
+    if not recorded_candidate(paths, rid, ref):  # a typo must not turn the shadow off or skew the wrong ratio
+        raise ValueError(f"{rid} has no recorded candidate {ref}; nothing written")
     state = read_state(paths)
     append_line(paths, {"v": 1, "type": "mark", "ts": round(time.time(), 3), "epoch": state["epoch"],
                         "request_id": rid, "ref": ref, "verdict": verdict})
