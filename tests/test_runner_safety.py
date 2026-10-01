@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
 import ctypes
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -69,16 +71,29 @@ def _process_exited(pid: int) -> bool:
         ctypes.windll.kernel32.CloseHandle(handle)
 
 
-def _posix_process_exited(pid: int) -> bool:
+def _posix_exit_state(pid: int) -> tuple[bool, str]:
+    """(exited, what /proc says). A zombie counts as exited: the orphan waits for init to reap it."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return True
-    status = Path(f"/proc/{pid}/status")
+        return True, "gone"
     try:
-        return "State:\tZ" in status.read_text(encoding="utf-8")
-    except OSError:
-        return False
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except OSError as exc:
+        # #227: init reaped the zombie between kill(0) and this read. Ask kill(0) again instead of
+        # calling that "alive", so a system without /proc still waits for the pid to go.
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True, "gone"
+        return False, f"kill(0) ok, /proc unreadable ({type(exc).__name__})"
+    fields = dict(line.split(":", 1) for line in status.splitlines() if line.startswith(("State:", "PPid:")))
+    state = fields.get("State", "?").strip()
+    return state[:1] in ("Z", "X"), f"State {state}, PPid {fields.get('PPid', '?').strip()}"
+
+
+def _posix_process_exited(pid: int) -> bool:
+    return _posix_exit_state(pid)[0]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows process-tree termination")
@@ -138,9 +153,40 @@ async def test_posix_timeout_kills_sigterm_ignoring_grandchild(tmp_path):
         assert not result.ok and result.error == "timeout after 1s"
         _parent, child = map(int, pids.read_text(encoding="utf-8").split())
         deadline = time.monotonic() + 5
-        while time.monotonic() < deadline and not _posix_process_exited(child):
+        exited, state = _posix_exit_state(child)
+        while not exited and time.monotonic() < deadline:
             await asyncio.sleep(0.05)
-        assert _posix_process_exited(child)
+            exited, state = _posix_exit_state(child)
+        # judge the last probe, not a fresh one: a fresh probe raced the zombie's reaping (#227)
+        assert exited, f"SIGTERM-ignoring grandchild {child} still alive 5s after the timeout kill: {state}"
     finally:
         if child is not None and not _posix_process_exited(child):
-            os.kill(child, 9)
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not Path("/proc/self/status").exists(), reason="Linux /proc")
+def test_posix_exit_probe_counts_a_pid_reaped_mid_probe_as_exited(monkeypatch):
+    """#227: init reaped the killed grandchild between kill(0) and the /proc read; that is not "alive"."""
+    pid = os.posix_spawn(sys.executable, [sys.executable, "-c", "pass"], dict(os.environ))
+    reaped = False
+    try:
+        deadline = time.monotonic() + 10
+        while not _posix_exit_state(pid)[1].startswith("State Z") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert _posix_exit_state(pid)[1].startswith("State Z"), "the unreaped child is a zombie first"
+        real_read = Path.read_text
+
+        def reap_then_read(self, *args, **kwargs):
+            nonlocal reaped
+            if self == Path(f"/proc/{pid}/status") and not reaped:
+                os.waitpid(pid, 0)  # plays init, reaping right after kill(0) saw the pid
+                reaped = True
+            return real_read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", reap_then_read)
+        assert _posix_exit_state(pid) == (True, "gone")
+        assert reaped
+    finally:
+        if not reaped:
+            os.waitpid(pid, 0)
