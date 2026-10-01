@@ -66,6 +66,20 @@ def test_the_report_tables_both_models_and_the_auto_off_history(tmp_path, config
     assert rep["objects"]["unresolved"] == 2 and rep["auto_off"][0]["reason"] == "worker_stuck"
 
 
+def test_info_boundary_report_names_only_the_field_and_category(tmp_path, config, capsys):
+    paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
+    shadow.read_state(paths)
+    detail = [{"field": "objects", "class": "path"}]
+    shadow.write_disabled(paths, "info_boundary", 1, boundary=detail)
+    shadow.append_line(paths, {"v": 1, "type": "auto_off", "ts": time.time(), "epoch": 1,
+                               "reason": "info_boundary", "counts": {}, "boundary": detail})
+    code, out = _cli(capsys, config, "report", "--today", "2026-10-15")
+    assert code == 0 and "objects:path" in out and "info_boundary" in out
+    code, out = _cli(capsys, config, "report", "--json", "--today", "2026-10-15")
+    report = json.loads(out)
+    assert report["state"]["boundary"] == detail and report["auto_off"][0]["boundary"] == detail
+
+
 def test_at_the_deadline_the_report_proposes_removal(tmp_path, config, capsys):
     _write(tmp_path, [_line(1, lane="research", candidates=1)])
     rep = shadow.build_report(shadow.ShadowPaths(tmp_path / "state" / "semantics"), date(2026, 12, 30))

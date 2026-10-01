@@ -90,6 +90,16 @@ TYPE_BUCKETS = ("local", "unknown", "withheld")  # besides the EDAM ids of the l
 TYPE_BASIS = ("declared", "inferred", "unknown")
 DECLARATION_COUNTS = ("outputs", "data_declared", "format_declared")
 SHA_HEX = re.compile(r"[0-9a-f]{64}")
+DOI_VALUE = re.compile(r"(?:doi:)?10\.\d{4,9}/\S+", re.IGNORECASE)
+FILENAME_VALUE = re.compile(r"[^\\/\s]+\.[A-Za-z0-9]{1,12}")
+BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id", "project", "lane",
+                             "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
+                             "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
+                             "key", "error_kind", "reason", "counts", "provenance.types",
+                             "provenance.declarations", "objects.artifact_types"})
+BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
+                              "unsafe_token", "non_string_key", "non_json_value", "schema", "type_version",
+                              "type_fields", "type_bucket", "type_declarations", "type_objects"})
 
 
 # ---------------------------------------------------------------- settings
@@ -279,10 +289,14 @@ def read_state(paths: ShadowPaths) -> dict:
     return state
 
 
-def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None) -> None:
+def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None, *,
+                   boundary: Iterable[Mapping[str, str]] | None = None) -> None:
     paths.root.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(paths.disabled, json.dumps({"reason": reason, "ts": time.time(), "epoch": epoch,
-                                                  "counts": dict(counts or {})}, sort_keys=True))
+    value = {"reason": reason, "ts": time.time(), "epoch": epoch, "counts": dict(counts or {})}
+    detail = _clean_boundary_details(boundary)
+    if detail:
+        value["boundary"] = detail
+    atomic_write_text(paths.disabled, json.dumps(value, sort_keys=True))
 
 
 def write_breaker(paths: ShadowPaths, epoch: int, recent: Iterable[bool], consecutive: int) -> None:
@@ -310,6 +324,8 @@ def read_disabled(paths: ShadowPaths) -> dict | None:
     value = _read_json(paths.disabled)
     if not isinstance(value, dict) or not isinstance(value.get("reason"), str):
         raise ValueError("disabled.json")
+    if "boundary" in value:
+        value["boundary"] = _clean_boundary_details(value.get("boundary"))
     return value
 
 
@@ -513,61 +529,147 @@ def _strings(value: Any) -> Iterable[str]:
             yield from _strings(v)
 
 
-def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
-    """Values a line must never contain: texts, instructions, paths, reference values, zones, project names."""
-    found: list[Any] = []
+def _value_class(value: str) -> str:
+    text = value.strip()
+    if re.match(r"https?://", text, re.IGNORECASE):
+        return "url"
+    if DOI_VALUE.fullmatch(text):
+        return "doi"
+    if re.match(r"[A-Za-z]:[\\/]", text) or text.startswith(("/", "\\")) or "/" in text or "\\" in text:
+        return "path"
+    if FILENAME_VALUE.fullmatch(text):
+        return "filename"
+    if any(ch.isspace() for ch in text):
+        return "free_text"
+    return "identifier"
+
+
+def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
+    """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
+    found: dict[str, str] = {}
+
+    def add(value: Any, category: str | None = None) -> None:
+        if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
+            found.setdefault(value.strip(), category or _value_class(value))
+
     for req in (snap.get("requests") or {}).values():
-        found += [req.get("text"), req.get("project_id")]
-        found += [r.get("value") for r in req.get("references") or []]
+        add(req.get("text"), "free_text")
+        add(req.get("project_id"), "identifier")
+        for reference in req.get("references") or []:
+            add(reference.get("value"))
         plan = req.get("plan") or {}
-        found += [s for s in _strings(plan) if len(s) >= 12] if req.get("research_contract") else [
-            step.get("instruction") for step in plan.get("steps") or []]
+        if req.get("research_contract"):
+            for value in _strings(plan):
+                if len(value) >= 12:
+                    add(value)
+        else:
+            for step in plan.get("steps") or []:
+                add(step.get("instruction"), "free_text")
         for result in (req.get("results") or {}).values():
-            found += [result.get("workdir"), result.get("workdir_id"), *_strings(result.get("outputs"))]
+            add(result.get("workdir"), "path")
+            add(result.get("workdir_id"), "identifier")
+            for value in _strings(result.get("outputs")):
+                add(value)
     for task in (snap.get("tasks") or {}).values():
         result = task.get("result") if isinstance(task.get("result"), dict) else {}
         outputs = list(_strings(result.get("outputs")))  # any shape: a malformed row must not end the check
-        found += [result.get("workdir"), result.get("workdir_id"), *outputs]
-        found += [o.replace("\\", "/").rsplit("/", 1)[-1] for o in outputs]
-    found += [zone[0] for zone in snap.get("zones") or []]
+        add(result.get("workdir"), "path")
+        add(result.get("workdir_id"), "identifier")
+        for output in outputs:
+            add(output)
+            add(output.replace("\\", "/").rsplit("/", 1)[-1], "filename")
+    for zone in snap.get("zones") or []:
+        add(zone[0], "path")
     project = snap.get("project") or {}
-    found += [project.get("id"), project.get("local_dir"), project.get("name"), snap.get("workspace_root")]
-    found += list((snap.get("actions") or {}).get("sensitive") or [])  # semantics-hook: actions
-    return {s.strip() for s in found if isinstance(s, str) and len(s.strip()) >= SENSITIVE_MIN}
+    add(project.get("id"), "identifier")
+    add(project.get("local_dir"), "path")
+    add(project.get("name"), "free_text")
+    add(snap.get("workspace_root"), "path")
+    for value in (snap.get("actions") or {}).get("sensitive") or []: add(value)  # semantics-hook: actions
+    return found
 
 
-def boundary_problems(line: Mapping[str, Any], sensitive: Iterable[str]) -> list[str]:
+def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
+    """Values a line must never contain: texts, instructions, paths, reference values, zones, project names."""
+    return set(sensitive_values(snap))
+
+
+def _boundary_field(path: tuple[str, ...]) -> str:
+    return path[0] if path and path[0] in BOUNDARY_FIELDS else "unknown"
+
+
+def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str],
+                   allowed_fields: Mapping[str, str] | None = None) -> list[tuple[str, str, str]]:
+    secrets = (sensitive.items() if isinstance(sensitive, Mapping)
+               else ((value, _value_class(value)) for value in sensitive if isinstance(value, str)))
+    secrets = [(value, category if category in BOUNDARY_CLASSES else _value_class(value))
+               for value, category in secrets if value]
+    allowed_fields = allowed_fields or {}
+    findings: set[tuple[str, str, str]] = set()
+
+    def add(problem: str, path: tuple[str, ...], category: str) -> None:
+        if category not in BOUNDARY_CLASSES:
+            category = "schema"
+        findings.add((problem, _boundary_field(path), category))
+
+    def walk(value: Any, path: tuple[str, ...] = ()) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if isinstance(key, str):
+                    child_path = (*path, key)
+                    if not SAFE_TOKEN.fullmatch(key):
+                        category = _value_class(key)
+                        add("not_a_token", child_path, "unsafe_token" if category == "identifier" else category)
+                else:
+                    child_path = path
+                    add("non_string_key", path, "non_string_key")
+                walk(child, child_path)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                walk(child, path)
+        elif isinstance(value, str):
+            token = bool(SAFE_TOKEN.fullmatch(value))
+            value_category = _value_class(value)
+            if not token:
+                category = value_category
+                add("not_a_token", path, "unsafe_token" if category == "identifier" else category)
+            allowed = len(path) == 1 and allowed_fields.get(path[0]) == value
+            if len(value) >= SENSITIVE_MIN and value not in VOCABULARY and not allowed:
+                for secret, category in secrets:
+                    if secret in value:
+                        add("sensitive_value", path, value_category if not token else category)
+        elif not (value is None or isinstance(value, (bool, int, float))):
+            add("non_json_value", path, "non_json_value")
+
+    walk(line)
+    return sorted(findings)
+
+
+def boundary_findings(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str], *,
+                      allowed_fields: Mapping[str, str] | None = None) -> list[dict[str, str]]:
+    """Off-record diagnostics: only a fixed field name and category, never the rejected value."""
+    return [{"field": field, "class": category}
+            for field, category in sorted({(field, category) for _, field, category in
+                                           _boundary_rows(line, sensitive, allowed_fields)})]
+
+
+def boundary_problems(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str], *,
+                      allowed_fields: Mapping[str, str] | None = None) -> list[str]:
     """Why a line may not be written: a string that is not a plain token, or a value carrying a sensitive one.
 
     Keys and the fixed words of ``VOCABULARY`` are code's own; every other string value is checked against
     the snapshot's texts, paths and names, so a request titled like a status word does not trip the check.
     """
-    problems: list[str] = []
-    keys: list[str] = []
-    values: list[str] = []
+    return [problem for problem, _, _ in _boundary_rows(line, sensitive, allowed_fields)]
 
-    def walk(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for k, v in value.items():
-                if isinstance(k, str):
-                    keys.append(k)
-                else:
-                    problems.append("non_string_key")
-                walk(v)
-        elif isinstance(value, (list, tuple)):
-            for v in value:
-                walk(v)
-        elif isinstance(value, str):
-            values.append(value)
-        elif not (value is None or isinstance(value, (bool, int, float))):
-            problems.append("non_json_value")
 
-    walk(line)
-    problems += ["not_a_token" for s in keys + values if not SAFE_TOKEN.fullmatch(s)]
-    secrets = [s for s in sensitive if s]
-    problems += ["sensitive_value" for leaf in values if len(leaf) >= SENSITIVE_MIN and leaf not in VOCABULARY
-                 for s in secrets if s in leaf]
-    return problems
+def _clean_boundary_details(value: Any) -> list[dict[str, str]]:
+    """Keep only code-owned labels before a diagnostic reaches disabled.json or a report."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    clean = {(item.get("field"), item.get("class")) for item in value if isinstance(item, Mapping)
+             and item.get("field") in BOUNDARY_FIELDS and item.get("class") in BOUNDARY_CLASSES}
+    return [{"field": field, "class": category} for field, category in sorted(clean)]
 
 
 # ---------------------------------------------------------------- file reads: zones, same disk, hash
@@ -1206,6 +1308,13 @@ def _actions_shape(line: Mapping[str, Any]) -> list[str]:
     return _actions().shape_problems(line)
 
 
+def _actions_boundary(line: Mapping[str, Any], boundary: list[dict[str, str]]) -> list[str]:
+    failures = _actions_shape(line)
+    if failures:
+        boundary.append({"field": "actions", "class": "schema"})
+    return failures
+
+
 def _actions_failed(line: Mapping[str, Any]) -> bool:
     if "actions" in line:
         return not isinstance(line["actions"], Mapping) or line["actions"].get("status") != "ok"
@@ -1340,13 +1449,17 @@ class ShadowService:
             epoch = self.epoch
         log.warning("semantics shadow turned itself off: %s%s", reason,
                     f" ({detail['kind']})" if detail.get("kind") else "")
+        boundary = _clean_boundary_details(detail.get("boundary")) if reason == "info_boundary" else []
         try:
-            write_disabled(self.paths, reason, epoch, counts)
+            write_disabled(self.paths, reason, epoch, counts, boundary=boundary)
         except OSError as exc:
             log.warning("semantics disabled.json not written (%s); off for this process", type(exc).__name__)
         try:
-            append_line(self.paths, {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": epoch,
-                                     "reason": reason, "counts": counts})
+            line = {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": epoch,
+                    "reason": reason, "counts": counts}
+            if boundary:
+                line["boundary"] = boundary
+            append_line(self.paths, line)
         except OSError:
             pass
 
@@ -1571,15 +1684,24 @@ class ShadowService:
 
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
         try:
-            problems = boundary_problems(line, sensitive_strings(snap))
-            problems += type_problems(line, (output_vocab.current() or _NO_VOCAB).edam_ids)
-            problems += _actions_shape(line)  # semantics-hook: actions
+            vocabulary = output_vocab.current() or _NO_VOCAB
+            allowed = {"vocab_sha256": vocabulary.sha256} if vocabulary.sha256 else {}
+            boundary = boundary_findings(line, sensitive_values(snap), allowed_fields=allowed)
+            problems = boundary_problems(line, sensitive_values(snap), allowed_fields=allowed)
+            type_failures = type_problems(line, vocabulary.edam_ids)
+            type_fields = {"type_version": "vocab_sha256", "type_fields": "provenance.types",
+                           "type_bucket": "provenance.types", "type_declarations": "provenance.declarations",
+                           "type_objects": "objects.artifact_types"}
+            boundary += [{"field": type_fields.get(problem, "unknown"), "class": problem}
+                         for problem in type_failures]
+            problems += type_failures
+            problems += _actions_boundary(line, boundary)  # semantics-hook: actions
         except Exception as exc:  # noqa: BLE001 - an unchecked line is never written
             log.warning("semantics shadow boundary check failed (%s); record not written", type(exc).__name__)
             self.outcome(failed=True)
             return
         if problems:
-            self.trip("info_boundary")
+            self.trip("info_boundary", boundary=boundary)
             return
         failed = False
         for model in [m for m in MODELS if m in line]:
@@ -1788,7 +1910,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
     return {
         "state": {"on": setting == "shadow" and disabled is None, "setting": setting,
-                  "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch")},
+                  "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch"),
+                  "boundary": _clean_boundary_details((disabled or {}).get("boundary"))},
         "requests": len(requests), "broken_lines": broken,
         "period": [_day(requests[0].get("ts")), _day(requests[-1].get("ts"))] if requests else None,
         "busy_skipped": sum(int(r.get("busy_skipped") or 0) for r in requests),
@@ -1803,8 +1926,9 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "versions": dict(sorted(versions.items())),
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "marks": {"reviewed": len(marks), "wrong": wrong},
-        "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason")}
-                     for l in lines if l.get("type") == "auto_off"],
+        "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
+                      "boundary": _clean_boundary_details(l.get("boundary"))}
+                      for l in lines if l.get("type") == "auto_off"],
         "deadline": deadline.isoformat(), "midpoint": (INTRODUCED + timedelta(days=MIDPOINT_DAYS)).isoformat(),
         "propose_removal": proposals,
     }
@@ -1817,10 +1941,14 @@ def render_report(rep: Mapping[str, Any]) -> str:
     def v(x: Any) -> str:
         return "-" if x is None else str(x)
 
+    def boundary(value: Any) -> str:
+        detail = _clean_boundary_details(value)
+        return " · 경계 " + ", ".join(f"{item['field']}:{item['class']}" for item in detail) if detail else ""
+
     out = [
         "semantics shadow report (로컬 기록, 네트워크 없음)",
         f"상태: {'on' if st['on'] else 'off'} · 설정 {st['setting']} · 자동 off {v(st['reason'])} · "
-        f"epoch {v(st['epoch'])}",
+        f"epoch {v(st['epoch'])}{boundary(st.get('boundary'))}",
         f"요청 {rep['requests']}건 · 기간 {' ~ '.join(rep['period']) if rep['period'] else '-'} · "
         f"busy로 건너뜀 {rep['busy_skipped']} · 깨진 줄 {rep['broken_lines']}",
         f"계산 p95 {v(rep['total_p95_ms'])} ms · snapshot p95 {v(rep['snapshot_p95_ms'])} ms",
@@ -1851,7 +1979,8 @@ def render_report(rep: Mapping[str, Any]) -> str:
         "",
         "자동 off 이력:" + ("" if rep["auto_off"] else " 없음"),
     ]
-    out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}" for a in rep["auto_off"]]
+    out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}{boundary(a.get('boundary'))}"
+            for a in rep["auto_off"]]
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]
