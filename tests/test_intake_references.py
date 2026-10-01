@@ -232,6 +232,51 @@ async def test_runner_adds_reference_paths_read_only_and_drops_unsafe_ones(tmp_p
     assert len([t for t in texts if "쓰기 가능" in t]) == 2, "warned once per directory"
 
 
+def _link_dir(link: Path, target: Path) -> None:
+    if os.name == "nt":  # a junction needs no symlink privilege
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def _reference_runner(tmp_path, monkeypatch, settings):
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    seen = {}
+
+    class Adapter:
+        async def run(self, ctx):
+            seen["ctx"] = ctx
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    return runner, seen
+
+
+@pytest.mark.asyncio
+async def test_runner_blocks_a_restricted_zone_written_through_a_link(tmp_path, monkeypatch):
+    # The zone is configured by an alias path; the reference names the real directory, so only the
+    # resolved comparison on the runner sees that they are the same place.
+    (tmp_path / "refs" / "vault").mkdir(parents=True)
+    (tmp_path / "refs" / "notes").mkdir()
+    _link_dir(tmp_path / "zone_alias", tmp_path / "refs" / "vault")
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path / "refs")]
+    settings.policy.data_zones = [DataZone(path=str(tmp_path / "zone_alias"))]
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    refs = [str(tmp_path / "refs" / "vault"), str(tmp_path / "refs"), str(tmp_path / "refs" / "notes")]
+    await runner.run_task(Task(id="task-z", request_id="r1", agent_id="worker", prompt="p",
+                               meta={"reference_dirs": refs}))
+    assert seen["ctx"].read_dirs == [str((tmp_path / "refs" / "notes").resolve())]
+    texts = [e["data"].get("text", "") for e in runner.store.pending() if e["type"] == "agent.log"]
+    assert len([t for t in texts if "통제 데이터 구역" in t]) == 2
+
+
 def test_shell_writes_into_a_reference_dir_go_to_the_pi_when_the_gate_sees_them(tmp_path):
     from labhq.policy import evaluate_tool
 

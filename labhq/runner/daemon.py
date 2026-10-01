@@ -400,6 +400,15 @@ class Runner:
         """Re-check path references with resolved paths on this runner (#36): (read-only dirs, skip notes)."""
         roots = [Path(root).resolve() for root in reference_roots(self.s)]
         open_dirs = [Path(d).resolve() for d in writable]
+        # Zones are compared lexically and resolved: a zone written through a symlink or junction
+        # (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at.
+        zones: list[Path] = []
+        for zone in self.s.policy.data_zones:
+            if zone.level == "restricted":
+                try:
+                    zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
+                except (OSError, RuntimeError, ValueError):
+                    continue
         kept: list[str] = []
         skipped: list[str] = []
         for raw in task.meta.get("reference_dirs") or []:
@@ -414,7 +423,9 @@ class Runner:
             directory = path if path.is_dir() else path.parent
             if not any(directory == root or directory.is_relative_to(root) for root in roots):
                 skipped.append(f"{raw} (runner.reference_roots 밖)")
-            elif overlaps_restricted(str(directory), self.s):
+            elif overlaps_restricted(str(directory), self.s) or any(
+                    directory == zone or directory.is_relative_to(zone) or zone.is_relative_to(directory)
+                    for zone in zones):
                 skipped.append(f"{raw} (통제 데이터 구역)")
             elif any(directory == d or directory.is_relative_to(d) for d in open_dirs):
                 continue  # already reachable through a writable project dir; keep that dir writable
