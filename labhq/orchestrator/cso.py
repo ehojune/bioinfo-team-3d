@@ -185,6 +185,22 @@ Request: {request}
 Plan: {plan}"""
 
 
+FOLLOWUP_PROMPT = """The PI asks a follow-up question about this finished request. Answer from the work already done:
+this request's report, its output files and your earlier session. This is read-only: do not start new
+analyses, HPC jobs, installations or hires. If answering needs new work, say which request the PI should send.
+
+Original request: {request}
+
+Final report (excerpt):
+{report}
+{history}
+PI follow-up question: {question}"""
+
+# Consults and follow-ups answer from existing work; they never write or submit.
+READ_ONLY_OVERRIDES = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
+                       "builtin_tools": "Read,Glob,Grep", "tools": []}
+
+
 def continuation_prompt(task: Task, updates: str, *, resumable: bool,
                         previous_result: TaskResult | None, context_chars: int) -> str:
     """One policy for continuing a task, including engines without session resume."""
@@ -548,8 +564,7 @@ class Orchestrator:
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
-        overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
-                     "builtin_tools": "Read,Glob,Grep", "tools": []}
+        overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
             session_id, workdir = self._last_agent_session(ask.request_id, routed)
             if requested.startswith("colleague:"):
@@ -575,6 +590,51 @@ class Orchestrator:
         await self.hub.resolve_ask(ask, runner_id, ask_result(
             answer=answer if answered else None, reason=None if answered else answer,
             **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
+
+    # ---------- follow-up on a finished request (#36) ----------
+    async def run_followup(self, rid: str, fid: str) -> None:
+        """Resume the request's CSO (or direct agent) session in its workspace; the request stays finished."""
+        req = self.hub.requests[rid]
+        entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
+        agent, direct = entry["agent_id"], req.get("mode") == "direct"
+        if direct:
+            session_id, workdir = self._last_agent_session(rid, agent)
+        else:
+            session_id, workdir = req.get("cso_session_id"), req.get("cso_workdir")
+        resumable = bool(session_id and self.hub.supports_resume(agent))
+        earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
+        history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
+                          for f in earlier)
+        outputs = [r["workdir"] for r in (req.get("results") or {}).values()
+                   if isinstance(r, dict) and r.get("workdir") and r.get("outputs")]
+        task = Task(agent_id=agent, request_id=rid, resume_session_id=session_id if resumable else None,
+                    prompt=FOLLOWUP_PROMPT.format(
+                        request=clip((req.get("text") or "") + render_references(req.get("references")), 4000),
+                        report=clip(req.get("report") or "(no report)", 6000), history=history,
+                        question=entry["text"]),
+                    meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
+                          "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
+                          "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
+                          **({"workdir": workdir} if workdir else {})})
+        await self._emit(rid, "request.followup", {"id": fid, "text": entry["text"], "agent_id": agent,
+                                                   "status": "running"})
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        try:
+            result = await self.run_step(task)
+        except BudgetExceeded as error:
+            result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=str(error))
+        except Exception as error:  # the follow-up must end in a recorded state, never stay "running"
+            result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=f"{type(error).__name__}: {error}")
+        answered = result.ok and bool(result.text.strip())
+        entry.update(status="done" if answered else "failed", answer=result.text.strip() if answered else "",
+                     error=None if answered else (result.error or "empty answer"), task_id=result.task_id,
+                     resumed_session=task.resume_session_id, answered_at=time.time())
+        if not direct and result.session_id and self.hub.supports_resume(agent):
+            req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
+        self.hub.save_request(rid)
+        await self._emit(rid, "request.followup_done", {
+            "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
+            "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task) -> TaskResult:

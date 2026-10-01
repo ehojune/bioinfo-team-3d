@@ -459,7 +459,8 @@ class Runner:
                 env["LABHQ_CONFIG"] = self.s.config_path
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                mcp_servers=self._mcp_servers(agent, env, allow_ask=not consult),
+                # A consult or a follow-up answers once from existing work; it does not ask anyone in turn.
+                mcp_servers=self._mcp_servers(agent, env, allow_ask=task.meta.get("kind") not in {"consult", "followup"}),
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,

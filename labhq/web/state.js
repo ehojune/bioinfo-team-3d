@@ -47,6 +47,7 @@ function req(rid) {
   if (!S.requests.has(rid)) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
+    Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -112,6 +113,7 @@ function apply(ev, replay = false) {
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
+        q.followups = (r.followups || []).map(f => ({ ...f }));
         Object.assign(q.steps, r.step_status || {});
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
@@ -269,6 +271,22 @@ function apply(ev, replay = false) {
       if (d.report) q.report = d.report;
       if (d.error) q.error = d.error;
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
+      break;
+    }
+    case 'request.followup': {
+      const q = req(rid), entry = { id: d.id, text: d.text, agent_id: d.agent_id, status: 'running', asked_at: ts };
+      q.followups = [...q.followups.filter(f => f.id !== d.id), entry];
+      feed({ who: 'pi', to: d.agent_id || 'cso', text: `이어 묻기: ${short(d.text, 130)}` }, ts, rid);
+      break;
+    }
+    case 'request.followup_done': {
+      const q = req(rid), prev = q.followups.find(f => f.id === d.id);
+      const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      q.followups = prev ? q.followups.map(f => (f.id === d.id ? entry : f)) : [...q.followups, entry];
+      if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
+      if (d.cost_known === false) q.costKnown = false;
+      feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
+        cls: d.ok ? '' : 'alert' }, ts, rid);
       break;
     }
     case 'github.posted': { const q = req(rid); q.github.push({ kind: d.kind, url: d.url, number: d.number }); feed({ who: 'github', text: GH_KO[d.kind] || 'GitHub에 업데이트했어요', url: d.url }, ts, rid); break; }

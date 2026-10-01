@@ -163,6 +163,7 @@ a{color:var(--sleep-ink)}
 .cc-tabs button{border:0;border-bottom:2px solid transparent;background:none;min-height:38px;cursor:pointer;color:var(--muted)}
 .cc-tabs button.active{border-color:var(--focus);color:var(--ink);font-weight:600}
 .panel[hidden]{display:none}
+.panel{min-width:0}  /* the 4-column kanban scrolls inside; it must not widen the panel past its column */
 .panel h2{margin:0 0 8px;font:600 16px/1.3 var(--ui);display:flex;align-items:baseline;gap:8px}
 .panel h2 .n{font:500 13px var(--ui);color:var(--muted)}
 .list{list-style:none;margin:0;padding:0}
@@ -268,6 +269,10 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .ref-default{cursor:pointer;min-height:32px;font-size:13px}.ref-default[aria-pressed="false"]{text-decoration:line-through}
 .ref-hint{font-size:12px;color:var(--muted);margin-top:4px}
 .req-refs{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px}.req-refs li{overflow-wrap:anywhere}
+.followups{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.followups ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.fu-q{margin:0;font-weight:500;overflow-wrap:anywhere}.fu-a{white-space:pre-wrap;font:14px/1.6 var(--ui);margin:4px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:260px;overflow:auto}
+.fu-wait{margin:4px 0 0;color:var(--muted);font-size:13px}.fu-err{margin:4px 0 0;color:var(--error-ink);font-size:13px}
+.fu-in{display:flex;gap:8px;align-items:flex-end;margin-top:8px}.fu-in textarea{flex:1;min-width:0;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--panel);color:var(--ink);resize:vertical}
 @media (max-width:620px){
   body{padding-bottom:160px}
   .panels{max-height:none;overflow:visible;padding:10px}
@@ -280,7 +285,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   .composer-in{flex-wrap:wrap;gap:6px 8px}
   #ask{order:1;flex:1 1 60%}
   #send{order:2}
-  #ref-toggle{order:2;padding:6px 10px}
+  #ref-toggle{order:4;min-height:38px;padding:4px 12px}
   .composer select{order:3;flex:1 1 40%;max-width:none;min-height:38px;font-size:14px}
   .toast{bottom:calc(185px + env(safe-area-inset-bottom,0px))}
 }
@@ -680,13 +685,27 @@ function dagSVG(q) {
   }
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="작업 순서도">${edges}${nodes}</svg>`;
 }
+/* follow-ups (#36): a finished request takes more questions in the same CSO session; it is not a new request */
+const FINISHED = ['done', 'failed', 'cancelled', 'rejected'];
+function followupHTML(q) {
+  const list = (q.followups || []).map(f => `<li class="fu"><p class="fu-q">${esc(f.text)}</p>${
+    f.status === 'running' ? '<p class="fu-wait">답을 기다리는 중…</p>'
+      : f.status === 'done' ? `<pre class="fu-a">${esc(f.answer)}</pre>`
+      : `<p class="fu-err">${esc(f.error || '답을 받지 못했어요')}</p>`}</li>`).join('');
+  const busy = (q.followups || []).some(f => f.status === 'running');
+  const form = FINISHED.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
+<textarea id="fu-text" rows="2" placeholder="이 결과에 대해 더 물어보기. 같은 CSO 세션이 이어서 답해요"></textarea>
+<button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
+  return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
+}
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown, q.references]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown, q.references, q.followups]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
+  const draft = $('#fu-text') ? $('#fu-text').value : '';  // a live update must not wipe a half-typed question
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
@@ -696,7 +715,8 @@ function renderRequest() {
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>${q.costKnown ? `비용 $${q.cost.toFixed(2)}` : `비용 $${q.cost.toFixed(2)} + 비용 미집계`}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
-${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}`;
+${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  if ($('#fu-text')) $('#fu-text').value = draft;
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick, onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null });
 }
 function renderStaff() {
@@ -818,6 +838,14 @@ $('#approvals').addEventListener('click', async e => {
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
+$('#request').addEventListener('click', async e => {
+  if (e.target.id !== 'fu-send') return;
+  const box = $('#fu-text'), text = box.value.trim(), rid = S.current;
+  if (!text) { toast('물어볼 내용을 적어 주세요'); box.focus(); return; }
+  e.target.disabled = true;
+  try { await api.followup(rid, text); box.value = ''; toast('같은 CSO 세션에 이어서 물었어요'); }
+  catch (err) { e.target.disabled = false; toast(`보내지 못했어요: ${err.message}`); }
+});
 $('#zones').addEventListener('click', e => { const s = e.target.closest('.seat[data-agent]'); if (s) openSheet(s.dataset.agent); });
 $('#staff-strip').addEventListener('click', e => { const card = e.target.closest('.staff-card[data-agent]'); if (card) openSheet(card.dataset.agent); });
 $('#staff-toggle').addEventListener('click', () => {
@@ -908,6 +936,7 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     request: body => post('/api/requests', body),
+    followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     approve: async (id, ok, note = '') => {
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, approved: ok, note }));
       else await post(`/api/approvals/${encodeURIComponent(id)}`, { approved: ok, note });
@@ -1143,6 +1172,13 @@ const Demo = (() => {
     start,
     api: {
       request: async body => { queue.push(body); toast('데모: 지금 진행 중인 일이 끝나면 시작해요'); return { request_id: 'queued' }; },
+      followup: async (rid, text) => {
+        const id = `fu_demo${++n}`;
+        E('request.followup', { request_id: rid, data: { id, text, agent_id: 'cso', status: 'running' } });
+        sleep(1600).then(() => E('request.followup_done', { request_id: rid, data: { id, ok: true,
+          answer: '[데모] 같은 CSO 세션이 보고서와 산출물을 다시 읽고 답해요. 새 분석이 필요하면 새 요청으로 보내 달라고 안내해요.' } }));
+        return { followup_id: id };
+      },
       approve: async (id, ok) => { const w = waiters.get(id); if (w) w(ok, ok ? '' : '데모에서 거절'); },
       recruit: async s => { hire(s); },
       contract: async (id, action, days) => {

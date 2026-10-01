@@ -42,6 +42,9 @@ export function startLiveOffice(onState) {
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
+      for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
+        text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
+      }
     }
     onState(S, visual);
   }
