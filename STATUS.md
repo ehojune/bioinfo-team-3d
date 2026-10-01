@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 연구 결과·출처 검증 후속 6건 (#114 #116 #117 #118 #128 #129)
+
+- 결론: 연구 결과와 출처 검증에 남은 빈틈 여섯 개를 닫았다. 연구 단계 실행은 여전히 opt-in이고 기본 꺼짐이라, 바뀐 것은 schema·검사·verifier뿐이다.
+- 바뀐 것: `single_cell_de@2`가 통과할 조합이 없던 `normalized_counts`를 field에서 거절한다(#114, 내장 pack hash 고정, 없어진 version을 적으면 남은 version을 알림). 결과는 선택한 단계의 `claim_ids` 밖 claim을 못 내고, 필수 evidence slot마다 `evidence.slots`로 채운 행이 있어야 한다(#128). 0건 검색 행의 출처도 해소하고, 추론·가설 행도 외부 출처면 `accessed_at`이 필요하다(#129). 조회는 동시 4개, 보고 전체 120초 deadline이고 넘긴 것은 미확인이다(#116). ID 옆 URI가 다른 곳을 가리키면 `conflicting`이고, 주요 레지스트리 URL(GEO·PubMed·PMC·identifiers.org 등)은 ID와 같은 출처로 묶인다(#117). DOI 옆 PubMed URL처럼 체계가 다르거나 version·isoform만 다른 URL은 코드가 결함으로 단정하지 않고 resolver에 넘기며, `/search`·`/docs` 같은 경로는 레코드로 읽지 않는다. 근거 행에 `result_count`를 두고, claim별 REVIEW v2(`labhq/research/review.py`)가 부재를 근거로 쓴 것을 늘 중대 결함으로 받는다(#118). 의미 모델 pilot fixture의 합성 결과 네 개에 slot을 적어 `FIXTURE_SHA256`이 바뀌었다(답은 그대로).
+- 실행한 것: issue마다 회귀 test를 먼저 써서 수정 전 실패를 확인했다(#114 9개, #128 3개, #129 5개, #116 3개, #117 25개, #118 test 파일 전체·result_count 1개). 독립 검증에서 정상 출처를 결함으로 판정하던 두 경우를 고치고 회귀 test 13개(수정 전 12개 실패)를 더했다. 전체 pytest 1605 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과. Python 3.10 문법은 ast로만 확인했다.
+- 미해결: live resolver가 아직 없고 deadline·동시성은 함수 인자다(설정 키 없음). 레지스트리 밖 URL을 ID와 함께 적으면 resolver가 uri 조회를 지원할 때까지 미확인이다. `result_count` 없이 "0 hits"만 적은 행은 reviewer가 잡아야 하고, REVIEW v2는 실행 경로에 연결하지 않았다. 설정에 `single_cell_de@1`이 남아 있으면 연구 계획 단계에서 오류가 난다.
+- 근거: `labhq/research/packs/single_cell_de.yaml`, `labhq/research/contract.py`, `labhq/research/review.py`, `labhq/evidence/claims.py`, `labhq/evidence/verify.py`, `docs/research_protocol.md`, `tests/test_research_protocol.py`, `tests/test_research_evidence.py`, `tests/test_evidence_verify.py`, `tests/test_research_review.py`.
+
 ## 2026-10-01 · #150 B1 의미 모델 그림자 — 요청 뒤 두 모델을 계산해 로컬에만 기록
 
 - 결론: `semantics: shadow`면 요청이 끝난 뒤 출처 의미 모델(#136)과 읽기 전용 객체·링크 뷰를 계산해 같은 줄에 나란히 남긴다. 기본은 off다. mock lab에서 off·shadow·보류 mode·오타 네 경우의 prompt·schema·계획·승인·결과·리뷰·round 기록·웹 snapshot·event가 같았다(diff 0). mock 요청의 재사용 후보는 0이었다. 산출 type 선언이 없어서이고, 이 공백을 재는 것이 B1의 목적이다.

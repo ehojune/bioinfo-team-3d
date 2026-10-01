@@ -12,7 +12,7 @@ import posixpath
 import re
 from collections.abc import Mapping
 from typing import Literal
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -44,6 +44,51 @@ STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "con
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DOI_HOSTS = frozenset({"doi.org", "dx.doi.org"})
+# Accession formats. The verifier checks them before any lookup so a malformed ID is reported, not guessed
+# at or "corrected"; registry_id uses them to tell a record page from a search or help page.
+ID_FORMATS: dict[str, str] = {
+    "doi": r"10\.\d{4,9}/\S+",
+    "pmid": r"[1-9]\d{0,8}",
+    "pmcid": r"PMC\d+",
+    "geo": r"G(?:SE|SM|PL|DS)\d+",
+    "sra": r"[SED]R[APRSX]\d{6,}",
+    "bioproject": r"PRJ[DEN][A-Z]\d+",
+    "biosample": r"SAM[DEN][A-Z]?\d+",
+    "refseq": r"[A-Z]{2}_(?:[A-Z]{2,6})?\d{6,}(?:\.\d+)?",  # NM_004985.5, WP_000000001.1, NZ_CP012345.1
+    "ensembl": r"ENS[A-Z]*[EGPTR]\d{11}(?:\.\d+)?",
+    "uniprot": r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?",
+    "dbsnp": r"rs[1-9]\d*",
+    "clinvar": r"(?:[RSV]CV\d{9}(?:\.\d+)?|[1-9]\d*)",
+    "pdb": r"[1-9][A-Za-z0-9]{3}",
+    "chembl": r"CHEMBL\d+",
+    "hgnc": r"HGNC:\d+",
+}
+
+_NCBI = "ncbi.nlm.nih.gov"
+# Registry pages whose path names exactly one record: (host without www., path pattern, scheme).
+_REGISTRY_PATHS: tuple[tuple[str, re.Pattern[str], str], ...] = tuple(
+    (host, re.compile(pattern), scheme) for host, pattern, scheme in (
+        ("pubmed.ncbi.nlm.nih.gov", r"/(\d+)/?", "pmid"),
+        (_NCBI, r"/pubmed/(\d+)/?", "pmid"),
+        (_NCBI, r"/pmc/articles/(PMC\d+)/?", "pmcid"),
+        ("pmc.ncbi.nlm.nih.gov", r"/articles/(PMC\d+)/?", "pmcid"),
+        (_NCBI, r"/bioproject/([^/]+)/?", "bioproject"),
+        (_NCBI, r"/biosample/([^/]+)/?", "biosample"),
+        (_NCBI, r"/sra/([^/]+)/?", "sra"),
+        (_NCBI, r"/snp/([^/]+)/?", "dbsnp"),
+        (_NCBI, r"/clinvar/variation/(\d+)/?", "clinvar"),
+        ("uniprot.org", r"/(?:uniprot|uniprotkb)/([^/]+?)(?:/entry)?/?", "uniprot"),
+        ("rest.uniprot.org", r"/uniprotkb/([^/.]+)(?:\.[a-z]+)?", "uniprot"),
+        ("rcsb.org", r"/structure/([^/]+)/?", "pdb"),
+        ("ebi.ac.uk", r"/chembl/(?:compound_report_card|target_report_card|explore/compound|explore/target)"
+                      r"/([^/]+)/?", "chembl"),
+        ("ensembl.org", r"/id/([^/]+)/?", "ensembl"),
+    ))
+# identifiers.org prefixes -> labhq schemes (https://identifiers.org/<prefix>:<id> or /<prefix>/<id>).
+_IDENTIFIERS_ORG = {"doi": "doi", "pubmed": "pmid", "pmc": "pmcid", "geo": "geo", "bioproject": "bioproject",
+                    "biosample": "biosample", "insdc.sra": "sra", "refseq": "refseq", "ensembl": "ensembl",
+                    "uniprot": "uniprot", "dbsnp": "dbsnp", "clinvar": "clinvar", "pdb": "pdb",
+                    "chembl.compound": "chembl", "chembl.target": "chembl", "hgnc": "hgnc"}
 
 
 def normalize_uri(uri: str) -> str:
@@ -58,6 +103,46 @@ def normalize_uri(uri: str) -> str:
 def normalize_id(scheme: str, value: str) -> str:
     """Comparison form of an identifier. Registry accessions are case-insensitive; URIs are not."""
     return normalize_uri(value) if scheme == "uri" else value.strip().casefold()
+
+
+def registry_id(uri: str) -> tuple[str, str] | None:
+    """The (scheme, value) a major registry URL names, or None for any other URL, search page or listing.
+
+    doi.org, identifiers.org, PubMed, PMC, GEO, NCBI BioProject/BioSample/SRA/dbSNP/ClinVar, UniProt, RCSB
+    PDB, ChEMBL and Ensembl. A path segment that is not an accession of that registry (``/search``,
+    ``/stream``, ``/docs``, ``/help``) is not a record page, so the URL stays an ordinary URI: reading an
+    endpoint name as a malformed accession would turn a correct citation into a defect.
+    """
+    try:
+        parts = urlsplit(uri.strip())
+        host = (parts.hostname or "").removeprefix("www.")
+    except ValueError:  # e.g. an unbalanced IPv6 bracket: not a registry address
+        return None
+    if parts.scheme.lower() not in {"http", "https"} or not host:
+        return None
+    path = unquote(parts.path)
+    found: tuple[str, str] | None = None
+    if host in _DOI_HOSTS:
+        found = ("doi", path.strip("/")) if path.strip("/") else None
+    elif host == "identifiers.org":
+        match = re.fullmatch(r"/([A-Za-z][A-Za-z0-9._]*)[:/](.+?)/?", path)
+        scheme = _IDENTIFIERS_ORG.get(match[1].casefold()) if match else None
+        if match and scheme:
+            value = match[2]
+            found = (scheme, f"HGNC:{value}" if scheme == "hgnc" and value.isdigit() else value)
+    elif host == _NCBI and path.rstrip("/") == "/geo/query/acc.cgi":
+        accession = (parse_qs(parts.query).get("acc") or [""])[0].strip()
+        found = ("geo", accession) if accession else None
+    else:
+        for registry_host, pattern, scheme in _REGISTRY_PATHS:
+            match = pattern.fullmatch(path) if host == registry_host else None
+            if match:
+                found = (scheme, match[1])
+                break
+    if not found:
+        return None
+    scheme, value = found[0], found[1].strip()
+    return (scheme, value) if re.fullmatch(ID_FORMATS[scheme], value, re.IGNORECASE) else None
 
 
 def normalize_artifact_path(path: str) -> str:
@@ -99,17 +184,18 @@ class SourceRef(StrictModel):
     def identities(self, artifact_paths: Mapping[str, str] | None = None) -> list[str]:
         """Every key under which this source is 'the same source', used to detect re-citation.
 
-        A row may name one dataset several ways (identifier, resolver URL, downloaded artifact), and two
-        artifact ids may point at one file, so each spelling gets its own key.
+        A row may name one dataset several ways (identifier, registry URL, downloaded artifact), and two
+        artifact ids may point at one file, so each spelling gets its own key. A registry URL also gets the
+        key of the identifier it names (``registry_id``).
         """
         keys: list[str] = []
         if self.id_scheme and _present(self.id_value):
             keys.append(f"{self.id_scheme}:{normalize_id(self.id_scheme, self.id_value or '')}")
         if _present(self.uri):
             uri = normalize_uri(self.uri or "")
-            parts = urlsplit(uri)
-            if parts.netloc in _DOI_HOSTS and parts.path.strip("/"):
-                keys.append(f"doi:{unquote(parts.path.strip('/')).casefold()}")
+            named = registry_id(uri)
+            if named:
+                keys.append(f"{named[0]}:{normalize_id(*named)}")
             keys.append(f"uri:{uri}")
         if _present(self.artifact_id):
             path = (artifact_paths or {}).get(self.artifact_id or "")
@@ -224,9 +310,33 @@ class Evidence(StrictModel):
     source_level: SourceLevel | None = None
     independence_group: str | None = Field(default=None, pattern=ID_PATTERN)  # same data -> same group
     assessment_reason: str | None = None
+    # Evidence slots of the plan step this row fills. A failed or empty attempt still fills its slot, so
+    # the gap shows as tried rather than silently absent.
+    slots: list[str] = []
+    # How many records a search returned, when the row records one. Code cannot read "0 hits" in a sentence,
+    # but it can read this: a search that counted 0 is not_found, never an observation (#118).
+    result_count: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.result_count is not None:
+            if not self.countable:
+                raise ValueError(f"{self.kind} row {self.id} is not a retrieval and has no result_count")
+            if self.status == "observed" and self.result_count == 0:
+                raise ValueError(f"evidence {self.id} counted 0 results but is observed; record a zero-result "
+                                 "search as not_found with source.query")
+            if self.status == "not_found" and self.result_count:
+                raise ValueError(f"evidence {self.id} is not_found but counted {self.result_count} results")
+        if self.slots and not self.countable:
+            raise ValueError(f"{self.kind} row {self.id} is not evidence and cannot fill evidence slots {self.slots}")
+        for slot in self.slots:
+            if not _present(slot):
+                raise ValueError(f"evidence {self.id} lists an empty slot id")
+            if self.slots.count(slot) > 1:
+                raise ValueError(f"evidence {self.id} lists slot {slot} more than once")
+        # R06 holds for every row kind: an inference that read an external page keeps the day it read it.
+        if self.source and self.source.external and not _present(self.source.accessed_at):
+            raise ValueError(f"evidence {self.id} cites an external source without accessed_at")
         if self.countable:
             if self.status is None or self.source is None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) needs status and source")
@@ -235,8 +345,6 @@ class Evidence(StrictModel):
             if missing:
                 raise ValueError(f"evidence {self.id} ({self.kind}) must state {', '.join(missing)}")
             source = self.source
-            if source.external and not _present(source.accessed_at):
-                raise ValueError(f"evidence {self.id} cites an external source without accessed_at")
             if self.status == "observed" and not _present(source.locator):
                 raise ValueError(f"evidence {self.id} is observed but its source has no locator")
             if self.status == "not_found" and not _present(source.query):
@@ -254,6 +362,15 @@ class Evidence(StrictModel):
     @property
     def countable(self) -> bool:
         return self.kind in COUNTABLE_EVIDENCE_KINDS
+
+    @property
+    def cites_source(self) -> bool:
+        """Whether the row relies on its source, so the source must resolve.
+
+        A failed or unavailable retrieval never reached its source. A finished search with no hits did: the
+        place it searched is cited and must exist, while what it looked for belongs in ``source.query``.
+        """
+        return self.source is not None and not (self.countable and self.status in {"failed", "unavailable"})
 
     @property
     def counts(self) -> bool:

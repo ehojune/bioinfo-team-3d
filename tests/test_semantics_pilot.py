@@ -17,7 +17,7 @@ RECORDS = FIXTURE / "records"
 # Fixed after the one independent review and correction 1. Changing either is a pilot correction
 # (a separate commit with its reason) or an experiment failure, never a routine update.
 EXPECTED_SHA256 = "e8f094595f3e4c19056df37ac2ee54425c8d5d20499e312e6f59671e05671c02"
-FIXTURE_SHA256 = "24dce1ed83a06b78d000606111a785e6eb388e0c39c262ecad4442b1700cafeb"
+FIXTURE_SHA256 = "a2596ef7f86b27f78925f27af27b0e726b99804e187df3dcb95ff06c3daa0316"
 
 
 def inventory_sha256(root: Path) -> str:

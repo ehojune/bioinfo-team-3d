@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import itertools
 import json
 from pathlib import Path
 
@@ -14,10 +15,12 @@ from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, ResearchResult, class
 from labhq.research.packs import configured_packs, load_pack_catalog, pack_snapshot, select_packs
 from labhq.settings import Settings
 
+PACK = "single_cell_de@2"
+
 
 def valid_pack_values():
     return {
-        "single_cell_de@1": {
+        PACK: {
             "fields": {
                 "donor_id": "metadata.donor_id",
                 "condition": "metadata.condition",
@@ -160,11 +163,11 @@ def test_plan_approval_is_invalidated_by_any_contract_change():
 
 def test_builtin_pack_loads_with_hash_and_conflicts_fail(tmp_path):
     settings = Settings()
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     selected = configured_packs(settings)
     snapshot = pack_snapshot(selected)
-    assert list(snapshot) == ["single_cell_de@1"] and len(snapshot["single_cell_de@1"]) == 64
-    pack = selected["single_cell_de@1"].pack
+    assert list(snapshot) == [PACK] and len(snapshot[PACK]) == 64
+    pack = selected[PACK].pack
     assert pack.core_contract == "extend_only" and pack.sources[0].license
 
     base = pack.model_dump(mode="json")
@@ -175,12 +178,12 @@ def test_builtin_pack_loads_with_hash_and_conflicts_fail(tmp_path):
     (tmp_path / "b.yaml").write_text(yaml.safe_dump(other, sort_keys=False), encoding="utf-8")
     catalog = load_pack_catalog([tmp_path])
     with pytest.raises(ValueError, match="conflict on validator"):
-        select_packs(catalog, ["single_cell_de@1", "other_pack@1"])
+        select_packs(catalog, [PACK, f"other_pack@{pack.version}"])
 
 
 def test_active_pack_requires_fields_validators_and_acceptance_before_cp1():
     settings = Settings()
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     selected = configured_packs(settings)
     refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
             for loaded in selected.values()]
@@ -190,36 +193,36 @@ def test_active_pack_requires_fields_validators_and_acceptance_before_cp1():
 
     for field in ("donor_id", "batch", "count_scale"):
         broken = copy.deepcopy(complete)
-        del broken["pack_values"]["single_cell_de@1"]["fields"][field]
+        del broken["pack_values"][PACK]["fields"][field]
         with pytest.raises(ValueError, match=field):
             validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
 
     invalid = copy.deepcopy(complete)
-    invalid["pack_values"]["single_cell_de@1"]["fields"]["count_scale"] = "unknown_scale"
+    invalid["pack_values"][PACK]["fields"]["count_scale"] = "unknown_scale"
     with pytest.raises(ValueError, match="count_scale"):
         validate_research_plan(invalid, max_steps=2, active_packs=snapshot, pack_definitions=selected)
 
     for section in ("validators", "acceptance"):
         broken = copy.deepcopy(complete)
-        broken["pack_values"]["single_cell_de@1"][section] = {}
+        broken["pack_values"][PACK][section] = {}
         with pytest.raises(ValueError, match=section):
             validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
 
 
 def test_confounded_single_cell_plan_cannot_claim_a_condition_effect():
     settings = Settings()
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     selected = configured_packs(settings)
     refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
             for loaded in selected.values()]
     plan = valid_plan(refs, pack_values=valid_pack_values())
-    plan["pack_values"]["single_cell_de@1"]["fields"]["batch_design"] = "fully_confounded_not_identifiable"
+    plan["pack_values"][PACK]["fields"]["batch_design"] = "fully_confounded_not_identifiable"
 
     with pytest.raises(ValueError, match="single_cell_de.confounded_conclusion_mode"):
         validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(selected),
                                pack_definitions=selected)
 
-    plan["pack_values"]["single_cell_de@1"]["fields"]["conclusion_mode"] = "descriptive_only"
+    plan["pack_values"][PACK]["fields"]["conclusion_mode"] = "descriptive_only"
     plan["brief"]["study_type"] = "exploratory"
     plan["brief"]["primary_hypothesis"] = None
     plan["protocol"]["statistics"]["applicable"] = False
@@ -324,7 +327,7 @@ async def test_simple_plan_only_uses_legacy_schema_and_does_not_dispatch_steps()
 async def test_research_plan_replans_over_limit_then_freezes_without_employee_dispatch():
     settings = Settings()
     settings.research.enabled = True
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
     settings.orchestrator.max_steps = 1
@@ -361,14 +364,14 @@ async def test_research_plan_replans_over_limit_then_freezes_without_employee_di
 async def test_invalid_pack_values_replan_before_cp1():
     settings = Settings()
     settings.research.enabled = True
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
     selected = configured_packs(settings)
     refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
             for loaded in selected.values()]
     incomplete = valid_plan(refs, pack_values=valid_pack_values())
-    del incomplete["pack_values"]["single_cell_de@1"]["fields"]["donor_id"]
+    del incomplete["pack_values"][PACK]["fields"]["donor_id"]
     replies = [incomplete, valid_plan(refs, pack_values=valid_pack_values())]
 
     async def reply(task):
@@ -441,12 +444,12 @@ def test_statistics_waiver_cannot_skip_core_fields():
 
 def _single_cell_plan(**fields):
     settings = Settings()
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     selected = configured_packs(settings)
     refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
             for loaded in selected.values()]
     plan = valid_plan(refs, pack_values=valid_pack_values())
-    plan["pack_values"]["single_cell_de@1"]["fields"].update(fields)
+    plan["pack_values"][PACK]["fields"].update(fields)
     return plan, selected
 
 
@@ -462,14 +465,11 @@ def _validate_single_cell(plan, selected):
         ("pseudobulk", "linear", "raw_counts", None),
         ("pseudobulk", "negative_binomial", "log_transformed", "single_cell_de.pseudobulk_raw_counts"),
         ("pseudobulk", "linear", "log_transformed", "single_cell_de.pseudobulk_raw_counts"),
-        ("pseudobulk", "linear", "normalized_counts", "single_cell_de.pseudobulk_raw_counts"),
         ("donor_dependent", "negative_binomial", "raw_counts", None),
         ("donor_dependent", "poisson", "raw_counts", None),
         ("donor_dependent", "negative_binomial", "log_transformed", "single_cell_de.count_likelihood_raw_counts"),
-        ("donor_dependent", "poisson", "normalized_counts", "single_cell_de.count_likelihood_raw_counts"),
         ("donor_dependent", "linear", "log_transformed", None),
         ("donor_dependent", "linear", "raw_counts", "single_cell_de.donor_linear_log_scale"),
-        ("donor_dependent", "linear", "normalized_counts", "single_cell_de.donor_linear_log_scale"),
     ],
 )
 def test_count_scale_and_model_combinations_are_machine_rules(model, family, scale, rule_id):
@@ -481,13 +481,62 @@ def test_count_scale_and_model_combinations_are_machine_rules(model, family, sca
             _validate_single_cell(plan, selected)
 
 
+SCALE_MODEL_FIELDS = ("count_scale", "model", "model_family")
+
+
+@pytest.mark.parametrize("model", ["pseudobulk", "donor_dependent"])
+@pytest.mark.parametrize("family", ["negative_binomial", "poisson", "linear"])
+def test_normalized_counts_is_rejected_at_the_field_for_one_reason(model, family):
+    # #114: no rule combination admitted normalized_counts, so the field rejects it before any rule runs.
+    plan, selected = _single_cell_plan(model=model, model_family=family, count_scale="normalized_counts")
+    with pytest.raises(ValueError) as error:
+        _validate_single_cell(plan, selected)
+    message = str(error.value)
+    assert "fields.count_scale must be one of ['raw_counts', 'log_transformed']" in message
+    assert "pack rule" not in message
+
+
+def test_every_allowed_scale_model_and_family_value_passes_in_some_combination():
+    # An allowed value that every rule combination rejects is a contract that says two things (#114).
+    _, selected = _single_cell_plan()
+    allowed = {field.name: field.allowed_values for field in selected[PACK].pack.fields
+               if field.name in SCALE_MODEL_FIELDS}
+    passing = []
+    for combination in itertools.product(*allowed.values()):
+        plan, selected = _single_cell_plan(**dict(zip(allowed, combination)))
+        try:
+            _validate_single_cell(plan, selected)
+        except ValueError:
+            continue
+        passing.append(dict(zip(allowed, combination)))
+    never = [f"{name}={value}" for name, values in allowed.items() for value in values
+             if not any(combo[name] == value for combo in passing)]
+    assert not never
+
+
+# A pack's content is what an approved plan meant by its id@version; changing it needs a new version.
+BUILTIN_PACK_SHA256 = {PACK: "72be2505e75ea9d21358df07cc8091404d9d54f01bf0986dd873e8bce79d355d"}
+
+
+def test_builtin_pack_content_is_pinned_per_version():
+    catalog = load_pack_catalog([Path("labhq/research/packs")])
+    assert {key: loaded.sha256 for key, loaded in catalog.items()} == BUILTIN_PACK_SHA256
+
+
+def test_a_retired_pack_version_names_the_available_one():
+    catalog = load_pack_catalog([Path("labhq/research/packs")])
+    retired = r"unknown research packs: \['single_cell_de@1'\] \(available: single_cell_de@2\)"
+    with pytest.raises(ValueError, match=retired):
+        select_packs(catalog, ["single_cell_de@1"])
+
+
 def test_log_scale_pseudobulk_is_rejected_whatever_the_rationale_says():
     # The rationale is free text and claims a raw-count model; only the declared values decide.
     plan, selected = _single_cell_plan(count_scale="log_transformed", model="pseudobulk",
                                        model_rationale="Raw-count negative binomial model on donor sums.")
     with pytest.raises(ValueError, match=r"single_cell_de\.pseudobulk_raw_counts"):
         _validate_single_cell(plan, selected)
-    plan["pack_values"]["single_cell_de@1"]["fields"]["count_scale"] = "raw_counts"
+    plan["pack_values"][PACK]["fields"]["count_scale"] = "raw_counts"
     _validate_single_cell(plan, selected)
 
 
@@ -546,7 +595,7 @@ def test_pack_loader_checks_every_predicate_of_a_when_list(tmp_path, when, messa
 async def test_log_scale_pseudobulk_replans_before_cp1():
     settings = Settings()
     settings.research.enabled = True
-    settings.research.active_packs = ["single_cell_de@1"]
+    settings.research.active_packs = [PACK]
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
     mismatched, _ = _single_cell_plan(count_scale="log_transformed", model="pseudobulk")
@@ -561,6 +610,6 @@ async def test_log_scale_pseudobulk_replans_before_cp1():
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
     assert "single_cell_de.pseudobulk_raw_counts" in hub.calls[1].prompt
     assert len(hub.approvals) == 1
-    frozen = hub.requests["r"]["plan"]["pack_values"]["single_cell_de@1"]["fields"]
+    frozen = hub.requests["r"]["plan"]["pack_values"][PACK]["fields"]
     assert frozen["count_scale"] == "raw_counts"
     assert hub.requests["r"]["outcome"] == "plan_approved"
