@@ -2,6 +2,38 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 PR A 리뷰 2회차 검증 — prefix_args 옵션, Claude·Codex 우회 실측
+
+- 결론: 남은 통로 하나를 닫았다. 읽기 전용 실행은 PI `extra_args`를 빼지만 `prefix_args`는 그대로 앞에 붙였고, Codex가 `exec` 앞의 `--dangerously-bypass-approvals-and-sandbox`로 `-s read-only`에서 파일을 썼다. 이제 `prefix_args`에 옵션이 있으면 읽기 전용 실행을 거부한다.
+- 바뀐 것: `read_only_launch_error`(`labhq/adapters/read_only.py`)를 `AgentAdapter.run`이 prepare 전에 부른다. 환경변수 전개 뒤 `-`로 시작하는 항목이 있으면 CLI를 띄우지 않는다. 일반 step은 그대로 쓴다.
+- 실행한 것: 어댑터가 만든 읽기 전용 명령을 실제 CLI로 돌렸다. Claude 2.1.282: 엔진 env의 `CLAUDE_CODE_PLUGIN_DIRS` plugin은 실리지만 hook·plugin MCP는 뜨지 않았고 `CLAUDE_CODE_MANAGED_SETTINGS_PATH` hook도 돌지 않았다. Codex 0.159.2(Windows elevated sandbox): shell 쓰기 거부, 작업 폴더 `.codex/config.toml`의 notify·MCP와 `.codex/hooks.json`은 안 읽힘, `windows.sandbox` 없이도 정책 거부, workspace-write 세션을 이어도 read-only 유지. 새 테스트 2개는 수정 전 실패를 확인했다.
+- 미해결: 같은 follow-up이 gateway 재시작 뒤 이전 실행과 같은 session·workdir를 쓸 수 있다(로컬 Codex 리뷰 P2). 엔진 env로 실린 Claude plugin은 실측상 쓰기 통로가 아니지만 허용 목록 밖이고, 러너가 물려주는 `CODEX_*` 변수(`CODEX_EXEC_SERVER_URL` 등)는 재지 않았다. 셋 다 후속 issue로 넘긴다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/base.py`, `tests/test_read_only_profile.py`.
+
+## 2026-10-01 · #36 PR A 리뷰 2회차 — 읽기 전용 허용 목록 profile, 사후 파일 비교
+
+- 결론: 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 허용 목록 profile로 돈다. plugin·hook·MCP·PI extra_args가 빠지고, 그래도 실행 중 파일이 바뀌면 결과를 실패로 하고 PI에게 알린다. 1회차 MCP 우회와 2회차 plugin hook 우회는 같은 부류(지우기 목록에 남은 새 통로)라 구조로 닫았다.
+- 바뀐 것: `labhq/adapters/read_only.py`의 `read_only_profile`이 직원의 이름·역할·지침·모델·한도·`project_dirs`·`disallowed_tools`만 가져온다. 분류되지 않은 AgentSpec 필드가 생기면 만들기를 거부한다. 러너는 보낸 쪽 override를 보지 않는다. Claude는 `--setting-sources ""`·`disableAllHooks`·plugin 없음, Codex는 `--disable hooks·plugins·apps·computer_use·browser_use`이고, 둘 다 `isolate_user_config`와 상관없이 격리한다. 러너가 실행 전후로 작업 폴더와 쓰기 가능한 project·upstream·참고 폴더를 비교한다(상한 `runner.read_only_check_max_entries` 50,000을 넘으면 실행 거부). 바뀐 목록은 manifest `read_only_changes`, 피드 경고는 `agent.log` level `alert`.
+- 실행한 것: Claude 2.1.282로 실측했다. 수정 전 명령에서 작업 폴더·plugin의 SessionStart·Stop hook 4개가 plan 모드와 `Read,Glob,Grep`을 거치지 않고 돌았고 새 명령에서는 하나도 돌지 않았다(fixture `claude_read_only_*.jsonl`). Codex feature 이름은 codex-cli 0.159.2 `features list`로 확인했다. 새 테스트 22개 중 18개가 수정 전 코드에서 실패했다(나머지 4개는 기존 금지 목록 유지·오탐 방지·fixture 고정), Node 1개도 수정 전 실패를 확인했다. 로컬 Codex 리뷰 P1 1(profile이 `disallowed_tools`를 지움)·P2 2(폴더 ctime 오탐, 취소 때 비교 누락)를 모두 고쳤다. 전체 pytest 1402 passed/20 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과.
+- 미해결: Windows에는 ctime이 없어 크기를 두고 mtime을 되돌린 수정은 못 본다. 다른 러너·프로세스가 같은 폴더를 쓰면 실패로 잡힌다. 감시 폴더 밖 쓰기와 Claude managed settings hook은 범위 밖이다. 옛 Codex에 `--disable` 이름이 없으면 읽기 전용 실행이 CLI 오류로 실패한다. Codex 실측 probe는 하지 않았다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/codex.py`, `labhq/runner/integrity.py`, `labhq/runner/daemon.py`, `tests/test_read_only_profile.py`, `tests/fixtures/real/claude_code/claude_read_only_*.jsonl`.
+
+## 2026-10-01 · #36 PR A 리뷰 1회차 — 읽기 전용 wrap-up, 링크로 적힌 통제 구역
+
+- 결론: 이어 묻기·상담이 턴 한도에 걸려도 읽기 전용이 풀리지 않는다. 링크(symlink·junction)로 적힌 통제 구역은 러너가 실제 경로로 막는다. P1 두 건을 고쳤고 P2 다섯 건은 고쳤으며 네 건은 후속 issue로 넘긴다.
+- 바뀐 것: read-only 작업은 wrap-up을 건너뛰고, 다른 작업의 wrap-up은 기존 override에 `max_turns`만 더한다. 러너가 통제 구역도 resolve해 비교한다. 질문 `options`가 list가 아니면 자유 입력 질문으로 읽고 list 밖의 질문 하나도 버리지 않는다. 참고 값의 NEL·DEL·U+2028/2029를 거부한다. 게이트웨이 루트 비교는 OS와 무관한 글자 비교다(Windows 게이트웨이의 POSIX 루트). 작업·프로젝트 폴더를 품은 참고는 뺀다. 프로젝트 보고의 경로 가림은 대소문자·구분자와 무관하다.
+- 실행한 것: 로컬 Codex 리뷰(origin/main 대비) P1 1·P2 1 모두 고침. 새 테스트 13개 중 12개가 수정 전 실패함을 확인했다(1개는 이미 막히던 url 줄바꿈을 고정). 전체 pytest 1234 passed/19 skipped, `node tests/*.cjs` 10개, `bash scripts/check_public.sh` 통과.
+- 미해결: PI 기본 참고의 github·url 가림, `~` 경로를 러너 계정 기준으로 풀기, 참고 폴더 안의 링크가 통제 구역을 가리키는 경우(project_dirs와 같은 한계), snapshot의 이어 묻기 답 길이. 실제 Claude·Codex CLI는 돌리지 않았다.
+- 근거: `labhq/orchestrator/cso.py`(run_step wrap-up), `labhq/runner/daemon.py`(`_reference_dirs`), `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_followup.py`, `tests/test_intake_references.py`, `tests/test_intake_questions.py`.
+
+## 2026-10-01 · #36 접수·참고 자료 PR A — 구조화 확인 질문, 참고 포인터, 이어 묻기
+
+- 결론: CSO 확인 질문이 선택지 버튼·자유 입력·깊이(약 30/60/90분)로 폰에 뜨고, 답은 #34 경로로 재계획에 들어간다. 요청에 GitHub·DOI·PMID·URL·러너 경로 포인터를 붙이면 브리핑·계획·단계 prompt에 들어가며 경로는 쓰기 권한 없이 열린다. 끝난 요청은 같은 CSO 세션에 이어 물을 수 있다.
+- 바뀐 것: `PLAN_SCHEMA.clarifying_questions`가 `{question, options 2-4, allow_free_text, depth?}`이고 문자열도 읽는다. PR 1 연구 PLAN도 같은 구조를 받되 문자열 질문은 그대로 둬서 기존 hash가 그대로다. `RequestIn.references`·`default_references`, `pi_profile.references`·`runner.reference_roots`(example은 빈 값), `labhq send --ref`·`--no-default-refs`, 2.5D **참고** 칩을 넣었다. 경로는 게이트웨이가 루트·통제 구역으로 거르고 러너가 실제 경로로 다시 확인한다. Claude는 `--add-dir`과 Edit·Write 거부, Codex는 `--add-dir` 없이 읽고, 쓰기 가능한 참고 경로는 러너가 한 번 경고한다. 프로젝트 GitHub 보고에서는 경로 참고를 가린다. `POST /api/requests/{id}/followup`은 읽기 전용으로 resume하고 요청 상태를 바꾸지 않는다. 4열 작업판이 패널 폭을 넓히던 문제도 고쳤다.
+- 실행한 것: 기능마다 회귀 테스트를 먼저 썼다. 새 테스트를 main 위에서 돌려 실패함을 확인했다(pytest 61개: 질문 8·참고 44·이어 묻기 8·e2e 1, Node 3·4·2. 기존 승인 게이트 동작을 고정하는 테스트 1개는 main에서도 통과). 수정 후 전체 pytest 1222 passed/19 skipped, `node tests/*.cjs` 10개, `bash scripts/check_public.sh` 통과. 로컬 게이트웨이와 mock 러너로 2.5D·3D 질문 카드, 참고 칩, 이어 묻기를 브라우저에서 눌러 확인했다(375px 폭 포함). 로컬 Codex 리뷰(branch 대 main): P1 미리 허용된 셸이 참고 경로에 쓸 수 있음 → prompt 규칙·쓰기 가능 경고·README로 대응(셸 sandbox는 범위 밖), P2 이어 묻기 초안이 다른 요청으로 넘어감 → 고침.
+- 미해결: 미리 허용된 셸 명령의 참고 경로 쓰기는 OS 권한으로만 막힌다. 실제 Claude·Codex CLI로는 돌리지 않았다. Codex가 `--add-dir` 없이 참고 경로를 읽는다는 것은 sandbox 기본 동작에 기댄 것이고, Windows elevated sandbox에서 확인하지 않았다. Gemini·Antigravity·cli 직원은 경로를 prompt로만 받는다. 범위 정책·`labhq_kb` 색인·브리핑 현실화는 PR B·C다. patch notes는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/intake.py`, `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `labhq/web/ui/decide.js`, `labhq/web/ui/refs.js`, `tests/test_intake_questions.py`, `tests/test_intake_references.py`, `tests/test_followup.py`, `tests/web_clarify_options.cjs`, `tests/web_refs.cjs`, `tests/web_followup.cjs`.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 리뷰 보강
 
 - 결론: verifier는 지지·반박 출처가 모두 확인돼야 claim을 `verified`로 둔다. context 행·추론 행에 든 가짜 ID도 보고 전체를 실패로 만든다. 같은 출처를 ID·doi.org URL·artifact 별칭으로 나눠 독립 근거로 세던 길도 막았다.

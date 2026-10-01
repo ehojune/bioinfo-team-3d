@@ -216,6 +216,46 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
     return None
 
 
+MAX_RESOLVED_CANDIDATES = 256
+
+
+def _real(p: str) -> str | None:
+    try:
+        return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
+    except (OSError, ValueError):
+        return None
+
+
+def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
+    """`touches` on this host's real filesystem: symlinks and junctions inside a candidate are followed.
+
+    `reference/link/raw.tsv` names no zone, yet reads one when `link` points there. This only means something
+    where the files are (the runner's approval gate) and only for calls the gate sees. Structured path fields
+    are checked first, then up to MAX_RESOLVED_CANDIDATES other candidates; the lexical check still covers the rest.
+    """
+    zones = [(p, zone) for p in paths if p for zone in {_norm(p), _real(p)} if zone]
+    if not zones:
+        return None
+    strings = sorted(_strings(obj), key=lambda item: not item[1])  # path fields first, e.g. Write before content
+    checked = 0
+    for s, path_field in strings:
+        for token in (s,) if path_field else _candidate_paths(s):
+            if not token or _drive_relative(token):
+                continue
+            if not _absolute(token):
+                if not workdir:
+                    continue
+                token = os.path.join(workdir, token)
+            checked += 1
+            if checked > MAX_RESOLVED_CANDIDATES:
+                return None
+            real = _real(token)
+            for original, zone in zones:
+                if real and _inside(real, zone):
+                    return original
+    return None
+
+
 def claude_rule_path(p: str) -> str:
     """Path as Claude Code matches it in permission rules.
 
@@ -244,6 +284,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     return {"permissions": {"deny": deny}} if deny else {}
 
 
+def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
+    """Add Edit/Write deny rules for directories a task may only read (reference paths, #36)."""
+    rules = [f"{tool}(/{claude_rule_path(d)}/**)" for d in directories for tool in ("Edit", "Write")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def evaluate_tool(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -256,7 +306,9 @@ def evaluate_tool(
         if write_path and _drive_relative(write_path):
             return Decision("ask", f"drive-relative write path has no known base: {write_path}")
     rp = restricted_paths(policy)
-    hit = touches(tool_input, rp, workdir=workdir)
+    # Lexical first, then the real path: a link below an allowed folder can lead into a zone (#36).
+    hit = touches(tool_input, rp, workdir=workdir) or touches_resolved(
+        tool_input, [z.path for z in policy.data_zones if z.level == "restricted"], workdir=workdir)
 
     if hit and tool_name in READ_LIKE | WRITE_LIKE:
         return Decision(

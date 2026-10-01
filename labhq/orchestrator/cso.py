@@ -16,7 +16,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
+                      question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
                                  refresh_plan_approval, validate_research_plan)
@@ -29,7 +32,7 @@ if TYPE_CHECKING:
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
-        "clarifying_questions": {"type": "array", "items": {"type": "string"}},
+        "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
@@ -89,7 +92,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- Ask clarifying_questions only if the ambiguity would change the plan.
+- {question_rule}
 
 PI's request: {request}"""
 
@@ -118,7 +121,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
-- Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
+- Put QC after data generation. {question_rule}
 - For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
   a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
@@ -185,6 +188,18 @@ Request: {request}
 Plan: {plan}"""
 
 
+FOLLOWUP_PROMPT = """The PI asks a follow-up question about this finished request. Answer from the work already done:
+this request's report, its output files and your earlier session. This is read-only: do not start new
+analyses, HPC jobs, installations or hires. If answering needs new work, say which request the PI should send.
+
+Original request: {request}
+
+Final report (excerpt):
+{report}
+{history}
+PI follow-up question: {question}"""
+
+
 def continuation_prompt(task: Task, updates: str, *, resumable: bool,
                         previous_result: TaskResult | None, context_chars: int) -> str:
     """One policy for continuing a task, including engines without session resume."""
@@ -198,6 +213,12 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
     return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
             f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
             f"\n\nContinuation updates:\n{updates}")
+
+
+def reference_meta(request: dict | None) -> dict[str, list[str]]:
+    """Path references travel as read-only directories; the runner re-checks them against its roots."""
+    dirs = reference_dirs((request or {}).get("references"))
+    return {"reference_dirs": dirs} if dirs else {}
 
 
 def format_roster(agents: list[dict]) -> str:
@@ -242,7 +263,11 @@ def qa_text(entry: Any) -> str:
     """A PI answer together with what it answers (older records stored the answer alone)."""
     if isinstance(entry, dict):
         qs = entry.get("questions") or ([entry["question"]] if entry.get("question") else [])
-        asked = "\n".join(f"Q{i}. {q}" for i, q in enumerate(qs, 1))
+        details = entry.get("question_details") or []
+        asked = "\n".join("\n".join([f"Q{i}. {q}", *(question_detail_lines(details[i - 1])
+                                                    if i <= len(details) and isinstance(details[i - 1], dict)
+                                                    else [])])
+                          for i, q in enumerate(qs, 1))
         return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
     return f"PI answer: {entry}"
 
@@ -538,6 +563,11 @@ class Orchestrator:
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
                 **{"from": "labhq", "routed_to": routed}))
             return
+        refusal = read_only_refusal(routed, self.hub.agents[routed].get("engine"))
+        if refusal:  # a consult runs as the runner's read-only profile; an engine that ignores it could write
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=refusal, **{"from": "labhq", "routed_to": routed}))
+            return
 
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
@@ -546,8 +576,7 @@ class Orchestrator:
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
-        overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
-                     "builtin_tools": "Read,Glob,Grep", "tools": []}
+        overrides = dict(READ_ONLY_OVERRIDES)
         async with self._consult_lock(ask.request_id, routed):
             # After a gateway restart the runner may still be running this ask's consult.
             # Adopt its result; when its outcome is unknown, isolate the new consult.
@@ -586,6 +615,59 @@ class Orchestrator:
         await self.hub.resolve_ask(ask, runner_id, ask_result(
             answer=answer if answered else None, reason=None if answered else answer,
             **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
+
+    # ---------- follow-up on a finished request (#36) ----------
+    async def run_followup(self, rid: str, fid: str) -> None:
+        """Resume the request's CSO (or direct agent) session in its workspace; the request stays finished."""
+        req = self.hub.requests[rid]
+        entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
+        agent, direct = entry["agent_id"], req.get("mode") == "direct"
+        refusal = read_only_refusal(agent, (self.hub.agents.get(agent) or {}).get("engine"))
+        if refusal:  # the same workspace and session, with an engine that would not keep it read-only
+            entry.update(status="failed", answer="", error=refusal, answered_at=time.time())
+            self.hub.save_request(rid)
+            await self._emit(rid, "request.followup_done", {
+                "id": fid, "ok": False, "answer": "", "error": refusal,
+                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
+            return
+        if direct:
+            session_id, workdir = self._last_agent_session(rid, agent)
+        else:
+            session_id, workdir = req.get("cso_session_id"), req.get("cso_workdir")
+        resumable = bool(session_id and self.hub.supports_resume(agent))
+        earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
+        history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
+                          for f in earlier)
+        outputs = [r["workdir"] for r in (req.get("results") or {}).values()
+                   if isinstance(r, dict) and r.get("workdir") and r.get("outputs")]
+        task = Task(agent_id=agent, request_id=rid, resume_session_id=session_id if resumable else None,
+                    prompt=FOLLOWUP_PROMPT.format(
+                        request=clip((req.get("text") or "") + render_references(req.get("references")), 4000),
+                        report=clip(req.get("report") or "(no report)", 6000), history=history,
+                        question=entry["text"]),
+                    meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
+                          "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
+                          "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
+                          **({"workdir": workdir} if workdir else {})})
+        await self._emit(rid, "request.followup", {"id": fid, "text": entry["text"], "agent_id": agent,
+                                                   "status": "running"})
+        self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        try:
+            result = await self.run_step(task)
+        except BudgetExceeded as error:
+            result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=str(error))
+        except Exception as error:  # the follow-up must end in a recorded state, never stay "running"
+            result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=f"{type(error).__name__}: {error}")
+        answered = result.ok and bool(result.text.strip())
+        entry.update(status="done" if answered else "failed", answer=clip(result.text.strip(), 20000) if answered else "",
+                     error=None if answered else (result.error or "empty answer"), task_id=result.task_id,
+                     resumed_session=task.resume_session_id, answered_at=time.time())
+        if not direct and result.session_id and self.hub.supports_resume(agent):
+            req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
+        self.hub.save_request(rid)
+        await self._emit(rid, "request.followup_done", {
+            "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
+            "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
 
     def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
         """Add an adopted task's recorded cost once (#93).
@@ -685,14 +767,17 @@ class Orchestrator:
             raise AssertionError("unreachable")
 
         res = await dispatch_with_retry(task, start=initial_attempt)
-        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
+        overrides = task.meta.get("agent_overrides") or {}
+        # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
+        read_only = is_read_only_task(task.meta)
+        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
                         prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir, "agent_overrides": {"max_turns": 2},
+                              "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
                               "outputs": ["PARTIAL_STATUS.md"]})
             try:
                 partial = await dispatch_with_retry(wrap, max_attempts=1)
@@ -831,7 +916,8 @@ class Orchestrator:
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         resume_session_id=session_id if can_resume else None,
-                        meta={"kind": "step", "step_id": step["id"], "request": request,
+                        meta={**reference_meta(self.hub.requests.get(rid)),
+                              "kind": "step", "step_id": step["id"], "request": request,
                               "instruction": step["instruction"],
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
@@ -995,8 +1081,10 @@ class Orchestrator:
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
-        text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
-                                     for c in req.get("clarifications") or [])
+        refs = reference_meta(req)
+        # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
+        text = req["text"] + render_references(req.get("references")) + "".join(
+            "\n\nPI clarification (questions and answer):\n" + qa_text(c) for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
         try:
@@ -1016,7 +1104,7 @@ class Orchestrator:
                     return
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
                                                budget_usd=req.get("budget_usd"),
-                                               meta={"kind": "direct", "title": text[:100],
+                                               meta={**refs, "kind": "direct", "title": text[:100],
                                                      "project_dirs": req.get("project_dirs", [])}))
                 self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
                              ok=res.ok and rid not in self.budget_denials)
@@ -1087,7 +1175,8 @@ class Orchestrator:
                 cos = self.cfg.chief_of_staff_agent
                 if cos and cos in known:
                     b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
-                                                 meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
+                                                 meta={**refs, "kind": "briefing", "request": text,
+                                                       "title": "CSO용 브리핑 준비"}))
                     if not b.ok:
                         self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
@@ -1110,19 +1199,19 @@ class Orchestrator:
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs))
+                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE)
                         schema = RESEARCH_PLAN_SCHEMA
                     else:
                         prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
-                                                    max_steps=self.cfg.max_steps)
+                                                    max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE)
                         schema = PLAN_SCHEMA
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=req.get("cso_session_id") if continuation else None,
                         prompt=prompt,
-                        meta={"kind": "plan", "roster": roster, "request": plan_request,
+                        meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
                               "title": "업무 분해·배정 계획 수립",
                               **({"workdir": req["cso_workdir"]} if continuation and req.get("cso_workdir") else {})}))
                     if planned.session_id:
@@ -1139,21 +1228,28 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-                questions = [q for q in plan.get("clarifying_questions") or [] if isinstance(q, str) and q.strip()]
+                details = normalize_questions(plan.get("clarifying_questions"))
+                questions = [q["question"] for q in details]
                 if questions:
                     req["pending_questions"] = questions
+                    if has_structure(details):
+                        req["pending_question_details"] = details
                     self.hub.save_request(rid)
-                    await self._emit(rid, "request.questions", {"questions": questions})
+                    await self._emit(rid, "request.questions", {"questions": questions, "details": details})
                     if self.cfg.wait_for_clarification:
+                        # The card shows options as buttons and returns the composed answer as the note (#34).
                         dec = await self.hub.request_approval(kind="clarify", request_id=rid,
-                            summary="Please answer before work begins:\n" +
-                                    "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1)))
+                                                              summary=questions_summary(details),
+                                                              detail={"questions": details})
                         if not dec.get("approved") or not str(dec.get("note") or "").strip():
                             self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
                             return
                         entry = {"questions": questions, "answer": str(dec["note"]).strip()}
+                        if has_structure(details):
+                            entry["question_details"] = details
                         req.setdefault("clarifications", []).append(entry)
                         req["pending_questions"] = []
+                        req.pop("pending_question_details", None)
                         self.hub.save_request(rid)  # a restart must not lose the PI's answer
                         text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
                         plan_res = await make_plan(text)
@@ -1161,8 +1257,9 @@ class Orchestrator:
                             self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
                             return
                         plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
-                        if plan.get("clarifying_questions"):
-                            req["pending_questions"] = plan["clarifying_questions"]
+                        still = normalize_questions(plan.get("clarifying_questions"))
+                        if still:
+                            req["pending_questions"] = [q["question"] for q in still]
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 if research_lane:
@@ -1250,7 +1347,7 @@ class Orchestrator:
                         prompt=prompt if parse_attempt == 1 else prompt +
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
                         'Do not omit verdict or add prose.',
-                        meta={"kind": "review", "revision": rev, "parse_attempt": parse_attempt,
+                        meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
                         self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
@@ -1319,7 +1416,7 @@ class Orchestrator:
                 resume_session_id=req.get("cso_session_id") if self.hub.supports_resume(self.cfg.cso_agent) else None,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)),
-                meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성",
+                meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": req["cso_workdir"]} if self.hub.supports_resume(self.cfg.cso_agent)
                          and req.get("cso_workdir") else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +

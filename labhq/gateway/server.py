@@ -17,13 +17,14 @@ from typing import Any, Literal
 import httpx
 from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from ..integrations.github import ProjectReporter
+from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
-from ..adapters import get_adapter
+from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 from ..security import token_matches
@@ -47,9 +48,22 @@ class RequestIn(BaseModel):
     work_kind: Literal["auto", "simple", "research"] = "auto"
     scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     project_dirs: list[str] = []
+    references: list[Reference] = Field(default_factory=list, max_length=MAX_REFERENCES)  # pointers only (#36)
+    default_references: bool = True  # add pi_profile.references
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
     meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
+
+
+class FollowupIn(BaseModel):
+    text: str = Field(max_length=4000)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("follow-up text is empty")
+        return value.strip()
 
 
 class CodexReviewIn(BaseModel):
@@ -142,6 +156,11 @@ class Hub:
         for rid, req in self.requests.items():
             if req.get("status") in {"running", "waiting_for_runner"}:
                 req["status"] = "interrupted"
+                self.save_request(rid)
+            stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
+            for followup in stale:  # its task future died with the old process; the PI can ask again
+                followup.update(status="interrupted", error="gateway restarted before the answer arrived")
+            if stale:
                 self.save_request(rid)
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
@@ -946,16 +965,43 @@ class Hub:
             raise KeyError(f"unknown project {body.project_id!r}")
         if proj and proj.local_dir and proj.local_dir not in req["project_dirs"]:
             req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
+        # Fixed at creation: a later config edit must not change what a running or resumed request points at.
+        req["references"] = effective_references(body.references, body.default_references, self.s)
+        # A dropped query may be a credential: kept only in this internal store, never in the request record,
+        # snapshot, prompts or reports.
+        originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
         self.requests[rid] = req
+        if originals:
+            self.store.put("reference_original", rid, {"references": originals})
         self.save_request(rid)
         asyncio.get_running_loop().create_task(self._start_request(rid))
         return rid
 
+    def start_followup(self, rid: str, text: str) -> dict:
+        """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
+        req = self.requests[rid]
+        if req.get("status") not in TERMINAL_REQUEST_STATES:
+            raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
+        if any(f.get("status") == "running" for f in req.get("followups") or []):
+            raise ValueError("a follow-up for this request is still running")
+        agent = req.get("agent_id") if req.get("mode") == "direct" else self.s.orchestrator.cso_agent
+        if agent not in self.agents:
+            raise ValueError(f"agent {agent!r} is not on any connected runner")
+        refusal = read_only_refusal(agent, self.agents[agent].get("engine"))
+        if refusal:
+            raise ValueError(refusal)
+        entry = {"id": new_id("fu"), "text": text.strip(), "agent_id": agent, "status": "running",
+                 "asked_at": time.time()}
+        req.setdefault("followups", []).append(entry)
+        self.save_request(rid)
+        asyncio.get_running_loop().create_task(self.orchestrator.run_followup(rid, entry["id"]))
+        return entry
+
     async def _start_request(self, rid: str) -> None:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
-                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id")}})
+                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
         await self.orchestrator.run_request(rid)
 
     def snapshot(self) -> dict[str, Any]:
@@ -966,7 +1012,8 @@ class Hub:
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
-                                                                  "usage", "usage_known", "agent_id")},
+                                                                  "usage", "usage_known", "agent_id", "references")},
+                          "followups": (r.get("followups") or [])[-20:],  # the full list stays on the request
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
@@ -974,6 +1021,7 @@ class Hub:
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
+            "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
             "recent_events": list(self.events)[-200:],
         }}
@@ -1096,6 +1144,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             return {"request_id": hub.create_request(body)}
         except KeyError as e:
             raise HTTPException(404, str(e))
+        except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
+            raise HTTPException(422, str(e))
 
     @app.get("/api/requests", dependencies=[Depends(auth)])
     async def list_requests(status: str = "running", limit: int = 20) -> list[dict]:
@@ -1118,6 +1168,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(409, "project has no repo or GitHub token is not set")
         c = await gh.request_codex_review(proj.repo, number, body.note, settings.github.codex_mention)
         return {"ok": True, "url": c.get("html_url")}
+
+    @app.post("/api/requests/{rid}/followup", dependencies=[Depends(auth)])
+    async def followup(rid: str, body: FollowupIn) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            entry = hub.start_followup(rid, body.text)
+        except ValueError as e:  # still running, one already pending, or no runner hosts the agent
+            raise HTTPException(409, str(e))
+        return {"request_id": rid, "followup_id": entry["id"]}
 
     @app.get("/api/requests/{rid}", dependencies=[Depends(auth)])
     async def get_request(rid: str) -> dict:

@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ..intake import ClarifyingQuestion
 from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
 
 
@@ -178,7 +179,8 @@ class ResearchPlan(StrictModel):
     brief: ResearchBrief
     protocol: ProtocolContract
     pack_values: dict[str, PackPlanValue]
-    clarifying_questions: list[str]
+    # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
+    clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
     notes: str

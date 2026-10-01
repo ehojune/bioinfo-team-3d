@@ -19,9 +19,11 @@ import os
 import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
+from urllib.parse import unquote
 
 import httpx
 
+from ..intake import public_url
 from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -37,6 +39,51 @@ SECRET_PATTERNS = [
     r"AKIA[0-9A-Z]{16}", r"AIza[0-9A-Za-z_\-]{30,}", r"xox[abpr]-[A-Za-z0-9-]{10,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 ]
+# A credential carried as a URL query or fragment parameter (signed S3/GCS/Azure/CloudFront URLs, API keys,
+# OAuth tokens): the parameter name stays, its value is dropped. Names are compared percent-decoded
+# (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
+QUERY_SECRET_NAME = re.compile(
+    r"[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
+    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy", re.IGNORECASE)
+QUERY_PARAM = re.compile(r"[?&;#]([^=&#;?\s\"'<>)\]]+)=")
+QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
+# `scheme://user:password@host` or `https://TOKEN@host`: the whole userinfo is a credential. `ssh://git@host`
+# names only an account and stays.
+URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*://)([^/?#\s@\"'<>]+)@")
+USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
+
+
+def _decoded(name: str) -> str:
+    for _ in range(3):  # `%252D` is `-` encoded twice
+        decoded = unquote(name)
+        if decoded == name:
+            break
+        name = decoded
+    return name
+
+
+def redact_url_credentials(text: str) -> str:
+    """Drop URL userinfo and the values of credential-named query or fragment parameters."""
+    text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
+        m.group(1)[:-3].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    out, last = [], 0
+    for m in QUERY_PARAM.finditer(text):
+        if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
+            continue
+        value = QUERY_VALUE.match(text, m.end())
+        if value:
+            out += [text[last:m.end()], "<redacted-secret>"]
+            last = value.end()
+    return "".join(out) + text[last:]
+
+
+def strip_reference_url_queries(text: str, requests: Any) -> str:
+    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it."""
+    bases = {public_url(str(ref.get("value") or "")) for req in requests
+             for ref in (req.get("references") or []) if ref.get("kind") == "url"}
+    for base in sorted((b for b in bases if b), key=len, reverse=True):
+        text = re.sub(re.escape(base) + r"[?#][^\s\"'<>)\]]*", lambda _m, b=base: b, text, flags=re.IGNORECASE)
+    return text
 
 
 NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
@@ -77,6 +124,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
+    out = redact_url_credentials(out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
@@ -296,7 +344,29 @@ class ProjectReporter:
         return self.s.project((self.hub.requests.get(rid) or {}).get("project_id"))
 
     def _clean(self, text: str) -> str:
-        return sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
+        out = strip_reference_url_queries(text or "", self.hub.requests.values())  # before sanitize rewrites it
+        out = sanitize(out, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
+        for pattern in self._reference_path_patterns():
+            out = pattern.sub("<reference-path>", out)
+        return out
+
+    def _reference_path_patterns(self) -> list[re.Pattern[str]]:
+        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project.
+
+        Agents echo paths with either separator, another letter case, or Git Bash's `/c/...` drive form, so the
+        match ignores case and separators instead of comparing the stored text literally.
+        """
+        values = {os.path.expanduser(r.value) for r in self.s.pi_profile.references if r.kind == "path"}
+        values |= {r.value for r in self.s.pi_profile.references if r.kind == "path"}
+        for req in self.hub.requests.values():
+            values |= {str(r.get("value")) for r in req.get("references") or [] if r.get("kind") == "path"}
+        patterns = []
+        for value in sorted((v.rstrip("\\/") for v in values if len(v) >= 4), key=len, reverse=True):
+            drive = re.match(r"([A-Za-z]):(.*)$", value)
+            head, rest = (rf"(?:{drive[1]}:|/{drive[1]}(?=[\\/]))", drive[2]) if drive else ("", value)
+            body = r"[\\/]+".join(re.escape(part) for part in rest.replace("\\", "/").split("/"))
+            patterns.append(re.compile(head + body, re.IGNORECASE))
+        return patterns
 
     @staticmethod
     def _action_key(ev: dict, action: str) -> str:

@@ -71,6 +71,9 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         assert types.count("request.review") == 2  # revise → accept
         assert "recruit.suggested" in types and "job.submitted" in types and "jobs.finished" in types
         assert sum(e["data"]["kind"] == "clarify" for e in seen if e["type"] == "approval.requested") == 1
+        clarify = next(e["data"] for e in seen if e["type"] == "approval.requested" and e["data"]["kind"] == "clarify")
+        assert clarify["detail"]["questions"][0]["options"] == ["cases", "controls", "both"]  # #36 buttons
+        assert req["clarifications"][0]["question_details"][0]["depth"] == 60
         assert "agent.ask" in types and "agent.answer" in types
         assert any(e["type"] == "approval.resolved" for e in seen)
         biologist_step = next(st["id"] for st in steps if st["agent_id"] == "biologist")

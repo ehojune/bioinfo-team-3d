@@ -437,6 +437,10 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--project-dir", action="append", default=[])
     sp.add_argument("--budget", type=float)
     sp.add_argument("--project", help="project id → updates go to that project's GitHub repo")
+    sp.add_argument("--ref", action="append", default=[], metavar="[KIND:]VALUE",
+                    help="reference pointer, repeatable: github owner/repo or URL, DOI, PMID, http(s) URL, "
+                         "or a runner path inside runner.reference_roots (prefix kind: to force one)")
+    sp.add_argument("--no-default-refs", action="store_true", help="leave out pi_profile.references")
     sp.add_argument("--no-wait", action="store_true")
     sub.add_parser("watch")
     sub.add_parser("projects", help="list projects and their GitHub repos")
@@ -574,8 +578,17 @@ def main(argv: list[str] | None = None) -> None:
             kind = f"파견 ~{datetime.fromtimestamp(a['expires_at']):%m-%d}" if a.get("expires_at") else "정규"
             print(f"{ICON.get(a['id'], '🐥')} {a['id']:<16} {a['name']:<18} {a['engine']:<11} {a.get('model') or '-':<8} {kind}")
     elif args.cmd == "send":
+        from .intake import infer_reference
+
+        references = []
+        for raw in args.ref:
+            reference = infer_reference(raw)
+            if reference is None:
+                p.error(f"--ref {raw!r}: kind unclear; prefix one of github: doi: pmid: url: path:")
+            references.append(reference)
         body = {"text": args.text, "mode": "direct" if args.agent else "orchestrate", "agent_id": args.agent,
-                "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project}
+                "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
+                "references": references, "default_references": not args.no_default_refs}
         if args.no_wait:
             print(_api(s, "POST", "/api/requests", json=body))
         else:

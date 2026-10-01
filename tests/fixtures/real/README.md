@@ -8,3 +8,4 @@
 - 재캡처: `python scripts/probe_engines.py ENGINE --output-dir <저장소 밖 경로> --redact`.
 - 새 원본은 로컬에 두고 가린 파일만 이 폴더에 복사한 뒤 `pytest -q`와 `scripts/check_public.sh`를 실행합니다.
 - init 이벤트는 허용 목록 필드만 남긴다. 도구·스킬·에이전트 목록은 개수로, labhq_* 가 아닌 MCP 서버 이름은 `<external>`로 바꾼다. 캡처한 머신의 개인 도구 목록이 공개 저장소에 남지 않게 하려는 것이다.
+- 읽기 전용 hook probe(2026-10-01, Claude Code 2.1.282): 작업 폴더 `.claude/settings.json`과 `--plugin-dir` plugin에 SessionStart·Stop hook을 두고 `--include-hook-events`를 붙여 돌렸다. `claude_read_only_hooks_control.jsonl`은 수정 전 읽기 전용 명령(plan, `Read,Glob,Grep`, `--setting-sources project,local`, plugin 전달)으로 hook 4개가 모두 돌았고, `claude_read_only_profile.jsonl`은 어댑터의 읽기 전용 명령으로 하나도 돌지 않았다. 두 번 다 `--settings`의 `Grep` 거부가 적용됐다.
