@@ -21,7 +21,7 @@ class AntigravityAdapter(AgentAdapter):
         if ctx.mcp_servers:
             raise ValueError("antigravity does not support MCP servers")
         if ctx.task.output_schema:
-            (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
+            ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.antigravity

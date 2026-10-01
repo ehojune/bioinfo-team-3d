@@ -523,6 +523,9 @@ def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: 
     Deny rules match the path as written, so every other link that leads to an offending one is returned
     too: `b` naming the same folder as `a`, `c` naming the subfolder that holds it, `loop` naming the folder
     itself. A folder listed once is not listed again through each alias; its links are matched by real path.
+
+    A mount below the folder is not opened and makes the listing incomplete, but the rest is still listed: a
+    project keeps running with that warning, and a link after the mount still needs its deny rule (#182).
     """
     found: list[Path] = []
     links: list[tuple[Path, Path]] = []
@@ -534,8 +537,7 @@ def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: 
             else:
                 links.append((path, info))
         elif kind == "mount":
-            incomplete = f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
-            break
+            incomplete = incomplete or f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
         elif kind == "unreadable":
             incomplete = f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
             break
@@ -597,9 +599,13 @@ def _text(value: str) -> str:
 
 # Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
 # Up to eight folders may come before the home folder (`/BiO/home/u01`, `/mnt/c/Users/pi`).
+# The account folder may hold single spaces (`C:\Users\Jane Doe`, up to four words) and JSON `\uXXXX` escapes of a
+# non-ASCII name (#183). Words split only at a single space and never hold a separator, so this stays linear.
+_ACCOUNT_WORD = r"(?:[^\\/\s\"'<>|]|\\u[0-9a-fA-F]{4})+"
+_ACCOUNT = rf"{_ACCOUNT_WORD}(?: {_ACCOUNT_WORD}){{0,3}}"
 _ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
              rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
-             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
+             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}{_ACCOUNT})")
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
@@ -647,13 +653,33 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
             rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
 
 
+# A code forge known by its first host label (`github.example.edu`, `gitlab.lab.org`, `git-hpc.inst.kr`). A PI default
+# URL there names a repository just as a github reference does, so its `owner/name` is identity too (#181).
+_FORGE_HOST = re.compile(r"(?:github|gitlab|gitea|forgejo|bitbucket|git|ghe)(?:-[a-z0-9-]+)?\..+", re.IGNORECASE)
+
+
+def _repository(kind: str, value: str) -> tuple[str, str, str] | None:
+    """(repository URL, owner, name) when a reference names a repository on github.com or another forge.
+
+    The first two path segments are taken, whichever branch or file the reference pointed at. On a forge with nested
+    groups (`gitlab.example.edu/group/sub/repo`) that is the group and the next level, still hidden as identity.
+    """
+    parts = urlsplit(value)
+    segments = [segment for segment in parts.path.split("/") if segment]
+    host = (parts.hostname or "").removeprefix("www.")
+    if len(segments) < 2 or not (kind == "github" or kind == "url" and _FORGE_HOST.fullmatch(host)):
+        return None
+    owner, repo = segments[0], segments[1].removesuffix(".git")
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/{owner}/{repo}", owner, repo
+
+
 def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[str]]:
     """URL patterns and repository-identity patterns for one private PI reference."""
-    github = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)", value, re.IGNORECASE)
-    if kind != "github" or not github:
+    repository = _repository(kind, value)
+    if repository is None:
         return [url_pattern(value, trailing_slash=False) + _URL_REST], []
-    owner, repo = github.groups()  # the repository, whichever branch the reference named
-    url = url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST
+    base, owner, repo = repository  # the repository, whichever branch the reference named
+    url = url_pattern(base, trailing_slash=False) + r"(?:\.git)?" + _URL_REST
     # `SEPARATOR` accepts POSIX, drive, UNC, native backslash and JSON-escaped clone paths. The clone folder
     # alone is also repository identity: an agent may shorten `C:\src\owner\repo` to `C:\src\repo` or `repo`.
     identities = [rf"(?<![\w.-]){_text(owner)}{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}",
@@ -671,7 +697,8 @@ def mask_published_references(text: str, settings: Any, requests: Any) -> str:
     - path references from any source: a runner path names a private folder (#36);
     - github and url references from the PI's defaults (#123): a private repository name or a personal wiki
       that the PI set once for every request, not something this request chose to point at. DOI and PMID
-      name published literature and stay.
+      name published literature and stay. A url on a self-hosted forge (`github.example.edu/o/r`) is a
+      repository too, and its `o/r` and clone folder are hidden as for github.com (#181).
     Path spellings accept POSIX, drive, extended/UNC prefixes, either separator, case variants and expanded
     homes. GitHub spellings include URLs, `owner/name` with either separator and the local clone folder name.
     Project reports and round records call this one rule (#130).

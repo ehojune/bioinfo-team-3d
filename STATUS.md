@@ -11,6 +11,14 @@
 - 미해결: protein-qc는 여전히 FAIL이다. CSO 계획이 `answer.md`를 `outputs/` 밖에 선언해 INCOMPLETE가 됐다(별개 원인, 그림자 실행의 penguins와 같은 부류). 사전 허용 Read의 `/tmp/...`는 "파일 없음"으로 끝난다. Bash 셸 쓰기 대상의 `/tmp`·`/c/` 표기는 그대로 승인을 받는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
 - 근거: `labhq/policy.py`, `labhq/tools/approval_mcp.py`, `labhq/adapters/claude_code.py`, `labhq/bench.py`, `tests/test_claude_write_paths.py`, `tests/test_bench_review3.py`, `tests/fixtures/real/claude_code/claude_windows_write_paths.json`, `claude_write_tmp_*.jsonl`.
 
+## 2026-10-01 · #165 #177 #178 #180 #181 #182 #183 #190 #193 — 작업 폴더 쓰기·Claude 규칙 경로·공개 가드 후속
+
+- 결론: 부류마다 공통 판정 하나로 닫았다. 러너가 작업 폴더에 쓰는 경로(#165·#190·#193), Claude 거부 규칙을 붙일 수 없는 경로(#177·#182), 공개 가드의 표기 빈틈(#180·#181·#183)이다. #165는 1–3번만, #178은 문서만 고쳤다(둘 다 실측이 남아 Refs).
+- 바뀐 것: `adapters/owned.py`가 labhq 소유 경로 쓰기를 맡는다. 링크를 따라가지 않고, 재사용 폴더에 링크가 있으면 실행을 거부한다. manifest와 Codex 마지막 답도 링크를 거쳐 읽지 않는다. 계약 skill 상위 링크도 지우지 않고 거부한다. 계약 skill은 원본과 같을 때만 면제하고, Windows·macOS에서는 지시 파일 이름을 대소문자 없이 비교한다. 재사용 폴더 검사 중 이벤트는 모았다가 로컬 로그에 쓴다. `claude_rule_ready`가 UNC 링크·참고를 거른다. mount 뒤도 계속 훑는다. 공개 가드는 percent-encoded webhook(앞에 다른 escape가 붙은 것 포함), 사내 forge의 owner/repo, 공백·`\uXXXX`가 든 계정 home을 가린다.
+- 실행한 것: 확인 조건 test는 수정 전 실패를 확인했다. 이 PC에서 skip된 것은 file symlink 13건과 POSIX 전용 3건이다. 전체 pytest 1968 passed/39 skipped, Node 11개, `scripts/check_public.sh`, `git diff --check` 통과. 로컬 Codex 리뷰(branch diff)는 결함을 찾지 못했다. 독립 검증이 P1 둘(링크 너머 manifest·마지막 답 읽기, escape 바로 뒤 webhook)을 고쳤고 P2 일곱은 후속으로 뺐다.
+- 미해결: 실제 CLI 실측 셋. #148 신뢰 경로 probe(#165 4번), 하위 폴더 CLAUDE.md 제외 probe(#165 5번), Claude 규칙의 대소문자·8.3 비교(#178)다. #178은 `allow_runner_read_restricted`와 대소문자 무시 파일 시스템이 겹칠 때만 남는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/adapters/owned.py`, `labhq/adapters/read_only.py`, `labhq/runner/daemon.py`, `labhq/runner/workspace.py`, `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_workspace_boundary.py`, `tests/test_publish_followups.py`.
+
 ## 2026-10-01 · PR #136·#158 후속 12건 — 계보 순회·resume 이유·그림자 breaker·hash·mark
 
 - 결론: #154 #155 #156 #157 #159 #160 #161 #163 #173 #174 #175를 issue별 커밋으로 고쳤다. #162는 이미 main(dc01c50)에 고쳐져 있어 issue의 두 모양만 test에 더했다. #163과 #174는 같은 결함이라 한 커밋이다.

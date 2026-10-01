@@ -210,8 +210,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
             if s.name.startswith("labhq_") and not s.timeout_s:  # labhq_ask sets its own, longer wait
                 servers[s.name]["timeout"] = (self.settings.policy.approvals.timeout_s + 120) * 1000
-        (ctx.meta_dir / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
-        (ctx.meta_dir / "system_prompt.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
+        ctx.write_meta("mcp.json", json.dumps({"mcpServers": servers}, indent=2))
+        ctx.write_meta("system_prompt.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code
