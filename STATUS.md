@@ -5,7 +5,7 @@
 ## 2026-10-02 · #247 #254 — Windows 불안정 test의 완료 조건 고정
 
 - 결론: #247은 `latched` 뒤 영속 기록이 끝나기 전 `enable`이 겹친 확인 경합, #254는 worker 대기가 아닌 호스트 지연까지 재던 1초 한계가 원인이었다. 제품 코드 결함은 아니었다.
-- 바뀐 것: #247은 `disabled.json`·`auto_off` 기록과 이전 worker 결과 폐기를 조건 대기한다. #254는 막힌 worker가 풀리기 전에 event-loop 호출이 반환하는 순서를 확인한다.
+- 바뀐 것: #247은 `disabled.json`·`auto_off` 기록과 이전 worker 결과 폐기를 조건 대기한다. #254는 막힌 worker가 풀리기 전에 event-loop 호출이 반환하는 순서를 확인하고 worker `join`·blocking queue put도 금지한다.
 - 실행한 것: 수정 전 #247은 유휴 100회 0, 단일 CPU 과부하 100회 2 실패(PermissionError 1·부분 JSON 1), 수정 후 두 test 모두 유휴 100회와 같은 부하 100회에서 실패 0이었다. 관련 파일 69건도 통과했다.
 - 미해결: 없음.
 - 근거: `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_worker.py`.

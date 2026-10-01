@@ -172,6 +172,21 @@ async def test_the_event_loop_never_waits_for_the_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(shadow, "compute_line", slow)
     _finish(hub, rid="req_burst0")
     assert started.wait(5), "shadow worker did not start"
+
+    worker = hub.semantics_shadow.thread
+    assert worker is not None
+    jobs = hub.semantics_shadow.queue
+    real_put = jobs.put
+
+    def nonblocking_put(item, block=True, timeout=None):
+        assert block is False and timeout is None, "event-loop path used blocking queue.put"
+        return real_put(item, block=block, timeout=timeout)
+
+    def no_join(*args, **kwargs):
+        raise AssertionError(f"event-loop path joined the worker: args={args!r}, kwargs={kwargs!r}")
+
+    monkeypatch.setattr(jobs, "put", nonblocking_put)
+    monkeypatch.setattr(worker, "join", no_join)
     safety_release = threading.Timer(10, release.set)
     safety_release.daemon = True
     safety_release.start()
