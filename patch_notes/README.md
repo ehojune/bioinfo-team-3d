@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |
 | 08:01 | [`1ad77e8`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/1ad77e8) | 외부 절대·home·drive 입력을 산출 치환과 workspace artifact dependency 추론에서 제외 |
 | 07:45 | [`87de545`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/87de545) | 같은 basename의 모호한 절대·home 참조는 교정하고 중첩 home 산출 경로는 전체 치환 |
