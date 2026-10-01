@@ -1,4 +1,4 @@
-"""Typed claim, evidence and link rows for research results (#90 R04-R05, #58 claim ledger).
+"""Typed claim, evidence and link rows for research results (#90 R04-R06, #58 claim ledger).
 
 The schema keeps three things apart: what is asserted (claim), what was observed or looked up
 (evidence), and how one bears on the other (link). Code checks enums, revisions and references;
@@ -7,6 +7,7 @@ whether a source really supports a sentence stays a reviewer judgment.
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,6 +40,10 @@ class SourceRef(StrictModel):
     id_scheme: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
     id_value: str | None = None
     artifact_id: str | None = None
+    version: str | None = None  # database release / record version, when the source has one
+    accessed_at: str | None = None  # YYYY-MM-DD the external source was read
+    locator: str | None = None  # where in the source: section, table, row, line, JSON pointer
+    query: str | None = None  # search scope and filters, required for a zero-result search
 
     @model_validator(mode="after")
     def identifies_something(self) -> "SourceRef":
@@ -46,7 +51,18 @@ class SourceRef(StrictModel):
             raise ValueError("source id_scheme and id_value must be given together")
         if not any(_present(value) for value in (self.uri, self.id_value, self.artifact_id)):
             raise ValueError("source needs a uri, an id_scheme/id_value pair, or an artifact_id")
+        if self.accessed_at is not None:
+            try:
+                _dt.date.fromisoformat(self.accessed_at)
+            except ValueError:
+                raise ValueError("source accessed_at must be a YYYY-MM-DD date") from None
+            if len(self.accessed_at) != 10:
+                raise ValueError("source accessed_at must be a YYYY-MM-DD date")
         return self
+
+    @property
+    def external(self) -> bool:
+        return _present(self.uri) or _present(self.id_value)
 
     def identity(self) -> str:
         """Stable key for 'the same source', used to detect re-citation of one dataset."""
@@ -97,6 +113,7 @@ class Evidence(StrictModel):
     kind: EvidenceKind
     observation: str = Field(min_length=1)
     status: EvidenceStatus | None = None  # retrieval outcome; countable kinds only
+    status_detail: str | None = None  # what was unavailable or failed; never a guess at the answer
     source: SourceRef | None = None
     derived_from: list[str] = []  # evidence ids an inference/hypothesis row reasons from
     method: str | None = None
@@ -116,6 +133,16 @@ class Evidence(StrictModel):
                        if not _present(getattr(self, name))]
             if missing:
                 raise ValueError(f"evidence {self.id} ({self.kind}) must state {', '.join(missing)}")
+            source = self.source
+            if source.external and not _present(source.accessed_at):
+                raise ValueError(f"evidence {self.id} cites an external source without accessed_at")
+            if self.status == "observed" and not _present(source.locator):
+                raise ValueError(f"evidence {self.id} is observed but its source has no locator")
+            if self.status == "not_found" and not _present(source.query):
+                raise ValueError(f"evidence {self.id} is not_found; record the searched scope and filters in "
+                                 "source.query")
+            if self.status in {"failed", "unavailable"} and not _present(self.status_detail):
+                raise ValueError(f"evidence {self.id} is {self.status}; say what failed in status_detail")
         else:
             if self.status is not None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) is not a retrieval; leave status empty")

@@ -17,10 +17,19 @@ def claim(cid="c1", status="supported", revision=1, **extra):
             "limitations": ["single cohort"], **extra}
 
 
+def source(status="observed"):
+    """Artifact source with the R06 field each retrieval status requires."""
+    if status == "not_found":
+        return {"artifact_id": "a1", "query": "gene == IL6 in pseudobulk_de.tsv"}
+    return {"artifact_id": "a1", "locator": "row gene=IL6"}
+
+
 def evidence(eid, kind="experimental", status="observed", **extra):
     row = {"id": eid, "kind": kind, "observation": f"observation {eid}"}
     if kind in COUNTABLE:
-        row.update(status=status, source={"artifact_id": "a1"}, directness="direct", source_level="primary",
+        if status in {"failed", "unavailable"}:
+            row["status_detail"] = "pseudobulk step exited 1 before writing the table"
+        row.update(status=status, source=source(status), directness="direct", source_level="primary",
                    independence_group="cohort1", assessment_reason="measures the asked comparison in raw counts")
     else:
         row["derived_from"] = ["e1"]
@@ -208,7 +217,7 @@ def test_links_and_claim_status_need_a_judgement_reason():
 
 
 def test_recited_source_is_not_independent_support():
-    geo = {"id_scheme": "geo", "id_value": "GSE79973"}
+    geo = {"id_scheme": "geo", "id_value": "GSE79973", "accessed_at": "2026-10-01", "locator": "series matrix"}
     first = {**evidence("e1"), "source": geo, "kind": "database_annotation"}
     recited = {**evidence("e2"), "source": {**geo, "id_value": "gse79973"}, "kind": "literature_claim",
                "independence_group": "paper2", "source_level": "secondary"}
@@ -219,6 +228,34 @@ def test_recited_source_is_not_independent_support():
         result(evidence=[first, {**recited, "independence_group": "cohort1"}], links=links))
     from labhq.evidence.claims import independent_groups
     assert independent_groups("c1", parsed.evidence, parsed.links) == ["cohort1"]
-    other = {**recited, "source": {"id_scheme": "geo", "id_value": "GSE118916"}}
+    other = {**recited, "source": {**geo, "id_value": "GSE118916"}}
     parsed = rc.ResearchResult.model_validate(result(evidence=[first, other], links=links))
     assert independent_groups("c1", parsed.evidence, parsed.links) == ["cohort1", "paper2"]
+
+
+# --- R06: where the source is, when it was read, what was searched -------------------------------
+
+def external(**extra):
+    return {"id_scheme": "doi", "id_value": "10.1038/s41586-020-2649-2", "accessed_at": "2026-10-01",
+            "locator": "Fig. 2b", **extra}
+
+
+@pytest.mark.parametrize("row, match", [
+    ({**evidence("e1"), "source": {k: v for k, v in external().items() if k != "accessed_at"}},
+     "external source without accessed_at"),
+    ({**evidence("e1"), "source": external(accessed_at="2026/10/01")}, "YYYY-MM-DD"),
+    ({**evidence("e1"), "source": external(accessed_at="20261001")}, "YYYY-MM-DD"),
+    ({**evidence("e1"), "source": {"artifact_id": "a1"}}, "observed but its source has no locator"),
+    ({**evidence("e1", status="not_found"), "source": {"artifact_id": "a1"}}, "record the searched scope"),
+    ({k: v for k, v in evidence("e1", status="failed").items() if k != "status_detail"},
+     "say what failed in status_detail"),
+    ({k: v for k, v in evidence("e1", status="unavailable").items() if k != "status_detail"},
+     "say what failed in status_detail"),
+])
+def test_source_records_access_date_location_and_search_scope(row, match):
+    rejects(result(claims=[claim(status="unresolved")], evidence=[row], links=[]), match)
+
+
+def test_complete_external_source_is_accepted():
+    parsed = rc.ResearchResult.model_validate(result(evidence=[{**evidence("e1"), "source": external(version="v1")}]))
+    assert parsed.evidence[0].source.locator == "Fig. 2b" and parsed.evidence[0].source.external
