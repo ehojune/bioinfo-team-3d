@@ -184,3 +184,22 @@ def test_the_report_cli_never_ends_in_a_traceback(tmp_path, config, capsys, monk
     monkeypatch.setattr(shadow, "build_report", broken)
     code, out = _cli(capsys, config, "report")
     assert code == 1 and "unexpected AttributeError" in out and "Traceback" not in out
+
+
+def test_the_report_splits_by_model_and_vocabulary_version_and_sums_type_counts(tmp_path, config, capsys):
+    """#221: a vocabulary change is its own version; declared and inferred are labelled as unverified."""
+    typed = _line(2)
+    typed["vocab_sha256"] = "b" * 64
+    typed["provenance"].update(model_sha256="a" * 64, types={"data_type": {"local": {"declared": 2}},
+                                                             "format": {"withheld": {"inferred": 1}}},
+                               declarations={"outputs": 4, "data_declared": 2, "format_declared": 1,
+                                             "issues": {"unknown_key": 1}})
+    _write(tmp_path, [_line(1), typed])
+    code, out = _cli(capsys, config, "report", "--json", "--today", "2026-10-15")
+    rep = json.loads(out)
+    assert code == 0 and rep["versions"] == {"-/-": 1, f"{'a' * 12}/{'b' * 12}": 1}
+    assert rep["types"] == {"data_type": {"local": {"declared": 2}}, "format": {"withheld": {"inferred": 1}}}
+    assert rep["declarations"] == {"outputs": 4, "data_declared": 2, "format_declared": 1, "issues": {"unknown_key": 1}}
+    code, out = _cli(capsys, config, "report", "--today", "2026-10-15")
+    assert f"{'a' * 12}/{'b' * 12} 1" in out and "계획 산출 4 · data 선언 2 · format 선언 1" in out
+    assert "내용 검증이 아니다" in out and "withheld inferred 1" in out

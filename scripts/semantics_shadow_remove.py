@@ -34,13 +34,19 @@ OWNED = [
 HOOK = "# semantics-hook"
 BEGIN, END = "# semantics-shadow: begin", "# semantics-shadow: end"
 COPY = ["labhq", "tests", "scripts", "agents", "config", "pyproject.toml"]
-CHECK_TESTS = ["tests/test_e2e_mock.py", "tests/test_semantics_pilot.py", "tests/test_cso.py"]
+# The output type vocabulary and declarations are core (#221): they must outlive the shadow.
+CHECK_TESTS = ["tests/test_e2e_mock.py", "tests/test_semantics_pilot.py", "tests/test_cso.py",
+               "tests/test_output_vocab.py", "tests/test_output_types.py", "tests/test_output_types_research.py"]
 SMOKE = """
 import asyncio, json, sys
 from pathlib import Path
 from labhq.settings import Settings
 from labhq.gateway.server import Hub
 from labhq.integrations.rounds import build_record
+from labhq import vocab
+from labhq.vocab import declare
+
+assert vocab.load().counts()["keys"] >= 1 and declare.FIELDS, "the output type vocabulary went with the shadow"
 
 config = Path(sys.argv[1])
 config.write_text("semantics: {mode: shadow, timeout_s: 2}\\ngateway: {state_dir: '%s'}\\n" % sys.argv[2],

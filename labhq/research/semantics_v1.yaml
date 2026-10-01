@@ -53,7 +53,9 @@ reuse:
   reuse_kinds: [reused_cross_request, reused_same_request]
 
 data_type:
-  source: declared        # the generating run's task meta output_types (pilot change 2; was: none)
+  source: declared        # the generating run's output_types: runner records, else dispatch meta (pilot change 2; was: none)
+  # vocabulary: legacy bare-key declarations only. Typed declarations (#221) use labhq/vocab/output_types.yaml
+  # under the version they name; labhq.vocab.declare.read turns any other version into unknown.
   vocabulary:
     raw_counts:        {broader: expression_counts}
     normalized_counts: {broader: expression_counts}
@@ -70,7 +72,8 @@ traversal:
 reasons:
   unknown: [multiple_reporters, no_reported_output, not_observed, multiple_hashes, manifest_missing, shared_session,
             no_matching_session, start_unknown, parent_missing, no_data_type_source, not_declared, generator_unknown,
-            no_contract_record, unresolved_input_ref, no_plan_hash]
+            no_contract_record, unresolved_input_ref, no_plan_hash, declaration_conflict, vocab_changed,
+            vocab_mismatch, invalid_declaration, no_vocab]
   cautions: [shared_ancestor_review, resume_parent_ambiguous, cycle, depth_limit]
 
 # Constraint id -> judge function (code table semantics.JUDGES). `rule` is the expected.yaml rule it carries.
@@ -98,7 +101,7 @@ constraints:
   method_from_plan:         {judge: judge_method, rule: method,
                              says: "method is plan hash and step with the plan packs, unknown when the generator is"}
   no_type_inheritance:      {judge: judge_data_type, rule: type,
-                             says: "data_type only from declarations of the generating run; never from packs or broader types"}
+                             says: "data_type only from declarations of the generating run, under the vocabulary version they name; two disagreeing declarations leave it unknown; never from packs, file extensions or broader types"}
   probe_not_validation:     {judge: judge_verification, rule: probe,
                              says: "probe tools show a connection only; method validation is not established"}
   independence_by_ledger:   {judge: judge_independence, rule: indep,

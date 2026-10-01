@@ -466,3 +466,17 @@ def test_a_failure_counted_on_the_event_loop_saves_its_window_off_the_loop(tmp_p
     _wait_for_shadow_state(service, tmp_path, lambda: service.paths.breaker.exists(), "breaker.json written")
     assert writers and threading.main_thread().name not in writers
     assert json.loads(service.paths.breaker.read_text(encoding="utf-8"))["consecutive"] == 1
+
+
+def test_a_type_bucket_outside_the_allow_list_turns_it_off_and_writes_nothing(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    real = shadow.compute_line
+
+    def leaky(snap, *args, **kwargs):
+        line = real(snap, *args, **kwargs)
+        line["provenance"]["types"] = {"data_type": {"raw_counts": {"declared": 1}}, "format": {}}  # a key, not an id
+        return line
+
+    monkeypatch.setattr(shadow, "compute_line", leaky)
+    _run(service, ["req_001"])
+    assert service.latched == "info_boundary" and _lines(tmp_path, "request") == []

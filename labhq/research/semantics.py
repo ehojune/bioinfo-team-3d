@@ -28,6 +28,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from labhq.evidence.claims import independent_groups, normalize_artifact_path, normalize_id, normalize_uri
 from labhq.research.contract import ResearchPlan, ResearchResult, validate_research_result
+import labhq.vocab as output_vocab
+from labhq.vocab import declare as output_types
 from labhq.yaml_unique import UniqueKeyError
 from labhq.yaml_unique import load_yaml_unique as _core_load_yaml_unique
 
@@ -590,15 +592,24 @@ def judge_method(plan_sha256: str | None, step_id: str | None, packs: Iterable[M
     return (Judged(method) if method else Judged(UNKNOWN, "no_plan_hash")), pack_keys
 
 
-def judge_data_type(rule: DataTypeRule, generator: str, declared: Mapping[str, Any] | None, path: str) -> Judged:
+def judge_data_type(rule: DataTypeRule, generator: str, typed: Mapping[str, Mapping[str, Any]] | None,
+                    path: str) -> Judged:
+    """``typed`` is labhq.vocab.declare.read of the generating run: one reader for both models (#221).
+
+    A legacy ``{path: key}`` declaration counts only for a key of this model's own vocabulary; a typed one only
+    under the vocabulary version it was declared with (the reader turns any other version into unknown)."""
     if rule.source == "none":
         return Judged(UNKNOWN, "no_data_type_source")
     if generator == UNKNOWN:
         return Judged(UNKNOWN, "generator_unknown")
-    types = {normalize_artifact_path(k): v for k, v in (declared or {}).items()}
-    if path in types and types[path] in rule.vocabulary:
-        return Judged(types[path])
-    return Judged(UNKNOWN, "not_declared")
+    field = ((typed or {}).get(path) or {}).get("data_type")
+    if field is None:
+        return Judged(UNKNOWN, "not_declared")
+    if field.legacy:
+        return Judged(field.value) if field.value in rule.vocabulary else Judged(UNKNOWN, "not_declared")
+    if field.basis != "declared":
+        return Judged(UNKNOWN, field.reason or "not_declared")
+    return Judged(field.value)
 
 
 def judge_verification(rule: VerificationRule, spec: Mapping[str, Any] | None) -> dict[str, Judged]:
@@ -707,8 +718,15 @@ def _set_field(row: dict, name: str, judged: Judged, p: Projection) -> None:
             row.setdefault("candidates", {})[name] = list(judged.candidates)
 
 
-def project(model: SemanticModel, records: Records) -> Projection:
-    """Project records onto the model. Pure: reads ``records``, returns a new Projection."""
+_CURRENT_VOCAB = object()
+
+
+def project(model: SemanticModel, records: Records, *, types_vocab: Any = _CURRENT_VOCAB) -> Projection:
+    """Project records onto the model. Pure: reads ``records``, returns a new Projection.
+
+    ``types_vocab`` is the output type vocabulary declarations are read under (default: the packaged one)."""
+    if types_vocab is _CURRENT_VOCAB:
+        types_vocab = output_vocab.current()
     p = Projection(model=model)
     spec = model.spec
     workdir_ids: dict[str, str] = {}      # result.workdir -> workdir_id
@@ -746,7 +764,11 @@ def project(model: SemanticModel, records: Records) -> Projection:
         _set_field(row, "method", method, p)
         row["_packs"] = packs
         row["_meta"] = meta
-        row["_output_types"] = ((task.get("payload") or {}).get("meta") or {}).get("output_types")
+        research = records.results.get(tid)
+        staff = {normalize_artifact_path(ref.path): {"data_type": ref.data_type, "format": ref.format}
+                 for ref in (research.artifact_refs if research else []) if ref.data_type or ref.format}
+        row["_types"] = output_types.read((task.get("payload") or {}).get("meta"), result, types_vocab,
+                                          normalize=normalize_artifact_path, staff=staff)
         p.runs[run] = row
         if method.value != UNKNOWN:
             p.methods.setdefault(method.value, {"id": method.value, "request": rid, "step": task.get("step_id"),
@@ -906,8 +928,9 @@ def project(model: SemanticModel, records: Records) -> Projection:
             _set_field(row, "method", Judged(gen_row["method"], (gen_row.get("unknown") or {}).get("method")), p)
             row["packs"] = list(gen_row["_packs"])
         _set_field(row, "sha256", judge_hash(records.observed.get(row["workspace"] or "", {}).get(row["path"], ())), p)
-        _set_field(row, "data_type", judge_data_type(spec.data_type, gen.value, gen_row["_output_types"] if gen_row else None,
-                                                     row["path"]), p)
+        typed = gen_row["_types"] if gen_row else {}
+        row["_types"] = typed.get(row["path"]) or {}
+        _set_field(row, "data_type", judge_data_type(spec.data_type, gen.value, typed, row["path"]), p)
         if row["data_type"] != UNKNOWN:
             p.add_edge(art, "means", judge_identity("type", row["data_type"]), "declared")
     by_hash: dict[str, list[str]] = {}

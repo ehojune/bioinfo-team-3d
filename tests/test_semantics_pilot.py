@@ -42,7 +42,7 @@ def test_fixture_records_are_the_pinned_version():
 
 # Model revision for #155 (reason start_unknown). The pilot measurement in docs/reference/semantics_pilot.md
 # ran on the previous hash 8fd9860f…8159.
-MODEL_SHA256 = "9ed9aa1eecdb41e9dc062e1184cdaacd7d94b2f7d4c335354eeb99ea7b561b42"
+MODEL_SHA256 = "fc4171808c1941b8d1bb457f6fcf7b4761c35c874e7ba162c4e39899993a8eef"  # #221: typed declarations, five reasons
 
 
 @pytest.fixture(scope="module")
@@ -615,7 +615,8 @@ SEMANTIC_FILES = [ROOT / "labhq" / "research" / "semantics.py", ROOT / "tests" /
 IMPORT_ALLOW = {"__future__", "copy", "hashlib", "json", "posixpath", "re", "sqlite3", "collections.abc",
                 "dataclasses", "pathlib", "typing", "urllib.parse", "yaml", "pydantic", "labhq.evidence",
                 "labhq.evidence.claims", "labhq.research.contract", "labhq.research.semantics",
-                "labhq.yaml_unique"}  # the duplicate-key YAML loader, shared with core vocab code (#221)
+                "labhq.yaml_unique",  # the duplicate-key YAML loader, shared with core vocab code (#221)
+                "labhq.vocab"}  # the output type vocabulary and its one reader (#221)
 
 
 def _imported_names(path):

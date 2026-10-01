@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..evidence.claims import normalize_artifact_path
+from ..vocab.declare import FIELDS, UNKNOWN, read, unknown
 
 OBJECT_TYPES = ("Staff", "Request", "Step", "Task", "Job", "DataAsset", "Approval", "Artifact")
 # link type -> (source object type, allowed target types)
@@ -73,8 +74,44 @@ def _task_state(task: Mapping[str, Any], woken: bool) -> str:
     return "done" if result.get("ok") else "failed"
 
 
-def build_view(snap: Mapping[str, Any]) -> ObjectView:
-    """Project one request of a shadow snapshot onto objects and links."""
+def _type_props(fields: Mapping[str, Any], vocab: Any) -> dict[str, Any]:
+    """Artifact type properties: the key (what judgments use) and, apart, its EDAM id or local/unknown."""
+    props: dict[str, Any] = {}
+    for name, short in (("data_type", "data"), ("format", "format")):
+        field = fields.get(name) or unknown("not_declared")
+        known = field.basis != "unknown"
+        props[name] = field.value if known else UNKNOWN
+        props[f"{short}_basis"] = field.basis
+        props[f"{short}_edam"] = ((vocab.edam_id(field.value) if vocab else None) or "local") if known else "unknown"
+    return props
+
+
+def type_artifacts(view: ObjectView, snap: Mapping[str, Any], vocab: Any) -> ObjectView:
+    """Give each Artifact its type properties, read by labhq.vocab.declare.read as the provenance model reads them,
+    under the ``vocab`` the caller loaded (None: every declaration reads as unknown). Read-only attributes: no
+    link, approval or action depends on them. A file several tasks reported with different types is unknown."""
+    rid = snap["rid"]
+    seen: dict[str, list[dict[str, Any]]] = {}
+    for _, task in sorted((snap.get("tasks") or {}).items()):
+        if task.get("request_id") != rid:
+            continue
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+        typed = read(payload.get("meta"), result, vocab, normalize=normalize_artifact_path)
+        for out in result.get("outputs") or []:
+            path = normalize_artifact_path(str(out))
+            art = f"artifact:{opaque(rid, result.get('workdir_id'), path)}"
+            if art in view.objects["Artifact"]:
+                seen.setdefault(art, []).append(_type_props(typed.get(path) or {}, vocab))
+    for art, props in seen.items():
+        same = all(p == props[0] for p in props)
+        view.add("Artifact", art, **(props[0] if same else _type_props(
+            {f: unknown("declaration_conflict") for f in FIELDS}, vocab)))
+    return view
+
+
+def build_view(snap: Mapping[str, Any], *, vocab: Any = None) -> ObjectView:
+    """Project one request of a shadow snapshot onto objects and links (with ``vocab``, typed artifacts too)."""
     view = ObjectView()
     rid = snap["rid"]
     req = snap["requests"][rid]
@@ -158,7 +195,7 @@ def build_view(snap: Mapping[str, Any]) -> ObjectView:
             view.link("approval_target", aid, f"task:{approval['task_id']}" if approval["task_id"] in tasks else None)
         else:
             view.link("approval_target", aid, request if approval.get("request_id") == rid else None)
-    return view
+    return type_artifacts(view, snap, vocab) if vocab is not None else view
 
 
 def summarize(view: ObjectView) -> dict[str, Any]:
@@ -170,7 +207,13 @@ def summarize(view: ObjectView) -> dict[str, Any]:
     for rel, _ in view.unresolved:
         unresolved[rel] = unresolved.get(rel, 0) + 1
     pending = sum(1 for a in view.objects["Approval"].values() if a.get("state") == "pending")
+    types = {"data_type": {}, "format": {}}  # basis counts only: no key or id leaves this module
+    for art in view.objects["Artifact"].values():
+        for name, short in (("data_type", "data"), ("format", "format")):
+            basis = art.get(f"{short}_basis", "unknown")
+            types[name][basis] = types[name].get(basis, 0) + 1
     return {"objects": {t: len(view.objects[t]) for t in OBJECT_TYPES}, "links": links,
+            "artifact_types": {k: dict(sorted(v.items())) for k, v in types.items()},
             "link_total": len(view.links), "unresolved": len(view.unresolved),
             "unresolved_by": dict(sorted(unresolved.items())), "pending_approvals": pending,
             "pending_jobs": sum(1 for j in view.objects["Job"].values() if j.get("state") == "pending")}

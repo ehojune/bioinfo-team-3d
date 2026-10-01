@@ -63,7 +63,8 @@ def test_the_view_has_no_actions():
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     imported |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     assert imported <= {"__future__", "hashlib", "re", "collections.abc", "dataclasses", "typing",
-                        "evidence.claims"}  # normalize_artifact_path: one spelling per path, as the model uses
+                        "evidence.claims",  # normalize_artifact_path: one spelling per path, as the model uses
+                        "vocab.declare"}  # the one declaration reader both models use; pure, no file read (#221)
     calls = {n.func.id for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
     assert not calls & {"open", "exec", "eval", "__import__"}
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
@@ -134,3 +135,57 @@ def test_the_line_and_report_count_no_pending_job_after_a_wake(tmp_path):
     rep = shadow.build_report(paths)
     assert rep["broken_lines"] == 0 and rep["objects"]["pending_jobs"] == 2
     assert "대기 job 2" in shadow.render_report(rep)
+
+
+# ---------------------------------------------------------------- typed output declarations (#221 todo 2)
+
+import json  # noqa: E402
+
+from labhq import vocab as output_vocab  # noqa: E402
+from labhq.research import semantics as sem  # noqa: E402
+from labhq.research.semantics_shadow import ShadowConfig, read_rows, take_snapshot  # noqa: E402
+from labhq.vocab import declare  # noqa: E402
+
+V = output_vocab.current()
+
+
+def _typed_snapshot(tmp_path, decl, *, outputs=("outputs/a.tsv", "outputs/b.md")):
+    wd, _ = workspace(tmp_path, "task_a1", "analyst", {o: b"x" for o in outputs})
+    row = task_row("req_a", "task_a1", "s1", "analyst", wd, list(outputs))
+    meta = {"output_types_vocab": V.sha256, "output_types": decl}
+    row["payload"]["meta"].update(meta)
+    row["result"]["output_types"] = declare.runner_records(list(outputs), meta, V)
+    hub = fake_hub(tmp_path, {"req_a": request_row("req_a", [("s1", "analyst")])}, {"task_a1": row})
+    snap = take_snapshot(hub, "req_a", ShadowConfig())
+    read_rows(snap, lambda: None)
+    return hub, snap
+
+
+def test_artifacts_carry_the_key_and_apart_its_edam_id_with_basis(tmp_path):
+    _, snap = _typed_snapshot(tmp_path, {"outputs/a.tsv": {"data_type": "raw_counts"}})
+    arts = {a.get("data_type"): a for a in build_view(snap, vocab=V).objects["Artifact"].values()}
+    assert arts["raw_counts"] == {"data_type": "raw_counts", "data_basis": "declared",
+                                  "data_edam": V.edam_id("raw_counts") or "local", "format": "tsv",
+                                  "format_basis": "inferred", "format_edam": V.edam_id("tsv") or "local"}
+    assert arts["unknown"]["format"] == "markdown" and arts["unknown"]["data_edam"] == "unknown"
+    assert summarize(build_view(snap, vocab=V))["artifact_types"] == {
+        "data_type": {"declared": 1, "unknown": 1}, "format": {"inferred": 2}}
+    assert summarize(build_view(snap))["artifact_types"] == {"data_type": {"unknown": 2}, "format": {"unknown": 2}}
+
+
+def test_both_models_read_the_same_declarations(tmp_path):
+    _, snap = _typed_snapshot(tmp_path, {"outputs/a.tsv": {"data_type": "raw_counts"},
+                                         "outputs/b.md": {"data_type": "report"}})
+    objects = {(a["data_type"], a["data_basis"]) for a in build_view(snap, vocab=V).objects["Artifact"].values()}
+    records, _ = sem.records_from_rows(snap["requests"], snap["tasks"])
+    p = sem.project(sem.load_model(), records, types_vocab=V)
+    provenance = {(row["data_type"], "declared" if row["data_type"] != sem.UNKNOWN else "unknown")
+                  for row in p.artifacts.values()}
+    assert objects == provenance == {("raw_counts", "declared"), ("report", "declared")}
+
+
+def test_the_line_s_object_type_counts_hold_no_key_or_id(tmp_path):
+    hub, _ = _typed_snapshot(tmp_path, {"outputs/a.tsv": {"data_type": "raw_counts"}})
+    objects = line_for(hub, "req_a")["objects"]
+    assert objects["artifact_types"]["data_type"] == {"declared": 1, "unknown": 1}
+    assert "raw_counts" not in json.dumps(objects) and "tsv" not in json.dumps(objects)
