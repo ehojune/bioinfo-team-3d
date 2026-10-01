@@ -25,7 +25,7 @@ from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Eng
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
-from ..policy import claude_deny_links, claude_read_only, claude_settings
+from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
 from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
@@ -65,6 +65,16 @@ def check_job_group(settings: Settings) -> None:
         raise RuntimeError(f"hpc.user does not exist: {user}") from e
     if gid not in os.getgrouplist(user, account.pw_gid):
         raise RuntimeError(f"hpc.user is not a member of hpc.job_group: {user}, {group}")
+
+
+def claude_rule_ready(path: str) -> bool:
+    """Whether Claude can be given a permission rule for this path (#177). The rule syntax for a UNC path
+    is unverified, so a UNC path gets none and a folder that needs one is not opened to Claude."""
+    try:
+        claude_rule_path(str(path))
+    except ValueError:
+        return False
+    return True
 
 
 def _can_list(path: str) -> bool:
@@ -483,10 +493,13 @@ class Runner:
                         "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다")})
         return denied, None
 
-    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
+    def _reference_dirs(self, task: Task, writable: list[str],
+                        needs_rules: bool = False) -> tuple[list[str], list[str], list[str]]:
         """Re-check path references with resolved paths on this runner (#36).
 
         Returns (read-only dirs, skip notes, refused values). A refused value is also withheld from the prompt.
+        With `needs_rules` (Claude: Edit/Write deny rules are what keeps a reference read-only), a folder that
+        gets no rule, such as a mapped network drive that resolves to UNC, is refused too (#177).
         """
         roots = [Path(root).resolve() for root in reference_roots(self.s)]
         open_dirs = [Path(d).resolve() for d in writable]
@@ -512,6 +525,8 @@ class Runner:
                     # A link or mount below the folder can still lead into a zone (reference/link/raw.tsv).
                     reason = scan_reference_dir(directory, zones, self.s.runner.reference_scan_max_entries,
                                                 self.s.runner.reference_scan_max_depth)
+                if reason is None and needs_rules and not claude_rule_ready(str(directory)):
+                    reason = "네트워크(UNC) 경로라 Claude 쓰기 거부 규칙을 만들 수 없음"
                 if reason is None:
                     if any(directory == d or directory.is_relative_to(d) for d in open_dirs):
                         continue  # already reachable through a writable project dir; keep that dir writable
@@ -627,6 +642,20 @@ class Runner:
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
+            unruled = [link for link in denied_links if not claude_rule_ready(link)]
+            denied_links = [link for link in denied_links if link not in unruled]
+            if unruled and agent.engine == Engine.claude_code:
+                # Claude reads an --add-dir folder without asking the gate; a zone link there with no deny rule
+                # would be read unchecked, so the task is refused instead of failing on the rule (#177).
+                folders = ", ".join(dict.fromkeys(Path(d).name or "(공유 폴더 루트)" for d in extra_dirs
+                                                  if any(Path(link).is_relative_to(Path(d)) for link in unruled)))
+                error = (f"프로젝트 폴더 {folders}의 통제 구역 링크 {len(unruled)}개에 Claude 거부 규칙을 붙일 수 없어"
+                         "(네트워크(UNC) 경로) 실행을 거부합니다. 드라이브 경로로 설정하거나 링크를 옮기세요")
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
+                await emit("agent.log", {"level": "alert", "text": error})
+                await emit("agent.status", {"state": "error", "error": short(error, 200)})
+                await emit("task.result", result.model_dump(mode="json"))
+                return result
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
                 upstream = Path(directory).resolve()
@@ -637,7 +666,8 @@ class Runner:
                         continue
                     extra_dirs.append(str(upstream))
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
-            read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
+            read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
+                                                               needs_rules=agent.engine == Engine.claude_code)
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
             kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
@@ -684,8 +714,9 @@ class Runner:
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
-                claude_settings=claude_deny_links(claude_read_only(claude_settings(self.s.policy), read_dirs),
-                                                  denied_links),
+                # Other engines never read these rules; only paths a rule can name go in (#177).
+                claude_settings=claude_deny_links(claude_read_only(
+                    claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

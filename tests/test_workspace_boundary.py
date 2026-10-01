@@ -428,3 +428,83 @@ async def test_a_zone_link_after_a_project_mount_still_gets_its_deny_rule(tmp_pa
     assert f"Read(/{claude_rule_path(str(project / 'sub' / 'raw'))}/**)" in deny
     warnings = _logs(runner, "warn")
     assert any("a_mount" in text for text in warnings), "the mount is still reported"
+
+
+# ---------------- #177: a project or reference folder written as a UNC path ----------------
+
+def _unc(path: Path) -> str | None:
+    """The same folder written as a UNC path: the local admin share on Windows, `//...` on POSIX."""
+    resolved = path.resolve()
+    if os.name != "nt":
+        return "/" + str(resolved)
+    unc = "\\\\localhost\\" + resolved.drive[0] + "$" + str(resolved)[2:]
+    return unc if os.path.isdir(unc) else None
+
+
+def _unc_project(tmp_path):
+    zone, project = tmp_path / "zone", tmp_path / "project"
+    zone.mkdir()
+    project.mkdir()
+    unc = _unc(project)
+    if unc is None:
+        pytest.skip("no local admin share to write this folder as a UNC path")
+    return zone, project, unc
+
+
+def test_a_unc_path_gets_no_claude_rule():
+    from labhq.runner.daemon import claude_rule_ready
+
+    assert not claude_rule_ready("\\\\server\\share\\project\\raw")
+    assert not claude_rule_ready("//server/share/project/raw")
+    assert claude_rule_ready("C:\\lab\\project\\raw") and claude_rule_ready("/lab/project/raw")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
+async def test_a_zone_link_in_a_unc_project_refuses_claude_instead_of_crashing(tmp_path, monkeypatch, engine):
+    """claude_rule_path has no verified UNC form. A zone link in a UNC project folder used to raise before the
+    adapter for every engine; now Claude, which reads an --add-dir folder without the gate, is refused (#177)."""
+    zone, _project, unc = _unc_project(tmp_path)
+    monkeypatch.setattr("labhq.runner.daemon.zone_links", lambda directory, *_args: ([Path(directory) / "raw"], None))
+    runner, seen = _capture_runner(tmp_path, monkeypatch, _zone_settings(tmp_path, zone), engine)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"project_dirs": [unc]}))
+    if engine == Engine.claude_code:
+        assert not result.ok and "UNC" in result.error and "project" in result.error, result.error
+        assert "localhost" not in result.error, "a folder name, not its path"
+        assert "ctx" not in seen
+    else:  # Codex never reads Claude rules; the project link is warned about as before
+        assert result.ok, result.error
+        assert any("raw" in text for text in _logs(runner, "warn"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a real link scanned through the POSIX `//` form")
+@pytest.mark.asyncio
+async def test_a_real_zone_link_in_a_unc_project_refuses_claude(tmp_path, monkeypatch):
+    zone, project, unc = _unc_project(tmp_path)
+    os.symlink(zone, project / "raw", target_is_directory=True)
+    runner, seen = _capture_runner(tmp_path, monkeypatch, _zone_settings(tmp_path, zone))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"project_dirs": [unc]}))
+    assert not result.ok and "UNC" in result.error and "ctx" not in seen
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a mapped network drive resolves to a UNC path on Windows")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
+async def test_a_reference_that_resolves_to_unc_is_not_opened_to_claude(tmp_path, monkeypatch, engine):
+    (tmp_path / "refs" / "atlas").mkdir(parents=True)
+    root = _unc(tmp_path / "refs")
+    if root is None:
+        pytest.skip("no local admin share to write this folder as a UNC path")
+    settings = _settings(tmp_path)
+    settings.runner.reference_roots = [root]
+    runner, seen = _capture_runner(tmp_path, monkeypatch, settings, engine)
+    reference = root + "\\atlas"
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt=f"read {reference}",
+                                        meta={"reference_dirs": [reference]}))
+    assert result.ok, result.error
+    ctx = seen["ctx"]
+    if engine == Engine.claude_code:  # its Edit/Write deny rule cannot be written, so it is not --add-dir'ed
+        assert ctx.read_dirs == [] and reference not in ctx.prompt
+        assert any("UNC" in text for text in _logs(runner, "warn"))
+    else:
+        assert len(ctx.read_dirs) == 1
