@@ -1,10 +1,14 @@
 # 출처·재사용 의미 모델 pilot의 기대 답 (#127). 구현보다 먼저, 아래 규칙에서 손으로 적었다.
 # 모든 기록은 합성이다. 실제 요청 기록을 복사하지 않았다.
 # 독립 검토 1회 뒤 EXPECTED_SHA256으로 고정한다. 그 뒤 수정은 사유를 적은 별도 커밋(보정 1회)뿐이다.
+# 보정 1은 검토 직후 고정 전에 썼다(revisions). 답은 바꾸지 않았다.
 schema: semantics-expected/1
 synthetic: true
 issue: 127
 records: records/
+revisions:
+- {n: 1, kind: 보정, date: 2026-10-01,
+   reason: "독립 검토 1회 반영. 17문항 답·변경 diff·forbidden_merges는 그대로다. wake·manifest 누락 규칙을 이 fixture의 공식 규칙으로 채택하고 원천 우선순위를 적었다(rules.wake·runmeta, design_deviations). independent_groups 호출 꼴을 고정했다(rules.indep). 결함을 원인 단위로 세게 하고 측정 규약(measurement)과 출력 칸(interface.output)을 넣었다"}
 
 conventions:
   ids:
@@ -120,7 +124,7 @@ labels:
   H_stats: &H_stats "0cf99d66398244c4c97922ccc8eedd7fcd8e2c92201621998ee683d087ff3c56"
   H_seqtool: &H_seqtool "690ea1e61c4d45617f754b2eb45be9e41e79547fe5eb824ee2a2782aedfac028"
 
-# 의미 규칙. 질의마다 rules에 여기 id를 적는다. 독립 결함 유형은 이 id 단위로 센다.
+# 의미 규칙. 질의마다 rules에 여기 id를 적는다. 독립 결함 유형은 질의가 아니라 원인 단위로 센다(measurement.defects).
 rules:
   gen: "result.outputs는 reported_output이다. 같은 workspace·경로를 보고한 run이 하나면 generated_by, 둘 이상이면 unknown(multiple_reporters)+후보, 없으면 unknown(no_reported_output). daemon은 이미 있는 선언 파일도 outputs에 넣는다(labhq/runner/daemon.py)"
   reuse: "use는 plan step input_refs(declared)에서만 나온다. artifact를 보고한 요청이 사용 run과 다르면 reused_cross_request, 같으면 same_request(재사용 아님), 보고한 run이 없으면 unknown(no_reported_output)"
@@ -128,7 +132,7 @@ rules:
   session: "그런 run이 둘 이상이면 resumes unknown(shared_session)+후보, caution resume_parent_ambiguous"
   retry: "retry = SQLite task.attempt > 1. resume 여부와 따로 판정한다. 재시도도 이전 session을 resume한다(labhq/orchestrator/cso.py)"
   wake: "wake_of = SQLite task.parent_task, 부모 run 결과에 pending_jobs·pending_asks가 있을 때. wake task의 meta.kind는 원래 kind를 물려받아(cso.py run_step) wake를 가리키지 않는다"
-  runmeta: "attempt·revision·kind·parent_task는 task_id로 SQLite task 행에서 읽는다. manifest 최상위 task는 첫 task뿐이다(labhq/runner/workspace.py). agent_spec_sha256은 manifest에만 있어 없으면 unknown(manifest_missing). session_id·resume_of는 SQLite 행(result.session_id, payload.resume_session_id)에도 있어 manifest가 없어도 읽는다"
+  runmeta: "attempt·revision·kind·parent_task는 task_id로 SQLite task 행에서 읽는다. manifest 최상위 task는 첫 task뿐이다(labhq/runner/workspace.py). agent_spec_sha256은 manifest에만 있어 없으면 unknown(manifest_missing). session_id·resume_of는 SQLite 행(result.session_id, payload.resume_session_id)에도 있어 manifest가 없어도 읽는다. 우선순위: manifest runs[t]에 칸이 있으면 그 값, 없을 때만 SQLite 행. null은 '기록상 없음'(resumes none)이고, 어느 원천에도 칸이 없을 때만 unknown(manifest_missing)이다"
   cite: "evidence.source → refers_to. run 결과의 evidence가 그 run이 보고하지 않은 대상을 가리키면 cites(basis cited). 계보 순회는 cites를 넘지 않는다"
   support: "bears_on 값은 links.relation 그대로다. context는 지지가 아니다"
   scope: "ID는 conventions.ids 범위를 따른다. 같은 claim id·evidence id·artifact_id·경로라도 범위가 다르면 다른 개체. 누락값끼리 같다고 하지 않는다(sha256 unknown끼리 same_content 아님)"
@@ -138,15 +142,19 @@ rules:
   probe: "contract.verification.probe_tools는 연결 확인(connection_only)이다. method_validation은 not_established"
   method: "run의 method = research_contract.plan_sha256 # step_id, packs = plan.protocol.packs. 생성 run이 unknown이면 method도 unknown(generator_unknown)"
   traverse: "claim→bears_on→evidence→refers_to→artifact→(보고 run이 하나면) run→used→… 를 방문 집합·깊이 64로 따른다. performs·uses_method·resumes·wake_of는 edge로 싣고 넘어가지 않는다. means는 싣지 않는다. cites는 cites 칸에만 싣는다. 보고 run이 여럿이면 그 reported_output edge만 싣고 멈춘다. cycle은 caution(이 fixture엔 없음)"
-  indep: "공통 조상(shared_ancestors)은 검토 단서다(caution shared_ancestor_review). 독립성 값은 #115 labhq.evidence.claims.independent_groups 결과를 그대로 싣는다"
+  indep: "공통 조상(shared_ancestors)은 검토 단서다(caution shared_ancestor_review). 독립성 값은 claim을 기록한 run의 ResearchResult로 labhq.evidence.independent_groups(claim.id, result.evidence, result.links)를 부른 반환값(relation 기본값 supports) 그대로다. 보정 1에서 이 fixture로 직접 불러 q09·q10·q17 값과 같음을 확인했다"
 
 # 설계 문서와 다르게 적은 곳. 독립 검토에서 확인할 것.
 design_deviations:
-  - "wake: 설계 표는 'wake=kind'. 코드에서 wake task는 meta.kind를 물려받아 kind=step이다. parent_task와 부모 결과의 pending_jobs로 판정한다(rule wake)"
-  - "manifest 누락: 설계는 session·resume도 unknown이라 했다. SQLite task 행에 result.session_id·payload.resume_session_id가 있어 known으로 두고 agent_spec_sha256만 unknown이다(rule runmeta, 질의 16)"
+  - "wake: 설계 표는 'wake=kind'. 코드에서 wake task는 meta.kind를 물려받아 kind=step이다(labhq/orchestrator/cso.py run_step의 wake meta). parent_task와 부모 결과의 pending_jobs·pending_asks로 판정한다(rule wake). 보정 1에서 공식 규칙으로 채택: kind만으로는 이 fixture에서도 실제 기록에서도 wake를 알 수 없다. kind=wrap_up도 parent_task를 갖지만 부모 결과에 pending이 없어 wake가 아니다"
+  - "manifest 누락: 설계는 session·resume도 unknown이라 했다. SQLite task 행에 result.session_id·payload.resume_session_id가 있어 known으로 두고 agent_spec_sha256만 unknown이다(rule runmeta, 질의 16). 보정 1에서 공식 규칙으로 채택: 설계가 말한 공백은 gateway로 가는 result.provenance(labhq/runner/workspace.py)이고, TaskResult.session_id·Task.resume_session_id는 SQLite 행에 따로 있다(labhq/models.py)"
   - "Q2: 설계의 리뷰 revision R3r→A5r 대신 같은 요청의 다음 step(filter, R3f→A5f)을 쓴다. 실제 revision은 같은 workspace에서 같은 선언 경로를 다시 보고하므로 A5r이 따로 생기지 않는다. 그 모양은 Q4 질의 13이 맡는다"
   - "input_refs의 세 꼴(conventions.input_refs)은 fixture 규약이다. 현 schema는 자유 문자열이다"
-not_in_this_commit: ["reader 오류용 반례", "성능용 cycle fixture와 50× 복제", "EXPECTED_SHA256·fixture hash 상수"]
+generated_elsewhere:   # 이 파일 밖에서 만든다
+  reader_errors: "tests/test_semantics_pilot.py가 임시 폴더에 깨진 기록을 만들어 read_records 거부를 본다"
+  cycle_and_depth: "scripts/semantics_pilot.py가 메모리에서 cycle·깊이 70 사슬 기록을 만든다. 종료와 caution(cycle·depth_limit)만 본다"
+  scale_50x: "scripts/semantics_pilot.py가 ID 접미 복제로 임시 폴더에 만든다. 성능만 보고 채점하지 않는다"
+  hashes: "EXPECTED_SHA256·fixture hash 상수는 tests/test_semantics_pilot.py에 둔다"
 
 reasons:
   unknown: [multiple_reporters, no_reported_output, not_observed, multiple_hashes, manifest_missing, shared_session,
@@ -167,6 +175,10 @@ interface:   # A·B가 같은 꼴로 낸다. 정답 비교는 아래 queries.ans
     roots: "claim | evidence | artifact | run | step(<request_id>/<step_id>)"
     answer: "edges(traverse로 닿은 edge id), cites, gaps(닿은 artifact의 generated_by·sha256, 닿은 run의 agent_spec_sha256·resumes), cautions, claim 루트는 bears_on·shared_ancestors·independent_groups, run 루트는 agent_verification"
     shared_ancestors: "supports·contradicts로 걸린 evidence 쌍마다 양쪽 계보에 다 있는 artifact·external_source. evidence가 하나면 []"
+  output:   # 보정 1. 소비자 일치와 forbidden_merges 판정이 쓰는 칸
+    extra: "두 소비자 출력에는 answer 칸 외에 root를 싣는다. artifact·run 루트면 node(nodes의 그 행, rows 제외), run 루트면 uses(그 run이 쓴 nodes.uses 행)도 싣는다"
+    edge: "edge는 {src, rel, dst, basis[, value][, unknown][, candidates]}로 낸다. 채점은 (src, rel, dst, value)로 edges 표의 id에 대응시키고 basis·unknown·candidates까지 같아야 맞은 것으로 센다. 표에 없는 edge는 오답이다"
+    candidate: "find_reusable 후보도 nodes 행(rows 제외)·uses(edge 칸 제외)·match·recommend 전부를 비교한다"
   agreement: "소비자 불일치는 find_reusable()(selector 없음, 12개 전부)의 후보와 audit_lineage(artifact=각각)·audit_lineage(run=각각)의 루트 칸을 nodes와 대조해 센다: generated_by(+reason), sha256(+reason), use별 reuse_kind"
 
 nodes:
@@ -654,6 +666,31 @@ changes:
         excluded_unknown: []
         candidates:
           *A2 : {match: {key: "yes", data_type: "no"}, recommend: false}   # normalized_counts ≠ raw_counts. 공통 broader로 호환되지 않는다
+
+# 측정 규약(M7). 구현 전에 고정한다(보정 1).
+measurement:
+  order: "B를 먼저 만든다. 상태 base → change1(B→A) → change2(A→B). 각 구현은 자기 상태의 답으로 채점한다"
+  shared_reader: "read_records는 파일·SQLite를 읽어 파싱·정규화만 한다(JSON 중복 키 거부, ResearchResult 검증, overlay 합치기). 생성·재사용·동일성·조상 판정은 A·B가 각자 한다"
+  score:
+    query: "질의 하나는 answer의 모든 칸(interface.output 포함)이 같을 때만 정답이다"
+    wrong_identification: "forbidden_merges를 어긴 항목 수. 세 상태 모두에서 본다"
+    disagreement: "interface.agreement의 사실마다 두 소비자 값이 다르면 1"
+  defects:
+    unit: "원인. 틀린 질의 수가 아니라 소비자 출력의 nodes·edges 칸 차이를 아래 cause로 묶어 서로 다른 cause 수를 센다. 한 칸(예: A8.generated_by)이 q05·q11을 함께 틀리게 해도 1건이다. unknown 이유만 달라도 그 칸의 cause로 센다"
+    node_field_cause: {generated_by: gen, reported_by: gen, generator_inputs: reuse, method: method, packs: method, sha256: hash,
+                       same_content_as: hash, data_type: type, reuse_kind: reuse, resumes: resume, wake_of: wake, retry: retry,
+                       attempt: runmeta, kind: runmeta, revision: runmeta, agent_spec_sha256: runmeta, session_id: runmeta, agent: runmeta,
+                       contract_status: probe, verification_scope: probe, method_validation: probe}
+    edge_rel_cause: {performs: runmeta, uses_method: method, used: reuse, reported_output: gen, resumes: resume, wake_of: wake,
+                     refers_to: cite, cites: cite, bears_on: support, means: type}
+    answer_field_cause: {bears_on: support, shared_ancestors: indep, independent_groups: indep, agent_verification: probe,
+                         runs: runmeta, run_count: runmeta, retry_count: retry, selected: traverse, excluded_unknown: traverse}
+    residual: "칸 차이 없이 질의만 틀리면 그 답 칸의 answer_field_cause, 그것도 없으면 traverse로 센다"
+  time: "커밋 trailer Pilot-Minutes = 설계·구현·test·수정·리뷰 대응을 모두 넣은 에이전트 작업 시간. A가 0분이면 B 우위를 인정하지 않는다. 변경 커밋의 비 test hunk 수는 보조 지표"
+  adapter: "외부 출력 꼴로 바꾸는 코드 줄 수를 A·B마다 의미 처리와 따로 적는다. 출력 꼴이 한쪽 내부 표현과 닮아 생기는 비용을 모델 효용으로 세지 않기 위해서다"
+  performance: "cold = 모델 load + read_records + projection + 질의 1회. warm = 같은 projection에서 질의만. 질의마다 warm-up 20회 뒤 200회 perf_counter_ns의 p95와 B/A. A·B를 번갈아 5 batch 돌려 batch별 p95 최소~최대를 적는다. tracemalloc peak. 크기 1×와 50×. cycle·깊이 fixture는 종료와 caution만 본다"
+  llm_zero: "semantics.py import는 stdlib·yaml·pydantic·labhq.evidence·labhq.research.contract뿐(AST). 측정 중 socket·subprocess·os.system·asyncio subprocess를 막는다"
+  gate: "채택·중단 기준은 issue #127 그대로다. 합성 fixture 결과를 실제 요청의 효과로 적지 않는다"
 
 # 잘못된 동일시·추론. base·변경 1·변경 2 어느 상태에서도 나오면 안 된다. lineage_not은 answer.edges만 본다(cites 칸 제외).
 forbidden_merges:
