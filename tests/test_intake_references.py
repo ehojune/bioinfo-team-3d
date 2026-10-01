@@ -620,6 +620,10 @@ def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_
     assert evaluate_tool("Bash", {"command": f"cat {repeated}"}, policy, allowed_roots=[ws], workdir=ws).action == "allow"
     write = {"file_path": str(workdir / "notes.md"), "content": decoys}
     assert evaluate_tool("Write", write, policy, allowed_roots=[ws], workdir=ws).action == "allow"
+    for tool, tool_input in [("Task", {"prompt": decoys}), ("WebFetch", {"url": "https://example.org", "prompt": decoys})]:
+        assert evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws).action == "allow", tool
+    many_paths = {"paths": [f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1)]}
+    assert evaluate_tool("Task", many_paths, policy, allowed_roots=[ws], workdir=ws).action == "ask"
     # Without restricted zones nothing can be reached through a link, so the cap never asks.
     assert evaluate_tool("Bash", {"command": f"cat {decoys}"}, Settings().policy,
                          allowed_roots=[ws], workdir=ws).action == "allow"

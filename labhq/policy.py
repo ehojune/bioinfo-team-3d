@@ -340,9 +340,9 @@ def evaluate_tool(
     hit = touches(tool_input, rp, workdir=workdir) or touches_resolved(
         tool_input, [z.path for z in policy.data_zones if z.level == "restricted"], workdir=workdir)
     if isinstance(hit, Unresolved):
-        # A file tool's free text is content or a search pattern, not a path it opens, and its path fields
-        # were all resolved. Anything else (a shell command, an MCP call, a Glob pattern) goes to the PI.
-        if not hit.path_field and tool_name in (READ_LIKE | WRITE_LIKE) - {"Glob"}:
+        # Free text opens paths only in a shell command, an MCP call or a Glob pattern; elsewhere it is file
+        # content, a search pattern or a prompt, and the structured path fields were all resolved.
+        if not (hit.path_field or tool_name in {"Bash", "PowerShell", "Glob"} or tool_name.startswith("mcp__")):
             hit = None
         else:
             shown = str(tool_input.get("command") or tool_input)[:200]
