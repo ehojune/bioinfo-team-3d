@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #261 — 연구 계획의 어휘 판본 hash가 정보 경계에 걸린 오판
+
+- 결론: 2차 실행의 연구 요청을 최신 main에서 다시 계산했다. 걸린 칸은 `vocab_sha256`, 부류는 검증된 산출 어휘 판본 hash였다. 연구 계획의 같은 판본을 자유 입력처럼 민감값에 넣어, 줄의 공개 판본 칸이 자기 자신과 일치하자 차단한 오판이다.
+- 바뀐 것: 현재 설치된 어휘 판본과 정확히 같은 값만 `vocab_sha256` 칸에서 허용한다. 같은 값이 다른 칸에 있거나 다른 판본이면 계속 막는다. 경계 위반으로 자동 off될 때 `disabled.json`·자동 off 줄·report에 고정된 칸 이름과 부류만 남기며 값은 쓰지 않는다. 경로·파일명·URL·DOI·직원 ID·자유 문장 차단 회귀를 넣었다.
+- 실행한 것: DB 사본 재계산은 수정 전 `vocab_sha256:identifier` 1건, 수정 뒤 경계·type·action shape 문제 0건이다. 회귀는 수정 전 10건 실패를 확인했다. 관련 75건, 의미 모델 415건(2 skipped), 전체 pytest 2438 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 정보 경계 변경이라 PR은 병합하지 않는다. 봇 리뷰가 끝나 P1이 없으면 총괄에게 넘긴다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_report.py`, `README.md`.
+
 ## 2026-10-02 · #149 결정 13 · #150 — 액션 층 그림자 A1 (실행 없음)
 
 - 결론: 객체 뷰 위에 기존 액션 7종의 전제 조건을 계산해 기록만 한다. 위험 검토 sol·astra가 둘 다 "A1만 조건부 go, A2 실행 코드는 이번 PR에서 뺀다"고 판정해 실행 허용 목록은 빈 집합이다. 실제 실행(A2, CLI `request.followup`)은 검토가 요구한 조건을 입증한 뒤 별도 PR이다.
