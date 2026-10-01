@@ -46,13 +46,23 @@ def _find_agents_dir(target: Path, configured: str) -> Path | None:
     return None
 
 
+def _has(*tools: str) -> bool:
+    return all(shutil.which(tool) for tool in tools)
+
+
 def _detect_scheduler() -> str | None:
-    """Scheduler family from its own admin tools or environment; None when unclear."""
-    if os.environ.get("SGE_ROOT") or shutil.which("qconf"):
-        return "sge"
-    if os.environ.get("PBS_HOME") or os.environ.get("PBS_EXEC") or shutil.which("pbsnodes"):
-        return "pbs"
-    return None
+    """Scheduler family from its own tools or environment; None when absent or ambiguous."""
+    slurm = _has("sbatch", "sinfo")
+    qsub = _has("qsub", "qstat")
+    found = []
+    if slurm:
+        found.append("slurm")
+    if qsub and (os.environ.get("SGE_ROOT") or shutil.which("qconf")):
+        found.append("sge")
+    # Slurm's Torque wrappers also install qsub/qstat/pbsnodes: pbsnodes alone is not PBS there.
+    if qsub and (os.environ.get("PBS_HOME") or os.environ.get("PBS_EXEC") or (shutil.which("pbsnodes") and not slurm)):
+        found.append("pbs")
+    return found[0] if len(found) == 1 else None
 
 
 def _is_windows() -> bool:
@@ -107,22 +117,24 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             gateway[key] = "<generated at write>" if dry_run else secrets.token_urlsafe(32)
         print("gateway runner/client token: 새 무작위 값 (출력 생략)")
         hpc = data.setdefault("hpc", {})
-        if not all(shutil.which(tool) for tool in ("qsub", "qstat")):
-            print("qsub/qstat을 모두 찾지 못했습니다. hpc.scheduler: none을 제안합니다.")
+        if not (_has("qsub", "qstat") or _has("sbatch", "sinfo")):
+            print("qsub/qstat도 sbatch/sinfo도 찾지 못했습니다. hpc.scheduler: none을 제안합니다.")
             default = "none"
         else:
-            # SGE and PBS both ship qsub/qstat; a wrong family fails only at the first job.
+            # SGE and PBS both ship qsub/qstat, Slurm may too; a wrong family fails only at the first job.
             default = _detect_scheduler()
             if default is None and yes:
-                raise InitError("qsub/qstat은 있지만 SGE인지 PBS인지 알 수 없습니다. "
+                raise InitError("스케줄러 도구는 있지만 SGE·PBS·Slurm 중 하나로 정할 수 없습니다. "
                                 "--yes 없이 실행해 hpc.scheduler를 고르세요.")
-            print(f"qsub/qstat 발견: {default or '종류 미확인'}")
-        scheduler = _ask("hpc.scheduler (none/sge/pbs/mock)", default or "", yes)
-        if scheduler not in ("none", "sge", "pbs", "mock"):
-            raise InitError("hpc.scheduler는 none, sge, pbs, mock 중 하나여야 합니다.")
+            print(f"스케줄러 도구 발견: {default or '종류 미확인'}")
+        scheduler = _ask("hpc.scheduler (none/sge/pbs/slurm/mock)", default or "", yes)
+        if scheduler not in ("none", "sge", "pbs", "slurm", "mock"):
+            raise InitError("hpc.scheduler는 none, sge, pbs, slurm, mock 중 하나여야 합니다.")
         hpc["scheduler"] = scheduler
         if scheduler == "pbs":
-            print("PBS Pro면 hpc.pro: true로 바꾸세요(Torque는 그대로).")
+            print("PBS Pro면 hpc.pbs.pro: true로 바꾸세요(Torque는 그대로).")
+        if scheduler == "slurm":
+            print("partition은 hpc.default_queue, 계정·QOS는 hpc.slurm.sbatch_args에 더하세요.")
         print("hpc.scheduler: " + hpc["scheduler"])
         if _is_windows():
             policy = data.setdefault("policy", {})
