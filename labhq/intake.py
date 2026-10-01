@@ -416,22 +416,65 @@ def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max
     return None
 
 
+# ---------- how a reference may be echoed in text: one rule for prompts and published texts ----------
+
+# Either separator, or a run of them: JSON doubles a backslash (`C:\\refs`) and may escape a slash (`\/srv`).
+SEPARATOR = r"[\\/]+"
+_PATH_END = r"(?![\w-]|\.[\w-])"  # `/srv/refs/a` is not `/srv/refs/atlas` or `a.bak`, but ends a sentence
+
+
+def _text(value: str) -> str:
+    """Literal text, where a non-ASCII character may also be a JSON `\\uXXXX` escape (json.dumps default)."""
+    out = []
+    for char in value:
+        if ord(char) < 0x80:
+            out.append(re.escape(char))
+            continue
+        units = char.encode("utf-16-be")
+        escaped = "".join(f"\\\\u{int.from_bytes(units[i:i + 2], 'big'):04x}" for i in range(0, len(units), 2))
+        out.append(f"(?:{re.escape(char)}|{escaped})")
+    return "".join(out)
+
+
+def path_pattern(value: str, *, boundary: bool) -> str:
+    """Regex source for a runner path as engines, shells and JSON encoders echo it (match with re.IGNORECASE).
+
+    Any separator or run of separators, a drive letter or Git Bash's `/c/...` form, and non-ASCII characters
+    as JSON escapes. With `boundary` the match must end the path component, so a sibling sharing the prefix
+    is not touched; without it a longer name is matched too (safe when deciding what not to publish).
+    """
+    value = value.rstrip("\\/") or value
+    head, rest = "", value
+    drive = re.match(r"([A-Za-z]):(.*)$", value, re.DOTALL)
+    if drive:
+        head, rest = rf"(?:{drive[1]}:|{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
+    body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
+    return head + body + (_PATH_END if boundary else "")
+
+
 def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tuple[str, ...] = ()) -> str:
     """Remove refused path references from a prompt: any engine would otherwise still open what it names.
 
-    Only the path itself or a path below it is replaced, and kept references are shielded first, longest
-    first, so refusing `/srv/refs/a` leaves `/srv/refs/atlas` and `/srv/refs/a b` intact.
+    Every form `path_pattern` knows is replaced, including JSON-escaped ones inside a plan (#133). Only the
+    path itself or a path below it is replaced, and kept references are shielded first, longest first, so
+    refusing `/srv/refs/a` leaves `/srv/refs/atlas` and `/srv/refs/a b` intact.
     """
-    shielded: dict[str, str] = {}
+    shielded: list[str] = []
+
+    def shield(match: re.Match) -> str:
+        shielded.append(match.group(0))
+        return f"\x00kept{len(shielded) - 1}\x00"
+
     refused_set = {v for v in refused if v}
     for value in sorted(refused_set | {v for v in kept if v}, key=len, reverse=True):
-        if value in refused_set:
-            text = text.replace(f"[path] {value} (read-only on the runner)", f"[path] {WITHHELD_PATH}")
-            replacement = "<withheld reference path>"
-        else:
-            replacement = shielded.setdefault(value, f"\x00kept{len(shielded)}\x00")
-        for form in {value, value.replace("\\", "/"), value.replace("/", "\\")}:
-            text = re.sub(re.escape(form) + r"(?![\w.-])", lambda _m, r=replacement: r, text)
-    for value, token in shielded.items():
-        text = text.replace(token, value)
-    return text
+        forms = {value, os.path.expanduser(value)}  # the runner's own home for a `~` reference (#124)
+        for form in sorted(forms, key=len, reverse=True):
+            if value in refused_set:
+                pattern = re.compile(path_pattern(form, boundary=True), re.IGNORECASE)
+                text = re.sub(r"\[path\] " + pattern.pattern + r" \(read-only on the runner\)",
+                              lambda _m: f"[path] {WITHHELD_PATH}", text, flags=re.IGNORECASE)
+                text = pattern.sub(lambda _m: "<withheld reference path>", text)
+            else:
+                # Exact letter case: on POSIX a kept `/srv/a` must not shield a refused `/srv/A`.
+                text = re.sub(path_pattern(form, boundary=True), shield, text)
+    return re.sub(r"\x00kept(\d+)\x00", lambda m: shielded[int(m.group(1))], text)

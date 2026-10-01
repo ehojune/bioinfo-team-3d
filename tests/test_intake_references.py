@@ -420,6 +420,32 @@ def test_withholding_a_refused_path_leaves_kept_paths_that_share_its_prefix_inta
     assert "/srv/refs/a/" not in out and "/srv/refs/a (" not in out and out.count("withheld by the runner") == 2
 
 
+@pytest.mark.asyncio
+async def test_refused_references_leave_task_md_in_json_escaped_forms_too(tmp_path, monkeypatch):
+    # #133: a plan quoted with json.dumps doubles backslashes and escapes non-ASCII (`\uc5f0`); another
+    # encoder may escape slashes (`\/`). The refused name must not survive in any of those forms.
+    from labhq.intake import render_references
+
+    (tmp_path / "refs" / "notes").mkdir(parents=True)
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path / "refs")]
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    windows, posix, kept = "C:\\Lab\\refs\\연구노트", "/srv/연구/private notes", str(tmp_path / "refs" / "notes")
+    plan = {"steps": [{"id": "s1", "instruction": f"Read {windows}\\summary.md, {posix}/a.md and {kept}"}]}
+    prompt = ("Compare" + render_references([{"kind": "path", "value": v} for v in (windows, posix, kept)])
+              + "\nPlan: " + json.dumps(plan) + "\nEscaped: " + json.dumps(plan, ensure_ascii=False).replace("/", "\\/"))
+    await runner.run_task(Task(id="task-j", request_id="r1", agent_id="worker", prompt=prompt,
+                               context="Upstream plan: " + json.dumps(plan),
+                               meta={"reference_dirs": [windows, posix, kept]}))
+    md = (runner.workspaces["task-j"].dir / "TASK.md").read_text(encoding="utf-8")
+    for form in (windows, json.dumps(windows)[1:-1], posix, json.dumps(posix)[1:-1], posix.replace("/", "\\/")):
+        assert form not in md, form
+    for leftover in ("연구", "\\uc5f0", "private notes", "Lab\\\\refs"):
+        assert leftover not in md, leftover
+    assert seen["ctx"].read_dirs == [str((tmp_path / "refs" / "notes").resolve())]
+    assert f"[path] {kept} (read-only on the runner)" in md and json.dumps(kept)[1:-1] in md
+
+
 def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path(tmp_path):
     from labhq.policy import evaluate_tool
 
