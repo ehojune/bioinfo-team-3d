@@ -17,12 +17,15 @@ ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can tak
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
 import logging
 import os
 import platform
 import queue
+import re
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -30,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..policy import _inside, _norm
+from ..util import atomic_write_text
 from . import semantics as sem
 from .semantics_objects import build_view, opaque, summarize
 
@@ -42,10 +47,16 @@ KEYS = ("mode", "timeout_s", "history_requests")
 DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
+HASH_MAX_FILES = 200
+HASH_MAX_TOTAL = 2 * 1024 ** 3
+HASH_MAX_FILE = 512 * 1024 ** 2
+HASH_CHUNK = 8 * 1024 ** 2
+MANIFEST_MAX = 1024 ** 2
 MAX_TASK_ROWS = 20_000
 MAX_EDGES = 50_000
 MAX_LINEAGE_ROOTS = 200
 MAX_CANDIDATE_REFS = 5
+OBSERVED_MAX = 20_000
 RETENTION_DAYS = 90
 LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX entries) stay under 50 MiB
 REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
@@ -121,6 +132,11 @@ class ShadowPaths:
     @property
     def log_old(self) -> Path:
         return self.root / "shadow.1.jsonl"
+
+
+    @property
+    def observed(self) -> Path:
+        return self.root / "observed.json"
 
 
 def shadow_root(settings: Any) -> Path:
@@ -299,7 +315,7 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
     return snap
 
 
-# ---------------------------------------------------------------- stop signals
+# ---------------------------------------------------------------- file reads: zones, same disk, hash
 
 class ShadowStop(Exception):
     """The job ran past its time cap or was abandoned."""
@@ -307,6 +323,142 @@ class ShadowStop(Exception):
 
 class ShadowTimeout(ShadowStop):
     pass
+
+
+def _zone_level(path: str, zones: list[tuple[str, str]]) -> str | None:
+    inside = [(len(z), level) for z, level in zones if _inside(path, z)]
+    if any(level == "restricted" for _, level in inside):
+        return "restricted"
+    return max(inside)[1] if inside else None
+
+
+def zone_allows(path: str, zones: Iterable[Iterable[str]], visibility: str | None) -> bool:
+    """Only `public` zones for a public project, `public` and `internal` otherwise. Outside every zone: no."""
+    allowed = {"public"} if visibility == "public" else {"public", "internal"}
+    normalized = [(_norm(z), level) for z, level in zones]
+    try:
+        real = _norm(os.path.realpath(path))
+    except (OSError, ValueError):
+        return False
+    return all(_zone_level(p, normalized) in allowed for p in {_norm(path), real})
+
+
+def _is_link(st: os.stat_result) -> bool:
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & reparse)
+
+
+def _unc(path: str) -> bool:
+    return path.startswith(("\\\\", "//"))
+
+
+@dataclass
+class HashBudget:
+    files: int = 0
+    bytes: int = 0
+    exhausted: bool = False
+
+
+class Reader:
+    """Read-only access to workspace files on this disk, inside allowed zones, within the budget."""
+
+    def __init__(self, snap: Mapping[str, Any], check: Callable[[], None]):
+        self.zones = [tuple(z) for z in snap.get("zones") or []]
+        self.visibility = (snap.get("project") or {}).get("visibility")
+        self.root = snap.get("workspace_root") or ""
+        self.host = snap.get("host")
+        self.check = check
+        self.budget = HashBudget()
+        self.manifests: dict[str, dict | None] = {}
+        self.workspace_state: dict[str, str] = {}
+
+    def workspace(self, workdir: Any) -> str:
+        """`ok`, or why this workspace is not read: remote, zone_excluded, not_regular, missing."""
+        if not isinstance(workdir, str) or not workdir:
+            return "missing"
+        if workdir in self.workspace_state:
+            return self.workspace_state[workdir]
+        state = self._workspace(workdir)
+        self.workspace_state[workdir] = state
+        return state
+
+    def _workspace(self, workdir: str) -> str:
+        if _unc(workdir) or not os.path.isabs(workdir) or not self.root:
+            return "remote"
+        if not _inside(_norm(workdir), _norm(self.root)):
+            return "remote"
+        if not zone_allows(workdir, self.zones, self.visibility):
+            return "zone_excluded"
+        try:
+            if _norm(os.path.realpath(workdir)) != _norm(workdir):
+                return "not_regular"  # the workspace or a parent is a link or junction
+            st = os.lstat(workdir)
+        except FileNotFoundError:
+            return "missing"
+        if _is_link(st) or not stat.S_ISDIR(st.st_mode):
+            return "not_regular"
+        manifest = self._small_json(os.path.join(workdir, "manifest.json"))
+        self.manifests[workdir] = manifest
+        if not isinstance(manifest, dict) or manifest.get("host") != self.host:
+            return "remote"  # a manifest written on another host: the runner's disk is not this one
+        return "ok"
+
+    def _small_json(self, path: str) -> Any:
+        try:
+            st = os.lstat(path)
+            if _is_link(st) or not stat.S_ISREG(st.st_mode) or st.st_size > MANIFEST_MAX:
+                return None
+            with open(path, "rb") as handle:
+                return json.loads(handle.read(MANIFEST_MAX + 1).decode("utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def file(self, workdir: str, rel: str) -> tuple[str, dict | None]:
+        """(`hashed`, {sha256, size, mtime_ns}) or (reason, None)."""
+        state = self.workspace(workdir)
+        if state != "ok":
+            return state, None
+        parts = [p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")]
+        if not parts or ".." in parts or re.match(r"^[A-Za-z]:", rel) or rel.startswith(("/", "\\")):
+            return "not_regular", None
+        current = workdir
+        try:
+            for part in parts[:-1]:
+                current = os.path.join(current, part)
+                st = os.lstat(current)
+                if _is_link(st) or not stat.S_ISDIR(st.st_mode):
+                    return "not_regular", None
+            path = os.path.join(current, parts[-1])
+            st = os.lstat(path)
+        except FileNotFoundError:
+            return "missing", None
+        if _is_link(st) or not stat.S_ISREG(st.st_mode):
+            return "not_regular", None
+        if not zone_allows(path, self.zones, self.visibility):
+            return "zone_excluded", None
+        if st.st_size > HASH_MAX_FILE:
+            self.budget.exhausted = True
+            return "too_large", None
+        if self.budget.files >= HASH_MAX_FILES or self.budget.bytes + st.st_size > HASH_MAX_TOTAL:
+            self.budget.exhausted = True
+            return "budget", None
+        self.budget.files += 1
+        self.budget.bytes += st.st_size
+        digest = hashlib.sha256()
+        with open(path, "rb", buffering=0) as handle:
+            opened = os.fstat(handle.fileno())
+            if (opened.st_ino, opened.st_dev) != (st.st_ino, st.st_dev):
+                return "not_regular", None  # replaced between the check and the open
+            while True:
+                self.check()
+                chunk = handle.read(HASH_CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        after = os.stat(path)
+        if (after.st_size, after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+            return "unstable", None
+        return "hashed", {"sha256": digest.hexdigest(), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
 # ---------------------------------------------------------------- the two models
@@ -343,6 +495,20 @@ def compute_objects(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
         return _failed("error", exc, started)
 
 
+def _artifact_locations(snap: Mapping[str, Any]) -> dict[tuple[str, str], str]:
+    """(workdir_id, normalized path) -> workdir, from every task row that reported it."""
+    found: dict[tuple[str, str], str] = {}
+    for task in (snap.get("tasks") or {}).values():
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        ws, workdir = result.get("workdir_id"), result.get("workdir")
+        if not isinstance(ws, str) or not isinstance(workdir, str):
+            continue
+        for out in result.get("outputs") or []:
+            if isinstance(out, str):
+                found.setdefault((ws, sem.normalize_artifact_path(out)), workdir)
+    return found
+
+
 def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) -> float | None:
     total = unknown = 0
     for row, fields in rows:
@@ -351,28 +517,78 @@ def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) ->
     return round(unknown / total, 4) if total else None
 
 
-def compute_provenance(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
-    """Provenance summary. No file is read yet, so no earlier output has a confirmed version (hash_unknown)."""
+def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
+                       check: Callable[[], None]) -> tuple[dict, dict]:
+    """(provenance summary, hash summary). ``observed`` (opaque artifact key -> first observation) is updated."""
     started = time.perf_counter()
+    hashes = {"hashed": 0, "bytes": 0, "observed_new": 0, "verified": 0, "changed": 0, "skipped": {}}
     try:
         rid = snap["rid"]
         model = _model()
         records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"])
         check()
-        p = sem.project(model, records)
+        first = sem.project(model, records)
         check()
-        incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
-                          or len(p.edges) > MAX_EDGES)
+        locations = _artifact_locations(snap)
         task_ok = {tid: bool((t.get("result") or {}).get("ok")) for tid, t in records.tasks.items()
                    if isinstance(t.get("result"), dict)}
 
-        def generator_ok(row: Mapping[str, Any]) -> bool:
+        def generator_ok(row: Mapping[str, Any], p: Any) -> bool:
             run = p.runs.get(row.get("generated_by")) if row.get("generated_by") != sem.UNKNOWN else None
             return bool(run) and task_ok.get(run["task_id"], False)
 
+        def skip(reason: str) -> None:
+            hashes["skipped"][reason] = hashes["skipped"].get(reason, 0) + 1
+
+        # hash this request's outputs (first observation) and the eligible earlier ones (re-check)
+        hash_state: dict[str, str] = {}
+        seen_now: dict[str, dict[str, str]] = {}
+        order = sorted(first.artifacts.items(), key=lambda kv: kv[1]["request"] != rid)
+        for art, row in order:
+            own = row["request"] == rid
+            key = opaque("art", art)
+            if not own and not (generator_ok(row, first) and row["data_type"] != sem.UNKNOWN):
+                hash_state[art] = "not_checked"  # fails another rule first: no file read needed
+                continue
+            workdir = locations.get((row["workspace"], row["path"]))
+            where = reader.workspace(workdir)  # zone and host first: no read outside them
+            if where != "ok":
+                hash_state[art] = where
+                skip(where)
+                continue
+            if not own and key not in observed:
+                hash_state[art] = "not_observed"
+                continue
+            status, seen = reader.file(workdir, row["path"])
+            check()
+            if seen is None:
+                hash_state[art] = status
+                skip(status)
+                continue
+            hashes["hashed"] += 1
+            hashes["bytes"] += seen["size"]
+            if own:
+                if key not in observed:
+                    observed[key] = {"sha256": seen["sha256"], "size": seen["size"], "at": time.time()}
+                    hashes["observed_new"] += 1
+                hash_state[art] = "observed" if observed[key]["sha256"] == seen["sha256"] else "changed"
+            else:
+                same = (observed[key]["sha256"], observed[key]["size"]) == (seen["sha256"], seen["size"])
+                hash_state[art] = "verified" if same else "changed"
+                hashes["verified" if same else "changed"] += 1
+            if hash_state[art] in ("observed", "verified"):
+                seen_now.setdefault(row["workspace"], {})[row["path"]] = seen["sha256"]
+        check()
+        records, _ = sem.records_from_rows(snap["requests"], snap["tasks"], observed=seen_now)
+        p = sem.project(model, records)
+        check()
+        incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
+                          or len(p.edges) > MAX_EDGES or reader.budget.exhausted)
         advisory = sem.find_reusable(p)
         excluded = {reason: 0 for reason in REASONS}
+        candidates: list[tuple[float, str]] = []
         population = 0
+        created = {r: (req.get("created_at") or 0) for r, req in snap["requests"].items()}
         for art, row in advisory.result["candidates"].items():
             if row["request"] == rid:
                 continue
@@ -380,15 +596,21 @@ def compute_provenance(snap: Mapping[str, Any], check: Callable[[], None]) -> di
             reasons = []
             if incomplete:
                 reasons.append("incomplete")
-            eligible = row["generated_by"] != sem.UNKNOWN and generator_ok(row)
-            if not eligible:
+            if row["generated_by"] == sem.UNKNOWN or not generator_ok(row, p):
                 reasons.append("not_generated")
             if row["data_type"] == sem.UNKNOWN:
                 reasons.append("type_unknown")
-            if eligible and row["data_type"] != sem.UNKNOWN:
-                reasons.append("hash_unknown")  # the version check needs a hash; none is read here
+            state = hash_state.get(art)
+            if state == "zone_excluded":
+                reasons.append("zone_excluded")
+            elif state == "changed":
+                reasons.append("version_changed")
+            elif state not in ("verified", "not_checked"):
+                reasons.append("hash_unknown")
             for reason in reasons:
                 excluded[reason] += 1
+            if not reasons and row["recommend"]:
+                candidates.append((created.get(row["request"], 0), art))
         check()
         lineage = {"roots": 0, "edges": 0, "cites": 0, "gaps": 0, "cautions": 0}
         roots = [("artifact", a) for a, row in sorted(p.artifacts.items()) if row["request"] == rid]
@@ -401,19 +623,22 @@ def compute_provenance(snap: Mapping[str, Any], check: Callable[[], None]) -> di
             check()
         own_runs = [(row, RUN_FIELDS) for row in p.runs.values() if row["request"] == rid]
         own_arts = [(row, ART_FIELDS) for row in p.artifacts.values() if row["request"] == rid]
-        return {
+        candidates.sort(reverse=True)
+        summary = {
             "status": "ok", "ms": _ms(started), "model_sha256": model.sha256, "rows_invalid": invalid,
             "runs": len(own_runs), "artifacts": len(own_arts), "edges": len(p.edges),
             "unknown_ratio": _unknown_ratio(own_runs + own_arts), "incomplete": incomplete,
-            "history_artifacts": population, "candidates": 0, "candidate_refs": [],
+            "history_artifacts": population, "candidates": len(candidates),
+            "candidate_refs": ["sem:" + opaque("art", art)[:8] for _, art in candidates[:MAX_CANDIDATE_REFS]],
             "excluded": excluded, "lineage": lineage,
         }
+        return summary, hashes
     except ShadowTimeout as exc:
-        return _failed("timeout", exc, started)
+        return _failed("timeout", exc, started), hashes
     except ShadowStop:
         raise
     except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
-        return _failed("error", exc, started)
+        return _failed("error", exc, started), hashes
 
 
 def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Callable[[], None], *,
@@ -433,7 +658,12 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
         "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"),
     }
     line["objects"] = compute_objects(snap, check)
-    line["provenance"] = compute_provenance(snap, check)
+    reader = Reader(snap, check)
+    line["provenance"], hashes = compute_provenance(snap, reader, observed, check)
+    workspaces: dict[str, int] = {}
+    for state in reader.workspace_state.values():
+        workspaces[state] = workspaces.get(state, 0) + 1
+    line["hash"] = {**hashes, "workspaces": dict(sorted(workspaces.items()))}
     line["ms"] = _ms(started)
     return line
 
@@ -451,6 +681,8 @@ class ShadowService:
         self.gen = 0
         self.epoch = 1
         self.busy_skipped = 0
+        self.observed: dict[str, dict] | None = None
+        self.observed_dirty = False
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
         self.pending = 0  # queued or running jobs
@@ -533,7 +765,10 @@ class ShadowService:
 
         line = None
         try:
-            line = compute_line(snap, {}, check, epoch=self.epoch)
+            observed = self.load_observed()
+            known = len(observed)
+            line = compute_line(snap, observed, check, epoch=self.epoch)
+            self.observed_dirty = self.observed_dirty or len(observed) != known
         except ShadowStop:
             line = None
         except Exception as exc:  # noqa: BLE001
@@ -547,6 +782,27 @@ class ShadowService:
             return
         self.finish(gen, snap, line)
 
+    def load_observed(self) -> dict[str, dict]:
+        if self.observed is None:
+            try:
+                value = _read_json(self.paths.observed) if self.paths.observed.exists() else {}
+            except (OSError, ValueError):
+                value = {}
+            self.observed = value if isinstance(value, dict) else {}
+            horizon = time.time() - RETENTION_DAYS * 86400
+            self.observed = {k: v for k, v in self.observed.items()
+                             if isinstance(v, dict) and float(v.get("at") or 0) >= horizon}
+        return self.observed
+
+    def save_observed(self) -> None:
+        if self.observed is None or not self.observed_dirty:
+            return
+        if len(self.observed) > OBSERVED_MAX:
+            newest = sorted(self.observed.items(), key=lambda kv: kv[1].get("at") or 0)[-OBSERVED_MAX:]
+            self.observed = dict(newest)
+        atomic_write_text(self.paths.observed, json.dumps(self.observed, sort_keys=True))
+        self.observed_dirty = False
+
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
         failed = False
         for model in [m for m in MODELS if m in line]:
@@ -558,6 +814,7 @@ class ShadowService:
             if self.gen != gen:
                 return
             append_line(self.paths, line)
+            self.save_observed()
             self.counts["lines"] += 1
         except OSError as exc:
             log.warning("semantics shadow record not written (%s)", type(exc).__name__)
