@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:34 | [`5c02fa8`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/5c02fa8) | 병합된 #249 위에 EDAM 부분집합 표·고지·생성·검증 묶음만 보존하고 #252 PI 결정을 대기 (#252) |
 | 03:20 | [`1207178`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1207178) | Windows CI의 RUNNER~1 짧은 경로와 긴 TEMP 경로를 실제 파일 동일성으로 비교해 어휘 패키징 검사를 유지 (#249) |
 | 03:07 | [`9f62171`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/9f62171) | origin/main의 POSIX 손자 종료 test 안정화를 반영하고 patch_notes 양쪽 행을 보존 (#227) |
 | 03:04 | [`c056863`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/c056863) | origin/main의 연구 pack snapshot·교정 보고 흐름과 산출 종류 선언을 함께 보존하고, 기본 off prompt를 현재 main과 byte 단위로 다시 고정 (#221·#222) |
