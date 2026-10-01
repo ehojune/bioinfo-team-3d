@@ -429,6 +429,9 @@ class Runner:
                 skipped.append(f"{raw} (통제 데이터 구역)")
             elif any(directory == d or directory.is_relative_to(d) for d in open_dirs):
                 continue  # already reachable through a writable project dir; keep that dir writable
+            elif any(d.is_relative_to(directory) for d in open_dirs):
+                # Edit/Write deny rules on this folder would also cover the task's own workspace or project.
+                skipped.append(f"{raw} (작업·프로젝트 폴더를 품고 있어 읽기 전용으로 열 수 없음)")
             elif str(directory) not in kept:
                 kept.append(str(directory))
         return kept, skipped

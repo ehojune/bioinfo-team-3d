@@ -74,7 +74,23 @@ def test_normalize_questions_keeps_legacy_strings_and_repairs_bad_options():
         {"question": "Too many", "options": ["1", "2", "3", "4"], "allow_free_text": True},
         {"question": "Duplicate options", "options": ["same", "other"], "allow_free_text": False},
     ]
-    assert normalize_questions(None) == [] and normalize_questions("not a list") == []
+    assert normalize_questions(None) == [] and normalize_questions(7) == [] and normalize_questions("  ") == []
+
+
+def test_malformed_question_shapes_still_wait_for_the_pi():
+    from labhq.intake import normalize_questions
+
+    # options that are not a list: a number used to raise TypeError and fail the whole request, a string
+    # split into one button per letter, a dict into its keys. Each becomes a free-text question instead.
+    raw = [{"question": "Which cohort?", "options": 5, "allow_free_text": False},
+           {"question": "Which genome?", "options": "hg38", "allow_free_text": False},
+           {"question": "Which test?", "options": {"wilcoxon": 1, "t": 2}, "allow_free_text": False}]
+    assert normalize_questions(raw) == [{"question": q, "options": [], "allow_free_text": True}
+                                        for q in ("Which cohort?", "Which genome?", "Which test?")]
+    # A lone question outside a list is still asked; dropping it would run the plan without waiting.
+    assert normalize_questions("Which cohort?") == [{"question": "Which cohort?", "options": [],
+                                                    "allow_free_text": True}]
+    assert normalize_questions(COHORT) == [COHORT]
 
 
 @pytest.mark.asyncio

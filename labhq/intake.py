@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import unicodedata
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -63,15 +64,19 @@ class ClarifyingQuestion(BaseModel):
 def normalize_questions(raw: Any) -> list[dict[str, Any]]:
     """Plain strings and malformed objects become questions the PI can still answer in free text."""
     out: list[dict[str, Any]] = []
-    for item in raw if isinstance(raw, list) else []:
+    # A lone question outside a list is still a question; dropping it would run the plan without waiting.
+    items = raw if isinstance(raw, list) else [raw] if isinstance(raw, (str, dict)) else []
+    for item in items:
         if isinstance(item, str):
             if item.strip():
                 out.append({"question": item.strip(), "options": [], "allow_free_text": True})
             continue
         if not isinstance(item, dict) or not isinstance(item.get("question"), str) or not item["question"].strip():
             continue
-        options = list(dict.fromkeys(option.strip() for option in item.get("options") or []
-                                     if isinstance(option, str) and option.strip()))
+        raw_options = item.get("options")
+        # Only a list holds options: a number would crash, a string would split into letters, a dict into keys.
+        options = list(dict.fromkeys(option.strip() for option in raw_options
+                                     if isinstance(option, str) and option.strip())) if isinstance(raw_options, list) else []
         free = item.get("allow_free_text") is not False
         if len(options) < 2:
             options, free = [], True
@@ -150,6 +155,11 @@ def _url(value: str) -> str:
     return value
 
 
+def _breaks_line(char: str) -> bool:
+    """C0/C1 controls (newline, NEL), DEL and the Unicode line/paragraph separators end a prompt line."""
+    return unicodedata.category(char) in {"Cc", "Zl", "Zp"}
+
+
 def _path(value: str) -> str:
     if value.startswith(("\\\\", "//")):
         raise ValueError("network (UNC) paths are not supported as references")
@@ -171,7 +181,9 @@ class Reference(BaseModel):
     @field_validator("note")
     @classmethod
     def one_line_note(cls, value: str | None) -> str | None:
-        return (" ".join(value.split()) or None) if value is not None else None
+        if value is None:
+            return None
+        return "".join(char for char in " ".join(value.split()) if not _breaks_line(char)) or None
 
     @model_validator(mode="after")
     def normalize(self) -> "Reference":
@@ -181,7 +193,7 @@ class Reference(BaseModel):
         elif self.kind == "pmid":
             value = _PMID_PREFIX.sub("", value)
         # Paths may contain spaces; no value may carry a newline or control character into a prompt line.
-        if not value or any(ord(char) < 32 or (char.isspace() and self.kind != "path") for char in value):
+        if not value or any(_breaks_line(char) or (char.isspace() and self.kind != "path") for char in value):
             raise ValueError("reference value must be one line without spaces or control characters")
         if self.kind == "github":
             value = _github(value)
@@ -230,9 +242,23 @@ def _inside(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
+def _configured_roots(settings: Any) -> list[str]:
+    return [root for root in [*settings.runner.reference_roots, *(p.local_dir for p in settings.projects if p.local_dir)]
+            if root]
+
+
 def reference_roots(settings: Any) -> list[str]:
-    roots = [*settings.runner.reference_roots, *(p.local_dir for p in settings.projects if p.local_dir)]
-    return [str(settings.path(root)) for root in roots if root]
+    """Roots as paths on this host (the runner resolves them before exposing a directory)."""
+    return [str(settings.path(root)) for root in _configured_roots(settings)]
+
+
+def _lexical_root(root: str, settings: Any) -> str:
+    # The gateway may run on another OS than the runner: on a Windows gateway `Path("/srv/refs")` is not
+    # absolute and would become `C:\srv\refs`. Absolute roots stay lexical; only relative ones use the config dir.
+    expanded = os.path.expandvars(os.path.expanduser(root))
+    if expanded.startswith(("/", "\\")) or re.match(r"[A-Za-z]:[\\/]", expanded):
+        return _norm(expanded)
+    return _norm(str(settings.path(root)))
 
 
 def restricted_zones(settings: Any) -> list[str]:
@@ -248,7 +274,7 @@ def check_reference_path(value: str, settings: Any) -> str:
     """Lexical gateway check; the runner checks again with resolved paths before exposing a directory."""
     path = os.path.expanduser(value)
     normalized = _norm(path)
-    if not any(_inside(normalized, _norm(root)) for root in reference_roots(settings)):
+    if not any(_inside(normalized, _lexical_root(root, settings)) for root in _configured_roots(settings)):
         raise ValueError(f"path reference {value!r} is outside runner.reference_roots and project local_dir")
     if overlaps_restricted(path, settings):
         raise ValueError(f"path reference {value!r} overlaps a restricted data zone")

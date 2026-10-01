@@ -297,19 +297,27 @@ class ProjectReporter:
 
     def _clean(self, text: str) -> str:
         out = sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
-        for value in self._reference_paths():
-            out = out.replace(value, "<reference-path>")
+        for pattern in self._reference_path_patterns():
+            out = pattern.sub("<reference-path>", out)
         return out
 
-    def _reference_paths(self) -> list[str]:
-        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project."""
+    def _reference_path_patterns(self) -> list[re.Pattern[str]]:
+        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project.
+
+        Agents echo paths with either separator, another letter case, or Git Bash's `/c/...` drive form, so the
+        match ignores case and separators instead of comparing the stored text literally.
+        """
         values = {os.path.expanduser(r.value) for r in self.s.pi_profile.references if r.kind == "path"}
         values |= {r.value for r in self.s.pi_profile.references if r.kind == "path"}
         for req in self.hub.requests.values():
             values |= {str(r.get("value")) for r in req.get("references") or [] if r.get("kind") == "path"}
-        variants = {form for value in values if len(value) >= 4
-                    for form in (value, value.replace("\\", "/"), value.replace("/", "\\"))}
-        return sorted(variants, key=len, reverse=True)
+        patterns = []
+        for value in sorted((v.rstrip("\\/") for v in values if len(v) >= 4), key=len, reverse=True):
+            drive = re.match(r"([A-Za-z]):(.*)$", value)
+            head, rest = (rf"(?:{drive[1]}:|/{drive[1]}(?=[\\/]))", drive[2]) if drive else ("", value)
+            body = r"[\\/]+".join(re.escape(part) for part in rest.replace("\\", "/").split("/"))
+            patterns.append(re.compile(head + body, re.IGNORECASE))
+        return patterns
 
     @staticmethod
     def _action_key(ev: dict, action: str) -> str:

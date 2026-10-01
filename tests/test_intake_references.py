@@ -49,6 +49,9 @@ def test_reference_values_are_normalized_per_kind(kind, value, expected):
     ("url", "https:///no-host"), ("url", "https://example.org/a b"),
     ("path", "relative/dir"), ("path", "/srv/refs/../etc"), ("path", "\\\\server\\share\\refs"),
     ("path", "C:refs"), ("path", "/srv/refs\nnext"), ("bogus", "x"),
+    # Line breaks a prompt line would honour: NEL, DEL, and the Unicode line/paragraph separators.
+    ("path", "/srv/refs\x85next"), ("path", "/srv/refs next"), ("path", "/srv/refs next"),
+    ("path", "/srv/refs\x7fnext"), ("url", "https://example.org/a b"),
 ])
 def test_invalid_references_are_rejected(kind, value):
     with pytest.raises(ValidationError):
@@ -57,6 +60,7 @@ def test_invalid_references_are_rejected(kind, value):
 
 def test_reference_note_is_one_bounded_line():
     assert ref("pmid", "1", "  line one\n\tline two ").note == "line one line two"
+    assert ref("pmid", "1", "a\x1b[2Jb c\x85d").note == "a[2Jb c d"
     with pytest.raises(ValidationError):
         ref("pmid", "1", "x" * 301)
     with pytest.raises(ValidationError):
@@ -98,6 +102,21 @@ def test_gateway_stores_references_with_pi_defaults_and_checks_runner_roots(tmp_
         assert response.status_code == 422, (reason, response.text)
     assert client.post("/api/requests", json={"text": "t", "references": [{"kind": "doi", "value": "nope"}]},
                        headers=auth).status_code == 422
+
+
+def test_gateway_root_check_is_lexical_across_operating_systems():
+    from labhq.intake import check_reference_path
+
+    # A Windows gateway may serve a POSIX runner and the reverse; Path() on the gateway host would turn
+    # `/srv/refs` into `C:\srv\refs` (or `C:\refs` into a relative path) and reject every reference.
+    s = Settings()
+    s.runner.reference_roots = ["/srv/refs", "C:\\Lab\\refs"]
+    s.projects = [ProjectSettings(id="p", local_dir="/home/pi/projects/p1")]
+    for value in ("/srv/refs/yuan", "C:\\Lab\\refs\\papers", "c:/lab/refs/notes", "/home/pi/projects/p1/docs"):
+        assert check_reference_path(value, s) == value
+    for value in ("/srv/other", "/srv/refs2", "D:\\Lab\\refs\\x", "/home/pi/projects/p2"):
+        with pytest.raises(ValueError):
+            check_reference_path(value, s)
 
 
 def test_pi_profile_path_outside_roots_blocks_requests_loudly(tmp_path):
@@ -277,6 +296,26 @@ async def test_runner_blocks_a_restricted_zone_written_through_a_link(tmp_path, 
     assert len([t for t in texts if "통제 데이터 구역" in t]) == 2
 
 
+@pytest.mark.asyncio
+async def test_runner_skips_a_reference_that_holds_the_tasks_writable_folders(tmp_path, monkeypatch):
+    # Edit/Write deny rules on a folder that contains the workspace or project would block the task's own work.
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path)]
+    (tmp_path / "lab" / "project").mkdir(parents=True)
+    (tmp_path / "notes").mkdir()
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    refs = [str(tmp_path), str(tmp_path / "lab"), str(tmp_path / "notes")]
+    await runner.run_task(Task(id="task-w", request_id="r1", agent_id="worker", prompt="p",
+                               meta={"reference_dirs": refs, "project_dirs": [str(tmp_path / "lab" / "project")]}))
+    ctx = seen["ctx"]
+    assert ctx.read_dirs == [str((tmp_path / "notes").resolve())]
+    deny = ctx.claude_settings.get("permissions", {}).get("deny", [])
+    from labhq.policy import claude_rule_path
+    assert not any(claude_rule_path(str(tmp_path.resolve())) + "/**)" in rule for rule in deny)
+    texts = [e["data"].get("text", "") for e in runner.store.pending() if e["type"] == "agent.log"]
+    assert len([t for t in texts if "품고 있어" in t]) == 2
+
+
 def test_shell_writes_into_a_reference_dir_go_to_the_pi_when_the_gate_sees_them(tmp_path):
     from labhq.policy import evaluate_tool
 
@@ -360,3 +399,15 @@ def test_project_reports_never_carry_reference_paths(tmp_path):
     assert str(private) not in cleaned and private.as_posix() not in cleaned
     assert "spec/a.md" not in cleaned and cleaned.count("<reference-path>") == 2
     assert "https://github.com/lab/protocols" in cleaned
+
+
+def test_project_reports_mask_reference_paths_in_any_case_or_separator(tmp_path):
+    s = settings_with_roots(tmp_path)
+    s.pi_profile.references = [ref("path", r"C:\Users\pi\Yuan", "private"), ref("path", "/home/pi/llm-wiki")]
+    hub = create_app(s).state.hub
+    text = (r"see c:\users\pi\yuan\a.md, C:/Users/pi/Yuan/b.md, /c/Users/pi/Yuan/c.md, "
+            r"C:\Users/pi\Yuan/d.md and /HOME/pi//llm-wiki/e.md")
+    cleaned = hub.reporter._clean(text)
+    assert "yuan" not in cleaned.casefold() and "llm-wiki" not in cleaned
+    assert cleaned.count("<reference-path>") == 5
+    assert hub.reporter._clean(r"C:\Users\pi\Yuanist and /home/pi/llm-wikis").count("<reference-path>") == 2
