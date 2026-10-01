@@ -27,6 +27,12 @@ WEB_TOOLS = {"WebSearch", "WebFetch"}
 # desktop). Names checked against `codex features list` on codex-cli 0.159.2; an unknown name is a CLI error, so a
 # Codex that lacks one fails the read-only run instead of running it with that feature on.
 READ_ONLY_DISABLED_FEATURES = ("hooks", "plugins", "apps", "computer_use", "browser_use")
+ELEVATED_SETUP_ERROR = (
+    "Codex elevated sandbox setup is required for the staff CODEX_HOME. An unattended run cannot safely "
+    "launch its administrator setup helper. Initialize that CODEX_HOME interactively before unattended work; "
+    "LabHQ did not fall back to a weaker sandbox."
+)
+CODEX_HOME_STATE = ("auth.json", "installation_id", "sessions", ".sandbox", ".sandbox-bin")
 
 
 def _toml(v: object) -> str:
@@ -73,15 +79,23 @@ class CodexAdapter(AgentAdapter):
             return ("Codex staff session refused: the workspace holds AGENTS.override.md, which Codex reads instead "
                     "of labhq's role instructions (AGENTS.md) and no flag turns off. An earlier run left it; move it "
                     "out of the workspace to continue.")
-        if not (b.isolate_user_config or ctx.read_only) or b.allow_global_agents_md:
-            return None
-        found = [n for home in child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")
-                 for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
-        if not found:
-            return None
-        return (f"Codex staff session refused: $CODEX_HOME/{found[0]} (global instructions) would load and no flag "
-                "turns it off. Run the runner under a dedicated account, point engines.codex.env.CODEX_HOME at a "
-                "separate staff login, or set engines.codex.allow_global_agents_md: true.")
+        isolated = b.isolate_user_config or ctx.read_only
+        homes = child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")
+        if isolated and not b.allow_global_agents_md:
+            found = [n for home in homes for n in ("AGENTS.md", "AGENTS.override.md") if (home / n).is_file()]
+            if found:
+                return (f"Codex staff session refused: $CODEX_HOME/{found[0]} (global instructions) would load and "
+                        "no flag turns it off. Run the runner under a dedicated account, point "
+                        "engines.codex.env.CODEX_HOME at a separate staff login, or set "
+                        "engines.codex.allow_global_agents_md: true.")
+        if isolated and _is_windows() and b.windows_sandbox == "elevated":
+            incomplete = [home for home in homes
+                          if any((home / name).exists() for name in CODEX_HOME_STATE)
+                          and not (home / ".sandbox" / "setup_marker.json").is_file()]
+            if incomplete:
+                return (ELEVATED_SETUP_ERROR + " Expected $CODEX_HOME/.sandbox/setup_marker.json; "
+                        "LabHQ did not start Codex or request elevation.")
+        return None
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
@@ -146,7 +160,12 @@ class CodexAdapter(AgentAdapter):
                 if typ == "item.started":
                     await ctx.emit("agent.tool", {"name": "shell", "input": short(item.get("command"), 300)})
                 elif item.get("exit_code") not in (None, 0):
-                    await ctx.emit("agent.tool_error", {"text": short(item.get("aggregated_output"), 400)})
+                    message = str(item.get("aggregated_output") or "command failed")
+                    if ("orchestrator_helper_launch_canceled" in message
+                            and "ShellExecuteExW failed to launch setup helper: 1223" in message):
+                        st.error = ELEVATED_SETUP_ERROR
+                        st.error_kind = "sandbox_setup_required"
+                    await ctx.emit("agent.tool_error", {"text": short(message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
             elif it == "mcp_tool_call" and typ == "item.completed":

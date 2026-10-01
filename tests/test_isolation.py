@@ -119,6 +119,28 @@ def test_codex_isolation_can_be_turned_off(tmp_path, monkeypatch):
     assert "--ignore-user-config" not in cmd and 'windows.sandbox="elevated"' not in cmd
 
 
+@pytest.mark.asyncio
+async def test_codex_elevated_sandbox_without_setup_marker_is_refused_before_spawn(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_mod, "_is_windows", lambda: True)
+    home = tmp_path / "codex-home"
+    (home / ".sandbox").mkdir(parents=True)
+    settings = Settings()
+    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
+    settings.engines.codex.env = {"CODEX_HOME": str(home)}
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine.codex, builtin_mcp=[])
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=workdir, settings=settings,
+                     mcp_servers=[], env={}, emit=_emit, prompt="x")
+
+    result = await get_adapter(agent.engine, settings).run(ctx)
+
+    assert not result.ok and "elevated sandbox setup" in (result.error or "")
+    assert "setup_marker.json" in (result.error or "")
+    assert "executable not found" not in (result.error or "")
+    assert not any(workdir.iterdir())
+
+
 def test_engine_env_passes_through(tmp_path):
     settings = Settings()
     settings.engines.codex.env = {"CODEX_HOME": "/srv/labhq/codex-home"}

@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:59 | [`4c497fe`](https://github.com/ehojune/bioinfo-team-3d/pull/265/commits/4c497fe) | doctor의 elevated sandbox setup 회귀 test가 POSIX CI에서도 Windows 검사 분기를 실행하도록 환경 mock을 고정했습니다 (#262, 리뷰 P1). |
+| 05:51 | [`556b7dd`](https://github.com/ehojune/bioinfo-team-3d/pull/265/commits/556b7dd) | Windows 무인 Codex의 직원 전용 홈에 elevated sandbox setup marker가 없으면 실행 전에 멈추고, setup helper 취소 1223을 `sandbox_setup_required` 원인으로 보존했습니다 (#262). 더 약한 sandbox로 자동 전환하지 않습니다. |
 | 05:41 | [`ea41669`](https://github.com/ehojune/bioinfo-team-3d/pull/264/commits/ea41669) | 연구 계획의 검증된 어휘 판본 hash가 정보 경계를 잘못 끄던 문제를 고치고 자동 off에 칸·부류만 남겼다 |
 | 03:56 | [`e83a2a0`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/e83a2a0) | **대기 중인 이어 묻기 관측이 끝난 요청의 B1 기록 자리를 막던 문제를 고쳤습니다** (#149 결정 13, 독립 검증 P1). 액션을 켠 상태에서 이어 묻기 관측이 queue에 먼저 있으면 요청 줄이 busy로 빠지고 busy 수가 올라, 5번 연속이면 B1 전체가 꺼졌습니다. 요청 job을 넣기 직전에 대기 중인 이어 묻기 관측을 뒤로 돌리게 했고 회귀 test를 넣었습니다. |
 | 03:34 | [`ebe3608`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/ebe3608) | **README와 STATUS에 액션 층 그림자의 설정과 한계를 적었습니다** (#149 결정 13). `semantics.actions` 설정, 빈 실행 허용 목록, HPC 거부, 확인형 보류, 제거 순서를 §8에 넣었습니다. A2를 다시 열 조건과 알려진 한계는 §10에 있습니다. |
