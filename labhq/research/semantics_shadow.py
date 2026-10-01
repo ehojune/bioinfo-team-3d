@@ -17,7 +17,6 @@ ends with ``# semantics-hook`` so ``scripts/semantics_shadow_remove.py`` can tak
 
 from __future__ import annotations
 
-import hashlib
 import itertools
 import json
 import logging
@@ -32,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from . import semantics as sem
+from .semantics_objects import build_view, opaque, summarize
 
 log = logging.getLogger("labhq.semantics")
 
@@ -325,13 +325,22 @@ def _ms(started: float) -> float:
     return round((time.perf_counter() - started) * 1000, 2)
 
 
-def opaque(*parts: Any) -> str:
-    """A stable id that does not carry the value it stands for (paths, project names)."""
-    return hashlib.sha256("\x1f".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:16]
-
-
 def _failed(status: str, exc: BaseException, started: float) -> dict:
     return {"status": status, "error_kind": type(exc).__name__, "ms": _ms(started)}
+
+
+def compute_objects(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
+    started = time.perf_counter()
+    try:
+        summary = summarize(build_view(snap))
+        check()
+        return {"status": "ok", "ms": _ms(started), **summary}
+    except ShadowTimeout as exc:
+        return _failed("timeout", exc, started)
+    except ShadowStop:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
+        return _failed("error", exc, started)
 
 
 def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) -> float | None:
@@ -423,6 +432,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
                  "tasks_truncated": bool(snap.get("tasks_truncated"))},
         "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"),
     }
+    line["objects"] = compute_objects(snap, check)
     line["provenance"] = compute_provenance(snap, check)
     line["ms"] = _ms(started)
     return line
