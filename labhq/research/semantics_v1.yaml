@@ -1,0 +1,102 @@
+# Provenance and reuse semantics, model B of the #127 pilot. status: pilot.
+# Advisory only: nothing here is read by the CLI, gateway, runner or orchestrator.
+# labhq/research/semantics.py loads this file with a duplicate-key-rejecting loader and checks it:
+# relation ends are declared concepts, every constraint id has exactly one judge_* function in code.
+model: labhq.provenance
+version: 1
+status: pilot
+
+concepts:
+  agent:           {means: "who ran it: agent_id, with agent_spec_sha256 from the workspace manifest", id: "agent:<agent_id>"}
+  method:          {means: "frozen plan step: research_contract.plan_sha256 # step_id, with plan.protocol.packs", id: "method:<plan_sha256>#<step_id>"}
+  data_type:       {means: "what an artifact's data means", id: "type:<name>"}
+  artifact:        {means: "one file version in one request's workspace", id: "art:<request_id>/<workdir_id>/<path>"}
+  run:             {means: "one execution attempt: (workspace, task_id)", id: "run:<workdir_id>/<task_id>"}
+  claim:           {means: "a request-scoped claim revision", id: "claim:<request_id>/<claim id>@<revision>"}
+  evidence:        {means: "an evidence row of one run's research result", id: "ev:<workdir_id>/<task_id>/<evidence id>"}
+  external_source: {means: "a dataset or document outside labhq, by normalized identifier", id: "ext:<scheme>:<value>[@<version>]"}
+
+# lineage: how audit_lineage walks a relation from a reached node.
+#   follow  walk on to the other end (direction down = src to dst, up = dst to src)
+#   record  keep the edge where the reached node sits at `at`, do not walk on
+#   cites   keep the edge in the separate cites list, never walk on
+#   none    not part of lineage answers
+relations:
+  performs:        {from: agent, to: [run], basis: [reported], lineage: {role: record, at: dst}}
+  uses_method:     {from: run, to: [method], basis: [declared], lineage: {role: record, at: src}}
+  used:            {from: run, to: [artifact, external_source], basis: [declared], lineage: {role: follow, direction: down}}
+  reported_output: {from: run, to: [artifact], basis: [reported], lineage: {role: follow, direction: up}}
+  resumes:         {from: run, to: [run], basis: [reported], lineage: {role: record, at: src}}
+  wake_of:         {from: run, to: [run], basis: [reported], lineage: {role: record, at: src}}
+  refers_to:       {from: evidence, to: [artifact, external_source], basis: [cited], lineage: {role: follow, direction: down}}
+  cites:           {from: run, to: [artifact, external_source], basis: [cited], lineage: {role: cites}}
+  bears_on:        {from: claim, to: [evidence], basis: [reported], values: [supports, contradicts, context], lineage: {role: follow, direction: down}}
+  means:           {from: artifact, to: [data_type], basis: [declared], lineage: {role: none}}
+
+# Where each judged field comes from. An unknown value keeps the same basis.
+field_basis:
+  generated_by: reported
+  sha256: reported
+  resumes: reported
+  wake_of: reported
+  agent_spec_sha256: reported
+  session_id: reported
+  method: declared
+  generator_inputs: declared
+  reuse_kind: declared
+  data_type: none
+  verification_scope: reported
+
+reuse:
+  scope: request          # a use is reuse only when the reporting request differs from the using run's request
+  kinds: [reused_cross_request, same_request, unknown]
+  reuse_kinds: [reused_cross_request]
+
+data_type:
+  source: none            # v1 records hold no per-artifact data meaning
+  vocabulary: {}
+  inherit_broader: false  # a broader type never makes two types compatible
+
+verification:
+  probe_scope: connection_only
+  method_validation: not_established
+
+traversal:
+  depth_limit: 64
+
+reasons:
+  unknown: [multiple_reporters, no_reported_output, not_observed, multiple_hashes, manifest_missing, shared_session,
+            no_matching_session, parent_missing, no_data_type_source, not_declared, generator_unknown,
+            no_contract_record, unresolved_input_ref, no_plan_hash]
+  cautions: [shared_ancestor_review, resume_parent_ambiguous, cycle, depth_limit]
+
+# Constraint id -> judge function (code table semantics.JUDGES). `rule` is the expected.yaml rule it carries.
+constraints:
+  generation_from_reports:  {judge: judge_generation, rule: gen,
+                             says: "outputs are reported, not observed creation. One reporter generated it; several or none leave it unknown"}
+  reuse_from_declared_use:  {judge: judge_reuse, rule: reuse,
+                             says: "use comes only from declared input_refs; reuse depends on the reporting scope, unknown without a reporter"}
+  resume_by_session:        {judge: judge_resume, rule: [resume, session],
+                             says: "resume_of names one earlier run's session in the same workspace; several such runs leave the parent unknown with a caution; resume is not the same run"}
+  retry_by_attempt:         {judge: judge_retry, rule: retry,
+                             says: "retry is SQLite attempt > 1, judged apart from resume"}
+  wake_by_parent:           {judge: judge_wake, rule: wake,
+                             says: "wake is parent_task whose result left pending jobs or asks; kind is inherited and says nothing"}
+  run_meta_from_rows:       {judge: judge_run_meta, rule: runmeta,
+                             says: "attempt, kind and revision come from the SQLite task row; agent hash only from the manifest"}
+  citation_not_lineage:     {judge: judge_citation, rule: cite,
+                             says: "evidence about something its run did not report is a citation, outside computed lineage"}
+  support_from_links:       {judge: judge_support, rule: support,
+                             says: "bears_on is the link relation; context never supports"}
+  hash_not_identity:        {judge: judge_hash, rule: hash,
+                             says: "several hashes for one path leave it unknown; equal hashes only hint same content"}
+  scoped_identity:          {judge: judge_identity, rule: scope,
+                             says: "ids carry request, workspace and run scope; missing values never match each other"}
+  method_from_plan:         {judge: judge_method, rule: method,
+                             says: "method is plan hash and step with the plan packs, unknown when the generator is"}
+  no_type_inheritance:      {judge: judge_data_type, rule: type,
+                             says: "data_type only from declarations of the generating run; never from packs or broader types"}
+  probe_not_validation:     {judge: judge_verification, rule: probe,
+                             says: "probe tools show a connection only; method validation is not established"}
+  independence_by_ledger:   {judge: judge_independence, rule: indep,
+                             says: "shared ancestors are a review hint; independence is the ledger's independent_groups"}
