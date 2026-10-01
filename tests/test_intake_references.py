@@ -664,6 +664,12 @@ def test_reference_masks_stay_linear_on_long_unbroken_tokens(tmp_path):
         withhold_reference_paths(f"x {token}", ["/srv/refs/x", "~/refs/llm-wiki"], [])
     assert time.perf_counter() - started < 5, "every mask must be linear in the text length"
     assert hub.reporter._clean("see ~/refs/llm-wiki/a.md") == "see <reference-path>/a.md"
+    # Linear without capping a run: a path written with many separators is still the same path.
+    many = "/" * 12
+    assert hub.reporter._clean(f"see C:{many}Lab{many}refs{many}a.md") == f"see <reference-path>{many}a.md"
+    assert hub.reporter._clean(f"see {many}home{many}pi{many}refs{many}llm-wiki/a") == "see <reference-path>/a"
+    out = withhold_reference_paths(f"read /srv{many}refs{many}x/a and \\\\?\\C:\\Lab\\refs", ["/srv/refs/x", "C:\\Lab\\refs"], [])
+    assert "refs" not in out and out.count("<withheld reference path>") == 2, out
 
 
 @pytest.mark.asyncio

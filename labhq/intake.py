@@ -574,9 +574,11 @@ def _links_leading_to(found: list[Path], links: list[tuple[Path, Path]]) -> list
 # ---------- how a reference may be echoed in text: one rule for prompts and published texts ----------
 
 # Either separator, or a run of them: JSON doubles a backslash (`C:\\refs`) and may escape a slash (`\/srv`).
-# Every repeat in these patterns is bounded: they run over whole reports and published files, where an
-# unbounded run (`/////`, `a,a,a`, a long `+` chain) was rescanned from every position, quadratic in its length.
-SEPARATOR = r"[\\/]{1,8}"
+# These patterns run over whole reports and published files, where a long run (`/////`, `/a/a/a`, `a,a,a`)
+# was rescanned from every position inside it, quadratic in its length. A match that opens with a separator
+# therefore starts only where a run of them starts (`_RUN_START`), and other open-ended repeats are bounded.
+SEPARATOR = r"[\\/]+"
+_RUN_START = r"(?<![\\/])"
 _PATH_END = r"(?![\w-]|\.[\w-])"  # `/srv/refs/a` is not `/srv/refs/atlas` or `a.bak`, but ends a sentence
 
 
@@ -595,9 +597,9 @@ def _text(value: str) -> str:
 
 # Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
 # Up to eight folders may come before the home folder (`/BiO/home/u01`, `/mnt/c/Users/pi`).
-_ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{SEPARATOR}root"
-             rf"|(?:[A-Za-z]:|{SEPARATOR}[A-Za-z](?=[\\/]))?(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?"
-             rf"{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
+_ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
+             rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
+             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
@@ -613,9 +615,11 @@ def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
     head, rest = "", value
     drive = re.match(r"([A-Za-z]):(.*)$", value, re.DOTALL)
     if drive:
-        head, rest = rf"(?:{drive[1]}:|{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
+        head, rest = rf"(?:{drive[1]}:|{_RUN_START}{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
     elif any_home and value.startswith(("~/", "~\\")):
         head, rest = _ANY_HOME, value[1:]
+    elif value.startswith(("/", "\\")):
+        head = _RUN_START
     body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
     return head + body + (_PATH_END if boundary else "")
 
@@ -638,7 +642,7 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
                else r"(?::(?:80|443))?")
     path = "".join(_SLASH + _text(segment) for segment in parts.path.rstrip("/").split("/")[1:])
     host_re = rf"\[{_text(host)}\]" if ":" in host else _text(host)  # `hostname` drops an IPv6 host's brackets
-    # Scheme and userinfo are bounded (see SEPARATOR); a longer userinfo is left to the credential guard.
+    # Scheme and userinfo are bounded (see `_RUN_START`); the host and path still match after a longer one.
     return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]{{0,31}}:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]{{1,256}}@)?"
             rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
 
