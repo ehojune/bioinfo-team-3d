@@ -22,7 +22,8 @@ from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
-from ..intake import overlaps_restricted, reference_roots, scan_reference_dir, withhold_reference_paths
+from ..intake import (expand_home_references, overlaps_restricted, reference_roots, scan_reference_dir,
+                      withhold_reference_paths)
 from ..policy import claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
@@ -529,11 +530,15 @@ class Runner:
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
-            if refused:  # before TASK.md is written: a refused reference must not stay named in the prompt
-                kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
-                task = ws.task = task.model_copy(update={
-                    "prompt": withhold_reference_paths(task.prompt, refused, kept),
-                    "context": withhold_reference_paths(task.context, refused, kept)})
+            kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
+            if refused or any(r.startswith("~") for r in kept):
+                # Before TASK.md is written: a refused reference must not stay named in the prompt, and a `~`
+                # reference is shown as this runner's account opens it (#124).
+                def rewrite(text: str) -> str:
+                    return expand_home_references(withhold_reference_paths(text, refused, kept), kept)
+
+                task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
+                                                         "context": rewrite(task.context)})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
                 ws.install_skill(Path(agent.contract.skill_dir))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import os
+import posixpath
 import re
 import stat
 import unicodedata
@@ -279,24 +280,61 @@ def _lexical_root(root: str, settings: Any) -> str:
     return _norm(str(settings.path(root)))
 
 
-def restricted_zones(settings: Any) -> list[str]:
-    return [_norm(zone.path) for zone in settings.policy.data_zones if zone.level == "restricted"]
+_HOME_DIR = re.compile(r"(?:[A-Za-z]:)?(?:[\\/][^\\/]+)*?[\\/](?:home|Users)[\\/][^\\/]+|[\\/]root", re.IGNORECASE)
+
+
+def _home_relative(path: str) -> str | None:
+    """`~/x` compared as written: whose home it is depends on the account that opens it (#124).
+
+    An absolute path under a home directory (`/home/pi/refs`, `C:\\Users\\pi\\refs`) also yields `~/refs`,
+    so a root written for the runner's account still admits `~/refs/x` typed on another host.
+    """
+    if path == "~" or path.startswith(("~/", "~\\")):
+        rest = path[1:]
+    elif match := _HOME_DIR.match(path):
+        rest = path[match.end():]
+        if rest and rest[0] not in "\\/":
+            return None
+    else:
+        return None
+    return posixpath.normpath("~/" + rest.replace("\\", "/").lstrip("/")).casefold()
+
+
+def _home_pair(path: str, other: str) -> tuple[str, str] | None:
+    """Both paths home-relative, when either is written with `~`; this host's home may not be the runner's."""
+    if not (path.startswith("~") or other.startswith("~")):
+        return None
+    a, b = _home_relative(path), _home_relative(other)
+    return (a, b) if a is not None and b is not None else None
 
 
 def overlaps_restricted(path: str, settings: Any) -> bool:
     normalized = _norm(path)
-    return any(_inside(normalized, zone) or _inside(zone, normalized) for zone in restricted_zones(settings))
+    for zone in settings.policy.data_zones:
+        if zone.level != "restricted":
+            continue
+        pairs = [(normalized, _norm(zone.path)), _home_pair(path, zone.path)]
+        if any(pair and (_inside(pair[0], pair[1]) or _inside(pair[1], pair[0])) for pair in pairs):
+            return True
+    return False
 
 
 def check_reference_path(value: str, settings: Any) -> str:
-    """Lexical gateway check; the runner checks again with resolved paths before exposing a directory."""
-    path = os.path.expanduser(value)
-    normalized = _norm(path)
-    if not any(_inside(normalized, _lexical_root(root, settings)) for root in _configured_roots(settings)):
+    """Lexical gateway check; the runner checks again with resolved paths before exposing a directory.
+
+    A `~` path is stored as written and the runner expands it with its own account's home (#124): the
+    gateway may run on another host or account (Windows gateway, WSL or HPC runner). It is compared
+    home-relative with roots written as `~/refs` or under a home folder (`/home/pi/refs`).
+    """
+    normalized = _norm(value)
+    # Only a `~` value is compared home-relative: an absolute path in someone else's home stays outside.
+    if not any(_inside(normalized, _lexical_root(root, settings)) or
+               (value.startswith("~") and (pair := _home_pair(value, root)) is not None and _inside(*pair))
+               for root in _configured_roots(settings)):
         raise ValueError(f"path reference {value!r} is outside runner.reference_roots and project local_dir")
-    if overlaps_restricted(path, settings):
+    if overlaps_restricted(value, settings):
         raise ValueError(f"path reference {value!r} overlaps a restricted data zone")
-    return path
+    return value
 
 
 def effective_references(requested: list[Reference], use_defaults: bool, settings: Any) -> list[dict[str, Any]]:
@@ -437,18 +475,27 @@ def _text(value: str) -> str:
     return "".join(out)
 
 
-def path_pattern(value: str, *, boundary: bool) -> str:
+# Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
+_ANY_HOME = (r"(?:~|\$HOME|\$\{HOME\}|%USERPROFILE%|[\\/]+root"
+             r"|(?:[A-Za-z]:|[\\/]+[A-Za-z](?=[\\/]))?(?:[\\/]+[^\\/\s\"'<>|]+)*?[\\/]+(?:home|Users)[\\/]+[^\\/\s\"'<>|]+)")
+
+
+def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
     """Regex source for a runner path as engines, shells and JSON encoders echo it (match with re.IGNORECASE).
 
     Any separator or run of separators, a drive letter or Git Bash's `/c/...` form, and non-ASCII characters
     as JSON escapes. With `boundary` the match must end the path component, so a sibling sharing the prefix
-    is not touched; without it a longer name is matched too (safe when deciding what not to publish).
+    is not touched; without it a longer name is matched too (safe when deciding what not to publish). With
+    `any_home`, a `~` path also matches under any home folder: the runner expands it with an account the
+    gateway does not know.
     """
     value = value.rstrip("\\/") or value
     head, rest = "", value
     drive = re.match(r"([A-Za-z]):(.*)$", value, re.DOTALL)
     if drive:
         head, rest = rf"(?:{drive[1]}:|{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
+    elif any_home and value.startswith(("~/", "~\\")):
+        head, rest = _ANY_HOME, value[1:]
     body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
     return head + body + (_PATH_END if boundary else "")
 
@@ -516,7 +563,7 @@ def _compiled_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = f
              for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)
              for source in link_patterns(kind, value)]
     values = {v.rstrip("\\/") for v in paths if len(v) >= 4}
-    masks += [(re.compile(path_pattern(v, boundary=False), re.IGNORECASE), REFERENCE_PATH_MASK)
+    masks += [(re.compile(path_pattern(v, boundary=False, any_home=True), re.IGNORECASE), REFERENCE_PATH_MASK)
               for v in sorted(values, key=len, reverse=True) if v]
     return tuple(masks)
 
@@ -553,3 +600,12 @@ def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tu
                 # Exact letter case: on POSIX a kept `/srv/a` must not shield a refused `/srv/A`.
                 text = re.sub(path_pattern(form, boundary=True), shield, text)
     return re.sub(r"\x00kept(\d+)\x00", lambda m: shielded[int(m.group(1))], text)
+
+
+def expand_home_references(text: str, kept: list[str] | tuple[str, ...]) -> str:
+    """Show a `~` reference as this runner's account opens it: the gateway stored it unexpanded (#124)."""
+    for value in kept:
+        if value.startswith("~") and (expanded := os.path.expanduser(value)) != value:
+            text = text.replace(f"[path] {value} (read-only on the runner)",
+                                f"[path] {expanded} (read-only on the runner)")
+    return text

@@ -117,9 +117,62 @@ def test_gateway_root_check_is_lexical_across_operating_systems():
     s.projects = [ProjectSettings(id="p", local_dir="/home/pi/projects/p1")]
     for value in ("/srv/refs/yuan", "C:\\Lab\\refs\\papers", "c:/lab/refs/notes", "/home/pi/projects/p1/docs"):
         assert check_reference_path(value, s) == value
-    for value in ("/srv/other", "/srv/refs2", "D:\\Lab\\refs\\x", "/home/pi/projects/p2"):
+    for value in ("/srv/other", "/srv/refs2", "D:\\Lab\\refs\\x", "/home/pi/projects/p2",
+                  "/home/other/projects/p1/docs"):  # home-relative matching is only for `~` values (#124)
         with pytest.raises(ValueError):
             check_reference_path(value, s)
+
+
+def _home(monkeypatch, path):
+    for name in ("HOME", "USERPROFILE"):  # POSIX and Windows expanduser
+        monkeypatch.setenv(name, str(path))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("root", ["~/refs", "/home/pi/refs"])
+async def test_tilde_reference_opens_in_the_runner_accounts_home(tmp_path, monkeypatch, root):
+    # #124: a Windows gateway expanded `~` with its own account and stored C:\Users\<gateway>\refs\x; a POSIX
+    # runner (WSL, HPC) then looked there and dropped the reference as missing. The gateway's roots may be
+    # written for the runner (`~/refs` or `/home/pi/refs`).
+    from labhq.intake import reference_dirs, render_references
+
+    gateway_home, runner_home = tmp_path / "gateway-home", tmp_path / "runner-home"
+    (runner_home / "refs" / "x").mkdir(parents=True)
+    _home(monkeypatch, gateway_home)
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    s.runner.reference_roots = [root]
+    s.policy.data_zones = [DataZone(path="~/refs/vault")]
+    client = TestClient(create_app(s))
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    rid = client.post("/api/requests", json={"text": "t", "mode": "plan_only", "references": [
+        {"kind": "path", "value": "~/refs/x"}]}, headers=auth).json()["request_id"]
+    stored = client.app.state.hub.requests[rid]["references"]
+    assert stored[0]["value"] == "~/refs/x", "stored as written, for the runner to expand"
+    for bad in ("~/refs/vault/raw", "~/other/x"):
+        response = client.post("/api/requests", json={"text": "t", "references": [{"kind": "path", "value": bad}]},
+                               headers=auth)
+        assert response.status_code == 422, bad
+
+    _home(monkeypatch, runner_home)  # the runner, on its own account
+    runner_settings = Settings()
+    runner_settings.runner.reference_roots = ["~/refs"]
+    runner, seen = _reference_runner(tmp_path, monkeypatch, runner_settings)
+    await runner.run_task(Task(id="task-h", request_id="r1", agent_id="worker",
+                               prompt="Compare" + render_references(stored), meta={"reference_dirs": reference_dirs(stored)}))
+    assert seen["ctx"].read_dirs == [str((runner_home / "refs" / "x").resolve())]
+    assert f"[path] {os.path.expanduser('~/refs/x')} (read-only on the runner)" in seen["ctx"].prompt
+    assert not [t for t in _log_texts(runner) if t.startswith("참고 경로 제외")]
+
+
+def test_project_reports_mask_a_tilde_reference_wherever_the_runner_expanded_it(tmp_path):
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "~/refs/llm-wiki", "source": "request"}]}
+    text = ("a ~/refs/llm-wiki/a.md b /home/pi/refs/llm-wiki/b.md c /BiO/home/u01/refs/llm-wiki d "
+            r"C:\Users\pi\refs\llm-wiki\d.md e /Users/pi/refs/llm-wiki f $HOME/refs/llm-wiki keep /srv/refs/llm-wiki")
+    cleaned = hub.reporter._clean(text)
+    assert cleaned.count("<reference-path>") == 6 and "keep /srv/refs/llm-wiki" in cleaned
 
 
 def test_pi_profile_path_outside_roots_blocks_requests_loudly(tmp_path):
