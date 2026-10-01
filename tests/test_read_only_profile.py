@@ -432,3 +432,57 @@ async def test_a_cancelled_read_only_run_still_reports_what_it_changed(tmp_path,
     run = next(iter(json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))["runs"].values()))
     assert run["read_only_changes"] == ["+ workdir/hook.txt"]
     assert [e for e in _events(runner, "agent.log") if e["data"].get("level") == "alert"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine,flag", [(Engine.codex, "--dangerously-bypass-approvals-and-sandbox"),
+                                         (Engine.claude_code, "--mcp-config")])
+async def test_an_option_in_prefix_args_refuses_a_read_only_run(tmp_path, monkeypatch, engine, flag):
+    """prefix_args land ahead of every agent argument. Probed on codex-cli 0.159.2: the bypass flag ahead of `exec`
+    wrote a file under `-s read-only`. A read-only run refuses an option there (after expansion); a step keeps it."""
+    import asyncio
+
+    runner = _runner(tmp_path)
+    engine_bin = getattr(runner.s.engines, engine.value)
+    monkeypatch.setenv("LABHQ_TEST_PREFIX_FLAG", flag)
+    engine_bin.prefix_args = ["cli.js", "${LABHQ_TEST_PREFIX_FLAG}"]
+    staff = _staff(tmp_path, engine).model_copy(update={"plugin_dirs": [], "allow_skills": False})
+    monkeypatch.setattr(runner.registry, "get", lambda _id: staff)
+    spawned = []
+
+    class Proc:
+        returncode = 0
+        stdin = None
+        stdout = stderr = None
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*cmd, **kwargs):
+        spawned.append(cmd)
+        proc = Proc()
+
+        async def lines():
+            for line in [b'{"type":"thread.started","thread_id":"t1"}\n']:
+                yield line
+
+        async def empty():
+            if False:
+                yield b""
+
+        proc.stdout, proc.stderr = lines(), empty()
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda cmd, env, engine: cmd)
+    for kind in ("consult", "followup"):
+        result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": kind}))
+        assert not result.ok and "prefix_args" in result.error, result.error
+    assert spawned == [], "the CLI never starts with an option the read-only flags cannot see"
+
+    engine_bin.prefix_args = ["cli.js"]  # the documented use: the script an interpreter runs
+    await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert len(spawned) == 1 and spawned[0][1] == "cli.js"
+    engine_bin.prefix_args = ["cli.js", "${LABHQ_TEST_PREFIX_FLAG}"]
+    await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    assert len(spawned) == 2 and spawned[1][2] == flag, "an ordinary step keeps the PI's launcher"

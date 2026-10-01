@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 PR A 리뷰 2회차 검증 — prefix_args 옵션, Claude·Codex 우회 실측
+
+- 결론: 남은 통로 하나를 닫았다. 읽기 전용 실행은 PI `extra_args`를 빼지만 `prefix_args`는 그대로 앞에 붙였고, Codex가 `exec` 앞의 `--dangerously-bypass-approvals-and-sandbox`로 `-s read-only`에서 파일을 썼다. 이제 `prefix_args`에 옵션이 있으면 읽기 전용 실행을 거부한다.
+- 바뀐 것: `read_only_launch_error`(`labhq/adapters/read_only.py`)를 `AgentAdapter.run`이 prepare 전에 부른다. 환경변수 전개 뒤 `-`로 시작하는 항목이 있으면 CLI를 띄우지 않는다. 일반 step은 그대로 쓴다.
+- 실행한 것: 어댑터가 만든 읽기 전용 명령을 실제 CLI로 돌렸다. Claude 2.1.282: 엔진 env의 `CLAUDE_CODE_PLUGIN_DIRS` plugin은 실리지만 hook·plugin MCP는 뜨지 않았고 `CLAUDE_CODE_MANAGED_SETTINGS_PATH` hook도 돌지 않았다. Codex 0.159.2(Windows elevated sandbox): shell 쓰기 거부, 작업 폴더 `.codex/config.toml`의 notify·MCP와 `.codex/hooks.json`은 안 읽힘, `windows.sandbox` 없이도 정책 거부, workspace-write 세션을 이어도 read-only 유지. 새 테스트 2개는 수정 전 실패를 확인했다.
+- 미해결: 같은 follow-up이 gateway 재시작 뒤 이전 실행과 같은 session·workdir를 쓸 수 있다(로컬 Codex 리뷰 P2). 엔진 env로 실린 Claude plugin은 실측상 쓰기 통로가 아니지만 허용 목록 밖이고, 러너가 물려주는 `CODEX_*` 변수(`CODEX_EXEC_SERVER_URL` 등)는 재지 않았다. 셋 다 후속 issue로 넘긴다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/base.py`, `tests/test_read_only_profile.py`.
+
 ## 2026-10-01 · #36 PR A 리뷰 2회차 — 읽기 전용 허용 목록 profile, 사후 파일 비교
 
 - 결론: 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 허용 목록 profile로 돈다. plugin·hook·MCP·PI extra_args가 빠지고, 그래도 실행 중 파일이 바뀌면 결과를 실패로 하고 PI에게 알린다. 1회차 MCP 우회와 2회차 plugin hook 우회는 같은 부류(지우기 목록에 남은 새 통로)라 구조로 닫았다.

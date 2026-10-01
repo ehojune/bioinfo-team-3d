@@ -45,3 +45,17 @@ def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
     if mcp_servers or agent != read_only_profile(agent):
         return "read-only run refused: the agent is not the read-only profile"
     return None
+
+
+def read_only_launch_error(engine: str, prefix_args: list[str]) -> str | None:
+    """Why a read-only run must not start with these `engines.<engine>.prefix_args` (already expanded).
+
+    prefix_args are for what an interpreter runs (`bin: node`, `prefix_args: [cli.js]`) and land ahead of every
+    agent argument, so an option there reaches the CLI as extra_args would. Probed on codex-cli 0.159.2:
+    `--dangerously-bypass-approvals-and-sandbox` ahead of `exec` wrote a file under `-s read-only`. A read-only run
+    drops extra_args; an option in prefix_args refuses it, since only the PI can tell which options are safe.
+    """
+    if any(arg.startswith("-") for arg in prefix_args):
+        return (f"read-only run refused: engines.{engine}.prefix_args holds a CLI option; keep only the script "
+                "path there and put options in extra_args, which a read-only run leaves out")
+    return None

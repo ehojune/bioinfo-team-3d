@@ -18,7 +18,7 @@ from typing import Any, Awaitable, Callable
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..util import extract_json, merge_staff_env, short
-from .read_only import read_only_mismatch
+from .read_only import read_only_launch_error, read_only_mismatch
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
 
@@ -336,18 +336,17 @@ class AgentAdapter(ABC):
 
     async def run(self, ctx: RunContext) -> TaskResult:
         env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
-        refused = (read_only_mismatch(ctx.agent, ctx.mcp_servers) if ctx.read_only else None) or \
-            self.preflight_error(ctx, env)
+        engine_bin = getattr(self.settings.engines, self.engine, None)
+        prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
+        refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix))
+                   if ctx.read_only else None) or self.preflight_error(ctx, env)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
         env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
-        engine_bin = getattr(self.settings.engines, self.engine, None)
         if engine_bin is not None:
-            cmd = [os.path.expandvars(os.path.expanduser(cmd[0])),
-                   *(os.path.expandvars(os.path.expanduser(arg)) for arg in engine_bin.prefix_args),
-                   *cmd[1:]]
+            cmd = [os.path.expandvars(os.path.expanduser(cmd[0])), *prefix, *cmd[1:]]
         try:
             cmd = _resolve_command(cmd, env, self.engine)
         except ValueError as exc:
