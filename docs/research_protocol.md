@@ -89,7 +89,7 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 
 claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행, 0건 검색(`not_found`) 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. 0건 행의 출처는 검색한 곳(DB·dataset)이고 찾던 ID는 `query`에 적는다. `failed`·`unavailable` 행은 출처에 닿지 못했으므로 검사하지 않는다. URI는 scheme·host만 대소문자를 무시한다.
 
-live resolver는 아직 없고 기본값은 조회 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
+조회는 한 번에 최대 `concurrency`(기본 4)개씩 돌고, 조회마다 `timeout_s`(기본 20초), 보고 전체는 `deadline_s`(기본 120초) 안에 끝난다. deadline을 넘긴 출처는 `failed/timeout`이라 미확인이며, 부재(`not_found`)로 적지 않는다. live resolver는 아직 없고 기본값은 조회 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.
 - 입력·검색식·명령·코드/환경·seed·exit·출력 hash를 기록한다. `documented`, `replayable`, `rerun_verified`를 구별한다.
 - 근거나 방법 revision이 바뀌면 종속 claim·분석·감사·승인을 stale 처리한다. 옛 결과는 이력으로만 둔다.

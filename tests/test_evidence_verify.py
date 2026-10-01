@@ -1,6 +1,7 @@
 """#90 R06 / #58: source resolver and evidence verifier. Offline only; live lookup stays off."""
 
 import asyncio
+import time
 
 import pytest
 from pydantic import ValidationError
@@ -319,3 +320,65 @@ def test_failed_and_unavailable_retrievals_are_still_not_resolved():
         rows.append(attempt)
     report = asyncio.run(verify_sources(build([claim("c1")], rows, [link("c1", "e1")]), resolver()))
     assert [c.evidence_id for c in report.evidence] == ["e1"] and report.ok is True
+
+
+class PacedResolver:
+    """Answers after ``delay`` seconds, or never for ``hang``; records how many lookups ran at once."""
+
+    name = "paced"
+
+    def __init__(self, delay, hang=()):
+        self.delay, self.hang = delay, set(hang)
+        self.active = self.peak = 0
+        self.calls = []
+
+    def supports(self, scheme):
+        return True
+
+    async def lookup(self, scheme, value):
+        self.calls.append(value)
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        try:
+            await asyncio.sleep(3600 if value in self.hang else self.delay)
+        finally:
+            self.active -= 1
+        return [SourceRecord(id_scheme=scheme, id_value=value)]
+
+
+def many_sources(n):
+    return build([claim("c1")], [row(f"e{i}", "geo", f"GSE{1000 + i}") for i in range(n)],
+                 [link("c1", f"e{i}") for i in range(n)])
+
+
+def test_lookups_run_concurrently_under_a_cap_and_finish_within_the_deadline():
+    # #116: eight 0.2 s lookups one by one would take 1.6 s, past the deadline.
+    paced = PacedResolver(0.2)
+    start = time.monotonic()
+    report = asyncio.run(verify_sources(many_sources(8), paced, concurrency=4, deadline_s=1.5))
+    assert time.monotonic() - start < 1.5
+    assert {c.resolution.status for c in report.evidence} == {"found"} and report.ok is True
+    assert paced.peak == 4
+
+
+def test_lookups_past_the_report_deadline_are_unverified_not_absent():
+    # Two lookups hang and hold both slots; the per-lookup timeout (20 s) is not what ends the report.
+    paced = PacedResolver(0.05, hang={"GSE1001", "GSE1002"})
+    start = time.monotonic()
+    report = asyncio.run(verify_sources(many_sources(6), paced, concurrency=2, deadline_s=0.5, timeout_s=20))
+    assert time.monotonic() - start < 2
+    resolutions = {c.evidence_id: c.resolution for c in report.evidence}
+    assert resolutions["e0"].status == "found"
+    for eid in ("e1", "e2", "e3", "e4", "e5"):
+        assert (resolutions[eid].lookup, resolutions[eid].status, resolutions[eid].error_kind) == (
+            "failed", "requires_verification", "timeout")
+        assert "deadline" in resolutions[eid].detail
+    assert paced.calls == ["GSE1000", "GSE1001", "GSE1002"]  # nothing is sent after the deadline
+    check = by_claim(report)["c1@1"]
+    assert check.state == "unverified" and not check.defects and not report.defective_evidence
+    assert report.lookup_failures == ["e1", "e2", "e3", "e4", "e5"] and report.ok is False
+
+
+def test_concurrency_must_allow_at_least_one_lookup():
+    with pytest.raises(ValueError, match="concurrency"):
+        asyncio.run(verify_sources(many_sources(1), PacedResolver(0), concurrency=0))
