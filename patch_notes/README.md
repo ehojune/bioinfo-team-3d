@@ -12,6 +12,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:52 | [`e72ad9c`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/e72ad9c) | **main 병합에서 STATUS.md의 두 항목을 함께 살렸습니다.** 이 PR의 연구 규약 증거 원장 항목과 main의 후속 #104·#106·#107·#108 항목을 둘 다 둡니다 |
+| 10:49 | [`433a8b6`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/433a8b6) | **출처 확인기가 확인 못 한 출처와 배경 행의 가짜 ID도 놓치지 않습니다** (#90 R06, 리뷰 보강). 전에는 배경으로만 이었거나 아예 잇지 않은 행, 추론 행에 든 가짜 ID를 검사하지 않아 '통과'가 나왔습니다. 이제 결함 행을 모아 보고 전체를 실패로 보고, 출처 하나라도 확인되지 않으면 그 주장은 '확인됨'이 아닙니다. URI는 도메인만 대소문자를 무시합니다 |
+| 10:49 | [`17cc50b`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/17cc50b) | **연구 규약 문서·STATUS에 verifier 판정 보강을 반영했습니다** (#90). 재인용 별칭, 추론 행의 근거 사슬, 측정 방법 비교, 주장이 '확인됨'이 되는 조건을 적었습니다 |
+| 10:49 | [`fdb6b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/fdb6b9e) | **같은 출처를 다른 표기로 나눠 독립 근거처럼 세던 길과 추론끼리 서로를 근거로 삼는 순환을 막았습니다** (#90 R04·R05·R07, 리뷰 보강). artifact id 두 개, DOI와 doi.org 주소, ID와 artifact를 함께 적은 행은 같은 출처로 봅니다. 추론·가설 행은 관찰이나 조회 행까지 이어져야 합니다. 측정 방법이 다른 값은 '비교 가능'으로 적을 수 없고, 조회일은 YYYY-MM-DD만 받습니다 |
+| 10:33 | [`b6f05b6`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/b6f05b6) | **연구 규약 문서·README·STATUS에 증거 원장(R04–R07)을 적었습니다** (#90). 코드가 어떤 항목을 거부하는지와 verifier 판정이 무슨 뜻인지를 규약 문서에 맞췄습니다 |
+| 10:31 | [`80ecbf6`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/80ecbf6) | **다른 종류의 기록이 돌아오거나 파일 해시가 바뀌면 일치로 보지 않습니다** (#90 R06, Codex 리뷰). 같은 숫자 ID라도 다른 DB의 기록이면 찾은 것으로 세지 않고, 적어 둔 sha256이 실제 파일과 다르면 '충돌'로 둡니다. RefSeq 형식 검사는 NZ_·WP_ accession도 받게 넓혔습니다 |
+| 10:25 | [`d51309c`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/d51309c) | **수치 근거에 값·단위·조건·분모를 반드시 적게 하고, 비교할 수 있는 값인지 검사합니다** (#90 R07). 모르는 항목은 영향과 함께 '모름'으로 적어야 합니다. 단위나 조건이 다른 값을 '비교 가능'으로 적으면 거부합니다 |
+| 10:23 | [`5b39c12`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/5b39c12) | **출처 확인기(verifier)가 조회 실패와 ID 없음을 구분합니다** (#90 R06). 네트워크 오류·시간 초과는 '없음'이 아니라 '확인 필요'로 남겨서, 못 찾은 것을 반박 근거로 오해하지 않게 합니다. 형식이 틀린 ID는 조회하지 않고, 실존하는 ID라도 문장을 지지하는지는 리뷰어가 판단합니다. 실제 조회기는 아직 없고 고정 응답으로만 시험합니다 |
+| 10:19 | [`aa47aa8`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/aa47aa8) | **근거마다 직접성·독립성·출처 수준·판정 이유를 반드시 적게 했습니다** (#90 R05). 같은 출처를 다른 독립 묶음으로 적으면 재인용을 독립 근거로 센 것이라 거부합니다. 주장별로 독립 근거가 몇 묶음인지 세는 함수도 두었습니다 |
+| 10:18 | [`f7170b3`](https://github.com/ehojune/bioinfo-team-3d/pull/115/commits/f7170b3) | **연구 결과에 claim(주장)·evidence(근거)·link(연결)를 따로 적는 원장을 넣었습니다** (#90 R04). 전에는 결과 한 덩어리에 섞여 있어서 어떤 주장이 어떤 근거에 기대는지 따질 수 없었습니다. 끊긴 참조, 옛 revision에 건 연결, 실패·0건 조회를 근거로 쓴 연결, 근거 없는 '지지됨'·'반박됨' 판정은 한꺼번에 모아 거부합니다. 추론·가설 근거는 배경으로만 연결할 수 있습니다 |
 | 10:09 | [`3b23239`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/3b23239) | **main 병합에서 bench report 표에 legacy 결과 열을 남겼습니다** (#105의 구조화 열과 함께) |
 | 10:03 | [`79580f0`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/79580f0) | **main 병합에서 #103의 GitHub 재시도 구조 위에 #107 판정 규칙을 얹었습니다.** 토큰 누락 뒤 재시작 복구는 그대로 둡니다 |
 | 10:02 | [`5c8747d`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/5c8747d) | **main 병합에서 README 설정 절의 두 변경을 함께 살렸습니다.** 연구 규약 pilot 줄과 #103의 라운드 기록 rate limit 설명을 둘 다 둡니다 |
