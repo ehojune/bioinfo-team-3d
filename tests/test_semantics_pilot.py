@@ -39,7 +39,7 @@ def test_fixture_records_are_the_pinned_version():
 # ---------------------------------------------------------------- model B
 
 
-MODEL_SHA256 = "0308ed44c1bd80f2d7750d5ca4f97c5040547b5a1bc6ca0565463365926828ce"
+MODEL_SHA256 = "8fd9860f5f480831ce2794ee585b513e1da8ad5f7c1bc8e4c49d6c06d0548159"
 
 
 @pytest.fixture(scope="module")
@@ -124,7 +124,7 @@ def test_no_wrong_identification_and_consumers_agree(name, fixture_paths, expect
 def test_defects_are_counted_by_cause_not_by_query(fixture_paths, expected):
     """One wrong fact (A8.generated_by) breaks five queries but is one defect type."""
     impl = pilot.IMPLS["B"]()
-    p = impl.project(fixture_paths.read(overlay=False))
+    p = impl.project(fixture_paths.read(overlay=impl.state == "change2"))
     a8 = "art:req_q3/task_q3scan_ag_seqtool/outputs/scan_extra.tsv"
     p.artifacts[a8]["generated_by"] = "run:task_q3scan_ag_seqtool/task_q3scan"
     p.artifacts[a8]["unknown"].pop("generated_by")

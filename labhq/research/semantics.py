@@ -32,7 +32,7 @@ from labhq.research.contract import ResearchPlan, ResearchResult, validate_resea
 MODEL_PATH = Path(__file__).with_name("semantics_v1.yaml")
 UNKNOWN = "unknown"
 NONE = "none"
-PILOT_STATE = "change1"  # which expected.yaml state this model answers (#127 pilot changes move it)
+PILOT_STATE = "change2"  # which expected.yaml state this model answers (#127 pilot changes move it)
 
 
 # ---------------------------------------------------------------- shared reader (A and B)

@@ -44,7 +44,7 @@ field_basis:
   method: declared
   generator_inputs: declared
   reuse_kind: declared
-  data_type: none
+  data_type: declared
   verification_scope: reported
 
 reuse:
@@ -53,8 +53,11 @@ reuse:
   reuse_kinds: [reused_cross_request, reused_same_request]
 
 data_type:
-  source: none            # v1 records hold no per-artifact data meaning
-  vocabulary: {}
+  source: declared        # the generating run's task meta output_types (pilot change 2; was: none)
+  vocabulary:
+    raw_counts:        {broader: expression_counts}
+    normalized_counts: {broader: expression_counts}
+    de_table:          {}
   inherit_broader: false  # a broader type never makes two types compatible
 
 verification:
