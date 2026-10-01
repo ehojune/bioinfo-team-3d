@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -19,6 +18,7 @@ from pathlib import Path
 from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
                    record_model_id, wrap_cwd)
+from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
@@ -31,8 +31,25 @@ SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
 # `--setting-sources project,local` and --plugin-dir, project and plugin SessionStart/Stop hooks ran under plan
 # mode and Read,Glob,Grep; with this profile none ran and the --settings deny rules still held.
 READ_ONLY_FLAGS = ["--setting-sources", "", "--disable-slash-commands"]
-WORKSPACE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def workspace_memory_excludes(workdir: Path) -> list[str]:
+    """Memory files a previous run could have left in a reused workspace (HPC wake-up, follow-up). Claude also loads
+    a subfolder's CLAUDE.md once it reads a file there (outputs/CLAUDE.md), so every depth is excluded (#147)."""
+    wd = Path(workdir).resolve().as_posix()
+    rules = WORKSPACE_INSTRUCTION_RULES["claude_code"]
+    broad = ([path for name in rules["exclude_files"] for path in (f"{wd}/{name}", f"{wd}/**/{name}")] +
+             [path for name in rules["exclude_dirs"]
+              for path in (f"{wd}/{name}/**", f"{wd}/**/{name}/**")] +
+             [f"{wd}/{name}" for name in rules["exclude_root_globs"]])
+    # Claude's glob matcher skips dot-prefixed folders under `**`. Add every matching path literally after walking
+    # the actual workspace with the same policy the read-only refusal check uses.
+    literal = []
+    for relative in workspace_instruction_paths("claude_code", Path(workdir), [], "exclude"):
+        path = Path(workdir) / relative
+        literal.append(f"{wd}/{relative}" + ("/**" if path.is_dir() else ""))
+    return list(dict.fromkeys([*broad, *literal]))
 
 
 def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
@@ -219,17 +236,17 @@ class ClaudeCodeAdapter(AgentAdapter):
         settings["permissions"] = permissions
         if ctx.read_only:  # isolation is not optional here, and no hook of any source runs
             cmd += READ_ONLY_FLAGS
-            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
+            # Only labhq's instructions: memory files an earlier writable run left here stay out (#147).
+            settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
             settings["disableAllHooks"] = True
         elif b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
-            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
             if a.allow_skills:
                 # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
-                wd = Path(ctx.workdir).resolve()
-                settings["claudeMdExcludes"] += [(wd / n).as_posix() for n in WORKSPACE_MEMORY] + \
-                    [(wd / ".claude" / "rules").as_posix() + "/**"]
+                settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
         if settings:
             cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:
@@ -238,7 +255,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--permission-prompt-tool", PERMISSION_TOOL]
         if not ctx.read_only:  # PI extra_args could load a plugin or lift plan mode; a read-only run takes none
             cmd += b.extra_args
-            for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
+            for directory in self._plugin_dirs(ctx, self.staff_env(ctx)):
                 cmd += ["--plugin-dir", directory]
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
         for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings

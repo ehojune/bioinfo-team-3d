@@ -600,7 +600,12 @@ class Runner:
                                                          "context": rewrite(task.context)})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
-                ws.install_skill(Path(agent.contract.skill_dir))
+                skill_error = ws.install_skill(Path(agent.contract.skill_dir))
+                if skill_error:
+                    result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=skill_error)
+                    await emit("agent.status", {"state": "error", "error": skill_error})
+                    await emit("task.result", result.model_dump(mode="json"))
+                    return result
             for directory in read_dirs:
                 # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
                 # make a reference truly read-only. Say so once per directory instead of implying a guarantee.

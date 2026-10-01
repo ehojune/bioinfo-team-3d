@@ -18,7 +18,8 @@ from typing import Any, Awaitable, Callable
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..util import extract_json, merge_staff_env, short
-from .read_only import read_only_launch_error, read_only_mismatch
+from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
+                        read_only_workspace_error)
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
 
@@ -303,6 +304,14 @@ class AgentAdapter(ABC):
         b = getattr(self.settings.engines, self.engine, None)
         return expand_env(b.env) if b is not None else {}
 
+    def staff_env(self, ctx: RunContext) -> dict[str, str]:
+        """The CLI's env: the runner's own without parent session markers, then engine env, then task env.
+        A read-only run takes only READ_ONLY_ENV_KEEP from the engine env (#145)."""
+        engine = self.engine_env()
+        if ctx.read_only:
+            engine = read_only_engine_env(engine)[0]
+        return merge_staff_env(dict(os.environ), engine, ctx.env)
+
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""
         return None
@@ -335,16 +344,23 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
+        env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
-        refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix))
+        refused = ((read_only_mismatch(ctx.agent, ctx.mcp_servers) or read_only_launch_error(self.engine, prefix)
+                    or read_only_workspace_error(
+                        self.engine, ctx.workdir, labhq_workspace_paths(ctx.agent, self.engine)))
                    if ctx.read_only else None) or self.preflight_error(ctx, env)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+        dropped = read_only_engine_env(self.engine_env())[1] if ctx.read_only else []
+        if dropped:  # names only: values can be secrets
+            await ctx.emit("agent.log", {"level": "warn", "text": (
+                f"읽기 전용 실행이라 engines.{self.engine}.env에서 {', '.join(dropped)}를 뺐습니다. "
+                "로그인·설정 위치·API 접속 변수만 씁니다")})
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
-        env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
+        env = self.staff_env(ctx)
         if engine_bin is not None:
             cmd = [os.path.expandvars(os.path.expanduser(cmd[0])), *prefix, *cmd[1:]]
         try:

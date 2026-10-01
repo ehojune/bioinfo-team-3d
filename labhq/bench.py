@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from .util import atomic_write_text, free_port, strip_parent_claude_env
+from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
 BENCH_ROOT = Path(str(files("labhq").joinpath("bench_data")))
@@ -414,7 +414,10 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
 
         engine_name = settings.bench.arms[arm].engine
         engine = getattr(settings.engines, engine_name)
-        env = strip_parent_claude_env({**os.environ, **{k: os.path.expandvars(v) for k, v in engine.env.items()}})
+        # As a staff run: the parent session's CLAUDE_*/CODEX_* go, then engine env (#146). Claude session markers
+        # stay out even when engine env names them, so a baseline never runs as a nested Claude session.
+        env = merge_staff_env(dict(os.environ), {k: os.path.expandvars(v) for k, v in engine.env.items()})
+        env = {k: v for k, v in env.items() if k not in set(parent_claude_markers(env))}
         if engine_name == "codex":
             from .adapters.base import child_config_dirs
 

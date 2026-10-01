@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from ..util import short
+from ..util import atomic_write_text, short
 from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
 
@@ -43,7 +43,7 @@ class CodexAdapter(AgentAdapter):
     enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
 
     def prepare(self, ctx: RunContext) -> None:
-        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
+        atomic_write_text(ctx.workdir / "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
         if ctx.task.output_schema:
             (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
 
@@ -65,6 +65,13 @@ class CodexAdapter(AgentAdapter):
 
     def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
         b = self.settings.engines.codex
+        # Codex reads AGENTS.override.md in its cwd instead of AGENTS.md, so a copy an earlier run left in a reused
+        # workspace would replace the role prepare() writes, for a follow-up and for every later step (#147).
+        override = ctx.workdir / "AGENTS.override.md"
+        if override.exists() or override.is_symlink():
+            return ("Codex staff session refused: the workspace holds AGENTS.override.md, which Codex reads instead "
+                    "of labhq's role instructions (AGENTS.md) and no flag turns off. An earlier run left it; move it "
+                    "out of the workspace to continue.")
         if not (b.isolate_user_config or ctx.read_only) or b.allow_global_agents_md:
             return None
         found = [n for home in child_config_dirs(env, ctx.workdir, "CODEX_HOME", ".codex")

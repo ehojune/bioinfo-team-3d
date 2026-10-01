@@ -26,6 +26,29 @@
 - 미해결: 자체 호스팅 webhook처럼 이름 없이 path에 든 비밀값은 못 가린다(README §10). PI 기본 url이 공개 사이트면 그 host URL도 보고에서 가려진다. project 링크 거부 규칙은 Claude만 따르고 Codex·셸은 막지 못한다. Windows에서 대소문자만 다른 유지 참고가 거부 경로와 함께 지워질 수 있다. 패치노트는 PR 번호가 생긴 뒤 쓴다. 거부 규칙은 적힌 경로 비교라 8.3 짧은 이름 같은 표기는 남을 수 있다. 나머지 P2는 후속 issue로 넘긴다.
 - 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `labhq/integrations/rounds.py`, `labhq/policy.py`, `labhq/runner/daemon.py`, `tests/test_intake_references.py`, `tests/test_github_reporter.py`, `tests/test_round_records.py`.
 
+## 2026-10-01 · PR #164 2회차 봇 리뷰 P1 — 읽기 전용 workspace 지시 경계 통합
+
+- 결론: 읽기 전용 실행이 workspace에서 읽을 수 있는 지시·memory·skill·설정 이름을 한 판정 함수로 모았다. 깊이와 숨김 폴더에 관계없이 Claude Code는 차단 목록으로 제외하고, 끌 수 없는 agents-md와 Codex project 지시는 실행 전에 거부한다.
+- 바뀐 것: adapter가 쓰는 `CLAUDE.md`·`CLAUDE.local.md`·`.claude/**`·`AGENTS*.md`·`.agents/**`·`.codex/**` 규칙을 `read_only.py` 한 곳에 뒀다. 계약 skill은 매 실행 원본에서 다시 만들며 원본이 없으면 stale 사본을 지우고 실행을 거부한다. POSIX directory symlink와 Windows junction은 대상 내용을 건드리지 않고 링크만 제거한다.
+- 실행한 것: 새 회귀 묶음은 수정 전 6 failed/1 skipped(POSIX 전용), 수정 후 관련 64 passed/1 skipped였다. 전체 pytest 1674 passed/22 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 새 CLI가 다른 workspace 지시 파일 이름을 도입하면 중앙 목록을 갱신해야 한다(README §10).
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/claude_code.py`, `labhq/runner/workspace.py`, `tests/test_read_only_followups.py`.
+
+## 2026-10-01 · PR #164 봇 리뷰 P1 — 재사용 workspace의 계약 skill 변조 차단
+
+- 결론: 계약 skill은 매 실행 직전에 원본에서 새로 복사한다. 이전 writable step이 설치본 내용을 바꾸거나 skill 디렉터리를 symlink·Windows junction으로 교체해도 read-only run은 그 지침을 읽지 않는다.
+- 바뀐 것: `TaskWorkspace.install_skill()`이 링크가 아닌 상위 폴더에서 임시 복사본을 만든 뒤 기존 설치본을 링크 대상까지 따라가지 않고 교체한다. 상위 폴더가 링크이거나 일반 폴더가 아니면 건드리지 않아 기존 workspace 검사가 read-only run을 거부한다.
+- 실행한 것: 내용 변조와 junction 치환 회귀 2건이 수정 전 실패하고 수정 후 통과했다. 관련 테스트 48개, 전체 pytest 1562 passed/21 skipped, Node 테스트 11개, `bash scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 근거: `labhq/runner/workspace.py`, `tests/test_read_only_followups.py`.
+
+## 2026-10-01 · PR #122 후속 다섯 건(#135 #145 #146 #147 #148) — 읽기 전용 실행의 env·작업 폴더 지침 파일
+
+- 결론: 이어 묻기·상담의 허용 목록을 argv 밖까지 넓혔다. 엔진 env는 로그인·설정 위치·API 접속 변수만 받고, 러너가 물려받은 `CODEX_*` 세션 변수는 모든 직원 실행에서 빠지며, 엔진이 작업 폴더에서 지침·설정으로 읽는데 끌 플래그가 없는 파일이 있으면 읽기 전용 실행을 띄우지 않는다. 실측할 수 없던 동작(신뢰된 경로 아래 Codex project config, Claude built-in agents-md)은 거부 쪽으로 뒀다.
+- 바뀐 것: `labhq/util.py`(`CODEX_ENV_PASSTHROUGH`, `strip_parent_session_env`), `labhq/adapters/read_only.py`(`READ_ONLY_ENV_KEEP`, `READ_ONLY_WORKSPACE_REFUSED`, `read_only_workspace_error`), `labhq/adapters/base.py`(`staff_env`, 뺀 env 이름을 피드에 경고), Codex preflight가 작업 폴더 `AGENTS.override.md`를 모든 실행에서 거부, 읽기 전용 Claude가 작업 폴더 CLAUDE.md류를 하위 폴더 것까지 `claudeMdExcludes`에 넣음(하위 폴더는 독립 검증에서 찾은 틈), `labhq/bench.py` baseline env 순서를 직원 실행과 맞춤. #135는 main에 이미 고쳐져 있어(12e3fba) 테스트만 더했다. B1 그림자 모드 PR(#150)의 파일(gateway/server.py, cli.py, research/semantics*.py, settings.py)은 건드리지 않았다.
+- 실행한 것: 새 `tests/test_read_only_followups.py` 22개 중 20개가 수정 전 코드에서 실패했다(나머지 2개는 PI가 고른 env·Claude의 .codex 오탐 방지). 로컬 Codex 리뷰 1회 P2 1건(bench가 engine env의 CODEX_*까지 지움)을 고쳤다. 독립 검증에서 하위 폴더 CLAUDE.md 틈 1건을 고쳤다. 전체 pytest 1560 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh`, `git diff --check` 통과. 실제 CLI probe는 하지 않았다.
+- 미해결: #148의 신뢰 경로 probe와 Claude agents-md가 `AGENTS.md`를 읽는지는 재지 않았다(재면 거부를 풀 수 있다). 러너를 띄운 셸의 `CLAUDE_*`·`CODEX_*` 밖 변수(`NODE_OPTIONS` 등)와 작업 폴더 상위의 `.codex/`·지침 파일은 보지 않는다. 일반 쓰기 step은 작업 폴더 `.codex/`를 그대로 둔다. 계약 skill 폴더를 앞선 실행이 고친 것은 알아채지 못한다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/codex.py`, `labhq/util.py`, `tests/test_read_only_followups.py`, README §8·§10.
+
 ## 2026-10-01 · #63 README 사무실 화면을 15초 움직이는 이미지로
 
 - 결론: README의 2.5D·3D 사무실 정지 화면을 각 15초짜리 움직이는 WebP로 바꿨다. 요청 하나가 CSO 계획, 승인 카드, 단계 진행을 거쳐 끝난다. 기존 PNG는 정지 화면 링크로 남겼다.
