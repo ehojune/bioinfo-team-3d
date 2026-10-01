@@ -390,3 +390,19 @@ def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path
     printed = json.loads(capsys.readouterr().out)
     assert "actions" not in printed and printed.keys() == rep.keys()
     assert shadow.render_report(rep) == shadow.render_report(json.loads(json.dumps(rep)))
+
+
+async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_path):
+    from scripts import semantics_shadow_remove as removal
+    lab = await run_lab(tmp_path / "lab", ON, ["CD276 세포유형 분석 [artifact]"])
+    assert lab["lines"] and "actions" in lab["lines"][-1]
+    hub = lab["hub"]
+    hub.requests["req_inflight1"] = {"id": "req_inflight1", "status": "running", "text": "x", "mode": "orchestrate",
+                                     "created_at": 1.0}
+    hub.save_request("req_inflight1")
+    summary = removal.check(tmp_path / "lab" / "state", only="actions")
+    assert summary["files"] == removal.ACTIONS_OWNED
+    assert summary["hook_lines"] == 8 + 22 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 22
+    assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
+                                "actions_field": False}
+    assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]
