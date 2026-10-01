@@ -453,27 +453,72 @@ def path_pattern(value: str, *, boundary: bool) -> str:
     return head + body + (_PATH_END if boundary else "")
 
 
+_SLASH = r"\\?/"  # one URL slash, JSON-escaped or not
+_URL_REST = r"(?:\\?/[^\s\"'<>)\],\\/?#;]*)*(?:[?#;][^\s\"'<>)\]]*)?"  # deeper path, query, fragment
+
+
+def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
+    """Regex source for an http(s) URL as text carries it (match with re.IGNORECASE): with or without the
+    scheme, userinfo or `www.`, the default port written out (`host:443`), JSON-escaped slashes
+    (`https:\\/\\/host\\/x`) and, by default, a trailing slash. Deeper paths and the query are not included."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").removeprefix("www.")
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    port_re = (rf":{port}" if port and port != {"http": 80, "https": 443}.get(parts.scheme.lower())
+               else r"(?::(?:80|443))?")
+    path = "".join(_SLASH + _text(segment) for segment in parts.path.rstrip("/").split("/")[1:])
+    return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]*:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]+@)?"
+            rf"(?:www\.)?{_text(host)}{port_re}{path}" + (rf"(?:{_SLASH})?" if trailing_slash else ""))
+
+
+def link_patterns(kind: str, value: str) -> list[str]:
+    """A private github or url reference in every form an agent writes it: the URL, and for GitHub the bare
+    `owner/repo` (also inside `git@github.com:owner/repo.git` or a clone path)."""
+    github = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)", value, re.IGNORECASE)
+    if kind != "github" or not github:
+        return [url_pattern(value, trailing_slash=False) + _URL_REST]
+    owner, repo = github.groups()  # the repository, whichever branch the reference named
+    return [url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST,
+            rf"(?<![\w.-]){_text(owner)}{_SLASH}{_text(repo)}(?:\.git)?{_PATH_END}"]
+
+
 REFERENCE_PATH_MASK = "<reference-path>"
+PRIVATE_REFERENCE_MASK = "<private-reference>"
 
 
 def published_reference_masks(settings: Any, requests: Any) -> tuple[tuple[re.Pattern[str], str], ...]:
     """What a published text (project report, round record) must not carry, as (pattern, replacement).
 
-    Path references from the PI's defaults and from any stored request: a runner path names a private folder
-    (#36). Project reports and round records share this one rule (#130).
+    - path references from any source: a runner path names a private folder (#36);
+    - github and url references from the PI's defaults (#123): a private repository name or a personal wiki
+      that the PI set once for every request, not something this request chose to point at. DOI and PMID
+      name published literature and stay.
+    Project reports and round records share this one rule (#130).
     """
-    paths = {r.value for r in settings.pi_profile.references if r.kind == "path"}
+    entries = [(r.kind, r.value, "pi_profile") for r in settings.pi_profile.references]
     for req in requests:
-        paths |= {str(r.get("value")) for r in req.get("references") or []
-                  if isinstance(r, dict) and r.get("kind") == "path" and r.get("value")}
-    return _compiled_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}))
+        entries += [(r.get("kind"), str(r.get("value")), r.get("source")) for r in req.get("references") or []
+                    if isinstance(r, dict) and r.get("value")]
+    paths = {value for kind, value, _ in entries if kind == "path"}
+    links = {(kind, value) for kind, value, source in entries
+             if kind in ("github", "url") and source == "pi_profile"}
+    return _compiled_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}), frozenset(links))
 
 
 @functools.lru_cache(maxsize=32)
-def _compiled_masks(paths: frozenset[str]) -> tuple[tuple[re.Pattern[str], str], ...]:
+def _compiled_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = frozenset()
+                    ) -> tuple[tuple[re.Pattern[str], str], ...]:
+    # Links first: a path mask must not eat the path part of a private URL and leave its host behind.
+    masks = [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
+             for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)
+             for source in link_patterns(kind, value)]
     values = {v.rstrip("\\/") for v in paths if len(v) >= 4}
-    return tuple((re.compile(path_pattern(v, boundary=False), re.IGNORECASE), REFERENCE_PATH_MASK)
-                 for v in sorted(values, key=len, reverse=True) if v)
+    masks += [(re.compile(path_pattern(v, boundary=False), re.IGNORECASE), REFERENCE_PATH_MASK)
+              for v in sorted(values, key=len, reverse=True) if v]
+    return tuple(masks)
 
 
 def mask_references(text: str, masks: tuple[tuple[re.Pattern[str], str], ...]) -> str:

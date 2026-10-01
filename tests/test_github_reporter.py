@@ -571,3 +571,60 @@ async def test_root_zone_turns_github_reporting_off(tmp_path):
     for typ in ("request.created", "request.completed"):
         await hub.reporter.handle({"type": typ, "request_id": "r", "data": {"report": "x"}})
     assert calls == []
+
+
+def _outbound_strings(calls):
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield key
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+
+    out = []
+    for _method, path, body in calls:
+        out.append(path)
+        out += list(strings(body))
+        if isinstance(body, dict) and "content" in body:
+            out.append(base64.b64decode(body["content"]).decode("utf-8"))
+    return out
+
+
+@pytest.mark.asyncio
+async def test_public_project_reports_hide_the_pis_default_github_and_url_references(tmp_path):
+    # #123: only path references were masked, so a private repository or a personal wiki the PI set as a
+    # default reference went to a public project repository once the CSO quoted it.
+    from labhq.intake import Reference
+
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p", visibility="public", allow_public_reports=True)])
+    s.gateway.state_dir = str(tmp_path / "state")
+    s.pi_profile.references = [Reference(kind="github", value="owner/Yuan"),
+                               Reference(kind="url", value="https://wiki.example.org/pi/notes"),
+                               Reference(kind="doi", value="10.1038/nature12373")]
+    hub = Hub(s, github_transport=fake_github(calls))
+    quoted = ("owner/Yuan, https://github.com/owner/Yuan, https://github.com/owner/Yuan/tree/main/docs, "
+              "git@github.com:owner/Yuan.git, HTTPS://WWW.GitHub.com/Owner/yuan, https://wiki.example.org/pi/notes, "
+              "https://wiki.example.org:443/pi/notes/page2?rev=3, wiki.example.org/pi/notes, "
+              "https:\\/\\/wiki.example.org\\/pi\\/notes and see owner/Yuan.")
+    keep = "scverse/scanpy https://github.com/scverse/scanpy 10.1038/nature12373 https://wiki.example.org/public"
+    hub.requests["r"] = {"id": "r", "text": f"study with {quoted}", "project_id": "p", "status": "done",
+                         "references": [{"kind": "github", "value": "https://github.com/scverse/scanpy",
+                                         "source": "request"},
+                                        {"kind": "github", "value": "https://github.com/owner/Yuan",
+                                         "source": "pi_profile"}]}
+    events = [("request.created", {}),
+              ("request.plan", {"steps": [{"id": "s", "agent_id": "a", "instruction": f"Read {quoted}"}]}),
+              ("request.completed", {"ok": True, "report": f"Used {quoted}. Kept {keep}"})]
+    for seq, (typ, data) in enumerate(events, 1):
+        await hub.reporter.handle({"type": typ, "request_id": "r", "seq": seq, "data": data})
+    outbound = _outbound_strings(calls)
+    assert any("<private-reference>" in value for value in outbound)
+    for value in outbound:
+        assert "yuan" not in value.casefold() and "wiki.example.org/pi" not in value.replace("\\/", "/"), value
+    report = outbound[-1] if "Kept" in outbound[-1] else next(v for v in outbound if "Kept" in v)
+    assert keep in report, "a request's own pointers and literature IDs stay"
