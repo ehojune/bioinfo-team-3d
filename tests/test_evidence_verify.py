@@ -509,6 +509,7 @@ def test_a_registry_url_naming_another_base_accession_is_conflicting(scheme, val
     ("ensembl", "ENSG00000141510.17", "ENSG00000141510", "requires_verification"),  # record without a version
     ("ensembl", "ENSG00000141510.17", "ENSG00000141510.17", "found"),
     ("ensembl", "ENSG00000141510.17", "ENSG00000139618", "conflicting"),
+    ("ensembl", "ENSG00000141510.17", "ENSG00000141510.16", "conflicting"),  # another explicit version
     ("uniprot", "P04637-2", "P04637", "requires_verification"),
     ("clinvar", "VCV000012375", "12375", "requires_verification"),
     ("clinvar", "VCV000012375", "12376", "conflicting"),
@@ -590,3 +591,36 @@ def test_a_uri_resolved_to_the_base_and_another_accession_is_conflicting():
     result = build([claim("c1")], [cited_with_uri("e1", "ensembl", cited, url)], [link("c1", "e1")])
     report = asyncio.run(verify_sources(result, mapping))
     assert report.evidence[0].resolutions[1].status == "conflicting" and report.defective_evidence == ["e1"]
+
+
+@pytest.mark.parametrize("scheme, cited, answer", [
+    ("ensembl", "ENSG00000141510.17", ["ENSG00000141510.17", "ENSG00000141510.16"]),  # two versions
+    ("uniprot", "P04637-2", ["P04637-2", "P04637-3"]),  # two isoforms
+    ("ensembl", "ENSG00000141510.17", ["ENSG00000141510.17", "ENSG00000141510"]),  # cited beside its base
+    ("ensembl", "ENSG00000141510.17", ["ENSG00000141510.16"]),  # another explicit version only
+    ("uniprot", "P04637-2", ["P04637-3"]),
+    ("clinvar", "VCV000012375.3", ["VCV000012375.2"]),
+])
+def test_an_id_lookup_with_another_explicit_version_or_an_extra_spelling_is_conflicting(scheme, cited, answer):
+    # Only a missing version is unconfirmed. Another explicit version or isoform is another record, as a
+    # mismatched version field is, and an answer that also names the base is not one record (#167).
+    mapping = StaticResolver({(scheme, cited): [{"id_scheme": scheme, "id_value": value} for value in answer]})
+    result = build([claim("c1")], [row("e1", scheme, cited)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert report.evidence[0].resolution.status == "conflicting"
+    assert report.defective_evidence == ["e1"] and report.ok is False
+
+
+@pytest.mark.parametrize("scheme, value, uri", [
+    ("ensembl", "ENSG00000141510.17", "https://www.ensembl.org/id/ENSG00000141510.16"),
+    ("refseq", "NM_000546.6", "https://identifiers.org/refseq:NM_000546.5"),
+    ("uniprot", "P04637-2", "https://www.uniprot.org/uniprotkb/P04637-3/entry"),
+])
+def test_a_registry_url_naming_another_version_of_the_cited_accession_is_conflicting(scheme, value, uri):
+    result = build([claim("c1")], [cited_with_uri("e1", scheme, value, uri)], [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(result, fixed))
+    uri_check = report.evidence[0].resolutions[-1]
+    assert (uri_check.id_scheme, uri_check.status, uri_check.resolver) == ("uri", "conflicting", "registry_url")
+    assert report.defective_evidence == ["e1"]
+    assert not [call for call in fixed.calls if call[0] == "uri"]

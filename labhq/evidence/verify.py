@@ -174,23 +174,27 @@ def _skipped(scheme: str, value: str, resolver: str, status: IdStatus, kind: str
 _SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
 
 
+def _accession_parts(scheme: str, value: str) -> tuple[str, int | None]:
+    """The base accession and the version or isoform it spells, None when it spells none."""
+    folded = normalize_id(scheme, value)
+    suffix = {"ensembl": r"\.", "refseq": r"\.", "clinvar": r"\.", "uniprot": "-"}.get(scheme)
+    if suffix is None:
+        return folded, None
+    match = re.fullmatch(rf"(.+?)(?:{suffix}(\d+))?", folded)
+    base, number = (match[1], match[2]) if match else (folded, None)
+    if scheme == "clinvar":
+        variation = re.fullmatch(r"vcv0*(\d+)", base)
+        base = variation[1] if variation else base
+    return base, int(number) if number is not None else None
+
+
 def accession_base(scheme: str, value: str) -> str:
     """The record an accession names with its version, isoform or VCV padding removed (#167).
 
     ``ENSG00000141510.17`` -> ``ensg00000141510``, ``P04637-2`` -> ``p04637``, ``VCV000012375.3`` -> ``12375``.
     RCV and SCV accessions keep their prefix: they are other ClinVar records, not variation ids.
     """
-    folded = normalize_id(scheme, value)
-    if scheme in {"ensembl", "refseq"}:
-        return re.sub(r"\.\d+$", "", folded)
-    if scheme == "uniprot":
-        return re.sub(r"-\d+$", "", folded)
-    if scheme == "clinvar":
-        variation = re.fullmatch(r"vcv0*(\d+)(?:\.\d+)?", folded)
-        if variation:
-            return variation[1]
-        return re.sub(r"\.\d+$", "", folded)
-    return folded
+    return _accession_parts(scheme, value)[0]
 
 
 AccessionMatch = Literal["same", "base_only", "different"]
@@ -199,16 +203,19 @@ AccessionMatch = Literal["same", "base_only", "different"]
 def compare_accessions(scheme: str, cited: str, other: str) -> AccessionMatch:
     """One judgment for every place that compares a cited accession with another spelling (#167).
 
-    ``same``: one spelling. ``base_only``: one record under another version, isoform or VCV padding, or
-    ClinVar records of different kinds (RCV beside a variation id); only the authority can say they agree.
-    ``different``: another record.
+    ``same``: one spelling. ``base_only``: one base accession where one side spells no version or isoform,
+    VCV padding, or ClinVar records of different kinds (RCV beside a variation id); only the authority can say
+    they agree. ``different``: another record, including two explicit versions or isoforms of one base
+    (``ENSG...17`` and ``ENSG...16``, ``P04637-2`` and ``P04637-3``), as a mismatched ``version`` field is.
     """
     if normalize_id(scheme, cited) == normalize_id(scheme, other):
         return "same"
     if scheme not in _SEVERAL_SPELLINGS:
         return "different"
-    left, right = accession_base(scheme, cited), accession_base(scheme, other)
+    (left, left_suffix), (right, right_suffix) = _accession_parts(scheme, cited), _accession_parts(scheme, other)
     if left == right:
+        if left_suffix is not None and right_suffix is not None and left_suffix != right_suffix:
+            return "different"
         return "base_only"
     if scheme == "clinvar" and _clinvar_kind(left) != _clinvar_kind(right):
         return "base_only"
@@ -238,10 +245,12 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
     if "different" in kinds:
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a different identifier")
-    exact = [r for r, kind in zip(records, kinds) if kind == "same"]
-    if not exact:
+    if "same" not in kinds:
         return _base_only(scheme, value, resolver, records, "the authority")
-    records = exact
+    if "base_only" in kinds:
+        # The cited spelling beside another spelling of its base: dropping either would pick one unasked.
+        return Resolution(**base, status="conflicting", candidates=records,
+                          detail="the authority returned the cited identifier beside another spelling of its base")
     matching = [r for r in records if version is None or r.version == version]
     if not matching:
         return Resolution(**base, status="conflicting", candidates=records,
