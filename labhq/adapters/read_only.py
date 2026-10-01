@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import fnmatch
+import stat
+from pathlib import Path, PurePath
 
 from ..models import AgentSpec
 
@@ -19,6 +22,43 @@ READ_ONLY_KEEPS = ("id", "name", "role", "character", "engine", "model", "system
                    "disallowed_tools", "max_turns", "max_budget_usd", "employment", "contract", "tags")
 # The marker consults and follow-ups carry in task meta. The runner never applies it: it rebuilds the profile.
 READ_ONLY_OVERRIDES = copy.deepcopy(READ_ONLY_FIELDS)
+# What a read-only run takes from `engines.<engine>.env` (#145): where the CLI keeps its login and settings, the
+# credentials it signs in with, and how it reaches the API. The rest is left out, since a variable can change what
+# the CLI loads: on Claude 2.1.282 CLAUDE_CODE_PLUGIN_DIRS loaded a plugin whose hooks and MCP stayed off only because
+# of disableAllHooks and --strict-mcp-config, and CLAUDE_CODE_MANAGED_SETTINGS_PATH, CLAUDE_CODE_SYNC_PLUGINS,
+# NODE_OPTIONS or a CODEX_* variable mean whatever the next CLI release makes them mean. The parent session's own
+# CLAUDE_*/CODEX_* are already gone (util.merge_staff_env). Names compare case-insensitively, as Windows does.
+READ_ONLY_ENV_KEEP = frozenset({
+    "PATH", "HOME", "USERPROFILE", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "AWS_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL",
+    "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+    "CODEX_CA_CERTIFICATE",
+})
+# Workspace names the adapters say their engines load as instructions, memory, skills or configuration. This is the
+# single policy list and `workspace_instruction_action` is the single matcher: depth and dot-prefixed ancestors do
+# not change the answer. Claude can exclude its own project sources with flags/settings; agents-md has no measured
+# off switch, and Codex project sources are refused because their trusted-workspace behaviour remains unverified.
+WORKSPACE_INSTRUCTION_RULES: dict[str, dict[str, tuple[str, ...]]] = {
+    "claude_code": {
+        "exclude_files": ("CLAUDE.md", "CLAUDE.local.md"),
+        "exclude_dirs": (".claude",),
+        "exclude_root_globs": (".claude/CLAUDE.md", ".claude/rules/**"),
+        "refuse_files": ("AGENTS*.md",),
+        "refuse_dirs": (".agents",),
+    },
+    "codex": {
+        "exclude_files": (),
+        "exclude_dirs": (),
+        "exclude_root_globs": (),
+        "refuse_files": ("AGENTS*.md",),
+        "refuse_dirs": (".agents", ".codex"),
+    },
+}
+# Where TaskWorkspace.install_skill copies a contract staff member's paper skill.
+SKILL_DIRS = (".claude/skills", ".agents/skills")
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -44,6 +84,79 @@ def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
     """Why a run marked read-only must not start: its agent is not exactly the profile, or MCP servers are wired."""
     if mcp_servers or agent != read_only_profile(agent):
         return "read-only run refused: the agent is not the read-only profile"
+    return None
+
+
+def read_only_engine_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """The part of `engines.<engine>.env` a read-only run keeps, and the names it leaves out (never the values)."""
+    kept = {key: value for key, value in env.items() if key.upper() in READ_ONLY_ENV_KEEP}
+    return kept, sorted(set(env) - set(kept))
+
+
+def labhq_workspace_paths(agent: AgentSpec, engine: str) -> list[str]:
+    """Instruction paths labhq replaces immediately before this engine starts."""
+    skill = agent.contract.skill_dir if agent.contract else None
+    paths = [f"{base}/{PurePath(skill).name}" for base in SKILL_DIRS] if skill else []
+    if engine == "codex":
+        paths.append("AGENTS.md")
+    return paths
+
+
+def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
+    """Return `exclude` or `refuse` for one engine-read workspace path, independent of depth."""
+    rules = WORKSPACE_INSTRUCTION_RULES.get(engine, {})
+    parts = relative.parts
+    name = parts[-1] if parts else ""
+    for action in ("refuse", "exclude"):
+        if any(part in rules.get(f"{action}_dirs", ()) for part in parts):
+            return action
+        if any(fnmatch.fnmatchcase(name, pattern) for pattern in rules.get(f"{action}_files", ())):
+            return action
+    return None
+
+
+def _is_link(path: Path) -> bool:
+    info = path.lstat()
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], action: str) -> list[str]:
+    """Find matching paths at every depth without following symlinks or Windows junctions."""
+    found: list[str] = []
+    pending = [Path(workdir)]
+    while pending:
+        path = pending.pop()
+        try:
+            entries = sorted(path.iterdir(), reverse=True)
+        except OSError:
+            continue
+        for entry in entries:
+            relative = entry.relative_to(workdir).as_posix()
+            try:
+                linked = _is_link(entry)
+            except OSError:
+                linked = True
+            if any(relative == mine or relative.startswith(mine + "/") for mine in owned):
+                continue
+            owns_below = any(mine.startswith(relative + "/") for mine in owned)
+            matches = workspace_instruction_action(engine, PurePath(relative)) == action
+            is_dir = False if linked else entry.is_dir()
+            if matches and (not is_dir or action == "refuse") and (not owns_below or linked):
+                found.append(relative)
+                continue
+            if is_dir:
+                pending.append(entry)
+    return found
+
+
+def read_only_workspace_error(engine: str, workdir: Path, owned: list[str]) -> str | None:
+    """Why a read-only run must not start in this workspace: it holds a file its engine would read as instructions."""
+    found = workspace_instruction_paths(engine, Path(workdir), owned, "refuse")
+    if found:
+        return (f"read-only run refused: the workspace holds {found[0]}, which {engine} would read as instructions "
+                "or configuration; a read-only run takes those only from labhq. Move it out of the workspace or "
+                "ask in a new request")
     return None
 
 

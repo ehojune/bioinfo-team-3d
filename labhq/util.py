@@ -24,14 +24,26 @@ def parent_claude_markers(env: dict[str, str]) -> list[str]:
             and key.upper() not in CLAUDE_ENV_PASSTHROUGH]
 
 
-def strip_parent_claude_env(env: dict[str, str]) -> dict[str, str]:
-    blocked = set(parent_claude_markers(env))
+# A runner started from a Codex terminal inherits that session's CODEX_* variables. codex-cli 0.159.2 reads several
+# that move or loosen what a staff Codex runs (CODEX_EXEC_SERVER_URL, CODEX_SANDBOX*, CODEX_PERMISSION_PROFILE,
+# CODEX_SQLITE_HOME, ...), so only the config home, the API key and the CA bundle pass (#146). A staff setting that
+# needs another one names it in engines.codex.env, which is applied after this.
+CODEX_ENV_PASSTHROUGH = frozenset({"CODEX_HOME", "CODEX_API_KEY", "CODEX_CA_CERTIFICATE"})
+
+
+def parent_codex_markers(env: dict[str, str]) -> list[str]:
+    """Codex host-session variables that must not reach staff subprocesses."""
+    return [key for key in env if key.upper().startswith("CODEX_") and key.upper() not in CODEX_ENV_PASSTHROUGH]
+
+
+def strip_parent_session_env(env: dict[str, str]) -> dict[str, str]:
+    blocked = {*parent_claude_markers(env), *parent_codex_markers(env)}
     return {key: value for key, value in env.items() if key not in blocked}
 
 
 def merge_staff_env(parent: dict[str, str], *overrides: dict[str, str]) -> dict[str, str]:
     """Drop inherited session markers before applying operator-provided overrides."""
-    merged = strip_parent_claude_env(parent)
+    merged = strip_parent_session_env(parent)
     for override in overrides:
         merged.update(override)
     return merged

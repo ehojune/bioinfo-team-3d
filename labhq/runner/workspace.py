@@ -13,17 +13,58 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import shutil
+import stat
 import time
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePath
 from typing import Any
 
 from .. import __version__
+from ..adapters.read_only import SKILL_DIRS
 from ..models import AgentSpec, Task
 from ..util import atomic_write_text
 
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
+
+
+def _is_link(path: Path) -> bool:
+    """A symlink or Windows reparse point (including a junction), without following it."""
+    info = path.lstat()
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _plain_directory(root: Path, relative: PurePath) -> Path | None:
+    """Create plain directory components, replacing links without traversing their targets."""
+    current = root
+    for part in relative.parts:
+        current /= part
+        if os.path.lexists(current):
+            if _is_link(current):
+                _remove_entry(current)
+                current.mkdir()
+            elif not current.is_dir():
+                return None
+        else:
+            current.mkdir()
+    return current
+
+
+def _remove_entry(path: Path) -> None:
+    """Remove one entry without following a symlink or Windows junction."""
+    if not os.path.lexists(path):
+        return
+    if path.is_symlink():
+        path.unlink()  # POSIX directory symlinks need unlink(), not rmdir()
+    elif _is_link(path):
+        path.rmdir()  # Windows junction: rmdir unlinks the reparse point, not its target
+    elif path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 class TaskWorkspace:
@@ -46,15 +87,31 @@ class TaskWorkspace:
         return (f"Read {name} in the current directory (it is long) and carry out the instruction there.\n\n"
                 f"Instruction summary: {t.prompt[:2000]}")
 
-    def install_skill(self, skill_dir: Path) -> None:
-        """Contract agents carry their paper skill; project-level skill dirs for Claude Code and Codex."""
+    def install_skill(self, skill_dir: Path) -> str | None:
+        """Install a fresh contract skill copy for this run, without traversing workspace links."""
         skill_dir = Path(skill_dir)
-        if not (skill_dir / "SKILL.md").exists():
-            return
-        for base in (".claude/skills", ".agents/skills"):
+        if not skill_dir.name:
+            return "contract skill source has no directory name; execution refused"
+        destinations = []
+        for base in SKILL_DIRS:
             dst = self.dir / base / skill_dir.name
-            if not dst.exists():
-                shutil.copytree(skill_dir, dst)
+            parent = _plain_directory(self.dir, PurePath(base))
+            if parent is None:
+                return "contract skill destination is not a directory; execution refused"
+            destinations.append((parent, dst))
+        if not (skill_dir / "SKILL.md").is_file():
+            for _, dst in destinations:
+                _remove_entry(dst)
+            return "contract skill source is missing or unreadable; execution refused"
+        for parent, dst in destinations:  # every run replaces every engine's copy from the source
+            fresh = parent / f".{skill_dir.name}.labhq-{uuid.uuid4().hex}"
+            try:
+                shutil.copytree(skill_dir, fresh)
+                _remove_entry(dst)
+                fresh.replace(dst)
+            finally:
+                _remove_entry(fresh)
+        return None
 
     def append_event(self, ev: dict[str, Any]) -> None:
         with open(self.dir / "events.jsonl", "a", encoding="utf-8") as f:
