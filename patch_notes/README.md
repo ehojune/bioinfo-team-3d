@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:44 | [`9c4cf43`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/9c4cf43) | **읽기 전용 실행의 계약 skill을 매번 원본에서 새로 복사합니다** (Codex 리뷰). 앞선 실행이 작업 폴더의 skill 사본을 바꿔 두면 읽기 전용 실행이 그 변조본을 믿었습니다. 이제 매 실행 원본에서 새 사본을 만들고 symlink·junction은 따라가지 않습니다 |
 | 16:39 | [`316f325`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/316f325) | **다른 cluster로 간 잡과 여러 잡을 고르는 잡 번호를 막았습니다** (#120 검증). 직원 스크립트에 `#SBATCH -M`·`--clusters`가 있으면 제출 전에 거부하고, 제출 뒤 `번호;cluster`가 돌아오면 같은 번호의 다른 잡을 가리킬 수 있어 추적하지 않고 오류로 알립니다. 잡 번호는 숫자로 시작해야만 받아서 `qdel all` 같은 일괄 선택도 막았습니다. |
 | 16:34 | [`5e3fb1b`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/5e3fb1b) | **하위 폴더의 CLAUDE.md류도 읽기 전용 Claude에 안 실리게 했습니다** (#147 독립 검증). Claude는 하위 폴더 파일을 읽을 때 그 폴더의 CLAUDE.md를 싣는데, 제외 목록은 작업 폴더 맨 위만 담았습니다. 앞선 실행이 `outputs/CLAUDE.md`를 남기면 이어 묻기가 그 지침을 받았습니다. 이제 모든 깊이를 제외합니다. |
 | 16:26 | [`bb8a40d`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/bb8a40d) | **Slurm 클러스터에서도 labhq로 잡을 돌릴 수 있습니다** (#120). 설정에서 `hpc.scheduler: slurm`을 고르면 sbatch로 제출하고 squeue·sacct로 상태와 종료 코드를 보며 scancel로 취소합니다. PI 승인, 실패와 잡 없음의 구분, 재시도 금지는 SGE·PBS와 같습니다. `labhq init`은 sbatch·sinfo로 스케줄러를 알아보고, doctor는 Slurm 명령 네 개를 점검합니다. 가짜 Slurm 명령으로 제출부터 취소까지 시험했고, 실제 클러스터 제출은 하지 않았습니다. |
