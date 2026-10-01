@@ -39,7 +39,7 @@ ID_FORMATS: dict[str, str] = {
     "sra": r"[SED]R[APRSX]\d{6,}",
     "bioproject": r"PRJ[DEN][A-Z]\d+",
     "biosample": r"SAM[DEN][A-Z]?\d+",
-    "refseq": r"[ANXWY][CGMRPTW]_\d+(?:\.\d+)?",
+    "refseq": r"[A-Z]{2}_(?:[A-Z]{2,6})?\d{6,}(?:\.\d+)?",  # NM_004985.5, WP_000000001.1, NZ_CP012345.1
     "ensembl": r"ENS[A-Z]*[EGPTR]\d{11}(?:\.\d+)?",
     "uniprot": r"(?:[OPQ][0-9][A-Z0-9]{3}[0-9]|[A-NR-Z][0-9](?:[A-Z][A-Z0-9]{2}[0-9]){1,2})(?:-\d+)?",
     "dbsnp": r"rs[1-9]\d*",
@@ -173,6 +173,10 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
     base = {"id_scheme": scheme, "id_value": value, "lookup": "succeeded", "resolver": resolver}
     if not records:
         return Resolution(**base, status="not_found", detail="the authority has no record for this identifier")
+    if any(r.id_scheme != scheme for r in records):
+        # Numeric IDs collide across databases (PMID 12345 vs ClinVar 12345).
+        return Resolution(**base, status="conflicting", candidates=records,
+                          detail="the authority returned a record from a different scheme")
     other = [r for r in records if r.id_value.casefold() != value.casefold()]
     if other:
         return Resolution(**base, status="conflicting", candidates=records,
@@ -225,9 +229,12 @@ async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_
                 "resolver": "manifest"}
         if digest is None:
             return Resolution(**base, status="not_found", detail=f"{path} is not in the observed manifest")
-        return Resolution(**base, status="found", record=SourceRecord(id_scheme="artifact",
-                                                                      id_value=source.artifact_id,
-                                                                      version=digest, url=path))
+        record = SourceRecord(id_scheme="artifact", id_value=source.artifact_id, version=digest, url=path)
+        if source.version and source.version.strip().casefold() != digest.casefold():
+            # The file at this path changed after the result cited it.
+            return Resolution(**base, status="conflicting", candidates=[record],
+                              detail=f"cited sha256 {source.version} differs from the observed {digest}")
+        return Resolution(**base, status="found", record=record)
     else:
         scheme, value = "uri", (source.uri or "").strip()
     key = (scheme, value.casefold(), source.version)

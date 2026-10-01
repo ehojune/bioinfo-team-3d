@@ -188,3 +188,29 @@ def test_resolution_keeps_lookup_outcome_and_id_status_apart(fields, match):
         Resolution(id_scheme="doi", id_value=DOI, resolver="x", **fields)
     assert Resolution(id_scheme="doi", id_value=DOI, resolver="x", lookup="succeeded", status="found",
                       record=SourceRecord(id_scheme="doi", id_value=DOI)).status == "found"
+
+
+def test_record_from_another_scheme_with_the_same_number_is_conflicting():
+    other_db = StaticResolver({("pmid", "12345"): [{"id_scheme": "clinvar", "id_value": "12345"}]})
+    result = build([claim("c1")], [row("e1", "pmid", "12345")], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, other_db))
+    assert report.evidence[0].resolution.status == "conflicting" and report.ok is False
+    assert "different scheme" in report.evidence[0].resolution.detail
+
+
+def test_artifact_cited_version_must_match_the_observed_hash():
+    cited = row("e1", artifact="a1", kind="experimental")
+    cited["source"]["version"] = "a" * 64
+    result = build([claim("c1")], [cited], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "b" * 64}))
+    assert report.evidence[0].resolution.status == "conflicting" and by_claim(report)["c1@1"].state == "defective"
+    report = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "a" * 64}))
+    assert report.evidence[0].resolution.status == "found" and report.ok is True
+
+
+@pytest.mark.parametrize("accession", ["NZ_CP012345.1", "NM_004985.5", "WP_000000001.1", "NZ_AAAA01000001.1"])
+def test_valid_refseq_accessions_reach_the_resolver(accession):
+    fixed = StaticResolver({("refseq", accession): [{"id_scheme": "refseq", "id_value": accession}]})
+    result = build([claim("c1")], [row("e1", "refseq", accession)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, fixed))
+    assert report.evidence[0].resolution.status == "found" and fixed.calls == [("refseq", accession.casefold())]
