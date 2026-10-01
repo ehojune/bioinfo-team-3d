@@ -614,7 +614,8 @@ ROOT = FIXTURE.parents[2]
 SEMANTIC_FILES = [ROOT / "labhq" / "research" / "semantics.py", ROOT / "tests" / "semantics_baseline.py"]
 IMPORT_ALLOW = {"__future__", "copy", "hashlib", "json", "posixpath", "re", "sqlite3", "collections.abc",
                 "dataclasses", "pathlib", "typing", "urllib.parse", "yaml", "pydantic", "labhq.evidence",
-                "labhq.evidence.claims", "labhq.research.contract", "labhq.research.semantics"}
+                "labhq.evidence.claims", "labhq.research.contract", "labhq.research.semantics",
+                "labhq.yaml_unique"}  # the duplicate-key YAML loader, shared with core vocab code (#221)
 
 
 def _imported_names(path):

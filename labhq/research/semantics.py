@@ -24,11 +24,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from urllib.parse import quote, unquote, urlsplit
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from labhq.evidence.claims import independent_groups, normalize_artifact_path, normalize_id, normalize_uri
 from labhq.research.contract import ResearchPlan, ResearchResult, validate_research_result
+from labhq.yaml_unique import UniqueKeyError
+from labhq.yaml_unique import load_yaml_unique as _core_load_yaml_unique
 
 MODEL_PATH = Path(__file__).with_name("semantics_v1.yaml")
 UNKNOWN = "unknown"
@@ -60,31 +61,14 @@ def _parse_json(text: str, where: str) -> Any:
         raise RecordsError(f"{where}: invalid JSON ({getattr(exc, 'msg', exc)})") from None
 
 
-class _UniqueKeyLoader(getattr(yaml, "CSafeLoader", yaml.SafeLoader)):  # type: ignore[misc]
-    """SafeLoader that rejects a mapping key given twice instead of keeping the last one."""
-
-
-def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
-    mapping: dict[Any, Any] = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
-            raise yaml.constructor.ConstructorError(None, None, f"duplicate key {key!r}", key_node.start_mark)
-        mapping[key] = loader.construct_object(value_node, deep=deep)
-    return mapping
-
-
-_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
-
-
 def load_yaml_unique(text: str, where: str) -> Any:
-    """yaml.safe_load that refuses duplicate keys. Errors carry ``where`` and a line, never a path."""
+    """yaml.safe_load that refuses duplicate keys. Errors carry ``where`` and a line, never a path.
+
+    The loader itself lives in core (``labhq.yaml_unique``) so the output type vocabulary keeps it after this pilot goes."""
     try:
-        return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
-    except yaml.YAMLError as exc:
-        mark = getattr(exc, "problem_mark", None)
-        line = f" line {mark.line + 1}" if mark is not None else ""
-        raise RecordsError(f"{where}:{line} {getattr(exc, 'problem', None) or exc}") from None
+        return _core_load_yaml_unique(text, where)
+    except UniqueKeyError as exc:
+        raise RecordsError(str(exc)) from None
 
 
 @dataclass(frozen=True)
