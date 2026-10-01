@@ -330,7 +330,8 @@ def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
 
         plan_values = plan.model_dump(mode="python")
         for rule in pack.rules:
-            if rule.when is not None and not _pack_predicate_matches(rule.when, supplied.fields, plan_values):
+            if not all(_pack_predicate_matches(condition, supplied.fields, plan_values)
+                       for condition in rule.conditions):
                 continue
             if rule.require is not None:
                 passed = _pack_predicate_matches(rule.require, supplied.fields, plan_values)

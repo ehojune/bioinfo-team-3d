@@ -121,6 +121,8 @@ Contract rules:
 - Put QC after data generation. Ask clarifying_questions only when an answer would change this contract.
 - For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
   a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
+  Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
+  the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
 - PR 1 pilot stops after CP1 approval. Research steps will not run in this PR.
 
@@ -390,6 +392,8 @@ class Orchestrator:
         self.hub = hub
         self.cfg = hub.s.orchestrator
         self.cost: dict[str, float] = {}
+        # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
+        self.cost_tasks: dict[str, set[str]] = {}
         self.attempts: dict[str, dict[str, int]] = {}
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
@@ -448,10 +452,10 @@ class Orchestrator:
             payload = entry.get("payload") or {}
             if entry.get("completed") or payload.get("agent_id") != agent_id:
                 continue
-            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight.
+            # Include dispatched-but-not-yet-accepted tasks: delivery can be in flight. Unfinished
+            # consults count too: the in-memory consult lock does not survive a gateway restart,
+            # while the runner keeps running the consult it already accepted (#93).
             meta = payload.get("meta") or {}
-            if meta.get("kind") == "consult":
-                continue
             active_workdir = meta.get("workdir")
             if ((session_id and payload.get("resume_session_id") == session_id) or
                     (workdir and active_workdir and Path(workdir).resolve() == Path(active_workdir).resolve())):
@@ -523,6 +527,12 @@ class Orchestrator:
                 **{"from": "pi", "routed_to": "pi", "hard_stop": stop}))
             return
 
+        wait_online = getattr(self.hub, "wait_agent_online", None)
+        if (routed not in self.hub.agents and wait_online and
+                self.hub.requests.get(ask.request_id or "", {}).get("status") == "waiting_for_runner"):
+            # Resume approval re-routes asks before runners reconnect, and the roster is empty
+            # until they do. The target's runner may also still hold this ask's consult (#93).
+            await wait_online(routed, self.hub.s.gateway.resume_wait_s)
         if routed not in self.hub.agents:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
@@ -539,21 +549,34 @@ class Orchestrator:
         overrides = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
                      "builtin_tools": "Read,Glob,Grep", "tools": []}
         async with self._consult_lock(ask.request_id, routed):
-            session_id, workdir = self._last_agent_session(ask.request_id, routed)
-            if requested.startswith("colleague:"):
-                session_id, workdir = None, None
-            if routed == self.cfg.cso_agent:
-                session_id = request.get("cso_session_id") or session_id
-                workdir = request.get("cso_workdir") or workdir
-            if self._consult_resource_busy(routed, session_id, workdir):
-                session_id, workdir = None, None
-            consult = Task(
-                agent_id=routed, request_id=ask.request_id, prompt=prompt,
-                resume_session_id=session_id if self.hub.supports_resume(routed) else None,
-                meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
-                      "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
-            )
-            result = await self.run_step(consult)
+            # After a gateway restart the runner may still be running this ask's consult.
+            # Adopt its result; when its outcome is unknown, isolate the new consult.
+            adopt = getattr(self.hub, "adopt_consult", None)
+            prior, result = await adopt(ask.id, routed) if adopt else (0, None)
+            first_attempt = 1
+            if result is not None:
+                self._count_adopted_cost(ask.request_id, result.task_id)
+                if failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
+                    result, first_attempt = None, prior + 1  # only the retries that are left
+            elif prior:
+                first_attempt = min(prior, self.cfg.step_max_attempts)  # its outcome was never observed
+            if result is None:
+                session_id, workdir = self._last_agent_session(ask.request_id, routed)
+                if requested.startswith("colleague:"):
+                    session_id, workdir = None, None
+                if routed == self.cfg.cso_agent:
+                    session_id = request.get("cso_session_id") or session_id
+                    workdir = request.get("cso_workdir") or workdir
+                if prior or self._consult_resource_busy(routed, session_id, workdir):
+                    session_id, workdir = None, None
+                consult = Task(
+                    agent_id=routed, request_id=ask.request_id, prompt=prompt,
+                    resume_session_id=session_id if self.hub.supports_resume(routed) else None,
+                    meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
+                          "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+                )
+                result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
+                                else self.run_step(consult))
             if routed == self.cfg.cso_agent and result.session_id:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
@@ -564,13 +587,32 @@ class Orchestrator:
             answer=answer if answered else None, reason=None if answered else answer,
             **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
+    def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
+        """Add an adopted task's recorded cost once (#93).
+
+        The durable request total can already hold parallel tasks whose run_step has not
+        added them yet, so copying that total would count those tasks twice.
+        """
+        if not rid or rid not in self.hub.requests:
+            return
+        counted = self.cost_tasks.setdefault(rid, set())
+        if task_id in counted:
+            return
+        counted.add(task_id)
+        amount = float((self.hub.requests[rid].get("cost_by_task") or {}).get(task_id) or 0)
+        self.cost[rid] = self.cost.get(rid, 0.0) + amount
+
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
-    async def run_step(self, task: Task) -> TaskResult:
+    async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
         rid = task.request_id or ""
-        async def dispatch_with_retry(current: Task, max_attempts: int | None = None) -> TaskResult:
+        initial_attempt = first_attempt
+
+        async def dispatch_with_retry(current: Task, max_attempts: int | None = None,
+                                      start: int = 1) -> TaskResult:
             key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
             limit = max_attempts or self.cfg.step_max_attempts
-            first_attempt = min(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), limit)
+            first_attempt = min(max(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), start),
+                                limit)
             previous_workdir = current.meta.get("workdir")
             previous_session = current.resume_session_id
             previous_result = None
@@ -602,6 +644,7 @@ class Orchestrator:
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+                    self.cost_tasks.setdefault(rid, set()).add(res.task_id)
                     kind = failure_kind(res)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
@@ -641,7 +684,7 @@ class Orchestrator:
                                                                "reason": res.error or "empty result"})
             raise AssertionError("unreachable")
 
-        res = await dispatch_with_retry(task)
+        res = await dispatch_with_retry(task, start=initial_attempt)
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
@@ -955,6 +998,7 @@ class Orchestrator:
         text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
                                      for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
+        self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
