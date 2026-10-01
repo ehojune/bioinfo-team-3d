@@ -147,6 +147,9 @@ def test_one_boundary_violation_turns_it_off_and_writes_nothing(tmp_path, monkey
     _run(service, ["req_001"])
     assert service.latched == "info_boundary"
     assert _lines(tmp_path, "request") == []
+    expected = [{"field": "objects", "class": "path"}]
+    assert _disabled(tmp_path)["boundary"] == expected
+    assert _lines(tmp_path, "auto_off")[-1]["boundary"] == expected
     for path in (tmp_path / "state" / "semantics").iterdir():
         assert "counts.tsv" not in path.read_text(encoding="utf-8")
 
@@ -159,6 +162,43 @@ def test_the_boundary_check_refuses_paths_free_text_and_known_values(value):
                                           "tasks": {"t": {"result": {"outputs": ["outputs/counts.tsv"]}}}})
     assert shadow.boundary_problems({"x": value}, sensitive)
     assert shadow.boundary_problems({"x": "sem:0a1b2c3d", "n": 3, "ok": True, "r": None}, sensitive) == []
+
+
+@pytest.mark.parametrize(("value", "sensitive", "category"), [
+    ("outputs/example.tsv", {}, "path"),
+    ("example.tsv", {"example.tsv": "filename"}, "filename"),
+    ("https://example.invalid/item", {}, "url"),
+    ("10.9999/example", {}, "doi"),
+    ("synthetic_staff_17", {"synthetic_staff_17": "employee_id"}, "employee_id"),
+    ("synthetic free sentence", {}, "free_text"),
+])
+def test_boundary_findings_keep_field_and_category_without_the_value(value, sensitive, category):
+    findings = shadow.boundary_findings({"objects": {"unexpected": value}}, sensitive)
+    assert {tuple(sorted(finding.items())) for finding in findings} == {
+        tuple(sorted({"field": "objects", "class": category}.items()))
+    }
+    assert value not in json.dumps(findings)
+
+
+def test_only_the_current_vocabulary_hash_is_public_in_its_version_field():
+    version = shadow.output_vocab.current().sha256
+    sensitive = {version: "identifier"}
+    allowed = {"vocab_sha256": version}
+    assert shadow.boundary_problems({"vocab_sha256": version}, sensitive, allowed_fields=allowed) == []
+    assert shadow.boundary_problems({"objects": {"unexpected": version}}, sensitive, allowed_fields=allowed)
+    assert shadow.boundary_problems({"vocab_sha256": "0" * 64}, {"0" * 64: "identifier"},
+                                    allowed_fields=allowed)
+
+
+def test_research_plan_vocabulary_version_does_not_turn_the_shadow_off(tmp_path):
+    service = _service(tmp_path)
+    version = shadow.output_vocab.current().sha256
+    request = service.hub.requests["req_001"]
+    request["research_contract"] = {"plan_sha256": "1" * 64}
+    request["plan"]["output_types_vocab"] = version
+    _run(service, ["req_001"])
+    assert service.latched is None
+    assert [line["request_id"] for line in _lines(tmp_path, "request")] == ["req_001"]
 
 
 def test_wrong_identity_marked_from_the_cli_turns_the_running_shadow_off(tmp_path):
@@ -417,7 +457,7 @@ def test_a_boundary_check_that_raises_writes_nothing_and_counts(tmp_path, monkey
     def broken(snap):
         raise TypeError("injected /data/cohort")
 
-    monkeypatch.setattr(shadow, "sensitive_strings", broken)
+    monkeypatch.setattr(shadow, "sensitive_values", broken)
     caplog.set_level(logging.WARNING, logger="labhq.semantics")
     _run(service, ["req_001", "req_002", "req_003"])
     assert service.counts["failures"] == 3 and service.latched == "consecutive_failures"
