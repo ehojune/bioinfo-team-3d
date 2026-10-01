@@ -138,7 +138,10 @@ BAD_NESTED = {"provenance_list": {"provenance": ["ok"]}, "objects_text": {"objec
               "object_counts_text": {"objects": {"status": "ok", "objects": {"Task": "four"}}},
               "workspaces_list": {"hash": {"hashed": 1, "workspaces": ["ok"]}},
               "candidates_text": {"provenance": {"status": "ok", "candidates": "two"}},
-              "ms_infinite": {"ms": float("inf")}}
+              "ms_infinite": {"ms": float("inf")},
+              # the two shapes of #162, already counted as broken since dc01c50
+              "objects_empty_list": {"objects": []},
+              "excluded_text_value": {"provenance": {"status": "ok", "excluded": {"x": "a"}}}}
 
 
 @pytest.mark.parametrize("bad", list(BAD_NESTED))
