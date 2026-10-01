@@ -215,3 +215,31 @@ def test_expired_observations_are_dropped_while_running(tmp_path):
     service.observed["k_late"] = {"sha256": "c", "size": 1, "at": time.time() - 91 * 86400}
     _run(service, ["req_002"])
     assert "k_late" not in json.loads(service.paths.observed.read_text(encoding="utf-8"))
+
+
+def test_enable_after_a_stuck_worker_starts_a_fresh_one(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    service.stuck_s = 0.2
+    release = threading.Event()
+    real = shadow.compute_line
+
+    def stuck_once(snap, *args, **kwargs):
+        if snap["rid"] == "req_001":
+            release.wait(10)
+        return real(snap, *args, **kwargs)
+
+    monkeypatch.setattr(shadow, "compute_line", stuck_once)
+    service.after_request("req_001")
+    deadline = time.monotonic() + 5
+    while service.latched is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert service.latched == "worker_stuck"
+    shadow.enable(service.paths)
+    service.after_request("req_002")  # the old job is still stuck; the new epoch must not trip on it
+    assert service.drain(10)
+    time.sleep(0.4)  # past the old watchdog's deadline
+    assert service.latched is None and service.epoch == 2
+    assert [(line["request_id"], line["epoch"]) for line in _lines(tmp_path, "request")] == [("req_002", 2)]
+    release.set()
+    time.sleep(0.2)
+    assert [line["request_id"] for line in _lines(tmp_path, "request")] == ["req_002"]

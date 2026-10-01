@@ -181,3 +181,20 @@ def test_a_same_host_manifest_fills_the_run_fields(tmp_path):
     remote = line_for(_lab(tmp_path / "remote", outputs=(), types=None, host="another-host")[0], "req_a", {})
     assert same["hash"]["workspaces"] == {"ok": 1} and remote["hash"]["workspaces"] == {"remote": 1}
     assert same["provenance"]["unknown_ratio"] < remote["provenance"]["unknown_ratio"]
+
+
+def test_a_manifest_inside_a_restricted_zone_is_not_read(tmp_path, monkeypatch):
+    opened = []
+    real = builtins.open
+
+    def counting(path, *args, **kwargs):
+        opened.append(str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(shadow, "open", counting, raising=False)
+    runs = str(tmp_path / "runs")
+    manifest = os.path.join(runs, "2026-10-01", "task_a1_analyst", "manifest.json")
+    hub, _ = _lab(tmp_path, zones=[DataZone(path=runs, level="internal"), DataZone(path=manifest, level="restricted")])
+    line = line_for(hub, "req_a", {})
+    assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
+    assert not [p for p in opened if p.endswith("manifest.json") and "task_a1" in p]

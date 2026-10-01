@@ -555,7 +555,10 @@ class Reader:
             return "missing"
         if _is_link(st) or not stat.S_ISDIR(st.st_mode):
             return "not_regular"
-        manifest = self._small_json(os.path.join(workdir, "manifest.json"))
+        manifest_path = os.path.join(workdir, "manifest.json")
+        if not zone_allows(manifest_path, self.zones, self.visibility):
+            return "zone_excluded"  # a narrower zone on the manifest itself wins over the folder's
+        manifest = self._small_json(manifest_path)
         self.manifests[workdir] = manifest
         if not isinstance(manifest, dict) or manifest.get("host") != self.host:
             return "remote"  # a manifest written on another host: the runner's disk is not this one
@@ -916,6 +919,7 @@ class ShadowService:
             self.consecutive = self.busy = self.busy_skipped = 0
             if stuck:  # the old thread may never return; give the new epoch its own worker
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
+            self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
 
     def trip(self, reason: str, **detail: Any) -> None:
         with self.lock:
@@ -973,7 +977,7 @@ class ShadowService:
 
     def check_stuck(self) -> None:
         with self.lock:
-            current = self.current
+            current = self.current if self.current and self.current[0] == self.gen else None
         if current and time.monotonic() - current[1] > self.stuck_s:
             self.trip("worker_stuck")
 
@@ -1041,7 +1045,7 @@ class ShadowService:
 
     def watch(self, gen: int, started: float) -> None:
         with self.lock:
-            stuck = self.current == (gen, started)
+            stuck = self.current == (gen, started) and gen == self.gen
         if stuck:
             self.trip("worker_stuck")
 
