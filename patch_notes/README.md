@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:43 | [`7a0d834`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/7a0d834) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #219 항목과 행을 이 PR 쪽과 시각순으로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
+| 01:43 | [`18f2aa7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/18f2aa7) | **`manifest.json`을 링크·FIFO로 바꿔도 산출 목록이 읽지 않는다는 test를 모든 OS에 두었습니다** (Codex 리뷰 P1). `b0d3f5e`의 test는 symlink를 만들 수 없는 Windows에서 skip되었습니다. owned 규칙이 manifest를 링크로 본다고 꾸민 test는 모든 OS에서 돌고, FIFO로 바꾼 run이 멈추지 않는지 보는 test는 POSIX에서 돕니다. 수정을 되돌리면 세 test 모두 실패했습니다 |
 | 01:23 | [`12a8534`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/12a8534) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #220 항목을 이 PR 항목 아래로 이었고, 패치노트는 두 쪽 행을 날짜별로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
 | 01:22 | [`b0d3f5e`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/b0d3f5e) | **direct 산출 목록이 `manifest.json`을 직원이 바꿔 둔 링크·FIFO를 따라 읽지 않게 했습니다** (#221 독립 검증 P1). 앞선 run의 `RESULT` 사본을 빼려고 manifest를 읽을 때 `read_owned`를 거치지 않아, 그 자리의 symlink를 따라 runner 권한으로 바깥 파일을 읽었습니다(#165 보호 우회). 이제 `read_owned`로 읽고 링크나 정규 파일이 아니면 빈 runs로 봅니다. 회귀 test는 WSL ext4에서 수정 전 실패했습니다 |
 | 00:19 | [`31c580c`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/31c580c) | 링크·junction으로 적힌 쓰기 폴더는 적힌 표기와 실제 경로에 Edit 규칙을 하나씩 두어 사전 허용(#219) |
