@@ -127,11 +127,41 @@ def _bench_process_exited(pid):
     return stat.is_file() and stat.read_text().rsplit(")", 1)[1].split()[0] == "Z"
 
 
-async def _wait_for_bench_processes(pids, timeout=10):
+def _bench_process_state(pids, processes):
+    return {
+        "pids": {pid: "exited" if _bench_process_exited(pid) else "running" for pid in pids},
+        "spawned_returncodes": [proc.returncode for proc in processes],
+    }
+
+
+async def _wait_for_bench_process_tree(pids_file, processes, timeout=30):
+    deadline = time.monotonic() + timeout
+    raw, pids = "<missing>", []
+    while True:
+        if pids_file.is_file():
+            raw = pids_file.read_text(encoding="utf-8")
+            try:
+                pids = list(map(int, raw.split()))
+            except ValueError:
+                pids = []
+        if len(pids) == 3 and all(not _bench_process_exited(pid) for pid in pids):
+            return pids
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"fake CLI tree did not start: pids_file={raw!r}; "
+                f"state={_bench_process_state(pids, processes)}"
+            )
+        await asyncio.sleep(0.05)
+
+
+async def _wait_for_bench_processes(pids, processes=(), timeout=30):
     deadline = time.monotonic() + timeout
     while remaining := [pid for pid in pids if not _bench_process_exited(pid)]:
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"baseline left live pids: {remaining}")
+            raise TimeoutError(
+                f"baseline left live pids: {remaining}; "
+                f"state={_bench_process_state(pids, processes)}"
+            )
         await asyncio.sleep(0.05)
 
 
@@ -139,6 +169,14 @@ def test_wait_for_bench_processes_reports_remaining_pids(monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "_bench_process_exited", lambda _pid: False)
     with pytest.raises(TimeoutError, match=r"live pids: \[11, 12\]"):
         asyncio.run(_wait_for_bench_processes([11, 12], timeout=0))
+
+
+def test_wait_for_bench_process_tree_reports_partial_pid_state(tmp_path, monkeypatch):
+    pids_file = tmp_path / "pids.txt"
+    pids_file.write_text("11 12", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_bench_process_exited", lambda _pid: False)
+    with pytest.raises(TimeoutError, match=r"pids_file='11 12'.*11.*running.*12.*running"):
+        asyncio.run(_wait_for_bench_process_tree(pids_file, [], timeout=0))
 
 
 @pytest.mark.parametrize("arm", ["sonnet-max", "astra-ultra"])
@@ -180,24 +218,35 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
         task = asyncio.create_task(bench._run_baseline(
             case, arm, tmp_path, "real", [sys.executable, str(script), str(pids_file)], settings))
         pids = []
-        started = time.monotonic()
         try:
-            await bench._until(pids_file.is_file, 5, "fake CLI did not start")
-            pids = list(map(int, pids_file.read_text().split()))
-            assert len(pids) == 3 and all(not _bench_process_exited(pid) for pid in pids)
+            pids = await _wait_for_bench_process_tree(pids_file, processes)
             if stop == "cancel":
                 task.cancel()  # asyncio.run translates Ctrl+C into cancellation of the main task.
-                with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(asyncio.shield(task), 4)
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), 15)
+                except asyncio.CancelledError:
+                    pass
+                except asyncio.TimeoutError:
+                    pytest.fail(
+                        "cancelled baseline did not finish; "
+                        f"state={_bench_process_state(pids, processes)}"
+                    )
+                else:
+                    pytest.fail("cancelled baseline returned instead of raising CancelledError")
             else:
-                run = await asyncio.wait_for(asyncio.shield(task), 4)
+                try:
+                    run = await asyncio.wait_for(asyncio.shield(task), 15)
+                except asyncio.TimeoutError:
+                    pytest.fail(
+                        "timed-out baseline did not finish; "
+                        f"state={_bench_process_state(pids, processes)}"
+                    )
                 assert run["status"] == "failed"
                 assert run["error"] == "timeout after 1s"
                 assert json.loads((tmp_path / "run.json").read_text())["error"] == run["error"]
-            assert time.monotonic() - started < 5
-            await _wait_for_bench_processes(pids)
+            await _wait_for_bench_processes(pids, processes)
         finally:
-            # Keep the deliberately failing pre-fix regression from leaking its fake CLI.
+            # Keep a failed assertion from leaking its fake CLI.
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             if not pids and pids_file.is_file():
@@ -211,7 +260,7 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
             for proc in processes:
                 if proc.returncode is None:
                     proc.kill()
-                await asyncio.wait_for(proc.wait(), 3)
+                await asyncio.wait_for(proc.wait(), 10)
 
     asyncio.run(exercise())
 

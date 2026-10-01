@@ -34,6 +34,19 @@ def _disabled(tmp_path):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
+def _wait_for_shadow_state(service, tmp_path, predicate, description, timeout=10):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"timed out waiting for {description}; "
+                f"state={{'latched': {service.latched!r}, 'disabled': {_disabled(tmp_path)!r}, "
+                f"'pending': {service.pending!r}, 'current': {service.current!r}, "
+                f"'counts': {service.counts!r}, 'events': {[line.get('type') for line in _lines(tmp_path)]!r}}}"
+            )
+        time.sleep(0.02)
+
+
 def _run(service, rids):
     for rid in rids:
         service.after_request(rid)
@@ -92,10 +105,12 @@ def test_a_stuck_worker_turns_it_off_and_its_late_result_is_dropped(tmp_path, mo
 
     monkeypatch.setattr(shadow, "compute_line", stuck)
     service.after_request("req_001")
-    deadline = time.monotonic() + 5
-    while service.latched is None and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert service.latched == "worker_stuck"
+    _wait_for_shadow_state(
+        service,
+        tmp_path,
+        lambda: service.latched == "worker_stuck" and (_disabled(tmp_path) or {}).get("reason") == "worker_stuck",
+        "worker_stuck latch and durable disabled state",
+    )
     release.set()
     assert service.drain(10)
     assert _lines(tmp_path, "request") == [] and _disabled(tmp_path)["reason"] == "worker_stuck"
