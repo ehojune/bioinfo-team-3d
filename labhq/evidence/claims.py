@@ -224,6 +224,9 @@ class Evidence(StrictModel):
     source_level: SourceLevel | None = None
     independence_group: str | None = Field(default=None, pattern=ID_PATTERN)  # same data -> same group
     assessment_reason: str | None = None
+    # Evidence slots of the plan step this row fills. A failed or empty attempt still fills its slot, so
+    # the gap shows as tried rather than silently absent.
+    slots: list[str] = []
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
