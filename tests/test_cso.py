@@ -1075,6 +1075,15 @@ def test_same_basename_input_path_is_not_rewritten_as_the_declared_output(instru
     assert "/datasets/report.md" in raw[0]["instruction"]
 
 
+@pytest.mark.parametrize("source", ["/datasets/report.md", "~/datasets/report.md", "C:/datasets/report.md"])
+def test_single_external_input_same_basename_requires_an_explicit_output_reference(source):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": f"Save a summary of {source}"}]
+    with pytest.raises(ValueError, match="ambiguous instruction paths"):
+        validate_steps(raw, {"analyst"}, 10)
+    assert raw[0]["instruction"] == f"Save a summary of {source}"
+
+
 def test_nested_home_output_path_is_rewritten_as_one_reference():
     raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"],
             "instruction": "Save ~/documents/reports/report.md"}]
@@ -1091,6 +1100,17 @@ def test_normalized_output_names_drive_dependency_inference():
     by = {step["id"]: step for step in steps}
     assert by["producer"]["outputs"] == ["outputs/answer.md"]
     assert by["consumer"]["depends_on"] == ["producer"]
+
+
+@pytest.mark.parametrize("source", ["/datasets/report.md", "~/datasets/report.md", "C:/datasets/report.md"])
+def test_external_input_basename_does_not_drive_dependency_inference(source):
+    raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "write report.md"},
+           {"id": "independent", "agent_id": "analyst", "outputs": [],
+            "instruction": f"Read {source}", "depends_on": []}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    by = {step["id"]: step for step in steps}
+    assert by["independent"]["depends_on"] == []
 
 
 @pytest.mark.asyncio

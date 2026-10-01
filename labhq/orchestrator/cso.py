@@ -356,23 +356,43 @@ def _instruction_path_action(instruction: str, start: int, end: int) -> str | No
     return kinds.pop() if len(kinds) == 1 else None
 
 
+def _external_output_reference(instruction: str, match: re.Match[str]) -> bool:
+    """True only when an external-form path is directly governed by an output action."""
+    if _instruction_path_action(instruction, match.start(), match.end()) != "output":
+        return False
+    left = max(0, match.start() - 200)
+    actions = [action for action in _OUTPUT_ACTION.finditer(instruction, left, match.start())]
+    if not actions:
+        return False
+    bridge = instruction[actions[-1].end():match.start()]
+    return re.fullmatch(r"\s*(?:(?:to|at|as|into)\s+)?", bridge, re.IGNORECASE) is not None
+
+
+def _external_reference(match: re.Match[str]) -> bool:
+    value = match.group(0).replace("\\", "/")
+    return value.startswith(("/", "~/")) or re.match(r"^[A-Za-z]:/", value) is not None
+
+
+def _instruction_references_artifact(instruction: str, inner: str) -> bool:
+    """Match only workspace artifact forms; absolute/home paths are external inputs or destinations."""
+    return any(not _external_reference(match) for match in _output_reference(inner).finditer(instruction))
+
+
 def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[str, int, list[str]]:
     pattern = _output_reference(inner)
     matches = list(pattern.finditer(instruction))
     # More than one same-basename reference that includes an absolute/home path can mix an input and output.
     # This shape is ambiguous regardless of wording, so do not rely on an open-ended language list.
-    def external_form(match: re.Match[str]) -> bool:
-        value = match.group(0).replace("\\", "/")
-        return value.startswith(("/", "~/")) or re.match(r"^[A-Za-z]:/", value) is not None
-
-    if len(matches) > 1 and any(external_form(match) for match in matches):
+    if len(matches) > 1 and any(_external_reference(match) for match in matches):
         return instruction, 0, [match.group(0) for match in matches]
     rewritten = 0
     ambiguous = []
 
     def replace(match: re.Match[str]) -> str:
         nonlocal rewritten
-        if _instruction_path_action(instruction, match.start(), match.end()) == "output":
+        action = _instruction_path_action(instruction, match.start(), match.end())
+        if action == "output" and (not _external_reference(match) or
+                                   _external_output_reference(instruction, match)):
             rewritten += 1
             return f"./{rel}"
         ambiguous.append(match.group(0))
@@ -485,8 +505,8 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
             output_names = [o for o in other["outputs"] if producers.get(o) == [other["id"]] and o not in own]
             id_referenced = bool(other["id"] and re.search(
                 r"(?<![\w])" + re.escape(other["id"]) + r"(?![\w])", s["instruction"]))
-            output_referenced = any(_output_reference(
-                o[len("outputs/"):] if o.startswith("outputs/") else o).search(s["instruction"])
+            output_referenced = any(_instruction_references_artifact(
+                s["instruction"], o[len("outputs/"):] if o.startswith("outputs/") else o)
                                     for o in output_names)
             if not id_referenced and not output_referenced:
                 continue
