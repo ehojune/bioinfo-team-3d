@@ -40,6 +40,7 @@ SLURM_STATE = {
     "COMPLETED": "completed", "CANCELLED": "cancelled",
     "FAILED": "failed", "TIMEOUT": "failed", "OUT_OF_MEMORY": "failed", "NODE_FAIL": "failed",
     "BOOT_FAIL": "failed", "DEADLINE": "failed", "PREEMPTED": "failed",
+    "REVOKED": "failed",  # federation sibling removed because another cluster started it; not tracked here
 }
 # Name last: other users' job names may contain the delimiter.
 SQUEUE_FORMAT = "%i|%T|%r|%j"
@@ -396,6 +397,11 @@ class Scheduler:
         records = parse_slurm_sacct(p.stdout)
         if p.stdout.strip() and not records:
             raise RuntimeError("sacct returned unexpected output; job state is unknown")
+        # Past squeue the controller no longer holds the job as active, so it has ended: a state this table
+        # does not know is a finish with unknown outcome, not a job that stays active forever (#186).
+        for r in records:
+            if r.state == "unknown":
+                r.state, r.detail = "unknown_finished", f"unrecognized Slurm state {r.raw_state}"
         # Accounting can lag behind the controller: keep squeue's final state, else let the watcher retry.
         return slurm_job(job_id, records) or live or JobInfo(job_id=job_id, state="missing")
 

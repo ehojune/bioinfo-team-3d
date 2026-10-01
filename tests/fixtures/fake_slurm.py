@@ -9,7 +9,7 @@ from __future__ import annotations
 from subprocess import CompletedProcess
 
 COMMANDS = ("sbatch", "squeue", "sacct", "scancel")
-TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL"}
+TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL", "REVOKED"}
 INVALID = "slurm_load_jobs error: Invalid job id specified"
 
 

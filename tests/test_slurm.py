@@ -363,3 +363,58 @@ def test_cluster_directive_is_found_before_submission(body, option):
                                   "#SBATCH --cluster-constraint=fast\necho hi"])
 def test_other_directives_are_not_cluster_choices(body):
     assert slurm_cluster_directive(body) is None
+
+
+def _runner(tmp_path) -> tuple[Runner, FakeSlurm]:
+    s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.hpc.scheduler, s.hpc.user = "slurm", "fixture"
+    runner = Runner(s)
+    fake = FakeSlurm()
+    runner.scheduler._run = fake
+    return runner, fake
+
+
+@pytest.mark.parametrize("controller_holds_it", [True, False])
+def test_revoked_federation_sibling_is_a_terminal_failure(controller_holds_it):
+    # #186: REVOKED (a finished federation sibling) read as "unknown", so the watcher never woke the agent.
+    backend, fake = slurm()
+    job_id = backend.submit("/w/j.sh", "align")
+    fake.set(job_id, "REVOKED")
+    if not controller_holds_it:
+        fake.account(job_id)
+        fake.purge(job_id)
+    info = backend.status(job_id)
+    assert (info.state, info.raw_state, info.terminal) == ("failed", "REVOKED", True)
+
+
+async def test_runner_wakes_once_after_a_revoked_job(tmp_path):
+    runner, fake = _runner(tmp_path)
+    try:
+        job_id = runner.scheduler.submit("/w/j.sh", "align")
+        await runner._on_track({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+        fake.set(job_id, "REVOKED")
+        fake.account(job_id)
+        fake.purge(job_id)
+        await runner._poll_jobs()
+        woke = [e for e in runner.store.pending() if e["type"] == "jobs.finished"]
+        assert len(woke) == 1 and woke[0]["data"]["jobs"][0]["state"] == "failed"
+    finally:
+        runner.store.close()
+
+
+def test_unrecognized_state_is_finished_only_after_the_controller_forgets_the_job():
+    # Same class as #186: a state missing from SLURM_STATE must not keep a gone job "active" forever.
+    backend, fake = slurm()
+    job_id = backend.submit("/w/j.sh", "align")
+    fake.set(job_id, "FUTURE_STATE")
+    live = backend.status(job_id)
+    assert (live.state, live.terminal) == ("unknown", False)  # slurmctld still holds it: keep watching
+    fake.account(job_id)
+    fake.purge(job_id)
+    gone = backend.status(job_id)
+    assert (gone.state, gone.raw_state, gone.terminal) == ("unknown_finished", "FUTURE_STATE", True)
+    assert "FUTURE_STATE" in gone.detail
