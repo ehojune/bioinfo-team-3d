@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:56 | [`f4d5f12`](https://github.com/ehojune/bioinfo-team-3d/pull/152/commits/f4d5f12) | **README 맨 위 배지가 종류별 개수 대신 연결된 대상을 하나씩 보여 줍니다** (#63). 예전 배지는 "builtin MCP 3"처럼 개수만 적혀 있어서 눌러도 어떤 도구인지 알 수 없었습니다. 이제 Claude Code·Codex(직원 수와 모델), SGE·PBS, labhq MCP, PubMed, bioRxiv / medRxiv, bioinfo-agent, Paper2Agent가 각자 배지로 나오고, 누르면 공식 페이지나 README 해당 절로 갑니다. 모두 직원 설정과 `HpcSettings`에서 `scripts/integrations.py`가 만들며, 쓰는 직원이 없거나 지원하지 않는 Gemini·Slurm은 배지를 만들지 않습니다. |
 | 13:18 | [`8d92fd2`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/8d92fd2) | **`prefix_args`에 CLI 옵션이 있으면 이어 묻기·상담을 시작하지 않습니다** (#36). 읽기 전용 실행은 `extra_args`를 빼지만 `prefix_args`는 모든 인자 앞에 그대로 붙어서, Codex 실측에서 `exec` 앞의 sandbox 우회 옵션이 `-s read-only`를 넘어 파일을 썼습니다. `prefix_args`에는 script 경로만 두고 옵션은 `extra_args`에 두세요. |
 | 12:59 | [`93b7ab2`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/93b7ab2) | **README §10에 읽기 전용 profile과 사후 파일 비교를 적었습니다** (#36). Claude·Codex 각각 무엇을 끄는지, 사후 비교가 무엇을 못 보는지(Windows ctime, 감시 폴더 밖, managed hook)를 한계로 남겼습니다. |
 | 12:58 | [`abdbae8`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/abdbae8) | **이어 묻기·상담이 파일을 바꾸면 결과를 실패로 하고 알립니다** (#36, Codex 리뷰). 러너가 실행 전후로 작업 폴더와 쓰기 가능한 폴더를 비교해, 바뀌면 피드에 경고를 띄우고 manifest `read_only_changes`에 남깁니다. 되돌리지는 않고, 항목이 50,000개를 넘으면 실행하지 않습니다. |
