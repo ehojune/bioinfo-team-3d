@@ -72,6 +72,7 @@ async def test_staff_subprocess_drops_parent_claude_session_markers(tmp_path, mo
     }
     for key, value in {**blocked, **kept}.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", "parent-bash")
     script = tmp_path / "env_agent.py"
     script.write_text(
         "import json, os, pathlib, sys\n"
@@ -82,17 +83,23 @@ async def test_staff_subprocess_drops_parent_claude_session_markers(tmp_path, mo
     )
     output = tmp_path / "env.json"
     settings = Settings()
+    settings.engines.claude_code.env = {"CLAUDE_CODE_GIT_BASH_PATH": "configured-bash"}
     agent = AgentSpec(id="a", name="A", role="test", engine=Engine.cli, builtin_mcp=[],
-                      cli=CliSpec(command=[sys.executable, str(script), str(output)], output="jsonl"))
+                      cli=CliSpec(command=[sys.executable, str(script), str(output)], output="jsonl",
+                                  env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "configured-limit"}))
     wd = tmp_path / "wd"
     wd.mkdir()
     ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=wd, settings=settings,
                      mcp_servers=[], env={}, emit=_emit, prompt="x")
-    result = await get_adapter(agent.engine, settings).run(ctx)
+    adapter = get_adapter(agent.engine, settings)
+    adapter.engine = "claude_code"  # exercise base merging with an engine-level env and the small fake CLI
+    result = await adapter.run(ctx)
     received = json.loads(output.read_text(encoding="utf-8"))
     assert result.ok
     assert not (blocked.keys() & received.keys())
     assert {key: received[key] for key in kept} == kept
+    assert received["CLAUDE_CODE_GIT_BASH_PATH"] == "configured-bash"
+    assert received["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "configured-limit"
 
 
 @pytest.mark.parametrize("windows", [True, False])
