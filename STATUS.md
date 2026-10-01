@@ -8,6 +8,30 @@
 - 실행한 것: 수정 중 e2e 6회차에서 `recruit.suggested`·HPC 이벤트 누락을 재현했다. 최종 변경 파일별 20회 실패 0, 전체 pytest 3회 각각 1889 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
 - 바뀐 파일: `tests/test_bench.py`, `tests/test_e2e_mock.py`, `tests/test_semantics_shadow_breaker.py`, `STATUS.md`. 새 의존성과 patch note 변경은 없다.
 
+## 2026-10-01 · PR #176 3회차 — 참고 공개 가림 부류 종료
+
+- 결론: 같은 부류의 P1 4154275555를 닫았다. 공개 게시 전에 path와 PI 기본 GitHub 참고를 한 함수에서 정규화해 경로와 저장소 정체성을 함께 가린다. P3 4154275565의 README 중복도 합쳤다.
+- 바뀐 것: `mask_published_references`가 POSIX·Windows drive·UNC·백슬래시·대소문자·home·URL 표기를 다루고, GitHub URL·`owner/name`·clone 폴더명을 가린다. 표기별 회귀 11건을 한 표로 묶었다. README 참고 항목은 2개에서 1개, 39,376자에서 38,282자로 줄었다. 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 표는 수정 전 5 failed/6 passed, 수정 뒤 11 passed였다. 관련 test는 154 passed/1 skipped, 전체 pytest 1892 passed/22 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`, `README.md`.
+
+## 2026-10-01 · PR #176 봇 리뷰 P1 3건 — 짧은 home 참고와 공용 경로 scanner
+
+- 결론: P1 3건을 닫았다. 짧은 home 참고를 모든 러너 표현에서 가리고, 경로·통제 구역 탐색은 공용 scanner로 입력 길이에 비례해 돈다.
+- 바뀐 것: path mask의 길이 필터를 없앴다. `mentions_zone`·`touches`·`touches_resolved`·`sanitize`는 separator run 첫머리만 검사하는 scanner를 함께 쓴다. 패치노트는 건드리지 않았다.
+- 실행한 것: 2회차 회귀 4개는 수정 전 각각 약 3초로 2초 상한을 넘었고 수정 뒤 합계 0.84초였다. 전체 pytest 1881 passed/22 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/intake.py`, `labhq/policy.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`, `tests/test_policy.py`, `tests/test_github_reporter.py`.
+
+## 2026-10-01 · #36 PR A 후속 8건 — 참고 자료 정보 경계와 폴더 링크 검사를 판정 하나로
+
+- 결론: 참고 자료의 경로·URL이 공개 보고·라운드 기록·prompt로 새는 길과, 참고·upstream·project 폴더의 링크·통제 구역 검사를 각각 공통 함수로 모았다. #123 #124 #130 #131 #132 #133 #134를 고쳤다. #125의 확인 조건은 #122에서 이미 테스트와 함께 들어가 있어 판정만 공통 함수로 옮겼다.
+- 바뀐 것: `intake.path_pattern`·`url_pattern`(구분자 run, drive·Git Bash, JSON `\\`·`\/`·`\uXXXX`, 기본 포트, 대소문자)을 prompt 지우기(#133)와 게시 가림이 함께 쓴다. 프로젝트 보고와 라운드 기록은 `github.publish_clean` 하나를 쓴다(#130). 가림 대상은 `published_reference_masks`가 정한다: 모든 path 참고, PI 기본 github(URL·`owner/repo`)·url(#123). `~` 참고는 적은 그대로 저장하고 러너가 자기 home으로 푼다(#124). 공개 가드는 webhook path·session·code도 가린다(#134). 실경로 게이트는 후보 256개를 넘으면 셸·MCP·Glob을 ask로 보낸다(#131). `intake._walk`·`overlaps_zone` 위에 참고(엄격)·upstream(구역 링크가 있으면 열지 않음)·project(열되 Claude 거부 규칙) 검사를 얹었다(#132). README §4·§8·§10을 맞췄다.
+- 실행한 것: issue마다 회귀 test를 먼저 썼고 수정 전 코드에서 모두 실패함을 확인했다(새 test 11개·12건, 기존 루트 검사 1건 강화). 링크 훑기 비용을 쟀다: Windows 11에서 항목 20,200개가 1,078 ms에서 33 ms로 줄었다(ismount를 POSIX에서만 부름). 전체 pytest 1555 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh`, `git diff --check` 통과. 검증에서 여섯 가지를 더 고쳤다: project 링크의 별칭(`b`가 `a`와 같은 폴더, 안쪽 별칭, 폴더 자신으로 돌아오는 링크)에도 거부 규칙을 붙이고, 훑기가 통제 구역 안을 열거나 그 안의 링크 이름을 로그에 남기지 않게 했다. 가림 정규식이 긴 줄을 위치마다 다시 훑지 않게 했다. 구분자로 여는 match는 구분자 run 첫머리에서만 시작하고, 나머지 열린 반복은 상한으로 묶었다(공백 없는 60 KB 줄 여섯 개: 267초 → 0.5초, 구분자 수에는 상한 없음). `CORPlice:pw@` 같은 도메인 계정 userinfo가 다시 가려진다(이 PR에서 생긴 회귀). 공개 가드가 통제 구역을 참고 가림보다 먼저 본다(`/refs` 참고가 `/srv/refs/vault` 줄을 가려 구역 판정을 피하던 회귀). IPv6 host URL 참고도 query가 떨어지고 가려진다. 새 test 5건, 기존 1건 강화.
+- 미해결: 자체 호스팅 webhook처럼 이름 없이 path에 든 비밀값은 못 가린다(README §10). PI 기본 url이 공개 사이트면 그 host URL도 보고에서 가려진다. project 링크 거부 규칙은 Claude만 따르고 Codex·셸은 막지 못한다. Windows에서 대소문자만 다른 유지 참고가 거부 경로와 함께 지워질 수 있다. 패치노트는 PR 번호가 생긴 뒤 쓴다. 거부 규칙은 적힌 경로 비교라 8.3 짧은 이름 같은 표기는 남을 수 있다. 나머지 P2는 후속 issue로 넘긴다.
+- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `labhq/integrations/rounds.py`, `labhq/policy.py`, `labhq/runner/daemon.py`, `tests/test_intake_references.py`, `tests/test_github_reporter.py`, `tests/test_round_records.py`.
+
 ## 2026-10-01 · PR #164 2회차 봇 리뷰 P1 — 읽기 전용 workspace 지시 경계 통합
 
 - 결론: 읽기 전용 실행이 workspace에서 읽을 수 있는 지시·memory·skill·설정 이름을 한 판정 함수로 모았다. 깊이와 숨김 폴더에 관계없이 Claude Code는 차단 목록으로 제외하고, 끌 수 없는 agents-md와 Codex project 지시는 실행 전에 거부한다.

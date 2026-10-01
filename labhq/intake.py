@@ -6,7 +6,10 @@ and an optional depth (about 30/60/90 minutes of work). Older plans used plain s
 
 from __future__ import annotations
 
+import functools
+import itertools
 import os
+import posixpath
 import re
 import stat
 import unicodedata
@@ -278,24 +281,61 @@ def _lexical_root(root: str, settings: Any) -> str:
     return _norm(str(settings.path(root)))
 
 
-def restricted_zones(settings: Any) -> list[str]:
-    return [_norm(zone.path) for zone in settings.policy.data_zones if zone.level == "restricted"]
+_HOME_DIR = re.compile(r"(?:[A-Za-z]:)?(?:[\\/][^\\/]+)*?[\\/](?:home|Users)[\\/][^\\/]+|[\\/]root", re.IGNORECASE)
+
+
+def _home_relative(path: str) -> str | None:
+    """`~/x` compared as written: whose home it is depends on the account that opens it (#124).
+
+    An absolute path under a home directory (`/home/pi/refs`, `C:\\Users\\pi\\refs`) also yields `~/refs`,
+    so a root written for the runner's account still admits `~/refs/x` typed on another host.
+    """
+    if path == "~" or path.startswith(("~/", "~\\")):
+        rest = path[1:]
+    elif match := _HOME_DIR.match(path):
+        rest = path[match.end():]
+        if rest and rest[0] not in "\\/":
+            return None
+    else:
+        return None
+    return posixpath.normpath("~/" + rest.replace("\\", "/").lstrip("/")).casefold()
+
+
+def _home_pair(path: str, other: str) -> tuple[str, str] | None:
+    """Both paths home-relative, when either is written with `~`; this host's home may not be the runner's."""
+    if not (path.startswith("~") or other.startswith("~")):
+        return None
+    a, b = _home_relative(path), _home_relative(other)
+    return (a, b) if a is not None and b is not None else None
 
 
 def overlaps_restricted(path: str, settings: Any) -> bool:
     normalized = _norm(path)
-    return any(_inside(normalized, zone) or _inside(zone, normalized) for zone in restricted_zones(settings))
+    for zone in settings.policy.data_zones:
+        if zone.level != "restricted":
+            continue
+        pairs = [(normalized, _norm(zone.path)), _home_pair(path, zone.path)]
+        if any(pair and (_inside(pair[0], pair[1]) or _inside(pair[1], pair[0])) for pair in pairs):
+            return True
+    return False
 
 
 def check_reference_path(value: str, settings: Any) -> str:
-    """Lexical gateway check; the runner checks again with resolved paths before exposing a directory."""
-    path = os.path.expanduser(value)
-    normalized = _norm(path)
-    if not any(_inside(normalized, _lexical_root(root, settings)) for root in _configured_roots(settings)):
+    """Lexical gateway check; the runner checks again with resolved paths before exposing a directory.
+
+    A `~` path is stored as written and the runner expands it with its own account's home (#124): the
+    gateway may run on another host or account (Windows gateway, WSL or HPC runner). It is compared
+    home-relative with roots written as `~/refs` or under a home folder (`/home/pi/refs`).
+    """
+    normalized = _norm(value)
+    # Only a `~` value is compared home-relative: an absolute path in someone else's home stays outside.
+    if not any(_inside(normalized, _lexical_root(root, settings)) or
+               (value.startswith("~") and (pair := _home_pair(value, root)) is not None and _inside(*pair))
+               for root in _configured_roots(settings)):
         raise ValueError(f"path reference {value!r} is outside runner.reference_roots and project local_dir")
-    if overlaps_restricted(path, settings):
+    if overlaps_restricted(value, settings):
         raise ValueError(f"path reference {value!r} overlaps a restricted data zone")
-    return path
+    return value
 
 
 def effective_references(requested: list[Reference], use_defaults: bool, settings: Any) -> list[dict[str, Any]]:
@@ -374,64 +414,332 @@ def _is_link(entry: os.DirEntry) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
+def _within(path: Path, root: Path) -> bool:
+    return path == root or path.is_relative_to(root)
+
+
+def overlaps_zone(path: Path, zones: list[Path]) -> bool:
+    """The one judgement for a real path against resolved restricted zones: inside one, or holding one."""
+    return any(_within(path, zone) or _within(zone, path) for zone in zones)
+
+
+def _walk(directory: Path, max_entries: int, max_depth: int, follow_outward: bool = False,
+          zones: list[Path] | tuple[Path, ...] = ()):
+    """Entries below `directory` that can lead elsewhere, as (kind, path, info), listed without following links.
+
+    kind is "link" (info: the resolved target, or None when it cannot be resolved), "mount", or a stop:
+    "limit" (info: why) or "unreadable". With `follow_outward`, a directory link whose target lies outside
+    `directory` is listed through the link path, sharing the caps, so a second link behind it is seen too.
+    With `zones`, nothing inside a restricted zone is listed and no link is followed into a folder holding
+    one: listing a zone reads its entries on the runner, and only the way into it is this check's concern.
+    """
+    real_root = directory.resolve()
+    if any(_within(real_root, zone) for zone in zones):
+        return
+    visited = {real_root}
+    seen = 0
+    stack: list[tuple[Path, Path, int]] = [(directory, real_root, 0)]  # (as listed, real path, depth)
+    while stack:
+        current, real, depth = stack.pop()
+        try:
+            with os.scandir(current) as iterator:
+                entries = list(itertools.islice(iterator, max_entries - seen + 1))
+            for entry in entries:
+                seen += 1
+                path = Path(entry.path)
+                if seen > max_entries:
+                    yield "limit", path, f"하위 항목이 상한 {max_entries}개를 넘어 링크를 다 확인할 수 없음"
+                    return
+                if _is_link(entry):
+                    try:
+                        target: Path | None = path.resolve()
+                    except (OSError, RuntimeError, ValueError):
+                        target = None
+                    yield "link", path, target
+                    if (follow_outward and target is not None and target not in visited
+                            and not _within(target, real_root) and target.is_dir() and not overlaps_zone(target, zones)):
+                        visited.add(target)
+                        if depth + 1 > max_depth:
+                            yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
+                            return
+                        stack.append((path, target, depth + 1))
+                    continue  # otherwise the target is listed where it really lives
+                if entry.is_dir(follow_symlinks=False):
+                    child = real / entry.name
+                    if any(_within(child, zone) for zone in zones):
+                        continue  # a zone inside the folder: not listed; the zone's own deny rules name it
+                    # On Windows a mount point is a reparse point (caught above); ismount costs ~3 ms a folder there.
+                    if os.name != "nt" and os.path.ismount(entry.path):
+                        yield "mount", path, None
+                        continue
+                    if depth + 1 > max_depth:
+                        yield "limit", path, f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
+                        return
+                    stack.append((path, child, depth + 1))
+        except OSError:
+            yield "unreadable", current, None
+            return
+
+
+def _name(path: Path, directory: Path) -> str:
+    return path.relative_to(directory).as_posix() or "."
+
+
 def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> str | None:
-    """Why `directory` must not be exposed, or None (#36).
+    """Why reference `directory` must not be exposed, or None (#36).
 
     Checking only the directory itself lets `reference/link/raw.tsv` reach a restricted zone through a
-    symlink or junction below it. Every entry is listed without following links; a link must resolve inside
-    the directory, and a mount point below it is refused because its contents live elsewhere. A directory
-    too large or too deep to list within the caps, or one that cannot be listed, is refused (fail closed).
-    Links made after this check and hard links are not seen; README §10 says so.
+    symlink or junction below it. A reference is a promise about what the task reads, so a link must resolve
+    inside the directory, and a mount point below it is refused because its contents live elsewhere. A
+    directory too large or too deep to list within the caps, or one that cannot be listed, is refused (fail
+    closed). Links made after this check and hard links are not seen; README §10 says so.
     """
-    seen = 0
-    stack: list[tuple[Path, int]] = [(directory, 0)]
-    while stack:
-        current, depth = stack.pop()
-        try:
-            with os.scandir(current) as entries:
-                for entry in entries:
-                    seen += 1
-                    if seen > max_entries:
-                        return f"하위 항목이 상한 {max_entries}개를 넘어 링크를 다 확인할 수 없음"
-                    name = Path(entry.path).relative_to(directory).as_posix()
-                    if _is_link(entry):
-                        try:
-                            target = Path(entry.path).resolve()
-                        except (OSError, RuntimeError, ValueError):
-                            return f"하위 링크 {name}을 풀 수 없음"
-                        if any(target == zone or target.is_relative_to(zone) or zone.is_relative_to(target)
-                               for zone in zones):
-                            return f"하위 링크 {name}이 통제 데이터 구역을 가리킴"
-                        if not (target == directory or target.is_relative_to(directory)):
-                            return f"하위 링크 {name}이 참고 폴더 밖을 가리킴"
-                        continue  # the target is listed where it really lives
-                    if entry.is_dir(follow_symlinks=False):
-                        if os.path.ismount(entry.path):
-                            return f"하위 {name}에 다른 파일 시스템이 mount되어 있음"
-                        if depth + 1 > max_depth:
-                            return f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
-                        stack.append((Path(entry.path), depth + 1))
-        except OSError:
-            return f"하위 폴더 {Path(current).relative_to(directory).as_posix() or '.'}를 읽을 수 없음"
+    for kind, path, info in _walk(directory, max_entries, max_depth):
+        name = _name(path, directory)
+        if kind == "link":
+            if info is None:
+                return f"하위 링크 {name}을 풀 수 없음"
+            if overlaps_zone(info, zones):
+                return f"하위 링크 {name}이 통제 데이터 구역을 가리킴"
+            if not _within(info, directory):
+                return f"하위 링크 {name}이 참고 폴더 밖을 가리킴"
+        elif kind == "mount":
+            return f"하위 {name}에 다른 파일 시스템이 mount되어 있음"
+        elif kind == "unreadable":
+            return f"하위 폴더 {name}를 읽을 수 없음"
+        else:
+            return info
     return None
+
+
+def zone_links(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> tuple[list[Path], str | None]:
+    """Links below a folder a task can write to that lead into a restricted zone or cannot be resolved (#132).
+
+    Unlike a reference, an earlier step's workspace or a project clone may link outside itself (a genome, a
+    shared cache), so only the zone is judged, with the same `overlaps_zone` as references. A directory link
+    leaving the folder is listed through, so a zone two links away is found as well. Returns the offending
+    link paths and, when the listing could not finish, why; the caller decides whether that is fatal.
+
+    Deny rules match the path as written, so every other link that leads to an offending one is returned
+    too: `b` naming the same folder as `a`, `c` naming the subfolder that holds it, `loop` naming the folder
+    itself. A folder listed once is not listed again through each alias; its links are matched by real path.
+    """
+    found: list[Path] = []
+    links: list[tuple[Path, Path]] = []
+    incomplete = None
+    for kind, path, info in _walk(directory, max_entries, max_depth, follow_outward=True, zones=zones):
+        if kind == "link":
+            if info is None or overlaps_zone(info, zones):
+                found.append(path)
+            else:
+                links.append((path, info))
+        elif kind == "mount":
+            incomplete = f"하위 {_name(path, directory)}에 다른 파일 시스템이 mount되어 있어 확인할 수 없음"
+            break
+        elif kind == "unreadable":
+            incomplete = f"하위 폴더 {_name(path, directory)}를 읽을 수 없음"
+            break
+        else:
+            incomplete = info
+            break
+    return found + _links_leading_to(found, links), incomplete
+
+
+def _location(path: Path) -> Path | None:
+    """Where a directory entry really is: its folder resolved, the entry itself not followed."""
+    try:
+        return path.parent.resolve() / path.name
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _links_leading_to(found: list[Path], links: list[tuple[Path, Path]]) -> list[Path]:
+    """Links (path, target) whose target holds one of `found`, or a link already taken, until none is added.
+
+    A taken link is denied whole: whatever route reaches a zone link through it is below its path.
+    """
+    reached = [loc for loc in map(_location, found) if loc is not None]
+    taken: list[Path] = []
+    pending = list(links)
+    while reached and pending:
+        hits = [(path, target) for path, target in pending if any(_within(loc, target) for loc in reached)]
+        if not hits:
+            break
+        pending = [link for link in pending if link not in hits]
+        taken += [path for path, _target in hits]
+        reached = [loc for loc in (_location(path) for path, _target in hits) if loc is not None]
+    return taken
+
+
+# ---------- how a reference may be echoed in text: one rule for prompts and published texts ----------
+
+# Either separator, or a run of them: JSON doubles a backslash (`C:\\refs`) and may escape a slash (`\/srv`).
+# These patterns run over whole reports and published files, where a long run (`/////`, `/a/a/a`, `a,a,a`)
+# was rescanned from every position inside it, quadratic in its length. A match that opens with a separator
+# therefore starts only where a run of them starts (`_RUN_START`), and other open-ended repeats are bounded.
+SEPARATOR = r"[\\/]+"
+_RUN_START = r"(?<![\\/])"
+_PATH_END = r"(?![\w-]|\.[\w-])"  # `/srv/refs/a` is not `/srv/refs/atlas` or `a.bak`, but ends a sentence
+
+
+def _text(value: str) -> str:
+    """Literal text, where a non-ASCII character may also be a JSON `\\uXXXX` escape (json.dumps default)."""
+    out = []
+    for char in value:
+        if ord(char) < 0x80:
+            out.append(re.escape(char))
+            continue
+        units = char.encode("utf-16-be")
+        escaped = "".join(f"\\\\u{int.from_bytes(units[i:i + 2], 'big'):04x}" for i in range(0, len(units), 2))
+        out.append(f"(?:{re.escape(char)}|{escaped})")
+    return "".join(out)
+
+
+# Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
+# Up to eight folders may come before the home folder (`/BiO/home/u01`, `/mnt/c/Users/pi`).
+_ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
+             rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
+             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
+
+
+def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
+    """Regex source for a runner path as engines, shells and JSON encoders echo it (match with re.IGNORECASE).
+
+    Any separator or run of separators, a drive letter or Git Bash's `/c/...` form, and non-ASCII characters
+    as JSON escapes. With `boundary` the match must end the path component, so a sibling sharing the prefix
+    is not touched; without it a longer name is matched too (safe when deciding what not to publish). With
+    `any_home`, a `~` path also matches under any home folder: the runner expands it with an account the
+    gateway does not know.
+    """
+    value = value.rstrip("\\/") or value
+    head, rest = "", value
+    drive = re.match(r"([A-Za-z]):(.*)$", value, re.DOTALL)
+    if drive:
+        head, rest = rf"(?:{drive[1]}:|{_RUN_START}{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
+    elif any_home and (value == "~" or value.startswith(("~/", "~\\"))):
+        head, rest = _ANY_HOME, value[1:]
+    elif value.startswith(("/", "\\")):
+        head = _RUN_START
+    body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
+    return head + body + (_PATH_END if boundary else "")
+
+
+_SLASH = r"\\?/"  # one URL slash, JSON-escaped or not
+_URL_REST = r"(?:\\?/[^\s\"'<>)\],\\/?#;]*)*(?:[?#;][^\s\"'<>)\]]*)?"  # deeper path, query, fragment
+
+
+def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
+    """Regex source for an http(s) URL as text carries it (match with re.IGNORECASE): with or without the
+    scheme, userinfo or `www.`, the default port written out (`host:443`), JSON-escaped slashes
+    (`https:\\/\\/host\\/x`) and, by default, a trailing slash. Deeper paths and the query are not included."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").removeprefix("www.")
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    port_re = (rf":{port}" if port and port != {"http": 80, "https": 443}.get(parts.scheme.lower())
+               else r"(?::(?:80|443))?")
+    path = "".join(_SLASH + _text(segment) for segment in parts.path.rstrip("/").split("/")[1:])
+    host_re = rf"\[{_text(host)}\]" if ":" in host else _text(host)  # `hostname` drops an IPv6 host's brackets
+    # Scheme and userinfo are bounded (see `_RUN_START`); the host and path still match after a longer one.
+    return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]{{0,31}}:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]{{1,256}}@)?"
+            rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
+
+
+def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[str]]:
+    """URL patterns and repository-identity patterns for one private PI reference."""
+    github = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)", value, re.IGNORECASE)
+    if kind != "github" or not github:
+        return [url_pattern(value, trailing_slash=False) + _URL_REST], []
+    owner, repo = github.groups()  # the repository, whichever branch the reference named
+    url = url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST
+    # `SEPARATOR` accepts POSIX, drive, UNC, native backslash and JSON-escaped clone paths. The clone folder
+    # alone is also repository identity: an agent may shorten `C:\src\owner\repo` to `C:\src\repo` or `repo`.
+    identities = [rf"(?<![\w.-]){_text(owner)}{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}",
+                  rf"(?<![\w.-]){_text(repo)}(?:\.git)?{_PATH_END}"]
+    return [url], identities
+
+
+REFERENCE_PATH_MASK = "<reference-path>"
+PRIVATE_REFERENCE_MASK = "<private-reference>"
+
+
+def mask_published_references(text: str, settings: Any, requests: Any) -> str:
+    """Normalize and mask references before a project report or round record is published.
+
+    - path references from any source: a runner path names a private folder (#36);
+    - github and url references from the PI's defaults (#123): a private repository name or a personal wiki
+      that the PI set once for every request, not something this request chose to point at. DOI and PMID
+      name published literature and stay.
+    Path spellings accept POSIX, drive, extended/UNC prefixes, either separator, case variants and expanded
+    homes. GitHub spellings include URLs, `owner/name` with either separator and the local clone folder name.
+    Project reports and round records call this one rule (#130).
+    """
+    entries = [(r.kind, r.value, "pi_profile") for r in settings.pi_profile.references]
+    for req in requests:
+        entries += [(r.get("kind"), str(r.get("value")), r.get("source")) for r in req.get("references") or []
+                    if isinstance(r, dict) and r.get("value")]
+    paths = {value for kind, value, _ in entries if kind == "path"}
+    links = {(kind, value) for kind, value, source in entries
+             if kind in ("github", "url") and source == "pi_profile"}
+    masks = _compiled_publish_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}), frozenset(links))
+    for pattern, replacement in masks:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+@functools.lru_cache(maxsize=32)
+def _compiled_publish_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = frozenset()
+                            ) -> tuple[tuple[re.Pattern[str], str], ...]:
+    link_patterns = [_private_reference_patterns(kind, value)
+                     for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)]
+    # Whole private URLs go first. Paths follow so an explicit path containing a repository name is hidden
+    # as a path; repository identities go last to catch clone paths which were never path references.
+    masks = [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
+             for urls, _identities in link_patterns for source in urls]
+    # Even `~` and `~/x` are valid references. Do not use length as a proxy for safety: the former expands
+    # to a runner account's whole home and the gateway cannot know that account in advance.
+    values = {v.rstrip("\\/") or v for v in paths if v}
+    masks += [(re.compile(path_pattern(v, boundary=False, any_home=True), re.IGNORECASE), REFERENCE_PATH_MASK)
+              for v in sorted(values, key=len, reverse=True) if v]
+    masks += [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
+              for _urls, identities in link_patterns for source in identities]
+    return tuple(masks)
 
 
 def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tuple[str, ...] = ()) -> str:
     """Remove refused path references from a prompt: any engine would otherwise still open what it names.
 
-    Only the path itself or a path below it is replaced, and kept references are shielded first, longest
-    first, so refusing `/srv/refs/a` leaves `/srv/refs/atlas` and `/srv/refs/a b` intact.
+    Every form `path_pattern` knows is replaced, including JSON-escaped ones inside a plan (#133). Only the
+    path itself or a path below it is replaced, and kept references are shielded first, longest first, so
+    refusing `/srv/refs/a` leaves `/srv/refs/atlas` and `/srv/refs/a b` intact.
     """
-    shielded: dict[str, str] = {}
+    shielded: list[str] = []
+
+    def shield(match: re.Match) -> str:
+        shielded.append(match.group(0))
+        return f"\x00kept{len(shielded) - 1}\x00"
+
     refused_set = {v for v in refused if v}
     for value in sorted(refused_set | {v for v in kept if v}, key=len, reverse=True):
-        if value in refused_set:
-            text = text.replace(f"[path] {value} (read-only on the runner)", f"[path] {WITHHELD_PATH}")
-            replacement = "<withheld reference path>"
-        else:
-            replacement = shielded.setdefault(value, f"\x00kept{len(shielded)}\x00")
-        for form in {value, value.replace("\\", "/"), value.replace("/", "\\")}:
-            text = re.sub(re.escape(form) + r"(?![\w.-])", lambda _m, r=replacement: r, text)
-    for value, token in shielded.items():
-        text = text.replace(token, value)
+        forms = {value, os.path.expanduser(value)}  # the runner's own home for a `~` reference (#124)
+        for form in sorted(forms, key=len, reverse=True):
+            if value in refused_set:
+                pattern = re.compile(path_pattern(form, boundary=True), re.IGNORECASE)
+                text = re.sub(r"\[path\] " + pattern.pattern + r" \(read-only on the runner\)",
+                              lambda _m: f"[path] {WITHHELD_PATH}", text, flags=re.IGNORECASE)
+                text = pattern.sub(lambda _m: "<withheld reference path>", text)
+            else:
+                # Exact letter case: on POSIX a kept `/srv/a` must not shield a refused `/srv/A`.
+                text = re.sub(path_pattern(form, boundary=True), shield, text)
+    return re.sub(r"\x00kept(\d+)\x00", lambda m: shielded[int(m.group(1))], text)
+
+
+def expand_home_references(text: str, kept: list[str] | tuple[str, ...]) -> str:
+    """Show a `~` reference as this runner's account opens it: the gateway stored it unexpanded (#124)."""
+    for value in kept:
+        if value.startswith("~") and (expanded := os.path.expanduser(value)) != value:
+            text = text.replace(f"[path] {value} (read-only on the runner)",
+                                f"[path] {expanded} (read-only on the runner)")
     return text

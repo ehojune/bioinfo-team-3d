@@ -22,8 +22,9 @@ from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
-from ..intake import overlaps_restricted, reference_roots, scan_reference_dir, withhold_reference_paths
-from ..policy import claude_read_only, claude_settings
+from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
+                      scan_reference_dir, withhold_reference_paths, zone_links)
+from ..policy import claude_deny_links, claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
@@ -105,6 +106,7 @@ class Runner:
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
+        self.project_link_warned: set[tuple] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
@@ -403,15 +405,9 @@ class Runner:
                     latest, latest_at = run, timestamp
         return latest
 
-    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
-        """Re-check path references with resolved paths on this runner (#36).
-
-        Returns (read-only dirs, skip notes, refused values). A refused value is also withheld from the prompt.
-        """
-        roots = [Path(root).resolve() for root in reference_roots(self.s)]
-        open_dirs = [Path(d).resolve() for d in writable]
-        # Zones are compared lexically and resolved: a zone written through a symlink or junction
-        # (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at.
+    def _zones(self) -> list[Path]:
+        """Restricted zones as real paths: a zone written through a symlink or junction
+        (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at."""
         zones: list[Path] = []
         for zone in self.s.policy.data_zones:
             if zone.level == "restricted":
@@ -419,6 +415,65 @@ class Runner:
                     zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
                 except (OSError, RuntimeError, ValueError):
                     continue
+        return zones
+
+    def _upstream_refusal(self, directory: Path, zones: list[Path]) -> str | None:
+        """Why an earlier step's workspace is not opened to this step, or None (#132).
+
+        Claude reads inside an `--add-dir` folder without asking the approval gate, so `outputs/link -> zone`
+        made by the earlier agent would be read unchecked. A refused folder is only not opened: its files can
+        still be read through the gate, which resolves real paths. A listing that cannot finish refuses too.
+        """
+        if not zones:
+            return None
+        if overlaps_zone(directory, zones):
+            return "통제 데이터 구역"
+        links, incomplete = zone_links(directory, zones, self.s.runner.reference_scan_max_entries,
+                                       self.s.runner.reference_scan_max_depth)
+        if links:
+            more = f" 외 {len(links) - 1}개" if len(links) > 1 else ""
+            return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
+        return incomplete
+
+    async def _project_links(self, directories: list[str], zones: list[Path], emit) -> list[str]:
+        """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
+
+        The folder itself stays open: the task works there, and refusing it would stop every step of the
+        project. A listing that cannot finish (a large clone) is said once instead of refused.
+        """
+        denied: list[str] = []
+        if not zones:
+            return denied
+        for directory in dict.fromkeys(directories):
+            path = Path(directory)
+            if not path.is_dir():
+                continue
+            # In a thread: a large clone on a network file system must not stall the runner's connection.
+            links, incomplete = await asyncio.to_thread(zone_links, path, zones, self.s.runner.reference_scan_max_entries,
+                                                        self.s.runner.reference_scan_max_depth)
+            denied += [str(link) for link in links]
+            key = (str(path), tuple(map(str, links)), incomplete)
+            if (links or incomplete) and key not in self.project_link_warned:
+                self.project_link_warned.add(key)
+                if links:
+                    names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
+                    await emit("agent.log", {"level": "warn", "text": (
+                        f"프로젝트 폴더 {path.name}의 링크 {len(links)}개가 통제 데이터 구역으로 이어지거나 풀 수 없습니다: "
+                        f"{names}. Claude는 그 경로를 읽고 쓰지 못하게 막지만 다른 엔진과 미리 허용된 셸 명령은 막지 못합니다")})
+                if incomplete:
+                    await emit("agent.log", {"level": "warn", "text": (
+                        f"프로젝트 폴더 {path.name}의 링크를 다 확인하지 못했습니다({incomplete}). "
+                        "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다")})
+        return denied
+
+    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """Re-check path references with resolved paths on this runner (#36).
+
+        Returns (read-only dirs, skip notes, refused values). A refused value is also withheld from the prompt.
+        """
+        roots = [Path(root).resolve() for root in reference_roots(self.s)]
+        open_dirs = [Path(d).resolve() for d in writable]
+        zones = self._zones()
         kept: list[str] = []
         skipped: list[str] = []
         refused: list[str] = []
@@ -434,9 +489,7 @@ class Runner:
                     reason = "없음"
                 elif not any(directory == root or directory.is_relative_to(root) for root in roots):
                     reason = "runner.reference_roots 밖"
-                elif overlaps_restricted(str(directory), self.s) or any(
-                        directory == zone or directory.is_relative_to(zone) or zone.is_relative_to(directory)
-                        for zone in zones):
+                elif overlaps_restricted(str(directory), self.s) or overlaps_zone(directory, zones):
                     reason = "통제 데이터 구역"
                 else:
                     # A link or mount below the folder can still lead into a zone (reference/link/raw.tsv).
@@ -520,20 +573,31 @@ class Runner:
         async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
+            zones = self._zones()
+            denied_links = await self._project_links(extra_dirs, zones, emit)
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
+                    reason = await asyncio.to_thread(self._upstream_refusal, upstream, zones)
+                    if reason:
+                        await emit("agent.log", {"level": "warn", "text": f"이전 단계 폴더 제외: {upstream.name} ({reason})"})
+                        continue
                     extra_dirs.append(str(upstream))
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
-            if refused:  # before TASK.md is written: a refused reference must not stay named in the prompt
-                kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
-                task = ws.task = task.model_copy(update={
-                    "prompt": withhold_reference_paths(task.prompt, refused, kept),
-                    "context": withhold_reference_paths(task.context, refused, kept)})
+            kept = [str(r) for r in task.meta.get("reference_dirs") or [] if str(r) not in refused]
+            if refused or any(r.startswith("~") for r in kept):
+                # Before TASK.md is written: a refused reference must not stay named in the prompt, and a `~`
+                # reference is shown as this runner's account opens it (#124).
+                def rewrite(text: str) -> str:
+                    return expand_home_references(withhold_reference_paths(text, refused, kept), kept)
+
+                task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
+                                                         "context": rewrite(task.context)})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))
@@ -569,7 +633,8 @@ class Runner:
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
-                claude_settings=claude_read_only(claude_settings(self.s.policy), read_dirs),
+                claude_settings=claude_deny_links(claude_read_only(claude_settings(self.s.policy), read_dirs),
+                                                  denied_links),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
