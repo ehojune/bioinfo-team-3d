@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -219,11 +218,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         settings["permissions"] = permissions
         if ctx.read_only:  # isolation is not optional here, and no hook of any source runs
             cmd += READ_ONLY_FLAGS
-            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
             settings["disableAllHooks"] = True
         elif b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
-            settings.update(user_config_isolation({**os.environ, **self.engine_env(), **ctx.env}, ctx.workdir))
+            settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
             if a.allow_skills:
                 # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
@@ -238,7 +237,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             cmd += ["--permission-prompt-tool", PERMISSION_TOOL]
         if not ctx.read_only:  # PI extra_args could load a plugin or lift plan mode; a read-only run takes none
             cmd += b.extra_args
-            for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
+            for directory in self._plugin_dirs(ctx, self.staff_env(ctx)):
                 cmd += ["--plugin-dir", directory]
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
         for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings

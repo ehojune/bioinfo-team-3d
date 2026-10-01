@@ -19,6 +19,21 @@ READ_ONLY_KEEPS = ("id", "name", "role", "character", "engine", "model", "system
                    "disallowed_tools", "max_turns", "max_budget_usd", "employment", "contract", "tags")
 # The marker consults and follow-ups carry in task meta. The runner never applies it: it rebuilds the profile.
 READ_ONLY_OVERRIDES = copy.deepcopy(READ_ONLY_FIELDS)
+# What a read-only run takes from `engines.<engine>.env` (#145): where the CLI keeps its login and settings, the
+# credentials it signs in with, and how it reaches the API. The rest is left out, since a variable can change what
+# the CLI loads: on Claude 2.1.282 CLAUDE_CODE_PLUGIN_DIRS loaded a plugin whose hooks and MCP stayed off only because
+# of disableAllHooks and --strict-mcp-config, and CLAUDE_CODE_MANAGED_SETTINGS_PATH, CLAUDE_CODE_SYNC_PLUGINS,
+# NODE_OPTIONS or a CODEX_* variable mean whatever the next CLI release makes them mean. The parent session's own
+# CLAUDE_*/CODEX_* are already gone (util.merge_staff_env). Names compare case-insensitively, as Windows does.
+READ_ONLY_ENV_KEEP = frozenset({
+    "PATH", "HOME", "USERPROFILE", "CLAUDE_CONFIG_DIR", "CODEX_HOME",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "AWS_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL",
+    "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+    "CODEX_CA_CERTIFICATE",
+})
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -45,6 +60,12 @@ def read_only_mismatch(agent: AgentSpec, mcp_servers: list) -> str | None:
     if mcp_servers or agent != read_only_profile(agent):
         return "read-only run refused: the agent is not the read-only profile"
     return None
+
+
+def read_only_engine_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """The part of `engines.<engine>.env` a read-only run keeps, and the names it leaves out (never the values)."""
+    kept = {key: value for key, value in env.items() if key.upper() in READ_ONLY_ENV_KEEP}
+    return kept, sorted(set(env) - set(kept))
 
 
 def read_only_launch_error(engine: str, prefix_args: list[str]) -> str | None:

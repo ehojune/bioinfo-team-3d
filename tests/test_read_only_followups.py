@@ -143,3 +143,66 @@ def test_bench_baseline_drops_the_parent_codex_session_too(tmp_path, monkeypatch
                                    "real", ["fake-cli"], settings))
     assert child_env and not CODEX_SESSION.keys() & child_env.keys()
     assert child_env["CODEX_HOME"] == str(tmp_path / "codex-home")
+
+
+# ---------------- #145: engines.<engine>.env in a read-only run ----------------
+
+def _runner(settings, monkeypatch, agent):
+    runner = Runner(settings)
+    monkeypatch.setattr(runner.registry, "get", lambda _id: agent)
+    return runner
+
+
+def _log(runner, level):
+    return [e["data"]["text"] for e in runner.store.pending()
+            if e["type"] == "agent.log" and e["data"].get("level") == level]
+
+
+# Probed on Claude 2.1.282 (PR #122 review 3): the plugin in CLAUDE_CODE_PLUGIN_DIRS loaded under the read-only flags.
+CLAUDE_LOADERS = {"CLAUDE_CODE_PLUGIN_DIRS": "/opt/pi-plugin", "CLAUDE_CODE_MANAGED_SETTINGS_PATH": "/opt/managed.json",
+                  "CLAUDE_CODE_SYNC_PLUGINS": "1", "NODE_OPTIONS": "--require /opt/hook.js"}
+CLAUDE_LOGIN = {"CLAUDE_CONFIG_DIR": "/srv/labhq/claude-staff", "ANTHROPIC_API_KEY": "staff-key",
+                "https_proxy": "http://proxy.lab:3128", "PATH": "/opt/node/bin"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["followup", "consult"])
+async def test_engine_env_that_loads_code_stays_out_of_a_read_only_claude_run(tmp_path, monkeypatch, spawned, kind):
+    seen = spawned(Engine.claude_code)
+    settings = _settings(tmp_path)
+    settings.engines.claude_code.env = {**CLAUDE_LOADERS, **CLAUDE_LOGIN}
+    runner = _runner(settings, monkeypatch, _staff(Engine.claude_code))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": kind}))
+    assert result.ok, result.error
+    argv, env = seen[0]
+    assert not CLAUDE_LOADERS.keys() & env.keys(), "a read-only run takes only login, config and network variables"
+    assert {key: env[key] for key in CLAUDE_LOGIN} == CLAUDE_LOGIN
+    assert not any("/opt/pi-plugin" in arg for arg in argv)
+    notes = _log(runner, "warn")
+    assert any("CLAUDE_CODE_PLUGIN_DIRS" in n and "NODE_OPTIONS" in n for n in notes), notes
+    assert not any("/opt/" in n for n in notes), "the note names variables, never their values"
+
+    await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    assert seen[1][1]["CLAUDE_CODE_PLUGIN_DIRS"] == "/opt/pi-plugin", "an ordinary step keeps the PI's env"
+
+
+@pytest.mark.asyncio
+async def test_engine_env_codex_variables_stay_out_of_a_read_only_codex_run(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.codex)
+    settings = _settings(tmp_path)
+    settings.engines.codex.env.update({"CODEX_SQLITE_HOME": "/opt/sqlite", "CODEX_EXEC_SERVER_URL": "ws://x:9",
+                                       "OPENAI_API_KEY": "staff-key"})
+    runner = _runner(settings, monkeypatch, _staff())
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert result.ok, result.error
+    env = seen[0][1]
+    assert "CODEX_SQLITE_HOME" not in env and "CODEX_EXEC_SERVER_URL" not in env
+    assert env["CODEX_HOME"] == str(tmp_path / "codex-home") and env["OPENAI_API_KEY"] == "staff-key"
+
+
+def test_the_read_only_env_allowlist_is_case_insensitive_and_keeps_no_loader():
+    from labhq.adapters.read_only import READ_ONLY_ENV_KEEP, read_only_engine_env
+
+    kept, dropped = read_only_engine_env({"Path": "p", "claude_code_plugin_dirs": "x", "codex_home": "h"})
+    assert kept == {"Path": "p", "codex_home": "h"} and dropped == ["claude_code_plugin_dirs"]
+    assert not {name for name in READ_ONLY_ENV_KEEP if "PLUGIN" in name or "SETTINGS" in name or "NODE_OPTIONS" in name}
