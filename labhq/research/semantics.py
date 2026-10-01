@@ -1060,10 +1060,52 @@ def _gap(p: Projection, row: Mapping[str, Any], name: str) -> dict:
     return gap
 
 
+def _cycles(steps: Mapping[str, Iterable[str]]) -> list[list[str]]:
+    """Strongly connected components of the walked steps that hold a cycle (#154), each sorted, in sorted order.
+
+    One caution per component, so the answer does not depend on which node the walk entered it from."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    found: list[list[str]] = []
+    for start in sorted(steps):
+        if start in index:
+            continue
+        index[start] = low[start] = len(index)
+        stack.append(start)
+        on_stack.add(start)
+        work = [(start, iter(sorted(set(steps.get(start, ())))))]
+        while work:
+            node, children = work[-1]
+            for child in children:
+                if child not in index:
+                    index[child] = low[child] = len(index)
+                    stack.append(child)
+                    on_stack.add(child)
+                    work.append((child, iter(sorted(set(steps.get(child, ()))))))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], index[child])
+            else:
+                work.pop()
+                if work:
+                    low[work[-1][0]] = min(low[work[-1][0]], low[node])
+                if low[node] == index[node]:
+                    members: list[str] = []
+                    while not members or members[-1] != node:
+                        members.append(stack.pop())
+                        on_stack.discard(members[-1])
+                    if len(members) > 1 or node in steps.get(node, ()):
+                        found.append(sorted(members))
+    return sorted(found)
+
+
 def _walk(p: Projection, root: str) -> _Walk:
     walk = _Walk()
     seen_edges: set[int] = set()
     done: set[str] = set()
+    steps: dict[str, list[str]] = {}   # node -> the nodes its followed edges lead to
     limit = p.model.spec.traversal.depth_limit
     relations = p.model.spec.relations
 
@@ -1072,10 +1114,7 @@ def _walk(p: Projection, root: str) -> _Walk:
             seen_edges.add(id(edge))
             into.append(edge)
 
-    def visit(node: str, depth: int, path: tuple[str, ...]) -> None:
-        if node in path:
-            walk.cautions.append({"code": "cycle", "nodes": [node]})
-            return
+    def visit(node: str, depth: int) -> None:
         if node in done:
             return
         if depth > limit:
@@ -1112,10 +1151,12 @@ def _walk(p: Projection, root: str) -> _Walk:
                 other = edge["dst"] if at_src else edge["src"]
                 if other != UNKNOWN:
                     nexts.append(other)
+        steps[node] = nexts
         for other in nexts:
-            visit(other, depth + 1, (*path, node))
+            visit(other, depth + 1)
 
-    visit(root, 0, ())
+    visit(root, 0)
+    walk.cautions.extend({"code": "cycle", "nodes": nodes} for nodes in _cycles(steps))
     return walk
 
 

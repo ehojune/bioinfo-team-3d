@@ -478,19 +478,46 @@ def concept(node: str) -> str:
         node.split(":", 1)[0], "")
 
 
-def closes_cycle(steps: dict[str, list[tuple[str, int]]], depth: dict[str, int], src: str, dst: str) -> bool:
-    """A walked step src -> dst closes a cycle when dst is no deeper than src and reaches src again."""
-    if depth[dst] > depth[src]:
-        return False
-    seen, todo = {dst}, [dst]
-    while todo:
-        for nxt, _edge in steps.get(todo.pop(), []):
-            if nxt == src:
-                return True
-            if nxt not in seen:
+def cycles(steps: dict[str, list[tuple[str, int]]]) -> list[list[str]]:
+    """Strongly connected components of the walked steps that hold a cycle (#154), by two passes (Kosaraju):
+    finish order on the steps, then components on the reversed steps. Each sorted, in sorted order."""
+    graph = {node: sorted({nxt for nxt, _edge in out}) for node, out in steps.items()}
+    order: list[str] = []
+    seen: set[str] = set()
+    for start in sorted(set(graph) | {n for out in graph.values() for n in out}):
+        if start in seen:
+            continue
+        seen.add(start)
+        todo = [(start, iter(graph.get(start, [])))]
+        while todo:
+            node, rest = todo[-1]
+            nxt = next((n for n in rest if n not in seen), None)
+            if nxt is None:
+                todo.pop()
+                order.append(node)
+            else:
                 seen.add(nxt)
-                todo.append(nxt)
-    return False
+                todo.append((nxt, iter(graph.get(nxt, []))))
+    reverse: dict[str, list[str]] = {}
+    for node, out in graph.items():
+        for nxt in out:
+            reverse.setdefault(nxt, []).append(node)
+    found, assigned = [], set()
+    for start in reversed(order):
+        if start in assigned:
+            continue
+        assigned.add(start)
+        component, todo = [], [start]
+        while todo:
+            node = todo.pop()
+            component.append(node)
+            for prev in reverse.get(node, []):
+                if prev not in assigned:
+                    assigned.add(prev)
+                    todo.append(prev)
+        if len(component) > 1 or start in graph.get(start, []):
+            found.append(sorted(component))
+    return sorted(found)
 
 
 def walk(reg: Registry, root: str) -> dict[str, Any]:
@@ -502,8 +529,7 @@ def walk(reg: Registry, root: str) -> dict[str, Any]:
              for node in expanded}
     edges = {edge for out in steps.values() for _nxt, edge in out}
     cautions = [{"code": "depth_limit", "nodes": [node]} for node in sorted(reached) if depth[node] > DEPTH_LIMIT]
-    for node in sorted({nxt for src, out in steps.items() for nxt, _edge in out if closes_cycle(steps, depth, src, nxt)}):
-        cautions.append({"code": "cycle", "nodes": [node]})
+    cautions += [{"code": "cycle", "nodes": nodes} for nodes in cycles(steps)]
     runs = sorted(n for n in expanded if concept(n) == "run")
     artifacts = sorted(n for n in expanded if concept(n) == "artifact")
     marks = ",".join("?" * len(runs))

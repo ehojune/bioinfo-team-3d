@@ -172,6 +172,44 @@ def test_models_agree_on_cycle_and_depth_limit(length, cycle):
     assert outs[0] == outs[1]
 
 
+def _records(rid, steps, tasks):
+    """In-memory records of one request: steps (id, input_refs, outputs) and their tasks (task id, step id)."""
+    from labhq.research.semantics import Records
+    plan = {"steps": [{"id": sid, "input_refs": refs, "outputs": outs} for sid, refs, outs in steps],
+            "protocol": {"packs": []}}
+    outputs = {sid: outs for sid, _refs, outs in steps}
+    rows = {tid: {"request_id": rid, "step_id": sid, "kind": "step", "attempt": 1, "revision": 0, "parent_task": None,
+                  "payload": {"agent_id": "ag_x", "resume_session_id": None, "meta": {}},
+                  "result": {"workdir": f"workspaces/{rid}/{tid}_ws", "workdir_id": f"{tid}_ws",
+                             "outputs": list(outputs[sid]), "session_id": f"sess_{tid}", "pending_jobs": [],
+                             "pending_asks": [], "provenance": {"runs": {tid: {"started_at": float(i)}}}}}
+            for i, (tid, sid) in enumerate(tasks)}
+    request = {"plan": plan, "research_contract": {"plan_sha256": "0" * 64}}
+    return Records(requests={rid: request}, tasks=rows, plans={rid: plan}, results={},
+                   manifests={row["result"]["workdir"]: None for row in rows.values()}, observed={}, contracts={})
+
+
+def two_entry_cycle(inputs):
+    """#154: run r uses s and a; run d reports s and a and uses s again (lineage_step r→s, r→a, a→d, d→s, s→d)."""
+    refs = {"s": "step:d/outputs/s.tsv", "a": "step:d/outputs/a.tsv"}
+    return _records("req_y", [("d", [refs["s"]], ["outputs/s.tsv", "outputs/a.tsv"]),
+                              ("r", [refs[n] for n in inputs], ["outputs/x.tsv"])], [("td", "d"), ("tr", "r")])
+
+
+@pytest.mark.parametrize("inputs", [("s", "a"), ("a", "s")], ids=["s_first", "a_first"])
+def test_a_cycle_with_two_entries_is_one_caution_naming_its_component(inputs):
+    """#154: one cycle caution per strongly connected component, whatever order the walk enters it from."""
+    outs = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(two_entry_cycle(inputs))
+        outs[name] = pilot.result_of(impl.audit_lineage(p, artifact="art:req_y/tr_ws/outputs/x.tsv"))
+    for out in outs.values():
+        assert [c for c in out["cautions"] if c["code"] == "cycle"] == [
+            {"code": "cycle", "nodes": ["art:req_y/td_ws/outputs/s.tsv", "run:td_ws/td"]}]
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
+
+
 def test_diamond_lineage_is_walked_by_node_not_by_path():
     """#140: 20 layers that each split into two outputs and merge in the next run (2^19 paths, 60 nodes)."""
     checks = {name: pilot.diamond_check(pilot.IMPLS[name](), 20) for name in ("B", "A")}
