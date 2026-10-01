@@ -257,6 +257,17 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 #ask{flex:1;min-width:0;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px 12px}
 .composer select{flex:none;max-width:30%;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 6px}
 .composer .btn{min-height:44px}
+.ref-panel{position:absolute;left:0;right:0;bottom:100%;background:var(--paper);border-top:1px solid var(--line);padding:8px 12px;box-shadow:0 -6px 18px rgba(20,35,50,.08)}
+.ref-panel[hidden]{display:none}
+.ref-in,.ref-chips,.ref-hint{max-width:1280px;margin:0 auto}
+.ref-in{display:flex;gap:8px}
+#ref-input{flex:1;min-width:0;min-height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:6px 10px;font-size:16px}
+.ref-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.ref-chips[hidden]{display:none}
+.ref-chip{display:inline-flex;align-items:center;gap:2px;max-width:100%;overflow-wrap:anywhere;font-size:13px;color:var(--ink)}
+.ref-remove{border:0;background:none;cursor:pointer;min-width:30px;min-height:30px;color:var(--muted);font-size:16px}
+.ref-default{cursor:pointer;min-height:32px;font-size:13px}.ref-default[aria-pressed="false"]{text-decoration:line-through}
+.ref-hint{font-size:12px;color:var(--muted);margin-top:4px}
+.req-refs{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px}.req-refs li{overflow-wrap:anywhere}
 @media (max-width:620px){
   body{padding-bottom:160px}
   .panels{max-height:none;overflow:visible;padding:10px}
@@ -269,6 +280,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
   .composer-in{flex-wrap:wrap;gap:6px 8px}
   #ask{order:1;flex:1 1 60%}
   #send{order:2}
+  #ref-toggle{order:2;padding:6px 10px}
   .composer select{order:3;flex:1 1 40%;max-width:none;min-height:38px;font-size:14px}
   .toast{bottom:calc(185px + env(safe-area-inset-bottom,0px))}
 }
@@ -356,6 +368,15 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 </section>
 
 <div class="composer">
+  <div class="ref-panel" id="ref-panel" hidden>
+    <div class="ref-in">
+      <label class="sr" for="ref-input">참고 자료</label>
+      <input id="ref-input" type="text" enterkeyhint="done" autocomplete="off" placeholder="GitHub URL · DOI · PMID · URL · 러너 경로">
+      <button class="btn" id="ref-add" type="button">추가</button>
+    </div>
+    <div class="ref-chips" id="ref-chips" aria-label="이 요청의 참고 자료"></div>
+    <p class="ref-hint">파일을 올리지 않고 위치만 넘겨요. 경로는 러너의 참고 폴더 안에서 읽기 전용으로 열립니다.</p>
+  </div>
   <div class="composer-in">
     <span class="memo" id="memo" title="끌어다 직원 책상에 놓으면 그 직원에게 바로 맡겨요">메모</span>
     <label class="sr" for="ask">요청 내용</label>
@@ -364,6 +385,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <select id="target"></select>
     <label class="sr" for="project">프로젝트</label>
     <select id="project" hidden></select>
+    <button class="btn" id="ref-toggle" type="button" aria-controls="ref-panel" aria-expanded="false">참고</button>
     <button class="btn primary" id="send" type="button">보내기</button>
   </div>
 </div>
@@ -376,6 +398,7 @@ import {decisionNote, syncDecisionCards, syncDecisionHistory} from './ui/decide.
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {initTabShell} from './ui/shell.js';
+import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/refs.js';
 (() => {
 'use strict';
 const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
@@ -513,7 +536,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderStaff();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderStaff(); renderRefs();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -661,7 +684,7 @@ let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown, q.references]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -670,7 +693,8 @@ function renderRequest() {
     `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : ''}</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
-  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${phaseList(q)}<div id="task-board"></div>
+  const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
+  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>${q.costKnown ? `비용 $${q.cost.toFixed(2)}` : `비용 $${q.cost.toFixed(2)} + 비용 미집계`}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
 ${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}`;
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick, onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null });
@@ -729,13 +753,43 @@ function toast(text) {
   t.textContent = text; t.classList.add('show');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
+/* reference pointers (#36): chips go with the next request; the gateway checks kinds and runner paths */
+const refs = { items: [], useDefaults: true };
+let refsKey = '';
+function renderRefs() {
+  const key = JSON.stringify([refs, S.defaultRefs.length]);
+  if (key === refsKey) return;
+  refsKey = key;
+  syncReferenceChips($('#ref-chips'), refs, S.defaultRefs, {
+    onRemove: index => { refs.items.splice(index, 1); renderRefs(); },
+    onToggleDefaults: () => { refs.useDefaults = !refs.useDefaults; renderRefs(); },
+  });
+  $('#ref-toggle').textContent = refs.items.length ? `참고 ${refs.items.length}` : '참고';
+}
+function addRef() {
+  const input = $('#ref-input'), ref = inferReference(input.value);
+  if (!input.value.trim()) return;
+  if (!ref) { toast('GitHub·DOI·PMID·URL·경로 중 무엇인지 모르겠어요. 앞에 doi: 처럼 붙여 주세요'); return; }
+  if (refs.items.length >= 20) { toast('참고 자료는 20개까지예요'); return; }
+  if (!refs.items.some(r => r.kind === ref.kind && r.value === ref.value)) refs.items.push(ref);
+  input.value = ''; renderRefs();
+}
+function showRefs(open) {
+  $('#ref-panel').hidden = !open;
+  $('#ref-toggle').setAttribute('aria-expanded', String(open));
+  if (open) { renderRefs(); $('#ref-input').focus(); }
+}
+$('#ref-add').addEventListener('click', addRef);
+$('#ref-input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addRef(); } });
+$('#ref-toggle').addEventListener('click', () => showRefs($('#ref-panel').hidden));
 async function send() {
   const input = $('#ask'), text = input.value.trim(), target = $('#target').value, project = $('#project').value;
   if (!text) { toast('무엇을 맡길지 먼저 적어 주세요'); input.focus(); return; }
-  const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null };
+  const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
+    references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
     await api.request(body);
-    input.value = '';
+    input.value = ''; refs.items = []; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }

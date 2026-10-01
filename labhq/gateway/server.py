@@ -17,9 +17,10 @@ from typing import Any, Literal
 import httpx
 from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..integrations.github import ProjectReporter
+from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
@@ -47,6 +48,8 @@ class RequestIn(BaseModel):
     work_kind: Literal["auto", "simple", "research"] = "auto"
     scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     project_dirs: list[str] = []
+    references: list[Reference] = Field(default_factory=list, max_length=MAX_REFERENCES)  # pointers only (#36)
+    default_references: bool = True  # add pi_profile.references
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
     meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
@@ -888,6 +891,8 @@ class Hub:
             raise KeyError(f"unknown project {body.project_id!r}")
         if proj and proj.local_dir and proj.local_dir not in req["project_dirs"]:
             req["project_dirs"] = [*req["project_dirs"], proj.local_dir]  # agents work in the project clone
+        # Fixed at creation: a later config edit must not change what a running or resumed request points at.
+        req["references"] = effective_references(body.references, body.default_references, self.s)
         req["environment"] = environment_snapshot(self)
         self.requests[rid] = req
         self.save_request(rid)
@@ -897,7 +902,7 @@ class Hub:
     async def _start_request(self, rid: str) -> None:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
-                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id")}})
+                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
         await self.orchestrator.run_request(rid)
 
     def snapshot(self) -> dict[str, Any]:
@@ -908,7 +913,7 @@ class Hub:
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
-                                                                  "usage", "usage_known", "agent_id")},
+                                                                  "usage", "usage_known", "agent_id", "references")},
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
@@ -916,6 +921,7 @@ class Hub:
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
+            "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
             "recent_events": list(self.events)[-200:],
         }}
@@ -1038,6 +1044,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             return {"request_id": hub.create_request(body)}
         except KeyError as e:
             raise HTTPException(404, str(e))
+        except ValueError as e:  # a reference outside the runner's roots or in a restricted zone
+            raise HTTPException(422, str(e))
 
     @app.get("/api/requests", dependencies=[Depends(auth)])
     async def list_requests(status: str = "running", limit: int = 20) -> list[dict]:

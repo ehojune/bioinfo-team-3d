@@ -296,7 +296,20 @@ class ProjectReporter:
         return self.s.project((self.hub.requests.get(rid) or {}).get("project_id"))
 
     def _clean(self, text: str) -> str:
-        return sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
+        out = sanitize(text, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
+        for value in self._reference_paths():
+            out = out.replace(value, "<reference-path>")
+        return out
+
+    def _reference_paths(self) -> list[str]:
+        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project."""
+        values = {os.path.expanduser(r.value) for r in self.s.pi_profile.references if r.kind == "path"}
+        values |= {r.value for r in self.s.pi_profile.references if r.kind == "path"}
+        for req in self.hub.requests.values():
+            values |= {str(r.get("value")) for r in req.get("references") or [] if r.get("kind") == "path"}
+        variants = {form for value in values if len(value) >= 4
+                    for form in (value, value.replace("\\", "/"), value.replace("/", "\\"))}
+        return sorted(variants, key=len, reverse=True)
 
     @staticmethod
     def _action_key(ev: dict, action: str) -> str:

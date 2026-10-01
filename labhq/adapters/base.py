@@ -156,6 +156,9 @@ class RunContext:
     emit: Emit
     prompt: str
     extra_dirs: list[str] = field(default_factory=list)
+    # Readable, never writable (#36 path references). Claude gets --add-dir plus deny rules; Codex reads
+    # outside its workspace without --add-dir, which would grant write access.
+    read_dirs: list[str] = field(default_factory=list)
     claude_settings: dict = field(default_factory=dict)
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest

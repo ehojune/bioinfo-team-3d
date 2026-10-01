@@ -229,7 +229,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         for directory in self._plugin_dirs(ctx, {**os.environ, **self.engine_env(), **ctx.env}):
             cmd += ["--plugin-dir", directory]
         cmd += ["--mcp-config", str(ctx.meta_dir / "mcp.json"), "--strict-mcp-config"]
-        for d in ctx.extra_dirs:
+        for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings
             cmd += ["--add-dir", d]
         allowed = [*a.tools, *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:

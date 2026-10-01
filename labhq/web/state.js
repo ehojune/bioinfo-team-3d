@@ -13,10 +13,13 @@ const S = {
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'askDetails', { value: new Map(), enumerable: false });
+// #36 additions stay non-enumerable too, so the legacy state digests (tests/web_state.cjs) are unchanged.
+Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
   S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.seq = 0; S.doorUntil = 0;
+  S.defaultRefs = [];
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
@@ -41,7 +44,11 @@ function upsertAgent(a) {
   S.agents.set(a.id, next);
 }
 function req(rid) {
-  if (!S.requests.has(rid)) S.requests.set(rid, { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() });
+  if (!S.requests.has(rid)) {
+    const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
+    Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
+    S.requests.set(rid, q);
+  }
   return S.requests.get(rid);
 }
 function stepDetail(rid, sid) {
@@ -98,11 +105,13 @@ function apply(ev, replay = false) {
       resetSnapshotState();
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
+      S.defaultRefs = d.default_references || [];
       (d.recent_events || []).forEach(e => apply(e, true));
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
         if (r.plan) setPlan(q, r.plan);
+        q.references = r.references || [];
         Object.assign(q.steps, r.step_status || {});
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
@@ -200,6 +209,7 @@ function apply(ev, replay = false) {
     case 'request.created': {
       const q = req(rid);
       Object.assign(q, { text: d.text, mode: d.mode, project_id: d.project_id, status: 'running', phase: d.mode === 'direct' ? 'execute' : 'briefing', created_at: ts });
+      q.references = d.references || [];
       S.current = rid;
       feed({ who: 'pi', text: `새 요청: ${short(d.text, 130)}` }, ts, rid);
       break;

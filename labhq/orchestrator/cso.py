@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
-                      question_detail_lines, questions_summary)
+                      question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
                                  refresh_plan_approval, validate_research_plan)
@@ -198,6 +198,12 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
     return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
             f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
             f"\n\nContinuation updates:\n{updates}")
+
+
+def reference_meta(request: dict | None) -> dict[str, list[str]]:
+    """Path references travel as read-only directories; the runner re-checks them against its roots."""
+    dirs = reference_dirs((request or {}).get("references"))
+    return {"reference_dirs": dirs} if dirs else {}
 
 
 def format_roster(agents: list[dict]) -> str:
@@ -794,7 +800,8 @@ class Orchestrator:
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         resume_session_id=session_id if can_resume else None,
-                        meta={"kind": "step", "step_id": step["id"], "request": request,
+                        meta={**reference_meta(self.hub.requests.get(rid)),
+                              "kind": "step", "step_id": step["id"], "request": request,
                               "instruction": step["instruction"],
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
@@ -958,8 +965,10 @@ class Orchestrator:
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
-        text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
-                                     for c in req.get("clarifications") or [])
+        refs = reference_meta(req)
+        # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
+        text = req["text"] + render_references(req.get("references")) + "".join(
+            "\n\nPI clarification (questions and answer):\n" + qa_text(c) for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         try:
             research_pilot = bool(self.hub.s.research.enabled)
@@ -978,7 +987,7 @@ class Orchestrator:
                     return
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
                                                budget_usd=req.get("budget_usd"),
-                                               meta={"kind": "direct", "title": text[:100],
+                                               meta={**refs, "kind": "direct", "title": text[:100],
                                                      "project_dirs": req.get("project_dirs", [])}))
                 self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
                              ok=res.ok and rid not in self.budget_denials)
@@ -1049,7 +1058,8 @@ class Orchestrator:
                 cos = self.cfg.chief_of_staff_agent
                 if cos and cos in known:
                     b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
-                                                 meta={"kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"}))
+                                                 meta={**refs, "kind": "briefing", "request": text,
+                                                       "title": "CSO용 브리핑 준비"}))
                     if not b.ok:
                         self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
@@ -1084,7 +1094,7 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=req.get("cso_session_id") if continuation else None,
                         prompt=prompt,
-                        meta={"kind": "plan", "roster": roster, "request": plan_request,
+                        meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
                               "title": "업무 분해·배정 계획 수립",
                               **({"workdir": req["cso_workdir"]} if continuation and req.get("cso_workdir") else {})}))
                     if planned.session_id:
@@ -1220,7 +1230,7 @@ class Orchestrator:
                         prompt=prompt if parse_attempt == 1 else prompt +
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
                         'Do not omit verdict or add prose.',
-                        meta={"kind": "review", "revision": rev, "parse_attempt": parse_attempt,
+                        meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
                         self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
@@ -1289,7 +1299,7 @@ class Orchestrator:
                 resume_session_id=req.get("cso_session_id") if self.hub.supports_resume(self.cfg.cso_agent) else None,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)),
-                meta={"kind": "synthesis", "request": text, "title": "최종 보고서 작성",
+                meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": req["cso_workdir"]} if self.hub.supports_resume(self.cfg.cso_agent)
                          and req.get("cso_workdir") else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +

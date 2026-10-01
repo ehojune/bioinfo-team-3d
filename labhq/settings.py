@@ -8,6 +8,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .intake import Reference
+
 
 class GatewaySettings(BaseModel):
     host: str = "127.0.0.1"
@@ -33,6 +35,8 @@ class RunnerSettings(BaseModel):
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)
+    # Read-only roots for `path` references (#36); each project's local_dir also counts.
+    reference_roots: list[str] = []
 
 
 class EngineBin(BaseModel):
@@ -212,6 +216,15 @@ class OrchestratorSettings(BaseModel):
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
 
 
+class PiProfileSettings(BaseModel):
+    """The PI's default reference pointers, added to every request unless the request turns them off.
+
+    Private pointers (a local knowledge base, unpublished notes) belong only in the uncommitted config.
+    """
+
+    references: list[Reference] = Field(default_factory=list, max_length=20)
+
+
 class ResearchSettings(BaseModel):
     """Opt-in research contract pilot. Research execution is intentionally disabled in PR 1."""
 
@@ -263,6 +276,7 @@ class Settings(BaseModel):
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
     research: ResearchSettings = ResearchSettings()
+    pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []

@@ -22,7 +22,8 @@ from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
-from ..policy import claude_settings
+from ..intake import overlaps_restricted, reference_roots
+from ..policy import claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
 from ..store import StateStore
@@ -394,6 +395,32 @@ class Runner:
                     latest, latest_at = run, timestamp
         return latest
 
+    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str]]:
+        """Re-check path references with resolved paths on this runner (#36): (read-only dirs, skip notes)."""
+        roots = [Path(root).resolve() for root in reference_roots(self.s)]
+        open_dirs = [Path(d).resolve() for d in writable]
+        kept: list[str] = []
+        skipped: list[str] = []
+        for raw in task.meta.get("reference_dirs") or []:
+            try:
+                path = Path(os.path.expanduser(str(raw))).resolve()
+            except (OSError, RuntimeError, ValueError):
+                skipped.append(f"{raw} (경로를 읽을 수 없음)")
+                continue
+            if not path.exists():
+                skipped.append(f"{raw} (없음)")
+                continue
+            directory = path if path.is_dir() else path.parent
+            if not any(directory == root or directory.is_relative_to(root) for root in roots):
+                skipped.append(f"{raw} (runner.reference_roots 밖)")
+            elif overlaps_restricted(str(directory), self.s):
+                skipped.append(f"{raw} (통제 데이터 구역)")
+            elif any(directory == d or directory.is_relative_to(d) for d in open_dirs):
+                continue  # already reachable through a writable project dir; keep that dir writable
+            elif str(directory) not in kept:
+                kept.append(str(directory))
+        return kept, skipped
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
@@ -418,6 +445,10 @@ class Runner:
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     extra_dirs.append(str(upstream))
+            # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
+            read_dirs, skipped = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
+            for note in skipped:
+                await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
@@ -431,8 +462,8 @@ class Runner:
                 mcp_servers=self._mcp_servers(agent, env, allow_ask=not consult),
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
-                emit=emit, prompt=prompt, extra_dirs=extra_dirs,
-                claude_settings=claude_settings(self.s.policy),
+                emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
+                claude_settings=claude_read_only(claude_settings(self.s.policy), read_dirs),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
@@ -440,7 +471,8 @@ class Runner:
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
-                          resume_of=task.resume_session_id, kind=task.meta.get("kind"))
+                          resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                          **({"reference_dirs": read_dirs} if read_dirs else {}))
             try:
                 result = await get_adapter(agent.engine, self.s).run(ctx)
                 result.pending_asks = self.broker.pending_for_task(task.id)

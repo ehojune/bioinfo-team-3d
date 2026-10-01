@@ -244,6 +244,16 @@ def claude_settings(policy: PolicySettings) -> dict:
     return {"permissions": {"deny": deny}} if deny else {}
 
 
+def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
+    """Add Edit/Write deny rules for directories a task may only read (reference paths, #36)."""
+    rules = [f"{tool}(/{claude_rule_path(d)}/**)" for d in directories for tool in ("Edit", "Write")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def evaluate_tool(
     tool_name: str,
     tool_input: dict[str, Any],

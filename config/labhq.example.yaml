@@ -16,6 +16,7 @@ runner:
   broker_port: 8788
   task_timeout_s: 21600
   job_poll_s: 60
+  reference_roots: []              # 참고 자료 path가 들어갈 수 있는 러너 쪽 폴더(읽기 전용). 프로젝트 local_dir은 자동 포함
 
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
@@ -92,6 +93,11 @@ orchestrator:
   max_revisions: 1
   max_steps: 12
   max_parallel_steps: 4
+
+# PI 기본 참고 자료. 요청마다 끌 수 있습니다(웹 '기본 참고' 칩, labhq send --no-default-refs).
+# 비공개 자료(개인 지식 저장소 등)의 경로는 커밋하지 않는 config/labhq.yaml에만 적습니다.
+pi_profile:
+  references: []              # 예: [{kind: github, value: owner/repo, note: 분석 규약}, {kind: path, value: /srv/refs/notes}]
 
 # 연구 계약 pilot은 opt-in입니다. PR 1에서는 계획·승인까지만 하고 연구 step은 실행하지 않습니다.
 research:
