@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:01 | [`2341a0c`](https://github.com/ehojune/bioinfo-team-3d/commit/2341a0c) | **POSIX timeout test가 SIGTERM을 무시하는 손자가 준비된 뒤에만 판정합니다** (#227). 손자가 SIG_IGN을 설치한 뒤 ready를 알리고 leader는 그 뒤에 pids 파일을 씁니다. 1초 안에 준비되지 않으면 5초 timeout으로 한 번 더 돌립니다 |
+| 02:01 | [`8fde4df`](https://github.com/ehojune/bioinfo-team-3d/commit/8fde4df) | **POSIX timeout test가 좀비 회수 순간을 '살아 있음'으로 읽지 않습니다** (#227). 대기 loop가 좀비를 보고 끝난 뒤 assert가 다시 확인하는 사이 init이 좀비를 거두면, kill(0)은 성공하고 /proc 읽기는 실패해 assert False가 났습니다. 이제 마지막 확인으로 판정하고 /proc 읽기가 실패하면 kill(0)을 다시 묻습니다. 회귀 test는 수정 전 실패했습니다 |
 | 00:19 | [`31c580c`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/31c580c) | 링크·junction으로 적힌 쓰기 폴더는 적힌 표기와 실제 경로에 Edit 규칙을 하나씩 두어 사전 허용(#219) |
 | 00:01 | [`d6eff9b`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/d6eff9b) | Windows TEMP 아래 작업 폴더에서 Claude가 쓰는 경로를 실제 쓰는 곳으로 판정하고, 폴더 밖 쓰기는 승인으로 넘김(#219) |
 
