@@ -444,17 +444,20 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
 
     A bare `Write` pre-approves every path, so the gate never saw Claude write `C:/tmp/...` on Windows
     (tests/fixtures/real/claude_code/claude_windows_write_paths.json). The Edit rule also covers Write, MultiEdit and
-    NotebookEdit. A root with no rule spelling (UNC) is left to the gate.
+    NotebookEdit. Claude pre-approves a write only when the path as written and its resolved path both match, so a
+    root spelled through a link or junction gets a rule for each spelling (probes junction_*). A spelling with no
+    rule form (UNC) is left to the gate.
     """
     tools = list(tools)
     kept = [t for t in tools if t not in WRITE_LIKE]
     if len(kept) == len(tools):
         return kept
     for root in write_roots:
-        try:
-            kept.append(f"Edit(/{claude_rule_path(os.path.realpath(root))}/**)")
-        except (OSError, ValueError):
-            continue
+        for resolve in (os.path.abspath, os.path.realpath):
+            try:
+                kept.append(f"Edit(/{claude_rule_path(resolve(root))}/**)")
+            except (OSError, ValueError):
+                continue
     return list(dict.fromkeys(kept))
 
 

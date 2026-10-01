@@ -17,7 +17,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from labhq.adapters import get_adapter
 from labhq.adapters.base import RunContext
 from labhq.models import AgentSpec, Engine, Task
-from labhq.policy import claude_rule_path, evaluate_tool
+from labhq.policy import claude_allowed_tools, claude_rule_path, evaluate_tool
 from labhq.settings import Settings
 
 REPO = Path(__file__).resolve().parents[1]
@@ -167,6 +167,34 @@ def test_bare_file_tools_are_preapproved_only_inside_the_write_roots(tmp_path):
     # The rule spelling Claude honoured in the fixture (probes scoped_rule_*).
     assert _probe("scoped_rule_relative")["allowed_tools"][1] == (
         f"Edit(/{claude_rule_path(_fill('<WORKDIR>'))}/**)")
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    if os.name == "nt":  # a junction needs no symlink privilege
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def test_a_write_root_spelled_through_a_link_gets_a_rule_for_each_spelling(tmp_path):
+    """Claude pre-approved a link-spelled absolute write only when both spellings had a rule (probes junction_*)."""
+    probes = {p["id"]: p for p in FIXTURE["probes"]}
+    assert probes["junction_real_rule_relative"]["written_to"]  # Claude resolves its own cwd
+    assert probes["junction_real_rule_absolute"]["written_to"] is None
+    assert probes["junction_link_rule_absolute"]["written_to"] is None
+    assert probes["junction_both_rules_absolute"]["written_to"]
+    fixed = probes["junction_labhq_rules_absolute"]  # this function's rules, run for real
+    assert fixed["allowed_tools"] == ["Edit(/<LINK_POSIX>/**)", "Edit(/<REAL_POSIX>/**)"] and fixed["written_to"]
+    real = tmp_path / "real"
+    (real / "ws").mkdir(parents=True)
+    _link_dir(tmp_path / "link", real)
+    root = tmp_path / "link" / "ws"
+    assert os.path.realpath(root) != os.path.abspath(root)
+    assert claude_allowed_tools(["Read", "Write"], [root]) == [
+        "Read", f"Edit(/{claude_rule_path(os.path.abspath(root))}/**)",
+        f"Edit(/{claude_rule_path(os.path.realpath(root))}/**)"]
 
 
 def test_agents_without_file_tools_get_no_edit_rule(tmp_path):

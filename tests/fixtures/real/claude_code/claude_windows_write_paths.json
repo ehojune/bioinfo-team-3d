@@ -10,7 +10,11 @@
     "<DRIVE>": "the drive of the workdir, e.g. C:",
     "<PROJECT>": "scratch folder names below <TMP> (user name inside)",
     "<WORKDIR>": "<TMP>\\claude\\<PROJECT>\\ws",
-    "<WORKDIR_BELOW_TMP>": "claude/<PROJECT>/ws in the redacted streams"
+    "<WORKDIR_BELOW_TMP>": "claude/<PROJECT>/ws in the redacted streams",
+    "<LINK_WORKDIR>": "a workdir spelled through a junction: <LINK>\\ws, where <LINK> is a junction to <REAL> (probes junction_*, captured 2026-10-02)",
+    "<REAL_WORKDIR>": "<REAL>\\ws, the junction target; Claude's init cwd was this resolved spelling",
+    "<LINK_POSIX>": "<LINK_WORKDIR> in Claude's rule form",
+    "<REAL_POSIX>": "<REAL_WORKDIR> in Claude's rule form"
   },
   "workdir": "<TMP>\\claude\\<PROJECT>\\ws",
   "bash_pwd": "/tmp/claude/<PROJECT>/ws",
@@ -121,6 +125,81 @@
       "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws_outside\\probe.txt",
       "tool_result": "approval broker unreachable (All connection attempts failed); ask the CSO to reschedule",
       "written_to": null
+    },
+    {
+      "id": "junction_real_rule_relative",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "outputs/jrel.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: outputs/jrel.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jrel.txt"
+    },
+    {
+      "id": "junction_real_rule_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "Claude requested permissions to write to <LINK_WORKDIR>\\outputs\\jabs.txt, but you haven't granted it yet.",
+      "written_to": null
+    },
+    {
+      "id": "junction_link_rule_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jlinkabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "Claude requested permissions to write to <LINK_WORKDIR>\\outputs\\jlinkabs.txt, but you haven't granted it yet.",
+      "written_to": null
+    },
+    {
+      "id": "junction_both_rules_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)",
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jbothabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: <LINK_WORKDIR>\\outputs\\jbothabs.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jbothabs.txt"
+    },
+    {
+      "id": "junction_both_rules_relative",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)",
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "outputs/jbothrel.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: outputs/jbothrel.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jbothrel.txt"
+    },
+    {
+      "id": "junction_labhq_rules_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<LINK_POSIX>/**)",
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jfixabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: <LINK_WORKDIR>\\outputs\\jfixabs.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jfixabs.txt"
     }
   ]
 }
