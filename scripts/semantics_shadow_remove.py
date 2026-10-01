@@ -17,6 +17,10 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+ACTIONS_OWNED = [
+    "labhq/research/semantics_actions.py",
+    "tests/test_semantics_actions.py",
+]
 OWNED = [
     "labhq/research/semantics_shadow.py",
     "labhq/research/semantics_objects.py",
@@ -29,6 +33,7 @@ OWNED = [
     "tests/test_semantics_shadow_breaker.py",
     "tests/test_semantics_shadow_report.py",
     "tests/test_semantics_shadow_remove.py",
+    *ACTIONS_OWNED,
     "scripts/semantics_shadow_remove.py",
 ]
 HOOK = "# semantics-hook"
