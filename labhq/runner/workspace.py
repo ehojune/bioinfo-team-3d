@@ -38,12 +38,15 @@ def _is_link(path: Path) -> bool:
 
 
 def _plain_directory(root: Path, relative: PurePath) -> Path | None:
-    """Create plain directory components, but never traverse a file, symlink or junction."""
+    """Create plain directory components, replacing links without traversing their targets."""
     current = root
     for part in relative.parts:
         current /= part
         if os.path.lexists(current):
-            if _is_link(current) or not current.is_dir():
+            if _is_link(current):
+                _remove_entry(current)
+                current.mkdir()
+            elif not current.is_dir():
                 return None
         else:
             current.mkdir()
@@ -54,11 +57,10 @@ def _remove_entry(path: Path) -> None:
     """Remove one entry without following a symlink or Windows junction."""
     if not os.path.lexists(path):
         return
-    if _is_link(path):
-        if path.is_dir():
-            path.rmdir()
-        else:
-            path.unlink()
+    if path.is_symlink():
+        path.unlink()  # POSIX directory symlinks need unlink(), not rmdir()
+    elif _is_link(path):
+        path.rmdir()  # Windows junction: rmdir unlinks the reparse point, not its target
     elif path.is_dir():
         shutil.rmtree(path)
     else:
@@ -85,16 +87,23 @@ class TaskWorkspace:
         return (f"Read {name} in the current directory (it is long) and carry out the instruction there.\n\n"
                 f"Instruction summary: {t.prompt[:2000]}")
 
-    def install_skill(self, skill_dir: Path) -> None:
+    def install_skill(self, skill_dir: Path) -> str | None:
         """Install a fresh contract skill copy for this run, without traversing workspace links."""
         skill_dir = Path(skill_dir)
-        if not (skill_dir / "SKILL.md").is_file():
-            return
-        for base in SKILL_DIRS:  # a read-only run exempts only these freshly replaced copies
+        if not skill_dir.name:
+            return "contract skill source has no directory name; execution refused"
+        destinations = []
+        for base in SKILL_DIRS:
             dst = self.dir / base / skill_dir.name
             parent = _plain_directory(self.dir, PurePath(base))
             if parent is None:
-                continue  # the read-only workspace check refuses this linked or non-directory parent
+                return "contract skill destination is not a directory; execution refused"
+            destinations.append((parent, dst))
+        if not (skill_dir / "SKILL.md").is_file():
+            for _, dst in destinations:
+                _remove_entry(dst)
+            return "contract skill source is missing or unreadable; execution refused"
+        for parent, dst in destinations:  # every run replaces every engine's copy from the source
             fresh = parent / f".{skill_dir.name}.labhq-{uuid.uuid4().hex}"
             try:
                 shutil.copytree(skill_dir, fresh)
@@ -102,6 +111,7 @@ class TaskWorkspace:
                 fresh.replace(dst)
             finally:
                 _remove_entry(fresh)
+        return None
 
     def append_event(self, ev: dict[str, Any]) -> None:
         with open(self.dir / "events.jsonl", "a", encoding="utf-8") as f:

@@ -16,6 +16,7 @@ from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task
 from labhq.runner.daemon import Runner
+from labhq.runner.workspace import _remove_entry
 from labhq.settings import Settings
 
 
@@ -389,6 +390,47 @@ async def test_a_read_only_run_replaces_a_link_at_the_contract_skill_destination
     assert len(seen) == 2
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX directory symlink semantics")
+def test_removing_a_contract_skill_directory_symlink_unlinks_only_the_link(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "SKILL.md").write_text("target stays\n", encoding="utf-8")
+    link = tmp_path / "skill"
+    link.symlink_to(target, target_is_directory=True)
+
+    _remove_entry(link)
+
+    assert not os.path.lexists(link)
+    assert (target / "SKILL.md").read_text(encoding="utf-8") == "target stays\n"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_contract_skill_source_removes_stale_copies_and_refuses_the_run(
+        tmp_path, monkeypatch, spawned):
+    from labhq.models import ContractInfo
+
+    seen = spawned(Engine.codex)
+    skill = tmp_path / "paper-skill"
+    skill.mkdir()
+    (skill / "SKILL.md").write_text("---\nname: paper-skill\n---\n", encoding="utf-8")
+    staff = _staff(contract=ContractInfo(hired_at=0, expires_at=0, skill_dir=str(skill)))
+    workdir = _workdir(tmp_path)
+    runner = _runner(_settings(tmp_path), monkeypatch, staff)
+    first = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="write",
+                                       meta={"kind": "step", "workdir": str(workdir)}))
+    assert first.ok, first.error
+    copies = [workdir / ".claude/skills/paper-skill", workdir / ".agents/skills/paper-skill"]
+    assert all((copy / "SKILL.md").is_file() for copy in copies)
+    (skill / "SKILL.md").unlink()
+
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+
+    assert not result.ok and "contract skill source" in result.error
+    assert all(not os.path.lexists(copy) for copy in copies)
+    assert len(seen) == 1, "the CLI must not start from a stale contract skill"
+
+
 @pytest.mark.asyncio
 async def test_a_read_only_claude_run_excludes_the_workspace_memory_files(tmp_path, monkeypatch, spawned):
     seen = spawned(Engine.claude_code)
@@ -400,7 +442,8 @@ async def test_a_read_only_claude_run_excludes_the_workspace_memory_files(tmp_pa
     argv = seen[0][0]
     excludes = json.loads(argv[argv.index("--settings") + 1])["claudeMdExcludes"]
     wd = workdir.resolve().as_posix()
-    assert {f"{wd}/CLAUDE.md", f"{wd}/CLAUDE.local.md", f"{wd}/.claude/CLAUDE.md", f"{wd}/.claude/rules/**"} <= set(excludes)
+    for name in ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/rules/x.md"):
+        assert any(_glob(pattern, f"{wd}/{name}") for pattern in excludes), name
 
 
 def _glob(pattern: str, path: str) -> bool:
@@ -424,7 +467,8 @@ async def test_a_read_only_claude_run_excludes_memory_files_in_workspace_subfold
     """Claude loads a subfolder's CLAUDE.md when it reads a file there, and a follow-up reads outputs/ first."""
     seen = spawned(Engine.claude_code)
     nested = ["outputs/CLAUDE.md", "outputs/run1/CLAUDE.local.md", "outputs/.claude/CLAUDE.md",
-              "outputs/.claude/rules/x.md"]
+              "outputs/.claude/rules/x.md", "outputs/.hidden/CLAUDE.md",
+              "outputs/.hidden/.claude/rules/x.md"]
     workdir = _workdir(tmp_path, *nested)
     runner = _runner(_settings(tmp_path), monkeypatch, _staff(Engine.claude_code))
     result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
@@ -437,6 +481,26 @@ async def test_a_read_only_claude_run_excludes_memory_files_in_workspace_subfold
     for name in nested:
         assert any(_glob(pattern, f"{wd}/{name}") for pattern in excludes), name
     assert not any(_glob(pattern, f"{wd}/outputs/result.md") for pattern in excludes), "only memory files"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine,entry", [
+    (Engine.claude_code, "outputs/.hidden/AGENTS.team.md"),
+    (Engine.codex, "outputs/.hidden/AGENTS.team.md"),
+    (Engine.codex, "outputs/.hidden/.agents/skills/stray/SKILL.md"),
+    (Engine.codex, "outputs/.hidden/.codex/config.toml"),
+])
+async def test_read_only_instruction_policy_applies_at_every_depth_and_in_hidden_folders(
+        tmp_path, monkeypatch, spawned, engine, entry):
+    seen = spawned(engine)
+    workdir = _workdir(tmp_path, entry)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff(engine))
+
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+
+    assert not result.ok and "read-only run refused" in result.error, result.error
+    assert seen == []
 
 
 # ---------------- #148: Codex project config in a reused workspace ----------------

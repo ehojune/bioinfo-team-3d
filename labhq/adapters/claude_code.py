@@ -18,6 +18,7 @@ from pathlib import Path
 from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
                    record_model_id, wrap_cwd)
+from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
 ISOLATION_FLAGS = ["--setting-sources", "project,local", "--disable-slash-commands"]
@@ -30,7 +31,6 @@ SKILL_ISOLATION_FLAGS = ["--setting-sources", "local"]
 # `--setting-sources project,local` and --plugin-dir, project and plugin SessionStart/Stop hooks ran under plan
 # mode and Read,Glob,Grep; with this profile none ran and the --settings deny rules still held.
 READ_ONLY_FLAGS = ["--setting-sources", "", "--disable-slash-commands"]
-WORKSPACE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -38,8 +38,18 @@ def workspace_memory_excludes(workdir: Path) -> list[str]:
     """Memory files a previous run could have left in a reused workspace (HPC wake-up, follow-up). Claude also loads
     a subfolder's CLAUDE.md once it reads a file there (outputs/CLAUDE.md), so every depth is excluded (#147)."""
     wd = Path(workdir).resolve().as_posix()
-    return ([f"{wd}/{n}" for n in WORKSPACE_MEMORY] + [f"{wd}/**/{n}" for n in WORKSPACE_MEMORY] +
-            [f"{wd}/.claude/rules/**", f"{wd}/**/.claude/rules/**"])
+    rules = WORKSPACE_INSTRUCTION_RULES["claude_code"]
+    broad = ([path for name in rules["exclude_files"] for path in (f"{wd}/{name}", f"{wd}/**/{name}")] +
+             [path for name in rules["exclude_dirs"]
+              for path in (f"{wd}/{name}/**", f"{wd}/**/{name}/**")] +
+             [f"{wd}/{name}" for name in rules["exclude_root_globs"]])
+    # Claude's glob matcher skips dot-prefixed folders under `**`. Add every matching path literally after walking
+    # the actual workspace with the same policy the read-only refusal check uses.
+    literal = []
+    for relative in workspace_instruction_paths("claude_code", Path(workdir), [], "exclude"):
+        path = Path(workdir) / relative
+        literal.append(f"{wd}/{relative}" + ("/**" if path.is_dir() else ""))
+    return list(dict.fromkeys([*broad, *literal]))
 
 
 def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:

@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #164 2회차 봇 리뷰 P1 — 읽기 전용 workspace 지시 경계 통합
+
+- 결론: 읽기 전용 실행이 workspace에서 읽을 수 있는 지시·memory·skill·설정 이름을 한 판정 함수로 모았다. 깊이와 숨김 폴더에 관계없이 Claude Code는 차단 목록으로 제외하고, 끌 수 없는 agents-md와 Codex project 지시는 실행 전에 거부한다.
+- 바뀐 것: adapter가 쓰는 `CLAUDE.md`·`CLAUDE.local.md`·`.claude/**`·`AGENTS*.md`·`.agents/**`·`.codex/**` 규칙을 `read_only.py` 한 곳에 뒀다. 계약 skill은 매 실행 원본에서 다시 만들며 원본이 없으면 stale 사본을 지우고 실행을 거부한다. POSIX directory symlink와 Windows junction은 대상 내용을 건드리지 않고 링크만 제거한다.
+- 실행한 것: 새 회귀 묶음은 수정 전 6 failed/1 skipped(POSIX 전용), 수정 후 관련 64 passed/1 skipped였다. 전체 pytest 1674 passed/22 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 새 CLI가 다른 workspace 지시 파일 이름을 도입하면 중앙 목록을 갱신해야 한다(README §10).
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/claude_code.py`, `labhq/runner/workspace.py`, `tests/test_read_only_followups.py`.
+
 ## 2026-10-01 · PR #164 봇 리뷰 P1 — 재사용 workspace의 계약 skill 변조 차단
 
 - 결론: 계약 skill은 매 실행 직전에 원본에서 새로 복사한다. 이전 writable step이 설치본 내용을 바꾸거나 skill 디렉터리를 symlink·Windows junction으로 교체해도 read-only run은 그 지침을 읽지 않는다.

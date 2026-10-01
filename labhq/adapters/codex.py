@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from ..util import short
+from ..util import atomic_write_text, short
 from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
 
@@ -43,7 +43,7 @@ class CodexAdapter(AgentAdapter):
     enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
 
     def prepare(self, ctx: RunContext) -> None:
-        (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
+        atomic_write_text(ctx.workdir / "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
         if ctx.task.output_schema:
             (ctx.meta_dir / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
 
