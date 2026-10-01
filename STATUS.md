@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #150 B1 의미 모델 그림자 — 요청 뒤 두 모델을 계산해 로컬에만 기록
+
+- 결론: `semantics: shadow`면 요청이 끝난 뒤 출처 의미 모델(#136)과 읽기 전용 객체·링크 뷰를 계산해 같은 줄에 나란히 남긴다. 기본은 off다. mock lab에서 off·shadow·보류 mode·오타 네 경우의 prompt·schema·계획·승인·결과·리뷰·round 기록·웹 snapshot·event가 같았다(diff 0). mock 요청의 재사용 후보는 0이었다. 산출 type 선언이 없어서이고, 이 공백을 재는 것이 B1의 목적이다.
+- 바뀐 것: `Settings.semantics` 한 칸, 새 `labhq/research/semantics_shadow.py`(설정·worker·산출 hash·자동 off·report)와 `semantics_objects.py`(객체 8종·링크 12종, 액션 없음), `semantics.py`의 `records_from_rows`, `labhq semantics report|enable|mark`, `scripts/semantics_shadow_remove.py`. 연결은 `# semantics-hook` 표시 줄 24개(settings 2·server 9·cli 13)뿐이다. 기록은 `gateway.state_dir/semantics/`에 ID·종류·hash·개수만 남는다.
+- 실행한 것: 기능 commit마다 새 test를 먼저 돌려 실패를 확인했다. 예외: 산출 hash의 승격 금지 test 2개와 git work tree 거부 test 1개는 앞 commit에서 이미 통과했다(후보가 원래 0이거나 worker commit의 기능). 전체 pytest 1668 passed/22 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과. 제거 시험은 임시 사본에서 지운 뒤 compile·설정 load·state 읽기와 e2e·pilot·cso test 통과. 로컬 Codex 리뷰 5회에서 P2 13건이 나왔고 모두 고쳤다(P1 없음). 이벤트 루프 부하는 1·3회차에 같은 부류로 나와 DB 읽기를 worker의 별도 읽기 전용 연결로 옮겨 닫았다. 나머지는 manifest 반영·구역 검사, observed 만료, 옵션 붙은 off, 멈춘 worker 뒤 새 epoch, 외부 off 즉시 반영, report 상태, git work tree 거부의 링크·CLI 우회, 멈춘 작업의 기록, 경로 표기였다. 리뷰는 5회에서 멈췄다. Python 3.10은 compile만 확인했다.
+- 미해결: 원격 runner 산출 hash(생성 시점 hash를 provenance에 싣기)는 별도 issue가 필요하다. 판정 기한 issue(병합+90일, 중간 +30일)와 semantics CI job은 이 PR에 없다. B2(CSO advisory)·팔란티어식 액션·EDAM(#151)은 PI 결정으로 보류다. symlink test는 이 Windows 계정에 권한이 없어 skip했고 junction test는 통과했다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/research/semantics_objects.py`, `scripts/semantics_shadow_remove.py`, `tests/test_semantics_shadow_*.py`, `tests/test_semantics_objects.py`, `tests/semantics_shadow_lab.py`.
+
 ## 2026-10-01 · #120 Slurm 스케줄러, #153 README 생성 블록 겹침
 
 - 결론: `hpc.scheduler: slurm`으로 HPC 직원 도구가 Slurm 클러스터에 붙는다. 제출 전 PI 승인, 실패와 '잡 없음' 구분, 제출 재시도 없음, 수면·기상, `ssh_host`·`submit_prefix`·`job_group`이 SGE·PBS와 같은 경로로 돈다. README 배지에 SLURM이 settings Literal에서 저절로 생겼다. `integrations.py --write`는 두 생성 블록이 겹치면 아무것도 쓰지 않고 실패한다.
