@@ -158,19 +158,31 @@ async def test_a_cancelled_step_still_gets_a_line(tmp_path):
 async def test_the_event_loop_never_waits_for_the_worker(tmp_path, monkeypatch):
     from labhq.research import semantics_shadow as shadow
     hub = _hub(tmp_path)
-    release = threading.Event()
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
     real = shadow.compute_line
 
     def slow(*args, **kwargs):
-        release.wait(5)
-        return real(*args, **kwargs)
+        started.set()
+        try:
+            release.wait(10)
+            return real(*args, **kwargs)
+        finally:
+            finished.set()
 
     monkeypatch.setattr(shadow, "compute_line", slow)
-    started = time.perf_counter()
-    for i in range(3):
-        _finish(hub, rid=f"req_burst{i}")
-    assert time.perf_counter() - started < 1.0
-    release.set()
+    _finish(hub, rid="req_burst0")
+    assert started.wait(5), "shadow worker did not start"
+    safety_release = threading.Timer(10, release.set)
+    safety_release.daemon = True
+    safety_release.start()
+    try:
+        _finish(hub, rid="req_burst1")
+        _finish(hub, rid="req_burst2")
+        assert not release.is_set(), "event-loop calls waited for the blocked worker"
+        assert not finished.is_set(), "worker finished before the event-loop calls returned"
+    finally:
+        safety_release.cancel()
+        release.set()
     assert hub.semantics_shadow.drain(10)
     assert hub.semantics_shadow.counts["busy"] == 1  # one running, one queued, the third skipped
     assert len([t for t in threading.enumerate() if t.name == hub.semantics_shadow.thread_name]) == 1
