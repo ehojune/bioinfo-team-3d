@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:57 | [`1208ee6`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1208ee6) | EDAM 유래 표·NOTICE·생성 script·전용 test를 #252 PI 확인용 draft PR #253으로 분리하고, subset 없이 core가 동작함을 전체 test로 확인 (#252) |
 | 02:44 | [`d19bb20`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/d19bb20) | origin/main(direct 산출 등록 #230 등)을 병합하고 README·STATUS 충돌은 양쪽 항목을 모두 보존 (#221) |
 | 02:32 | [`2d02904`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/2d02904) | README 설정·한계 절과 STATUS에 산출 종류 선언 자리를 적음 (#221·#151) |
 | 02:28 | [`7e81b01`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/7e81b01) | 선언을 켜도 dispatch·승인·결과가 꺼진 때와 같음을 비교 test로 고정 (#221) |
