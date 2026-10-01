@@ -121,6 +121,16 @@ def root_zone_restricted(policy: PolicySettings) -> bool:
     return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
 
 
+def _literal_zone_pattern(zone: str) -> str:
+    """Match a normalized zone with either separator without rescanning inside one separator run."""
+    separator = r"[/\\]+"
+    parts = [re.escape(part) for part in zone.split("/") if part]
+    body = separator.join(parts)
+    # A POSIX or UNC path starts only at the beginning of its separator run. Without this guard, a failed
+    # `////.../restricted` match retries the greedy separator at every slash and takes quadratic time.
+    return (r"(?<![/\\])" + separator if zone.startswith("/") else "") + body
+
+
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = (),
              limit: int | None = MAX_BODY) -> str:
     out = text or ""
@@ -140,7 +150,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     #    is unknowable: fail closed to the end of the line.
     tail = r"[^\r\n]*"
     for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
-        pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
+        pattern = _literal_zone_pattern(zone)
         # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
         out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:

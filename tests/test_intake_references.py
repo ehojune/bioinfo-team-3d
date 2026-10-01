@@ -201,6 +201,21 @@ def test_project_reports_mask_a_tilde_reference_wherever_the_runner_expanded_it(
     assert cleaned.count("<reference-path>") == 6 and "keep /srv/refs/llm-wiki" in cleaned
 
 
+@pytest.mark.parametrize(("reference", "text"), [
+    ("~", r"a ~ b ~/notes.md c /home/worker/notes.md d C:\Users\worker\notes.md"),
+    ("~/x", r"a ~/x b ~/x/notes.md c /home/worker/x/notes.md d C:\Users\worker\x\notes.md"),
+])
+def test_project_reports_mask_short_tilde_references_in_every_runner_home(tmp_path, reference, text):
+    # A valid short reference must not fall through a length cutoff. The gateway cannot know which account
+    # expands it, so both the literal tilde and any runner account's expanded home form are private.
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": reference, "source": "request"}]}
+    cleaned = hub.reporter._clean(text)
+    assert cleaned.count("<reference-path>") == 4, cleaned
+    assert "worker" not in cleaned and "~/" not in cleaned and " a ~ " not in f" {cleaned} "
+
+
 def test_pi_profile_path_outside_roots_blocks_requests_loudly(tmp_path):
     s = settings_with_roots(tmp_path)
     s.pi_profile.references = [ref("path", str(tmp_path / "private"))]
@@ -650,6 +665,9 @@ def test_reference_masks_stay_linear_on_long_unbroken_tokens(tmp_path):
     from labhq.intake import withhold_reference_paths
 
     s = settings_with_roots(tmp_path)
+    # Keep a POSIX restricted root even on Windows: this is the production shape on Linux runners, where
+    # sanitize's literal-zone fallback used to rescan every suffix of a long separator run.
+    s.policy.data_zones = [DataZone(path="/restricted")]
     s.pi_profile.references = [ref("url", "https://wiki.example.org/pi/notes"), ref("github", "owner/Yuan")]
     hub = create_app(s).state.hub
     hub.requests["r"] = {"references": [{"kind": "path", "value": "~/refs/llm-wiki", "source": "request"},

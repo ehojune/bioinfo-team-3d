@@ -616,7 +616,7 @@ def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
     drive = re.match(r"([A-Za-z]):(.*)$", value, re.DOTALL)
     if drive:
         head, rest = rf"(?:{drive[1]}:|{_RUN_START}{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
-    elif any_home and value.startswith(("~/", "~\\")):
+    elif any_home and (value == "~" or value.startswith(("~/", "~\\"))):
         head, rest = _ANY_HOME, value[1:]
     elif value.startswith(("/", "\\")):
         head = _RUN_START
@@ -688,7 +688,9 @@ def _compiled_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = f
     masks = [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
              for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)
              for source in link_patterns(kind, value)]
-    values = {v.rstrip("\\/") for v in paths if len(v) >= 4}
+    # Even `~` and `~/x` are valid references. Do not use length as a proxy for safety: the former expands
+    # to a runner account's whole home and the gateway cannot know that account in advance.
+    values = {v.rstrip("\\/") or v for v in paths if v}
     masks += [(re.compile(path_pattern(v, boundary=False, any_home=True), re.IGNORECASE), REFERENCE_PATH_MASK)
               for v in sorted(values, key=len, reverse=True) if v]
     return tuple(masks)

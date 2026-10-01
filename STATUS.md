@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #176 봇 리뷰 P1 2건 — 짧은 home 참고와 긴 구분자 run
+
+- 결론: P1 2건을 닫았다. `~`·`~/x` 같은 짧은 참고도 literal과 어느 러너 계정의 home 표현에서든 공개 전에 가린다. 통제 구역 fallback은 separator run 첫머리에서만 match를 시작해 입력 길이에 비례해 돈다.
+- 바뀐 것: path mask의 길이 필터를 없애고 `~` 단독도 `_ANY_HOME`으로 처리했다. POSIX·UNC 통제 구역의 literal fallback에는 separator run 시작 guard를 붙였다. 패치노트는 건드리지 않았다.
+- 실행한 것: 수정 전 짧은 tilde 회귀 2건은 가림 0회로 실패했고, POSIX 통제 구역을 포함한 60 KB 회귀는 18.0초로 5초 기준을 넘었다. 수정 뒤 관련 33개 test, 전체 pytest 1557 passed/21 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`.
+
 ## 2026-10-01 · #36 PR A 후속 8건 — 참고 자료 정보 경계와 폴더 링크 검사를 판정 하나로
 
 - 결론: 참고 자료의 경로·URL이 공개 보고·라운드 기록·prompt로 새는 길과, 참고·upstream·project 폴더의 링크·통제 구역 검사를 각각 공통 함수로 모았다. #123 #124 #130 #131 #132 #133 #134를 고쳤다. #125의 확인 조건은 #122에서 이미 테스트와 함께 들어가 있어 판정만 공통 함수로 옮겼다.
