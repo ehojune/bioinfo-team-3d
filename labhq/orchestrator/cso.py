@@ -320,6 +320,58 @@ def _output_reference(inner: str) -> re.Pattern[str]:
                       r"(?![A-Za-z0-9_\-/\\]|\.[A-Za-z0-9_])", re.IGNORECASE)
 
 
+_OUTPUT_ACTION = re.compile(
+    r"\b(?:write|writes|writing|written|save|saves|saving|saved|create|creates|creating|created|"
+    r"produce|produces|producing|produced|export|exports|exporting|exported|store|stores|storing|stored|"
+    r"deliver|delivers|delivering|delivered|emit|emits|emitting|emitted|generate|generates|generating|generated|"
+    r"make|makes|making|made)\b|"
+    r"작성|저장|생성|내보내|산출|만들",
+    re.IGNORECASE,
+)
+_INPUT_ACTION = re.compile(
+    r"\b(?:read|reads|reading|load|loads|loading|loaded|use|uses|using|used|consume|consumes|consuming|"
+    r"consumed|open|opens|opening|opened|inspect|inspects|inspecting|inspected|input|from)\b|"
+    r"읽|불러|사용|입력|열어|검사",
+    re.IGNORECASE,
+)
+
+
+def _instruction_path_action(instruction: str, start: int, end: int) -> str | None:
+    """Nearest input/output action around a path; ties stay ambiguous instead of changing an input."""
+    left, right = max(0, start - 200), min(len(instruction), end + 100)
+    actions = []
+    for kind, pattern in (("output", _OUTPUT_ACTION), ("input", _INPUT_ACTION)):
+        for action in pattern.finditer(instruction, left, right):
+            if action.end() <= start:
+                distance = start - action.end()
+            elif action.start() >= end:
+                distance = action.start() - end
+            else:
+                distance = 0
+            actions.append((distance, kind))
+    if not actions:
+        return None
+    nearest = min(distance for distance, _ in actions)
+    kinds = {kind for distance, kind in actions if distance == nearest}
+    return kinds.pop() if len(kinds) == 1 else None
+
+
+def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[str, int, list[str]]:
+    pattern = _output_reference(inner)
+    rewritten = 0
+    ambiguous = []
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal rewritten
+        if _instruction_path_action(instruction, match.start(), match.end()) == "output":
+            rewritten += 1
+            return f"./{rel}"
+        ambiguous.append(match.group(0))
+        return match.group(0)
+
+    return pattern.sub(replace, instruction), rewritten, ambiguous
+
+
 def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     """Keep every declared output under outputs/ before dispatch (#220).
 
@@ -329,7 +381,7 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
     declaration made explicit. An output that leaves outputs/ (absolute, drive, `..`) cannot be fixed here;
     it comes back as a problem for the caller to reject.
     """
-    warnings, bad, outputs, seen = [], [], [], set()
+    warnings, bad, ambiguous, outputs, seen = [], [], [], [], set()
     for name in step["outputs"]:
         rel = output_relpath(name)
         if rel is None:
@@ -340,13 +392,20 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
             continue
         seen.add(rel)
         inner = rel[len("outputs/"):] if rel.startswith("outputs/") else rel
-        instruction, refs = _output_reference(inner).subn(f"./{rel}", step["instruction"])
+        instruction, refs, unclear = _rewrite_output_references(step["instruction"], inner, rel)
+        ambiguous.extend(unclear)
         if refs or name.strip().replace("\\", "/") != rel:
             step["instruction"] = instruction
             warnings.append(f"step {step['id']}: output {name!r} moved under outputs/ as {rel}")
         outputs.append(rel)
     step["outputs"] = outputs + bad
-    return warnings, f"step {step['id']}: outputs {bad} are outside its outputs/ folder" if bad else None
+    problems = []
+    if bad:
+        problems.append(f"step {step['id']}: outputs {bad} are outside its outputs/ folder")
+    if ambiguous:
+        problems.append(f"step {step['id']}: ambiguous instruction paths {ambiguous} match declared outputs; "
+                        "use a distinct input name and an explicit output action with outputs/<name>")
+    return warnings, "; ".join(problems) if problems else None
 
 
 def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:

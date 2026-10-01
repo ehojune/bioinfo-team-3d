@@ -1056,6 +1056,17 @@ def test_output_normalization_rewrites_instruction_paths_case_insensitively_and_
     assert len([w for w in warnings if "moved under outputs/" in w]) == 1
 
 
+@pytest.mark.parametrize("instruction", [
+    "Read /datasets/report.md, then write report.md",
+    "Write report.md after reading /datasets/report.md",
+])
+def test_same_basename_input_path_is_not_rewritten_as_the_declared_output(instruction):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"], "instruction": instruction}]
+    with pytest.raises(ValueError, match="ambiguous instruction paths"):
+        validate_steps(raw, {"analyst"}, 10)
+    assert "/datasets/report.md" in raw[0]["instruction"]
+
+
 def test_normalized_output_names_drive_dependency_inference():
     raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["./answer.md"],
             "instruction": "write ./answer.md"},
