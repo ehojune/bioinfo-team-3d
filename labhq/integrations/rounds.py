@@ -28,6 +28,10 @@ log = logging.getLogger("labhq.rounds")
 REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
+class RoundPublicationDeferred(RuntimeError):
+    """A restart-time configuration change can make this delivery publishable."""
+
+
 @functools.lru_cache(maxsize=1)
 def _git_commit() -> str | None:
     """HEAD when this process first asks: the code it loaded, even if the checkout moves later."""
@@ -311,8 +315,13 @@ class RoundRecorder:
                     transient = False
                     rate_limited = False
                     retry_after = 0.0
+                    restart_only = False
                     try:
                         published = await self.publish(rid)
+                    except RoundPublicationDeferred as exc:
+                        published = False
+                        restart_only = True
+                        log.warning("round issue publication deferred: %s", exc)
                     except Exception as exc:
                         published = False
                         transient = (isinstance(exc, httpx.TransportError) or
@@ -328,6 +337,8 @@ class RoundRecorder:
                         continue
                     if published:
                         self.hub.store.delete("round_delivery", rid)
+                    elif restart_only:
+                        self.hub.store.put("round_delivery", rid, {**delivery, "state": "pending"})
                     else:
                         retry = rate_limited or transient and attempts < self.MAX_ATTEMPTS
                         saved_attempts = delivery.get("attempts", 0) if rate_limited else attempts
@@ -372,8 +383,7 @@ class RoundRecorder:
         if self.client is None:
             token = os.environ.get(self.s.github.token_env, "")
             if not token and self.transport is None:
-                log.warning("round issue publication needs %s", self.s.github.token_env)
-                return False
+                raise RoundPublicationDeferred(f"{self.s.github.token_env} is not set")
             self.client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport,
                                        lambda value: sanitize(value, self.s.policy,
                                            [self.s.gateway.client_token, self.s.gateway.runner_token]))

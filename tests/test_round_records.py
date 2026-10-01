@@ -221,6 +221,70 @@ async def test_403_reset_requires_exhausted_remaining_and_waits_until_reset(tmp_
 
 
 @pytest.mark.asyncio
+async def test_rate_limit_retry_after_is_a_lower_bound_and_does_not_exhaust_attempts(tmp_path, monkeypatch):
+    class RateLimitedOnce(FakeGitHub):
+        limited = False
+
+        def __call__(self, request):
+            if not self.limited:
+                self.limited = True
+                return httpx.Response(429, headers={"Retry-After": "60"}, json={"message": "slow down"})
+            return super().__call__(request)
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    remote = RateLimitedOnce()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    monkeypatch.setattr(hub.rounds, "MAX_ATTEMPTS", 1, raising=False)
+    slept = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(hub.rounds, "_sleep", fake_sleep, raising=False)
+    round_request(hub, "req-rate", "done")
+    hub.rounds.write("req-rate")
+    hub.rounds.submit("req-rate")
+    try:
+        await asyncio.wait_for(hub.rounds.drain(), 2)
+        assert slept == [60]
+        assert remote.issue is not None
+        assert hub.store.get("round_delivery", "req-rate") is None
+    finally:
+        hub.rounds.worker.cancel()
+        await asyncio.gather(hub.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_missing_token_stays_pending_and_recovers_after_restart(tmp_path, monkeypatch):
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    monkeypatch.delenv(cfg.github.token_env, raising=False)
+    first = Hub(cfg)
+    round_request(first, "req-token", "done")
+    first.rounds.write("req-token")
+    first.rounds.submit("req-token")
+    try:
+        await asyncio.wait_for(first.rounds.drain(), 2)
+        assert first.store.get("round_delivery", "req-token")["state"] == "pending"
+    finally:
+        first.rounds.worker.cancel()
+        await asyncio.gather(first.rounds.worker, return_exceptions=True)
+
+    monkeypatch.setenv(cfg.github.token_env, "restored-token")
+    remote = FakeGitHub()
+    restarted = Hub(cfg, httpx.MockTransport(remote))
+    restarted.rounds.recover()
+    try:
+        await asyncio.wait_for(restarted.rounds.drain(), 2)
+        assert remote.issue is not None
+        assert restarted.store.get("round_delivery", "req-token") is None
+    finally:
+        restarted.rounds.worker.cancel()
+        await asyncio.gather(restarted.rounds.worker, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["public", 401, 403, 422, 500])
 async def test_publication_stops_on_permanent_failure_or_retry_limit(tmp_path, failure, monkeypatch):
     calls = []
