@@ -485,3 +485,55 @@ def test_a_registry_url_alone_is_looked_up_as_its_identifier():
     resolution = report.evidence[0].resolution
     assert (resolution.id_scheme, resolution.id_value, resolution.status) == ("geo", "GSE79973", "found")
     assert geo.calls == [("geo", "gse79973")] and report.ok is True
+
+
+@pytest.mark.parametrize("scheme, value, uri", [
+    ("ensembl", "ENSG00000141510", "https://www.ensembl.org/id/ENSG00000139618"),  # TP53 beside BRCA2
+    ("ensembl", "ENSG00000141510.17", "https://www.ensembl.org/id/ENSG00000139618.17"),  # same version, other gene
+    ("refseq", "NM_000546.6", "https://identifiers.org/refseq:NM_004985.5"),
+    ("uniprot", "P04637-2", "https://www.uniprot.org/uniprotkb/P38398/entry"),
+    ("clinvar", "VCV000012375", "https://www.ncbi.nlm.nih.gov/clinvar/variation/12376/"),
+])
+def test_a_registry_url_naming_another_base_accession_is_conflicting(scheme, value, uri):
+    # #167: version, isoform and VCV padding are spellings of one record; a different base accession is not.
+    result = build([claim("c1")], [cited_with_uri("e1", scheme, value, uri)], [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(result, fixed))
+    uri_check = report.evidence[0].resolutions[-1]
+    assert (uri_check.id_scheme, uri_check.status, uri_check.resolver) == ("uri", "conflicting", "registry_url")
+    assert by_claim(report)["c1@1"].state == "defective" and report.defective_evidence == ["e1"]
+    assert not [call for call in fixed.calls if call[0] == "uri"]  # code decides; no authority call
+
+
+@pytest.mark.parametrize("scheme, cited, answer, status", [
+    ("ensembl", "ENSG00000141510.17", "ENSG00000141510", "requires_verification"),  # record without a version
+    ("ensembl", "ENSG00000141510.17", "ENSG00000141510.17", "found"),
+    ("ensembl", "ENSG00000141510.17", "ENSG00000139618", "conflicting"),
+    ("uniprot", "P04637-2", "P04637", "requires_verification"),
+    ("clinvar", "VCV000012375", "12375", "requires_verification"),
+    ("clinvar", "VCV000012375", "12376", "conflicting"),
+])
+def test_a_uri_resolved_to_the_same_base_accession_is_unverified_not_conflicting(scheme, cited, answer, status):
+    # #167: the resolver path compares by the same base form as the local registry-URL check.
+    url = "https://example.org/tp53-record"
+    mapping = StaticResolver({(scheme, cited): [{"id_scheme": scheme, "id_value": cited}],
+                              ("uri", url): [{"id_scheme": scheme, "id_value": answer}]})
+    result = build([claim("c1")], [cited_with_uri("e1", scheme, cited, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    uri_check = report.evidence[0].resolutions[1]
+    assert (uri_check.id_scheme, uri_check.status) == ("uri", status)
+    assert (report.defective_evidence == ["e1"]) is (status == "conflicting")
+    assert report.ok is (status == "found")
+
+
+@pytest.mark.parametrize("cited, answer, status", [
+    ("ENSG00000141510.17", "ENSG00000141510", "requires_verification"),  # the authority drops the version
+    ("ENSG00000141510.17", "ENSG00000139618", "conflicting"),
+    ("P04637-2", "P04637", "requires_verification"),
+])
+def test_an_id_lookup_answered_with_the_base_accession_is_unverified(cited, answer, status):
+    scheme = "uniprot" if cited.startswith("P") else "ensembl"
+    mapping = StaticResolver({(scheme, cited): [{"id_scheme": scheme, "id_value": answer}]})
+    result = build([claim("c1")], [row("e1", scheme, cited)], [link("c1", "e1")])
+    resolution = asyncio.run(verify_sources(result, mapping)).evidence[0].resolution
+    assert (resolution.id_scheme, resolution.status) == (scheme, status)

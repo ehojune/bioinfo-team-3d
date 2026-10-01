@@ -32,7 +32,7 @@ IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "require
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
                            "resolver_error"})
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
-                        "uri_unmapped"})
+                        "uri_unmapped", "base_match_only"})
 
 
 class StrictModel(BaseModel):
@@ -158,6 +158,63 @@ def _skipped(scheme: str, value: str, resolver: str, status: IdStatus, kind: str
                       error_kind=kind, detail=detail)
 
 
+# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
+# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
+_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
+
+
+def accession_base(scheme: str, value: str) -> str:
+    """The record an accession names with its version, isoform or VCV padding removed (#167).
+
+    ``ENSG00000141510.17`` -> ``ensg00000141510``, ``P04637-2`` -> ``p04637``, ``VCV000012375.3`` -> ``12375``.
+    RCV and SCV accessions keep their prefix: they are other ClinVar records, not variation ids.
+    """
+    folded = normalize_id(scheme, value)
+    if scheme in {"ensembl", "refseq"}:
+        return re.sub(r"\.\d+$", "", folded)
+    if scheme == "uniprot":
+        return re.sub(r"-\d+$", "", folded)
+    if scheme == "clinvar":
+        variation = re.fullmatch(r"vcv0*(\d+)(?:\.\d+)?", folded)
+        if variation:
+            return variation[1]
+        return re.sub(r"\.\d+$", "", folded)
+    return folded
+
+
+AccessionMatch = Literal["same", "base_only", "different"]
+
+
+def compare_accessions(scheme: str, cited: str, other: str) -> AccessionMatch:
+    """One judgment for every place that compares a cited accession with another spelling (#167).
+
+    ``same``: one spelling. ``base_only``: one record under another version, isoform or VCV padding, or
+    ClinVar records of different kinds (RCV beside a variation id); only the authority can say they agree.
+    ``different``: another record.
+    """
+    if normalize_id(scheme, cited) == normalize_id(scheme, other):
+        return "same"
+    if scheme not in _SEVERAL_SPELLINGS:
+        return "different"
+    left, right = accession_base(scheme, cited), accession_base(scheme, other)
+    if left == right:
+        return "base_only"
+    if scheme == "clinvar" and _clinvar_kind(left) != _clinvar_kind(right):
+        return "base_only"
+    return "different"
+
+
+def _clinvar_kind(base: str) -> str:
+    return "variation" if base.isdigit() else base[:3]  # rcv / scv
+
+
+def _base_only(scheme: str, value: str, resolver: str, records: list[SourceRecord], source: str) -> Resolution:
+    named = ", ".join(sorted({r.id_value for r in records}))
+    return _skipped(scheme, value, resolver, "requires_verification", "base_match_only",
+                    f"{source} names {named}, which shares only the base accession with the cited {value}; "
+                    "whether they are one record is unconfirmed")
+
+
 def _judge(scheme: str, value: str, version: str | None, records: list[SourceRecord], resolver: str) -> Resolution:
     base = {"id_scheme": scheme, "id_value": value, "lookup": "succeeded", "resolver": resolver}
     if not records:
@@ -166,10 +223,14 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
         # Numeric IDs collide across databases (PMID 12345 vs ClinVar 12345).
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a record from a different scheme")
-    other = [r for r in records if normalize_id(scheme, r.id_value) != normalize_id(scheme, value)]
-    if other:
+    kinds = [compare_accessions(scheme, value, r.id_value) for r in records]
+    if "different" in kinds:
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a different identifier")
+    exact = [r for r, kind in zip(records, kinds) if kind == "same"]
+    if not exact:
+        return _base_only(scheme, value, resolver, records, "the authority")
+    records = exact
     matching = [r for r in records if version is None or r.version == version]
     if not matching:
         return Resolution(**base, status="conflicting", candidates=records,
@@ -285,24 +346,20 @@ async def _resolve_external(scheme: str, value: str, version: str | None, lookup
     return _judge(scheme, value, version, outcome, resolver.name)
 
 
-# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
-# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
-_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
-
-
 async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tuple[str, str],
                               lookups: _Lookups) -> Resolution | None:
     """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address.
 
-    Code alone calls a registry URL ``conflicting`` only when it names another accession of the same scheme,
-    and that scheme spells each record one way. A DOI beside its PubMed URL, or ``ENSG...17`` beside
-    ``/id/ENSG...``, may be one record: only the authority can tell, so those go to the resolver like any URL.
+    Code alone calls a registry URL ``conflicting`` when it names another base accession of the same scheme
+    (``compare_accessions``). A DOI beside its PubMed URL, or ``ENSG...17`` beside ``/id/ENSG...``, may be
+    one record: only the authority can tell, so those go to the resolver like any URL.
     """
     scheme, value = cited
     if named is not None and named[0] == scheme:
-        if normalize_id(*named) == normalize_id(scheme, value):
+        match = compare_accessions(scheme, value, named[1])
+        if match == "same":
             return None  # already checked as the ID itself
-        if scheme not in _SEVERAL_SPELLINGS:
+        if match == "different":
             return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
                               resolver="registry_url",
                               candidates=[SourceRecord(id_scheme=named[0], id_value=named[1], url=uri)],
@@ -323,11 +380,14 @@ async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tu
     if not named_records:
         return _skipped("uri", uri, resolver.name, "requires_verification", "uri_unmapped",
                         f"{resolver.name} resolved the uri but did not say which {scheme} it is")
-    same = [r for r in named_records if normalize_id(scheme, r.id_value) == normalize_id(scheme, value)]
-    if not same:
-        return Resolution(**base, status="conflicting", candidates=named_records,
-                          detail=f"the uri resolves to a different {scheme} than the cited {value}")
-    return Resolution(**base, status="found", record=same[0])
+    kinds = [compare_accessions(scheme, value, r.id_value) for r in named_records]
+    same = [r for r, kind in zip(named_records, kinds) if kind == "same"]
+    if same:
+        return Resolution(**base, status="found", record=same[0])
+    if "base_only" in kinds:
+        return _base_only("uri", uri, resolver.name, named_records, "the uri")
+    return Resolution(**base, status="conflicting", candidates=named_records,
+                      detail=f"the uri resolves to a different {scheme} than the cited {value}")
 
 
 async def _resolve(source: SourceRef, lookups: _Lookups, artifact_paths: Mapping[str, str],
