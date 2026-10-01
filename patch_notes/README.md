@@ -8,6 +8,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-02
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:25 | [`42aa21c`](https://github.com/ehojune/bioinfo-team-3d/pull/239/commits/42aa21c) | STATUS의 전체 test 수를 main 병합 뒤 값(pytest 2187 passed)으로 고쳤습니다. |
+| 00:51 | [`7de972a`](https://github.com/ehojune/bioinfo-team-3d/pull/239/commits/7de972a) | **main 병합에서 STATUS·패치노트 충돌을 풀었습니다.** 소유 경로 쓰기·정보 경계 후속(#216)과 겹친 부분은 양쪽을 모두 살렸습니다. |
+| 00:38 | [`6cd20a1`](https://github.com/ehojune/bioinfo-team-3d/pull/239/commits/6cd20a1) | **Windows 명령줄 한도를 넘는 직원 prompt는 TASK 파일로 넘깁니다** (#222). 재계획 명령이 33,091자라 Windows가 거부하고 `executable not found`로 보이던 결함입니다. adapter가 길이를 UTF-16 단위로 재서 32,000을 넘으면 TASK 파일을 가리키는 짧은 prompt로 바꾸고, 그래도 넘으면 실행 전에 거부합니다. |
+| 00:01 | [`4117f6e`](https://github.com/ehojune/bioinfo-team-3d/pull/239/commits/4117f6e) | **연구 계획이 CP1 승인 카드까지 가게 했습니다** (#222). `protocol.packs`(id·version·sha256)는 설정 snapshot이라 CSO가 아니라 코드가 채웁니다. 계약 검사는 첫 오류에서 멈추지 않고 문제를 모아 교정 prompt에 번호 목록으로 넣습니다. 교정 뒤에도 실패하면 CP1 카드 없이 `plan_invalid`로 끝내고 남은 문제와 설정된 pack을 한국어로 보고합니다. catalog에 `pack_values_keys`를 넣어 acceptance 키를 rule id로 고정했습니다. |
+
 ## 2026-10-01
 
 | 시간 | 커밋 | 주요 변경사항 |
