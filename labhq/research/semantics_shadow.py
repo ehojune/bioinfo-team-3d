@@ -28,6 +28,7 @@ import re
 import stat
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,9 @@ KEYS = ("mode", "timeout_s", "history_requests")
 DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
+BUSY_LIMIT = 5                   # consecutive requests skipped because the worker was busy
+CONSECUTIVE_FAILURES = 3
+RECENT_WINDOW, RECENT_FAILURES = 20, 3
 HASH_MAX_FILES = 200
 HASH_MAX_TOTAL = 2 * 1024 ** 3
 HASH_MAX_FILE = 512 * 1024 ** 2
@@ -59,7 +63,13 @@ MAX_CANDIDATE_REFS = 5
 OBSERVED_MAX = 20_000
 RETENTION_DAYS = 90
 LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX entries) stay under 50 MiB
+VERDICTS = ("ok", "wrong_identity", "wrong_other", "irrelevant")
 REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
+SAFE_TOKEN = re.compile(r"[A-Za-z0-9_.:@#+-]{0,96}")
+VOCABULARY = frozenset({"general", "research", "direct", "orchestrate", "plan_only", "done", "failed", "rejected",
+                        "cancelled", "interrupted", "running", "ok", "error", "timeout", "request", "auto_off",
+                        "enable", "mark", *VERDICTS, *REASONS})
+SENSITIVE_MIN = 6
 RUN_FIELDS = ("agent_spec_sha256", "kind", "attempt", "retry", "revision", "session_id", "method", "resumes",
               "wake_of")
 ART_FIELDS = ("generated_by", "generator_inputs", "method", "packs", "sha256", "data_type")
@@ -133,6 +143,13 @@ class ShadowPaths:
     def log_old(self) -> Path:
         return self.root / "shadow.1.jsonl"
 
+    @property
+    def disabled(self) -> Path:
+        return self.root / "disabled.json"
+
+    @property
+    def state(self) -> Path:
+        return self.root / "state.json"
 
     @property
     def observed(self) -> Path:
@@ -209,6 +226,34 @@ def read_lines(paths: ShadowPaths) -> tuple[list[dict], int]:
             else:
                 broken += 1
     return lines, broken
+
+
+def read_state(paths: ShadowPaths) -> dict:
+    """epoch and start time; created on first use."""
+    if not paths.state.exists():
+        state = {"epoch": 1, "since": time.time()}
+        paths.root.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(paths.state, json.dumps(state))
+        return state
+    state = _read_json(paths.state)
+    if not isinstance(state, dict) or not isinstance(state.get("epoch"), int) or state["epoch"] < 1:
+        raise ValueError("state.json")
+    return state
+
+
+def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None) -> None:
+    paths.root.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(paths.disabled, json.dumps({"reason": reason, "ts": time.time(), "epoch": epoch,
+                                                  "counts": dict(counts or {})}, sort_keys=True))
+
+
+def read_disabled(paths: ShadowPaths) -> dict | None:
+    if not paths.disabled.exists():
+        return None
+    value = _read_json(paths.disabled)
+    if not isinstance(value, dict) or not isinstance(value.get("reason"), str):
+        raise ValueError("disabled.json")
+    return value
 
 
 # ---------------------------------------------------------------- snapshot (event loop side, no file reads)
@@ -313,6 +358,76 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
     snap = json.loads(json.dumps(snap, default=str))
     snap["snapshot_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return snap
+
+
+# ---------------------------------------------------------------- information boundary
+
+def _strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for k, v in value.items():
+            yield from _strings(k)
+            yield from _strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _strings(v)
+
+
+def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
+    """Values a line must never contain: texts, instructions, paths, reference values, zones, project names."""
+    found: list[Any] = []
+    for req in (snap.get("requests") or {}).values():
+        found += [req.get("text"), req.get("project_id")]
+        found += [r.get("value") for r in req.get("references") or []]
+        plan = req.get("plan") or {}
+        found += [s for s in _strings(plan) if len(s) >= 12] if req.get("research_contract") else [
+            step.get("instruction") for step in plan.get("steps") or []]
+        for result in (req.get("results") or {}).values():
+            found += [result.get("workdir"), result.get("workdir_id"), *(result.get("outputs") or [])]
+    for task in (snap.get("tasks") or {}).values():
+        result = task.get("result") if isinstance(task.get("result"), dict) else {}
+        outputs = [o for o in result.get("outputs") or [] if isinstance(o, str)]
+        found += [result.get("workdir"), result.get("workdir_id"), *outputs]
+        found += [o.replace("\\", "/").rsplit("/", 1)[-1] for o in outputs]
+    found += [zone[0] for zone in snap.get("zones") or []]
+    project = snap.get("project") or {}
+    found += [project.get("id"), project.get("local_dir"), project.get("name"), snap.get("workspace_root")]
+    return {s.strip() for s in found if isinstance(s, str) and len(s.strip()) >= SENSITIVE_MIN}
+
+
+def boundary_problems(line: Mapping[str, Any], sensitive: Iterable[str]) -> list[str]:
+    """Why a line may not be written: a string that is not a plain token, or a value carrying a sensitive one.
+
+    Keys and the fixed words of ``VOCABULARY`` are code's own; every other string value is checked against
+    the snapshot's texts, paths and names, so a request titled like a status word does not trip the check.
+    """
+    problems: list[str] = []
+    keys: list[str] = []
+    values: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for k, v in value.items():
+                if isinstance(k, str):
+                    keys.append(k)
+                else:
+                    problems.append("non_string_key")
+                walk(v)
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                walk(v)
+        elif isinstance(value, str):
+            values.append(value)
+        elif not (value is None or isinstance(value, (bool, int, float))):
+            problems.append("non_json_value")
+
+    walk(line)
+    problems += ["not_a_token" for s in keys + values if not SAFE_TOKEN.fullmatch(s)]
+    secrets = [s for s in sensitive if s]
+    problems += ["sensitive_value" for leaf in values if len(leaf) >= SENSITIVE_MIN and leaf not in VOCABULARY
+                 for s in secrets if s in leaf]
+    return problems
 
 
 # ---------------------------------------------------------------- file reads: zones, same disk, hash
@@ -668,21 +783,27 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     return line
 
 
-# ---------------------------------------------------------------- worker
+# ---------------------------------------------------------------- worker and breaker
 
 class ShadowService:
-    """One daemon worker thread and a queue of one. A busy worker skips the request and counts it."""
+    """One daemon worker thread, a queue of one, and a breaker that latches off without a redeploy."""
 
-    def __init__(self, hub: Any, cfg: ShadowConfig, paths: ShadowPaths):
-        self.hub, self.cfg, self.paths = hub, cfg, paths
+    def __init__(self, hub: Any, cfg: ShadowConfig, paths: ShadowPaths, *, stuck_s: float = STUCK_S):
+        self.hub, self.cfg, self.paths, self.stuck_s = hub, cfg, paths, stuck_s
         self.lock = threading.RLock()
         self.queue: queue.Queue = queue.Queue(maxsize=1)
         self.thread: threading.Thread | None = None
         self.gen = 0
         self.epoch = 1
+        self.latched: str | None = None
+        self.recent: deque[bool] = deque(maxlen=RECENT_WINDOW)
+        self.consecutive = 0
+        self.busy = 0
         self.busy_skipped = 0
+        self.current: tuple[int, float] | None = None
         self.observed: dict[str, dict] | None = None
         self.observed_dirty = False
+        self.state_mtime: float | None = None
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
         self.pending = 0  # queued or running jobs
@@ -699,15 +820,78 @@ class ShadowService:
                 return None
             service = cls(hub, cfg, ShadowPaths(root))
             prune(service.paths, time.time())
+            service.load()
             return service
         except Exception as exc:  # noqa: BLE001
             log.warning("semantics shadow could not start (%s); semantics stays off", type(exc).__name__)
             return None
 
+    # -- breaker state on disk
+    def load(self) -> None:
+        try:
+            self.epoch = int(read_state(self.paths)["epoch"])
+            self.state_mtime = self.paths.state.stat().st_mtime
+            disabled = read_disabled(self.paths)
+        except (OSError, ValueError, TypeError) as exc:
+            self.trip("breaker_storage", kind=type(exc).__name__)
+            return
+        if disabled is not None:
+            self.latched = disabled["reason"]
+
+    def refresh(self) -> None:
+        """Pick up `labhq semantics enable` or a disabled.json written by `labhq semantics mark`."""
+        try:
+            if self.paths.disabled.exists():
+                if not self.latched:
+                    disabled = read_disabled(self.paths) or {}
+                    with self.lock:
+                        self.latched, self.gen = str(disabled.get("reason") or "disabled"), self.gen + 1
+                return
+            mtime = self.paths.state.stat().st_mtime if self.paths.state.exists() else None
+            if mtime != self.state_mtime:
+                epoch = int(read_state(self.paths)["epoch"])
+                self.state_mtime = mtime
+                if epoch > self.epoch:
+                    self.new_epoch(epoch)
+        except (OSError, ValueError, TypeError) as exc:
+            self.trip("breaker_storage", kind=type(exc).__name__)
+
+    def new_epoch(self, epoch: int) -> None:
+        with self.lock:
+            stuck = self.current is not None
+            self.epoch, self.latched, self.gen = epoch, None, self.gen + 1
+            self.recent.clear()
+            self.consecutive = self.busy = self.busy_skipped = 0
+            if stuck:  # the old thread may never return; give the new epoch its own worker
+                self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
+
+    def trip(self, reason: str, **detail: Any) -> None:
+        with self.lock:
+            if self.latched:
+                return
+            self.latched, self.gen = reason, self.gen + 1
+            counts = {**self.counts, "recent_failures": sum(self.recent), "consecutive": self.consecutive}
+            epoch = self.epoch
+        log.warning("semantics shadow turned itself off: %s%s", reason,
+                    f" ({detail['kind']})" if detail.get("kind") else "")
+        try:
+            write_disabled(self.paths, reason, epoch, counts)
+        except OSError as exc:
+            log.warning("semantics disabled.json not written (%s); off for this process", type(exc).__name__)
+        try:
+            append_line(self.paths, {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": epoch,
+                                     "reason": reason, "counts": counts})
+        except OSError:
+            pass
+
     # -- event loop side
     def after_request(self, rid: str) -> None:
         """Queue the finished request for the worker. Never raises, never waits, reads no workspace file."""
         try:
+            self.refresh()
+            self.check_stuck()
+            if self.latched:
+                return
             snap = take_snapshot(self.hub, rid, self.cfg)
             snap["busy_skipped"] = self.busy_skipped
             with self.lock:
@@ -717,10 +901,15 @@ class ShadowService:
                     self.pending += 1
                 except queue.Full:
                     self.busy_skipped += 1
+                    self.busy += 1
                     self.counts["busy"] += 1
+                    busy = self.busy
                 else:
-                    self.busy_skipped = 0
+                    self.busy = self.busy_skipped = 0
+                    busy = 0
                     self.ensure_thread()
+            if busy >= BUSY_LIMIT:
+                self.trip("worker_busy")
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
             self.outcome(failed=True)
@@ -729,6 +918,12 @@ class ShadowService:
         if self.thread is None or not self.thread.is_alive():
             self.thread = threading.Thread(target=self.run, args=(self.queue,), name=self.thread_name, daemon=True)
             self.thread.start()
+
+    def check_stuck(self) -> None:
+        with self.lock:
+            current = self.current
+        if current and time.monotonic() - current[1] > self.stuck_s:
+            self.trip("worker_stuck")
 
     # -- worker thread
     def run(self, jobs: queue.Queue) -> None:
@@ -745,7 +940,7 @@ class ShadowService:
             try:
                 if jobs is not self.queue:
                     return
-                if gen != self.gen:
+                if gen != self.gen or self.latched:
                     self.counts["discarded"] += 1
                     continue
                 self.work(gen, snap)
@@ -756,6 +951,11 @@ class ShadowService:
     def work(self, gen: int, snap: dict) -> None:
         started = time.monotonic()
         deadline = started + self.cfg.timeout_s
+        with self.lock:
+            self.current = (gen, started)
+        watchdog = threading.Timer(self.stuck_s, self.watch, args=(gen, started))
+        watchdog.daemon = True
+        watchdog.start()
 
         def check() -> None:
             if self.gen != gen:
@@ -777,10 +977,21 @@ class ShadowService:
             if self.gen == gen:
                 self.outcome(failed=True)
                 return
+        finally:
+            watchdog.cancel()
+            with self.lock:
+                if self.current == (gen, started):
+                    self.current = None
         if line is None or self.gen != gen:
             self.counts["discarded"] += 1  # late or abandoned: never written
             return
         self.finish(gen, snap, line)
+
+    def watch(self, gen: int, started: float) -> None:
+        with self.lock:
+            stuck = self.current == (gen, started)
+        if stuck:
+            self.trip("worker_stuck")
 
     def load_observed(self) -> dict[str, dict]:
         if self.observed is None:
@@ -804,6 +1015,9 @@ class ShadowService:
         self.observed_dirty = False
 
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
+        if boundary_problems(line, sensitive_strings(snap)):
+            self.trip("info_boundary")
+            return
         failed = False
         for model in [m for m in MODELS if m in line]:
             if line[model].get("status") != "ok":
@@ -823,8 +1037,15 @@ class ShadowService:
 
     def outcome(self, *, failed: bool) -> None:
         with self.lock:
+            self.recent.append(failed)
+            self.consecutive = self.consecutive + 1 if failed else 0
             if failed:
                 self.counts["failures"] += 1
+            consecutive, recent = self.consecutive, sum(self.recent)
+        if consecutive >= CONSECUTIVE_FAILURES:
+            self.trip("consecutive_failures")
+        elif recent >= RECENT_FAILURES:
+            self.trip("recent_failures")
 
     def drain(self, timeout: float = 5.0) -> bool:
         """Tests and tools: wait until the queue is empty and no job runs."""
@@ -836,3 +1057,44 @@ class ShadowService:
                 return True
             time.sleep(0.01)
         return False
+
+
+# ---------------------------------------------------------------- enable, mark (local)
+
+def enable(paths: ShadowPaths) -> str:
+    try:
+        disabled = read_disabled(paths)
+    except ValueError:
+        disabled = {"reason": "breaker_storage"}
+    try:
+        state = read_state(paths)
+    except ValueError:  # a broken state.json: continue after the highest epoch the log has seen
+        lines, _ = read_lines(paths)
+        state = {"epoch": max([int(l.get("epoch") or 1) for l in lines if isinstance(l.get("epoch"), int)] or [1]),
+                 "since": time.time()}
+    epoch = int(state["epoch"]) + 1
+    atomic_write_text(paths.state, json.dumps({**state, "epoch": epoch}))
+    if paths.disabled.exists():
+        paths.disabled.unlink()
+    append_line(paths, {"v": 1, "type": "enable", "ts": round(time.time(), 3), "epoch": epoch,
+                        "previous_reason": (disabled or {}).get("reason")})
+    head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
+    return head + f"새 epoch {epoch}을 엽니다. 설정 mode가 shadow인 gateway는 다음 요청부터 기록합니다."
+
+
+def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
+    if not re.fullmatch(r"req_[A-Za-z0-9]{1,64}", rid):
+        raise ValueError("request id must look like req_<id>")
+    if not re.fullmatch(r"sem:[0-9a-f]{8}", ref):
+        raise ValueError("ref must be sem:<8 hex>")
+    if verdict not in VERDICTS:
+        raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}")
+    state = read_state(paths)
+    append_line(paths, {"v": 1, "type": "mark", "ts": round(time.time(), 3), "epoch": state["epoch"],
+                        "request_id": rid, "ref": ref, "verdict": verdict})
+    if verdict != "wrong_identity":
+        return "기록했습니다."
+    write_disabled(paths, "wrong_identity", int(state["epoch"]))
+    append_line(paths, {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": state["epoch"],
+                        "reason": "wrong_identity", "counts": {}})
+    return ("자동 off: wrong_identity. 총괄이 원천 ID·판본을 확인한 뒤 `labhq semantics enable`로 다시 켤지 정합니다.")
