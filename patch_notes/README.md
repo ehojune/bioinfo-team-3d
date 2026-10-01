@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:07 | [`9f62171`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/9f62171) | origin/main의 POSIX 손자 종료 test 안정화를 반영하고 patch_notes 양쪽 행을 보존 (#227) |
 | 03:04 | [`c056863`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/c056863) | origin/main의 연구 pack snapshot·교정 보고 흐름과 산출 종류 선언을 함께 보존하고, 기본 off prompt를 현재 main과 byte 단위로 다시 고정 (#221·#222) |
 | 02:57 | [`1208ee6`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1208ee6) | EDAM 유래 표·NOTICE·생성 script·전용 test를 #252 PI 확인용 draft PR #253으로 분리하고, subset 없이 core가 동작함을 전체 test로 확인 (#252) |
 | 02:47 | [`5f7bc21`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/5f7bc21) | main에 병합된 #243의 HANDOFF.md·STATUS.md와 PR #245의 패치노트 행을 함께 보존해 충돌을 해소 |
