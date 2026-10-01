@@ -226,6 +226,16 @@ def pack_snapshot(packs: dict[str, LoadedPack]) -> dict[str, str]:
     return {key: loaded.sha256 for key, loaded in sorted(packs.items())}
 
 
+def pack_refs(packs: dict[str, LoadedPack]) -> list[dict[str, str]]:
+    """The `protocol.packs` entries of a PLAN made under this snapshot; labhq writes them, not the CSO (#222)."""
+    return [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for _key, loaded in sorted(packs.items())]
+
+
+def _compact(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item not in (None, [], {})}
+
+
 def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
     if not packs:
         return "(no domain packs selected)"
@@ -234,9 +244,13 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
         pack = loaded.pack
         rows.append(json.dumps({"key": key, "sha256": loaded.sha256,
                                 "applies_when": pack.applies_when,
-                                "fields": [field.model_dump(mode="json") for field in pack.fields],
+                                # The exact keys of pack_values[key]: acceptance ids are the rule ids (#222).
+                                "pack_values_keys": {"fields": [field.name for field in pack.fields],
+                                                     "validators": [v.id for v in pack.validators],
+                                                     "acceptance": [rule.id for rule in pack.rules]},
+                                "fields": [_compact(field.model_dump(mode="json")) for field in pack.fields],
                                 "validators": [v.model_dump(mode="json") for v in pack.validators],
-                                "reviewer_questions": pack.reviewer_questions,
-                                "rules": [rule.model_dump(mode="json", by_alias=True) for rule in pack.rules]},
-                               ensure_ascii=False, sort_keys=True))
+                                "rules": [_compact(rule.model_dump(mode="json", by_alias=True)) for rule in pack.rules],
+                                "reviewer_questions": pack.reviewer_questions},
+                               ensure_ascii=False))
     return "\n".join(rows)

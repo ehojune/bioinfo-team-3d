@@ -2,14 +2,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
-## 2026-10-02 · #221 할 일 2 · #151 — 산출 데이터 종류 선언 자리(EDAM subset)
+## 2026-10-02 · #221 할 일 2 · #151 — 산출 데이터 종류 선언 자리
 
 - 결론: 출처 모델과 객체 뷰가 함께 쓰는 "산출 데이터 종류 선언 자리"를 core에 만들었다(PI 결정 12). 기본 off라 지금 동작은 그대로다. 켜면 CSO가 단계 산출마다 data_type·format key를 적고, 러너가 실제로 모은 산출에 붙이며, 두 그림자 모델이 같은 읽기 함수로 읽는다. 팔란티어식 액션은 계속 보류다.
-- 바뀐 것: `labhq/vocab/`(로컬 key 38개, 선언 정규화 계약 하나, EDAM subset·map·NOTICE), `plan.declare_output_types`(기본 false), 일반·연구 계획 단계의 `output_types`, `TaskResult.output_types`(러너 기록), `ArtifactRef.data_type·format`, 그림자 줄의 `vocab_sha256`·`types`(zone 통과분만 EDAM ID별, 나머지 withheld)·`declarations`, report의 model/vocab 판본 분리. EDAM subset은 `scripts/edam_subset.py`가 릴리스 1.25.20260626T1230Z의 EDAM.owl(SHA-256 고정, GitHub digest와 일치)에서 뽑았다. key 32개가 고유 용어 31개로 풀렸고 6개는 local이다.
+- 바뀐 것: `labhq/vocab/`(로컬 key 38개, 선언 정규화 계약 하나, optional subset loader), `plan.declare_output_types`(기본 false), 일반·연구 계획 단계의 `output_types`, `TaskResult.output_types`(러너 기록), `ArtifactRef.data_type·format`, 그림자 줄의 `vocab_sha256`·`types`(zone 통과분만 ID별, 나머지 withheld)·`declarations`, report의 model/vocab 판본 분리. EDAM 표와 생성·검증 묶음은 draft PR #253으로 분리했다.
 - 두 위험 검토(Sol·Astra, 둘 다 조건부 go)의 필수 수정: 기본 off와 off일 때 schema·prompt·dispatch 바이트 동일, 로컬 어휘와 EDAM 분리(subset 없거나 깨져도 동작), 정규화 계약 하나(순서 무관, 중복·별칭·충돌·판본 차이는 unknown, 엔트리·바이트 상한), 선언 판본 고정(다른 판본은 재해석하지 않음), 빈 선언은 canonical에서 빠져 승인된 계획 hash 유지, off·재개 때 저장 선언 보존, 경고는 코드·개수만, 그림자 줄은 subset ID 허용 목록으로 key·값 검사, zone gate 뒤에만 종류별 집계, 공통 YAML loader를 core로 분리, wheel 포함·semantics 제거 뒤 core 동작, report 판본 분리.
-- 실행한 것: 기능·수정 커밋 6개마다 그 커밋의 test를 부모 코드에 돌려 실패를 확인했다(import 실패 3, 12·27·5건 실패). dispatch·승인·결과가 선언과 무관함은 guard test로 고정했다. 전체 pytest 2353 passed/41 skipped, Node 13개, `bash scripts/check_public.sh` 통과. wheel을 빌드해 저장소 밖 설치본에서 어휘·subset load를 확인했다. `semantics_shadow_remove.py --check`에서 제거 뒤 어휘 load와 선언 test 3개가 돈다. 로컬 Codex 리뷰 P2 3건(직원 선언 중복의 순서 의존, 객체 뷰의 직원 선언 누락, 엔트리 상한 불일치)을 고쳤다.
-- 미해결: 실제 CLI에서 켜 보지 않았다. 켜기 전 조건은 Claude·Codex schema probe, 같은 요청의 off/on 계획 비교, prompt+schema 실제 token(규칙 500자·schema 224자, token 미측정)이다. direct 산출 등록(#221 할 일 1)은 이 PR 밖이다. 연구 직원 선언은 연구 단계가 실행되기 전까지 쓰이지 않는다. EDAM map·subset은 CC BY-SA 4.0이고 저장소 전체 라이선스가 없어 PI 확인 전 병합 보류다(그 커밋 없이도 나머지는 동작). 로컬 key 정의 검수는 모두 pending이다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
-- 근거: `labhq/vocab/`, `labhq/yaml_unique.py`, `labhq/orchestrator/cso.py`, `labhq/research/contract.py`, `labhq/runner/daemon.py`, `labhq/models.py`, `labhq/research/semantics*.py`, `scripts/edam_subset.py`, `tests/test_output_vocab.py`, `tests/test_output_types*.py`, `tests/test_edam_subset.py`, `tests/test_semantics_output_types.py`.
+- 실행한 것: 기능·수정 커밋마다 회귀를 먼저 확인했고 dispatch·승인·결과가 선언과 무관함을 guard test로 고정했다. EDAM 묶음을 뺀 실제 tree에서 subset 부재 회귀를 포함한 관련 test 91개와 전체 pytest 2341 passed/43 skipped, Node 13개, `bash scripts/check_public.sh`가 통과했다. 로컬 Codex 리뷰 P2 3건(직원 선언 중복의 순서 의존, 객체 뷰의 직원 선언 누락, 엔트리 상한 불일치)을 고쳤다.
+- 미해결: 실제 CLI에서 켜 보지 않았다. 켜기 전 조건은 Claude·Codex schema probe, 같은 요청의 off/on 계획 비교, prompt+schema 실제 token(규칙 500자·schema 224자, token 미측정)이다. 연구 직원 선언은 연구 단계가 실행되기 전까지 쓰이지 않는다. EDAM 표는 #252 PI 확인 전 병합하지 않는 draft PR #253에 있다. 로컬 key 정의 검수는 모두 pending이다.
+- 근거: `labhq/vocab/`, `labhq/yaml_unique.py`, `labhq/orchestrator/cso.py`, `labhq/research/contract.py`, `labhq/runner/daemon.py`, `labhq/models.py`, `labhq/research/semantics*.py`, `tests/test_output_vocab.py`, `tests/test_output_types*.py`, `tests/test_semantics_output_types.py`.
+
+## 2026-10-02 · #222 — 공개 데이터 연구 요청이 실제 CLI로 CP1 승인 카드까지
+
+- 결론: 10-01 실행의 CSO 연구 계획 5개는 모두 acceptance 키를 지어냈다. rule id가 prompt 어디에도 키로 적혀 있지 않아 reviewer question을 키로 썼다. d1은 `protocol.packs`의 sha256도 비웠다. 검증은 첫 오류에서 멈춰서 교정 한 번에 오류 하나만 보였다. 이제 pack hash는 코드가 채우고, prompt는 `pack_values_keys`를 보여 주고, 교정 prompt에는 문제를 모두 넣는다. 재실행하다 Windows 명령줄 한도를 넘은 재계획이 `executable not found`로 실패하는 것도 찾아 고쳤다.
+- 바뀐 것: `with_pack_refs`·`research_plan_errors`(키 missing·unexpected, 통계 core 누락 field 이름), `pack_refs`와 catalog `pack_values_keys`, CSO 교정 루프. 교정 뒤에도 실패하면 CP1 카드 없이 `outcome: plan_invalid`, 한국어 보고서, `plan_validation.errors`가 남는다. adapter는 명령줄이 32,000 UTF-16 단위를 넘으면 TASK 파일을 가리키는 prompt로 바꾸고, 그래도 넘으면 실행 전에 거부한다. README §8·§10, `docs/research_protocol.md`를 맞췄다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 실행한 것: 회귀 test 12건 모두 main 코드에서 실패한다(독립 검증: main에 새 test 파일만 얹어 12 failed). 그중 1건(agent_id 타입)은 로컬 Codex 리뷰가 찾은 중간 회귀의 guard다. 로컬 Codex 리뷰 P2 2건(agent_id가 list면 교정 없이 실패, 길이를 UTF-16으로 세기)을 반영했다. 실제 CLI 재실행(CSO Sonnet, 10-01 d1과 같은 공개 GSE96583 요청): 첫 시도는 clarify 뒤 재계획 명령이 33,091자라 실패했다. 고친 뒤 두 번 모두 CP1까지 갔다(첫 계획 통과 349초·$0.55, 한도를 20,000으로 낮춰 TASK 파일 경로로 clarify·재계획 1,116초·$1.50). 두 번 다 CSO는 `protocol.packs`를 비웠고 acceptance 14개를 rule id로 채웠다. 전체 pytest 2187 passed/41 skipped, Node 13개, `bash scripts/check_public.sh` 통과.
+- 미해결: 연구 lane은 요청마다 모든 active pack 값을 채워야 한다. d2(엽록체 IR 가설에 `single_cell_de@2`)처럼 대상이 다르면 여전히 CP1에 못 가고, 보고서는 설정된 pack과 그 적용 대상을 알려 줄 뿐이다(README §10). 요청별 pack 선택은 범위 밖이다.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/base.py`, `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `tests/test_research_cp1.py`, `tests/fixtures/fake_claude_cso.py`, `tests/test_adapters_fake_cli.py`.
 
 ## 2026-10-02 · 열린 issue 작업 큐 동기화
 

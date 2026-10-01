@@ -1,12 +1,12 @@
 # Output data type vocabulary (#221 todo 2, #151). Local keys only: no EDAM label or id is written here.
 # labhq/vocab/__init__.py loads this file with the duplicate-key-rejecting loader of labhq.util.
-# The CSO sees the key names only. EDAM ids, when present, come from edam_subset.yaml, which
-# scripts/edam_subset.py generates from a pinned EDAM release; nobody types an id by hand.
+# The CSO sees the key names only. EDAM ids, when present, come from an optional
+# generated edam_subset.yaml; nobody types an id by hand.
 #
 # Per key: branch (data | format | operation), definition (labhq's own words), extensions (format only,
 # lower case, a single trailing .gz is peeled off first), ok / not (examples), review (pending until the PI
 # or a named reviewer checks the definition and the examples).
-# At most 40 keys. Adding one is a PR that edits this file, edam_map.yaml and reruns the script.
+# At most 40 keys. Adding one requires its own review.
 version: 1
 
 terms:
