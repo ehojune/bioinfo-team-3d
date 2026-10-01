@@ -13,6 +13,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 17:57 | [`2a2cc26`](https://github.com/ehojune/bioinfo-team-3d/pull/166/commits/2a2cc26) | **main 병합에서 #158 그림자 설정과 이 PR의 pack 버전을 함께 살렸습니다.** README 설정 절과 설정 예시에 두 변경을 모두 둡니다 |
+| 17:25 | [`52a71df`](https://github.com/ehojune/bioinfo-team-3d/pull/179/commits/52a71df) | README 2.5D·3D 사무실 정지 화면을 15초 움직이는 WebP로 교체(정지 PNG는 링크로 유지) |
 | 17:07 | [`dc01c50`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/dc01c50) | **모양이 틀린 request 줄은 깨진 줄로 세도록 고쳤습니다** (#150). provenance·objects·hash가 object가 아니거나 안쪽 값이 유한한 숫자가 아니면 그 줄만 `broken_lines`로 세고 나머지는 집계합니다. `run_cli`는 traceback 대신 예외 이름 한 줄과 종료 코드 1을 냅니다. 회귀 test 10개는 수정 전 실패를 확인했습니다. |
 | 17:05 | [`c375ece`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/c375ece) | **그림자 zone 동률은 더 엄격한 level로 정했습니다** (#150). 길이가 같은 zone끼리 겹치면 public < internal < restricted 순으로 엄격한 쪽을 씁니다. 설정에 없는 level은 허용하지 않습니다. 회귀 test 3개는 수정 전 실패를 확인했습니다. |
 | 16:39 | [`316f325`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/316f325) | **다른 cluster로 간 잡과 여러 잡을 고르는 잡 번호를 막았습니다** (#120 검증). 직원 스크립트에 `#SBATCH -M`·`--clusters`가 있으면 제출 전에 거부하고, 제출 뒤 `번호;cluster`가 돌아오면 같은 번호의 다른 잡을 가리킬 수 있어 추적하지 않고 오류로 알립니다. 잡 번호는 숫자로 시작해야만 받아서 `qdel all` 같은 일괄 선택도 막았습니다. |

@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #63 README 사무실 화면을 15초 움직이는 이미지로
+
+- 결론: README의 2.5D·3D 사무실 정지 화면을 각 15초짜리 움직이는 WebP로 바꿨다. 요청 하나가 CSO 계획, 승인 카드, 단계 진행을 거쳐 끝난다. 기존 PNG는 정지 화면 링크로 남겼다.
+- 바뀐 것: `docs/media/office-25d.webp`(1.31 MB, 1200×750, 15fps, 217프레임), `docs/media/office-3d.webp`(2.38 MB, 1200×750, 12fps, 177프레임), README 이미지 줄과 설명 문구. 코드·의존성·pyproject는 그대로다.
+- 실행한 것: 임시 state_dir에서 mock demo(키·클러스터 없음)를 띄우고 headless Chrome을 CDP screencast로 녹화해 Pillow로 인코딩했다. 녹화 script는 PI 결정(일회성 코드)대로 저장소에 넣지 않았다. 녹화 중에만 mock 단계를 0.9초(계획 1.4초)씩 늦추고 승인은 3초 뒤 자동으로 했다. 같은 프레임의 GIF는 51.5 MB·52.3 MB라 WebP를 골랐다. 프레임에 로컬 경로·사용자명·token이 보이지 않는 것을 확인했다.
+- 미해결: 3D는 headless Chrome의 하드웨어 GPU로 녹화했다. SwiftShader는 1600×1000에서 초당 4프레임 정도라 끊겼다. 화면이 바뀌면 다시 녹화해야 한다.
+- 근거: `docs/media/office-25d.webp`, `docs/media/office-3d.webp`, `README.md`.
+
 ## 2026-10-01 · 연구 결과·출처 검증 후속 6건 (#114 #116 #117 #118 #128 #129)
 
 - 결론: 연구 결과와 출처 검증에 남은 빈틈 여섯 개를 닫았다. 연구 단계 실행은 여전히 opt-in이고 기본 꺼짐이라, 바뀐 것은 schema·검사·verifier뿐이다.
