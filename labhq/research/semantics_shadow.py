@@ -22,6 +22,7 @@ import hashlib
 import itertools
 import json
 import logging
+import math
 import os
 import platform
 import queue
@@ -1240,6 +1241,36 @@ def _day(ts: Any) -> str:
         return "?"
 
 
+HASH_COUNTS = ("hashed", "observed_new", "verified", "changed")
+WORKSPACE_STATES = ("ok", "remote", "zone_excluded", "not_regular", "missing")
+
+
+def _number(value: Any) -> bool:
+    return value is None or (isinstance(value, (int, float)) and math.isfinite(value))
+
+
+def _counts(value: Any, keys: Iterable[str] | None = None) -> bool:
+    """None, or an object whose values (only `keys`, when given) are finite numbers."""
+    if value is None:
+        return True
+    return isinstance(value, Mapping) and all(_number(v) for k, v in value.items() if keys is None or k in keys)
+
+
+def readable_request(line: Mapping[str, Any]) -> bool:
+    """Every field the report adds up, in the shape the worker writes it. A row left by a torn write or an older
+    schema is a broken line, so one bad row does not end the report."""
+    models = [line.get("provenance"), line.get("objects"), line.get("hash")]
+    if not all(m is None or isinstance(m, Mapping) for m in models):
+        return False
+    prov, objs, hashes = (m or {} for m in models)
+    return (all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
+            and all(_number(m.get("ms")) for m in (prov, objs))
+            and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
+            and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
+            and _counts(objs.get("objects")) and all(_number(objs.get(k)) for k in ("link_total", "unresolved"))
+            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES))
+
+
 def configured(settings: Any) -> str:
     """What the setting asks for: shadow, off, invalid (off with a warning) or refused (state_dir in git)."""
     raw = getattr(settings, "semantics", None)
@@ -1252,7 +1283,8 @@ def configured(settings: Any) -> str:
 def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "unknown") -> dict:
     today = today or date.today()
     lines, broken = read_lines(paths)
-    requests = [l for l in lines if l.get("type") == "request"]
+    requests = [l for l in lines if l.get("type") == "request" and readable_request(l)]
+    broken += sum(1 for l in lines if l.get("type") == "request") - len(requests)
     try:
         disabled = read_disabled(paths)
     except (OSError, ValueError):
@@ -1315,9 +1347,9 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "snapshot_p95_ms": _pct([float(r.get("snapshot_ms") or 0) for r in requests], 0.95),
         "provenance": model_stats("provenance"), "objects": model_stats("objects"),
         "hash": {k: sum(int((r.get("hash") or {}).get(k) or 0) for r in requests)
-                 for k in ("hashed", "observed_new", "verified", "changed")},
+                 for k in HASH_COUNTS},
         "workspaces": {k: sum(int(((r.get("hash") or {}).get("workspaces") or {}).get(k) or 0) for r in requests)
-                       for k in ("ok", "remote", "zone_excluded", "not_regular", "missing")},
+                       for k in WORKSPACE_STATES},
         "research_with_candidates": research_with_candidates,
         "marks": {"reviewed": len(marks), "wrong": wrong},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason")}
@@ -1424,5 +1456,8 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
             print(mark(paths, args.request_id, args.ref, args.verdict))
     except (OSError, ValueError) as exc:
         print(f"semantics {args.semantics_cmd}: {exc if isinstance(exc, ValueError) else type(exc).__name__}")
+        return 1
+    except Exception as exc:  # a record shape the checks above missed: one line, not a traceback
+        print(f"semantics {args.semantics_cmd}: unexpected {type(exc).__name__} while reading the shadow records")
         return 1
     return 0

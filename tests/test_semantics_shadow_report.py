@@ -130,3 +130,34 @@ def test_the_cli_writes_nothing_inside_a_git_work_tree(tmp_path, capsys, args):
         main(["--config", str(path), "semantics", *args])
     assert done.value.code == 1 and "git work tree" in capsys.readouterr().out
     assert not (tmp_path / "state").exists()
+
+
+BAD_NESTED = {"provenance_list": {"provenance": ["ok"]}, "objects_text": {"objects": "ok"},
+              "hash_number": {"hash": 3}, "excluded_list": {"provenance": {"status": "ok", "excluded": [1]}},
+              "lineage_text": {"provenance": {"status": "ok", "lineage": "gaps"}},
+              "object_counts_text": {"objects": {"status": "ok", "objects": {"Task": "four"}}},
+              "workspaces_list": {"hash": {"hashed": 1, "workspaces": ["ok"]}},
+              "candidates_text": {"provenance": {"status": "ok", "candidates": "two"}},
+              "ms_infinite": {"ms": float("inf")}}
+
+
+@pytest.mark.parametrize("bad", list(BAD_NESTED))
+def test_a_request_row_with_a_malformed_payload_is_a_broken_line(tmp_path, config, capsys, bad):
+    """Valid JSON in an older or torn shape is counted as broken; the rows around it still add up."""
+    paths = _write(tmp_path, [_line(1), _line(3, candidates=2, lane="research")])
+    with paths.log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({**_line(2), **BAD_NESTED[bad]}) + "\n")
+    rep = shadow.build_report(paths, date(2026, 10, 15))
+    assert rep["requests"] == 2 and rep["broken_lines"] == 1 and rep["research_with_candidates"] == 1
+    assert rep["provenance"]["n"] == 2 and rep["objects"]["unresolved"] == 2
+    code, out = _cli(capsys, config, "report", "--json", "--today", "2026-10-15")
+    assert code == 0 and json.loads(out)["broken_lines"] == 1
+
+
+def test_the_report_cli_never_ends_in_a_traceback(tmp_path, config, capsys, monkeypatch):
+    def broken(*args, **kwargs):
+        raise AttributeError("'list' object has no attribute 'get'")
+
+    monkeypatch.setattr(shadow, "build_report", broken)
+    code, out = _cli(capsys, config, "report")
+    assert code == 1 and "unexpected AttributeError" in out and "Traceback" not in out
