@@ -514,6 +514,49 @@ async def test_a_reported_result_releases_an_abandoned_tasks_session(tmp_path):
         hub.store.close()
 
 
+async def test_session_wait_keeps_an_accepted_task_that_sat_in_the_runner_queue(tmp_path):
+    """The runner accepts a task before its queue and starts task_timeout_s only at CLI spawn."""
+    s = settings(tmp_path)
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        # consult_parallel was saturated: dispatched longer ago than any timeout, it only now starts.
+        queued = time.time() - (s.runner.task_timeout_s + s.gateway.resume_wait_s + 60)
+        hub.store.put("task", "orphan", {**hub.store.get("task", "orphan"), "dispatched_at": queued})
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir))
+        await asyncio.sleep(0.5)
+        assert not wait.done(), "the connected generation still runs the consult in this session"
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        assert await asyncio.wait_for(wait, 2) == ("after-consult", workdir)
+    finally:
+        hub.store.close()
+
+
+async def test_session_wait_measures_the_reconnect_grace_from_the_disconnect(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.5
+    hub = Hub(s)
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        socket = CaptureSocket()
+        hub.register_runner("local", socket, ROSTER, "inc-1")
+        wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir))
+        await asyncio.sleep(0.8)  # the consult runs longer than resume_wait_s
+        hub.unregister_runner("local", socket)
+        await asyncio.sleep(0.15)  # a short drop, well inside resume_wait_s
+        assert not wait.done(), "the grace starts at the disconnect, not at the start of the wait"
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")  # same generation: still running
+        await asyncio.sleep(0.8)
+        assert not wait.done()
+        await hub.on_runner_message("local", result_frame("orphan", "late answer", "after-consult"))
+        assert await asyncio.wait_for(wait, 2) == ("after-consult", workdir)
+    finally:
+        hub.store.close()
+
+
 # ---- #113: a re-routed facilities ask keeps the employee it went to before the restart ----
 
 FACILITIES = [{"id": "facilities", "engine": "claude_code"}]

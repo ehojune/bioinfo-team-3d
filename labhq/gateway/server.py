@@ -843,16 +843,16 @@ class Hub:
         """The session and workdir a task may resume once no earlier task still uses them (#112, #144).
 
         An earlier task, such as a consult whose ask a restart left unanswered, keeps running on its
-        runner. While it runs on the agent's connected runner generation or is in flight to it from
-        this gateway, wait for it, up to its task timeout; its turn may rotate the session, so the
-        latest turn is resumed. While the agent's runner is offline, wait up to ``resume_wait_s`` for
-        it to reconnect. Otherwise its outcome is unknown: return ``(None, None)`` so the task opens
-        a new session and workdir.
+        runner. While the agent's connected runner generation accepted it, or it is in flight to that
+        runner from this gateway, wait for its result; its turn may rotate the session, so the latest
+        turn is resumed. No clock releases such a holder: the runner accepts a task before it leaves
+        the queue and starts its task timeout only when the CLI spawns, and it always reports a result
+        (#204). While the agent's runner is offline, wait up to ``resume_wait_s`` from the disconnect
+        for it to reconnect. Otherwise its outcome is unknown: return ``(None, None)`` so the task
+        opens a new session and workdir.
         """
         loop = asyncio.get_running_loop()
-        grace = loop.time() + self.s.gateway.resume_wait_s
-        limit = float((self.agents.get(agent_id) or {}).get("task_timeout_s") or self.s.runner.task_timeout_s)
-        limit += self.s.gateway.resume_wait_s
+        offline_deadline: float | None = None
         resumed: set[str] = set()
         announced = False
         while True:
@@ -868,15 +868,21 @@ class Hub:
                 return session_id, workdir
             runner = self.agent_runner.get(agent_id)
             online = runner in self.runners
+            # Same rule as _await_prior_task: resume_wait_s bounds a reconnect, measured from the
+            # disconnect, never the work of a task the runner accepted.
+            if online:
+                offline_deadline = None
+            elif offline_deadline is None:
+                offline_deadline = loop.time() + self.s.gateway.resume_wait_s
             for tid, entry in holders:
-                started = float(entry.get("dispatched_at") or 0)
                 running = (online and bool(entry.get("accepted")) and
                            self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
-                if entry.get("abandoned") or (started and time.time() > started + limit):
+                if entry.get("abandoned"):
                     return None, None
                 # An unaccepted task the connected runner does not run (a delivery this gateway gave
                 # up on, or one a previous gateway sent) has an unknown outcome.
-                if not (running or (online and tid in self.futures) or (not online and loop.time() < grace)):
+                if not (running or (online and tid in self.futures) or
+                        (not online and loop.time() < offline_deadline)):
                     return None, None
                 if session_id and (entry.get("payload") or {}).get("resume_session_id") == session_id:
                     resumed.add(tid)
