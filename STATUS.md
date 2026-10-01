@@ -6,9 +6,17 @@
 
 - 결론: 10-01 실행의 CSO 연구 계획 5개는 모두 acceptance 키를 지어냈다. rule id가 prompt 어디에도 키로 적혀 있지 않아 reviewer question을 키로 썼다. d1은 `protocol.packs`의 sha256도 비웠다. 검증은 첫 오류에서 멈춰서 교정 한 번에 오류 하나만 보였다. 이제 pack hash는 코드가 채우고, prompt는 `pack_values_keys`를 보여 주고, 교정 prompt에는 문제를 모두 넣는다. 재실행하다 Windows 명령줄 한도를 넘은 재계획이 `executable not found`로 실패하는 것도 찾아 고쳤다.
 - 바뀐 것: `with_pack_refs`·`research_plan_errors`(키 missing·unexpected, 통계 core 누락 field 이름), `pack_refs`와 catalog `pack_values_keys`, CSO 교정 루프. 교정 뒤에도 실패하면 CP1 카드 없이 `outcome: plan_invalid`, 한국어 보고서, `plan_validation.errors`가 남는다. adapter는 명령줄이 32,000 UTF-16 단위를 넘으면 TASK 파일을 가리키는 prompt로 바꾸고, 그래도 넘으면 실행 전에 거부한다. README §8·§10, `docs/research_protocol.md`를 맞췄다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
-- 실행한 것: 회귀 test 12건 중 11건은 수정 전 실패했다. 나머지 1건(agent_id 타입)은 로컬 Codex 리뷰가 찾은 중간 회귀의 guard다. 로컬 Codex 리뷰 P2 2건(agent_id가 list면 교정 없이 실패, 길이를 UTF-16으로 세기)을 반영했다. 실제 CLI 재실행(CSO Sonnet, 10-01 d1과 같은 공개 GSE96583 요청): 첫 시도는 clarify 뒤 재계획 명령이 33,091자라 실패했다. 고친 뒤 두 번 모두 CP1까지 갔다(첫 계획 통과 349초·$0.55, 한도를 20,000으로 낮춰 TASK 파일 경로로 clarify·재계획 1,116초·$1.50). 두 번 다 CSO는 `protocol.packs`를 비웠고 acceptance 14개를 rule id로 채웠다. 전체 pytest 2134 passed/25 skipped, Node 13개, `bash scripts/check_public.sh` 통과.
+- 실행한 것: 회귀 test 12건 모두 main 코드에서 실패한다(독립 검증: main에 새 test 파일만 얹어 12 failed). 그중 1건(agent_id 타입)은 로컬 Codex 리뷰가 찾은 중간 회귀의 guard다. 로컬 Codex 리뷰 P2 2건(agent_id가 list면 교정 없이 실패, 길이를 UTF-16으로 세기)을 반영했다. 실제 CLI 재실행(CSO Sonnet, 10-01 d1과 같은 공개 GSE96583 요청): 첫 시도는 clarify 뒤 재계획 명령이 33,091자라 실패했다. 고친 뒤 두 번 모두 CP1까지 갔다(첫 계획 통과 349초·$0.55, 한도를 20,000으로 낮춰 TASK 파일 경로로 clarify·재계획 1,116초·$1.50). 두 번 다 CSO는 `protocol.packs`를 비웠고 acceptance 14개를 rule id로 채웠다. 전체 pytest 2177 passed/41 skipped, Node 13개, `bash scripts/check_public.sh` 통과.
 - 미해결: 연구 lane은 요청마다 모든 active pack 값을 채워야 한다. d2(엽록체 IR 가설에 `single_cell_de@2`)처럼 대상이 다르면 여전히 CP1에 못 가고, 보고서는 설정된 pack과 그 적용 대상을 알려 줄 뿐이다(README §10). 요청별 pack 선택은 범위 밖이다.
 - 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/base.py`, `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `tests/test_research_cp1.py`, `tests/fixtures/fake_claude_cso.py`, `tests/test_adapters_fake_cli.py`.
+
+## 2026-10-01 · #165 #177 #178 #180 #181 #182 #183 #190 #193 — 작업 폴더 쓰기·Claude 규칙 경로·공개 가드 후속
+
+- 결론: 부류마다 공통 판정 하나로 닫았다. 러너가 작업 폴더에 쓰는 경로(#165·#190·#193), Claude 거부 규칙을 붙일 수 없는 경로(#177·#182), 공개 가드의 표기 빈틈(#180·#181·#183)이다. #165는 1–3번만, #178은 문서만 고쳤다(둘 다 실측이 남아 Refs).
+- 바뀐 것: `adapters/owned.py`가 labhq 소유 경로 쓰기를 맡는다. 링크를 따라가지 않고, 재사용 폴더에 링크가 있으면 실행을 거부한다. manifest와 Codex 마지막 답도 링크를 거쳐 읽지 않는다. 계약 skill 상위 링크도 지우지 않고 거부한다. 계약 skill은 원본과 같을 때만 면제하고, Windows·macOS에서는 지시 파일 이름을 대소문자 없이 비교한다. 재사용 폴더 검사 중 이벤트는 모았다가 로컬 로그에 쓴다. `claude_rule_ready`가 UNC 링크·참고를 거른다. mount 뒤도 계속 훑는다. 공개 가드는 percent-encoded webhook(앞에 다른 escape가 붙은 것 포함), 사내 forge의 owner/repo, 공백·`\uXXXX`가 든 계정 home을 가린다.
+- 실행한 것: 확인 조건 test는 수정 전 실패를 확인했다. 이 PC에서 skip된 것은 file symlink 13건과 POSIX 전용 3건이다. 전체 pytest 1968 passed/39 skipped, Node 11개, `scripts/check_public.sh`, `git diff --check` 통과. 로컬 Codex 리뷰(branch diff)는 결함을 찾지 못했다. 독립 검증이 P1 둘(링크 너머 manifest·마지막 답 읽기, escape 바로 뒤 webhook)을 고쳤고 P2 일곱은 후속으로 뺐다.
+- 미해결: 실제 CLI 실측 셋. #148 신뢰 경로 probe(#165 4번), 하위 폴더 CLAUDE.md 제외 probe(#165 5번), Claude 규칙의 대소문자·8.3 비교(#178)다. #178은 `allow_runner_read_restricted`와 대소문자 무시 파일 시스템이 겹칠 때만 남는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/adapters/owned.py`, `labhq/adapters/read_only.py`, `labhq/runner/daemon.py`, `labhq/runner/workspace.py`, `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_workspace_boundary.py`, `tests/test_publish_followups.py`.
 
 ## 2026-10-01 · PR #136·#158 후속 12건 — 계보 순회·resume 이유·그림자 breaker·hash·mark
 
