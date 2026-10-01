@@ -54,7 +54,7 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `failures` | 검색·도구·분석 실패. 0건과 구별 |
 | `method_changes` | 계획값과 실제값, 이유, 결론 영향 여부 |
 
-근거 행의 `slots`에는 그 행이 채운 step의 evidence slot ID를 적는다. 필수 slot마다 채운 행이 하나는 있어야 하고, 선언하지 않은 slot은 거부한다. 조회가 실패했거나 0건이어도 그 행에 slot을 적는다. 시도하고 비었다는 것이 CP2에 그대로 보여야 하기 때문이다. 추론·가설 행은 slot을 채우지 못한다.
+근거 행의 `slots`에는 그 행이 채운 step의 evidence slot ID를 적는다. 한 step 안에서 slot ID는 겹칠 수 없다(겹치면 CP1 전에 PLAN을 거부한다, #187). 필수 slot마다 채운 행이 하나는 있어야 하고, 선언하지 않은 slot은 거부한다. 조회가 실패했거나 0건이어도 그 행에 slot을 적는다. 시도하고 비었다는 것이 CP2에 그대로 보여야 하기 때문이다. 추론·가설 행은 slot을 채우지 못한다.
 
 evidence 종류는 `observation`, `database_annotation`, `experimental`, `literature_claim`, `inference`, `hypothesis`다. 앞의 넷만 근거로 센다. `inference`·`hypothesis`는 `derived_from`을 적고 `context`로만 연결한다.
 
