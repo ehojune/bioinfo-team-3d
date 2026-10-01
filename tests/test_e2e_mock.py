@@ -76,7 +76,16 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         seen.append(ev)
         await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
-            await hub.resolve_approval(ev["data"]["id"], True, "ok")
+            aid = ev["data"]["id"]
+
+            async def approve():
+                # Answer later, like the web or a phone: request_approval must already be waiting on
+                # its future, so the pending-approval path stays under test (no fixed sleep).
+                await _until(lambda: aid in hub.approvals, 10, f"approval {aid} to be pending",
+                             lambda: {"pending": sorted(hub.approvals)})
+                await hub.resolve_approval(aid, True, "ok")
+
+            asyncio.get_running_loop().create_task(approve())
 
     hub.publish = tap
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=gport, log_level="warning"))
