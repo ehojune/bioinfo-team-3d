@@ -130,12 +130,15 @@ def free_port() -> int:
 
 
 def output_relpath(name: str) -> str | None:
-    """A declared step output as `outputs/...` (POSIX, lexically normalized), or None if it leaves outputs/.
+    """A declared step output as `outputs/...` (POSIX, lexically normalized), or None if unsafe.
 
-    Runner and orchestrator both use this, so `./t.tsv`, `outputs\t.tsv` and `outputs/x/../t.tsv` match.
+    Runner and orchestrator both use this, so `./t.tsv` and `outputs\t.tsv` match. Parent traversal is
+    rejected before normalization: an agent told to write `tmp/../t.tsv` would otherwise write outside
+    `outputs/` even though its normalized declaration appeared contained.
     """
-    s = str(name).replace("\\", "/")
-    if s.startswith("/") or re.match(r"^[A-Za-z]:", s):
+    s = str(name).strip().replace("\\", "/")
+    parts = s.split("/")
+    if not s or s.startswith("/") or re.match(r"^[A-Za-z]:", s) or parts[0] == "~" or ".." in parts:
         return None
     import posixpath
 

@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
+
+- 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.
+- 바뀐 것: 공백은 제거하고 원문 `..`·home·절대 경로는 정규화 전에 거부한다. 중복 선언은 합치고, 자기 산출의 루트·절대·home·bare 지시 경로는 대소문자와 무관하게 canonical 경로로 고친다. 같은 basename의 외부 입력과 산출이 섞이거나 외부 입력만 있으면 표현을 추측하지 않고 계획 교정을 요구하며, 중첩 home은 전체 경로를 한 번에 바꾼다. 외부 절대·home·drive 입력은 workspace artifact dependency로 추론하지 않고 canonical `outputs/...` 참조는 추론한다. 경로 문자열 안의 action 단어는 동사 판정에서 제외한다. 저장 계획 resume와 연구 CP1도 같은 검사를 다시 탄다. `wait_for_clarification: false`는 교정 계획 질문도 첫 계획처럼 기록한 뒤 진행한다. main에 이미 있던 단순 `./<name>` 교정은 기존 회귀로 유지했다.
+- 실행한 것: 최초 확인 조건 10건과 봇 P1 회귀 8건이 수정 전 실패했다. 최종 관련 180건과 전체 pytest 2483 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `scripts/patch_notes.py check`, `git diff --check`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/util.py`, `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/test_research_protocol.py`, `tests/test_output_types_research.py`.
+
 ## 2026-10-02 · #247 #254 — Windows 불안정 test의 완료 조건 고정
 
 - 결론: #247은 `latched` 뒤 영속 기록이 끝나기 전 `enable`이 겹친 확인 경합, #254는 worker 대기가 아닌 호스트 지연까지 재던 1초 한계가 원인이었다. 제품 코드 결함은 아니었다.

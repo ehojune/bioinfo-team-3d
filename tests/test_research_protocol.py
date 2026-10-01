@@ -361,6 +361,31 @@ async def test_research_plan_replans_over_limit_then_freezes_without_employee_di
 
 
 @pytest.mark.asyncio
+async def test_research_plan_replans_unsafe_output_then_freezes_normalized_paths():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    unsafe = valid_plan()
+    unsafe["steps"][0]["outputs"] = ["tmp/../result1.tsv"]
+    corrected = valid_plan()
+    corrected["steps"][0]["instruction"] = "write ./result1.tsv"
+    replies = [unsafe, corrected]
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=replies.pop(0))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+    request = hub.requests["r"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert "tmp/../result1.tsv" in hub.calls[1].prompt
+    assert request["status"] == "done" and request["outcome"] == "plan_approved"
+    assert request["plan"]["steps"][0]["outputs"] == ["outputs/result1.tsv"]
+    assert "./outputs/result1.tsv" in request["plan"]["steps"][0]["instruction"]
+
+
+@pytest.mark.asyncio
 async def test_invalid_pack_values_replan_before_cp1():
     settings = Settings()
     settings.research.enabled = True

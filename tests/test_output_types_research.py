@@ -23,7 +23,7 @@ CANARY = "CANARY-research-91c2"
 # current main after #239 (d1e3cab), json.dumps without sorting: what the engines receive, byte for byte
 RESEARCH_PLAN_SCHEMA_SHA = "d1e3dd0295981c11cb1c7de101f1baec76067d11a9d5f09d41b49eeff733db70"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "fe79df7a9eaca8fe68410842462addbda7250f3ba106264ec5bb6644b287633a"
+RESEARCH_PROMPT_SHA = "fbf24f10b8385d80522e6c353b697c150d1290af16bdceabf3ab301dbc4a8372"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
 
 
@@ -110,7 +110,9 @@ async def test_off_removes_declarations_and_freezes_the_plan_of_main():
     assert req["outcome"] == "plan_approved" and [t.meta["kind"] for t in hub.calls] == ["plan"]
     assert raw_sha(schemas[0]) == RESEARCH_PLAN_SCHEMA_SHA and "output_types" not in hub.calls[0].prompt
     assert "output_types" not in req["plan"]["steps"][0] and "output_types_stats" not in req
-    undeclared = rc.plan_sha256(plan_with([])(req["plan"]["protocol"]["packs"]))
+    expected = plan_with([])(req["plan"]["protocol"]["packs"])
+    expected["steps"][0]["outputs"] = ["outputs/result1.tsv"]
+    undeclared = rc.plan_sha256(expected)
     assert req["research_contract"]["plan_sha256"] == undeclared
 
 

@@ -308,7 +308,7 @@ def test_roster_and_dependencies():
     steps, warnings = validate_steps(raw, {"worker", "sci_reviewer"}, 10)
     assert [s["id"] for s in steps] == ["A", "B"]
     assert steps[1]["depends_on"] == ["A"]
-    assert len(warnings) == 2
+    assert len(warnings) == 3
     with pytest.raises(ValueError, match="invalid dependencies"):
         validate_steps([{**raw[0], "depends_on": ["missing"]}], {"worker"}, 10)
     with pytest.raises(ValueError, match="cycle"):
@@ -898,7 +898,7 @@ async def test_declared_missing_output_is_incomplete_and_skips_dependent():
     req = hub.requests["r"]
     assert req["status"] == "failed"
     assert req["results"]["A"]["status"] == "incomplete"
-    assert req["results"]["A"]["missing_outputs"] == ["table.tsv"]
+    assert req["results"]["A"]["missing_outputs"] == ["outputs/table.tsv"]
     assert "A [terminal]" in req["report"] and "table.tsv" in req["report"]
     assert req["results"]["B"]["status"] == "skipped"
 
@@ -955,7 +955,8 @@ async def test_runner_records_declared_artifact_and_reuses_workspace(tmp_path):
 
 @pytest.mark.parametrize("name,expected", [
     ("table.tsv", "outputs/table.tsv"), ("./table.tsv", "outputs/table.tsv"),
-    (r"outputs\table.tsv", "outputs/table.tsv"), ("outputs/dir/../table.tsv", "outputs/table.tsv"),
+    (r"outputs\table.tsv", "outputs/table.tsv"), (" outputs/table.tsv ", "outputs/table.tsv"),
+    ("outputs/dir/../table.tsv", None), ("tmp/../table.tsv", None), ("~/table.tsv", None),
     ("../escape.tsv", None), ("/abs/t.tsv", None), ("C:/x/t.tsv", None),
 ])
 def test_declared_outputs_normalize_like_the_runner(name, expected):
@@ -1039,10 +1040,96 @@ def test_output_normalization_touches_only_root_references_to_own_outputs():
     assert by["a"]["outputs"] == ["outputs/t.tsv", "outputs/notes.md"]
     assert by["a"]["instruction"] == ("Write ./outputs/t.tsv and ./outputs/notes.md. "
                                       "Keep ../t.tsv, ./outputs/t.tsv and ./other.tsv as they are.")
-    assert by["b"] == {**raw[1], "id": "b", "depends_on": []}  # a bare name with no root reference is unchanged
+    assert by["b"] == {**raw[1], "id": "b", "instruction": "make ./outputs/table.tsv",
+                       "outputs": ["outputs/table.tsv"], "depends_on": []}
     assert by["c"]["instruction"] == raw[2]["instruction"]  # another step's reference is not rewritten
-    assert by["c"]["depends_on"] == ["b"]  # inference still matches the declared name
-    assert sum("moved under outputs/" in w for w in warnings) == 2
+    assert by["c"]["depends_on"] == ["a", "b"]  # normalized references drive both dependencies
+    assert sum("moved under outputs/" in w for w in warnings) == 3
+
+
+def test_output_normalization_rewrites_instruction_paths_case_insensitively_and_deduplicates():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": [" answer.md ", "./answer.md"],
+            "instruction": "Save /abs/ANSWER.md"}]
+    steps, warnings = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["outputs"] == ["outputs/answer.md"]
+    assert steps[0]["instruction"] == "Save ./outputs/answer.md"
+    assert len([w for w in warnings if "moved under outputs/" in w]) == 1
+
+
+def test_bare_workspace_output_path_is_rewritten_from_a_postposed_action():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["Answer.md"],
+            "instruction": "작업 폴더의 answer.md에 저장"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == "작업 폴더의 ./outputs/Answer.md에 저장"
+
+
+@pytest.mark.parametrize("instruction", [
+    "Read /datasets/report.md, then write report.md",
+    "Write report.md after reading /datasets/report.md",
+    "Save a summary of /datasets/report.md to report.md",
+])
+def test_same_basename_input_path_is_not_rewritten_as_the_declared_output(instruction):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"], "instruction": instruction}]
+    with pytest.raises(ValueError, match="ambiguous instruction paths"):
+        validate_steps(raw, {"analyst"}, 10)
+    assert "/datasets/report.md" in raw[0]["instruction"]
+
+
+@pytest.mark.parametrize("source", ["/datasets/report.md", "~/datasets/report.md", "C:/datasets/report.md"])
+def test_single_external_input_same_basename_requires_an_explicit_output_reference(source):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": f"Save a summary of {source}"}]
+    with pytest.raises(ValueError, match="ambiguous instruction paths"):
+        validate_steps(raw, {"analyst"}, 10)
+    assert raw[0]["instruction"] == f"Save a summary of {source}"
+
+
+def test_nested_home_output_path_is_rewritten_as_one_reference():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "Save ~/documents/reports/report.md"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == "Save ./outputs/report.md"
+
+
+def test_normalized_output_names_drive_dependency_inference():
+    raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["./answer.md"],
+            "instruction": "write ./answer.md"},
+           {"id": "consumer", "agent_id": "analyst", "outputs": [],
+            "instruction": "read answer.md", "depends_on": []}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    by = {step["id"]: step for step in steps}
+    assert by["producer"]["outputs"] == ["outputs/answer.md"]
+    assert by["consumer"]["depends_on"] == ["producer"]
+
+
+@pytest.mark.parametrize("source", ["/datasets/report.md", "~/datasets/report.md", "C:/datasets/report.md"])
+def test_external_input_basename_does_not_drive_dependency_inference(source):
+    raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "write report.md"},
+           {"id": "independent", "agent_id": "analyst", "outputs": [],
+            "instruction": f"Read {source}", "depends_on": []}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    by = {step["id"]: step for step in steps}
+    assert by["independent"]["depends_on"] == []
+
+
+@pytest.mark.parametrize("reference", ["outputs/report.md", "./outputs/report.md"])
+def test_canonical_output_path_drives_dependency_inference(reference):
+    raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "write report.md"},
+           {"id": "consumer", "agent_id": "analyst", "outputs": [],
+            "instruction": f"Read {reference}", "depends_on": []}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    by = {step["id"]: step for step in steps}
+    assert by["consumer"]["depends_on"] == ["producer"]
+
+
+@pytest.mark.parametrize("name", ["input.csv", "read.txt", "input/report.md"])
+def test_action_words_inside_output_path_are_not_instruction_actions(name):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": [name],
+            "instruction": f"Save {name}"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == f"Save ./outputs/{name}"
 
 
 @pytest.mark.asyncio
@@ -1078,6 +1165,58 @@ async def test_corrected_plan_with_new_questions_does_not_dispatch():
     assert req["status"] == "failed"
     assert req["pending_questions"] == ["Which species should the QC cover?"]
     assert [t for t in hub.calls if t.meta["kind"] == "step"] == []
+
+
+@pytest.mark.asyncio
+async def test_corrected_plan_questions_follow_disabled_clarification_policy():
+    fixture = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))["plan"]
+    bad = json.loads(json.dumps(fixture))
+    bad["steps"][1]["outputs"] = ["/tmp/answer.md"]
+    asking = {**fixture, "clarifying_questions": ["Which species should the QC cover?"]}
+    hub = penguins_hub([bad, asking])
+    hub.s.orchestrator.wait_for_clarification = False
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done"
+    assert hub.requests["r"]["pending_questions"] == ["Which species should the QC cover?"]
+    assert [t for t in hub.calls if t.meta["kind"] == "step"]
+
+
+@pytest.mark.asyncio
+async def test_resume_revalidates_and_normalizes_stored_plan_outputs():
+    async def dispatch(task):
+        return result(task, text="done", outputs=["outputs/answer.md"])
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    hub.requests["r"]["plan"] = {"steps": [{"id": "A", "agent_id": "worker",
+                                               "instruction": "write ./answer.md",
+                                               "outputs": ["answer.md"], "depends_on": []}]}
+    await Orchestrator(hub).run_request("r", resume=True)
+    assert hub.requests["r"]["plan"]["steps"][0]["outputs"] == ["outputs/answer.md"]
+    assert hub.calls[0].meta["outputs"] == ["outputs/answer.md"]
+
+
+@pytest.mark.asyncio
+async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
+    async def dispatch(task):
+        return result(task, text="unused")
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"].update(
+        plan={"steps": [{"id": "A"}]}, pending_questions=["Approve follow-up?"],
+        cost_known=False, cost_usd=1.25,
+    )
+    orch = Orchestrator(hub)
+    orch.budget_outcomes["r"] = [{"spent_usd": 1.25, "limit_usd": 1.0, "approved": True}]
+    block = ("<!-- LABHQ_BENCH_RESULT -->\n```json\n{\"answer\": true}\n```\n"
+             "<!-- /LABHQ_BENCH_RESULT -->")
+    orch._finish("r", "Narrative\n\n" + block,
+                 {"A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"]}}, ok=True)
+    report = hub.requests["r"]["report"]
+    assert report.rstrip().endswith("<!-- /LABHQ_BENCH_RESULT -->")
+    assert report.index("Step status and output paths") < report.index("<!-- LABHQ_BENCH_RESULT -->")
+    assert report.index("비용 미집계") < report.index("<!-- LABHQ_BENCH_RESULT -->")
+    assert report.index("Budget: $1.25 > $1.00; approved.") < report.index("<!-- LABHQ_BENCH_RESULT -->")
 
 
 def test_cso_plan_prompt_states_the_outputs_rule():
