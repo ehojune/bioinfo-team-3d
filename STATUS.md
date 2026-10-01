@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #136·#158 후속 12건 — 계보 순회·resume 이유·그림자 breaker·hash·mark
+
+- 결론: #154 #155 #156 #157 #159 #160 #161 #163 #173 #174 #175를 issue별 커밋으로 고쳤다. #162는 이미 main(dc01c50)에 고쳐져 있어 issue의 두 모양만 test에 더했다. #163과 #174는 같은 결함이라 한 커밋이다.
+- 바뀐 것: cycle 경고는 강연결 요소마다 한 건(A·B), 계보 순회는 너비 우선 최소 깊이, resume 이유 `start_unknown`(모델 hash `9ed9aa1e…`), hash는 `timeout_s`의 절반까지, JSON1 없으면 `sqlite_json1_missing` off, Windows 읽기는 FILE_SHARE_DELETE, wake 자식이 있으면 job은 끝난 것, breaker window는 `breaker.json`, mark는 기록된 후보만. README 그림자 절과 §10을 맞췄다. 패치노트는 건드리지 않았다.
+- 실행한 것: 확인 조건마다 회귀 test가 수정 전 실패함을 봤다(#156은 재확인 비교를 바꾸는 변이로). 전체 pytest 1958 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과. Codex 리뷰 P2 1건(event loop에서 breaker.json fsync)을 daemon thread 저장으로 고쳤다.
+- 미해결: Windows에서 hash 중인 파일 위로 다른 파일을 `os.replace`하는 쓰기는 여전히 실패할 수 있다(README §10). `finished` job은 최종 상태(성공·실패)를 모른다. derived_from 깊이 경계는 A(64)와 B(65)가 한 단계 다르다(이번 범위 밖).
+- 근거: `labhq/research/semantics.py`, `labhq/research/semantics_v1.yaml`, `labhq/research/semantics_shadow.py`, `labhq/research/semantics_objects.py`, `tests/semantics_baseline.py`, `tests/test_semantics_pilot.py`, `tests/test_semantics_shadow_*.py`, `tests/test_semantics_objects.py`.
+
 ## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
 
 - 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.
