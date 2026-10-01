@@ -1197,6 +1197,41 @@ async def test_resume_revalidates_and_normalizes_stored_plan_outputs():
 
 
 @pytest.mark.asyncio
+async def test_resume_rejects_stored_plan_when_max_steps_was_reduced():
+    """#282: a stored plan longer than today's max_steps fails loudly instead of losing its tail steps."""
+    async def dispatch(task):
+        raise AssertionError("an over-limit stored plan must not dispatch")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_steps = 1
+    hub.s.orchestrator.reviewer_agent = None
+    hub.requests["r"]["plan"] = {"steps": [
+        {"id": "A", "agent_id": "worker", "instruction": "first", "outputs": [], "depends_on": []},
+        {"id": "B", "agent_id": "worker", "instruction": "second", "outputs": [], "depends_on": ["A"]},
+    ]}
+    hub.requests["r"]["results"] = {"A": result(Task(agent_id="worker", prompt="first"),
+                                                text="A done").model_dump(mode="json")}
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert [step["id"] for step in req["plan"]["steps"]] == ["A", "B"]
+    assert "2 steps" in req["error"] and "maximum is 1" in req["error"]
+    assert "### B · worker (FAILED" in req["report"]
+    assert hub.calls == []
+
+
+def test_new_plan_keeps_truncating_to_max_steps():
+    """#282 changes only stored plans; a fresh CSO plan is still cut to max_steps as before."""
+    raw = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": []} for sid in ("A", "B", "C")]
+    steps, _ = validate_steps(raw, {"worker"}, 2)
+    assert [step["id"] for step in steps] == ["A", "B"]
+    with pytest.raises(ValueError, match="has 3 steps; maximum is 2"):
+        validate_steps(raw, {"worker"}, 2, reject_excess=True)
+
+
+@pytest.mark.asyncio
 async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     async def dispatch(task):
         return result(task, text="unused")

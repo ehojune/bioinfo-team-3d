@@ -463,10 +463,17 @@ def _normalize_plan_outputs(plan: Any) -> tuple[Any, list[str]]:
 
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                    excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
-                   vocab: output_vocab.Vocab | None = None, stats: dict | None = None) -> tuple[list[dict], list[str]]:
+                   vocab: output_vocab.Vocab | None = None, stats: dict | None = None,
+                   reject_excess: bool = False) -> tuple[list[dict], list[str]]:
     """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
     ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
-    any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221."""
+    any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221.
+
+    A fresh CSO plan is cut to ``max_steps``. A stored plan passes ``reject_excess``: cutting it would drop steps
+    the request already promised, so a plan over the limit raises instead (#282)."""
+    if reject_excess and len(raw) > max_steps:
+        raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}; "
+                         "raise orchestrator.max_steps to resume it")
     warnings, steps, seen = [], [], set()
     raw_types: dict[str, Any] = {}
     for i, s in enumerate(raw[:max_steps]):
@@ -1489,7 +1496,8 @@ class Orchestrator:
                 type_stats: dict = {}
                 vocab = self._output_vocab()
                 steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
-                                                 orchestration, vocab=vocab, stats=type_stats)
+                                                 orchestration, vocab=vocab, stats=type_stats,
+                                                 reject_excess=True)
                 req["plan"] = {**req["plan"], "steps": steps, "warnings": warnings}
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
