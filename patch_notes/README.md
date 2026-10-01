@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:04 | [`e1975e5`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/e1975e5) | **main 병합에서 gateway import 충돌을 양쪽 모두 살려 풀었습니다.** 이 PR의 session 점유 판정과 main의 연구 팩 검사를 함께 가져옵니다. 동작 변경은 없습니다. |
+| 23:04 | [`60486a9`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/60486a9) | **runner 대기열에서 오래 기다린 이전 상담을 두고 CSO가 새 session으로 갈라지지 않게 했습니다** (#112 리뷰). runner는 대기열에 넣기 전에 수락을 알리고 시간 제한은 실제 실행이 시작될 때부터 셉니다. 그런데 보낸 시각부터 시간 제한을 재서 막 실행을 시작한 상담을 끝난 것으로 보고 계획·종합·이어 묻기를 새 session으로 열었습니다. 이제 지금 runner가 수락한 작업은 결과가 올 때까지 기다리고, runner 재접속 유예도 끊긴 때부터 셉니다. 회귀 테스트 2건은 수정 전 실패했습니다. |
 | 22:45 | [`df9ed20`](https://github.com/ehojune/bioinfo-team-3d/pull/214/commits/df9ed20) | HPC 잡 취소 소유를 러너가 직접 제출해 받은 id로만 인정, 직원이 신고한 id·이벤트는 근거에서 뺌 |
 | 21:33 | [`84b9308`](https://github.com/ehojune/bioinfo-team-3d/pull/214/commits/84b9308) | **시험 잡을 시험마다 새 개인 폴더에 만듭니다** (Codex 독립 검증 P1). 고정 파일명에 symlink나 hard link가 남아 있으면 스크립트와 잡 로그가 그 대상, 곧 통제 구역 원본으로 쓰일 수 있었습니다. 이제 `mkdtemp`로 새 폴더를 만들고 통제 구역 검사를 한 번 더 거친 뒤 스크립트를 새 파일로만 만듭니다. hardlink 회귀 테스트는 수정 전 실패, 수정 뒤 통과했습니다 |
 | 21:17 | [`c83243a`](https://github.com/ehojune/bioinfo-team-3d/pull/198/commits/c83243a) | **이어 묻기 답이 작업 결과 이벤트로 한 번 더 실려 snapshot이 다시 커지던 길을 막았습니다** (#126 검증 후속). 러너가 보내는 task.result 본문에도 같은 답이 잘리지 않은 채 있어 실제로는 2,044,888 bytes였습니다. 이제 replay되는 본문은 작업판 카드와 같은 500자로 자르고, 같은 경우 208,507 bytes입니다 |
