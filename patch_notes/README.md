@@ -12,6 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:49 | [`35a7836`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/35a7836) | **읽기 전용을 강제할 수 없는 엔진에는 이어 묻기·상담을 보내지 않습니다** (#36, Codex 리뷰). `engine: cli` 직원은 sandbox·도구 제한을 쓰지 않아 이어 묻기에서도 산출물을 고칠 수 있었습니다. 엔진마다 읽기 전용 지원 여부를 한 곳에서 판정해, 지원하지 않는 직원(cli·Gemini·Antigravity)에게는 게이트웨이·CSO·러너가 모두 실행을 거부하고 이유를 돌려줍니다. |
+| 11:45 | [`973754e`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/973754e) | **URL 참고의 query·fragment를 떼고, 공개 게시에서 query credential을 가립니다** (#36, Codex 리뷰). signed URL이나 `?token=` 값이 보고에 인용되어 GitHub에 올라갈 수 있었습니다. 이제 scheme·host·path만 저장·표시·prompt에 쓰고 원문은 게이트웨이 내부 저장소에만 둡니다. 공개 가드는 `token`·`sig`·`X-Amz-*` 같은 값도 가립니다. |
+| 11:40 | [`76e499c`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/76e499c) | **참고 폴더 안의 링크가 통제 구역이나 폴더 밖으로 이어지면 그 참고를 열지 않습니다** (#36, Codex 리뷰). 폴더 자체만 확인해서 하위 symlink·junction으로 통제 데이터를 읽을 수 있었습니다. 러너가 열기 전에 폴더를 훑어 그런 링크·mount가 있거나 개수·깊이 상한을 넘으면 거부하고 prompt에서도 지웁니다. 승인 게이트는 경로를 실제 경로로도 비교합니다. |
 | 11:18 | [`1b33366`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/1b33366) | **STATUS에 #36 접수 PR A 리뷰 1회차 보고를 남겼습니다** |
 | 11:18 | [`de33f3b`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/de33f3b) | **참고 경로 검사와 보고 가림의 좁은 빈틈을 막았습니다** (#36, Codex 리뷰). 목록이 아닌 질문 선택지는 자유 입력 질문으로 읽고, 줄바꿈 계열 문자가 든 참고 값은 거부합니다. Windows 게이트웨이에서 POSIX 루트가 모두 거부되던 것과, 작업 폴더를 품은 참고 폴더가 직원 자신의 쓰기를 막던 것을 고쳤고, 프로젝트 보고의 경로 가림은 대소문자·구분자와 상관없이 동작합니다. |
 | 11:12 | [`64cca85`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/64cca85) | **링크로 적힌 통제 구역도 러너가 실제 경로로 막습니다** (#36, Codex 리뷰). 통제 구역을 symlink·junction 경로로 적으면 그 실제 폴더가 참고 폴더로 열리던 빈틈을, 구역 경로도 실제 경로로 풀어 비교해 닫았습니다. |
