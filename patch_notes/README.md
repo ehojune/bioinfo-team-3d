@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:35 | [`258bf48`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/258bf48) | 러너가 허용한 입력 증거만 쓰고 파일명과 Git ref의 대소문자를 보존함 |
 | 06:18 | [`be52c34`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/be52c34) | 재사용 후보를 입력 정체성과 목표 data type으로 먼저 걸러 정밀도를 높임 |
 | 05:59 | [`4c497fe`](https://github.com/ehojune/bioinfo-team-3d/pull/265/commits/4c497fe) | doctor의 elevated sandbox setup 회귀 test가 POSIX CI에서도 Windows 검사 분기를 실행하도록 환경 mock을 고정했습니다 (#262, 리뷰 P1). |
 | 05:51 | [`556b7dd`](https://github.com/ehojune/bioinfo-team-3d/pull/265/commits/556b7dd) | Windows 무인 Codex의 직원 전용 홈에 elevated sandbox setup marker가 없으면 실행 전에 멈추고, setup helper 취소 1223을 `sandbox_setup_required` 원인으로 보존했습니다 (#262). 더 약한 sandbox로 자동 전환하지 않습니다. |
