@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:02 | [`5c8747d`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/5c8747d) | **main 병합에서 README 설정 절의 두 변경을 함께 살렸습니다.** 연구 규약 pilot 줄과 #103의 라운드 기록 rate limit 설명을 둘 다 둡니다 |
 | 07:25 | [`a325461`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/a325461) | **통계를 쓰는 연구 계획은 분석 전에 선택을 모두 정해야 승인으로 갑니다** (Codex 리뷰). 비교군·다중검정 보정·결측과 제외 기준·효과크기와 구간 방식을 비워도 통과해서, 결과를 본 뒤 고를 여지가 남았습니다. 이제 각 항목을 정하거나 해당 없음 사유를 적어야 하고, estimand·분석 단위·주요 outcome은 면제할 수 없습니다 |
 | 07:16 | [`e67d921`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/e67d921) | **package에 든 설정 template에 연구 규약 설정을 반영했습니다** |
 | 07:14 | [`3370b3b`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/3370b3b) | **도메인 pack의 합격 조건을 문장이 아니라 기계가 판정하는 규칙으로 바꿨습니다** (Codex 리뷰). 전에는 조건 설명만 비어 있지 않으면 통과해서, 조건과 batch가 완전히 겹쳐 효과를 추정할 수 없는 설계에서도 효과를 주장하는 계획이 승인으로 갔습니다. 이제 pack이 `when`·`require`/`forbid` 규칙을 선언하고, 계획이 하나라도 어기면 승인 대신 다시 계획합니다. 모르는 필드·연산자가 든 pack은 불러올 때 거부합니다. 계획을 고치느라 예산 승인이 거절되면 승인 단계로 가지 않고 멈춥니다 |
