@@ -10,6 +10,14 @@
 - 미해결: 2차 원본에서 #261 자동 off 뒤 네 live 요청은 정답표가 없어 혼동행렬에서 제외했다. 15건 전체 replay의 최종 후보도 같은 3개였으며, B2 전환 근거로 쓰지 않는다.
 - 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_provenance.py`, `tests/test_semantics_shadow_hash.py`, `tests/test_direct_outputs.py`.
 
+## 2026-10-02 · #262 — Windows Codex elevated sandbox setup 사전 차단
+
+- 결론: 직원 Codex는 격리한 `CODEX_HOME`에서 떴지만 그 홈에는 elevated sandbox setup marker가 없었다. LabHQ가 `--ignore-user-config`와 `windows.sandbox="elevated"`를 명시하므로 개인 설정은 원인이 아니다. Codex가 무인 실행 중 관리자 helper를 띄우려다 사용자가 취소해 Windows 1223으로 실패했고, 기존 처리는 최종 응답이 있다는 이유로 성공처럼 넘긴 뒤 `missing_outputs`로 바꿨다.
+- 바뀐 것: 초기화된 직원 `CODEX_HOME`에 marker가 없으면 adapter preflight와 doctor가 Codex를 시작하기 전에 이유를 밝히고 멈춘다. 실시간 1223 event도 `sandbox_setup_required` 실패로 보존한다. 더 약한 sandbox로 자동 전환하지 않는다.
+- 실행한 것: 회귀 test 3건을 실패부터 확인했다. 관련 test 190 passed/17 skipped, 전체 pytest 2432 passed/44 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. 격리 폴더에서 `unelevated` 저장은 2회 성공했지만 상위 canary 쓰기도 성공해 작업 폴더 경계를 지키지 못했으므로 채택하지 않았다. UAC와 elevated setup은 실행하지 않았다.
+- 미해결: 실제 elevated 직원 실행 2회 저장 확인은 관리자가 해당 직원 `CODEX_HOME`의 setup을 대화형으로 마친 뒤 해야 한다. preflight는 marker 존재 여부를 확인하며, 버전 비호환은 실행 중 1223 원인 분류로 남는다. sandbox·권한 변경이므로 병합하지 않는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/adapters/codex.py`, `labhq/doctor.py`, `tests/test_isolation.py`, `tests/test_real_streams.py`, `tests/test_doctor.py`.
+
 ## 2026-10-02 · #261 — 연구 계획의 어휘 판본 hash가 정보 경계에 걸린 오판
 
 - 결론: 2차 실행의 연구 요청을 최신 main에서 다시 계산했다. 걸린 칸은 `vocab_sha256`, 부류는 검증된 산출 어휘 판본 hash였다. 연구 계획의 같은 판본을 자유 입력처럼 민감값에 넣어, 줄의 공개 판본 칸이 자기 자신과 일치하자 차단한 오판이다.

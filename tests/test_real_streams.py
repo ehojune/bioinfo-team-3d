@@ -104,6 +104,35 @@ async def test_claude_usage_from_result_fixture(tmp_path):
     assert any(kind == "agent.usage" and data["tokens"] == result.usage for kind, data in events)
 
 
+@pytest.mark.asyncio
+async def test_codex_elevated_setup_cancellation_is_a_causal_failure(tmp_path):
+    settings = Settings()
+    agent = AgentSpec(id="fixture", name="Fixture", role="test", engine=Engine.codex, builtin_mcp=[])
+    task = Task(agent_id=agent.id, prompt="test")
+    events = []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+
+    ctx = RunContext(task=task, agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[], env={}, emit=emit, prompt="test")
+    adapter = get_adapter(agent.engine, settings)
+    state = RunState()
+    message = ("Failed to create unified exec process: orchestrator_helper_launch_canceled: "
+               "ShellExecuteExW failed to launch setup helper: 1223")
+    await adapter.handle_line(json.dumps({"type": "item.completed", "item": {
+        "type": "command_execution", "exit_code": 1, "aggregated_output": message,
+    }}), state, ctx)
+    await adapter.handle_line(json.dumps({"type": "turn.completed", "usage": {}}), state, ctx)
+
+    result = adapter.finalize(state, ctx, 0)
+
+    assert not result.ok
+    assert result.error_kind == "sandbox_setup_required"
+    assert "elevated sandbox setup" in (result.error or "")
+    assert any(kind == "agent.tool_error" for kind, _ in events)
+
+
 def test_fixture_privacy_and_valid_json():
     for fixture in ROOT.rglob("*"):
         if not fixture.is_file():
