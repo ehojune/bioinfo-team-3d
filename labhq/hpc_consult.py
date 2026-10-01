@@ -11,6 +11,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
@@ -160,20 +161,38 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
               policy: PolicySettings | None = None, backend: Scheduler | None = None,
               sleep: Callable[[float], None] = time.sleep, poll_s: float = 5.0, max_polls: int = 60) -> dict:
     """At most one PI-approved trial job, followed until it finishes or `max_polls` status checks pass."""
-    if policy and touches_resolved({"path": str(trial_dir)}, restricted_paths(policy)):
-        return {"outcome": "refused", "message": "시험 폴더가 통제 데이터 구역 안이라 제출하지 않았습니다."}
+    zones = restricted_paths(policy) if policy else []
+    refused = {"outcome": "refused", "message": "시험 폴더가 통제 데이터 구역 안이라 제출하지 않았습니다."}
+    if zones and touches_resolved({"path": str(trial_dir)}, zones):
+        return refused
     backend = backend or Scheduler(hpc)
+    run_dir: Path | None = None
 
     def hide(text: str) -> str:  # init never prints local paths
-        return text.replace(str(trial_dir), "<trial>").replace(str(Path.home()), "~")
+        for folder in (run_dir, trial_dir):  # run_dir first: it sits inside trial_dir
+            if folder is not None:
+                text = text.replace(str(folder), "<trial>")
+        return text.replace(str(Path.home()), "~")
 
-    script, out, err = (trial_dir / f"{TRIAL['name']}.{ext}" for ext in ("sh", "out", "err"))
-    job = (TRIAL["name"], TRIAL["cores"], TRIAL["mem"], TRIAL["walltime"], hpc.default_queue, str(out), str(err))
+    def files(folder: Path) -> tuple[Path, tuple]:
+        script, out, err = (folder / f"{TRIAL['name']}.{ext}" for ext in ("sh", "out", "err"))
+        return script, (TRIAL["name"], TRIAL["cores"], TRIAL["mem"], TRIAL["walltime"], hpc.default_queue,
+                        str(out), str(err))
+
+    script, job = files(trial_dir)  # what the PI sees; the files go to a fresh folder below
     if not confirm(f"시험 잡 1회(sleep 1, 1코어, 5분): {hide(shlex.join(backend.submit_args(str(script), *job)))}"):
         return {"outcome": "declined", "message": "PI가 거절해 아무것도 제출하지 않았습니다."}
     try:
         trial_dir.mkdir(parents=True, exist_ok=True)
-        script.write_text(build_script("sleep 1", str(trial_dir)), encoding="utf-8")
+        # A new private folder per trial: a link left at a fixed name (labhq_trial.sh/.out/.err) would send the
+        # script write or the job's logs to its target, possibly a restricted file.
+        run_dir = Path(tempfile.mkdtemp(prefix="run-", dir=str(trial_dir)))
+        if zones and touches_resolved({"path": str(run_dir)}, zones):  # trial_dir swapped for a link meanwhile
+            run_dir.rmdir()
+            return refused
+        script, job = files(run_dir)
+        with open(script, "x", encoding="utf-8") as f:  # never reuse or follow an existing path
+            f.write(build_script("sleep 1", str(run_dir)))
         if os.name != "nt":
             script.chmod(0o750)
     except OSError as e:

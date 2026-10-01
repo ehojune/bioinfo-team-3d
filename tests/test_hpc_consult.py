@@ -1,5 +1,6 @@
 """Issue #119: HPC first-setup consult against fixture SGE/PBS/Slurm output. No cluster is contacted."""
 
+import os
 import subprocess
 from subprocess import CompletedProcess
 
@@ -152,7 +153,32 @@ def test_approved_trial_is_submitted_once_and_followed_to_the_end(tmp_path):
                                sleep=waits.append, poll_s=2.0)
     assert (result["outcome"], result["job_id"], result["state"]) == ("tracked", "777", "completed")
     assert len(backend.submitted()) == 1 and waits == [2.0, 2.0]
-    assert (tmp_path / "trial" / "labhq_trial.sh").read_text(encoding="utf-8").rstrip().endswith("sleep 1")
+    script, = (tmp_path / "trial").glob("run-*/labhq_trial.sh")  # a fresh folder per trial
+    assert script.read_text(encoding="utf-8").rstrip().endswith("sleep 1")
+    assert str(script) in backend.submitted()[0]
+
+
+@pytest.mark.parametrize("kind", ["hardlink", "symlink"])
+def test_trial_never_writes_through_a_link_left_in_the_trial_folder(tmp_path, kind):
+    # A link at the fixed trial file names must not let the script write or the job logs reach its target.
+    zone = tmp_path / "zone"
+    zone.mkdir()
+    raw = zone / "raw.tsv"
+    raw.write_text("restricted original", encoding="utf-8")
+    trial = tmp_path / "trial"
+    trial.mkdir()
+    for name in ("labhq_trial.sh", "labhq_trial.out", "labhq_trial.err"):
+        try:
+            os.link(raw, trial / name) if kind == "hardlink" else (trial / name).symlink_to(raw)
+        except (OSError, NotImplementedError) as e:
+            pytest.skip(f"{kind} unavailable here: {e}")
+    policy = PolicySettings.model_validate({"data_zones": [{"path": str(zone), "level": "restricted"}]})
+    backend = Backend()
+    result = consult.trial_job(backend.cfg, trial, lambda text: True, policy=policy, backend=backend,
+                               sleep=lambda s: None)
+    assert result["outcome"] == "tracked" and raw.read_text(encoding="utf-8") == "restricted original"
+    argv = backend.submitted()[0]
+    assert not any(str(trial / name) in argv for name in ("labhq_trial.sh", "labhq_trial.out", "labhq_trial.err"))
 
 
 def test_trial_waits_a_bounded_number_of_polls(tmp_path):
