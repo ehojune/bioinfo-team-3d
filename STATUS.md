@@ -4,10 +4,10 @@
 
 ## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot
 
-- 결론: 중단 기준 충족, 접기를 권고한다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). B는 독립 결함이 더 많았고(17문항 밖 반례 2건, A 0) 변경 시간도 짧지 않았다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
+- 결론: 중단 기준 충족, 접기를 권고한다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). B는 독립 결함 유형이 더 많았고(17문항 밖 반례 B 3유형, A 2유형) 변경 시간도 짧지 않았다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
 - 바뀐 것: 새 파일 `labhq/research/semantics_v1.yaml`·`semantics.py`(B, 공유 read_records), `tests/semantics_baseline.py`(A), `tests/test_semantics_pilot.py`·`test_semantics_public.py`, `scripts/semantics_pilot.py`, `docs/reference/semantics_pilot.md`. `expected.yaml`은 고정 전 보정 1회(답 변경 없음, 규칙 원천·측정 규약 고정). `pyproject.toml` package-data 1줄. 설정·실행 경로·CSO·state_dir은 그대로다.
 - 실행한 것: 기대 답 독립 검토 1회 반영(동의하지 않은 두 건은 코드 근거로 유지). 측정 script(1× warm 200회·5 batch, 50× 복제, tracemalloc, cycle·깊이 70). 격리 test(fresh process import, AST, CSO prompt hash, 파일 bytes, socket·subprocess 차단). 전체 pytest 1373 passed/20 skipped, `node tests/*.cjs` 8개, `bash scripts/check_public.sh`, `git diff --check` 통과.
-- 미해결: 접는 커밋(semantics.py·YAML·script 삭제, fixture·기대 답·제약 test는 남김)은 리뷰 뒤 결정한다. 변경 내용을 구현 전에 알아 B에 분기를 미리 넣었으므로 변경 시간 지표는 변경 비용을 재지 못했다. A의 N+1 SQL 탓에 성능 비교는 근거가 약하다. 구현 뒤 독립 리뷰는 아직이다. patch notes는 PR 번호가 생긴 뒤 쓴다.
+- 미해결: 접는 커밋(semantics.py·YAML·script 삭제, fixture·기대 답·제약 test는 남김)은 리뷰 뒤 결정한다. 변경 내용을 구현 전에 알아 B에 분기를 미리 넣었으므로 변경 시간 지표는 변경 비용을 재지 못했다. A의 N+1 SQL 탓에 성능 비교는 근거가 약하다. 구현 뒤 독립 리뷰(Codex 1회)의 P2 3건과 검증에서 찾은 A의 diamond DAG 지수 시간은 고치지 않고 후속으로 넘긴다. patch notes는 PR 번호가 생긴 뒤 쓴다.
 - 근거: `docs/reference/semantics_pilot.md`, `tests/fixtures/semantics/expected.yaml`, `scripts/semantics_pilot.py`, `tests/test_semantics_pilot.py`.
 
 ## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 리뷰 보강

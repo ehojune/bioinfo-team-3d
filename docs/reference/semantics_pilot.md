@@ -11,7 +11,7 @@ commit `78ad491` · model `labhq.provenance@1` `8fd9860f5f480831ce2794ee585b513e
 | 채택 조건(issue #127) | 결과 | 충족 |
 |---|---|---|
 | B 17/17·잘못된 동일시 0·소비자 불일치 0 | 17/17·0·0 (base·change1·change2) | 예 |
-| A보다 독립 결함 유형 2건 이상 적음 | 17문항 안: A 0·B 0. 밖의 반례: B 2(gen·resume), A 0 | 아니오 |
+| A보다 독립 결함 유형 2건 이상 적음 | 17문항 안: A 0·B 0. 밖의 반례: B 3유형(gen·resume·indep), A 2유형(scope·traverse) | 아니오 |
 | 또는 같은 정확도로 두 변경 모두 시간 30% 이상 짧음 | 변경 1: B 3분·A 1분, 변경 2: B 1분·A 1분 | 아니오 |
 | 최초 매핑 ≤2시간·변경 ≤30분 | B 11분, 변경 최대 3분 | 예 |
 | cold·warm p95 B/A ≤1.1 | 1×: 0.64·0.07, 50×: 0.11·0.005 | 예(근거 약함, 아래) |
@@ -28,6 +28,10 @@ commit `78ad491` · model `labhq.provenance@1` `8fd9860f5f480831ce2794ee585b513e
 
 - 17문항 밖 반례 2개(맞는 세션이 없는 resume, 한 출력을 두 철자로 보고)에서 B만 A와 달랐다. B가 reported_output을 두 번 싣고 빈 후보 목록을 냈다. `fb9c061`에서 고쳤다. A는 relation 표의 UNIQUE와 조건부 칸으로 처음부터 맞았다.
 - 두 결함은 A를 쓰면서 찾았다. 같은 작업자가 B를 먼저 쓴 순서 효과다.
+- 구현 뒤 독립 리뷰(Codex)와 검증에서 반례가 더 나왔다. 고치지 않았다(후속 판단).
+  - B: 같은 workspace의 앞 run에 started_at이 없을 때 resume 판정이 TypeError로 projection 전체를 멈춘다(resume). 같은 claim revision을 두 run이 보고하면 bears_on은 둘 다 싣고 independent_groups는 마지막 결과로만 낸다(indep).
+  - A: 같은 claim revision을 두 run이 보고하면 claim 표 PRIMARY KEY 충돌로 project가 멈춘다(scope). 재귀 CTE가 경로를 열거해 diamond DAG에서 시간이 층마다 두 배쯤 는다(traverse, 14층 0.45초·B 0.001초 미만).
+  - 이 반례로도 B가 A보다 2유형 이상 적지 않다. 판정은 그대로다.
 - 원인 단위 집계는 변형 test로 확인했다. A8.generated_by 하나를 틀리면 질의 다섯 개가 틀려도 결함은 `gen` 1건이다.
 
 ## 시간(Pilot-Minutes, 에이전트 작업 시간)
@@ -38,6 +42,7 @@ commit `78ad491` · model `labhq.provenance@1` `8fd9860f5f480831ce2794ee585b513e
 | 보정 1·hash 고정 | | | 12 · 2 |
 | 최초 구현 | 11(공유 reader·채점 포함) | 4 | |
 | 측정·격리 test | | | 8 |
+| 구현 뒤 리뷰·검증 | | | 12 |
 | 결함 수정 | 2 | 0 | |
 | 변경 1(B→A) | 3 | 1 | |
 | 변경 2(A→B) | 1 | 1 | |
@@ -84,4 +89,4 @@ AST로 함수 단위로 셌다. A의 `run_row`·`artifact_row`는 unknown 이유
 
 - 합성 기록 16행·manifest 8개뿐이다. A·B가 같게 나온 것도 이 범위의 결과다.
 - 같은 작업자(Claude Opus 5.5)가 B, A 순서로 썼다. A는 B에서 정한 규칙과 출력 꼴을 그대로 받았다.
-- 기대 답 검토는 독립 검토 1회(구현 전)뿐이다. 구현 뒤 독립 리뷰는 이 기록에 들어 있지 않다.
+- 기대 답 검토는 독립 검토 1회(구현 전)뿐이다. 구현 뒤 독립 리뷰는 1회(Codex)이고, 17문항 밖 반례 탐색은 체계적이지 않다.
