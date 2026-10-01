@@ -1,5 +1,6 @@
 """Issue #119: HPC first-setup consult against fixture SGE/PBS/Slurm output. No cluster is contacted."""
 
+import subprocess
 from subprocess import CompletedProcess
 
 import pytest
@@ -168,3 +169,43 @@ def test_trial_never_runs_inside_a_restricted_zone(tmp_path):
     result = consult.trial_job(backend.cfg, tmp_path / "trial", lambda text: pytest.fail("asked"),
                                policy=policy, backend=backend)
     assert result["outcome"] == "refused" and backend.calls == []
+
+
+def test_trial_that_cannot_be_prepared_or_submitted_is_reported_not_retried(tmp_path):
+    blocked = tmp_path / "file"
+    blocked.write_text("not a folder", encoding="utf-8")
+    backend = Backend()
+    result = consult.trial_job(backend.cfg, blocked / "trial", lambda text: True, backend=backend)
+    assert result["outcome"] == "prepare_failed" and backend.submitted() == []
+
+    class Rejecting(Backend):
+        def _run(self, args):
+            self.calls.append(args)
+            return CompletedProcess(args, 1, "", "qsub: fixture rejected")
+
+    rejecting = Rejecting()
+    result = consult.trial_job(rejecting.cfg, tmp_path / "trial", lambda text: True, backend=rejecting)
+    assert result["outcome"] == "submit_failed" and "fixture rejected" in result["message"]
+    assert [c[0] for c in rejecting.calls] == ["qsub"]  # one attempt, no status polling, no resubmission
+
+
+def test_mem_free_load_value_is_not_divided_by_cores():
+    # A non-consumable mem_free is a host condition: 8 cores × 64G must still ask for mem_free=64G.
+    outputs = {**SGE, ("qconf", "-sc"): "mem_free  mf  MEMORY  <=  YES  NO  0  0\nh_rt h_rt TIME <= YES NO 0 0\n"}
+    hpc, _ = consult.draft("sge", consult.survey("sge", Cluster(outputs)))
+    settings = HpcSettings.model_validate(hpc)
+    assert (settings.sge.mem_resource, settings.sge.mem_per_slot) == ("mem_free", False)
+    assert "mem_free=64G" in Scheduler(settings).submit_args("/w/j.sh", "a", 8, "64G", "1:00:00", None, "/w/o", "/w/e")
+
+
+def test_status_timeout_after_the_trial_submit_is_reported_once(tmp_path):
+    class Hanging(Backend):
+        def _run(self, args):
+            if args[0] == "qstat":
+                self.calls.append(args)
+                raise subprocess.TimeoutExpired(args, 60)
+            return super()._run(args)
+
+    backend = Hanging()
+    result = consult.trial_job(backend.cfg, tmp_path / "trial", lambda text: True, backend=backend)
+    assert (result["outcome"], result["job_id"]) == ("status_failed", "777") and len(backend.submitted()) == 1

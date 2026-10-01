@@ -29,6 +29,7 @@ SURVEY = {
 }
 PE_PREFERENCE = ("smp", "threads", "openmp", "shm", "omp")
 MEM_PREFERENCE = ("h_vmem", "mem_free", "virtual_free", "s_vmem", "h_rss", "mem_req", "m_mem_free")
+PER_SLOT_LIMITS = ("h_vmem", "s_vmem", "h_rss")  # process limits SGE multiplies by the slots on a host
 MAX_PE_QUERIES = 20
 PBS_PRO_TEMPLATE = "select=1:ncpus={cores}:mem={mem},walltime={walltime}"
 TRIAL = {"name": "labhq_trial", "cores": 1, "mem": "1G", "walltime": "00:05:00"}
@@ -118,7 +119,10 @@ def draft(scheduler: str, found: dict) -> tuple[dict, list[str]]:
                    or next((n for n in MEM_PREFERENCE if n in memory), None))
             if mem:
                 sge["mem_resource"] = mem
-                sge["mem_per_slot"] = memory[mem]["consumable"] != "JOB"  # consumable JOB counts once per job
+                # Consumable YES and the h_vmem-style limits count per slot; consumable JOB and load values
+                # such as mem_free (a host must have that much free) count once per job.
+                consumable = memory[mem]["consumable"]
+                sge["mem_per_slot"] = consumable == "YES" or (consumable == "NO" and mem in PER_SLOT_LIMITS)
             else:
                 notes.append("요청 가능한 메모리 리소스를 찾지 못했습니다. hpc.sge.mem_resource를 확인하세요.")
             h_rt = complexes.get("h_rt")
@@ -167,19 +171,22 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
     job = (TRIAL["name"], TRIAL["cores"], TRIAL["mem"], TRIAL["walltime"], hpc.default_queue, str(out), str(err))
     if not confirm(f"시험 잡 1회(sleep 1, 1코어, 5분): {hide(shlex.join(backend.submit_args(str(script), *job)))}"):
         return {"outcome": "declined", "message": "PI가 거절해 아무것도 제출하지 않았습니다."}
-    trial_dir.mkdir(parents=True, exist_ok=True)
-    script.write_text(build_script("sleep 1", str(trial_dir)), encoding="utf-8")
-    if os.name != "nt":
-        script.chmod(0o750)
+    try:
+        trial_dir.mkdir(parents=True, exist_ok=True)
+        script.write_text(build_script("sleep 1", str(trial_dir)), encoding="utf-8")
+        if os.name != "nt":
+            script.chmod(0o750)
+    except OSError as e:
+        return {"outcome": "prepare_failed", "message": f"시험 스크립트를 쓰지 못해 제출하지 않았습니다: {hide(str(e))}"}
     try:
         job_id = backend.submit(str(script), *job)
-    except RuntimeError as e:
+    except (RuntimeError, OSError) as e:
         return {"outcome": "submit_failed", "message": hide(str(e))}
     max_polls = max(1, max_polls)
     for attempt in range(max_polls):
         try:
             info = backend.status(job_id)
-        except RuntimeError as e:
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:  # e.g. qstat timed out: never resubmit
             return {"outcome": "status_failed", "job_id": job_id, "message": hide(str(e))}
         if info.terminal:
             break

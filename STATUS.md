@@ -6,7 +6,7 @@
 
 - 결론: `labhq init`이 읽기 전용 조회로 `hpc:` 초안을 만들고, PI가 `y`라고 한 시험 잡 1회만 제출해 끝까지 추적한다. #171 후속 P2(#172 여섯 항목, #185, #186)를 닫았다.
 - 바뀐 것: 스크립트에 스케줄러 지시가 있으면 임계값과 무관하게 승인, `hpc_cancel`은 broker가 추적한 그 직원의 잡만, 스케줄러 명령 env는 허용 목록, 셸 승인 목록 확대, cluster 판정은 `slurm_cluster_option` 하나(묶은 짧은 옵션 포함), accounting 없음·`REVOKED`·모르는 상태도 종료로 깨움. 패치노트는 건드리지 않았다.
-- 실행한 것: issue별 회귀 테스트가 수정 전 실패, 수정 뒤 통과했다. 전체 pytest 2023 passed/23 skipped, Node 11개, `scripts/check_public.sh` 통과.
+- 실행한 것: issue별 회귀 테스트가 수정 전 실패, 수정 뒤 통과했다. 로컬 Codex 리뷰 P2 3건(비소모성 `mem_free`를 코어로 나눔, mock id 취소, 시험 잡 상태 timeout)도 회귀 테스트와 함께 고쳤다. 전체 pytest 2027 passed/23 skipped, Node 11개, `scripts/check_public.sh` 통과.
 - 미해결: SGE `.sge_request`(제출 폴더·home)는 직원이 셸로 쓰면 승인 계산 밖 자원을 요청할 수 있다(README §10). 실제 클러스터에서는 돌리지 않았다.
 - 근거: `labhq/hpc_consult.py`, `labhq/init_wizard.py`, `labhq/tools/scheduler.py`, `labhq/tools/hpc_mcp.py`, `labhq/settings.py`, `tests/test_hpc_consult.py`, `tests/test_hpc_followups.py`.
 
