@@ -8,10 +8,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-02
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:09 | [`88edab9`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/88edab9) | **main 병합에서 workspace.py의 helper 충돌을 새 `owned` 모듈 쪽에 맞춰 풀었습니다.** main이 링크 판정·삭제를 `adapters/owned.py`로 옮겨, 이 PR의 산출 목록은 같은 `is_link`를 쓰고 중복된 helper는 지웠습니다. README는 main의 참고 자료 문단과 이 PR의 그림자 문단을 함께 살렸습니다. 동작 변경은 없습니다 |
+| 00:07 | [`c24ceb7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/c24ceb7) | **UTF-8이 아닌 이름의 파일이 끝난 direct 실행을 실패로 바꾸지 않게 했습니다** (#221 독립 검증 P1). Linux에서 푼 CP949 파일명 하나가 결과를 JSON으로 보내는 순간 `UnicodeEncodeError`를 냈습니다. 그런 이름은 목록에서 빼고 작업 로그에 알립니다. 항목 상한 test는 NTFS의 이름순 가정 때문에 ext4에서 실패했고, 이제 목록 순서와 무관하게 검사합니다. 두 test 모두 수정 전 실패했습니다 |
+
 ## 2026-10-01
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:52 | [`b9fc9cf`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/b9fc9cf) | **direct 요청의 산출도 결과 outputs로 남겨 그림자 출처 모델이 artifact로 보게 했습니다** (#221 할 일 1). 계획 없이 도는 direct 요청은 산출을 선언하지 않아 outputs가 늘 비어 있었습니다. 이제 runner가 작업 폴더 `outputs/` 아래 정규 파일을 직접 셉니다. symlink·junction·mount·통제 구역은 따라가지 않고 `RESULT*.md`는 빼며, 최대 200개와 참고 폴더 훑기 상한 안에서만 세고 상한에 닿으면 작업 로그에 경고합니다. 회귀 10건은 수정 전 실패했습니다 |
 | 23:29 | [`3ef8530`](https://github.com/ehojune/bioinfo-team-3d/pull/216/commits/3ef8530) | **main 병합에서 README 설정 절의 세 문단을 줄 단위로 합쳤습니다.** 연구 규약·참고 자료·그림자 문단에서 양쪽이 바꾼 줄을 각각 살렸습니다 |
 | 23:04 | [`e1975e5`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/e1975e5) | **main 병합에서 gateway import 충돌을 양쪽 모두 살려 풀었습니다.** 이 PR의 session 점유 판정과 main의 연구 팩 검사를 함께 가져옵니다. 동작 변경은 없습니다. |
 | 23:04 | [`60486a9`](https://github.com/ehojune/bioinfo-team-3d/pull/204/commits/60486a9) | **runner 대기열에서 오래 기다린 이전 상담을 두고 CSO가 새 session으로 갈라지지 않게 했습니다** (#112 리뷰). runner는 대기열에 넣기 전에 수락을 알리고 시간 제한은 실제 실행이 시작될 때부터 셉니다. 그런데 보낸 시각부터 시간 제한을 재서 막 실행을 시작한 상담을 끝난 것으로 보고 계획·종합·이어 묻기를 새 session으로 열었습니다. 이제 지금 runner가 수락한 작업은 결과가 올 때까지 기다리고, runner 재접속 유예도 끊긴 때부터 셉니다. 회귀 테스트 2건은 수정 전 실패했습니다. |
