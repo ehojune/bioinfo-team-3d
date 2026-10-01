@@ -19,7 +19,7 @@ from labhq.evidence import independent_groups
 from labhq.evidence.claims import normalize_artifact_path, normalize_id, normalize_uri
 from labhq.research.semantics import Records
 
-PILOT_STATE = "base"   # which expected.yaml state this baseline answers (#127 pilot changes move it)
+PILOT_STATE = "change1"   # which expected.yaml state this baseline answers (#127 pilot changes move it)
 DEPTH_LIMIT = 64
 UNKNOWN, NONE = "unknown", "none"
 
@@ -54,6 +54,8 @@ CREATE VIEW use_kind AS
          WHEN ur.request IS NOT NULL AND NOT EXISTS (SELECT 1 FROM relation r JOIN run rr ON rr.id = r.src
                           WHERE r.rel = 'reported_output' AND r.dst = u.dst
                             AND (rr.request IS NULL OR rr.request = ur.request)) THEN 'reused_cross_request'
+         WHEN NOT EXISTS (SELECT 1 FROM relation r WHERE r.rel = 'reported_output' AND r.dst = u.dst
+                          AND r.src = u.src) THEN 'reused_same_request'
          ELSE 'same_request' END AS reuse_kind
   FROM relation u JOIN run ur ON ur.id = u.src JOIN generator g ON g.artifact = u.dst
   WHERE u.rel = 'used';
@@ -377,7 +379,7 @@ def uses_of(reg: Registry, *, artifact: str | None = None, run: str | None = Non
     return out
 
 
-REUSE_KINDS = ("reused_cross_request",)
+REUSE_KINDS = ("reused_cross_request", "reused_same_request")
 
 
 def agent_row(reg: Registry, agent: str) -> dict:
