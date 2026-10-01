@@ -5,12 +5,15 @@ hash follow: regular files only, nothing through a link or junction, nothing in 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import stat
 from pathlib import Path
 
 import pytest
 
+from labhq.adapters import owned as owned_module
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.research import semantics_shadow as shadow
 from labhq.runner import workspace as workspace_module
@@ -194,6 +197,52 @@ async def test_a_manifest_swapped_for_a_link_is_not_read_for_the_listing(tmp_pat
     result = await runner.run_task(_direct("task-f"))
     assert result.outputs == ["outputs/RESULT_x.md"]
     assert json.loads(outside.read_text(encoding="utf-8")) == {"runs": {"x": {}}}
+
+
+@pytest.mark.asyncio
+async def test_the_listing_reads_the_manifest_only_through_the_owned_file_check(tmp_path, monkeypatch):
+    # Codex review P1 (PR #230), on every OS: where no symlink can be made, the owned-file rule is told manifest.json
+    # is one. The listing must ask that rule, so it does not read the file, whatever it holds.
+    def write(wd: Path) -> None:
+        _files(wd, {"outputs/RESULT_x.md": "the agent's own",
+                    "manifest.json": json.dumps({"runs": {"x": {}}})})
+        manifest = wd / "manifest.json"
+        real = owned_module.is_link
+        monkeypatch.setattr(owned_module, "is_link", lambda path: Path(path) == manifest or real(path))
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_direct("task-o"))
+    assert result.outputs == ["outputs/RESULT_x.md"]
+
+
+def _release(fifo: Path | None) -> None:
+    """Give a reader stuck on the FIFO its end of file, so a failing run does not hang the test session."""
+    if fifo is None or not stat.S_ISFIFO(os.lstat(fifo).st_mode):
+        return
+    try:
+        os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+    except OSError:  # no reader is waiting
+        pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFO on this OS")
+async def test_a_manifest_swapped_for_a_fifo_does_not_hang_the_finished_run(tmp_path, monkeypatch):
+    # Codex review P1 (PR #230): opening a FIFO waits for a writer, so the run finished but never reported.
+    made: dict[str, Path] = {}
+
+    def write(wd: Path) -> None:
+        _files(wd, {"outputs/table.tsv": "t"})
+        (wd / "manifest.json").unlink()
+        os.mkfifo(wd / "manifest.json")
+        made["fifo"] = wd / "manifest.json"
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    try:
+        result = await asyncio.wait_for(runner.run_task(_direct("task-p")), timeout=10)
+    finally:
+        _release(made.get("fifo"))
+    assert result.outputs == ["outputs/table.tsv"]
 
 
 def test_the_file_cap_is_the_shadow_hash_cap():
