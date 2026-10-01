@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:00 | [`aeb6a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/aeb6a6e) | **경로·통제 구역을 찾는 함수들이 모두 하나의 선형 scanner를 씁니다** (Codex 리뷰, 같은 부류를 한 번에). 아주 긴 입력에서 가림 검사가 제곱 시간으로 느려지는 경로가 `mentions_zone` 등에도 남아 있었습니다 |
 | 18:24 | [`f817653`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/f817653) | **main 병합에서 README 설정 절과 한계 절의 두 변경을 함께 살렸습니다.** pack v2 설명(#114)과 그림자 한계(#150)를 이 PR의 링크 검사 설명과 함께 둡니다 |
 | 18:23 | [`4444373`](https://github.com/ehojune/bioinfo-team-3d/pull/176/commits/4444373) | **짧은 홈 경로(`~`)도 공개 보고에서 가리고, 아주 긴 입력에서 가림 검사가 느려지지 않게 했습니다** (Codex 리뷰). `~`·`~/x`처럼 짧은 경로가 길이 필터에 걸려 그대로 게시될 수 있었고, 구분자가 수만 개 든 입력에서는 통제 구역 검사가 제곱 시간으로 느려졌습니다 |
 | 17:57 | [`2a2cc26`](https://github.com/ehojune/bioinfo-team-3d/pull/166/commits/2a2cc26) | **main 병합에서 #158 그림자 설정과 이 PR의 pack 버전을 함께 살렸습니다.** README 설정 절과 설정 예시에 두 변경을 모두 둡니다 |
