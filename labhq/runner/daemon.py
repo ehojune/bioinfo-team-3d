@@ -781,6 +781,13 @@ class Runner:
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
                 found.append(relative)
+        if task.meta.get("kind") == "direct":
+            # No plan declares a direct run's outputs: its folder is listed, so the shadow sees them too (#221).
+            listed, note = await asyncio.to_thread(ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,
+                                                   self.s.runner.reference_scan_max_depth)
+            found += listed
+            if note:
+                await emit("agent.log", {"level": "warn", "text": note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
             result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())

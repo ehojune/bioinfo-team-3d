@@ -11,6 +11,22 @@
 - 미해결: 실제 CLI에서 켜 보지 않았다. 켜기 전 조건은 Claude·Codex schema probe, 같은 요청의 off/on 계획 비교, prompt+schema 실제 token(규칙 500자·schema 224자, token 미측정)이다. direct 산출 등록(#221 할 일 1)은 이 PR 밖이다. 연구 직원 선언은 연구 단계가 실행되기 전까지 쓰이지 않는다. EDAM map·subset은 CC BY-SA 4.0이고 저장소 전체 라이선스가 없어 PI 확인 전 병합 보류다(그 커밋 없이도 나머지는 동작). 로컬 key 정의 검수는 모두 pending이다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
 - 근거: `labhq/vocab/`, `labhq/yaml_unique.py`, `labhq/orchestrator/cso.py`, `labhq/research/contract.py`, `labhq/runner/daemon.py`, `labhq/models.py`, `labhq/research/semantics*.py`, `scripts/edam_subset.py`, `tests/test_output_vocab.py`, `tests/test_output_types*.py`, `tests/test_edam_subset.py`, `tests/test_semantics_output_types.py`.
 
+## 2026-10-02 · 열린 issue 작업 큐 동기화
+
+- 결론: 오래된 병합 전 큐를 열린 PR 2건과 아직 추적되지 않던 후속 33건 기준으로 바꿨다.
+- 바뀐 것: PR #239·#230을 리뷰 중으로 두고, #57·#90·#149·#150·#151·#165·#178의 남은 단계와 P2·P3 후속을 `HANDOFF.md`에 묶었다.
+- 실행한 것: GitHub의 열린 PR·issue 상태와 각 issue의 현재 본문을 대조했다.
+- 미해결: 구현은 하지 않았다. 각 묶음의 순서와 담당은 다음 개발 총괄이 정한다.
+- 근거: `HANDOFF.md`, GitHub issue #57·#86·#90·#149–#151·#165·#178·#196–#242 중 열린 후속.
+
+## 2026-10-01 · #221 할 일 1 — direct 요청 산출을 결과 outputs로
+
+- 결론: direct 요청도 작업 폴더 `outputs/`의 산출을 결과 outputs로 남겨, 그림자 출처 모델이 artifact로 보고 hash를 잰다. 할 일 2(산출 데이터 종류 선언 자리)는 PI 판단(#149·#151) 대기라 하지 않았고 #221은 열어 둔다.
+- 바뀐 것: runner가 `kind: direct` 실행 뒤 `TaskWorkspace.scan_outputs`로 `outputs/` 아래 정규 파일을 센다. symlink·junction·mount·통제 구역은 따라가지 않고(`outputs/` 자체 포함) labhq의 `RESULT*.md`와 UTF-8로 읽을 수 없는 이름(Linux에서 푼 CP949 파일명 등)은 빼며, 최대 200개(그림자 `HASH_MAX_FILES`)와 `runner.reference_scan_max_entries`·`reference_scan_max_depth` 안에서만 센다. 상한에 닿으면 작업 로그에 경고가 남는다. 계획 단계는 그대로 선언한 산출만 보고한다. direct 이어 묻기는 orchestrate처럼 산출이 있는 작업 폴더를 읽기 전용 upstream으로 받는다. mock 직원은 direct `[artifact]`에도 파일을 쓴다. README 그림자 절을 맞췄고 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 10건이 수정 전 실패하고 수정 뒤 통과했다(step 선언 산출 guard 1건은 전후 통과). 로컬 Codex 리뷰 P2 1건(`outputs/` 자체가 mount거나 통제 구역 안이면 그대로 순회)을 고치고 회귀에 넣었다. run log의 c1·c2를 실제 Claude Code CLI(data_steward=Sonnet, 공개 palmerpenguins 발췌, 별도 state)로 다시 돌렸다. c1은 outputs 2개·`observed_new 2`(이전 0), c2는 `history_artifacts 2`·`candidates 0`·`type_unknown 2`. 전체 pytest 2133 passed/25 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. 독립 검증에서 P1 2건을 고쳤다. UTF-8이 아닌 파일명 하나가 끝난 direct 실행을 `UnicodeEncodeError` 실패로 바꾸던 것과, 항목 상한 test가 ext4 목록 순서에서 실패하던 것이다(WSL ext4에서 수정 전 실패, 수정 뒤 12 passed). main 병합 뒤 두 번째 검증에서 Codex 리뷰 P1 1건도 고쳤다. 산출 목록이 `manifest.json`을 `read_owned` 없이 읽어, 직원이 그 자리에 둔 링크나 FIFO를 따라가던 것이다(#165 우회, WSL ext4에서 수정 전 실패, 수정 뒤 13 passed).
+- 미해결: 할 일 2 전이라 live 후보는 여전히 0이다(`type_unknown`). 같은 폴더를 다시 쓰는 재시도·wake는 같은 파일을 여러 run이 보고해 `not_generated`가 된다(선언 산출과 같은 규칙). hard link는 경로로 구별하지 못한다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/adapters/mock.py`, `tests/test_direct_outputs.py`, `tests/semantics_shadow_lab.py`.
+
 ## 2026-10-02 · #219 — Windows TEMP 아래 작업 폴더의 Claude 쓰기 경로
 
 - 결론: Claude 직원이 Git Bash `pwd`의 `/tmp/...`를 Write에 넣어도, 작업 폴더 안이면 승인 없이 작업 폴더에 쓴다. 폴더 밖 쓰기는 여전히 승인을 받는다.
