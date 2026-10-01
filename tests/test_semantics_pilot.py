@@ -111,6 +111,18 @@ def test_model_b_answers_are_advisory(fixture_paths):
     assert [c["recommend"] for c in a8.values()] == [False]
 
 
+def test_changes_move_only_the_declared_answers(expected):
+    """Before/after outputs are fixed: change 1 moves q02 and five uses, change 2 moves q06 and data types."""
+    base, one, two = (pilot.expected_state(expected, s) for s in pilot.STATES)
+    moved = lambda a, b: sorted(q for q in a["answers"] if a["answers"][q] != b["answers"][q])  # noqa: E731
+    assert moved(base, one) == ["q02"] and moved(one, two) == ["q06"]
+    kinds = lambda s: {u["edge"]: u["reuse_kind"] for u in s["nodes"]["uses"]}  # noqa: E731
+    assert sorted(e for e in kinds(base) if kinds(base)[e] != kinds(one)[e]) == ["e07", "e10", "e28", "e36", "e68"]
+    types = {a["id"]: a["data_type"] for a in two["nodes"]["artifacts"]}
+    assert sum(t != "unknown" for t in types.values()) == 6 and len(two["edges"]) == len(one["edges"]) + 6
+    assert {impl().state for impl in pilot.IMPLS.values()} == {"change2"}
+
+
 # ---------------------------------------------------------------- measurement protocol
 
 @pytest.mark.parametrize("name", ["B", "A"])
