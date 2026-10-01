@@ -511,6 +511,48 @@ def _upstream(runner, name):
 
 
 @pytest.mark.asyncio
+async def test_a_reused_workspace_linking_into_a_zone_is_refused_before_it_is_opened(tmp_path, monkeypatch):
+    # #191: an earlier attempt can leave `raw -> zone` in meta.workdir. The retry must not write TASK.md,
+    # prepare an adapter, or rely on a tool gate that the agent can bypass by reading the alias directly.
+    settings = _vault_settings(tmp_path)
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    workdir = tmp_path / "reused"
+    workdir.mkdir()
+    _link_dir(workdir / "raw", tmp_path / "vault")
+
+    class StaleWorkspace:
+        def append_event(self, _event):
+            raise AssertionError("the previous workspace was written before its links were checked")
+
+    runner.workspaces["task-retry"] = StaleWorkspace()
+
+    result = await runner.run_task(Task(id="task-retry", request_id="r1", agent_id="worker", prompt="retry",
+                                        resume_session_id="session-1", meta={"workdir": str(workdir)}))
+
+    assert not result.ok and "재사용 작업 폴더" in result.error
+    assert "ctx" not in seen and not (workdir / "TASK_wake_task-retry.md").exists()
+    reported = " ".join([result.error, *_log_texts(runner)])
+    assert "raw" in reported and str(tmp_path / "vault") not in reported
+
+
+@pytest.mark.asyncio
+async def test_a_reused_workspace_that_cannot_be_fully_scanned_is_refused(tmp_path, monkeypatch):
+    settings = _vault_settings(tmp_path)
+    settings.runner.reference_scan_max_entries = 2
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    workdir = tmp_path / "reused"
+    workdir.mkdir()
+    for i in range(3):
+        (workdir / f"old-{i}.txt").write_text("x", encoding="utf-8")
+
+    result = await runner.run_task(Task(id="task-retry", request_id="r1", agent_id="worker", prompt="retry",
+                                        meta={"workdir": str(workdir)}))
+
+    assert not result.ok and "재사용 작업 폴더" in result.error and "상한" in result.error
+    assert "ctx" not in seen and not (workdir / "TASK.md").exists()
+
+
+@pytest.mark.asyncio
 async def test_an_earlier_steps_folder_linking_into_a_zone_is_not_opened_to_the_next_step(tmp_path, monkeypatch):
     # #132: `outputs/link -> zone` made by an earlier agent reached the next step through --add-dir, where
     # Claude reads without asking the gate. Links elsewhere (a shared genome) are fine; two hops are found.
