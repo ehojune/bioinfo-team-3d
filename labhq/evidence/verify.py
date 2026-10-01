@@ -32,11 +32,16 @@ IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "require
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
                            "resolver_error"})
 SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
-                        "uri_unmapped"})
+                        "uri_unmapped", "base_match_only"})
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class RecordId(StrictModel):
+    id_scheme: str
+    id_value: str
 
 
 class SourceRecord(StrictModel):
@@ -45,6 +50,9 @@ class SourceRecord(StrictModel):
     version: str | None = None
     title: str | None = None
     url: str | None = None
+    # The authority's own mapping to the same work under other schemes (DOI <-> PMID <-> PMCID). The ledger
+    # cannot know a DOI row and a PMID row are one paper; the verifier reads it here (#168).
+    same_as: list[RecordId] = []
 
 
 class Resolution(StrictModel):
@@ -89,7 +97,8 @@ class LookupFailed(Exception):
 
 class SourceResolver(Protocol):
     """Looks an identifier up at its authority. Raise ``LookupFailed`` when the lookup did not complete;
-    return ``[]`` only when the authority answered that no such record exists."""
+    return ``[]`` only when the authority answered that no such record exists. A record lists in ``same_as``
+    the identifiers the authority maps to the same work, such as a paper's PMID and PMCID beside its DOI."""
 
     name: str
 
@@ -150,12 +159,78 @@ class VerificationReport(StrictModel):
     claims: list[ClaimCheck]
     lookup_failures: list[str]  # evidence ids whose lookup did not complete; not absence
     defective_evidence: list[str]  # evidence ids citing a not_found, malformed or conflicting source
+    # R05 across schemes: rows the authority maps to one work but that declare different independence groups.
+    recitations: list[str] = []
     ok: bool
 
 
 def _skipped(scheme: str, value: str, resolver: str, status: IdStatus, kind: str, detail: str) -> Resolution:
     return Resolution(id_scheme=scheme, id_value=value, lookup="skipped", status=status, resolver=resolver,
                       error_kind=kind, detail=detail)
+
+
+# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
+# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
+_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
+
+
+def _accession_parts(scheme: str, value: str) -> tuple[str, int | None]:
+    """The base accession and the version or isoform it spells, None when it spells none."""
+    folded = normalize_id(scheme, value)
+    suffix = {"ensembl": r"\.", "refseq": r"\.", "clinvar": r"\.", "uniprot": "-"}.get(scheme)
+    if suffix is None:
+        return folded, None
+    match = re.fullmatch(rf"(.+?)(?:{suffix}(\d+))?", folded)
+    base, number = (match[1], match[2]) if match else (folded, None)
+    if scheme == "clinvar":
+        variation = re.fullmatch(r"vcv0*(\d+)", base)
+        base = variation[1] if variation else base
+    return base, int(number) if number is not None else None
+
+
+def accession_base(scheme: str, value: str) -> str:
+    """The record an accession names with its version, isoform or VCV padding removed (#167).
+
+    ``ENSG00000141510.17`` -> ``ensg00000141510``, ``P04637-2`` -> ``p04637``, ``VCV000012375.3`` -> ``12375``.
+    RCV and SCV accessions keep their prefix: they are other ClinVar records, not variation ids.
+    """
+    return _accession_parts(scheme, value)[0]
+
+
+AccessionMatch = Literal["same", "base_only", "different"]
+
+
+def compare_accessions(scheme: str, cited: str, other: str) -> AccessionMatch:
+    """One judgment for every place that compares a cited accession with another spelling (#167).
+
+    ``same``: one spelling. ``base_only``: one base accession where one side spells no version or isoform,
+    VCV padding, or ClinVar records of different kinds (RCV beside a variation id); only the authority can say
+    they agree. ``different``: another record, including two explicit versions or isoforms of one base
+    (``ENSG...17`` and ``ENSG...16``, ``P04637-2`` and ``P04637-3``), as a mismatched ``version`` field is.
+    """
+    if normalize_id(scheme, cited) == normalize_id(scheme, other):
+        return "same"
+    if scheme not in _SEVERAL_SPELLINGS:
+        return "different"
+    (left, left_suffix), (right, right_suffix) = _accession_parts(scheme, cited), _accession_parts(scheme, other)
+    if left == right:
+        if left_suffix is not None and right_suffix is not None and left_suffix != right_suffix:
+            return "different"
+        return "base_only"
+    if scheme == "clinvar" and _clinvar_kind(left) != _clinvar_kind(right):
+        return "base_only"
+    return "different"
+
+
+def _clinvar_kind(base: str) -> str:
+    return "variation" if base.isdigit() else base[:3]  # rcv / scv
+
+
+def _base_only(scheme: str, value: str, resolver: str, records: list[SourceRecord], source: str) -> Resolution:
+    named = ", ".join(sorted({r.id_value for r in records}))
+    return _skipped(scheme, value, resolver, "requires_verification", "base_match_only",
+                    f"{source} names {named}, which shares only the base accession with the cited {value}; "
+                    "whether they are one record is unconfirmed")
 
 
 def _judge(scheme: str, value: str, version: str | None, records: list[SourceRecord], resolver: str) -> Resolution:
@@ -166,10 +241,16 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
         # Numeric IDs collide across databases (PMID 12345 vs ClinVar 12345).
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a record from a different scheme")
-    other = [r for r in records if normalize_id(scheme, r.id_value) != normalize_id(scheme, value)]
-    if other:
+    kinds = [compare_accessions(scheme, value, r.id_value) for r in records]
+    if "different" in kinds:
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a different identifier")
+    if "same" not in kinds:
+        return _base_only(scheme, value, resolver, records, "the authority")
+    if "base_only" in kinds:
+        # The cited spelling beside another spelling of its base: dropping either would pick one unasked.
+        return Resolution(**base, status="conflicting", candidates=records,
+                          detail="the authority returned the cited identifier beside another spelling of its base")
     matching = [r for r in records if version is None or r.version == version]
     if not matching:
         return Resolution(**base, status="conflicting", candidates=records,
@@ -285,24 +366,20 @@ async def _resolve_external(scheme: str, value: str, version: str | None, lookup
     return _judge(scheme, value, version, outcome, resolver.name)
 
 
-# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
-# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
-_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
-
-
 async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tuple[str, str],
                               lookups: _Lookups) -> Resolution | None:
     """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address.
 
-    Code alone calls a registry URL ``conflicting`` only when it names another accession of the same scheme,
-    and that scheme spells each record one way. A DOI beside its PubMed URL, or ``ENSG...17`` beside
-    ``/id/ENSG...``, may be one record: only the authority can tell, so those go to the resolver like any URL.
+    Code alone calls a registry URL ``conflicting`` when it names another base accession of the same scheme
+    (``compare_accessions``). A DOI beside its PubMed URL, or ``ENSG...17`` beside ``/id/ENSG...``, may be
+    one record: only the authority can tell, so those go to the resolver like any URL.
     """
     scheme, value = cited
     if named is not None and named[0] == scheme:
-        if normalize_id(*named) == normalize_id(scheme, value):
+        match = compare_accessions(scheme, value, named[1])
+        if match == "same":
             return None  # already checked as the ID itself
-        if scheme not in _SEVERAL_SPELLINGS:
+        if match == "different":
             return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
                               resolver="registry_url",
                               candidates=[SourceRecord(id_scheme=named[0], id_value=named[1], url=uri)],
@@ -323,11 +400,14 @@ async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tu
     if not named_records:
         return _skipped("uri", uri, resolver.name, "requires_verification", "uri_unmapped",
                         f"{resolver.name} resolved the uri but did not say which {scheme} it is")
-    same = [r for r in named_records if normalize_id(scheme, r.id_value) == normalize_id(scheme, value)]
-    if not same:
+    kinds = [compare_accessions(scheme, value, r.id_value) for r in named_records]
+    same = [r for r, kind in zip(named_records, kinds) if kind == "same"]
+    if same:
+        return Resolution(**base, status="found", record=same[0])
+    if "different" in kinds:
         return Resolution(**base, status="conflicting", candidates=named_records,
                           detail=f"the uri resolves to a different {scheme} than the cited {value}")
-    return Resolution(**base, status="found", record=same[0])
+    return _base_only("uri", uri, resolver.name, named_records, "the uri")
 
 
 async def _resolve(source: SourceRef, lookups: _Lookups, artifact_paths: Mapping[str, str],
@@ -424,11 +504,44 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
             independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
 
     defective = [eid for eid, check in checks.items() if check.resolution.status in DEFECT_STATUSES]
+    recitations = _recitations(result, checks, artifact_paths)
     return VerificationReport(
         plan_sha256=result.plan_sha256, step_id=result.step_id,
         resolver=resolver.name if resolver else "none",
         evidence=list(checks.values()), claims=claim_checks,
         lookup_failures=[eid for eid, check in checks.items()
                          if any(r.lookup == "failed" for r in check.resolutions)],
-        defective_evidence=defective,
-        ok=not defective and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+        defective_evidence=defective, recitations=recitations,
+        ok=not defective and not recitations
+        and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+
+
+def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
+                 artifact_paths: Mapping[str, str]) -> list[str]:
+    """The ledger's re-citation rule with the identifiers the authority added (#168).
+
+    The ledger keys each row by the spellings it writes (``SourceRef.identities``) and already rejects two
+    groups on one key. A found record adds the identifiers it is ``same_as``, so a DOI row and a PMID row of
+    one paper share a key here. Only found records count: an unchecked row keeps the keys it wrote.
+    """
+    errors: list[str] = []
+    first: dict[str, tuple[str, str]] = {}
+    for row in result.evidence:
+        if not (row.countable and row.source and row.independence_group):
+            continue
+        keys = row.source.identities(artifact_paths)
+        check = checks.get(row.id)
+        for resolution in check.resolutions if check else []:
+            record = resolution.record
+            if resolution.status != "found" or record is None or record.id_scheme == "artifact":
+                continue
+            for alias in (record, *record.same_as):
+                keys.append(f"{alias.id_scheme}:{normalize_id(alias.id_scheme, alias.id_value)}")
+        for key in dict.fromkeys(keys):
+            seen = first.setdefault(key, (row.id, row.independence_group))
+            if seen[1] != row.independence_group:
+                errors.append(f"evidence {seen[0]} and {row.id} cite one source ({key}, per the resolver) but "
+                              f"declare independence groups {seen[1]} and {row.independence_group}; re-citation "
+                              "is not independent")
+                break
+    return errors

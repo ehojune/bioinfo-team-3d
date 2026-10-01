@@ -26,6 +26,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator
+from ..research.packs import check_configured_packs
 from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
@@ -33,6 +34,35 @@ from ..util import short
 
 log = logging.getLogger(__name__)
 TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
+# #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
+# The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
+SNAPSHOT_ANSWER_CHARS = 2000
+# A step card shows this much of a task's result text; a replayed task.result needs no more.
+SNAPSHOT_RESULT_CHARS = 500
+
+
+def snapshot_followup(entry: dict) -> dict:
+    """The snapshot copy of a follow-up or of its `request.followup_done` data: one rule for both (#126)."""
+    answer = entry.get("answer")
+    if not isinstance(answer, str) or len(answer) <= SNAPSHOT_ANSWER_CHARS:
+        return entry
+    return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
+
+
+def snapshot_event(event: dict) -> dict:
+    """The snapshot copy of a replayed event. A follow-up's answer is also the text of its task's `task.result`,
+    sent by the runner unclipped, so that text is cut too. A replay never shows it whole: the web keeps
+    task.result text only for plan steps, and the snapshot's `step_details` replace it with the same head."""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return event
+    if event.get("type") == "request.followup_done":
+        return {**event, "data": snapshot_followup(data)}
+    text = data.get("text")
+    if event.get("type") == "task.result" and isinstance(text, str) and len(text) > SNAPSHOT_RESULT_CHARS:
+        return {**event, "data": {**data, "text": text[:SNAPSHOT_RESULT_CHARS], "text_truncated": True,
+                                  "text_chars": len(text)}}
+    return event
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
@@ -1024,7 +1054,8 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "usage", "usage_known", "agent_id", "references")},
-                          "followups": (r.get("followups") or [])[-20:],  # the full list stays on the request
+                          # the full list and full answers stay on the request (GET /api/requests/{id})
+                          "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
@@ -1034,7 +1065,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
-            "recent_events": list(self.events)[-200:],
+            "recent_events": [snapshot_event(e) for e in list(self.events)[-200:]],
         }}
 
     def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:
@@ -1052,7 +1083,7 @@ class Hub:
                 "attempts": max((int(entry.get("attempt") or 1) for _, entry in matches), default=0),
                 "outputs": result.get("outputs") or [],
                 "missing_outputs": result.get("missing_outputs") or [],
-                "text": short(result.get("text") or "", 500),
+                "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
@@ -1060,6 +1091,7 @@ class Hub:
 
 
 def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    check_configured_packs(settings)  # before any state opens: a stale pack key stops the start (#170)
     hub = Hub(settings, github_transport)
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub

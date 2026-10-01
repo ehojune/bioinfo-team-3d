@@ -10,6 +10,22 @@
 - 미해결: SGE `.sge_request`(제출 폴더·home)는 직원이 셸로 쓰면 승인 계산 밖 자원을 요청할 수 있다(README §10). 실제 클러스터에서는 돌리지 않았다.
 - 근거: `labhq/hpc_consult.py`, `labhq/init_wizard.py`, `labhq/tools/scheduler.py`, `labhq/tools/hpc_mcp.py`, `labhq/settings.py`, `tests/test_hpc_consult.py`, `tests/test_hpc_followups.py`.
 
+## 2026-10-01 · #126 #184 — 웹 화면 후속: snapshot 답 길이, 승인 알림·이름표·하단 줄
+
+- 결론: snapshot의 이어 묻기 답은 앞 2,000자만 싣고 전문은 펼칠 때 받는다(#126). 승인 알림은 승인이 끝나는 모든 경로에서 지우고, 3D 이름표는 자기 머리 위에 두고, 2.5D 데스크톱은 사무실·Command Center·직원 줄·입력창이 겹치지 않게 화면을 나눴다(#184).
+- 바뀐 것: gateway `snapshot_followup` 하나가 요청 followups와 replay 이벤트를 함께 자르고, 같은 답이 다시 실리는 replay `task.result` 본문은 step 카드 길이(500자)로 자른다. 공용 reducer에 `fillFollowups`, 승인 종료 공통 `endApproval`(resolved·timeout·expired·stale, snapshot에서 사라진 승인)과 `toast.clear` effect를 넣었다. 3D는 skin별 label anchor 대신 head anchor 기준 `labelPoint`를 쓴다. mock 승인 예시는 `Rscript scripts/qc_plots.R`로 바꿨다. README §6을 맞췄고 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 실행한 것: 확인 조건마다 회귀를 먼저 썼고 수정 전 모두 실패했다. 긴 답 25개 snapshot은 2,644,490에서 276,687 bytes, 러너 `task.result`까지 실제 경로로 쌓은 경우 2,044,888에서 208,507 bytes. 1200×750 브라우저 측정에서 사무실·Command Center 87–527px, 직원 줄 541–677px, 입력창 685–750px로 겹침 0, 페이지 스크롤 없이 마지막 행과 메신저 끝이 각자 안쪽 스크롤로 보인다. 전체 pytest 1928 passed/23 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 가로 621–999px 단일 열에서는 직원 줄이 sticky라 스크롤 중 내용을 덮는다. snapshot 크기는 여전히 요청 수에 비례한다. README 움직이는 화면은 다시 녹화하지 않았다.
+- 근거: `labhq/gateway/server.py`, `labhq/web/state.js`, `labhq/web/index.html`, `labhq/web/lab3d/src/{live,skins,main}.js`, `tests/test_followup.py`, `tests/web_issue126.cjs`, `tests/web_issue184.cjs`.
+
+## 2026-10-01 · PR #166 후속 여섯 건(#167 #168 #169 #170 #187 #188) — 연구 근거 검증과 계획·검토 결속
+
+- 결론: 여러 표기 accession 비교, 체계가 다른 같은 논문의 재인용, REVIEW v2 작성자 결속, 없어진 pack version, PLAN slot id 중복을 닫았다. #169와 #188은 같은 부류라 `author` 필수화 하나로 닫았다.
+- 바뀐 것: `compare_accessions`가 version·isoform·VCV 자리채움을 뗀 base로 판정하고 레지스트리 URL 로컬 판정, uri resolver 경로, ID 조회 응답이 함께 쓴다. base가 다르거나 양쪽에 적힌 version·isoform이 다르면 `conflicting`, 한쪽에 version·isoform이 없으면 `base_match_only` 미확인이다. ID 조회 응답에 인용 표기와 같은 base의 다른 표기가 함께 오면 `conflicting`이다(#167). resolver 기록의 `same_as`(DOI↔PMID↔PMCID)를 재인용 키에 더해 `VerificationReport.recitations`로 보고하고 `ok`를 막는다(#168). `validate_research_review`는 `author`가 없거나 비면 거부한다(#169 #188). gateway는 상태를 열기 전에 pack을 불러 `available: single_cell_de@2`를 담은 오류로 멈춘다(#170). 한 step 안 evidence slot id 중복은 CP1 전에 거부한다(#187). 패치노트는 건드리지 않았다.
+- 실행한 것: 새 회귀 17건이 수정 전 main에서 모두 실패하고 수정 뒤 통과했다. 리뷰에서 나온 P2(uri 후보에 다른 accession이 섞이면 conflicting) 1건을 고치고 회귀를 더했다. 독립 검증에서 다른 version·isoform 응답이 미확인이나 `found`로 내려가던 회귀(main은 `conflicting`)를 찾아 고치고 회귀 10건을 더했다. 전체 pytest 1947 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 같은 기록의 다른 version(ENSG…17과 ENSG…16)을 재인용으로 보지는 않는다. 대응 ID는 resolver가 `same_as`로 줄 때만 쓰며 live resolver는 아직 없다. REVIEW v2와 pack 검사는 연구 실행 경로(#90 PR 3) 전이라 호출하는 쪽이 작성자를 넘겨야 한다.
+- 근거: `labhq/evidence/verify.py`, `labhq/research/review.py`, `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/gateway/server.py`, `labhq/cli.py`, `tests/test_evidence_verify.py`, `tests/test_research_review.py`, `tests/test_research_protocol.py`, `tests/test_research_evidence.py`.
+
 ## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
 
 - 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.

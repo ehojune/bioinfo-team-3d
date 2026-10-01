@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Shapes,C } from './primitives.js';
 import { ROSTER,STATES,STATE_LABELS,STATE_COLORS } from './characters.js';
 import { buildOffice } from './office.js';
-import { rosterFor,selectionsFor,buildSkin,buildProcedural } from './skins.js';
+import { rosterFor,selectionsFor,buildSkin,buildProcedural,labelPoint } from './skins.js';
 import { buildStatusLayer } from './status-layer.js';
 
 import { startLiveOffice } from './live.js';
@@ -101,7 +101,7 @@ function placeLabels(){
   const c=byId.get(selected);selection.visible=view==='office'&&!!c;if(c)selection.position.set(c.seat[0],0,c.seat[1]);
   chars.forEach(ch=>{
     if(view==='gallery')projection.set(0,ch.bodyBottom-.17,0).applyMatrix4(ch.root.matrixWorld);
-    else ch.skin.anchors.label.getWorldPosition(projection);
+    else labelPoint(ch.skin,projection);
     projection.project(camera);
     const x=(projection.x*.5+.5)*width,y=(-projection.y*.5+.5)*height,label=labels.get(ch.id);
     const show=window.innerWidth>480||ch.id===selected||ch.state==='waiting';

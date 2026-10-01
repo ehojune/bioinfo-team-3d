@@ -215,6 +215,13 @@ def configured_packs(settings: Any) -> dict[str, LoadedPack]:
     return select_packs(load_pack_catalog(directories), settings.research.active_packs)
 
 
+def check_configured_packs(settings: Any) -> None:
+    """Load the configured packs when the gateway starts, so a retired ``id@version`` or a missing pack
+    directory stops it with the available versions instead of failing the first research plan (#170)."""
+    if settings.research.enabled or settings.research.active_packs:
+        configured_packs(settings)
+
+
 def pack_snapshot(packs: dict[str, LoadedPack]) -> dict[str, str]:
     return {key: loaded.sha256 for key, loaded in sorted(packs.items())}
 
