@@ -186,7 +186,11 @@ def load_pack_catalog(directories: list[Path]) -> dict[str, LoadedPack]:
 def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, LoadedPack]:
     missing = [key for key in keys if key not in catalog]
     if missing:
-        raise ValueError(f"unknown research packs: {missing}")
+        # A config written for a retired version should say which version replaced it.
+        ids = {key.rpartition("@")[0] for key in missing}
+        available = sorted(key for key, loaded in catalog.items() if loaded.pack.id in ids)
+        hint = f" (available: {', '.join(available)})" if available else ""
+        raise ValueError(f"unknown research packs: {missing}{hint}")
     selected = {key: catalog[key] for key in keys}
     validators: dict[str, str] = {}
     rules: dict[str, dict[str, Any]] = {}

@@ -184,6 +184,74 @@ def test_result_binds_to_the_frozen_plan_revision_and_step():
         rc.validate_research_result(result(plan_sha256=digest), plan=changed)
 
 
+def _slotted_plan():
+    plan = minimal_plan()
+    plan["steps"][0]["evidence_slots"] = [{"id": "e1", "required": True, "description": "IL6 donor-level DE row"},
+                                          {"id": "e_rep", "required": False, "description": "replication cohort"}]
+    return plan, rc.plan_sha256(plan)
+
+
+def test_result_binds_to_the_selected_steps_claims_and_required_slots():
+    # #128: step s1 declared claim c1 and the required slot e1; a result reporting only c999 is not its answer.
+    plan, digest = _slotted_plan()
+    declared = result(plan_sha256=digest, evidence=[evidence("e1", slots=["e1"])])
+    assert rc.validate_research_result(declared, plan=plan).evidence[0].slots == ["e1"]  # optional e_rep may stay empty
+    outside = result(plan_sha256=digest, claims=[claim("c999")], links=[link("c999", "e1")],
+                     evidence=[evidence("e1", slots=["e1"])])
+    with pytest.raises(ValueError, match=r"claim c999 is outside the claim_ids \['c1'\] that step s1 declared"):
+        rc.validate_research_result(outside, plan=plan)
+    with pytest.raises(ValueError, match="required evidence slot e1 of step s1 has no evidence row"):
+        rc.validate_research_result(result(plan_sha256=digest), plan=plan)
+    undeclared = result(plan_sha256=digest, evidence=[evidence("e1", slots=["e1", "e9"])])
+    with pytest.raises(ValueError, match="evidence e1 fills slot e9 that step s1 does not declare"):
+        rc.validate_research_result(undeclared, plan=plan)
+    # Every binding defect comes back at once, so one correction can fix them all.
+    with pytest.raises(ValueError, match="c999.*required evidence slot e1"):
+        rc.validate_research_result(result(plan_sha256=digest, claims=[claim("c999")], links=[link("c999", "e1")]),
+                                    plan=plan)
+
+
+def test_a_failed_attempt_still_addresses_a_required_slot():
+    # The gap is recorded, not hidden: CP2 shows the slot as tried and failed instead of silently absent.
+    plan, digest = _slotted_plan()
+    tried = result(plan_sha256=digest, claims=[claim(status="unresolved")], links=[link("c1", "e1", "context")],
+                   evidence=[evidence("e1", status="failed", slots=["e1"])])
+    assert rc.validate_research_result(tried, plan=plan).evidence[0].status == "failed"
+
+
+def test_only_countable_rows_fill_evidence_slots():
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind="inference", slots=["e1"])]),
+            "inference row e2 is not evidence and cannot fill evidence slots")
+    rejects(result(evidence=[evidence("e1", slots=["e1", "e1"])]), "evidence e1 lists slot e1 more than once")
+
+
+@pytest.mark.parametrize("kind", ["inference", "hypothesis"])
+@pytest.mark.parametrize("cited", [{"id_scheme": "doi", "id_value": "10.1038/s41586-020-2649-2"},
+                                   {"uri": "https://example.org/pathway.html"}])
+def test_reasoning_rows_that_cite_an_external_source_keep_its_access_date(kind, cited):
+    # #129 (R06): the access date belongs to the source a row actually used, whatever the row kind.
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind=kind, source=cited)]),
+            "evidence e2 cites an external source without accessed_at")
+    dated = evidence("e2", kind=kind, source={**cited, "accessed_at": "2026-10-01"})
+    assert rc.ResearchResult.model_validate(result(evidence=[evidence("e1"), dated])).evidence[1].kind == kind
+
+
+def test_a_search_that_counted_zero_results_is_not_an_observation():
+    # #118: when the row states how many records the search returned, code can tell 0 hits from a finding.
+    rejects(result(evidence=[evidence("e1", result_count=0)]),
+            "evidence e1 counted 0 results but is observed; record a zero-result search as not_found")
+    rejects(result(evidence=[evidence("e1"), evidence("e2", status="not_found", result_count=3)],
+                   links=[link("c1", "e1")]), "evidence e2 is not_found but counted 3 results")
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind="inference", result_count=1)]),
+            "inference row e2 is not a retrieval")
+    rejects(result(evidence=[evidence("e1", result_count=-1)]), "greater than or equal to 0")
+    counted = rc.ResearchResult.model_validate(result(evidence=[evidence("e1", result_count=12)]))
+    assert counted.evidence[0].result_count == 12
+    empty = result(evidence=[evidence("e1"), evidence("e2", status="not_found", result_count=0)],
+                   links=[link("c1", "e1")])
+    assert rc.ResearchResult.model_validate(empty).evidence[1].result_count == 0
+
+
 # --- R05: directness, independence, source level and reasons ------------------------------------
 
 @pytest.mark.parametrize("field", ["directness", "source_level", "independence_group", "assessment_reason"])
@@ -257,6 +325,46 @@ def test_recitation_is_caught_through_every_identifier_of_a_source(second_source
                    links=[link("c1", "e1"), link("c1", "e2")])
     value["artifact_refs"] += artifacts
     rejects(value, f"e1 and e2 cite the same source {shared}")
+
+
+@pytest.mark.parametrize("uri, scheme, value", [
+    ("https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973", "geo", "GSE79973"),
+    ("https://identifiers.org/geo:GSE79973", "geo", "GSE79973"),
+    ("https://identifiers.org/GEO/GSE79973", "geo", "GSE79973"),
+    ("https://pubmed.ncbi.nlm.nih.gov/22140103/", "pmid", "22140103"),
+    ("https://www.ncbi.nlm.nih.gov/pubmed/22140103", "pmid", "22140103"),
+    ("https://identifiers.org/pubmed:22140103", "pmid", "22140103"),
+    ("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3084216/", "pmcid", "PMC3084216"),
+    ("https://pmc.ncbi.nlm.nih.gov/articles/PMC3084216/", "pmcid", "PMC3084216"),
+    ("https://identifiers.org/doi:10.1038/s41586-020-2649-2", "doi", "10.1038/s41586-020-2649-2"),
+    ("https://dx.doi.org/10.1038/S41586-020-2649-2", "doi", "10.1038/s41586-020-2649-2"),
+    ("https://www.ncbi.nlm.nih.gov/bioproject/PRJNA257197", "bioproject", "PRJNA257197"),
+    ("https://www.ncbi.nlm.nih.gov/snp/rs7412", "dbsnp", "rs7412"),
+    ("https://www.uniprot.org/uniprotkb/P05231/entry", "uniprot", "P05231"),
+    ("https://www.rcsb.org/structure/1ALU", "pdb", "1ALU"),
+    ("https://identifiers.org/hgnc:6018", "hgnc", "HGNC:6018"),
+])
+def test_registry_urls_are_the_same_source_as_their_identifier(uri, scheme, value):
+    # #117: a resolver URL and the bare ID are one source, so they cannot be two independence groups.
+    base = {"accessed_at": "2026-10-01", "locator": "summary"}
+    rows = [cited("e1", "lab1", {"id_scheme": scheme, "id_value": value, **base}),
+            cited("e2", "lab2", {"uri": uri, **base})]
+    rejects(result(evidence=rows, links=[link("c1", "e1"), link("c1", "e2")]),
+            f"e1 and e2 cite the same source {scheme}:{value.casefold()}")
+
+
+@pytest.mark.parametrize("uri", ["https://pubmed.ncbi.nlm.nih.gov/?term=IL6", "https://www.ncbi.nlm.nih.gov/geo/",
+                                 "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=",
+                                 "https://example.org/geo/query/acc.cgi?acc=GSE79973",
+                                 # Endpoints and help pages under a record path are not accessions.
+                                 "https://rest.uniprot.org/uniprotkb/search?query=gene:IL6",
+                                 "https://rest.uniprot.org/uniprotkb/stream?query=gene:IL6&format=tsv",
+                                 "https://www.ncbi.nlm.nih.gov/sra/docs/",
+                                 "https://www.ncbi.nlm.nih.gov/bioproject/browse",
+                                 "https://doi.org/help"])
+def test_search_pages_and_other_hosts_are_not_read_as_identifiers(uri):
+    from labhq.evidence.claims import registry_id
+    assert registry_id(uri) is None
 
 
 def test_uri_paths_are_case_sensitive_when_judging_recitation():

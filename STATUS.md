@@ -25,6 +25,30 @@
 - 미해결: #148의 신뢰 경로 probe와 Claude agents-md가 `AGENTS.md`를 읽는지는 재지 않았다(재면 거부를 풀 수 있다). 러너를 띄운 셸의 `CLAUDE_*`·`CODEX_*` 밖 변수(`NODE_OPTIONS` 등)와 작업 폴더 상위의 `.codex/`·지침 파일은 보지 않는다. 일반 쓰기 step은 작업 폴더 `.codex/`를 그대로 둔다. 계약 skill 폴더를 앞선 실행이 고친 것은 알아채지 못한다.
 - 근거: `labhq/adapters/read_only.py`, `labhq/adapters/codex.py`, `labhq/util.py`, `tests/test_read_only_followups.py`, README §8·§10.
 
+## 2026-10-01 · #63 README 사무실 화면을 15초 움직이는 이미지로
+
+- 결론: README의 2.5D·3D 사무실 정지 화면을 각 15초짜리 움직이는 WebP로 바꿨다. 요청 하나가 CSO 계획, 승인 카드, 단계 진행을 거쳐 끝난다. 기존 PNG는 정지 화면 링크로 남겼다.
+- 바뀐 것: `docs/media/office-25d.webp`(1.31 MB, 1200×750, 15fps, 217프레임), `docs/media/office-3d.webp`(2.38 MB, 1200×750, 12fps, 177프레임), README 이미지 줄과 설명 문구. 코드·의존성·pyproject는 그대로다.
+- 실행한 것: 임시 state_dir에서 mock demo(키·클러스터 없음)를 띄우고 headless Chrome을 CDP screencast로 녹화해 Pillow로 인코딩했다. 녹화 script는 PI 결정(일회성 코드)대로 저장소에 넣지 않았다. 녹화 중에만 mock 단계를 0.9초(계획 1.4초)씩 늦추고 승인은 3초 뒤 자동으로 했다. 같은 프레임의 GIF는 51.5 MB·52.3 MB라 WebP를 골랐다. 프레임에 로컬 경로·사용자명·token이 보이지 않는 것을 확인했다.
+- 미해결: 3D는 headless Chrome의 하드웨어 GPU로 녹화했다. SwiftShader는 1600×1000에서 초당 4프레임 정도라 끊겼다. 화면이 바뀌면 다시 녹화해야 한다.
+- 근거: `docs/media/office-25d.webp`, `docs/media/office-3d.webp`, `README.md`.
+
+## 2026-10-01 · 연구 결과·출처 검증 후속 6건 (#114 #116 #117 #118 #128 #129)
+
+- 결론: 연구 결과와 출처 검증에 남은 빈틈 여섯 개를 닫았다. 연구 단계 실행은 여전히 opt-in이고 기본 꺼짐이라, 바뀐 것은 schema·검사·verifier뿐이다.
+- 바뀐 것: `single_cell_de@2`가 통과할 조합이 없던 `normalized_counts`를 field에서 거절한다(#114, 내장 pack hash 고정, 없어진 version을 적으면 남은 version을 알림). 결과는 선택한 단계의 `claim_ids` 밖 claim을 못 내고, 필수 evidence slot마다 `evidence.slots`로 채운 행이 있어야 한다(#128). 0건 검색 행의 출처도 해소하고, 추론·가설 행도 외부 출처면 `accessed_at`이 필요하다(#129). 조회는 동시 4개, 보고 전체 120초 deadline이고 넘긴 것은 미확인이다(#116). ID 옆 URI가 다른 곳을 가리키면 `conflicting`이고, 주요 레지스트리 URL(GEO·PubMed·PMC·identifiers.org 등)은 ID와 같은 출처로 묶인다(#117). DOI 옆 PubMed URL처럼 체계가 다르거나 version·isoform만 다른 URL은 코드가 결함으로 단정하지 않고 resolver에 넘기며, `/search`·`/docs` 같은 경로는 레코드로 읽지 않는다. 근거 행에 `result_count`를 두고, claim별 REVIEW v2(`labhq/research/review.py`)가 부재를 근거로 쓴 것을 늘 중대 결함으로 받는다(#118). 의미 모델 pilot fixture의 합성 결과 네 개에 slot을 적어 `FIXTURE_SHA256`이 바뀌었다(답은 그대로).
+- 실행한 것: issue마다 회귀 test를 먼저 써서 수정 전 실패를 확인했다(#114 9개, #128 3개, #129 5개, #116 3개, #117 25개, #118 test 파일 전체·result_count 1개). 독립 검증에서 정상 출처를 결함으로 판정하던 두 경우를 고치고 회귀 test 13개(수정 전 12개 실패)를 더했다. 전체 pytest 1605 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과. Python 3.10 문법은 ast로만 확인했다.
+- 미해결: live resolver가 아직 없고 deadline·동시성은 함수 인자다(설정 키 없음). 레지스트리 밖 URL을 ID와 함께 적으면 resolver가 uri 조회를 지원할 때까지 미확인이다. `result_count` 없이 "0 hits"만 적은 행은 reviewer가 잡아야 하고, REVIEW v2는 실행 경로에 연결하지 않았다. 설정에 `single_cell_de@1`이 남아 있으면 연구 계획 단계에서 오류가 난다.
+- 근거: `labhq/research/packs/single_cell_de.yaml`, `labhq/research/contract.py`, `labhq/research/review.py`, `labhq/evidence/claims.py`, `labhq/evidence/verify.py`, `docs/research_protocol.md`, `tests/test_research_protocol.py`, `tests/test_research_evidence.py`, `tests/test_evidence_verify.py`, `tests/test_research_review.py`.
+
+## 2026-10-01 · #150 B1 의미 모델 그림자 — 요청 뒤 두 모델을 계산해 로컬에만 기록
+
+- 결론: `semantics: shadow`면 요청이 끝난 뒤 출처 의미 모델(#136)과 읽기 전용 객체·링크 뷰를 계산해 같은 줄에 나란히 남긴다. 기본은 off다. mock lab에서 off·shadow·보류 mode·오타 네 경우의 prompt·schema·계획·승인·결과·리뷰·round 기록·웹 snapshot·event가 같았다(diff 0). mock 요청의 재사용 후보는 0이었다. 산출 type 선언이 없어서이고, 이 공백을 재는 것이 B1의 목적이다.
+- 바뀐 것: `Settings.semantics` 한 칸, 새 `labhq/research/semantics_shadow.py`(설정·worker·산출 hash·자동 off·report)와 `semantics_objects.py`(객체 8종·링크 12종, 액션 없음), `semantics.py`의 `records_from_rows`, `labhq semantics report|enable|mark`, `scripts/semantics_shadow_remove.py`. 연결은 `# semantics-hook` 표시 줄 24개(settings 2·server 9·cli 13)뿐이다. 기록은 `gateway.state_dir/semantics/`에 ID·종류·hash·개수만 남는다.
+- 실행한 것: 기능 commit마다 새 test를 먼저 돌려 실패를 확인했다. 예외: 산출 hash의 승격 금지 test 2개와 git work tree 거부 test 1개는 앞 commit에서 이미 통과했다(후보가 원래 0이거나 worker commit의 기능). 전체 pytest 1668 passed/22 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과. 제거 시험은 임시 사본에서 지운 뒤 compile·설정 load·state 읽기와 e2e·pilot·cso test 통과. 로컬 Codex 리뷰 5회에서 P2 13건이 나왔고 모두 고쳤다(P1 없음). 이벤트 루프 부하는 1·3회차에 같은 부류로 나와 DB 읽기를 worker의 별도 읽기 전용 연결로 옮겨 닫았다. 나머지는 manifest 반영·구역 검사, observed 만료, 옵션 붙은 off, 멈춘 worker 뒤 새 epoch, 외부 off 즉시 반영, report 상태, git work tree 거부의 링크·CLI 우회, 멈춘 작업의 기록, 경로 표기였다. 리뷰는 5회에서 멈췄다. Python 3.10은 compile만 확인했다.
+- 미해결: 원격 runner 산출 hash(생성 시점 hash를 provenance에 싣기)는 별도 issue가 필요하다. 판정 기한 issue(병합+90일, 중간 +30일)와 semantics CI job은 이 PR에 없다. B2(CSO advisory)·팔란티어식 액션·EDAM(#151)은 PI 결정으로 보류다. symlink test는 이 Windows 계정에 권한이 없어 skip했고 junction test는 통과했다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/research/semantics_objects.py`, `scripts/semantics_shadow_remove.py`, `tests/test_semantics_shadow_*.py`, `tests/test_semantics_objects.py`, `tests/semantics_shadow_lab.py`.
+
 ## 2026-10-01 · #120 Slurm 스케줄러, #153 README 생성 블록 겹침
 
 - 결론: `hpc.scheduler: slurm`으로 HPC 직원 도구가 Slurm 클러스터에 붙는다. 제출 전 PI 승인, 실패와 '잡 없음' 구분, 제출 재시도 없음, 수면·기상, `ssh_host`·`submit_prefix`·`job_group`이 SGE·PBS와 같은 경로로 돈다. README 배지에 SLURM이 settings Literal에서 저절로 생겼다. `integrations.py --write`는 두 생성 블록이 겹치면 아무것도 쓰지 않고 실패한다.
