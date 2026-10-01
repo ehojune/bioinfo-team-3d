@@ -12,6 +12,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:56 | [`e83a2a0`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/e83a2a0) | **대기 중인 이어 묻기 관측이 끝난 요청의 B1 기록 자리를 막던 문제를 고쳤습니다** (#149 결정 13, 독립 검증 P1). 액션을 켠 상태에서 이어 묻기 관측이 queue에 먼저 있으면 요청 줄이 busy로 빠지고 busy 수가 올라, 5번 연속이면 B1 전체가 꺼졌습니다. 요청 job을 넣기 직전에 대기 중인 이어 묻기 관측을 뒤로 돌리게 했고 회귀 test를 넣었습니다. |
+| 03:34 | [`ebe3608`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/ebe3608) | **README와 STATUS에 액션 층 그림자의 설정과 한계를 적었습니다** (#149 결정 13). `semantics.actions` 설정, 빈 실행 허용 목록, HPC 거부, 확인형 보류, 제거 순서를 §8에 넣었습니다. A2를 다시 열 조건과 알려진 한계는 §10에 있습니다. |
+| 03:29 | [`548498e`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/548498e) | **액션 층만 따로 지우는 `--only actions`를 제거 스크립트에 넣었습니다** (#149 결정 13). 액션 파일과 표시한 연결 줄만 지우고 B1 그림자는 남깁니다. `--check`가 임시 사본에서 컴파일, 남은 참조, 기존 state 읽기, B1 줄 기록, 관련 test를 확인합니다. |
+| 03:29 | [`370d20c`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/370d20c) | **`labhq semantics report`에 액션 층 절을 더했습니다** (#149 결정 13). 관측 창, 실제로 취해진 수, 전제와 어긋난 사례(막힌 중에 실행됨, 읽기 전용인데 접수됨), 관측 못 한 건, 깨진 칸을 따로 보여 주고 A2 검토 자료를 붙입니다. 액션이 꺼져 있고 기록이 없으면 보고서는 전과 같습니다. |
+| 03:28 | [`2fe1d32`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/2fe1d32) | **요청이 끝날 때와 이어 묻기가 일어날 때 액션 판정을 그림자로 기록합니다** (#149 결정 13). `semantics.actions: shadow`를 켰을 때만 B1 줄에 `actions` 칸을, 이어 묻기마다 `type: followup` 줄을 남깁니다. 끄면 모듈을 불러오지 않고 기록도 전과 바이트까지 같습니다. 확인형 값과 오타는 액션만 끄고 B1은 그대로 둡니다. 이어 묻기 관측이 밀리면 20개까지 순서대로 쌓고 넘친 수는 다음 줄에 남깁니다. |
+| 03:28 | [`a45054b`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/a45054b) | **ontology 액션 층의 첫 단계로, 기존 액션 7종의 전제 조건만 판정하는 모듈을 넣었습니다** (#149 결정 13). 승인·답변·이어 묻기·task 취소·직원 모집·계약 수정·HPC 제출의 조건을 참·거짓·모름으로 계산할 뿐 실제로 실행하지 않습니다. 실행 허용 목록은 빈 집합이고 HPC 액션은 늘 거부합니다. 기록에 없는 시점은 모름으로 두고, 판정 모듈은 gateway·네트워크·프로세스를 import하지 않습니다. |
 | 03:20 | [`1207178`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1207178) | Windows CI의 RUNNER~1 짧은 경로와 긴 TEMP 경로를 실제 파일 동일성으로 비교해 어휘 패키징 검사를 유지 (#249) |
 | 03:07 | [`9f62171`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/9f62171) | origin/main의 POSIX 손자 종료 test 안정화를 반영하고 patch_notes 양쪽 행을 보존 (#227) |
 | 03:04 | [`c056863`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/c056863) | origin/main의 연구 pack snapshot·교정 보고 흐름과 산출 종류 선언을 함께 보존하고, 기본 off prompt를 현재 main과 byte 단위로 다시 고정 (#221·#222) |

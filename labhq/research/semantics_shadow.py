@@ -52,6 +52,7 @@ MODES = ("off", "shadow")
 MODELS = ("provenance", "objects")  # the two models a line carries side by side
 HELD_MODES = ("advisory", "ab")  # B2: CSO advisory and A/B, held by the PI (#149)
 KEYS = ("mode", "timeout_s", "history_requests")
+KEYS += ("actions",)  # semantics-hook: actions (#149 결정 13 A1, off by default)
 DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
@@ -80,6 +81,7 @@ SAFE_TOKEN = re.compile(r"[A-Za-z0-9_.:@#+-]{0,96}")
 VOCABULARY = frozenset({"general", "research", "direct", "orchestrate", "plan_only", "done", "failed", "rejected",
                         "cancelled", "interrupted", "running", "ok", "error", "timeout", "request", "auto_off",
                         "enable", "mark", *VERDICTS, *REASONS})
+VOCABULARY |= {"followup", "refused", "refused_read_only", "shadow_only", "refused_p3"}  # semantics-hook: actions
 SENSITIVE_MIN = 6
 RUN_FIELDS = ("agent_spec_sha256", "kind", "attempt", "retry", "revision", "session_id", "method", "resumes",
               "wake_of")
@@ -96,6 +98,7 @@ SHA_HEX = re.compile(r"[0-9a-f]{64}")
 class ShadowConfig:
     timeout_s: float = DEFAULT_TIMEOUT_S
     history_requests: int = 200
+    actions: bool = False  # semantics-hook: actions
 
 
 _warned: set[str] = set()
@@ -139,7 +142,9 @@ def resolve(raw: Any) -> ShadowConfig | None:
         history = options.get("history_requests", 200)
         if isinstance(history, bool) or not isinstance(history, int) or not 10 <= history <= 1000:
             return _ignored(raw, "history_requests must be an integer from 10 to 1000")
-        return ShadowConfig(timeout_s=float(timeout), history_requests=history)
+        cfg = ShadowConfig(timeout_s=float(timeout), history_requests=history)
+        cfg = _actions_config(cfg, options.get("actions"), raw)  # semantics-hook: actions
+        return cfg
     except Exception as exc:  # noqa: BLE001 - a setting must never break the gateway
         return _ignored(raw, type(exc).__name__)
 
@@ -435,6 +440,8 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
         snap["state_db"] = str(hub.s.path(hub.s.gateway.state_dir) / "gateway.sqlite3")
     else:
         snap["rows"] = _rows_from_store(hub.store, rid, {r.get("id") for r in others[:cfg.history_requests - 1]})
+    if cfg.actions:  # semantics-hook: actions
+        snap["actions"] = _actions_inputs(hub, rid)  # semantics-hook: actions
     snap = json.loads(json.dumps(snap, default=str))
     snap["snapshot_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return snap
@@ -487,6 +494,8 @@ def read_rows(snap: dict, check: Callable[[], None]) -> None:
     snap["jobs_done"] = {tid: {"jobs": [{"job_id": j.get("job_id"), "state": j.get("state")}
                                         for j in (body or {}).get("jobs") or [] if isinstance(j, dict)]}
                          for tid, body in sorted(jobs.items())}
+    if "actions" in snap:  # semantics-hook: actions
+        _actions_rows(snap, own, decisions)  # semantics-hook: actions
     snap["rows_ms"] = _ms(started)
 
 
@@ -523,6 +532,7 @@ def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
     found += [zone[0] for zone in snap.get("zones") or []]
     project = snap.get("project") or {}
     found += [project.get("id"), project.get("local_dir"), project.get("name"), snap.get("workspace_root")]
+    found += list((snap.get("actions") or {}).get("sensitive") or [])  # semantics-hook: actions
     return {s.strip() for s in found if isinstance(s, str) and len(s.strip()) >= SENSITIVE_MIN}
 
 
@@ -1059,6 +1069,8 @@ def type_problems(line: Mapping[str, Any], allowed_ids: Iterable[str]) -> list[s
 
 def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
     """A request whose job stopped before the models ran: ids and the failure only, so the report counts it."""
+    if snap.get("job") == "followup":  # semantics-hook: actions
+        return _followup_failed(snap, status, exc, epoch=epoch, ms=ms)  # semantics-hook: actions
     rid = snap["rid"]
     req = (snap.get("requests") or {}).get(rid) or {}
     project = req.get("project_id")
@@ -1074,6 +1086,8 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     """One request line: both models side by side, ids, kinds, hashes and counts only.
 
     ``hash_over`` says when output hashing has used its share of the time cap (#159)."""
+    if snap.get("job") == "followup":  # semantics-hook: actions
+        return _followup_compute(snap, check, epoch=epoch)  # semantics-hook: actions
     started = time.perf_counter()
     read_rows(snap, check)
     rid = snap["rid"]
@@ -1096,8 +1110,120 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     for state in reader.workspace_state.values():
         workspaces[state] = workspaces.get(state, 0) + 1
     line["hash"] = {**hashes, "workspaces": dict(sorted(workspaces.items()))}
+    if "actions" in snap:  # semantics-hook: actions
+        line["actions"] = compute_actions(snap, check)  # semantics-hook: actions
     line["ms"] = _ms(started)
     return line
+
+
+# semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this block)
+# The action layer's shadow (semantics_actions.py): the hook lines marked for actions call
+# these. Off by default; nothing here executes an action, and with actions off none of it runs or is imported.
+
+ACTIONS_HELD = ("confirm",)  # A2 (CLI execution of request.followup) is held for its own PR
+ACTION_BACKLOG = 20  # follow-up observations kept behind a full queue; more are dropped and counted
+
+
+def _actions() -> Any:
+    from . import semantics_actions
+    return semantics_actions
+
+
+def _actions_config(cfg: ShadowConfig, value: Any, raw: Any) -> ShadowConfig:
+    """``actions: shadow`` adds the A1 observations to the shadow. Any other value keeps actions off with one
+    warning and leaves the shadow as it was; no value turns execution on."""
+    from dataclasses import replace
+    mode = _mode(value)
+    if mode == "shadow":
+        return replace(cfg, actions=True)
+    if mode != "off":
+        key = "actions:" + repr(raw)[:500]
+        if key not in _warned:
+            _warned.add(key)
+            log.warning("semantics actions setting ignored (%s); actions stay off and the shadow goes on",
+                        "confirm is held (A2); this version records only" if mode in ACTIONS_HELD
+                        else "actions must be off or shadow")
+    return cfg
+
+
+def actions_setting(settings: Any) -> str:
+    """What the setting asks of the action layer: shadow, off, held (confirm) or invalid."""
+    if configured(settings) != "shadow":
+        return "off"
+    raw = getattr(settings, "semantics", None)
+    mode = _mode(raw.get("actions") if isinstance(raw, Mapping) else None)
+    return mode if mode in ("off", "shadow") else "held" if mode in ACTIONS_HELD else "invalid"
+
+
+def _actions_inputs(hub: Any, rid: str) -> dict:
+    """Event loop side: states, times and booleans from memory, like take_snapshot."""
+    from ..adapters import enforces_read_only
+    return _actions().request_inputs(hub.requests[rid], hub.approvals, hub.agents, getattr(hub, "agent_runner", {}),
+                                     cso_agent=hub.s.orchestrator.cso_agent, recruiter=hub.s.recruit.agent_id,
+                                     read_only=enforces_read_only, now=time.time())
+
+
+def _actions_rows(snap: dict, own: Mapping[str, Any], decisions: Mapping[str, Any]) -> None:
+    rows = _actions().row_inputs(own, decisions)
+    acts = snap["actions"]
+    acts["tasks"], acts["decided"] = rows["tasks"], rows["decided"]
+    acts["sensitive"] = [*(acts.get("sensitive") or []), *rows["sensitive"]]
+
+
+def compute_actions(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
+    started = time.perf_counter()
+    try:
+        out = _actions().evaluate(snap["actions"], check)
+        check()
+        return {"status": "ok", "ms": _ms(started), **out}
+    except ShadowTimeout as exc:
+        return _failed("timeout", exc, started)
+    except ShadowStop:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
+        return _failed("error", exc, started)
+
+
+def _followup_compute(snap: Mapping[str, Any], check: Callable[[], None], *, epoch: int) -> dict:
+    started = time.perf_counter()
+    check()
+    line = _actions().followup_line(snap["actions"], rid=snap["rid"], epoch=epoch, ts=round(time.time(), 3),
+                                    busy_skipped=int(snap.get("busy_skipped") or 0))
+    line["ms"] = _ms(started)
+    return line
+
+
+def _followup_failed(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
+    acts = snap.get("actions") or {}
+    return {"v": 1, "type": "followup", "ts": round(time.time(), 3), "epoch": epoch, "request_id": snap.get("rid"),
+            "phase": acts.get("phase"), "key": acts.get("key"), "status": status, "error_kind": type(exc).__name__,
+            "ms": ms}
+
+
+def _actions_shape(line: Mapping[str, Any]) -> list[str]:
+    if "actions" not in line and line.get("type") != "followup":
+        return []
+    return _actions().shape_problems(line)
+
+
+def _actions_failed(line: Mapping[str, Any]) -> bool:
+    if "actions" in line:
+        return not isinstance(line["actions"], Mapping) or line["actions"].get("status") != "ok"
+    return line.get("type") == "followup" and line.get("status") != "ok"
+
+
+def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
+    """Add the A1 section to the report when actions are set or recorded; otherwise the report stays as it was."""
+    setting = actions_setting(settings)
+    lines, _ = read_lines(paths)
+    if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
+        return
+    rep["actions"] = _actions().report(lines, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+
+
+def _actions_render(rep: Mapping[str, Any]) -> list[str]:
+    return _actions().render(rep) if "actions" in rep else []
+# semantics-actions: end
 
 
 # ---------------------------------------------------------------- worker and breaker
@@ -1126,6 +1252,8 @@ class ShadowService:
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
         self.pending = 0  # queued or running jobs
+        self.action_backlog: deque = deque()  # semantics-hook: actions (follow-up observations behind the queue)
+        self.action_skipped = 0  # semantics-hook: actions (dropped: queue and backlog full)
 
     @classmethod
     def start(cls, hub: Any) -> "ShadowService | None":
@@ -1234,6 +1362,7 @@ class ShadowService:
             snap["busy_skipped"] = self.busy_skipped
             with self.lock:
                 job = (self.gen, self.queue, snap)
+                self.yield_followup()  # semantics-hook: actions (a waiting follow-up never takes this slot)
                 try:
                     self.queue.put_nowait(job)
                     self.pending += 1
@@ -1251,6 +1380,81 @@ class ShadowService:
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
+
+    # semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this)
+    def after_followup(self, rid: str, fid: str | None, phase: str, outcome: str | None = None) -> None:
+        """A follow-up was asked, refused or ended. Queue its observation: never raises, never waits, never counts
+        toward the B1 busy limit. Behind a busy queue it waits in a backlog of ACTION_BACKLOG, in order and after
+        the queued job; past that it is dropped and counted. With actions off it returns before reading anything."""
+        if not self.cfg.actions:
+            return
+        try:
+            self.refresh()
+            self.check_stuck()
+            if self.latched:
+                return
+            from ..adapters import enforces_read_only
+            inputs = _actions().followup_inputs(self.hub.requests[rid], fid, phase, outcome, self.hub.agents,
+                                                cso_agent=self.hub.s.orchestrator.cso_agent,
+                                                read_only=enforces_read_only, now=time.time())
+            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs}, default=str))
+            with self.lock:
+                queued = False
+                if not self.action_backlog:  # an earlier observation still waiting goes first
+                    try:
+                        self.queue.put_nowait((self.gen, self.queue, snap))
+                        queued = True
+                    except queue.Full:
+                        pass
+                if queued:
+                    self.ensure_thread()
+                elif len(self.action_backlog) >= ACTION_BACKLOG:
+                    self.action_skipped += 1  # written with the next backlog line, which a drop guarantees
+                    return
+                else:
+                    self.action_backlog.append((self.gen, snap))
+                self.pending += 1
+        except Exception as exc:  # noqa: BLE001 - the follow-up itself must never see this
+            log.warning("semantics actions skipped a follow-up observation (%s)", type(exc).__name__)
+            self.outcome(failed=True, on_loop=True)
+
+    def yield_followup(self) -> None:
+        """Event loop side, under self.lock, just before a request job is queued: a follow-up observation still
+        waiting in the queue of one steps back to the front of the backlog, so a request job finds the queue as
+        it would without actions and B1's busy count never sees a follow-up. With actions off it does nothing."""
+        if not self.cfg.actions or not self.queue.full():
+            return
+        try:
+            job = self.queue.get_nowait()
+        except queue.Empty:  # the worker took it first
+            return
+        if isinstance(job[2], Mapping) and job[2].get("job") == "followup":
+            self.action_backlog.appendleft((job[0], job[2]))  # still pending: work_backlog runs it next
+        else:
+            self.queue.put_nowait(job)  # a request job: only putters hold self.lock, so its slot is still free
+
+    def work_backlog(self, jobs: queue.Queue) -> None:
+        """Worker side, after each job: the follow-up observations that found the queue busy, oldest first, and
+        only while the queue is empty, so a request job queued before them is never overtaken."""
+        while jobs is self.queue:
+            with self.lock:
+                if not self.action_backlog or not jobs.empty():
+                    return
+                gen, snap = self.action_backlog.popleft()
+                snap = {**snap, "busy_skipped": self.action_skipped}  # drops so far ride on this line
+                self.action_skipped = 0
+            try:
+                if gen != self.gen or self.latched or self.external_off():
+                    self.counts["discarded"] += 1
+                    continue
+                self.work(gen, snap)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("semantics actions observation failed (%s)", type(exc).__name__)
+                self.outcome(failed=True)
+            finally:
+                with self.lock:
+                    self.pending = max(0, self.pending - 1)
+    # semantics-actions: end
 
     def ensure_thread(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -1288,6 +1492,7 @@ class ShadowService:
             finally:
                 with self.lock:
                     self.pending = max(0, self.pending - 1)
+                self.work_backlog(jobs)  # semantics-hook: actions
 
     def work(self, gen: int, snap: dict) -> None:
         started = time.monotonic()
@@ -1368,6 +1573,7 @@ class ShadowService:
         try:
             problems = boundary_problems(line, sensitive_strings(snap))
             problems += type_problems(line, (output_vocab.current() or _NO_VOCAB).edam_ids)
+            problems += _actions_shape(line)  # semantics-hook: actions
         except Exception as exc:  # noqa: BLE001 - an unchecked line is never written
             log.warning("semantics shadow boundary check failed (%s); record not written", type(exc).__name__)
             self.outcome(failed=True)
@@ -1381,6 +1587,7 @@ class ShadowService:
                 failed = True
                 log.warning("semantics shadow %s %s (%s)", model, line[model].get("status"),
                             line[model].get("error_kind"))
+        failed = _actions_failed(line) or failed  # semantics-hook: actions
         try:
             if self.gen != gen or self.external_off():
                 self.counts["discarded"] += 1
@@ -1651,6 +1858,7 @@ def render_report(rep: Mapping[str, Any]) -> str:
         out.append("제거: semantics: off → scripts/semantics_shadow_remove.py → state_dir/semantics 삭제(선택)")
     else:
         out.append("제거 제안: 없음")
+    out += _actions_render(rep)  # semantics-hook: actions
     return "\n".join(out)
 
 
@@ -1716,6 +1924,7 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
         if args.semantics_cmd == "report":
             today = date.fromisoformat(args.today) if args.today else None
             rep = build_report(paths, today, configured(settings))
+            _actions_report(rep, paths, settings)  # semantics-hook: actions
             print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_report(rep))
         elif args.semantics_cmd == "enable":
             print(enable(paths))

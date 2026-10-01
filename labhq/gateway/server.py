@@ -1276,7 +1276,11 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             entry = hub.start_followup(rid, body.text)
         except ValueError as e:  # still running, one already pending, or no runner hosts the agent
+            if hub.semantics_shadow is not None:  # semantics-hook: actions
+                hub.semantics_shadow.after_followup(rid, None, "refused")  # semantics-hook: actions
             raise HTTPException(409, str(e))
+        if hub.semantics_shadow is not None:  # semantics-hook: actions
+            hub.semantics_shadow.after_followup(rid, entry["id"], "asked")  # semantics-hook: actions
         return {"request_id": rid, "followup_id": entry["id"]}
 
     @app.get("/api/requests/{rid}", dependencies=[Depends(auth)])

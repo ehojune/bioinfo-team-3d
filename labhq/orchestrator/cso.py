@@ -806,6 +806,8 @@ class Orchestrator:
         if refusal:  # the same workspace and session, with an engine that would not keep it read-only
             entry.update(status="failed", answer="", error=refusal, answered_at=time.time())
             self.hub.save_request(rid)
+            if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
+                self.hub.semantics_shadow.after_followup(rid, fid, "ended", "refused_read_only")  # semantics-hook: actions
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": refusal,
                 "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
@@ -848,6 +850,8 @@ class Orchestrator:
         if not direct and result.session_id and self.hub.supports_resume(agent):
             req["cso_session_id"], req["cso_workdir"] = result.session_id, result.workdir or workdir
         self.hub.save_request(rid)
+        if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
+            self.hub.semantics_shadow.after_followup(rid, fid, "ended", "done" if answered else "failed")  # semantics-hook: actions
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
             "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
