@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:22 | [`5b47008`](https://github.com/ehojune/bioinfo-team-3d/pull/243/commits/5b47008) | 열린 issue 작업 큐를 실제 PR과 후속 작업 기준으로 동기화 |
 | 02:16 | [`c67eec7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/c67eec7) | direct 산출 목록이 검사한 outputs 폴더를 열린 핸들로만 읽어, 검사 뒤 링크로 바뀐 폴더를 따라가지 않게 함 (#221 검증) |
 | 01:43 | [`7a0d834`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/7a0d834) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #219 항목과 행을 이 PR 쪽과 시각순으로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
 | 01:43 | [`18f2aa7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/18f2aa7) | **`manifest.json`을 링크·FIFO로 바꿔도 산출 목록이 읽지 않는다는 test를 모든 OS에 두었습니다** (Codex 리뷰 P1). `b0d3f5e`의 test는 symlink를 만들 수 없는 Windows에서 skip되었습니다. owned 규칙이 manifest를 링크로 본다고 꾸민 test는 모든 OS에서 돌고, FIFO로 바꾼 run이 멈추지 않는지 보는 test는 POSIX에서 돕니다. 수정을 되돌리면 세 test 모두 실패했습니다 |
