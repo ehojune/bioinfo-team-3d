@@ -465,10 +465,10 @@ def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
         found += [s for s in _strings(plan) if len(s) >= 12] if req.get("research_contract") else [
             step.get("instruction") for step in plan.get("steps") or []]
         for result in (req.get("results") or {}).values():
-            found += [result.get("workdir"), result.get("workdir_id"), *(result.get("outputs") or [])]
+            found += [result.get("workdir"), result.get("workdir_id"), *_strings(result.get("outputs"))]
     for task in (snap.get("tasks") or {}).values():
         result = task.get("result") if isinstance(task.get("result"), dict) else {}
-        outputs = [o for o in result.get("outputs") or [] if isinstance(o, str)]
+        outputs = list(_strings(result.get("outputs")))  # any shape: a malformed row must not end the check
         found += [result.get("workdir"), result.get("workdir_id"), *outputs]
         found += [o.replace("\\", "/").rsplit("/", 1)[-1] for o in outputs]
     found += [zone[0] for zone in snap.get("zones") or []]
@@ -528,10 +528,26 @@ def _zone_level(path: str, zones: list[tuple[str, str]]) -> str | None:
     return max(inside)[1] if inside else None
 
 
-def zone_allows(path: str, zones: Iterable[Iterable[str]], visibility: str | None) -> bool:
+def zone_forms(zones: Iterable[Iterable[str]]) -> list[tuple[str, str]] | None:
+    """Each zone under its written and its real spelling, as the runner's gate compares them: a restricted
+    zone given as a link or junction also covers the folder it points to. None when one cannot be resolved."""
+    forms: list[tuple[str, str]] = []
+    for z, level in zones:
+        try:
+            real = _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(z))))
+        except (OSError, ValueError):
+            return None
+        forms += [(spelling, level) for spelling in {_norm(z), real}]
+    return forms
+
+
+def zone_allows(path: str, zones: Iterable[Iterable[str]], visibility: str | None, *,
+                forms: list[tuple[str, str]] | None = None) -> bool:
     """Only `public` zones for a public project, `public` and `internal` otherwise. Outside every zone: no."""
     allowed = {"public"} if visibility == "public" else {"public", "internal"}
-    normalized = [(_norm(z), level) for z, level in zones]
+    normalized = forms if forms is not None else zone_forms(zones)
+    if normalized is None:
+        return False
     try:
         real = _norm(os.path.realpath(path))
     except (OSError, ValueError):
@@ -560,6 +576,7 @@ class Reader:
 
     def __init__(self, snap: Mapping[str, Any], check: Callable[[], None]):
         self.zones = [tuple(z) for z in snap.get("zones") or []]
+        self.zone_forms = zone_forms(self.zones)  # None: a zone did not resolve, so nothing is read
         self.visibility = (snap.get("project") or {}).get("visibility")
         self.root = snap.get("workspace_root") or ""
         self.host = snap.get("host")
@@ -583,7 +600,7 @@ class Reader:
             return "remote"
         if not _inside(_norm(workdir), _norm(self.root)):
             return "remote"
-        if not zone_allows(workdir, self.zones, self.visibility):
+        if not zone_allows(workdir, self.zones, self.visibility, forms=self.zone_forms or []):
             return "zone_excluded"
         try:
             if _norm(os.path.realpath(workdir)) != _norm(workdir):
@@ -594,7 +611,7 @@ class Reader:
         if _is_link(st) or not stat.S_ISDIR(st.st_mode):
             return "not_regular"
         manifest_path = os.path.join(workdir, "manifest.json")
-        if not zone_allows(manifest_path, self.zones, self.visibility):
+        if not zone_allows(manifest_path, self.zones, self.visibility, forms=self.zone_forms or []):
             return "zone_excluded"  # a narrower zone on the manifest itself wins over the folder's
         manifest = self._small_json(manifest_path)
         self.manifests[workdir] = manifest
@@ -637,7 +654,7 @@ class Reader:
             return "missing", None
         if _is_link(st) or not stat.S_ISREG(st.st_mode):
             return "not_regular", None
-        if not zone_allows(path, self.zones, self.visibility):
+        if not zone_allows(path, self.zones, self.visibility, forms=self.zone_forms or []):
             return "zone_excluded", None
         if st.st_size > HASH_MAX_FILE:
             self.budget.exhausted = True
@@ -1063,6 +1080,9 @@ class ShadowService:
                     self.counts["discarded"] += 1
                     continue
                 self.work(gen, snap)
+            except Exception as exc:  # noqa: BLE001 - a dead worker would count nothing and never turn off
+                log.warning("semantics shadow job failed (%s)", type(exc).__name__)
+                self.outcome(failed=True)
             finally:
                 with self.lock:
                     self.pending = max(0, self.pending - 1)
@@ -1141,7 +1161,13 @@ class ShadowService:
         self.observed_dirty = False
 
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
-        if boundary_problems(line, sensitive_strings(snap)):
+        try:
+            problems = boundary_problems(line, sensitive_strings(snap))
+        except Exception as exc:  # noqa: BLE001 - an unchecked line is never written
+            log.warning("semantics shadow boundary check failed (%s); record not written", type(exc).__name__)
+            self.outcome(failed=True)
+            return
+        if problems:
             self.trip("info_boundary")
             return
         failed = False

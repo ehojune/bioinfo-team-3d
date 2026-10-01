@@ -198,3 +198,23 @@ def test_a_manifest_inside_a_restricted_zone_is_not_read(tmp_path, monkeypatch):
     line = line_for(hub, "req_a", {})
     assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
     assert not [p for p in opened if p.endswith("manifest.json") and "task_a1" in p]
+
+
+def test_a_restricted_zone_written_as_a_link_is_compared_at_its_target(tmp_path, reads):
+    """A restricted zone given through a link or junction still covers the folder it points to."""
+    runs = tmp_path / "runs"
+    hub, _ = _lab(tmp_path, zones=[])
+    link = tmp_path / "restricted_link"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(runs / "2026-10-01"), str(link))
+        else:
+            os.symlink(runs / "2026-10-01", link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a directory link here")
+    hub.s.policy.data_zones = [DataZone(path=str(runs), level="internal"), DataZone(path=str(link), level="restricted")]
+    observed: dict = {}
+    line = line_for(hub, "req_a", observed)
+    assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
+    assert reads == [] and observed == {}

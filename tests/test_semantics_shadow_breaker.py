@@ -300,3 +300,32 @@ def test_a_job_stopped_before_the_models_still_leaves_a_line(tmp_path, monkeypat
     assert service.counts["failures"] == 1
     rep = shadow.build_report(service.paths)
     assert rep["requests"] == 1 and rep["provenance"][failure] == 1
+
+
+def test_a_malformed_row_is_a_failure_and_never_ends_the_worker(tmp_path):
+    """`result.outputs: 42` in a stored row: the line is still checked and written, the failure counts, and
+    three in a row turn the shadow off. The worker thread must not die before it counts."""
+    service = _service(tmp_path)
+    for i in (1, 2, 3):
+        rid, tid = f"req_{i:03d}", f"task_bad{i}"
+        row = task_row(rid, tid, "s1", "analyst", None, [])
+        row["result"]["outputs"] = 42
+        service.hub.store.rows["task"][tid] = row
+    _run(service, ["req_001", "req_002", "req_003"])
+    assert service.counts["failures"] == 3 and service.latched == "consecutive_failures"
+    assert [line["objects"]["status"] for line in _lines(tmp_path, "request")] == ["error"] * 3
+
+
+def test_a_boundary_check_that_raises_writes_nothing_and_counts(tmp_path, monkeypatch, caplog):
+    service = _service(tmp_path)
+
+    def broken(snap):
+        raise TypeError("injected /data/cohort")
+
+    monkeypatch.setattr(shadow, "sensitive_strings", broken)
+    caplog.set_level(logging.WARNING, logger="labhq.semantics")
+    _run(service, ["req_001", "req_002", "req_003"])
+    assert service.counts["failures"] == 3 and service.latched == "consecutive_failures"
+    assert _lines(tmp_path, "request") == []
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("boundary check" in m for m in messages) and all("/data/cohort" not in m for m in messages)
