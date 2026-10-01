@@ -133,8 +133,8 @@ def test_research_plan_and_result_contracts_are_strict():
     with pytest.raises(ValueError, match="re-plan without truncation"):
         validate_research_plan(valid_plan(steps=2), max_steps=1, active_packs={})
     with pytest.raises(ValidationError, match="plan_sha256"):
-        ResearchResult.model_validate({"schema_version": 2, "step_id": "s1", "findings": [], "evidence": [],
-                                       "artifact_refs": [], "not_established": [], "failures": [],
+        ResearchResult.model_validate({"schema_version": 2, "step_id": "s1", "claims": [], "evidence": [],
+                                       "links": [], "artifact_refs": [], "not_established": [], "failures": [],
                                        "method_changes": []})
 
 
