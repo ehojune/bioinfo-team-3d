@@ -791,7 +791,11 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
-            result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+            try:
+                result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+            except Exception:
+                result.output_types = {}
+                await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
         try:
             for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
                 write_owned(ws.dir, f"outputs/{name}", result.text or "")
