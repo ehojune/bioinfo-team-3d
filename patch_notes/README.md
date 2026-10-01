@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:28 | [`079c88b`](https://github.com/ehojune/bioinfo-team-3d/pull/279/commits/079c88b) | event-loop test가 worker join과 blocking queue put도 거부하도록 보강 |
 | 07:17 | [`ecb3013`](https://github.com/ehojune/bioinfo-team-3d/pull/279/commits/ecb3013) | Windows 그림자 test 두 건을 시간 한계 대신 영속 기록·완료 순서로 판정 |
 | 06:49 | [`83cc18d`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/83cc18d) | 요청별 입력 hash를 첫 그림자 관측에 보존하고 계획의 출력 이름을 입력에서 제외함 |
 | 06:35 | [`258bf48`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/258bf48) | 러너가 허용한 입력 증거만 쓰고 파일명과 Git ref의 대소문자를 보존함 |
