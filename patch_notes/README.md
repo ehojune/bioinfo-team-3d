@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:45 | [`5c77784`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/5c77784) | **읽기 전용 실행이 작업 폴더의 지시·memory·skill 파일을 어디에 있든 받지 않게 했습니다** (Codex 리뷰, 같은 부류를 한 판정으로). 숨김·중첩 폴더의 `CLAUDE.md` 같은 지시 파일은 한 판정 함수로 제외하거나 실행을 거부합니다. 계약 skill은 매번 원본에서 새로 복사하고, 원본이 없거나 symlink·junction이면 실행하지 않습니다 |
 | 17:57 | [`2a2cc26`](https://github.com/ehojune/bioinfo-team-3d/pull/166/commits/2a2cc26) | **main 병합에서 #158 그림자 설정과 이 PR의 pack 버전을 함께 살렸습니다.** README 설정 절과 설정 예시에 두 변경을 모두 둡니다 |
 | 17:44 | [`9c4cf43`](https://github.com/ehojune/bioinfo-team-3d/pull/164/commits/9c4cf43) | **읽기 전용 실행의 계약 skill을 매번 원본에서 새로 복사합니다** (Codex 리뷰). 앞선 실행이 작업 폴더의 skill 사본을 바꿔 두면 읽기 전용 실행이 그 변조본을 믿었습니다. 이제 매 실행 원본에서 새 사본을 만들고 symlink·junction은 따라가지 않습니다 |
 | 17:25 | [`52a71df`](https://github.com/ehojune/bioinfo-team-3d/pull/179/commits/52a71df) | README 2.5D·3D 사무실 정지 화면을 15초 움직이는 WebP로 교체(정지 PNG는 링크로 유지) |
