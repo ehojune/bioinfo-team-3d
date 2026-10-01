@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 러너 env·POSIX 종료 #83 · 라운드 게시 복구 #97
+
+- 결론: 부모 Claude session marker만 지우고 운영자가 지정한 engine·task env는 보존한다. POSIX timeout은 leader가 먼저 끝나도 남은 process group을 SIGKILL한다. 라운드 기록은 GitHub의 rate-limit 대기 시각을 지키며, 토큰 누락은 재시작 때 다시 게시할 pending 상태로 둔다.
+- 바뀐 것: 공용 env 병합 순서를 일반 직원 실행과 MCP 점검에 적용했다. `Retry-After`·`X-RateLimit-Reset`을 보존해 backoff의 하한으로 쓰고 rate limit은 일반 재시도 상한에서 뺐다. README의 engine env·라운드 기록 동작도 맞췄다.
+- 실행한 것: 수정 전 #83 env와 #97 rate-limit·token·reset 회귀 4건 실패를 확인했다. 수정 후 관련 94 passed/10 skipped, 전체 pytest 1097 passed/19 skipped, Node `tests/*.cjs` 5개, `bash scripts/check_public.sh`, `git diff --check` 통과. pytest 임시·상태 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: POSIX 자손 종료 회귀는 Windows에서 skip되어 Linux CI 확인이 남았다. 실제 GitHub API와 토큰 교체는 fake API·재시작 상태로 대신했다. 범위 제한에 따라 저장소 밖 HARVEST·LEAD_NOTES와 patch notes는 수정하지 않았고 `.git` 읽기 전용이라 커밋하지 않았다.
+- 근거: `labhq/adapters/base.py`, `labhq/util.py`, `labhq/tools/_mcpcompat.py`, `labhq/integrations/github.py`, `labhq/integrations/rounds.py`, `tests/test_isolation.py`, `tests/test_runner_safety.py`, `tests/test_round_records.py`, `tests/test_github_reporter.py`.
+
 ## 2026-10-01 · 웹 후속 #75 #87 #88
 
 - 결론: 폰의 고정 직원 줄을 기본으로 접고 결정 이력을 최근 10건부터 요청별로 묶었다. 재접속 snapshot은 200개 이전의 활성 task도 실행 중으로 복원하며, 직원 카드와 3D 승인 시계가 실제 상태를 계속 보여 준다.
