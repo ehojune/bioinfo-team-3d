@@ -214,3 +214,77 @@ def test_valid_refseq_accessions_reach_the_resolver(accession):
     result = build([claim("c1")], [row("e1", "refseq", accession)], [link("c1", "e1")])
     report = asyncio.run(verify_sources(result, fixed))
     assert report.evidence[0].resolution.status == "found" and fixed.calls == [("refseq", accession.casefold())]
+
+
+def test_claim_with_an_unverified_source_is_not_verified():
+    result = build([claim("c1")], [row("e1", "doi", DOI), row("e2", "geo", "GSE79973")],
+                   [link("c1", "e1"), link("c1", "e2")])
+    report = asyncio.run(verify_sources(result, resolver(failures={("geo", "GSE79973"): "network"})))
+    check = by_claim(report)["c1@1"]
+    assert check.verified_evidence == ["e1"] and check.unverified_evidence == ["e2"]
+    assert check.state == "unverified" and report.ok is False
+    # An unverified source on the contradicting side also keeps the claim open.
+    result = build([claim("c1", status="partially_supported")], [row("e1", "doi", DOI), row("e2", "geo", "GSE79973")],
+                   [link("c1", "e1"), link("c1", "e2", "contradicts")])
+    report = asyncio.run(verify_sources(result, resolver(failures={("geo", "GSE79973"): "timeout"})))
+    assert by_claim(report)["c1@1"].state == "unverified" and report.ok is False
+
+
+def test_uri_lookups_keep_path_case_and_fold_only_scheme_and_host():
+    uri = "https://example.org/files/Data.tsv"
+    fixed = StaticResolver({("uri", uri): [{"id_scheme": "uri", "id_value": uri}]})
+
+    def uri_row(eid, value, group):
+        return {**row(eid, "doi", DOI, group=group), "source": {"uri": value, "accessed_at": "2026-10-01",
+                                                                "locator": "row 1"}}
+
+    result = build([claim("c1"), claim("c2")],
+                   [uri_row("e1", uri, "g1"), uri_row("e2", "https://example.org/files/data.tsv", "g2"),
+                    uri_row("e3", "HTTPS://EXAMPLE.ORG/files/Data.tsv", "g1")],
+                   [link("c1", "e1"), link("c2", "e2"), link("c1", "e3")])
+    report = asyncio.run(verify_sources(result, fixed))
+    status = {check.evidence_id: check.resolution.status for check in report.evidence}
+    assert status == {"e1": "found", "e2": "not_found", "e3": "found"}
+    assert by_claim(report)["c2@1"].state == "defective" and by_claim(report)["c1@1"].state == "verified"
+    assert len(fixed.calls) == 2
+
+
+def test_a_defective_source_fails_the_report_even_as_context():
+    fake = row("e1", "geo", "GSE99999999")
+    malformed = row("e2", "dbsnp", "rs-12")
+    inferred = {"id": "e3", "kind": "inference", "observation": "pathway guess", "derived_from": ["e4"],
+                "source": {"id_scheme": "doi", "id_value": "10.9999/made-up", "accessed_at": "2026-10-01"}}
+    real = row("e4", "doi", DOI)
+    result = build([claim("c1"), claim("c2", status="proposed")], [fake, malformed, inferred, real],
+                   [link("c1", "e4"), link("c2", "e1", "context")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    assert by_claim(report)["c1@1"].state == "verified" and by_claim(report)["c2@1"].state == "not_asserted"
+    assert report.defective_evidence == ["e1", "e2", "e3"] and report.ok is False
+
+
+def test_every_identifier_a_source_carries_is_checked():
+    # A downloaded record: the DOI resolves, but the file the row reads is not in the observed manifest.
+    both = row("e1", "doi", DOI, kind="experimental")
+    both["source"]["artifact_id"] = "a1"
+    result = build([claim("c1")], [both], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver(), observed_artifacts={"out/other.tsv": "b" * 64}))
+    check = report.evidence[0]
+    assert [(r.id_scheme, r.status) for r in check.resolutions] == [("doi", "found"), ("artifact", "not_found")]
+    assert check.resolution.id_scheme == "artifact"
+    assert by_claim(report)["c1@1"].state == "defective" and report.ok is False
+    # With both identifiers, version belongs to the external record, so the artifact is checked by presence.
+    report = asyncio.run(verify_sources(result, resolver(), observed_artifacts={"out/de.tsv": "b" * 64}))
+    assert [r.status for r in report.evidence[0].resolutions] == ["found", "found"] and report.ok is True
+
+
+def test_artifact_paths_match_the_manifest_across_separators():
+    result = ResearchResult.model_validate({
+        "schema_version": 2, "plan_sha256": "b" * 64, "step_id": "s1", "claims": [claim("c1")],
+        "evidence": [row("e1", artifact="a1", kind="experimental")], "links": [link("c1", "e1")],
+        "artifact_refs": [{"artifact_id": "a1", "path": ".\\out\\de.tsv"}],
+        "not_established": [], "failures": [], "method_changes": []})
+    report = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "c" * 64}))
+    assert report.evidence[0].resolution.status == "found" and report.ok is True
+    clash = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "c" * 64,
+                                                                   "out\\de.tsv": "d" * 64}))
+    assert clash.evidence[0].resolution.status == "conflicting" and clash.ok is False

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .claims import STATUS_NEEDS, SourceRef
+from .claims import STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -120,9 +120,10 @@ class StaticResolver:
                  failures: Mapping[tuple[str, str], str] | None = None, schemes: Iterable[str] | None = None,
                  name: str = "static") -> None:
         self.name = name
-        self.records = {(scheme, value.casefold()): [SourceRecord.model_validate(r) for r in rows]
+        self.records = {(scheme, normalize_id(scheme, value)): [SourceRecord.model_validate(r) for r in rows]
                         for (scheme, value), rows in (records or {}).items()}
-        self.failures = {(scheme, value.casefold()): kind for (scheme, value), kind in (failures or {}).items()}
+        self.failures = {(scheme, normalize_id(scheme, value)): kind
+                         for (scheme, value), kind in (failures or {}).items()}
         self.schemes = set(schemes) if schemes is not None else {key[0] for key in [*self.records, *self.failures]}
         self.calls: list[tuple[str, str]] = []
 
@@ -130,7 +131,7 @@ class StaticResolver:
         return scheme in self.schemes
 
     async def lookup(self, scheme: str, value: str) -> list[SourceRecord]:
-        key = (scheme, value.casefold())
+        key = (scheme, normalize_id(scheme, value))
         self.calls.append(key)
         if key in self.failures:
             raise LookupFailed(self.failures[key], f"fixture {self.failures[key]} for {scheme}:{value}")
@@ -140,12 +141,14 @@ class StaticResolver:
 class EvidenceCheck(StrictModel):
     evidence_id: str
     source_location: str | None  # where in the source the observation sits
-    resolution: Resolution
+    resolution: Resolution  # the worst of ``resolutions``: defect, then unverified, then found
+    resolutions: list[Resolution]  # one per identifier the source carries (external ID or URI, artifact)
 
 
 class ClaimCheck(StrictModel):
     claim: str  # "<id>@<revision>"
     declared_status: str
+    # verified: every supporting/contradicting source resolved and at least one carries the status.
     state: Literal["verified", "unverified", "defective", "not_asserted"]
     verified_evidence: list[str]
     unverified_evidence: list[str]
@@ -161,6 +164,7 @@ class VerificationReport(StrictModel):
     evidence: list[EvidenceCheck]
     claims: list[ClaimCheck]
     lookup_failures: list[str]  # evidence ids whose lookup did not complete; not absence
+    defective_evidence: list[str]  # evidence ids citing a not_found, malformed or conflicting source
     ok: bool
 
 
@@ -177,7 +181,7 @@ def _judge(scheme: str, value: str, version: str | None, records: list[SourceRec
         # Numeric IDs collide across databases (PMID 12345 vs ClinVar 12345).
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a record from a different scheme")
-    other = [r for r in records if r.id_value.casefold() != value.casefold()]
+    other = [r for r in records if normalize_id(scheme, r.id_value) != normalize_id(scheme, value)]
     if other:
         return Resolution(**base, status="conflicting", candidates=records,
                           detail="the authority returned a different identifier")
@@ -214,30 +218,40 @@ async def _lookup(resolver: SourceResolver, scheme: str, value: str, version: st
     return _judge(scheme, value, version, records, resolver.name)
 
 
-async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_paths: Mapping[str, str],
-                   observed_artifacts: Mapping[str, str] | None, timeout_s: float,
-                   cache: dict[tuple[str, str, str | None], Resolution]) -> Resolution:
-    if source.id_scheme and source.id_value:
-        scheme, value = source.id_scheme, source.id_value.strip()
-    elif source.artifact_id:
-        path = artifact_paths.get(source.artifact_id, "")
-        if observed_artifacts is None:
-            return _skipped("artifact", source.artifact_id, "manifest", "requires_verification",
-                            "manifest_unavailable", "artifact hashes need the observed task manifest")
-        digest = observed_artifacts.get(path)
-        base = {"id_scheme": "artifact", "id_value": source.artifact_id, "lookup": "succeeded",
-                "resolver": "manifest"}
-        if digest is None:
-            return Resolution(**base, status="not_found", detail=f"{path} is not in the observed manifest")
-        record = SourceRecord(id_scheme="artifact", id_value=source.artifact_id, version=digest, url=path)
-        if source.version and source.version.strip().casefold() != digest.casefold():
-            # The file at this path changed after the result cited it.
-            return Resolution(**base, status="conflicting", candidates=[record],
-                              detail=f"cited sha256 {source.version} differs from the observed {digest}")
-        return Resolution(**base, status="found", record=record)
-    else:
-        scheme, value = "uri", (source.uri or "").strip()
-    key = (scheme, value.casefold(), source.version)
+DEFECT_STATUSES = frozenset({"not_found", "conflicting", "insufficient"})
+
+
+def _severity(resolution: Resolution) -> int:
+    if resolution.status in DEFECT_STATUSES:
+        return 2
+    return 1 if resolution.status == "requires_verification" else 0
+
+
+def _resolve_artifact(artifact_id: str, cited_sha256: str | None, artifact_paths: Mapping[str, str],
+                      observed: Mapping[str, set[str]] | None) -> Resolution:
+    path = artifact_paths.get(artifact_id, "")
+    if observed is None:
+        return _skipped("artifact", artifact_id, "manifest", "requires_verification",
+                        "manifest_unavailable", "artifact hashes need the observed task manifest")
+    digests = observed.get(path)
+    base = {"id_scheme": "artifact", "id_value": artifact_id, "lookup": "succeeded", "resolver": "manifest"}
+    if not digests:
+        return Resolution(**base, status="not_found", detail=f"{path} is not in the observed manifest")
+    records = [SourceRecord(id_scheme="artifact", id_value=artifact_id, version=d, url=path) for d in sorted(digests)]
+    if len(records) > 1:
+        return Resolution(**base, status="conflicting", candidates=records,
+                          detail=f"the manifest spells {path} several ways with different hashes")
+    digest = records[0].version or ""
+    if cited_sha256 and cited_sha256.strip().casefold() != digest.casefold():
+        # The file at this path changed after the result cited it.
+        return Resolution(**base, status="conflicting", candidates=records,
+                          detail=f"cited sha256 {cited_sha256} differs from the observed {digest}")
+    return Resolution(**base, status="found", record=records[0])
+
+
+async def _resolve_external(scheme: str, value: str, version: str | None, resolver: SourceResolver | None,
+                            timeout_s: float, cache: dict[tuple[str, str, str | None], Resolution]) -> Resolution:
+    key = (scheme, normalize_id(scheme, value), version)
     if key in cache:
         return cache[key]
     pattern = ID_FORMATS.get(scheme)
@@ -251,28 +265,61 @@ async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_
         resolution = _skipped(scheme, value, resolver.name, "requires_verification", "unsupported_scheme",
                               f"{resolver.name} cannot look up {scheme}")
     else:
-        resolution = await _lookup(resolver, scheme, value, source.version, timeout_s)
+        resolution = await _lookup(resolver, scheme, value, version, timeout_s)
     cache[key] = resolution
     return resolution
+
+
+async def _resolve(source: SourceRef, resolver: SourceResolver | None, artifact_paths: Mapping[str, str],
+                   observed: Mapping[str, set[str]] | None, timeout_s: float,
+                   cache: dict[tuple[str, str, str | None], Resolution]) -> list[Resolution]:
+    """Check every identifier the source carries; skipping one would let it stand unchecked.
+
+    ``version`` describes the external record when there is one; on an artifact-only source it is the
+    cited sha256.
+    """
+    resolutions: list[Resolution] = []
+    external: tuple[str, str] | None = None
+    if source.id_scheme and source.id_value and source.id_value.strip():
+        external = (source.id_scheme, source.id_value.strip())
+    elif source.uri and source.uri.strip():
+        external = ("uri", source.uri.strip())
+    if external:
+        resolutions.append(await _resolve_external(*external, source.version, resolver, timeout_s, cache))
+    if source.artifact_id:
+        resolutions.append(_resolve_artifact(source.artifact_id, None if external else source.version,
+                                             artifact_paths, observed))
+    return resolutions
 
 
 async def verify_sources(result: "ResearchResult", resolver: SourceResolver | None = None, *,
                          observed_artifacts: Mapping[str, str] | None = None,
                          timeout_s: float = 20.0) -> VerificationReport:
-    """Resolve every observed countable source in a result and judge each claim's declared status.
+    """Resolve every cited source in a result and judge each claim's declared status.
 
     ``observed_artifacts`` maps artifact paths to the SHA-256 the runner observed; without it artifact
-    evidence stays ``requires_verification``.
+    evidence stays ``requires_verification``. ``ok`` needs every asserted claim verified and no defective
+    source anywhere in the result, context and reasoning rows included.
     """
-    artifact_paths = {ref.artifact_id: ref.path for ref in result.artifact_refs}
+    artifact_paths = {ref.artifact_id: normalize_artifact_path(ref.path) for ref in result.artifact_refs}
+    observed: dict[str, set[str]] | None = None
+    if observed_artifacts is not None:
+        observed = {}
+        for path, digest in observed_artifacts.items():
+            observed.setdefault(normalize_artifact_path(path), set()).add(digest)
     cache: dict[tuple[str, str, str | None], Resolution] = {}
     checks: dict[str, EvidenceCheck] = {}
     for row in result.evidence:
-        if not row.counts or row.source is None:
+        # A failed, empty or unavailable retrieval is not cited as a source of anything. Every other row
+        # with a source is checked, context and reasoning rows included: a made-up ID is a defect anywhere.
+        if row.source is None or (row.countable and row.status != "observed"):
             continue
-        resolution = await _resolve(row.source, resolver, artifact_paths, observed_artifacts, timeout_s, cache)
+        resolutions = await _resolve(row.source, resolver, artifact_paths, observed, timeout_s, cache)
+        if not resolutions:
+            continue
+        worst = max(resolutions, key=_severity)  # max keeps the first of equal severity
         checks[row.id] = EvidenceCheck(evidence_id=row.id, source_location=row.source.locator,
-                                       resolution=resolution)
+                                       resolution=worst, resolutions=resolutions)
 
     groups = {row.id: row.independence_group for row in result.evidence}
     claim_checks: list[ClaimCheck] = []
@@ -297,15 +344,20 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         elif needed is None:
             state = "not_asserted"
         else:
-            state = "verified" if verified else "unverified"
+            # One resolved source does not vouch for the others: an unchecked supporting or contradicting
+            # source could still be invented, and a partial status depends on both sides.
+            state = "verified" if verified and not unverified else "unverified"
         claim_checks.append(ClaimCheck(
             claim=claim.key, declared_status=claim.status, state=state, verified_evidence=verified,
             unverified_evidence=unverified, defects=defects,
             independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
 
+    defective = [eid for eid, check in checks.items() if check.resolution.status in DEFECT_STATUSES]
     return VerificationReport(
         plan_sha256=result.plan_sha256, step_id=result.step_id,
         resolver=resolver.name if resolver else "none",
         evidence=list(checks.values()), claims=claim_checks,
-        lookup_failures=[eid for eid, check in checks.items() if check.resolution.lookup == "failed"],
-        ok=all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+        lookup_failures=[eid for eid, check in checks.items()
+                         if any(r.lookup == "failed" for r in check.resolutions)],
+        defective_evidence=defective,
+        ok=not defective and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
