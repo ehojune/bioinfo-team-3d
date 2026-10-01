@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:17 | [`4055c63`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/4055c63) | CSO 산출 선언과 지시문을 실행 전에 한 번 정규화하고 bench 결과 블록을 마지막에 보존 |
 | 06:49 | [`83cc18d`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/83cc18d) | 요청별 입력 hash를 첫 그림자 관측에 보존하고 계획의 출력 이름을 입력에서 제외함 |
 | 06:35 | [`258bf48`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/258bf48) | 러너가 허용한 입력 증거만 쓰고 파일명과 Git ref의 대소문자를 보존함 |
 | 06:18 | [`be52c34`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/be52c34) | 재사용 후보를 입력 정체성과 목표 data type으로 먼저 걸러 정밀도를 높임 |
