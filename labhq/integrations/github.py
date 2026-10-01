@@ -23,7 +23,7 @@ from urllib.parse import unquote
 
 import httpx
 
-from ..intake import mask_references, public_url, published_reference_masks, url_pattern
+from ..intake import mask_published_references, public_url, url_pattern
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -208,7 +208,7 @@ def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> st
     requests = list(requests)
     out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
     out = sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token], limit=None)
-    return clip(mask_references(out, published_reference_masks(settings, requests)), MAX_BODY)
+    return clip(mask_published_references(out, settings, requests), MAX_BODY)
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:

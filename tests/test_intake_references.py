@@ -857,6 +857,32 @@ def test_project_reports_never_carry_reference_paths(tmp_path):
     assert "https://github.com/lab/protocols" in cleaned
 
 
+@pytest.mark.parametrize(("kind", "reference", "written", "mask"), [
+    pytest.param("path", "/srv/refs/private", r"/SRV/refs/private/notes.md", "<reference-path>", id="path-posix"),
+    pytest.param("path", r"C:\Lab\Private", r"c:/lab/private/notes.md", "<reference-path>", id="path-drive"),
+    pytest.param("path", r"C:\Lab\Private", r"\\?\C:\LAB\Private\notes.md", "<reference-path>", id="path-unc"),
+    pytest.param("path", "~/refs/private", r"C:\Users\runner\refs\private\notes.md", "<reference-path>",
+                 id="path-home"),
+    pytest.param("github", "owner/Yuan", "https://github.com/owner/Yuan/tree/main", "<private-reference>",
+                 id="github-url"),
+    pytest.param("github", "owner/Yuan", "/srv/clones/owner/Yuan/README.md", "<private-reference>",
+                 id="github-posix-clone"),
+    pytest.param("github", "owner/Yuan", r"C:\src\OWNER\YUAN\README.md", "<private-reference>",
+                 id="github-drive-clone"),
+    pytest.param("github", "owner/Yuan", r"\\server\clones\owner\Yuan\README.md", "<private-reference>",
+                 id="github-unc-clone"),
+    pytest.param("github", "owner/Yuan", r"owner\Yuan", "<private-reference>", id="github-backslashes"),
+    pytest.param("github", "owner/Yuan", "~/src/Yuan", "<private-reference>", id="github-home-clone"),
+    pytest.param("github", "owner/Yuan", "clone Yuan locally", "<private-reference>", id="github-clone-name"),
+])
+def test_published_references_mask_every_path_and_repository_spelling(tmp_path, kind, reference, written, mask):
+    s = settings_with_roots(tmp_path)
+    s.pi_profile.references = [ref(kind, reference)]
+    cleaned = create_app(s).state.hub.reporter._clean(f"before {written} after")
+    secret = "private" if kind == "path" else "yuan"
+    assert mask in cleaned and secret not in cleaned.replace(mask, "").casefold(), cleaned
+
+
 def test_project_reports_mask_reference_paths_in_any_case_or_separator(tmp_path):
     s = settings_with_roots(tmp_path)
     s.pi_profile.references = [ref("path", r"C:\Users\pi\Yuan", "private"), ref("path", "/home/pi/llm-wiki")]

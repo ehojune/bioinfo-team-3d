@@ -647,29 +647,34 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
             rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
 
 
-def link_patterns(kind: str, value: str) -> list[str]:
-    """A private github or url reference in every form an agent writes it: the URL, and for GitHub the bare
-    `owner/repo` (also inside `git@github.com:owner/repo.git` or a clone path)."""
+def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[str]]:
+    """URL patterns and repository-identity patterns for one private PI reference."""
     github = re.match(r"https?://(?:www\.)?github\.com/([^/]+)/([^/]+)", value, re.IGNORECASE)
     if kind != "github" or not github:
-        return [url_pattern(value, trailing_slash=False) + _URL_REST]
+        return [url_pattern(value, trailing_slash=False) + _URL_REST], []
     owner, repo = github.groups()  # the repository, whichever branch the reference named
-    return [url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST,
-            rf"(?<![\w.-]){_text(owner)}{_SLASH}{_text(repo)}(?:\.git)?{_PATH_END}"]
+    url = url_pattern(f"https://github.com/{owner}/{repo}", trailing_slash=False) + r"(?:\.git)?" + _URL_REST
+    # `SEPARATOR` accepts POSIX, drive, UNC, native backslash and JSON-escaped clone paths. The clone folder
+    # alone is also repository identity: an agent may shorten `C:\src\owner\repo` to `C:\src\repo` or `repo`.
+    identities = [rf"(?<![\w.-]){_text(owner)}{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}",
+                  rf"(?<![\w.-]){_text(repo)}(?:\.git)?{_PATH_END}"]
+    return [url], identities
 
 
 REFERENCE_PATH_MASK = "<reference-path>"
 PRIVATE_REFERENCE_MASK = "<private-reference>"
 
 
-def published_reference_masks(settings: Any, requests: Any) -> tuple[tuple[re.Pattern[str], str], ...]:
-    """What a published text (project report, round record) must not carry, as (pattern, replacement).
+def mask_published_references(text: str, settings: Any, requests: Any) -> str:
+    """Normalize and mask references before a project report or round record is published.
 
     - path references from any source: a runner path names a private folder (#36);
     - github and url references from the PI's defaults (#123): a private repository name or a personal wiki
       that the PI set once for every request, not something this request chose to point at. DOI and PMID
       name published literature and stay.
-    Project reports and round records share this one rule (#130).
+    Path spellings accept POSIX, drive, extended/UNC prefixes, either separator, case variants and expanded
+    homes. GitHub spellings include URLs, `owner/name` with either separator and the local clone folder name.
+    Project reports and round records call this one rule (#130).
     """
     entries = [(r.kind, r.value, "pi_profile") for r in settings.pi_profile.references]
     for req in requests:
@@ -678,28 +683,29 @@ def published_reference_masks(settings: Any, requests: Any) -> tuple[tuple[re.Pa
     paths = {value for kind, value, _ in entries if kind == "path"}
     links = {(kind, value) for kind, value, source in entries
              if kind in ("github", "url") and source == "pi_profile"}
-    return _compiled_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}), frozenset(links))
+    masks = _compiled_publish_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}), frozenset(links))
+    for pattern, replacement in masks:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 @functools.lru_cache(maxsize=32)
-def _compiled_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = frozenset()
-                    ) -> tuple[tuple[re.Pattern[str], str], ...]:
-    # Links first: a path mask must not eat the path part of a private URL and leave its host behind.
+def _compiled_publish_masks(paths: frozenset[str], links: frozenset[tuple[str, str]] = frozenset()
+                            ) -> tuple[tuple[re.Pattern[str], str], ...]:
+    link_patterns = [_private_reference_patterns(kind, value)
+                     for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)]
+    # Whole private URLs go first. Paths follow so an explicit path containing a repository name is hidden
+    # as a path; repository identities go last to catch clone paths which were never path references.
     masks = [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
-             for kind, value in sorted(links, key=lambda item: len(item[1]), reverse=True)
-             for source in link_patterns(kind, value)]
+             for urls, _identities in link_patterns for source in urls]
     # Even `~` and `~/x` are valid references. Do not use length as a proxy for safety: the former expands
     # to a runner account's whole home and the gateway cannot know that account in advance.
     values = {v.rstrip("\\/") or v for v in paths if v}
     masks += [(re.compile(path_pattern(v, boundary=False, any_home=True), re.IGNORECASE), REFERENCE_PATH_MASK)
               for v in sorted(values, key=len, reverse=True) if v]
+    masks += [(re.compile(source, re.IGNORECASE), PRIVATE_REFERENCE_MASK)
+              for _urls, identities in link_patterns for source in identities]
     return tuple(masks)
-
-
-def mask_references(text: str, masks: tuple[tuple[re.Pattern[str], str], ...]) -> str:
-    for pattern, replacement in masks:
-        text = pattern.sub(replacement, text)
-    return text
 
 
 def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tuple[str, ...] = ()) -> str:

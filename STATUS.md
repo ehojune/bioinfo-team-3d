@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #176 3회차 — 참고 공개 가림 부류 종료
+
+- 결론: 같은 부류의 P1 4154275555를 닫았다. 공개 게시 전에 path와 PI 기본 GitHub 참고를 한 함수에서 정규화해 경로와 저장소 정체성을 함께 가린다. P3 4154275565의 README 중복도 합쳤다.
+- 바뀐 것: `mask_published_references`가 POSIX·Windows drive·UNC·백슬래시·대소문자·home·URL 표기를 다루고, GitHub URL·`owner/name`·clone 폴더명을 가린다. 표기별 회귀 11건을 한 표로 묶었다. README 참고 항목은 2개에서 1개, 39,376자에서 38,282자로 줄었다. 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 표는 수정 전 5 failed/6 passed, 수정 뒤 11 passed였다. 관련 test는 154 passed/1 skipped, 전체 pytest 1892 passed/22 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`, `README.md`.
+
 ## 2026-10-01 · PR #176 봇 리뷰 P1 3건 — 짧은 home 참고와 공용 경로 scanner
 
 - 결론: P1 3건을 닫았다. 짧은 home 참고를 모든 러너 표현에서 가리고, 경로·통제 구역 탐색은 공용 scanner로 입력 길이에 비례해 돈다.
