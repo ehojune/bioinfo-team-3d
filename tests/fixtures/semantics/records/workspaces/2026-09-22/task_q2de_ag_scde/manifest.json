@@ -1,0 +1,52 @@
+{
+  "labhq_version": "0.2.1",
+  "host": "synth-host-a",
+  "task": {
+    "id": "task_q2de",
+    "request_id": "req_q2",
+    "agent_id": "ag_scde",
+    "prompt": "Synthetic prompt for task_q2de.",
+    "output_schema": null,
+    "resume_session_id": null,
+    "budget_usd": null,
+    "created_at": 1790035299.0,
+    "meta": {
+      "kind": "step",
+      "step_id": "de2",
+      "request": "Synthetic request req_q2.",
+      "instruction": "Synthetic step de2.",
+      "revision": 0,
+      "title": "de2: Synthetic step de2.",
+      "project_dirs": [],
+      "upstream_dirs": [],
+      "outputs": [
+        "outputs/de_table.tsv"
+      ],
+      "attempt": 1
+    }
+  },
+  "agent_id": "ag_scde",
+  "engine": "claude_code",
+  "model": "model-a",
+  "agent_spec_sha256": "a5473b3b385004ed7dfa09d980d1101d9435dcb2030807f923ae49aa042629f0",
+  "runs": {
+    "task_q2de": {
+      "started_at": 1790035300.0,
+      "runner_id": "runner-a",
+      "engine": "claude_code",
+      "model": "model-a",
+      "engine_cli_version": "0.0.0-synth",
+      "resume_of": null,
+      "kind": "step",
+      "ended_at": 1790035900.0,
+      "ok": true,
+      "error": null,
+      "cost_usd": 0.01,
+      "cost_known": true,
+      "usage": {},
+      "usage_known": true,
+      "session_id": "sess_q2de",
+      "pending_jobs": []
+    }
+  }
+}

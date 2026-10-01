@@ -1,0 +1,33 @@
+{
+  "synthetic": true,
+  "note": "Runner-observed sha256 per workspace (workdir_id) and path spelling, the observed_artifacts input of labhq.evidence.verify.verify_sources. No entry means not observed.",
+  "workspaces": {
+    "task_q1fetch_ag_fetch": {
+      "outputs/raw_counts.tsv": "0d9bafaa1bebc02b611b954fc63ab51dd24d7aa12965fe1a462cdab4625d0b42"
+    },
+    "task_q1de_ag_scde": {
+      "outputs/norm_counts.tsv": "29e1e808400dfc420e883d7fdccc634e52f9fb86546bff52cb2b044c192095c4",
+      "outputs/de_table.tsv": "9a672d63bb6c3475e5e8e45b58aa934b698fa02a4fe47e009585d63ad238c3d5"
+    },
+    "task_q2de_ag_scde": {
+      "outputs/de_table.tsv": "f81198ea75e0fca984641d38bc4dd2c5db69e1c46dc04682aad9f636777c4ec0"
+    },
+    "task_q2flt_ag_stats": {
+      "outputs/de_filtered.tsv": "d9c74c709fbf0fa0f953e8e2012f645bab3f5b1e54855542795262538f8c1bb7"
+    },
+    "task_q3fetch_ag_fetch": {
+      "outputs/raw_counts.tsv": "0d9bafaa1bebc02b611b954fc63ab51dd24d7aa12965fe1a462cdab4625d0b42"
+    },
+    "task_q3scan_ag_seqtool": {
+      "outputs/scan_hits.tsv": "44d38dbcaa85ca049429c1120e4dc2d6e34bf1c95cdf60c00c82c6432e95d8e9"
+    },
+    "task_q4qc_ag_scde": {
+      "outputs/qc_table.tsv": "a44dc0fc5416310b81acb38475c52704e7462eab6f387f05f325066f101ad37a",
+      "outputs/qc_summary.tsv": "67e957c9d36d40acaaffefedc0fab18307eae352f4b2eba0367f93a454322100"
+    },
+    "task_q4rep_ag_scde": {
+      "outputs/de_table.tsv": "67bfbfe1f927024719cc68ce53d9fb2ad845b2e21fb3de019785500594bf6012",
+      "./outputs/de_table.tsv": "dd0abadf18d3afff57d58a079fc5be9b691f471110fc4bbd64005a2d57ac67be"
+    }
+  }
+}

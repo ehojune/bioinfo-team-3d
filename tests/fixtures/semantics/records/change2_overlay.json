@@ -1,0 +1,38 @@
+{
+  "synthetic": true,
+  "note": "Change 2 only: merged into state.task[task_id].payload.meta.output_types before the change-2 run.",
+  "task_meta": {
+    "task_q1fetch": {
+      "output_types": {
+        "outputs/raw_counts.tsv": "raw_counts"
+      }
+    },
+    "task_q1de": {
+      "output_types": {
+        "outputs/norm_counts.tsv": "normalized_counts",
+        "outputs/de_table.tsv": "de_table"
+      }
+    },
+    "task_q1dew": {
+      "output_types": {
+        "outputs/norm_counts.tsv": "normalized_counts",
+        "outputs/de_table.tsv": "de_table"
+      }
+    },
+    "task_q2de": {
+      "output_types": {
+        "outputs/de_table.tsv": "de_table"
+      }
+    },
+    "task_q2flt": {
+      "output_types": {
+        "outputs/de_filtered.tsv": "de_table"
+      }
+    },
+    "task_q3fetch": {
+      "output_types": {
+        "outputs/raw_counts.tsv": "raw_counts"
+      }
+    }
+  }
+}
