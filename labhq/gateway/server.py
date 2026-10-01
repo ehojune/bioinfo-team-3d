@@ -761,20 +761,23 @@ class Hub:
                 if entry.get("kind") == "consult" and
                 ((entry.get("payload") or {}).get("meta") or {}).get("ask_id") == ask_id]
 
-    async def adopt_consult(self, ask_id: str, agent_id: str) -> tuple[bool, TaskResult | None]:
+    async def adopt_consult(self, ask_id: str, agent_id: str) -> tuple[int, TaskResult | None]:
         """Adopt the consult a previous gateway started for this ask (#93).
 
-        Returns ``(found, result)``. ``result`` is ``None`` when a prior consult exists but its
-        outcome is unknown (another runner generation, or abandoned). The caller then runs a new
-        consult in a separate session and workdir, because the old one may still hold them.
+        Returns ``(attempt, result)`` for the latest prior consult, or ``(0, None)`` without one.
+        ``result`` is ``None`` when its outcome is unknown (another runner generation, or
+        abandoned). The caller then runs a new consult in a separate session and workdir,
+        because the old one may still hold them.
         """
         prior = self.consult_attempts(ask_id)
         if not prior:
-            return False, None
+            return 0, None
         for tid, _ in prior:
             self.recovered_tasks.add(tid)  # handled here; dispatch recovery must not re-adopt it
-        tid, entry = max(prior, key=lambda pair: (int(pair[1].get("attempt") or 1),
-                                                  pair[1].get("dispatched_at", 0)))
+        # Latest dispatch first: an isolated rerun restarts its attempt numbering.
+        tid, entry = max(prior, key=lambda pair: (pair[1].get("dispatched_at", 0),
+                                                  int(pair[1].get("attempt") or 1)))
+        attempt = int(entry.get("attempt") or 1)
         if not entry.get("completed") and self.agent_runner.get(agent_id) not in self.runners:
             # Resume approval can precede the runner's reconnect; its generation decides adoption.
             await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s)
@@ -782,13 +785,14 @@ class Hub:
         if not entry.get("completed"):
             runner = self.agent_runner.get(agent_id)
             if not self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)):
-                return True, None
+                return attempt, None
             await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
                                          reason="adopting consult started before gateway restart")
             entry = self.store.get("task", tid) or entry
         if not entry.get("completed") or entry.get("abandoned") or not entry.get("result"):
-            return True, None
-        return True, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})
+            return attempt, None
+        # The task.result handler already added its cost to the durable request total.
+        return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:

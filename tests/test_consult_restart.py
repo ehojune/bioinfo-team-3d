@@ -205,3 +205,83 @@ async def test_recovery_never_answers_an_ask_with_another_asks_consult(tmp_path)
         assert hub.store.get("ask", ask.id)["answer"]["answer"] == "answer for the second ask"
     finally:
         hub.store.close()
+
+
+def ledger_consult(hub, tid, *, attempt, dispatched_at, completed, result=None, abandoned=False, workdir=None):
+    task = Task(id=tid, agent_id="cso", request_id="r", prompt="answer", resume_session_id=None,
+                meta={"kind": "consult", "ask_id": "the-ask", "attempt": attempt,
+                      **({"workdir": workdir} if workdir else {})})
+    hub.store.put("task", tid, {"request_id": "r", "kind": "consult", "attempt": attempt, "accepted": True,
+                                "completed": completed, "dispatched_at": dispatched_at,
+                                "runner_id": "local", "runner_incarnation": "inc-1",
+                                **({"abandoned": True} if abandoned else {}),
+                                "payload": task.model_dump(mode="json"),
+                                **({"result": result.model_dump(mode="json")} if result else {})})
+
+
+async def test_adoption_prefers_the_latest_consult_over_a_higher_attempt(tmp_path):
+    hub = Hub(settings(tmp_path))
+    try:
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        lost = TaskResult(task_id="old", agent_id="cso", ok=False, error="runner generation changed")
+        ledger_consult(hub, "old", attempt=2, dispatched_at=1, completed=True, result=lost, abandoned=True)
+        # After an earlier restart the isolated rerun started again at attempt 1 and finished.
+        rerun = TaskResult(task_id="rerun", agent_id="cso", ok=True, text="Use cohort C7")
+        ledger_consult(hub, "rerun", attempt=1, dispatched_at=2, completed=True, result=rerun)
+        attempt, result = await hub.adopt_consult("the-ask", "cso")
+        assert attempt == 1 and result is not None and result.text == "Use cohort C7"
+    finally:
+        hub.store.close()
+
+
+async def test_adopted_consult_cost_reaches_the_request_budget_total(tmp_path):
+    hub = Hub(settings(tmp_path))
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running", "cost_usd": 0.0}
+        hub.orchestrator.cost["r"] = 0.0  # run_request baseline taken before the late result
+        task = Task(id="running", agent_id="cso", request_id="r", prompt="answer",
+                    meta={"kind": "consult", "ask_id": "the-ask"})
+        hub.store.put("task", "running", {"request_id": "r", "kind": "consult", "accepted": True,
+                                          "completed": False, "dispatched_at": 1, "runner_id": "local",
+                                          "runner_incarnation": "inc-1", "payload": task.model_dump(mode="json")})
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        routed = asyncio.create_task(hub.orchestrator.answer_ask(question("the-ask"), "local"))
+        await asyncio.sleep(0.05)
+        done = TaskResult(task_id="running", agent_id="cso", ok=True, text="Use cohort C7", cost_usd=0.75)
+        await hub.on_runner_message("local", {"type": "task.result", "task_id": "running", "request_id": "r",
+                                              "data": done.model_dump(mode="json")})
+        await asyncio.wait_for(routed, 2)
+        assert hub.requests["r"]["cost_usd"] == 0.75
+        assert hub.orchestrator.cost["r"] == 0.75, "budget checks and _finish use this total"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize(("prior_attempt", "expected_calls"), [(1, 2), (3, 0)])
+async def test_adopted_transient_failure_uses_only_the_remaining_retries(tmp_path, prior_attempt, expected_calls):
+    s = settings(tmp_path)
+    s.orchestrator.step_max_attempts = 3
+    hub = Hub(s)
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running"}
+        failed = TaskResult(task_id="old", agent_id="cso", ok=False, error="rate limit; try again")
+        ledger_consult(hub, "old", attempt=prior_attempt, dispatched_at=1, completed=True, result=failed)
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            ok = len(calls) == 2
+            return TaskResult(task_id=task.id, agent_id="cso", ok=ok, text="Use cohort C7" if ok else "",
+                              error=None if ok else "rate limit; try again")
+
+        hub.dispatch = dispatch
+        await hub.orchestrator.answer_ask(question("the-ask"), "local")
+        assert len(calls) == expected_calls
+        assert [task.meta["attempt"] for task in calls] == list(range(prior_attempt + 1, 4))[:expected_calls]
+        assert all(task.resume_session_id is None and "workdir" not in task.meta for task in calls)
+        answer = hub.store.get("ask", "the-ask")["answer"]
+        assert answer["status"] == ("answered" if expected_calls else "rejected")
+    finally:
+        hub.store.close()

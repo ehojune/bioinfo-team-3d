@@ -550,7 +550,14 @@ class Orchestrator:
             # After a gateway restart the runner may still be running this ask's consult.
             # Adopt its result; when its outcome is unknown, isolate the new consult.
             adopt = getattr(self.hub, "adopt_consult", None)
-            prior, result = await adopt(ask.id, routed) if adopt else (False, None)
+            prior, result = await adopt(ask.id, routed) if adopt else (0, None)
+            first_attempt = 1
+            if result is not None:
+                self._sync_durable_cost(ask.request_id)
+                if failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
+                    result, first_attempt = None, prior + 1  # only the retries that are left
+            elif prior:
+                first_attempt = min(prior, self.cfg.step_max_attempts)  # its outcome was never observed
             if result is None:
                 session_id, workdir = self._last_agent_session(ask.request_id, routed)
                 if requested.startswith("colleague:"):
@@ -566,7 +573,8 @@ class Orchestrator:
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
                           "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
                 )
-                result = await self.run_step(consult)
+                result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
+                                else self.run_step(consult))
             if routed == self.cfg.cso_agent and result.session_id:
                 request["cso_session_id"], request["cso_workdir"] = result.session_id, result.workdir
                 if ask.request_id in self.hub.requests:
@@ -577,13 +585,23 @@ class Orchestrator:
             answer=answer if answered else None, reason=None if answered else answer,
             **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
+    def _sync_durable_cost(self, rid: str | None) -> None:
+        """Include costs the gateway recorded outside run_step, e.g. an adopted consult (#93)."""
+        if rid and rid in self.hub.requests:
+            durable = float(self.hub.requests[rid].get("cost_usd") or 0)
+            self.cost[rid] = max(self.cost.get(rid, 0.0), durable)
+
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
-    async def run_step(self, task: Task) -> TaskResult:
+    async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
         rid = task.request_id or ""
-        async def dispatch_with_retry(current: Task, max_attempts: int | None = None) -> TaskResult:
+        initial_attempt = first_attempt
+
+        async def dispatch_with_retry(current: Task, max_attempts: int | None = None,
+                                      start: int = 1) -> TaskResult:
             key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
             limit = max_attempts or self.cfg.step_max_attempts
-            first_attempt = min(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), limit)
+            first_attempt = min(max(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), start),
+                                limit)
             previous_workdir = current.meta.get("workdir")
             previous_session = current.resume_session_id
             previous_result = None
@@ -654,7 +672,7 @@ class Orchestrator:
                                                                "reason": res.error or "empty result"})
             raise AssertionError("unreachable")
 
-        res = await dispatch_with_retry(task)
+        res = await dispatch_with_retry(task, start=initial_attempt)
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
