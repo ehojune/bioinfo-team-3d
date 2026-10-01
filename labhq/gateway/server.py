@@ -35,6 +35,10 @@ log = logging.getLogger(__name__)
 TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 
 
+def _semantics_wanted(raw: Any) -> bool:  # semantics-hook
+    return not (raw in (None, False, "off") or raw in ({"mode": False}, {"mode": "off"}))  # semantics-hook
+
+
 class UTF8JSONResponse(JSONResponse):
     media_type = "application/json; charset=utf-8"
 
@@ -173,6 +177,10 @@ class Hub:
         self.orchestrator = Orchestrator(self)
         self.reporter = ProjectReporter(self, settings, github_transport)
         self.rounds = RoundRecorder(self, github_transport)
+        self.semantics_shadow = None  # semantics-hook
+        if _semantics_wanted(getattr(settings, "semantics", None)):  # semantics-hook: any spelling of off never imports it
+            from ..research.semantics_shadow import ShadowService  # semantics-hook
+            self.semantics_shadow = ShadowService.start(self)  # semantics-hook
         for rid, req in self.requests.items():
             if req.get("status") == "interrupted":
                 self.rounds.write(rid)
@@ -252,6 +260,8 @@ class Hub:
         self.pending_committed.append((event, tuple(self.clients)))
         asyncio.get_running_loop().create_task(self._send_committed_event())
         self._queue_terminal_delivery(event)
+        if getattr(self, "semantics_shadow", None) is not None:  # semantics-hook: after the request ended
+            self.semantics_shadow.after_request(rid)  # semantics-hook: copies rows, queues, never raises
 
     def _queue_terminal_delivery(self, event: dict) -> None:
         seq = event["seq"]

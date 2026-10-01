@@ -451,10 +451,35 @@ def _imported_names(path):
     return names
 
 
-def test_existing_modules_never_import_the_pilot():
-    offenders = [path.relative_to(ROOT).as_posix() for path in (ROOT / "labhq").rglob("*.py")
-                 if not (path.name == "semantics.py" and path.parent.name == "research")
-                 and any("semantics" in name for name in _imported_names(path))]
+SHADOW_MODULES = {"labhq/research/semantics.py", "labhq/research/semantics_shadow.py",
+                  "labhq/research/semantics_objects.py"}  # the model and its #150 shadow worker
+
+
+def test_existing_modules_reach_the_model_only_through_a_lazy_marked_hook():
+    """No module imports the model at load time. The gateway and CLI may import the #150 shadow, but only
+    inside a function, on a `# semantics-hook` line that the removal script deletes."""
+    import ast
+    offenders = []
+    for path in (ROOT / "labhq").rglob("*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel in SHADOW_MODULES:
+            continue
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        tree = ast.parse(source)
+        lazy = {id(n) for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                for n in ast.walk(f)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = ["." * node.level + (node.module or "")] + [alias.name for alias in node.names]
+            else:
+                continue
+            if any("semantics" in name for name in names) and not (
+                    id(node) in lazy and "# semantics-hook" in lines[node.lineno - 1]
+                    and all("semantics_shadow" in name or "semantics" not in name for name in names)):
+                offenders.append(f"{rel}:{node.lineno}")
     assert offenders == []
 
 

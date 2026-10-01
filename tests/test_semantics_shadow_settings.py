@@ -63,3 +63,12 @@ def test_default_is_off_and_the_example_configs_say_so():
     assert texts[0] == texts[1]
     data = yaml.safe_load(texts[0])
     assert "semantics" in data and resolve(data["semantics"]) is None
+
+
+def test_a_gateway_with_a_bad_value_starts_with_semantics_off(tmp_path):
+    from labhq.gateway.server import Hub
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    s.semantics = {"mode": "advisory"}
+    assert Hub(s).semantics_shadow is None
+    assert not (tmp_path / "state" / "semantics").exists()
