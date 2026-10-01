@@ -678,6 +678,43 @@ def test_publish_guard_reads_encoded_parameter_names_and_url_userinfo():
     assert "ssh://git@github.com/o/r.git" in out, "an account name alone is not a credential"
 
 
+def test_publish_guard_hides_webhook_paths_session_ids_and_codes():
+    # #134: these secrets sit in a URL path or under a name that is not credential-like.
+    from labhq.integrations.github import sanitize
+
+    text = ("a https://hooks.slack.com/services/T0AAA/B0BBB/sl4ckSECRET1 "
+            "b https://discord.com/api/webhooks/123456/d1scordSECRET2 "
+            r"c https:\/\/hooks.slack.com\/services\/T0AAA\/B0BBB\/sl4ckSECRET3 "
+            "d https://lab.webhook.office.com/webhookb2/abc@def/IncomingWebhook/t3amsSECRET4/xyz "
+            "e https://api.telegram.org/bot123456:t3legramSECRET5/sendMessage "
+            "f https://h.example/app;jsessionid=JSESS6 g https://app.example/cb?code=0authCODE7&state=s1 "
+            "h https://h.example/x?session=SESS8&PHPSESSID=php9 "
+            r"i https:\/\/alice:pa55WORD10@h.example\/x")
+    out = sanitize(text, Settings().policy)
+    for secret in ("sl4ckSECRET1", "d1scordSECRET2", "sl4ckSECRET3", "t3amsSECRET4", "t3legramSECRET5", "JSESS6",
+                   "0authCODE7", "SESS8", "php9", "pa55WORD10", "T0AAA"):
+        assert secret not in out, secret
+    assert "https://hooks.slack.com/services/<redacted-secret> b" in out
+    assert "https://api.telegram.org/bot<redacted-secret> f" in out and "state=s1" in out
+    assert "https://h.example/app;jsessionid=<redacted-secret> g" in out
+
+
+def test_reference_url_queries_are_dropped_with_a_default_port_or_json_escapes(tmp_path):
+    # #134: the query of a legacy URL reference survived when the text wrote `host:443` or escaped slashes.
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "url", "value": "https://share.example.org/f/cohort.tsv?dl=x",
+                                         "source": "request"}]}
+    text = ("a https://share.example.org:443/f/cohort.tsv?dl=opaque1 "
+            r"b https:\/\/share.example.org\/f\/cohort.tsv?dl=opaque2 "
+            "c HTTPS://Share.Example.org/f/cohort.tsv#opaque3 d https://share.example.org/f/cohort.tsv;jsession=opaque4 "
+            "e https://share.example.org/f/cohort.tsv; then")
+    cleaned = hub.reporter._clean(text)
+    for secret in ("opaque1", "opaque2", "opaque3", "opaque4"):
+        assert secret not in cleaned, secret
+    assert "https://share.example.org:443/f/cohort.tsv b" in cleaned and "cohort.tsv; then" in cleaned
+
+
 def test_project_reports_drop_the_query_of_legacy_url_references(tmp_path):
     s = settings_with_roots(tmp_path)
     hub = create_app(s).state.hub

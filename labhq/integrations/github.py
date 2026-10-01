@@ -23,7 +23,7 @@ from urllib.parse import unquote
 
 import httpx
 
-from ..intake import mask_references, public_url, published_reference_masks
+from ..intake import mask_references, public_url, published_reference_masks, url_pattern
 from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -44,13 +44,26 @@ SECRET_PATTERNS = [
 # (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
 QUERY_SECRET_NAME = re.compile(
     r"[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
-    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy", re.IGNORECASE)
+    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy"
+    # A session id (`;jsessionid=`, `PHPSESSID`, `?session=`) or an OAuth authorization code (#134).
+    r"|[\w.-]*sess(?:ion)?(?:[_-]?id)?|sid|code|auth_?code|authorization_code", re.IGNORECASE)
 QUERY_PARAM = re.compile(r"[?&;#]([^=&#;?\s\"'<>)\]]+)=")
 QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
 # `scheme://user:password@host` or `https://TOKEN@host`: the whole userinfo is a credential. `ssh://git@host`
 # names only an account and stays.
-URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*://)([^/?#\s@\"'<>]+)@")
+# JSON-escaped slashes (`https:\/\/user:pw@host`) count (#134).
+URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})([^/\\?#\s@\"'<>]+)@")
 USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
+# Webhook URLs carry the credential in the path, under no parameter name (#134). Only these hosts are known;
+# a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count.
+WEBHOOK_PATH = re.compile(
+    r"(?<![\w.-])((?:https?:(?:\\?/){2})?(?:"
+    r"hooks\.slack\.com(?:\\?/)(?:services|workflows|triggers)"
+    r"|(?:[\w-]+\.)?discord(?:app)?\.com(?:\\?/)api(?:(?:\\?/)v\d+)?(?:\\?/)webhooks"
+    r"|[\w-]+\.webhook\.office\.com(?:\\?/)webhookb2"
+    r"|outlook\.office(?:365)?\.com(?:\\?/)webhook"
+    r"|api\.telegram\.org(?:\\?/)(?:file(?:\\?/))?bot"
+    r"))(\\?/)?[^\s\"'<>)\]?#]+", re.IGNORECASE)
 
 
 def _decoded(name: str) -> str:
@@ -63,9 +76,11 @@ def _decoded(name: str) -> str:
 
 
 def redact_url_credentials(text: str) -> str:
-    """Drop URL userinfo and the values of credential-named query or fragment parameters."""
+    """Drop URL userinfo, known webhook path tails and the values of credential-named query or fragment
+    parameters, JSON-escaped URLs included."""
     text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
-        m.group(1)[:-3].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+        m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
     out, last = [], 0
     for m in QUERY_PARAM.finditer(text):
         if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
@@ -78,11 +93,15 @@ def redact_url_credentials(text: str) -> str:
 
 
 def strip_reference_url_queries(text: str, requests: Any) -> str:
-    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it."""
+    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it.
+
+    The base is found as `url_pattern` finds it, so `host:443` and JSON-escaped URLs lose the query too (#134).
+    """
     bases = {public_url(str(ref.get("value") or "")) for req in requests
              for ref in (req.get("references") or []) if ref.get("kind") == "url"}
     for base in sorted((b for b in bases if b), key=len, reverse=True):
-        text = re.sub(re.escape(base) + r"[?#][^\s\"'<>)\]]*", lambda _m, b=base: b, text, flags=re.IGNORECASE)
+        tail = r"(?:[?#][^\s\"'<>)\]]*|;[^\s\"'<>)\]]+)"  # `;jsessionid=` too, but not a `;` ending prose
+        text = re.sub(f"({url_pattern(base)}){tail}", lambda m: m.group(1), text, flags=re.IGNORECASE)
     return text
 
 
