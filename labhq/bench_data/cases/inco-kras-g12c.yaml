@@ -19,8 +19,18 @@ check:
     - 're:(?<![A-Za-z0-9_])CHEMBL4594350(?![A-Za-z0-9_])'
     - 're:(?<![A-Za-z0-9_])CHEMBL6068410(?![A-Za-z0-9_])'
     - 're:(?:직접\s*비교(?:를)?\s*(?:하지\s*(?:않|말)|불가|금지|할\s*수\s*없)|(?:cannot|can''t|do\s+not|must\s+not|should\s+not)\s+(?:be\s+)?(?:directly\s+compar(?:e|ed)|compar(?:e|ed)\s+directly)|not\s+directly\s+comparable)|(?:IC50|IC₅₀)\s*순위표는\s*작성하지\s*않|(?:서로\s*다른\s*assay)[^\n.]{0,100}한\s*순위표에\s*합쳐서는\s*안'
+result_fields:
+  pdb_id: {type: string, equals: 6OIM}
+  chembl_ids:
+    type: string_list
+    equals: [CHEMBL4535757, CHEMBL4594350, CHEMBL6068410]
 budget_usd: 2.0
 mock_answer: |
   # KRAS G12C
   PDB 6OIM과 sotorasib CHEMBL4535757를 확인했다. 비교군은 adagrasib CHEMBL4594350,
   olomorasib CHEMBL6068410이다. assay 조건과 단위가 다르면 IC50를 직접 비교하지 않는다.
+  <!-- LABHQ_BENCH_RESULT -->
+  ```json
+  {"pdb_id": "6OIM", "chembl_ids": ["CHEMBL4535757", "CHEMBL4594350", "CHEMBL6068410"]}
+  ```
+  <!-- /LABHQ_BENCH_RESULT -->

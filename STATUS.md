@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · bench 구조화 채점·baseline 설정 #92 #101
+
+- 결론: 모든 arm이 같은 case별 JSON 결과 블록을 내고, 문장 표현 대신 그 값으로 채점한다. 형식 실패와 값 오답은 따로 기록·집계한다.
+- 바뀐 것: 다섯 case에 key·type·기대값 규칙을 넣고 공통 prompt·mock 답을 갱신했다. 기존 문장 검사는 근거·한계의 보조 판정으로 남겼다. Claude·Codex baseline은 `extra_args`를 일반 adapter와 같은 위치에 넣는다. README에 사용자 동작을 반영했다.
+- 실행한 것: 수정 전 회귀 4건 실패. 수정 후 전체 pytest 1099 passed/18 skipped, Node `tests/*.cjs` 5개, `scripts/check_public.sh` 통과. 임시·상태 폴더는 저장소 밖 TEMP를 썼다.
+- 미해결: 실제 유료 CLI 실행은 하지 않았다. 구조화 블록 도입 전 저장된 답은 재채점하면 형식 실패이며, 기존 15개 fixture는 보조 문장 검사 근거로만 남겼다.
+- 근거: `labhq/bench.py`, `labhq/bench_data/cases/`, `tests/test_bench_structured.py`, `tests/test_bench_rescore.py`.
+
 ## 2026-10-01 · 러너 env·POSIX 종료 #83 · 라운드 게시 복구 #97
 
 - 결론: 부모 Claude session marker만 지우고 운영자가 지정한 engine·task env는 보존한다. POSIX timeout은 leader가 먼저 끝나도 남은 process group을 SIGKILL한다. 라운드 기록은 GitHub의 rate-limit 대기 시각을 지키며, 토큰 누락은 재시작 때 다시 게시할 pending 상태로 둔다.

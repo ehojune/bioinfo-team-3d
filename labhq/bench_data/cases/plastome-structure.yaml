@@ -18,8 +18,18 @@ check:
     - 'num:153483:(?<![A-Za-z0-9_])NC_040849\.1(?![A-Za-z0-9_])[ \t|:=]*(?:(?:은|는|길이|length(?:_bp)?)\s*[:=]?\s*)*(?<![A-Za-z0-9_.,+-])(?P<value>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\d|[.,]\d)\s*(?P<unit>bp|kb)?(?![A-Za-z가-힣])'
     - 'range:25000..27000:(?<![A-Za-z0-9_])IR(?:a\s*,\s*IRb(?:\s*각각)?)?(?![A-Za-z0-9_])[ \t|:=]*(?:(?:은|는|길이|범위|예상|약|각각)\s*[:=]?\s*)*(?P<low>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?P<low_unit>bp|kb)?\s*(?:[–—−~-]|to|부터)\s*(?P<high>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?P<unit>bp|kb)(?![A-Za-z])'
     - 'range:17000..19000:(?<![A-Za-z0-9_])SSC(?![A-Za-z0-9_])[ \t|:=]*(?:(?:은|는|길이|범위|예상|약|각각)\s*[:=]?\s*)*(?P<low>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?P<low_unit>bp|kb)?\s*(?:[–—−~-]|to|부터)\s*(?P<high>[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(?P<unit>bp|kb)(?![A-Za-z])'
+result_fields:
+  nc_000932_1_length_bp: {type: integer, equals: 154478}
+  nc_040849_1_length_bp: {type: integer, equals: 153483}
+  ir_single_copy_bp: {type: integer_range, minimum: 25000, maximum: 27000}
+  ssc_bp: {type: integer_range, minimum: 17000, maximum: 19000}
 budget_usd: 1.5
 mock_answer: |
   # Plastome 비교
   NC_000932.1은 154478 bp, NC_040849.1은 153483 bp다. accession과 종 이름을 먼저 대조한다.
   quadripartite 구조에서 IR은 25–27 kb, SSC는 17–18 kb 범위를 예상하고 경계를 별도 계산한다.
+  <!-- LABHQ_BENCH_RESULT -->
+  ```json
+  {"nc_000932_1_length_bp": 154478, "nc_040849_1_length_bp": 153483, "ir_single_copy_bp": [25000, 27000], "ssc_bp": [17000, 18000]}
+  ```
+  <!-- /LABHQ_BENCH_RESULT -->

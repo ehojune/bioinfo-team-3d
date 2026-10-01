@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:11 | [`c0c516c`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/c0c516c) | **관측한 범위는 양 끝이 정확해야 맞음으로 채점합니다** (Codex 리뷰). 펭귄 case의 지느러미 길이처럼 실제 최솟값·최댓값을 묻는 문항에서 `[200, 210]` 같은 오답이 범위 안에 든다는 이유로 통과했습니다. 관측 범위(`equals`)와 설계 허용 범위(`minimum`/`maximum`, 엽록체 IR·SSC)를 나눴습니다 |
+| 07:03 | [`ffb0c24`](https://github.com/ehojune/bioinfo-team-3d/pull/105/commits/ffb0c24) | **bench를 모든 arm이 같은 구조화 결과 블록으로 채점합니다** (#92, #101). 전에는 답 문장을 정규식으로 읽어서 같은 뜻을 다르게 쓴 맞는 답이 FAIL이 됐습니다. 이제 답 끝의 JSON 결과 블록을 case의 기대값과 비교하고, 문장 검사는 참고용(`narrative_passed`)으로 따로 남깁니다. 기준선 명령에도 설정의 `extra_args`(proxy·profile 등)를 넣어 labhq arm과 같은 조건에서 돌립니다 |
 | 06:58 | [`4dc1419`](https://github.com/ehojune/bioinfo-team-3d/pull/103/commits/4dc1419) | **라운드 기록 게시가 GitHub rate limit과 토큰 누락을 이겨 냅니다** (#97). `Retry-After`·reset 시각만큼 기다렸다 다시 하고, 토큰이 없어서 실패한 기록은 토큰을 넣고 재시작하면 다시 게시합니다 |
 | 06:58 | [`6dea51c`](https://github.com/ehojune/bioinfo-team-3d/pull/103/commits/6dea51c) | **직원 CLI 환경변수의 우선순위를 바로잡고, Linux·macOS에서 직원이 띄운 하위 프로세스까지 정리합니다** (#83). 설정한 `CLAUDE_CODE_*` 값은 지키고 부모 세션 표식만 뺍니다. 종료 때 process group 전체를 끝냅니다 |
 | 06:56 | [`db0d1dd`](https://github.com/ehojune/bioinfo-team-3d/pull/102/commits/db0d1dd) | **재접속하거나 이벤트가 끊긴 뒤에도 실행 중인 단계가 그대로 보입니다** (#87). gateway snapshot에서 진행 중 단계 상태를 되살립니다 |
