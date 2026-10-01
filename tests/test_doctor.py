@@ -1,6 +1,7 @@
 import json
 import pytest
 from labhq import doctor
+from labhq.adapters import codex as codex_mod
 from labhq.settings import DataZone, Settings
 
 
@@ -179,6 +180,7 @@ def test_doctor_runs_staff_adapter_preflight_with_engine_environment(tmp_path, m
 
 
 def test_doctor_names_missing_codex_elevated_setup_without_starting_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(codex_mod, "_is_windows", lambda: True)
     settings = _settings(tmp_path)
     (tmp_path / "agents" / "core" / "worker.yaml").write_text(
         "id: worker\nname: Worker\nrole: test\nengine: codex\n", encoding="utf-8")
