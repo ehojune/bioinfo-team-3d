@@ -460,6 +460,102 @@ def test_pilot_imports_only_the_allowlist(path):
     assert modules <= IMPORT_ALLOW, modules - IMPORT_ALLOW
 
 
+SCRIPT = ROOT / "scripts" / "semantics_pilot.py"
+SCRIPT_ALLOW = IMPORT_ALLOW | {"argparse", "ast", "contextlib", "importlib", "sys", "tempfile", "time", "tracemalloc"}
+GUARD_ONLY = {"asyncio", "os", "socket", "subprocess"}   # the script imports these only to block them
+DYNAMIC_ALLOW = {"labhq.research.semantics", "tests.semantics_baseline"}
+
+
+def _dotted(node):
+    import ast
+    if isinstance(node, ast.Name):
+        return node.id
+    return f"{_dotted(node.value)}.{node.attr}" if isinstance(node, ast.Attribute) else ""
+
+
+def script_import_problems(source):
+    """Imports of the measurement script outside its allowlist (#142). Process and network modules may be
+    imported only inside no_network_or_subprocess; a dynamic import must name an allowed module literally."""
+    import ast
+    tree = ast.parse(source)
+    guard = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "no_network_or_subprocess")
+    guarded = {id(n) for n in ast.walk(guard)}
+    problems = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _dotted(node.func) in ("importlib.import_module", "__import__"):
+            arg = node.args[0] if node.args else None
+            if not (isinstance(arg, ast.Constant) and arg.value in DYNAMIC_ALLOW):
+                problems.append(f"dynamic import line {node.lineno}")
+            continue
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = ["." * node.level + (node.module or "")]
+        else:
+            continue
+        for name in names:
+            if name in GUARD_ONLY and id(node) not in guarded:
+                problems.append(f"{name} outside the guard, line {node.lineno}")
+            elif name not in GUARD_ONLY and name not in SCRIPT_ALLOW:
+                problems.append(f"{name} line {node.lineno}")
+    return problems
+
+
+def test_script_imports_only_the_allowlist():
+    assert script_import_problems(SCRIPT.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize("edit", [
+    lambda s: s.replace("import argparse\n", "import argparse\nimport urllib.request\n", 1),
+    lambda s: s.replace("import argparse\n", "import argparse\nimport subprocess\n", 1),
+    lambda s: s.replace("def main(argv", "def _llm():\n    from labhq.adapters import claude_code\n\n\ndef main(argv", 1),
+    lambda s: s.replace('importlib.import_module("tests.semantics_baseline")',
+                        'importlib.import_module("labhq." + "adapters")', 1),
+], ids=["network_module", "subprocess_outside_guard", "adapter", "computed_dynamic_import"])
+def test_script_import_check_catches_a_variant(edit):
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert edit(source) != source
+    assert script_import_problems(edit(source))
+
+
+def _starter_args(name, bad):
+    """Arguments naming a program that does not exist, so an unblocked starter fails instead of running."""
+    import os
+    if name.startswith("posix_spawn"):
+        return (bad, [bad], {})
+    family = "spawn" if name.startswith("spawn") else "exec"
+    suffix = name[len(family):]
+    head = (os.P_WAIT,) if family == "spawn" else ()
+    return (*head, bad, *((bad,) if suffix.startswith("l") else ([bad],)), *(({},) if suffix.endswith("e") else ()))
+
+
+def _process_starters():
+    import os
+    return sorted(n for n in dir(os) if n.startswith(("spawn", "exec", "posix_spawn")) and callable(getattr(os, n)))
+
+
+@pytest.mark.parametrize("name", _process_starters())
+def test_guard_blocks_every_os_process_starter(tmp_path, name):
+    """#142: os.spawn*, os.exec* and os.posix_spawn* start a program without subprocess; the guard refuses them."""
+    import os
+    original, bad = getattr(os, name), str(tmp_path / "no-such-program")
+    with pilot.no_network_or_subprocess():
+        with pytest.raises(RuntimeError, match="blocked"):
+            getattr(os, name)(*_starter_args(name, bad))
+    assert getattr(os, name) is original
+
+
+def test_guard_blocks_fork_and_shell_helpers():
+    import os
+    names = [n for n in ("system", "popen", "fork", "forkpty", "startfile") if hasattr(os, n)]
+    originals = {n: getattr(os, n) for n in names}
+    with pilot.no_network_or_subprocess():
+        assert all(getattr(os, n) is not originals[n] for n in names)   # replaced, not called: fork is real
+        with pytest.raises(RuntimeError, match="blocked"):
+            os.popen("exit 0")
+    assert all(getattr(os, n) is originals[n] for n in names)
+
+
 def _fresh(code):
     import os
     import subprocess

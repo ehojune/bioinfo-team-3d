@@ -396,7 +396,11 @@ def defect_causes(impl: Impl, p: Any, expected: dict, state_name: str, scored: d
 
 @contextmanager
 def no_network_or_subprocess() -> Iterator[None]:
-    """Fail any socket, subprocess or shell use inside the block (LLM-call zero, measured)."""
+    """Fail any socket, subprocess, shell or process start inside the block (LLM-call zero, measured).
+
+    Besides subprocess and os.system: every os.spawn*, os.exec* and os.posix_spawn* this platform has,
+    os.popen, fork and startfile, and the event loop's subprocess methods (#142).
+    """
     import asyncio
     import os
     import socket
@@ -405,8 +409,12 @@ def no_network_or_subprocess() -> Iterator[None]:
     def refuse(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("semantics pilot: network and subprocess use is blocked")
 
+    starters = sorted(n for n in dir(os) if n.startswith(("spawn", "exec", "posix_spawn")) and callable(getattr(os, n)))
+    starters += [n for n in ("popen", "fork", "forkpty", "startfile") if hasattr(os, n)]
+    loop = asyncio.base_events.BaseEventLoop
     saved = [(socket, "socket"), (socket, "create_connection"), (socket, "getaddrinfo"), (subprocess, "Popen"),
-             (os, "system"), (asyncio, "create_subprocess_exec"), (asyncio, "create_subprocess_shell")]
+             (os, "system"), (asyncio, "create_subprocess_exec"), (asyncio, "create_subprocess_shell"),
+             (loop, "subprocess_exec"), (loop, "subprocess_shell"), *((os, n) for n in starters)]
     originals = [(mod, name, getattr(mod, name)) for mod, name in saved]
     try:
         for mod, name, _ in originals:
