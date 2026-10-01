@@ -25,7 +25,7 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator
+from ..orchestrator.cso import Orchestrator, holds_session
 from ..research.packs import check_configured_packs
 from ..settings import Settings
 from ..security import token_matches
@@ -637,8 +637,9 @@ class Hub:
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
             if task:
-                self.store.put("task", tid, {**task, "completed": True,
-                                              "result": result.model_dump(mode="json")})
+                # A reported result supersedes an abandonment: the task did finish (#112).
+                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                                              "completed": True, "result": result.model_dump(mode="json")})
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
@@ -865,6 +866,62 @@ class Hub:
         # orchestrator adds it by task ID, which this ledger entry owns.
         return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0,
                                                                                       "task_id": tid})
+
+    async def wait_session_free(self, agent_id: str, session_id: str | None, workdir: str | None, *,
+                                request_id: str | None = None, step_id: str | None = None
+                                ) -> tuple[str | None, str | None]:
+        """The session and workdir a task may resume once no earlier task still uses them (#112, #144).
+
+        An earlier task, such as a consult whose ask a restart left unanswered, keeps running on its
+        runner. While the agent's connected runner generation accepted it, or it is in flight to that
+        runner from this gateway, wait for its result; its turn may rotate the session, so the latest
+        turn is resumed. No clock releases such a holder: the runner accepts a task before it leaves
+        the queue and starts its task timeout only when the CLI spawns, and it always reports a result
+        (#204). While the agent's runner is offline, wait up to ``resume_wait_s`` from the disconnect
+        for it to reconnect. Otherwise its outcome is unknown: return ``(None, None)`` so the task
+        opens a new session and workdir.
+        """
+        loop = asyncio.get_running_loop()
+        offline_deadline: float | None = None
+        resumed: set[str] = set()
+        announced = False
+        while True:
+            holders = [(tid, entry) for tid, entry in self.store.all("task").items()
+                       if holds_session(entry, agent_id, session_id, workdir)]
+            if not holders:
+                turns = [self.store.get("task", tid) or {} for tid in resumed]
+                latest = max(((float(e.get("dispatched_at") or 0), (e.get("result") or {}).get("session_id"))
+                              for e in turns if (e.get("result") or {}).get("session_id")), default=(0.0, None))[1]
+                if latest and latest != session_id:
+                    session_id, resumed = latest, set()
+                    continue
+                return session_id, workdir
+            runner = self.agent_runner.get(agent_id)
+            online = runner in self.runners
+            # Same rule as _await_prior_task: resume_wait_s bounds a reconnect, measured from the
+            # disconnect, never the work of a task the runner accepted.
+            if online:
+                offline_deadline = None
+            elif offline_deadline is None:
+                offline_deadline = loop.time() + self.s.gateway.resume_wait_s
+            for tid, entry in holders:
+                running = (online and bool(entry.get("accepted")) and
+                           self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
+                if entry.get("abandoned"):
+                    return None, None
+                # An unaccepted task the connected runner does not run (a delivery this gateway gave
+                # up on, or one a previous gateway sent) has an unknown outcome.
+                if not (running or (online and tid in self.futures) or
+                        (not online and loop.time() < offline_deadline)):
+                    return None, None
+                if session_id and (entry.get("payload") or {}).get("resume_session_id") == session_id:
+                    resumed.add(tid)
+            if not announced:
+                announced = True
+                await self.publish({"type": "request.step_wait", "ts": time.time(), "request_id": request_id,
+                                    "data": {"step_id": step_id, "agent_id": agent_id,
+                                             "reason": "an earlier task still uses this session or workdir"}})
+            await asyncio.sleep(0.1)
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:

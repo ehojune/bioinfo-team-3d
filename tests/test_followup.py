@@ -432,3 +432,124 @@ async def test_followup_end_to_end_with_mock_runner(tmp_path):
         await asyncio.sleep(0.2)
         for t in tasks:
             t.cancel()
+
+
+# ---- #144: a follow-up after a gateway restart never shares the interrupted one's session ----
+
+CSO_ONLY = [{"id": "cso", "engine": "claude_code"}]
+
+
+class CaptureSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, body):
+        self.sent.append(json.loads(body))
+
+    async def close(self, code=1000):
+        pass
+
+
+def restart_settings(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.gateway.resume_wait_s = 2
+    settings.orchestrator.step_max_attempts = 1
+    return settings
+
+
+def followup_frames(socket):
+    return [frame["task"] for frame in socket.sent
+            if frame["type"] == "task.dispatch" and frame["task"]["meta"].get("kind") == "followup"]
+
+
+def result_frame(task_id, text, session):
+    result = TaskResult(task_id=task_id, agent_id="cso", ok=True, text=text, session_id=session)
+    return {"type": "task.result", "task_id": task_id, "request_id": "r", "data": result.model_dump(mode="json")}
+
+
+async def _within(predicate, timeout=3.0):
+    for _ in range(int(timeout / 0.01)):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+async def followup_running_then_restart(settings, workdir):
+    """Gateway 1 sends a follow-up, the runner accepts it, and the gateway dies before the answer."""
+    first = Hub(settings)
+    first.requests["r"] = {"id": "r", "text": "Compare cohorts", "mode": "orchestrate", "status": "done",
+                           "report": "Final report: cohort A wins", "cso_session_id": "cso-1",
+                           "cso_workdir": workdir, "followups": []}
+    first.save_request("r")
+    socket = CaptureSocket()
+    first.register_runner("local", socket, CSO_ONLY, "inc-1")
+    first.start_followup("r", "Why cohort A?")
+    await _within(lambda: followup_frames(socket))
+    running = followup_frames(socket)[0]
+    assert running["resume_session_id"] == "cso-1" and running["meta"]["workdir"] == workdir
+    await first.on_runner_message("local", {"type": "task.accepted", "task_id": running["id"], "request_id": "r"})
+    lost = [t for t in asyncio.all_tasks() if getattr(t.get_coro(), "__qualname__", "") == "Orchestrator.run_followup"]
+    for task in lost:
+        task.cancel()
+    await asyncio.gather(*lost, return_exceptions=True)
+    first.store.close()
+    return running
+
+
+@pytest.mark.asyncio
+async def test_followup_after_restart_waits_for_the_interrupted_one_still_running(tmp_path):
+    settings = restart_settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    running = await followup_running_then_restart(settings, workdir)
+    hub = Hub(settings)
+    socket = CaptureSocket()
+    seen, publish = [], hub.publish
+
+    async def tap(event, **kwargs):
+        seen.append(event)
+        await publish(event, **kwargs)
+
+    hub.publish = tap
+    try:
+        assert hub.requests["r"]["followups"][0]["status"] == "interrupted"
+        hub.register_runner("local", socket, CSO_ONLY, "inc-1")  # same generation: it still runs there
+        hub.start_followup("r", "And the effect size?")
+        await _within(lambda: followup_frames(socket) or any(
+            e["type"] == "request.step_wait" and e["data"].get("step_id") == "followup" for e in seen))
+        assert followup_frames(socket) == [], "never two CLIs in one session and workdir"
+        await hub.on_runner_message("local", result_frame(running["id"], "Cohort A had more donors", "cso-2"))
+        await _within(lambda: followup_frames(socket))
+        follow = followup_frames(socket)[0]
+        assert follow["resume_session_id"] == "cso-2", "the interrupted turn is the latest one in the session"
+        assert follow["meta"]["workdir"] == workdir
+        await hub.on_runner_message("local", result_frame(follow["id"], "Cohen's d was 0.4", "cso-3"))
+        await _within(lambda: hub.requests["r"]["followups"][-1]["status"] != "running")
+        assert hub.requests["r"]["followups"][-1]["answer"] == "Cohen's d was 0.4"
+        assert hub.requests["r"]["cso_session_id"] == "cso-3"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_followup_after_restart_isolates_when_the_interrupted_outcome_is_unknown(tmp_path):
+    settings = restart_settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    await followup_running_then_restart(settings, workdir)
+    hub = Hub(settings)
+    socket = CaptureSocket()
+    try:
+        # The runner restarted too: the old follow-up is abandoned, but its CLI may still hold the session.
+        hub.register_runner("local", socket, CSO_ONLY, "inc-2")
+        hub.start_followup("r", "And the effect size?")
+        await _within(lambda: followup_frames(socket))
+        follow = followup_frames(socket)[0]
+        assert follow["resume_session_id"] is None and "workdir" not in follow["meta"]
+        await hub.on_runner_message("local", result_frame(follow["id"], "Cohen's d was 0.4", "fresh"))
+        await _within(lambda: hub.requests["r"]["followups"][-1]["status"] != "running")
+        assert hub.requests["r"]["followups"][-1]["status"] == "done"
+        assert hub.requests["r"]["cso_session_id"] == "fresh"
+    finally:
+        hub.store.close()

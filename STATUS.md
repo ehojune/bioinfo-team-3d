@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #112 #113 #144 — 재시작 뒤 CSO session·질의 route 후속
+
+- 결론: 재시작으로 gateway가 놓친 상담·이어 묻기가 runner에서 계속 도는 동안, CSO 계획·최종 보고서·새 이어 묻기가 같은 session·workdir로 겹쳐 dispatch되지 않는다. 재시작 전 facilities가 받던 질의는 roster가 빈 동안 CSO로 넘어가지 않는다.
+- 바뀐 것: `holds_session` 하나로 "결과가 기록되지 않은 task가 session·workdir를 쥐었나"를 판정한다(abandoned 포함). 상담은 쥔 task가 있으면 바로 격리하고, 계획·종합·이어 묻기는 `Hub.wait_session_free`로 지금 runner 세대가 수락한 task를 결과가 올 때까지, runner가 끊기면 끊긴 때부터 `resume_wait_s`까지 기다린 뒤 그 turn의 session에서 잇는다. 끝났는지 모르면 새 session·workdir로 연다(#112 #144). 질의 원장의 `routed_to`로 재시작 전 담당자를 유지하고, 그 runner를 `resume_wait_s`까지 기다리며, facilities가 끝내 안 돌아오면 CSO가 답한다(#113). README §8을 맞췄다.
+- 실행한 것: 회귀 12건 중 10건은 수정 전 실패, 2건(facilities 없는 설정 무대기, fallback)은 guard다. 로컬 리뷰 P2 2건(끊긴 runner로 전달 중인 task의 대기 상한, abandoned 뒤 도착한 결과의 점유 해제)을 #112 커밋에 반영했다. 봇 리뷰 P1(queue에서 기다린 수락 task를 dispatch 시각+timeout으로 놓아 줌)은 시계로 점유를 푸는 규칙을 빼서 고쳤고, 재접속 유예도 시작 시각이 아니라 끊긴 때부터 센다(회귀 2건, 수정 전 실패). 전체 pytest 1939 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 기다린 이전 이어 묻기의 답은 그 항목에 붙이지 않는다(interrupted 그대로). 수락된 task에는 대기 상한이 없다. runner가 queue·task timeout을 거쳐 결과를 꼭 보내므로 그것을 기다린다. 격리된 실행은 session 맥락 없이 prompt의 보고서·결과로 답한다. 재시작 전 CSO가 받던 facilities 질의는 facilities가 돌아와도 CSO가 잇는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `tests/test_consult_restart.py`, `tests/test_followup.py`.
+
 ## 2026-10-01 · #119 #172 #185 #186 — HPC 첫 설정 상담과 #171 후속
 
 - 결론: `labhq init`이 읽기 전용 조회로 `hpc:` 초안을 만들고, PI가 `y`라고 한 시험 잡 1회만 제출해 끝까지 추적한다. #171 후속 P2(#172 여섯 항목, #185, #186)를 닫았다.
