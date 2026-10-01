@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTIONS_OWNED = [
     "labhq/research/semantics_actions.py",
     "tests/test_semantics_actions.py",
+    "tests/test_semantics_actions_shadow.py",
 ]
 OWNED = [
     "labhq/research/semantics_shadow.py",

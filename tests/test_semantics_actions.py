@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import copy
 import json
+import logging
 import socket
 import subprocess
 from pathlib import Path
@@ -15,10 +16,41 @@ from pathlib import Path
 import pytest
 
 from labhq.research import semantics_actions as acts
+from labhq.research import semantics_shadow as shadow
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "labhq" / "research" / "semantics_actions.py"
 T0 = 1_790_000_000.0
+
+
+# ---------------------------------------------------------------- settings
+
+@pytest.mark.parametrize("value, on", [("shadow", True), (None, False), (False, False), ("off", False)])
+def test_actions_setting_is_off_unless_shadow(value, on):
+    raw = {"mode": "shadow"} if value is None else {"mode": "shadow", "actions": value}
+    cfg = shadow.resolve(raw)
+    assert cfg is not None and cfg.actions is on
+
+
+@pytest.mark.parametrize("value", ["confirm", "run", "on", True, ["request.followup"], {"allow": "all"}])
+def test_any_other_actions_value_keeps_actions_off_and_the_shadow_on(value, caplog):
+    shadow._warned.clear()
+    with caplog.at_level(logging.WARNING, logger="labhq.semantics"):
+        cfg = shadow.resolve({"mode": "shadow", "actions": value})
+        again = shadow.resolve({"mode": "shadow", "actions": value})
+    assert cfg is not None and cfg.actions is False and again == cfg
+    warnings = [r.getMessage() for r in caplog.records if "actions" in r.getMessage()]
+    assert len(warnings) == 1 and "shadow goes on" in warnings[0]
+
+
+def test_mode_off_turns_actions_off_too():
+    assert shadow.resolve({"mode": "off", "actions": "shadow"}) is None
+
+
+@pytest.mark.parametrize("key", ["actions_allow", "allow", "execute"])
+def test_an_allowlist_key_is_unknown_so_semantics_stays_off(key):
+    """No setting can add to the built-in allowlist: an allowlist key is a future version's, so semantics is off."""
+    assert shadow.resolve({"mode": "shadow", "actions": "shadow", key: ["approval.decide", "hpc.submit"]}) is None
 
 
 # ---------------------------------------------------------------- gate: nothing executes
