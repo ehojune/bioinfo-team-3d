@@ -326,3 +326,39 @@ def test_staff_duplicates_for_one_file_conflict_in_any_order():
     fields = read({"output_types_vocab": V.sha256}, staff=staff)
     assert fields["outputs/a.tsv"]["data_type"].reason == "declaration_conflict"
     assert fields["outputs/b.tsv"]["format"].value == "tsv"
+
+
+# ---------------------------------------------------------------- declarations change no execution decision
+
+TYPE_META = {"output_types", "output_types_vocab"}
+
+
+def dispatched(hub):
+    """What execution depends on: who runs what, with which prompt, schema, session, folders and outputs."""
+    return [(t.agent_id, t.prompt, json.dumps(t.output_schema, sort_keys=True), t.resume_session_id,
+             json.dumps({k: v for k, v in t.meta.items() if k not in TYPE_META}, sort_keys=True, default=str))
+            for t in hub.calls if t.meta["kind"] != "plan"]
+
+
+def outcome(hub):
+    req = hub.requests["r"]
+    steps = [{k: v for k, v in s.items() if k != "output_types"} for s in req["plan"]["steps"]]
+    warnings = [w for w in req["plan"]["warnings"] if "output_types" not in w]
+    return (req["status"], req.get("report"), steps, warnings, hub.approvals,
+            {sid: {k: v for k, v in r.items() if k not in ("output_types", "task_id")}  # task ids are random
+             for sid, r in (req.get("results") or {}).items()})
+
+
+@pytest.mark.asyncio
+async def test_declaring_types_changes_no_dispatch_approval_or_result():
+    plain = json.loads(PENGUINS_PLAN.read_text(encoding="utf-8"))["plan"]
+    runs = []
+    for declare_on, plan in ((False, plain), (True, plain), (True, declared_penguins())):
+        hub = penguins_hub([plan])
+        hub.s.plan.declare_output_types = declare_on
+        await Orchestrator(hub).run_request("r")
+        runs.append(hub)
+    assert all(h.requests["r"]["status"] == "done" for h in runs)
+    assert dispatched(runs[0]) == dispatched(runs[1]) == dispatched(runs[2])
+    assert outcome(runs[0]) == outcome(runs[1]) == outcome(runs[2])
+    assert any("output_types" in t.meta for t in runs[2].calls)  # the declarations did travel
