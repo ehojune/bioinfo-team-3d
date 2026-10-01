@@ -632,3 +632,32 @@ def test_settings_have_no_semantics_key():
 
 def test_script_hash_helpers_match_the_pinned_constants():
     assert pilot.inventory_sha256(RECORDS) == inventory_sha256(RECORDS) == FIXTURE_SHA256
+
+
+def test_reader_accepts_runner_absolute_workdir_under_root():
+    # The runner stores result.workdir as str(ws.dir) — an absolute path under workspace_root.
+    with pilot.fixture_copy() as paths:
+        relative = paths.read(overlay=True)
+        original = relative.tasks["task_q1fetch"]["result"]["workdir"]
+
+        def absolute(body):
+            body["result"]["workdir"] = str(paths.root.joinpath(*original.replace("\\", "/").split("/")))
+            return json.dumps(body)
+
+        _rewrite_task(paths, "task_q1fetch", absolute)
+        records = paths.read(overlay=True)
+        stored = records.tasks["task_q1fetch"]["result"]["workdir"]
+        assert records.manifests[stored] == relative.manifests[original] is not None
+
+
+def test_reader_rejects_absolute_workdir_outside_root():
+    from labhq.research.semantics import RecordsError
+
+    with pilot.fixture_copy() as paths:
+        def outside(body):
+            body["result"]["workdir"] = str(paths.root.parent / "elsewhere" / "run")
+            return json.dumps(body)
+
+        _rewrite_task(paths, "task_q1fetch", outside)
+        with pytest.raises(RecordsError, match="not inside the records root"):
+            paths.read(overlay=True)

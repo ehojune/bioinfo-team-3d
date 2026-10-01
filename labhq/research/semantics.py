@@ -109,6 +109,17 @@ def _relative_inside(rel: str, where: str) -> PurePosixPath:
     return path
 
 
+def _workdir_inside(workdir: str, root: Path, where: str) -> PurePosixPath:
+    """Accept the runner's stored form: relative, or absolute under ``root`` (runner writes ``str(ws.dir)``)."""
+    if not (PurePosixPath(workdir.replace("\\", "/")).is_absolute() or re.match(r"^[A-Za-z]:", workdir)):
+        return _relative_inside(workdir, where)
+    try:
+        rel = Path(workdir).resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        raise RecordsError(f"{where}: path {workdir!r} is not inside the records root") from None
+    return _relative_inside(rel.as_posix(), where)
+
+
 def _wal_path(path: Path) -> Path:
     return path.with_name(path.name + "-wal")
 
@@ -226,7 +237,7 @@ def read_records(root: Path, *, state_db: Path, observed: Path | None = None, re
                 raise RecordsError(f"state task {tid}: research result invalid ({detail})") from None
         workdir = result.get("workdir")
         if workdir and workdir not in manifests:
-            rel = _relative_inside(workdir, f"state task {tid} result.workdir")
+            rel = _workdir_inside(workdir, root, f"state task {tid} result.workdir")
             path = root.joinpath(*rel.parts, "manifest.json")
             manifests[workdir] = (_parse_json(path.read_text(encoding="utf-8"), f"{rel.as_posix()}/manifest.json")
                                   if path.is_file() else None)
