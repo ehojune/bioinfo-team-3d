@@ -326,3 +326,43 @@ def test_linux_keeps_exact_case_for_instruction_names():
 
     assert workspace_instruction_action("claude_code", PurePath("outputs/claude.md")) is None
     assert workspace_instruction_action("claude_code", PurePath("outputs/AGENTS.md")) == "refuse"
+
+
+# ---------------- #193: the first status events of a reused workspace stay in its local log ----------------
+
+def _events(workdir: Path) -> list[dict]:
+    return [json.loads(line) for line in (workdir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+async def test_a_reused_workspace_keeps_queued_and_working_in_its_events_log(tmp_path, monkeypatch, spawned, resume):
+    spawned(Engine.codex)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff())
+    first = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    assert first.ok, first.error
+    workdir = Path(first.workdir)
+    task = Task(agent_id="worker", request_id="r", prompt="again", resume_session_id="t1" if resume else None,
+                meta={"kind": "step", "workdir": str(workdir)})
+    result = await runner.run_task(task)
+    assert result.ok, result.error
+    states = [e["data"].get("state") for e in _events(workdir) if e["task_id"] == task.id and e["type"] == "agent.status"]
+    assert states[:2] == ["queued", "working"], states
+    assert states[-1] == "done"
+    assert not runner.event_buffers, "nothing is held once the workspace is open"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reused_workspace_gets_no_local_events(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.codex)
+    workdir = tmp_path / "runs" / "earlier_step"
+    workdir.mkdir(parents=True)
+    _link_dir(workdir / ".labhq", tmp_path)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff())
+    task = Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step", "workdir": str(workdir)})
+    result = await runner.run_task(task)
+    assert not result.ok and seen == []
+    assert not (workdir / "events.jsonl").exists() and not runner.event_buffers
+    sent = [e["data"].get("state") for e in runner.store.pending() if e.get("task_id") == task.id
+            and e["type"] == "agent.status"]
+    assert sent == ["queued", "working", "error"], "the gateway still sees every event"

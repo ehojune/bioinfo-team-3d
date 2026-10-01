@@ -111,6 +111,9 @@ class Runner:
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
         self.workspaces: dict[str, TaskWorkspace] = {}
+        # Events of a task whose reused workspace is still being checked: written to its events.jsonl, in order,
+        # once the check passes (#193), and dropped with the workspace when it fails.
+        self.event_buffers: dict[str, list[dict]] = {}
         # Folders each running task may write (read-only tasks: only labhq's own result files in their workspace),
         # and those of tasks that ended recently, as (ended_at, task_id, read_only, roots): a read-only check
         # leaves out what another task wrote while it ran.
@@ -202,6 +205,8 @@ class Runner:
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
             ws.append_event(d)
+        elif ev.task_id in self.event_buffers:
+            self.event_buffers[ev.task_id].append(d)
         self.send(d)
         if ev.type == "task.result" and ev.task_id:
             self.store.put("accepted_task", ev.task_id, {"state": "finished"})
@@ -341,6 +346,7 @@ class Runner:
         try:
             await self.run_task(task)
         except BaseException as e:  # cancelled or crashed: the gateway must still get a result
+            self.event_buffers.pop(task.id, None)
             err = "cancelled" if isinstance(e, asyncio.CancelledError) else f"{type(e).__name__}: {e}"
             if not isinstance(e, asyncio.CancelledError):
                 log.exception("task %s crashed", task.id)
@@ -578,6 +584,7 @@ class Runner:
         ws = None if reused else TaskWorkspace(self.ws_root, task, agent, workspace_dir)
         if reused:
             self.workspaces.pop(task.id, None)  # emit() must not append through the previous workspace yet
+            self.event_buffers[task.id] = []  # ...but queued/working still belong in its log once it is safe
         if ws:
             self.workspaces[task.id] = ws
             self.task_req[task.id] = task.request_id
@@ -604,6 +611,7 @@ class Runner:
                 if reason is None:  # labhq writes these from outside every sandbox (#165)
                     reason = owned_link_error(workspace_dir)
                 if reason:
+                    self.event_buffers.pop(task.id, None)  # nothing is written into a workspace refused as unsafe
                     error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
                     await emit("agent.log", {"level": "alert", "text": error})
@@ -611,6 +619,8 @@ class Runner:
                     await emit("task.result", result.model_dump(mode="json"))
                     return result
                 ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+                for event in self.event_buffers.pop(task.id, []):  # before any later event (#193)
+                    ws.append_event(event)
                 self.workspaces[task.id] = ws
                 self.task_req[task.id] = task.request_id
             assert ws is not None
