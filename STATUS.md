@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #122 후속 다섯 건(#135 #145 #146 #147 #148) — 읽기 전용 실행의 env·작업 폴더 지침 파일
+
+- 결론: 이어 묻기·상담의 허용 목록을 argv 밖까지 넓혔다. 엔진 env는 로그인·설정 위치·API 접속 변수만 받고, 러너가 물려받은 `CODEX_*` 세션 변수는 모든 직원 실행에서 빠지며, 엔진이 작업 폴더에서 지침·설정으로 읽는데 끌 플래그가 없는 파일이 있으면 읽기 전용 실행을 띄우지 않는다. 실측할 수 없던 동작(신뢰된 경로 아래 Codex project config, Claude built-in agents-md)은 거부 쪽으로 뒀다.
+- 바뀐 것: `labhq/util.py`(`CODEX_ENV_PASSTHROUGH`, `strip_parent_session_env`), `labhq/adapters/read_only.py`(`READ_ONLY_ENV_KEEP`, `READ_ONLY_WORKSPACE_REFUSED`, `read_only_workspace_error`), `labhq/adapters/base.py`(`staff_env`, 뺀 env 이름을 피드에 경고), Codex preflight가 작업 폴더 `AGENTS.override.md`를 모든 실행에서 거부, 읽기 전용 Claude가 작업 폴더 CLAUDE.md류를 `claudeMdExcludes`에 넣음, `labhq/bench.py` baseline env 순서를 직원 실행과 맞춤. #135는 main에 이미 고쳐져 있어(12e3fba) 테스트만 더했다. B1 그림자 모드 PR(#150)의 파일(gateway/server.py, cli.py, research/semantics*.py, settings.py)은 건드리지 않았다.
+- 실행한 것: 새 `tests/test_read_only_followups.py` 21개 중 19개가 수정 전 코드에서 실패했다(나머지 2개는 PI가 고른 env·Claude의 .codex 오탐 방지). 로컬 Codex 리뷰 1회 P2 1건(bench가 engine env의 CODEX_*까지 지움)을 고쳤다. 전체 pytest 1559 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh`, `git diff --check` 통과. 실제 CLI probe는 하지 않았다.
+- 미해결: #148의 신뢰 경로 probe와 Claude agents-md가 `AGENTS.md`를 읽는지는 재지 않았다(재면 거부를 풀 수 있다). 러너를 띄운 셸의 `CLAUDE_*`·`CODEX_*` 밖 변수(`NODE_OPTIONS` 등)와 작업 폴더 상위의 `.codex/`·지침 파일은 보지 않는다. 일반 쓰기 step은 작업 폴더 `.codex/`를 그대로 둔다. 계약 skill 폴더를 앞선 실행이 고친 것은 알아채지 못한다.
+- 근거: `labhq/adapters/read_only.py`, `labhq/adapters/codex.py`, `labhq/util.py`, `tests/test_read_only_followups.py`, README §8·§10.
+
 ## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot (PR A: opt-in으로 main에)
 
 - 결론: 중단 기준은 충족했다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). 그러나 PI 결정(2026-10-01)으로 접지 않고 opt-in·실행 경로 미연결로 유지한다. 그림자 모드로 실데이터를 모아 #121에서 재평가한다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
