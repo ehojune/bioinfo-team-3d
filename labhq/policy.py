@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
 from urllib.parse import unquote, urlsplit
 
-from .settings import PolicySettings
+from .settings import SCHEDULER_JOB_COMMANDS, PolicySettings
 
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -27,7 +27,7 @@ POWERSHELL_ASK_PATTERNS = (
     r"\b(?:Invoke-Expression|iex)\b[^;\n]*(?:Invoke-WebRequest|iwr|DownloadString|https?://)",
     r"\b(?:Invoke-WebRequest|iwr)\b[^|\n]*\|\s*(?:Invoke-Expression|iex)\b",
     r"\bSet-ExecutionPolicy\b", r"\bStart-Process\b[^;\n]*\s-Verb\s+RunAs\b",
-    r"\bFormat-Volume\b", r"\b(?:qsub|qdel|sbatch|sudo)\b",
+    r"\bFormat-Volume\b", SCHEDULER_JOB_COMMANDS, r"\bsudo\b",
     r"\bgit\s+push\b[^;\n]*--force\b",
 )
 
