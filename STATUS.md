@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · PR #277 — 산출 종류 선언 reader 일치와 예외 격리
+
+- 결론: #249 후속 P2 네 건을 닫았다. legacy와 typed 선언은 공용 reader가 같은 local vocabulary로 판정하고, 계획 선언과 runner record가 다르면 basis와 무관하게 충돌로 남긴다. 기본값은 off이며 off의 prompt·schema·dispatch는 #249 main 계약 그대로다.
+- 바뀐 것: `no_vocab` 이유를 바로잡고, hash 불가 YAML key·어휘 loader·optional subset I/O·runner record 생성 예외를 선언 기능 안에 격리했다. EDAM 표가 없어도 local 38-key vocabulary는 동작하며 성공한 task 결과는 보존한다.
+- 실행한 것: 새 회귀는 수정 전 11 failed/91 passed, 수정 뒤 102 passed. 전체 pytest 2458 passed/44 skipped, Node 13개, `scripts/check_public.sh`, patch-notes·diff 검사가 통과했다.
+- 미해결: 없음. EDAM 표·NOTICE·생성 script는 draft #253 범위이며 이 PR에는 없다.
+- 근거: `labhq/vocab/{__init__.py,declare.py}`, `labhq/yaml_unique.py`, `labhq/runner/daemon.py`, `labhq/research/semantics.py`, `tests/test_output_{types,vocab}.py`, `tests/test_semantics_{objects,output_types}.py`.
+
 ## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
 
 - 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
