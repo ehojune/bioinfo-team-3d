@@ -14,8 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 03:04 | [`c056863`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/c056863) | origin/main의 연구 pack snapshot·교정 보고 흐름과 산출 종류 선언을 함께 보존하고, 기본 off prompt를 현재 main과 byte 단위로 다시 고정 (#221·#222) |
 | 02:57 | [`1208ee6`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1208ee6) | EDAM 유래 표·NOTICE·생성 script·전용 test를 #252 PI 확인용 draft PR #253으로 분리하고, subset 없이 core가 동작함을 전체 test로 확인 (#252) |
+| 02:47 | [`5f7bc21`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/5f7bc21) | main에 병합된 #243의 HANDOFF.md·STATUS.md와 PR #245의 패치노트 행을 함께 보존해 충돌을 해소 |
 | 02:44 | [`d19bb20`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/d19bb20) | origin/main(direct 산출 등록 #230 등)을 병합하고 README·STATUS 충돌은 양쪽 항목을 모두 보존 (#221) |
 | 02:32 | [`2d02904`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/2d02904) | README 설정·한계 절과 STATUS에 산출 종류 선언 자리를 적음 (#221·#151) |
+| 02:32 | [`db89121`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/db89121) | **main 병합에서 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** direct 산출 등록(#230)의 줄과 이 PR의 두 줄을 모두 두고 시간 역순으로 맞췄습니다. 동작 변경은 없습니다 |
 | 02:28 | [`7e81b01`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/7e81b01) | 선언을 켜도 dispatch·승인·결과가 꺼진 때와 같음을 비교 test로 고정 (#221) |
 | 02:22 | [`1401b45`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/1401b45) | 로컬 리뷰 P2 3건: 직원 선언 중복은 충돌로 처리, 객체 뷰도 직원 선언을 읽음, 선언 엔트리 상한을 하나로 통일 (#221) |
 | 02:22 | [`5b47008`](https://github.com/ehojune/bioinfo-team-3d/pull/243/commits/5b47008) | 열린 issue 작업 큐를 실제 PR과 후속 작업 기준으로 동기화 |
@@ -25,6 +27,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 02:05 | [`c2212a3`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/c2212a3) | 산출 데이터 종류 어휘(로컬 key 38개)와, 선언을 켜는 설정 `plan.declare_output_types`(기본 꺼짐)를 둠 (#221·#151) |
 | 02:05 | [`986ef8a`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/986ef8a) | 연구 계획 단계와 직원 산출 참조에 종류 선언 칸을 두고, 빈 선언은 CP1 hash에서 빼 승인된 계획 hash를 지킴 (#221·#151) |
 | 02:05 | [`3f17f32`](https://github.com/ehojune/bioinfo-team-3d/pull/249/commits/3f17f32) | CSO 계획 단계의 산출 종류 선언을 key만 받아 정규화하고 dispatch meta·러너 결과까지 운반 (#221·#151) |
+| 02:01 | [`2341a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/2341a0c) | **POSIX timeout test가 SIGTERM을 무시하는 손자가 준비된 뒤에만 판정합니다** (#227). 손자가 SIG_IGN을 설치한 뒤 ready를 알리고 leader는 그 뒤에 pids 파일을 씁니다. 1초 안에 준비되지 않으면 5초 timeout으로 한 번 더 돌립니다 |
+| 02:01 | [`8fde4df`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/8fde4df) | **POSIX timeout test가 좀비 회수 순간을 '살아 있음'으로 읽지 않습니다** (#227). 대기 loop가 좀비를 보고 끝난 뒤 assert가 다시 확인하는 사이 init이 좀비를 거두면, kill(0)은 성공하고 /proc 읽기는 실패해 assert False가 났습니다. 이제 마지막 확인으로 판정하고 /proc 읽기가 실패하면 kill(0)을 다시 묻습니다. 회귀 test는 수정 전 실패했습니다 |
 | 01:43 | [`7a0d834`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/7a0d834) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #219 항목과 행을 이 PR 쪽과 시각순으로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
 | 01:43 | [`18f2aa7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/18f2aa7) | **`manifest.json`을 링크·FIFO로 바꿔도 산출 목록이 읽지 않는다는 test를 모든 OS에 두었습니다** (Codex 리뷰 P1). `b0d3f5e`의 test는 symlink를 만들 수 없는 Windows에서 skip되었습니다. owned 규칙이 manifest를 링크로 본다고 꾸민 test는 모든 OS에서 돌고, FIFO로 바꾼 run이 멈추지 않는지 보는 test는 POSIX에서 돕니다. 수정을 되돌리면 세 test 모두 실패했습니다 |
 | 01:25 | [`42aa21c`](https://github.com/ehojune/bioinfo-team-3d/pull/239/commits/42aa21c) | STATUS의 전체 test 수를 main 병합 뒤 값(pytest 2187 passed)으로 고쳤습니다. |
