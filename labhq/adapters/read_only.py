@@ -43,7 +43,10 @@ READ_ONLY_ENV_KEEP = frozenset({
 # (claudeMdExcludes); Codex's AGENTS.md (labhq rewrites it) and AGENTS.override.md (refused for every Codex run).
 READ_ONLY_WORKSPACE_REFUSED: dict[str, tuple[str, ...]] = {
     "claude_code": ("AGENTS.md", "AGENTS.override.md"),  # the built-in agents-md plugin; not measured
-    "codex": (".agents",),  # project skills ($CWD/.agents/skills)
+    # .agents: project skills ($CWD/.agents/skills). .codex: project config (config.toml with notify and
+    # mcp_servers, hooks.json), which runs outside `-s read-only`. Probed on codex-cli 0.159.2: not read when the
+    # workspace is untrusted; under a trusted runner.workspace_root it was not probed, so it refuses (#148).
+    "codex": (".agents", ".codex"),
 }
 # Where TaskWorkspace.install_skill copies a contract staff member's paper skill.
 SKILL_DIRS = (".claude/skills", ".agents/skills")

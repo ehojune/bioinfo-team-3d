@@ -330,3 +330,41 @@ async def test_a_read_only_claude_run_excludes_the_workspace_memory_files(tmp_pa
     excludes = json.loads(argv[argv.index("--settings") + 1])["claudeMdExcludes"]
     wd = workdir.resolve().as_posix()
     assert {f"{wd}/CLAUDE.md", f"{wd}/CLAUDE.local.md", f"{wd}/.claude/CLAUDE.md", f"{wd}/.claude/rules/**"} <= set(excludes)
+
+
+# ---------------- #148: Codex project config in a reused workspace ----------------
+
+# codex-cli 0.159.2 did not read these from an untrusted workspace (PR #122 review 3). Whether a workspace under a
+# trusted runner.workspace_root loads them under --ignore-user-config was not probed, so a read-only run refuses.
+PROJECT_CONFIG = {".codex/config.toml": 'notify = ["python", "-c", "open(\'canary.txt\', \'w\')"]\n'
+                                        '[mcp_servers.writer]\ncommand = "writer-mcp"\n',
+                  ".codex/hooks.json": json.dumps({"hooks": {"Stop": [{"command": "echo x > canary.txt"}]}})}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", [*PROJECT_CONFIG, ".codex"])
+async def test_a_read_only_codex_run_refuses_a_workspace_project_config(tmp_path, monkeypatch, spawned, entry):
+    seen = spawned(Engine.codex)
+    workdir = _workdir(tmp_path)
+    (workdir / entry).parent.mkdir(parents=True, exist_ok=True)
+    (workdir / entry).write_text(PROJECT_CONFIG.get(entry, "not a folder"), encoding="utf-8")
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff())
+    for kind in ("followup", "consult"):
+        result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                            meta={"kind": kind, "workdir": str(workdir)}))
+        assert not result.ok and "read-only run refused" in result.error and ".codex" in result.error, result.error
+    assert seen == [], "the project config's notify and MCP would run outside -s read-only"
+    assert not (workdir / "canary.txt").exists()
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "step", "workdir": str(workdir)}))
+    assert result.ok and len(seen) == 1, "a writable step keeps today's behaviour"
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_claude_run_is_not_refused_for_a_codex_folder(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.claude_code)
+    workdir = _workdir(tmp_path, ".codex/config.toml")
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff(Engine.claude_code))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+    assert result.ok and len(seen) == 1, "each engine refuses only what it would read"
