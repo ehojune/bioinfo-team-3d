@@ -334,6 +334,21 @@ _TASK_SQL = ("SELECT key, json_remove(body, '$.payload.prompt', '$.payload.conte
 _DECISION_SQL = ("SELECT key, body FROM state WHERE kind = 'approval_decision' "
                  "AND json_extract(body, '$.approval.request_id') = ?")
 _JOBS_SQL = "SELECT key, body FROM state WHERE kind = 'jobs_done' AND key IN (SELECT value FROM json_each(?))"
+JSON1_PROBE = ("SELECT json('{}'), json_remove('{}', '$.a'), json_extract('{}', '$.a'), "
+               "(SELECT count(*) FROM json_each('[]'))")
+
+
+def sqlite_json1() -> bool:
+    """True when this Python's SQLite has the JSON1 functions the row queries use (#160)."""
+    try:
+        db = sqlite3.connect(":memory:")
+        try:
+            db.execute(JSON1_PROBE).fetchone()
+        finally:
+            db.close()
+    except sqlite3.Error:
+        return False
+    return True
 
 
 def _rows_from_sql(execute: Callable[..., Any], rid: str, history: set, limit: int) -> list[dict]:
@@ -969,6 +984,8 @@ class ShadowService:
             service = cls(hub, cfg, ShadowPaths(root))
             prune(service.paths, time.time())
             service.load()
+            if not service.latched and not sqlite_json1():  # every job would fail on the row query
+                service.trip("sqlite_json1_missing")
             return service
         except Exception as exc:  # noqa: BLE001
             log.warning("semantics shadow could not start (%s); semantics stays off", type(exc).__name__)

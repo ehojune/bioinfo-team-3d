@@ -344,3 +344,23 @@ def test_a_boundary_check_that_raises_writes_nothing_and_counts(tmp_path, monkey
     assert _lines(tmp_path, "request") == []
     messages = [r.getMessage() for r in caplog.records]
     assert any("boundary check" in m for m in messages) and all("/data/cohort" not in m for m in messages)
+
+
+def test_a_sqlite_without_json1_turns_it_off_at_start_with_its_reason(tmp_path, monkeypatch):
+    """#160: the task query needs JSON1; without it the shadow is off with a reason the report shows, instead of
+    failing every job and ending as consecutive_failures."""
+    monkeypatch.setattr(shadow, "JSON1_PROBE", "SELECT no_such_json1_function('{}')", raising=False)
+    service = _service(tmp_path)
+    assert service.latched == "sqlite_json1_missing" and _disabled(tmp_path)["reason"] == "sqlite_json1_missing"
+    _run(service, ["req_001"])
+    assert _lines(tmp_path, "request") == [] and service.counts["failures"] == 0
+    rep = shadow.build_report(service.paths, setting="shadow")
+    assert rep["state"]["on"] is False and rep["state"]["reason"] == "sqlite_json1_missing"
+    assert [a["reason"] for a in rep["auto_off"]] == ["sqlite_json1_missing"]
+    assert "sqlite_json1_missing" in shadow.render_report(rep)
+
+
+def test_the_json1_probe_runs_the_functions_the_task_query_uses():
+    assert shadow.sqlite_json1() is True
+    for name in ("json_remove", "json_extract", "json_each"):
+        assert name in shadow._TASK_SQL + shadow._JOBS_SQL and name in shadow.JSON1_PROBE
