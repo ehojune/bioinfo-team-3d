@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:17 | [`dfa94ce`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/dfa94ce) | **main 병합에서 consult 재시작 복구와 이 PR의 읽기 전용 지침을 함께 살렸습니다.** #93의 재시도 시작 번호와 이 PR의 읽기 전용 작업 wrap-up 건너뛰기를 둘 다 두고, 이어 묻기와 adopt 비용 합산 함수도 모두 남겼습니다. 연구 규약 import와 README 설명도 양쪽 내용을 합쳤습니다 |
 | 12:09 | [`ff5ee4a`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/ff5ee4a) | **공개 가드가 URL의 userinfo와 인코딩된 credential 이름도 가립니다** (#36). 요청 본문에 붙여 넣은 `https://user:password@host`·`https://TOKEN@host`와 `X%2DAmz%2DSignature`처럼 이름을 인코딩한 parameter가 그대로 게시될 수 있었습니다. `ssh://git@host` 같은 계정 이름은 그대로 둡니다. |
 | 12:08 | [`15fae4b`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/15fae4b) | **이어 묻기·상담에서는 직원 자신의 MCP 서버도 뺍니다** (#36, Codex 리뷰). MCP 서버는 Codex sandbox나 Claude plan 모드 밖에서 돌아, 쓰기 도구가 있는 서버를 단 직원은 읽기 전용 질의에서도 파일을 바꿀 수 있었습니다. 읽기 전용 제한은 이제 보낸 쪽이 아니라 러너가 직접 적용합니다. |
 | 11:57 | [`a3b62c6`](https://github.com/ehojune/bioinfo-team-3d/pull/122/commits/a3b62c6) | **거부한 참고 경로를 prompt에서 지울 때 이름이 비슷한 허용 경로는 그대로 둡니다** (#36). `/srv/refs/a`를 빼면 `/srv/refs/atlas`까지 깨지던 것을 경로 경계로 고쳤습니다. |
