@@ -218,6 +218,46 @@ def test_resume_with_an_unknown_peer_start_is_unknown_not_an_error(peer_started,
     assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
 
 
+K2 = "claim:req_q2/K2@1"
+Q2DE_RUNS = ("run:task_q2de_ag_scde/task_q2de", "run:task_q2de_ag_scde/task_q2de2")
+
+
+def _add_q2de_retry(paths):
+    """task_q2de's result reported again by an attempt 2 task of the same request, as task_q4qc2 retries
+    task_q4qc: same workspace, resumed session. The retry's E2 carries its own independence group."""
+    import sqlite3
+    db = sqlite3.connect(paths.state_db)
+    body = json.loads(db.execute("SELECT body FROM state WHERE kind = 'task' AND key = 'task_q2de'").fetchone()[0])
+    body["attempt"] = body["payload"]["meta"]["attempt"] = 2
+    body["payload"].update(id="task_q2de2", resume_session_id="sess_q2de")
+    result = body["result"]
+    result["task_id"] = "task_q2de2"
+    result["provenance"]["runs"] = {"task_q2de2": {**result["provenance"]["runs"]["task_q2de"],
+                                                   "started_at": 1790036000.0, "ended_at": 1790036600.0}}
+    for ev in result["structured"]["evidence"]:
+        if ev["id"] == "E2":
+            ev["independence_group"] = "g_q2_de_retry"
+    db.execute("INSERT INTO state VALUES ('task', 'task_q2de2', ?)", (json.dumps(body),))
+    db.commit()
+    db.close()
+
+
+def claim_reported_twice(name):
+    impl = pilot.IMPLS[name]()
+    with pilot.fixture_copy() as paths:
+        _add_q2de_retry(paths)
+        records = paths.read(overlay=impl.state == "change2")
+    return pilot.result_of(impl.audit_lineage(impl.project(records), claim=K2))
+
+
+def test_baseline_reads_a_claim_revision_reported_twice():
+    """#138: the claim row is stored once and every reporting run is kept, instead of an IntegrityError."""
+    out = claim_reported_twice("A")
+    assert out["bears_on"]["supports"] == sorted(f"ev:task_q2de_ag_scde/{run.rsplit('/', 1)[1]}/{ev}"
+                                                 for run in Q2DE_RUNS for ev in ("E1r", "E2"))
+    assert out["independent_groups"] == ["g_q1_de", "g_q2_de", "g_q2_de_retry"]
+
+
 # ---------------------------------------------------------------- shared reader
 
 def test_reader_refuses_a_missing_database_without_creating_it(tmp_path):

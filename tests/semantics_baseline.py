@@ -35,6 +35,8 @@ CREATE TABLE relation (src TEXT NOT NULL, rel TEXT NOT NULL, dst TEXT NOT NULL, 
                        UNIQUE (src, rel, dst, value));
 CREATE TABLE evidence (id TEXT PRIMARY KEY, run TEXT, target TEXT);
 CREATE TABLE claim (id TEXT PRIMARY KEY, request TEXT, run TEXT, claim_id TEXT);
+-- every run whose result reported a claim revision; claim.run keeps the first one only
+CREATE TABLE claim_report (claim TEXT NOT NULL, run TEXT NOT NULL, PRIMARY KEY (claim, run));
 CREATE TABLE agent (id TEXT PRIMARY KEY, agent_id TEXT, contract_status TEXT, probes INTEGER);
 CREATE INDEX relation_src ON relation (src, rel);
 CREATE INDEX relation_dst ON relation (dst, rel);
@@ -98,7 +100,7 @@ SELECT EXISTS (SELECT 1 FROM up WHERE node = :target AND depth > 0),
 class Registry:
     db: sqlite3.Connection
     records: Records
-    results: dict[str, Any]   # claim id -> ResearchResult that records it
+    results: dict[str, list[Any]]   # claim id -> every ResearchResult that reported it
 
 
 # ---------------------------------------------------------------- shared helpers
@@ -255,8 +257,9 @@ def project(records: Records) -> Registry:
                 rel(ev_id, "refers_to", target, "cited")
         for claim in result.claims:
             cid = f"claim:{rid}/{claim.id}@{claim.revision}"
-            db.execute("INSERT INTO claim VALUES (?, ?, ?, ?)", (cid, rid, run, claim.id))
-            reg.results[cid] = result
+            db.execute("INSERT OR IGNORE INTO claim VALUES (?, ?, ?, ?)", (cid, rid, run, claim.id))
+            db.execute("INSERT OR IGNORE INTO claim_report VALUES (?, ?)", (cid, run))
+            reg.results.setdefault(cid, []).append(result)
         for link in result.links:
             value = link.relation if link.relation in ("supports", "contradicts") else "context"
             rel(f"claim:{rid}/{link.claim_id}@{link.claim_revision}", "bears_on", f"ev:{ws}/{tid}/{link.evidence_id}",
@@ -561,7 +564,9 @@ def audit_lineage(reg: Registry, *, claim: str | None = None, evidence: str | No
                   for i, a in enumerate(counted) for b in counted[i + 1:] if lineage[a] & lineage[b]]
         result["shared_ancestors"] = shared
         claim_id = one(db, "SELECT claim_id FROM claim WHERE id = ?", root)
-        result["independent_groups"] = independent_groups(claim_id, reg.results[root].evidence, reg.results[root].links)
+        # one ledger per reporting result: evidence ids are local to a result, so groups are joined, not rows
+        result["independent_groups"] = sorted({g for res in reg.results[root]
+                                               for g in independent_groups(claim_id, res.evidence, res.links)})
         result["cautions"] = walked["cautions"] + [{"code": "shared_ancestor_review", **s} for s in shared]
     if kind == "artifact":
         result["node"] = artifact_row(reg, root)
