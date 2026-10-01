@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path, PurePath
 
 from ..models import AgentSpec
 
@@ -34,6 +35,18 @@ READ_ONLY_ENV_KEEP = frozenset({
     "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
     "CODEX_CA_CERTIFICATE",
 })
+# What an engine reads from its working folder as instructions or configuration and no read-only flag switches off
+# (#147). A reused workspace can hold any of them from an earlier writable run, and the follow-up would take its
+# instructions from there. A read-only run refuses rather than guess whether the CLI loads them; only what labhq
+# itself puts there (a contract skill, `labhq_workspace_paths`) is exempt. Handled elsewhere, so not listed:
+# Claude's .claude/settings*.json (--setting-sources ""), .mcp.json (--strict-mcp-config), CLAUDE.md files
+# (claudeMdExcludes); Codex's AGENTS.md (labhq rewrites it) and AGENTS.override.md (refused for every Codex run).
+READ_ONLY_WORKSPACE_REFUSED: dict[str, tuple[str, ...]] = {
+    "claude_code": ("AGENTS.md", "AGENTS.override.md"),  # the built-in agents-md plugin; not measured
+    "codex": (".agents",),  # project skills ($CWD/.agents/skills)
+}
+# Where TaskWorkspace.install_skill copies a contract staff member's paper skill.
+SKILL_DIRS = (".claude/skills", ".agents/skills")
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -66,6 +79,42 @@ def read_only_engine_env(env: dict[str, str]) -> tuple[dict[str, str], list[str]
     """The part of `engines.<engine>.env` a read-only run keeps, and the names it leaves out (never the values)."""
     kept = {key: value for key, value in env.items() if key.upper() in READ_ONLY_ENV_KEEP}
     return kept, sorted(set(env) - set(kept))
+
+
+def labhq_workspace_paths(agent: AgentSpec) -> list[str]:
+    """Workspace paths (relative, POSIX) that labhq itself writes for this staff member: its contract skill."""
+    skill = agent.contract.skill_dir if agent.contract else None
+    return [f"{base}/{PurePath(skill).name}" for base in SKILL_DIRS] if skill else []
+
+
+def _foreign_entry(workdir: Path, name: str, owned: list[str]) -> str | None:
+    """The first entry at or under `workdir/name` that labhq did not write, without following links."""
+    pending = [workdir / name]
+    while pending:
+        path = pending.pop()
+        if not (path.exists() or path.is_symlink()):
+            continue
+        relative = path.relative_to(workdir).as_posix()
+        if any(relative == mine or relative.startswith(mine + "/") for mine in owned):
+            continue  # labhq's own copy
+        if path.is_symlink() or not path.is_dir() or not any(mine.startswith(relative + "/") for mine in owned):
+            return relative
+        try:
+            pending.extend(sorted(path.iterdir(), reverse=True))
+        except OSError:
+            return relative  # unreadable: cannot tell, so it counts
+    return None
+
+
+def read_only_workspace_error(engine: str, workdir: Path, owned: list[str]) -> str | None:
+    """Why a read-only run must not start in this workspace: it holds a file its engine would read as instructions."""
+    for name in READ_ONLY_WORKSPACE_REFUSED.get(engine, ()):
+        found = _foreign_entry(Path(workdir), name, owned)
+        if found:
+            return (f"read-only run refused: the workspace holds {found}, which {engine} would read as instructions "
+                    "or configuration; a read-only run takes those only from labhq. Move it out of the workspace or "
+                    "ask in a new request")
+    return None
 
 
 def read_only_launch_error(engine: str, prefix_args: list[str]) -> str | None:

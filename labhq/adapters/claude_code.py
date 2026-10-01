@@ -34,6 +34,12 @@ WORKSPACE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md")
 PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
+def workspace_memory_excludes(workdir: Path) -> list[str]:
+    """Memory files a previous run could have left in a reused workspace (HPC wake-up, follow-up)."""
+    wd = Path(workdir).resolve()
+    return [(wd / n).as_posix() for n in WORKSPACE_MEMORY] + [(wd / ".claude" / "rules").as_posix() + "/**"]
+
+
 def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:
     """Settings that keep the PI's own Claude setup out of a staff session.
 
@@ -219,6 +225,8 @@ class ClaudeCodeAdapter(AgentAdapter):
         if ctx.read_only:  # isolation is not optional here, and no hook of any source runs
             cmd += READ_ONLY_FLAGS
             settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
+            # Only labhq's instructions: memory files an earlier writable run left here stay out (#147).
+            settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
             settings["disableAllHooks"] = True
         elif b.isolate_user_config:
             cmd += SKILL_ISOLATION_FLAGS if a.allow_skills else ISOLATION_FLAGS
@@ -226,9 +234,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             if a.allow_skills:
                 # A skill-enabled member takes instructions only from labhq and its pinned plugin. A reused
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
-                wd = Path(ctx.workdir).resolve()
-                settings["claudeMdExcludes"] += [(wd / n).as_posix() for n in WORKSPACE_MEMORY] + \
-                    [(wd / ".claude" / "rules").as_posix() + "/**"]
+                settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
         if settings:
             cmd += ["--settings", json.dumps(settings)]
         if a.builtin_tools is not None:

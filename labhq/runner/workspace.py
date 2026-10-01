@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
+from ..adapters.read_only import SKILL_DIRS
 from ..models import AgentSpec, Task
 from ..util import atomic_write_text
 
@@ -51,7 +52,7 @@ class TaskWorkspace:
         skill_dir = Path(skill_dir)
         if not (skill_dir / "SKILL.md").exists():
             return
-        for base in (".claude/skills", ".agents/skills"):
+        for base in SKILL_DIRS:  # a read-only run exempts exactly these copies
             dst = self.dir / base / skill_dir.name
             if not dst.exists():
                 shutil.copytree(skill_dir, dst)
