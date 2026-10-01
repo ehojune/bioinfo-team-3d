@@ -164,6 +164,10 @@ class ShadowPaths:
     def observed(self) -> Path:
         return self.root / "observed.json"
 
+    @property
+    def breaker(self) -> Path:
+        return self.root / "breaker.json"
+
 
 def shadow_root(settings: Any) -> Path:
     return settings.path(settings.gateway.state_dir) / "semantics"
@@ -268,6 +272,25 @@ def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[
     paths.root.mkdir(parents=True, exist_ok=True)
     atomic_write_text(paths.disabled, json.dumps({"reason": reason, "ts": time.time(), "epoch": epoch,
                                                   "counts": dict(counts or {})}, sort_keys=True))
+
+
+def write_breaker(paths: ShadowPaths, epoch: int, recent: Iterable[bool], consecutive: int) -> None:
+    paths.root.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(paths.breaker, json.dumps({"epoch": epoch, "recent": list(recent), "consecutive": consecutive}))
+
+
+def read_breaker(paths: ShadowPaths, epoch: int) -> tuple[list[bool], int] | None:
+    """The failure window an earlier process saved for ``epoch`` (#173): (recent, consecutive), or None when the
+    file is missing or belongs to another epoch. A file of the wrong shape raises, like the other breaker files."""
+    if not paths.breaker.exists():
+        return None
+    value = _read_json(paths.breaker)
+    whole = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0  # noqa: E731
+    recent = value.get("recent") if isinstance(value, dict) else None
+    if (not isinstance(recent, list) or len(recent) > RECENT_WINDOW or not all(isinstance(x, bool) for x in recent)
+            or not whole(value.get("epoch")) or not whole(value.get("consecutive"))):
+        raise ValueError("breaker.json")
+    return (recent, value["consecutive"]) if value["epoch"] == epoch else None
 
 
 def read_disabled(paths: ShadowPaths) -> dict | None:
@@ -1001,6 +1024,8 @@ class ShadowService:
         self.current: tuple[int, float] | None = None
         self.observed: dict[str, dict] | None = None
         self.observed_dirty = False
+        self.window_lock = threading.Lock()  # orders breaker.json writes without holding self.lock
+        self.window_seq = self.window_saved = 0
         self.state_mtime: float | None = None
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
@@ -1032,11 +1057,16 @@ class ShadowService:
             self.epoch = int(read_state(self.paths)["epoch"])
             self.state_mtime = self.paths.state.stat().st_mtime
             disabled = read_disabled(self.paths)
+            window = read_breaker(self.paths, self.epoch)
         except (OSError, ValueError, TypeError) as exc:
             self.trip("breaker_storage", kind=type(exc).__name__)
             return
         if disabled is not None:
             self.latched = disabled["reason"]
+        elif window is not None:  # this epoch's failures before a restart still count (#173)
+            self.recent.extend(window[0])
+            self.consecutive = window[1]
+            self.check_window()
 
     def external_off(self) -> bool:
         """A disabled.json written elsewhere (`labhq semantics mark`, another process) latches this one too."""
@@ -1124,7 +1154,7 @@ class ShadowService:
                 self.trip("worker_busy")
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
-            self.outcome(failed=True)
+            self.outcome(failed=True, on_loop=True)
 
     def ensure_thread(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -1266,17 +1296,44 @@ class ShadowService:
             failed = True
         self.outcome(failed=failed)
 
-    def outcome(self, *, failed: bool) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False) -> None:
+        """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
+        daemon thread instead of there (#173)."""
         with self.lock:
             self.recent.append(failed)
             self.consecutive = self.consecutive + 1 if failed else 0
             if failed:
                 self.counts["failures"] += 1
+            self.window_seq += 1
+            window = (self.window_seq, self.epoch, list(self.recent), self.consecutive)
+        self.check_window()
+        if on_loop:
+            threading.Thread(target=self.keep_window, args=window, name=f"{self.thread_name}-breaker",
+                             daemon=True).start()
+        else:
+            self.keep_window(*window)
+
+    def keep_window(self, *window: Any) -> None:
+        try:
+            self.save_window(*window)
+        except OSError as exc:  # a window that cannot be kept would forget failures at the next restart
+            self.trip("breaker_storage", kind=type(exc).__name__)
+
+    def check_window(self) -> None:
+        with self.lock:
             consecutive, recent = self.consecutive, sum(self.recent)
         if consecutive >= CONSECUTIVE_FAILURES:
             self.trip("consecutive_failures")
         elif recent >= RECENT_FAILURES:
             self.trip("recent_failures")
+
+    def save_window(self, seq: int, epoch: int, recent: list[bool], consecutive: int) -> None:
+        """Write the failure window to breaker.json (#173). Outside self.lock, so the event loop never waits on the
+        disk; a later outcome that already wrote wins over an earlier one still on its way."""
+        with self.window_lock:
+            if seq > self.window_saved:
+                write_breaker(self.paths, epoch, recent, consecutive)
+                self.window_saved = seq
 
     def drain(self, timeout: float = 5.0) -> bool:
         """Tests and tools: wait until the queue is empty and no job runs."""
@@ -1481,8 +1538,9 @@ def enable(paths: ShadowPaths) -> str:
                  "since": time.time()}
     epoch = int(state["epoch"]) + 1
     atomic_write_text(paths.state, json.dumps({**state, "epoch": epoch}))
-    if paths.disabled.exists():
-        paths.disabled.unlink()
+    for stale in (paths.disabled, paths.breaker):  # the new epoch starts with no failures
+        if stale.exists():
+            stale.unlink()
     append_line(paths, {"v": 1, "type": "enable", "ts": round(time.time(), 3), "epoch": epoch,
                         "previous_reason": (disabled or {}).get("reason")})
     head = f"꺼진 이유: {disabled['reason']}. " if disabled else "꺼져 있지 않았습니다. "
