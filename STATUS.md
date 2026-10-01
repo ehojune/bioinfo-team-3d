@@ -10,6 +10,15 @@
 - 미해결: 할 일 2 전이라 live 후보는 여전히 0이다(`type_unknown`). 같은 폴더를 다시 쓰는 재시도·wake는 같은 파일을 여러 run이 보고해 `not_generated`가 된다(선언 산출과 같은 규칙). hard link는 경로로 구별하지 못한다.
 - 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/adapters/mock.py`, `tests/test_direct_outputs.py`, `tests/semantics_shadow_lab.py`.
 
+## 2026-10-02 · #219 — Windows TEMP 아래 작업 폴더의 Claude 쓰기 경로
+
+- 결론: Claude 직원이 Git Bash `pwd`의 `/tmp/...`를 Write에 넣어도, 작업 폴더 안이면 승인 없이 작업 폴더에 쓴다. 폴더 밖 쓰기는 여전히 승인을 받는다.
+- 원인: Claude Code 2.1.282(Windows)의 Bash는 TEMP를 `/tmp`로 보여 주고, 파일 도구는 같은 표기를 드라이브 루트 `C:\tmp\...`에 쓴다. 게이트는 그 경로를 폴더 밖으로 보고 물었다(chief_of_staff·biologist). 맨 `Write`가 사전 허용된 직원(analyst·data_steward)은 묻지 않고 `C:\tmp`에 써서 산출이 비었다.
+- 바뀐 것: 게이트는 드라이브 없는 쓰기 경로를 Claude가 실제로 쓸 경로로 판정한다. Git Bash 뜻(`/tmp`→TMP·TEMP, `/c/`→`C:\`)이 쓰기 루트 안일 때만 그 경로로 고쳐 `updatedInput`으로 돌려준다. TMP·TEMP가 없거나 다르면 고치지 않고 지금처럼 묻는다. 승인 요청에는 실제로 쓸 경로를 `detail.path`로 싣는다. 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 바꿨다. 링크로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둔다(검증 중 발견: 실제 경로 규칙만으로는 링크 표기 절대경로 쓰기가 막혔다). bench 대본 PI는 그 task 작업 폴더 안 Write/Edit 요청을 승인하고 `workdir_write_approvals`로 따로 센다. README §8·§10을 맞췄다.
+- 실행한 것: 실제 Claude CLI(2.1.282, sonnet) probe로 경로 표기와 파일이 생긴 곳을 기록했다(가린 fixture 3개). 수정 뒤 같은 `/tmp` 쓰기는 작업 폴더에 생겼고, 폴더 밖 쓰기는 게이트가 승인으로 넘겼다. junction 표기 작업 폴더 probe 6개(`junction_*`)로 두 표기 규칙이 모두 있어야 사전 허용됨을 확인했다. bench public-protein-qc labhq arm 재실행에서 미스크립트 승인 1→0, `C:\tmp` 쓰기 0. 새 회귀 36건 중 34건이 수정 전 실패했다(2건은 guard). 전체 pytest 2160 passed/25 skipped, Node 13개, `bash scripts/check_public.sh` 통과. Codex 리뷰 지적 없음.
+- 미해결: protein-qc는 여전히 FAIL이다. CSO 계획이 `answer.md`를 `outputs/` 밖에 선언해 INCOMPLETE가 됐다(별개 원인, 그림자 실행의 penguins와 같은 부류). 사전 허용 Read의 `/tmp/...`는 "파일 없음"으로 끝난다. Bash 셸 쓰기 대상의 `/tmp`·`/c/` 표기는 그대로 승인을 받는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/policy.py`, `labhq/tools/approval_mcp.py`, `labhq/adapters/claude_code.py`, `labhq/bench.py`, `tests/test_claude_write_paths.py`, `tests/test_bench_review3.py`, `tests/fixtures/real/claude_code/claude_windows_write_paths.json`, `claude_write_tmp_*.jsonl`.
+
 ## 2026-10-01 · #220 — CSO 계획의 산출 경로를 실행 전에 outputs/ 안으로
 
 - 결론: 단계 결과 계약은 작업 폴더 `outputs/` 아래만 센다. penguins 계획은 `answer.md`를 선언하고 지시문에 `./answer.md`(작업 폴더 루트)를 적어, analyst가 만든 파일을 찾지 못해 INCOMPLETE가 됐다. 이제 계획 검증이 dispatch 전에 고치거나 다시 받는다.

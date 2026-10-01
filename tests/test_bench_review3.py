@@ -209,3 +209,34 @@ def test_test_agent_forwards_budget_policy_to_each_case(tmp_path, monkeypatch):
     summary = asyncio.run(bench.run_test_agent(tmp_path, arms=("labhq",), approve_budget_up_to=3))
     assert seen == [3] * 5
     assert summary["failed"] == 5
+
+
+@pytest.mark.parametrize("tool,path,approved", [
+    ("Write", "{workdir}/outputs/answer.md", True),
+    ("Edit", "outputs/answer.md", True),
+    ("NotebookEdit", "{workdir}/outputs/nb.ipynb", True),
+    ("Write", "{elsewhere}/answer.md", False),
+    ("Write", "outputs/../../answer.md", False),
+    ("Write", "{workdir}/.claude/settings.json", False),
+    ("Bash", "{workdir}/outputs/answer.md", False),
+    ("Write", None, False),
+])
+def test_scripted_pi_approves_only_writes_inside_the_task_workdir(tmp_path, harness, monkeypatch, tool, path, approved):
+    """#219: a tool_permission ask for a Write/Edit inside that task's own workdir is a harness rule, not unscripted."""
+    case, events, decisions, _ = harness
+    workdir = tmp_path / "runs" / "task_w_analyst"
+    (workdir / "outputs").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+
+    from labhq.runner import daemon
+    monkeypatch.setattr(daemon.Runner, "workspaces", {"task_w": SimpleNamespace(dir=workdir)}, raising=False)
+    detail = {"tool_name": tool, "input": "{}"}
+    if path is not None:
+        detail["path"] = path.format(workdir=workdir.as_posix(), elsewhere=(tmp_path / "elsewhere").as_posix())
+    events.append({"kind": "tool_permission", "task_id": "task_w", "summary": f"{tool}: write", "detail": detail})
+    events.append({"kind": "tool_permission", "task_id": "task_other", "summary": "Write: other task",
+                   "detail": {"tool_name": "Write", "path": (workdir / "outputs" / "x.md").as_posix()}})
+    run = asyncio.run(bench._run_labhq(case, tmp_path, "real", Settings()))
+    assert [ok for ok, _ in decisions] == [approved, False]
+    assert run["workdir_write_approvals"] == int(approved)
+    assert run["unscripted_approvals"] == 2 - int(approved)
