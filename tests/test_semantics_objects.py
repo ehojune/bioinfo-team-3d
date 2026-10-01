@@ -4,6 +4,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from labhq.research.semantics_objects import LINK_TYPES, OBJECT_TYPES, build_view, summarize
 from tests.semantics_shadow_lab import fake_hub, line_for, request_row, task_row, workspace
 
@@ -88,3 +90,47 @@ def test_one_file_under_two_spellings_is_one_artifact():
     summary = summarize(build_view(snap))
     assert summary["objects"]["Artifact"] == 1 and summary["links"]["task_artifact"] == 1
     assert summary["links"]["step_input"] == 1 and "step_input" not in summary["unresolved_by"]
+
+
+def _hpc_wait(child_kind: str | None = "step"):
+    """task_w left HPC job 301 pending; task_w2 is its wake-up. Saving the step result cleared jobs_done."""
+    tasks = {"task_w": task_row("req_h", "task_w", "s1", "analyst", "/w/task_w_analyst", [])}
+    tasks["task_w"]["result"]["pending_jobs"] = ["301"]
+    if child_kind:
+        tasks["task_w2"] = {**task_row("req_h", "task_w2", "s1", "analyst", "/w/task_w_analyst", ["outputs/a.tsv"],
+                                       kind=child_kind), "parent_task": "task_w"}
+    return {"rid": "req_h", "requests": {"req_h": request_row("req_h", [("s1", "analyst")])}, "tasks": tasks,
+            "agents": {"analyst": {"engine": "mock"}}, "jobs_done": {}, "approvals": []}
+
+
+@pytest.mark.parametrize("child, job_state, task_state, pending", [
+    ("step", "finished", "done", 0),       # woken: the CSO waited for the jobs before it dispatched the wake
+    (None, "pending", "waiting", 1),       # never woken: still pending
+    ("wrap_up", "pending", "waiting", 1),  # a wrap-up turn continues a task without waiting for its jobs
+])
+def test_jobs_of_a_woken_task_are_not_pending_after_the_checkpoint_is_cleared(child, job_state, task_state, pending):
+    """#163 #174: the wake-up task is the durable record that the jobs ended."""
+    view = build_view(_hpc_wait(child))
+    assert view.objects["Job"]["job:task_w/301"]["state"] == job_state
+    assert view.objects["Task"]["task:task_w"]["state"] == task_state
+    assert summarize(view)["pending_jobs"] == pending
+
+
+def test_a_recorded_final_job_state_is_kept():
+    snap = _hpc_wait("step")
+    snap["jobs_done"] = {"task_w": {"jobs": [{"job_id": "301", "state": "failed"}]}}
+    assert build_view(snap).objects["Job"]["job:task_w/301"]["state"] == "failed"
+
+
+def test_the_line_and_report_count_no_pending_job_after_a_wake(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+    snap = _hpc_wait("step")
+    hub = fake_hub(tmp_path, snap["requests"], snap["tasks"])   # the store keeps no jobs_done, as after a wake
+    line = line_for(hub, "req_h")
+    assert line["objects"]["status"] == "ok" and line["objects"]["pending_jobs"] == 0
+    paths = shadow.ShadowPaths(tmp_path / "report")
+    shadow.append_line(paths, {**line, "objects": {**line["objects"], "pending_jobs": 2}})
+    shadow.append_line(paths, line)
+    rep = shadow.build_report(paths)
+    assert rep["broken_lines"] == 0 and rep["objects"]["pending_jobs"] == 2
+    assert "대기 job 2" in shadow.render_report(rep)

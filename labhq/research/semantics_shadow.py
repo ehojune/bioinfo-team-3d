@@ -1332,7 +1332,8 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and all(_number(m.get("ms")) for m in (prov, objs))
             and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
             and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
-            and _counts(objs.get("objects")) and all(_number(objs.get(k)) for k in ("link_total", "unresolved"))
+            and _counts(objs.get("objects"))
+            and all(_number(objs.get(k)) for k in ("link_total", "unresolved", "pending_jobs"))
             and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES))
 
 
@@ -1381,7 +1382,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                        if ok else None,
                        links_mean=round(statistics.mean(int(r.get("link_total") or 0) for r in ok), 2) if ok else None,
                        unresolved=sum(int(r.get("unresolved") or 0) for r in ok),
-                       with_unresolved=sum(1 for r in ok if (r.get("unresolved") or 0) > 0))
+                       with_unresolved=sum(1 for r in ok if (r.get("unresolved") or 0) > 0),
+                       pending_jobs=sum(int(r.get("pending_jobs") or 0) for r in ok))
         return out
 
     research_with_candidates = sum(1 for r in requests if r.get("lane") == "research"
@@ -1446,7 +1448,7 @@ def render_report(rep: Mapping[str, Any]) -> str:
         f"incomplete {p['incomplete']} |",
         f"| 객체·링크 뷰 | {o['n']} | {o['ok']} | {o['timeout']} | {o['error']} | {v(o['p50_ms'])} | {v(o['p95_ms'])} | "
         f"객체 평균 {v(o['objects_mean'])} · 링크 평균 {v(o['links_mean'])} · unresolved {o['unresolved']} "
-        f"({o['with_unresolved']}건) |",
+        f"({o['with_unresolved']}건) · 대기 job {o['pending_jobs']} |",
         "",
         "후보 제외 이유: " + ", ".join(f"{k} {n}" for k, n in p["excluded"].items()),
         "hash: " + ", ".join(f"{k} {n}" for k, n in rep["hash"].items()) + " · 작업 폴더: "
