@@ -17,7 +17,7 @@ from pathlib import Path
 
 import websockets
 
-from ..adapters import get_adapter, read_only_refusal
+from ..adapters import READ_ONLY_OVERRIDES, get_adapter, read_only_refusal
 from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
@@ -459,6 +459,8 @@ class Runner:
             await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
             await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
             return result
+        if read_only:  # what a read-only task reaches is fixed here, not trusted to the sender's overrides
+            agent = agent.model_copy(update=READ_ONLY_OVERRIDES)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         ws = TaskWorkspace(self.ws_root, task, agent, override)
         self.workspaces[task.id] = ws

@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..adapters import read_only_refusal
+from ..adapters import READ_ONLY_OVERRIDES, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
@@ -196,10 +196,6 @@ Final report (excerpt):
 {report}
 {history}
 PI follow-up question: {question}"""
-
-# Consults and follow-ups answer from existing work; they never write or submit.
-READ_ONLY_OVERRIDES = {"sandbox": "read-only", "permission_mode": "plan", "builtin_mcp": [],
-                       "builtin_tools": "Read,Glob,Grep", "tools": []}
 
 
 def continuation_prompt(task: Task, updates: str, *, resumable: bool,

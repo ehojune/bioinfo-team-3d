@@ -10,7 +10,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import Hub, RequestIn, create_app
-from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.models import AgentSpec, Engine, McpServerSpec, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -68,7 +68,7 @@ async def test_followup_resumes_the_cso_session_in_its_workspace_read_only():
     assert task.agent_id == "cso" and task.resume_session_id == "cso-1"
     assert task.meta["kind"] == "followup" and task.meta["workdir"] == "/w/cso"
     assert task.meta["agent_overrides"]["sandbox"] == "read-only"
-    assert task.meta["agent_overrides"]["builtin_mcp"] == []
+    assert task.meta["agent_overrides"]["builtin_mcp"] == [] and task.meta["agent_overrides"]["mcp"] == []
     assert task.meta["upstream_dirs"] == ["/w/s1"] and task.meta["reference_dirs"] == ["/srv/refs/yuan"]
     assert "PI follow-up question: Why cohort A?" in task.prompt and "Final report: cohort A wins" in task.prompt
     req = hub.requests["r"]
@@ -296,6 +296,35 @@ async def test_runner_never_runs_a_read_only_task_on_an_engine_that_cannot_enfor
     from labhq.orchestrator.cso import failure_kind
     assert failure_kind(result) == "terminal", "a refusal is never retried"
     assert [e["type"] for e in runner.store.pending() if e["type"] == "task.result"] == ["task.result"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
+async def test_runner_gives_a_read_only_task_no_mcp_server_or_write_tool_of_its_own(tmp_path, monkeypatch, engine):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    # No overrides from the sender: the runner itself fixes what a read-only task can reach. An auto-approved
+    # MCP server runs outside Codex's read-only sandbox and Claude's plan mode, so it could still write.
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=engine, tools=["Bash(python *)"],
+                      mcp=[McpServerSpec(name="notes_writer", command="notes-mcp", auto_approve=True)])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    seen = []
+
+    class Adapter:
+        async def run(self, ctx):
+            seen.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    for kind in ("followup", "consult", "step"):
+        await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": kind}))
+    for ctx in seen[:2]:
+        assert ctx.mcp_servers == [] and ctx.agent.mcp == [] and ctx.agent.tools == []
+        assert ctx.agent.sandbox == "read-only" and ctx.agent.permission_mode == "plan"
+        assert ctx.agent.builtin_tools == "Read,Glob,Grep" and not ctx.use_permission_tool
+    assert "notes_writer" in [s.name for s in seen[2].mcp_servers], "an ordinary step keeps the agent's servers"
 
 
 async def _until(predicate, timeout=30.0):
