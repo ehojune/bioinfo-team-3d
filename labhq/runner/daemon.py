@@ -22,7 +22,7 @@ from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
-from ..intake import overlaps_restricted, reference_roots
+from ..intake import overlaps_restricted, reference_roots, scan_reference_dir, withhold_reference_paths
 from ..policy import claude_read_only, claude_settings
 from ..registry import Registry
 from ..settings import Settings
@@ -396,8 +396,11 @@ class Runner:
                     latest, latest_at = run, timestamp
         return latest
 
-    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str]]:
-        """Re-check path references with resolved paths on this runner (#36): (read-only dirs, skip notes)."""
+    def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
+        """Re-check path references with resolved paths on this runner (#36).
+
+        Returns (read-only dirs, skip notes, refused values). A refused value is also withheld from the prompt.
+        """
         roots = [Path(root).resolve() for root in reference_roots(self.s)]
         open_dirs = [Path(d).resolve() for d in writable]
         # Zones are compared lexically and resolved: a zone written through a symlink or junction
@@ -411,30 +414,39 @@ class Runner:
                     continue
         kept: list[str] = []
         skipped: list[str] = []
+        refused: list[str] = []
         for raw in task.meta.get("reference_dirs") or []:
+            reason = None
             try:
                 path = Path(os.path.expanduser(str(raw))).resolve()
             except (OSError, RuntimeError, ValueError):
-                skipped.append(f"{raw} (경로를 읽을 수 없음)")
-                continue
-            if not path.exists():
-                skipped.append(f"{raw} (없음)")
-                continue
-            directory = path if path.is_dir() else path.parent
-            if not any(directory == root or directory.is_relative_to(root) for root in roots):
-                skipped.append(f"{raw} (runner.reference_roots 밖)")
-            elif overlaps_restricted(str(directory), self.s) or any(
-                    directory == zone or directory.is_relative_to(zone) or zone.is_relative_to(directory)
-                    for zone in zones):
-                skipped.append(f"{raw} (통제 데이터 구역)")
-            elif any(directory == d or directory.is_relative_to(d) for d in open_dirs):
-                continue  # already reachable through a writable project dir; keep that dir writable
-            elif any(d.is_relative_to(directory) for d in open_dirs):
-                # Edit/Write deny rules on this folder would also cover the task's own workspace or project.
-                skipped.append(f"{raw} (작업·프로젝트 폴더를 품고 있어 읽기 전용으로 열 수 없음)")
-            elif str(directory) not in kept:
-                kept.append(str(directory))
-        return kept, skipped
+                reason = "경로를 읽을 수 없음"
+            else:
+                directory = path if path.is_dir() else path.parent
+                if not path.exists():
+                    reason = "없음"
+                elif not any(directory == root or directory.is_relative_to(root) for root in roots):
+                    reason = "runner.reference_roots 밖"
+                elif overlaps_restricted(str(directory), self.s) or any(
+                        directory == zone or directory.is_relative_to(zone) or zone.is_relative_to(directory)
+                        for zone in zones):
+                    reason = "통제 데이터 구역"
+                else:
+                    # A link or mount below the folder can still lead into a zone (reference/link/raw.tsv).
+                    reason = scan_reference_dir(directory, zones, self.s.runner.reference_scan_max_entries,
+                                                self.s.runner.reference_scan_max_depth)
+                if reason is None:
+                    if any(directory == d or directory.is_relative_to(d) for d in open_dirs):
+                        continue  # already reachable through a writable project dir; keep that dir writable
+                    if any(d.is_relative_to(directory) for d in open_dirs):
+                        # Edit/Write deny rules on this folder would also cover the task's own workspace or project.
+                        reason = "작업·프로젝트 폴더를 품고 있어 읽기 전용으로 열 수 없음"
+                    elif str(directory) not in kept:
+                        kept.append(str(directory))
+            if reason is not None:
+                skipped.append(f"{raw} ({reason})")
+                refused.append(str(raw))
+        return kept, skipped, refused
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
@@ -451,9 +463,6 @@ class Runner:
         semaphore = self.consult_sem if consult else self.sem
         async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
-            prompt = ws.write_task_md()
-            if agent.contract and agent.contract.skill_dir:
-                ws.install_skill(Path(agent.contract.skill_dir))
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
@@ -461,9 +470,15 @@ class Runner:
                 if upstream.is_dir() and upstream.is_relative_to(root):
                     extra_dirs.append(str(upstream))
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
-            read_dirs, skipped = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
+            read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs])
             for note in skipped:
                 await emit("agent.log", {"level": "warn", "text": f"참고 경로 제외: {note}"})
+            if refused:  # before TASK.md is written: a refused reference must not stay named in the prompt
+                task = ws.task = task.model_copy(update={"prompt": withhold_reference_paths(task.prompt, refused),
+                                                         "context": withhold_reference_paths(task.context, refused)})
+            prompt = ws.write_task_md()
+            if agent.contract and agent.contract.skill_dir:
+                ws.install_skill(Path(agent.contract.skill_dir))
             for directory in read_dirs:
                 # Pre-approved shell commands (e.g. Bash(python *)) are not sandboxed; only OS permissions
                 # make a reference truly read-only. Say so once per directory instead of implying a guarantee.

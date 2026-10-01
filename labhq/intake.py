@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import unicodedata
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -335,3 +337,67 @@ def render_references(refs: list[dict[str, Any]] | None) -> str:
 
 def reference_dirs(refs: list[dict[str, Any]] | None) -> list[str]:
     return [str(ref["value"]) for ref in refs or [] if ref.get("kind") == "path"]
+
+
+# ---------- runner-side checks of a directory before it is exposed ----------
+
+WITHHELD_PATH = "(withheld by the runner; do not look for it)"
+
+
+def _is_link(entry: os.DirEntry) -> bool:
+    """A symlink, or on Windows any reparse point: junctions and volume mount points are not symlinks there."""
+    if entry.is_symlink():
+        return True
+    attributes = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max_depth: int) -> str | None:
+    """Why `directory` must not be exposed, or None (#36).
+
+    Checking only the directory itself lets `reference/link/raw.tsv` reach a restricted zone through a
+    symlink or junction below it. Every entry is listed without following links; a link must resolve inside
+    the directory, and a mount point below it is refused because its contents live elsewhere. A directory
+    too large or too deep to list within the caps, or one that cannot be listed, is refused (fail closed).
+    Links made after this check and hard links are not seen; README §10 says so.
+    """
+    seen = 0
+    stack: list[tuple[Path, int]] = [(directory, 0)]
+    while stack:
+        current, depth = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    seen += 1
+                    if seen > max_entries:
+                        return f"하위 항목이 상한 {max_entries}개를 넘어 링크를 다 확인할 수 없음"
+                    name = Path(entry.path).relative_to(directory).as_posix()
+                    if _is_link(entry):
+                        try:
+                            target = Path(entry.path).resolve()
+                        except (OSError, RuntimeError, ValueError):
+                            return f"하위 링크 {name}을 풀 수 없음"
+                        if any(target == zone or target.is_relative_to(zone) or zone.is_relative_to(target)
+                               for zone in zones):
+                            return f"하위 링크 {name}이 통제 데이터 구역을 가리킴"
+                        if not (target == directory or target.is_relative_to(directory)):
+                            return f"하위 링크 {name}이 참고 폴더 밖을 가리킴"
+                        continue  # the target is listed where it really lives
+                    if entry.is_dir(follow_symlinks=False):
+                        if os.path.ismount(entry.path):
+                            return f"하위 {name}에 다른 파일 시스템이 mount되어 있음"
+                        if depth + 1 > max_depth:
+                            return f"폴더 깊이가 상한 {max_depth}단계를 넘어 링크를 다 확인할 수 없음"
+                        stack.append((Path(entry.path), depth + 1))
+        except OSError:
+            return f"하위 폴더 {Path(current).relative_to(directory).as_posix() or '.'}를 읽을 수 없음"
+    return None
+
+
+def withhold_reference_paths(text: str, values: list[str]) -> str:
+    """Remove refused path references from a prompt: any engine would otherwise still open what it names."""
+    for value in sorted({v for v in values if v}, key=len, reverse=True):
+        text = text.replace(f"[path] {value} (read-only on the runner)", f"[path] {WITHHELD_PATH}")
+        for form in {value, value.replace("\\", "/"), value.replace("/", "\\")}:
+            text = text.replace(form, "<withheld reference path>")
+    return text

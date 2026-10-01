@@ -316,6 +316,119 @@ async def test_runner_skips_a_reference_that_holds_the_tasks_writable_folders(tm
     assert len([t for t in texts if "품고 있어" in t]) == 2
 
 
+def _link_file(link: Path, target: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError) as error:  # Windows without Developer Mode or admin rights
+        pytest.skip(f"this OS account cannot create file symlinks ({error}); directory junction cases still run")
+
+
+def _log_texts(runner):
+    return [e["data"].get("text", "") for e in runner.store.pending() if e["type"] == "agent.log"]
+
+
+async def _expose(tmp_path, monkeypatch, settings, reference):
+    from labhq.intake import render_references
+
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    prompt = "Compare cohorts" + render_references([{"kind": "path", "value": str(reference)}])
+    prompt += f"\nStep: read {reference}/summary.md first."
+    await runner.run_task(Task(id="task-l", request_id="r1", agent_id="worker", prompt=prompt,
+                               meta={"reference_dirs": [str(reference)]}))
+    return runner, seen["ctx"]
+
+
+def _vault_settings(tmp_path):
+    (tmp_path / "refs" / "notes" / "sub").mkdir(parents=True)
+    (tmp_path / "refs" / "notes" / "summary.md").write_text("ok", encoding="utf-8")
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "raw.tsv").write_text("donor\tgenotype", encoding="utf-8")
+    (tmp_path / "elsewhere").mkdir()
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path / "refs")]
+    settings.policy.data_zones = [DataZone(path=str(tmp_path / "vault"))]
+    return settings
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["vault", "elsewhere"])
+async def test_runner_refuses_a_reference_whose_subfolder_links_out(tmp_path, monkeypatch, target):
+    # reference/link/raw.tsv would read the restricted zone (or any folder the PI did not point at)
+    # through a path no lexical rule recognizes. A junction needs no privilege on Windows.
+    settings = _vault_settings(tmp_path)
+    notes = tmp_path / "refs" / "notes"
+    _link_dir(notes / "sub" / "link", tmp_path / target)
+    runner, ctx = await _expose(tmp_path, monkeypatch, settings, notes)
+    assert ctx.read_dirs == []
+    refused = [t for t in _log_texts(runner) if t.startswith("참고 경로 제외")]
+    assert len(refused) == 1 and "sub/link" in refused[0].replace("\\", "/") and "링크" in refused[0]
+    assert str(tmp_path / target) not in refused[0], "the link target is not echoed into logs"
+    # The pointer is withheld from the prompt too: every engine, not only Claude's --add-dir, follows it.
+    assert str(notes) not in ctx.prompt and notes.as_posix() not in ctx.prompt
+    assert "withheld by the runner" in ctx.prompt
+
+
+@pytest.mark.asyncio
+async def test_runner_refuses_a_reference_holding_a_file_link_into_a_restricted_zone(tmp_path, monkeypatch):
+    settings = _vault_settings(tmp_path)
+    notes = tmp_path / "refs" / "notes"
+    _link_file(notes / "raw.tsv", tmp_path / "vault" / "raw.tsv")
+    runner, ctx = await _expose(tmp_path, monkeypatch, settings, notes)
+    assert ctx.read_dirs == []
+    assert any("raw.tsv" in t and "통제" in t for t in _log_texts(runner))
+
+
+@pytest.mark.asyncio
+async def test_runner_keeps_a_reference_whose_links_stay_inside_it(tmp_path, monkeypatch):
+    settings = _vault_settings(tmp_path)
+    notes = tmp_path / "refs" / "notes"
+    _link_dir(notes / "alias", notes / "sub")
+    runner, ctx = await _expose(tmp_path, monkeypatch, settings, notes)
+    assert ctx.read_dirs == [str(notes.resolve())]
+    assert not [t for t in _log_texts(runner) if t.startswith("참고 경로 제외")]
+    assert f"[path] {notes} (read-only on the runner)" in ctx.prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["entries", "depth"])
+async def test_runner_fails_closed_when_a_reference_is_too_big_to_check(tmp_path, monkeypatch, limit):
+    settings = _vault_settings(tmp_path)
+    notes = tmp_path / "refs" / "notes"
+    if limit == "entries":
+        settings.runner.reference_scan_max_entries = 3
+        for i in range(5):
+            (notes / f"f{i}.txt").write_text("x", encoding="utf-8")
+    else:
+        settings.runner.reference_scan_max_depth = 2
+        (notes / "a" / "b" / "c").mkdir(parents=True)
+    runner, ctx = await _expose(tmp_path, monkeypatch, settings, notes)
+    assert ctx.read_dirs == [] and "withheld by the runner" in ctx.prompt
+    assert any("상한" in t for t in _log_texts(runner) if t.startswith("참고 경로 제외"))
+
+
+def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path(tmp_path):
+    from labhq.policy import evaluate_tool
+
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "raw.tsv").write_text("donor", encoding="utf-8")
+    workdir = tmp_path / "ws"
+    (workdir / "reference").mkdir(parents=True)
+    _link_dir(workdir / "reference" / "link", tmp_path / "vault")
+    policy = Settings().policy
+    policy.data_zones = [DataZone(path=str(tmp_path / "vault"))]
+    ws = str(workdir)
+    absolute = str(workdir / "reference" / "link" / "raw.tsv")
+    for tool, tool_input in [("Read", {"file_path": absolute}), ("Read", {"file_path": "reference/link/raw.tsv"}),
+                             ("Grep", {"pattern": "donor", "path": "reference/link"}),
+                             ("Glob", {"pattern": "reference/link/*.tsv"})]:
+        decision = evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws)
+        assert decision.action == "deny", (tool, tool_input)
+    shell = evaluate_tool("Bash", {"command": "head reference/link/raw.tsv"}, policy, allowed_roots=[ws], workdir=ws)
+    assert shell.action == "ask"
+    assert evaluate_tool("Read", {"file_path": "reference/other.md"}, policy,
+                         allowed_roots=[ws], workdir=ws).action == "allow"
+
+
 def test_shell_writes_into_a_reference_dir_go_to_the_pi_when_the_gate_sees_them(tmp_path):
     from labhq.policy import evaluate_tool
 

@@ -37,6 +37,9 @@ class RunnerSettings(BaseModel):
     force_engine: str | None = None  # "mock" runs every agent with the mock engine (demo/tests)
     # Read-only roots for `path` references (#36); each project's local_dir also counts.
     reference_roots: list[str] = []
+    # A reference folder is listed for links and mounts before it is exposed; past these caps it is refused.
+    reference_scan_max_entries: int = Field(default=20000, ge=1)
+    reference_scan_max_depth: int = Field(default=16, ge=0)
 
 
 class EngineBin(BaseModel):
