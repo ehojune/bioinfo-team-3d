@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:29 | [`58db9ca`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/58db9ca) | **의미 모델이 실제 runner 기록을 읽을 수 있게 했습니다** (Codex 리뷰). runner는 작업 폴더를 절대 경로로 저장하는데 reader가 절대 경로를 모두 거부해서, 실제 기록을 넣으면 정상 task가 전부 실패했습니다. 기록 폴더 안의 절대 경로는 받고, 밖은 계속 거부합니다. 다음 그림자 모드(#150)가 실제 기록을 읽으려면 필요한 수정입니다 |
 | 14:16 | [`6fc62ee`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/6fc62ee) | **main 병합에서 STATUS.md와 패치노트 표에 두 변경을 함께 살렸습니다.** main에 새로 들어온 #63 README 배지와 #36 접수 PR A 항목이 이 PR의 #127 pilot 항목과 같은 자리를 고쳐 충돌했습니다. 코드 충돌은 없었고, 문서는 어느 쪽도 지우지 않고 둘 다 남겼습니다. |
 | 14:05 | [`5c26a93`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/5c26a93) | **후속 6건을 고친 뒤 다시 재고 판정을 바꿔 적었습니다: 중단 기준은 충족했지만 접지 않고 opt-in으로 둡니다** (#127). PI 결정입니다. A·B 모두 17/17 그대로이고, 17문항 밖 반례도 모두 고쳐 회귀 test로 남겼습니다. 실데이터는 다음 PR의 그림자 모드로 모아 #121에서 다시 평가합니다 |
 | 14:02 | [`898352f`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/898352f) | **pilot이 LLM이나 외부 프로그램을 부르지 않는다는 검사의 빈틈을 막았습니다** (#142). 전에는 os의 spawn·exec 계열 함수로 프로그램을 띄울 수 있었고, 측정 script의 import는 검사하지 않았습니다. 이제 둘 다 막고 검사합니다 |
