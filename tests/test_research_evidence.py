@@ -13,13 +13,15 @@ COUNTABLE = {"observation", "database_annotation", "experimental", "literature_c
 def claim(cid="c1", status="supported", revision=1, **extra):
     return {"id": cid, "revision": revision, "statement": "IL6 expression is higher in cases than controls.",
             "scope": "donor-level pseudobulk of one public cohort", "kind": "finding", "status": status,
-            "importance": "major", "limitations": ["single cohort"], **extra}
+            "importance": "major", "status_reason": "donor-level effect observed in the frozen analysis",
+            "limitations": ["single cohort"], **extra}
 
 
 def evidence(eid, kind="experimental", status="observed", **extra):
     row = {"id": eid, "kind": kind, "observation": f"observation {eid}"}
     if kind in COUNTABLE:
-        row.update(status=status, source={"artifact_id": "a1"})
+        row.update(status=status, source={"artifact_id": "a1"}, directness="direct", source_level="primary",
+                   independence_group="cohort1", assessment_reason="measures the asked comparison in raw counts")
     else:
         row["derived_from"] = ["e1"]
     row.update(extra)
@@ -27,7 +29,8 @@ def evidence(eid, kind="experimental", status="observed", **extra):
 
 
 def link(cid, eid, relation="supports", revision=1):
-    return {"claim_id": cid, "claim_revision": revision, "evidence_id": eid, "relation": relation}
+    return {"claim_id": cid, "claim_revision": revision, "evidence_id": eid, "relation": relation,
+            "rationale": f"{eid} {relation} {cid} on the same donors"}
 
 
 def result(**overrides):
@@ -170,3 +173,52 @@ def test_result_binds_to_the_frozen_plan_revision_and_step():
     changed["protocol"]["primary_metrics"] = ["odds ratio"]
     with pytest.raises(ValueError, match="does not match the frozen plan"):
         rc.validate_research_result(result(plan_sha256=digest), plan=changed)
+
+
+# --- R05: directness, independence, source level and reasons ------------------------------------
+
+@pytest.mark.parametrize("field", ["directness", "source_level", "independence_group", "assessment_reason"])
+def test_countable_evidence_must_state_its_assessment(field):
+    row = evidence("e1")
+    del row[field]
+    rejects(result(evidence=[row]), rf"evidence e1 \(experimental\) must state {field}")
+    rejects(result(evidence=[{**evidence("e1"), field: "  "}]), field)
+
+
+def test_assessment_enums_are_closed():
+    rejects(result(evidence=[{**evidence("e1"), "directness": "strong"}]), "Input should be .direct.")
+    rejects(result(evidence=[{**evidence("e1"), "source_level": "gold"}]), "Input should be .primary.")
+
+
+def test_non_countable_rows_do_not_need_a_source_assessment():
+    value = result(evidence=[evidence("e1"), evidence("e2", kind="hypothesis")],
+                   links=[link("c1", "e1"), link("c1", "e2", "context")])
+    assert rc.ResearchResult.model_validate(value).evidence[1].directness is None
+
+
+def test_links_and_claim_status_need_a_judgement_reason():
+    no_rationale = link("c1", "e1")
+    del no_rationale["rationale"]
+    rejects(result(links=[no_rationale]), "rationale")
+    rejects(result(links=[{**link("c1", "e1"), "rationale": "   "}]), "link c1->e1 needs a rationale")
+    no_reason = claim()
+    del no_reason["status_reason"]
+    rejects(result(claims=[no_reason]), "status_reason")
+    rejects(result(claims=[claim(status_reason=" ")]), "claim c1@1 needs a status_reason")
+
+
+def test_recited_source_is_not_independent_support():
+    geo = {"id_scheme": "geo", "id_value": "GSE79973"}
+    first = {**evidence("e1"), "source": geo, "kind": "database_annotation"}
+    recited = {**evidence("e2"), "source": {**geo, "id_value": "gse79973"}, "kind": "literature_claim",
+               "independence_group": "paper2", "source_level": "secondary"}
+    links = [link("c1", "e1"), link("c1", "e2")]
+    rejects(result(evidence=[first, recited], links=links),
+            "e1 and e2 cite the same source geo:gse79973 but declare independence groups cohort1 and paper2")
+    parsed = rc.ResearchResult.model_validate(
+        result(evidence=[first, {**recited, "independence_group": "cohort1"}], links=links))
+    from labhq.evidence.claims import independent_groups
+    assert independent_groups("c1", parsed.evidence, parsed.links) == ["cohort1"]
+    other = {**recited, "source": {"id_scheme": "geo", "id_value": "GSE118916"}}
+    parsed = rc.ResearchResult.model_validate(result(evidence=[first, other], links=links))
+    assert independent_groups("c1", parsed.evidence, parsed.links) == ["cohort1", "paper2"]

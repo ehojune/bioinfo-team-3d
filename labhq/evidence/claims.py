@@ -1,4 +1,4 @@
-"""Typed claim, evidence and link rows for research results (#90 R04, #58 claim ledger).
+"""Typed claim, evidence and link rows for research results (#90 R04-R05, #58 claim ledger).
 
 The schema keeps three things apart: what is asserted (claim), what was observed or looked up
 (evidence), and how one bears on the other (link). Code checks enums, revisions and references;
@@ -27,6 +27,8 @@ EvidenceKind = Literal["observation", "database_annotation", "experimental", "li
 COUNTABLE_EVIDENCE_KINDS = frozenset({"observation", "database_annotation", "experimental", "literature_claim"})
 EvidenceStatus = Literal["observed", "unavailable", "not_found", "failed"]
 Relation = Literal["supports", "contradicts", "context"]
+Directness = Literal["direct", "indirect"]
+SourceLevel = Literal["primary", "secondary", "tertiary"]
 
 # Which countable link relation a claim status asserts.
 STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "contradicted": "contradicts"}
@@ -63,6 +65,7 @@ class Claim(StrictModel):
     kind: ClaimKind
     status: ClaimStatus
     importance: Literal["major", "minor"]
+    status_reason: str = Field(min_length=1)  # why the evidence earns this status, not a probability
     limitations: list[str] = []
     supersedes: str | None = None  # "<claim id>@<earlier revision>"
 
@@ -98,12 +101,21 @@ class Evidence(StrictModel):
     derived_from: list[str] = []  # evidence ids an inference/hypothesis row reasons from
     method: str | None = None
     conditions: list[str] = []
+    # R05 assessment: fit to the question comes first, then these. Counts never add up to a grade.
+    directness: Directness | None = None
+    source_level: SourceLevel | None = None
+    independence_group: str | None = Field(default=None, pattern=ID_PATTERN)  # same data -> same group
+    assessment_reason: str | None = None
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
         if self.countable:
             if self.status is None or self.source is None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) needs status and source")
+            missing = [name for name in ("directness", "source_level", "independence_group", "assessment_reason")
+                       if not _present(getattr(self, name))]
+            if missing:
+                raise ValueError(f"evidence {self.id} ({self.kind}) must state {', '.join(missing)}")
         else:
             if self.status is not None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) is not a retrieval; leave status empty")
@@ -126,6 +138,7 @@ class EvidenceLink(StrictModel):
     claim_revision: int = Field(ge=1)
     evidence_id: str = Field(pattern=ID_PATTERN)
     relation: Relation
+    rationale: str = Field(min_length=1)  # why this evidence bears on the claim this way
 
 
 def _present(value: object) -> bool:
@@ -156,6 +169,18 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         if row.source and row.source.artifact_id and row.source.artifact_id not in artifact_ids:
             errors.append(f"evidence {row.id} cites artifact {row.source.artifact_id} missing from artifact_refs")
 
+    # Re-citing one dataset is not independent support: one source identity, one independence group.
+    groups_by_source: dict[str, tuple[str, str]] = {}
+    for row in evidence:
+        if not (row.countable and row.source and row.independence_group):
+            continue
+        identity = row.source.identity()
+        first = groups_by_source.setdefault(identity, (row.id, row.independence_group))
+        if first[1] != row.independence_group:
+            errors.append(f"evidence {first[0]} and {row.id} cite the same source {identity} but declare "
+                          f"independence groups {first[1]} and {row.independence_group}; re-citation is not "
+                          "independent")
+
     seen_pairs: set[tuple[str, str]] = set()
     asserted: dict[str, set[str]] = {}
     for link in links:
@@ -183,7 +208,12 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         else:
             asserted.setdefault(link.claim_id, set()).add(link.relation)
 
+    for link in links:
+        if not link.rationale.strip():
+            errors.append(f"link {link.claim_id}->{link.evidence_id} needs a rationale")
     for claim in claims:
+        if not claim.status_reason.strip():
+            errors.append(f"claim {claim.key} needs a status_reason")
         needed = STATUS_NEEDS.get(claim.status)
         relations = asserted.get(claim.id, set())
         if needed and needed not in relations:
@@ -191,3 +221,13 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         if claim.status == "supported" and "contradicts" in relations:
             errors.append(f"claim {claim.key} has contradicting evidence; use partially_supported or contradicted")
     return errors
+
+
+def independent_groups(claim_id: str, evidence: list[Evidence], links: list[EvidenceLink],
+                       relation: str = "supports") -> list[str]:
+    """Distinct independence groups among observed countable rows linked to a claim with ``relation``."""
+    by_id = {row.id: row for row in evidence}
+    groups = {by_id[link.evidence_id].independence_group for link in links
+              if link.claim_id == claim_id and link.relation == relation
+              and link.evidence_id in by_id and by_id[link.evidence_id].counts}
+    return sorted(group for group in groups if group)
