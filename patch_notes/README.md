@@ -12,7 +12,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:09 | [`3b23239`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/3b23239) | **main 병합에서 bench report 표에 legacy 결과 열을 남겼습니다** (#105의 구조화 열과 함께) |
+| 10:03 | [`79580f0`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/79580f0) | **main 병합에서 #103의 GitHub 재시도 구조 위에 #107 판정 규칙을 얹었습니다.** 토큰 누락 뒤 재시작 복구는 그대로 둡니다 |
 | 10:02 | [`5c8747d`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/5c8747d) | **main 병합에서 README 설정 절의 두 변경을 함께 살렸습니다.** 연구 규약 pilot 줄과 #103의 라운드 기록 rate limit 설명을 둘 다 둡니다 |
+| 07:45 | [`fdd5e9f`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/fdd5e9f) | **권한 부족 같은 403을 rate limit으로 오인해 끝없이 다시 시도하지 않습니다** (#107). 남은 요청 수가 0이거나 `Retry-After`가 있을 때만 대기 뒤 재시도합니다 |
+| 07:45 | [`cb68515`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/cb68515) | **구조화 채점 이전에 저장된 bench 결과도 report에 PASS/FAIL로 보입니다** (#108) |
+| 07:45 | [`a377009`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/a377009) | **재개된 단계를 다시 열 때 실제로 실행 중인 task를 보여 줍니다** (#106). 같은 단계에 끝난 이전 task와 새 task가 함께 있으면 실행 중인 쪽을 우선하고, 대기 중 상태도 작업판에 표시합니다 |
+| 07:45 | [`07f219e`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/07f219e) | **bench 종료 검사가 느린 Windows 러너에서 멈추지 않게 했습니다** (#104). 고정 대기 대신 상한 있는 조건 대기로 바꾸고, 실패하면 남은 프로세스 번호를 보여 줍니다 |
 | 07:25 | [`a325461`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/a325461) | **통계를 쓰는 연구 계획은 분석 전에 선택을 모두 정해야 승인으로 갑니다** (Codex 리뷰). 비교군·다중검정 보정·결측과 제외 기준·효과크기와 구간 방식을 비워도 통과해서, 결과를 본 뒤 고를 여지가 남았습니다. 이제 각 항목을 정하거나 해당 없음 사유를 적어야 하고, estimand·분석 단위·주요 outcome은 면제할 수 없습니다 |
 | 07:16 | [`e67d921`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/e67d921) | **package에 든 설정 template에 연구 규약 설정을 반영했습니다** |
 | 07:14 | [`3370b3b`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/3370b3b) | **도메인 pack의 합격 조건을 문장이 아니라 기계가 판정하는 규칙으로 바꿨습니다** (Codex 리뷰). 전에는 조건 설명만 비어 있지 않으면 통과해서, 조건과 batch가 완전히 겹쳐 효과를 추정할 수 없는 설계에서도 효과를 주장하는 계획이 승인으로 갔습니다. 이제 pack이 `when`·`require`/`forbid` 규칙을 선언하고, 계획이 하나라도 어기면 승인 대신 다시 계획합니다. 모르는 필드·연산자가 든 pack은 불러올 때 거부합니다. 계획을 고치느라 예산 승인이 거절되면 승인 단계로 가지 않고 멈춥니다 |

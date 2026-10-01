@@ -38,6 +38,7 @@ def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
                                          "steps": {"s1": "done", "s2": "running"}}
         assert hub.snapshot()["data"]["running_tasks"] == [{
             "id": "t2", "request_id": "r1", "state": "running", "step_id": "s2", "agent_id": "worker",
+            "dispatched_at": 0,
         }]
         assert "report" not in item and len(item["text"]) <= 120
         assert [r["id"] for r in client.get("/api/requests?status=done", headers=headers).json()] == ["r2"]
@@ -158,6 +159,25 @@ def test_steps_asleep_on_hpc_count_as_active(tmp_path):
     assert hub.request_summary(hub.requests["r1"])["step_progress"]["steps"] == {"s1": "hibernating"}
     hub.requests["r1"]["results"] = {"s1": {"ok": True}}
     assert hub.running_tasks() == []
+
+
+def test_running_tasks_choose_state_priority_then_latest_dispatch(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["r1"] = {"id": "r1", "status": "running", "results": {}}
+    sleeping = {"request_id": "r1", "accepted": True, "completed": True,
+                "result": {"pending_jobs": ["j1"]}, "payload": {"agent_id": "analyst"}}
+    running = {**sleeping, "completed": False, "result": None}
+    hub.store.put("task", "sleep-newer", {**sleeping, "step_id": "s1", "dispatched_at": 20})
+    hub.store.put("task", "run-older", {**running, "step_id": "s1", "dispatched_at": 10})
+    hub.store.put("task", "run-oldest", {**running, "step_id": "s2", "dispatched_at": 1})
+    hub.store.put("task", "run-latest", {**running, "step_id": "s2", "dispatched_at": 2})
+
+    assert [(task["step_id"], task["id"], task["state"]) for task in hub.running_tasks()] == [
+        ("s1", "run-older", "running"),
+        ("s2", "run-latest", "running"),
+    ]
 
 
 @pytest.mark.parametrize("wake_first", [False, True])

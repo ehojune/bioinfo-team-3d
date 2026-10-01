@@ -608,8 +608,9 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
     lines = [f"# Bench · {result['case_id']}", "",
-             "| arm | model | effort | mode | 상태 | 산출물 | 형식 | 값 | 서술(보조) | PI 개입 | PI 질문 | 미스크립트 승인 | 예산 승인(회) | 비용(USD) | 최종 비용/예산(배) | 상한 | tokens | 경과(초) |",
-             "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+             "| arm | model | effort | mode | 상태 | 산출물 | legacy 결과 | 형식 | 값 | 서술(보조) | PI 개입 | PI 질문 | 미스크립트 승인 | 예산 승인(회) | 비용(USD) | 최종 비용/예산(배) | 상한 | tokens | 경과(초) |",
+             "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+    legacy_rows = False
     for row in result["rows"]:
         cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
         ratio = row.get("cost_budget_ratio")
@@ -618,12 +619,15 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
         ratio_text = "미집계" if ratio is None else f"{ratio:.3f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
+        structured = any(key in row for key in ("format_passed", "content_passed", "narrative_passed"))
+        legacy_rows = legacy_rows or not structured
+        legacy = "N/A" if structured else "PASS" if row.get("checks_passed") else "FAIL"
         status = lambda value: "N/A" if value is None else "PASS" if value else "FAIL"
         model = row.get("model") or "; ".join(
             f"{staff['id']}={staff.get('model') or 'default'}" for staff in row.get("staff_models") or []) or "—"
         lines.append(f"| {row['engine']} | {model} | {row.get('effort') or 'staff config'} | "
                      f"{row.get('mode') or result['mode']} | {row['status']} | {'OK' if row['artifact_exists'] else 'FAIL'} | "
-                     f"{status(row.get('format_passed'))} | {status(row.get('content_passed'))} | "
+                     f"{legacy} | {status(row.get('format_passed'))} | {status(row.get('content_passed'))} | "
                      f"{status(row.get('narrative_passed'))} | {row['pi_interventions']} | "
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
@@ -631,6 +635,9 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
     failures = [row for row in result["rows"] if row.get("error")]
     if failures:
         lines += ["", "## 실패 원인", *[f"- {row['engine']}: {row['error']}" for row in failures]]
+    if legacy_rows:
+        lines += ["", "이전 채점 결과는 **legacy 결과**에 표시했다. 새 기준이 필요하면 "
+                  f"`labhq bench rescore {result['case_id']} --all`을 실행한다."]
     return "\n".join(lines) + "\n"
 
 
