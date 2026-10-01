@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from ..policy import evaluate_tool
+from ..policy import WRITE_LIKE, evaluate_tool
 from ..settings import Settings
 from ..util import short
 from ._mcpcompat import make_server
@@ -54,18 +54,23 @@ def _text_only_tool():
 async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
-    tool_input = input or {}
-    d = evaluate_tool(tool_name, tool_input, S.policy, allowed_roots=[WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR)
+    d = evaluate_tool(tool_name, input or {}, S.policy, allowed_roots=[WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR)
+    # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
+    tool_input = d.updated_input or input or {}
     if d.action == "allow":
         return _allow(tool_input)
     if d.action == "deny":
         return _deny(d.reason)
+    detail = {"tool_name": tool_name, "input": short(tool_input, 1500)}
+    path = (tool_input.get("file_path") or tool_input.get("notebook_path")) if tool_name in WRITE_LIKE else None
+    if isinstance(path, str):
+        detail["path"] = path  # in full: `input` is cut at 1,500 characters
     try:
         async with httpx.AsyncClient(timeout=S.policy.approvals.timeout_s + 30) as c:
             r = await c.post(f"{BROKER}/approval", headers={"X-Labhq-Token": TOKEN}, json={
                 "task_id": TASK, "agent_id": AGENT, "kind": "tool_permission",
                 "summary": f"{tool_name}: {d.reason}",
-                "detail": {"tool_name": tool_name, "input": short(tool_input, 1500)},
+                "detail": detail,
                 "timeout_s": S.policy.approvals.timeout_s,
             })
             r.raise_for_status()

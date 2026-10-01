@@ -12,7 +12,7 @@ import ntpath
 import posixpath
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
 from .settings import SCHEDULER_JOB_COMMANDS, PolicySettings
@@ -69,6 +69,9 @@ def _shell_write_targets(command: str) -> Iterator[str]:
 class Decision:
     action: str  # allow | deny | ask
     reason: str = ""
+    # The tool input the decision was made on, when it is not the input Claude sent (#219). The gate must answer
+    # with it (updatedInput), so the file Claude writes is the one that was judged.
+    updated_input: dict | None = None
 
 
 def _norm(p: str) -> str:
@@ -436,7 +439,112 @@ def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
+def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.PathLike]) -> list[str]:
+    """`--allowedTools` with bare Write/Edit narrowed to `Edit(//root/**)` rules for the write roots (#219).
+
+    A bare `Write` pre-approves every path, so the gate never saw Claude write `C:/tmp/...` on Windows
+    (tests/fixtures/real/claude_code/claude_windows_write_paths.json). The Edit rule also covers Write, MultiEdit and
+    NotebookEdit. Claude pre-approves a write only when the path as written and its resolved path both match, so a
+    root spelled through a link or junction gets a rule for each spelling (probes junction_*). A spelling with no
+    rule form (UNC) is left to the gate.
+    """
+    tools = list(tools)
+    kept = [t for t in tools if t not in WRITE_LIKE]
+    if len(kept) == len(tools):
+        return kept
+    for root in write_roots:
+        for resolve in (os.path.abspath, os.path.realpath):
+            try:
+                kept.append(f"Edit(/{claude_rule_path(resolve(root))}/**)")
+            except (OSError, ValueError):
+                continue
+    return list(dict.fromkeys(kept))
+
+
+_ROOTED_NO_DRIVE = re.compile(r"^[/\\](?![/\\])")  # `/tmp/x`, `\tmp\x`; not UNC, not `C:/x`
+_GIT_BASH_DRIVE = re.compile(r"^[/\\]([A-Za-z])(?=[/\\]|$)")
+_GIT_BASH_TMP = re.compile(r"^[/\\]tmp(?=[/\\]|$)", re.IGNORECASE)
+
+
+def _git_bash_tmp(environ: Mapping[str, str]) -> str | None:
+    """The folder Git for Windows mounts at `/tmp` (`usertemp`: the user's TMP/TEMP); None when unclear."""
+    found = set()
+    for key in ("TMP", "TEMP"):
+        value = environ.get(key)
+        if not value:
+            continue
+        if not re.match(r"^[A-Za-z]:[/\\]", value):
+            return None
+        if os.name == "nt":  # 8.3 names and junctions, as the workdir was resolved
+            try:
+                value = os.path.realpath(value)
+            except (OSError, ValueError):
+                return None
+        found.add(ntpath.normpath(value))
+    if len({p.casefold() for p in found}) != 1:
+        return None
+    return found.pop()
+
+
+def _git_bash_path(path: str, environ: Mapping[str, str]) -> str | None:
+    """What Claude's Bash (Git Bash) means by a drive-less rooted path, for the mounts labhq knows."""
+    if _GIT_BASH_TMP.match(path):
+        tmp = _git_bash_tmp(environ)
+        return ntpath.normpath(tmp + "\\" + path[4:]) if tmp else None
+    drive = _GIT_BASH_DRIVE.match(path)
+    if drive:
+        return ntpath.normpath(f"{drive.group(1).upper()}:\\{path[2:]}")
+    return None
+
+
+def claude_write_input(tool_name: str, tool_input: dict[str, Any], workdir: str | None, roots: Iterable[str], *,
+                       windows: bool | None = None, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The input with its write path spelled as the file Claude will write (#219).
+
+    On Windows Claude writes a drive-less rooted path (`/tmp/x`, `\\tmp\\x`) on its cwd's drive (`C:/tmp/x`),
+    while its Bash (Git Bash) prints TEMP as `/tmp`. When only the Git Bash meaning is inside the write roots, the
+    model copied `pwd` and the path is respelled there; otherwise the drive-root path is kept so an ask shows it.
+    The gate must answer with the returned input. Other paths and hosts come back unchanged.
+    """
+    windows = os.name == "nt" if windows is None else windows
+    key = next((k for k in ("file_path", "notebook_path") if tool_input.get(k)), None)
+    if tool_name not in WRITE_LIKE or not windows or key is None or not workdir:
+        return tool_input
+    raw = tool_input[key]
+    if not isinstance(raw, str) or not _ROOTED_NO_DRIVE.match(raw):
+        return tool_input
+    drive = ntpath.splitdrive(workdir)[0]
+    if not drive:
+        return tool_input
+    folded = [_norm(r) for r in roots if r]
+    actual = ntpath.normpath(drive + raw)
+    chosen = actual
+    if not any(_inside(_norm(actual), r) for r in folded):
+        meant = _git_bash_path(raw, os.environ if environ is None else environ)
+        if meant and any(_inside(_norm(meant), r) for r in folded):
+            chosen = meant
+    return {**tool_input, key: chosen}
+
+
 def evaluate_tool(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    policy: PolicySettings,
+    allowed_roots: Iterable[str] = (),
+    workdir: str | None = None,
+    *,
+    windows: bool | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Decision:
+    allowed_roots = list(allowed_roots)
+    judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
+    decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
+    if judged is not tool_input:
+        decision.updated_input = judged
+    return decision
+
+
+def _evaluate_tool(
     tool_name: str,
     tool_input: dict[str, Any],
     policy: PolicySettings,

@@ -8,6 +8,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-02
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:19 | [`31c580c`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/31c580c) | 링크·junction으로 적힌 쓰기 폴더는 적힌 표기와 실제 경로에 Edit 규칙을 하나씩 두어 사전 허용(#219) |
+| 00:01 | [`d6eff9b`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/d6eff9b) | Windows TEMP 아래 작업 폴더에서 Claude가 쓰는 경로를 실제 쓰는 곳으로 판정하고, 폴더 밖 쓰기는 승인으로 넘김(#219) |
+
 ## 2026-10-01
 
 | 시간 | 커밋 | 주요 변경사항 |
