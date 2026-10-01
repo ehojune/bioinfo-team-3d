@@ -61,3 +61,43 @@ def test_a_non_forge_default_url_keeps_its_path_words_outside_the_url():
     settings = _with_default("url", "https://wiki.example.org/pi/notes")
     out = _published("the wiki https://wiki.example.org/pi/notes/today and pi/notes", settings)
     assert "wiki.example.org" not in out and out.endswith("and pi/notes"), out
+
+
+# ---------------- #183: another account's home with a space or a JSON-escaped name ----------------
+
+HOME_REFERENCE = [{"references": [{"kind": "path", "value": "~/refs/llm-wiki", "source": "request"}]}]
+
+
+def test_a_home_reference_is_hidden_under_an_account_with_a_space_or_a_json_escaped_name():
+    texts = {
+        "space": "see C:" + chr(92) + "Users" + chr(92) + "Jane Doe" + chr(92) + "refs" + chr(92) + "llm-wiki" + chr(92)
+                 + "a.md now",
+        "posix space": "see /home/jane q doe/refs/llm-wiki/a.md now",
+        "json": "see " + json.dumps({"p": "C:" + chr(92) + "Users" + chr(92) + "장지훈" + chr(92) + "refs" + chr(92)
+                                         + "llm-wiki" + chr(92) + "a.md"}),
+        "json slash": "see " + json.dumps({"p": "/home/장 지훈/refs/llm-wiki/a.md"}),
+    }
+    for name, text in texts.items():
+        out = _published(text, requests=HOME_REFERENCE)
+        assert "llm-wiki" not in out and "<reference-path>" in out, (name, out)
+        for account in ("Jane", "jane", "uc7a5", "장지훈", "\uc7a5"):
+            assert account not in out, (name, account, out)
+
+
+def test_a_spaced_account_does_not_swallow_the_prose_before_a_reference():
+    out = _published("files in /home/alice and then /refs/llm-wiki/a.md", requests=HOME_REFERENCE)
+    assert out == "files in /home/alice and then /refs/llm-wiki/a.md", "the home is not a prefix of that path"
+    out = _published("files in /home/alice and also /home/bob/refs/llm-wiki/a.md", requests=HOME_REFERENCE)
+    assert out == "files in /home/alice and also <reference-path>/a.md", out
+
+
+def test_the_home_mask_stays_linear_on_long_spaced_lines():
+    import time
+
+    n = 60_000
+    lines = ["C:/Users/" + "a " * (n // 2), "/home/" + "a b c d " * (n // 8), ("/home/a b " * (n // 10)),
+             "C:" + chr(92) + "Users" + (chr(92) + "u0041") * (n // 6)]
+    started = time.perf_counter()
+    for line in lines:
+        _published(f"x {line} ~/refs/llm-wiki/a.md", requests=HOME_REFERENCE)
+    assert time.perf_counter() - started < 5, "the account component must stay linear in the text length"

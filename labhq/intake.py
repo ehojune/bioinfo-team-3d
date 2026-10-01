@@ -599,9 +599,13 @@ def _text(value: str) -> str:
 
 # Any account's home as a path names it: `~`, $HOME, a POSIX, macOS, HPC or Windows home folder (#124).
 # Up to eight folders may come before the home folder (`/BiO/home/u01`, `/mnt/c/Users/pi`).
+# The account folder may hold single spaces (`C:\Users\Jane Doe`, up to four words) and JSON `\uXXXX` escapes of a
+# non-ASCII name (#183). Words split only at a single space and never hold a separator, so this stays linear.
+_ACCOUNT_WORD = r"(?:[^\\/\s\"'<>|]|\\u[0-9a-fA-F]{4})+"
+_ACCOUNT = rf"{_ACCOUNT_WORD}(?: {_ACCOUNT_WORD}){{0,3}}"
 _ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
              rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
-             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}[^\\/\s\"'<>|]+)")
+             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}{_ACCOUNT})")
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
