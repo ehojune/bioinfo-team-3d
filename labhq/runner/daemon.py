@@ -19,7 +19,7 @@ import websockets
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
-from ..adapters.owned import OwnedPathError, owned_link_error, write_owned
+from ..adapters.owned import OwnedPathError, owned_link_error, read_owned, write_owned
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
@@ -403,9 +403,9 @@ class Runner:
         paths.add(ws.dir / "manifest.json")
         latest, latest_at = None, -1.0
         for path in sorted(paths):
-            try:
-                manifest = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            try:  # a manifest.json that is a link is an agent's, not labhq's (#165)
+                manifest = json.loads(read_owned(path.parent, path.name) or "")
+            except ValueError:
                 continue
             runs = manifest.get("runs", {}) if isinstance(manifest, dict) else {}
             if not isinstance(runs, dict):

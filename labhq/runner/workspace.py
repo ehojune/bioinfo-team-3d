@@ -22,7 +22,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from .. import __version__
-from ..adapters.owned import OwnedPathError, append_owned, plain_directory, write_owned
+from ..adapters.owned import OwnedPathError, append_owned, plain_directory, read_owned, write_owned
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
 from ..models import AgentSpec, Task
@@ -100,22 +100,29 @@ class TaskWorkspace:
     def append_job(self, job: dict[str, Any]) -> None:
         self._append("jobs.jsonl", json.dumps(job, ensure_ascii=False) + "\n")
 
-    def write_manifest(self, **fields: Any) -> None:
-        p = self.dir / "manifest.json"
-        data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {
+    def _manifest(self) -> dict[str, Any]:
+        """The manifest as labhq wrote it. A link in its place is never read: its target would be copied into the
+        workspace by the next write (#165); a fresh manifest replaces the link instead."""
+        text = read_owned(self.dir, "manifest.json")
+        return json.loads(text) if text is not None else {
             "labhq_version": __version__, "host": platform.node(),
             "task": self.task.model_dump(mode="json", exclude={"context"}),
             "agent_id": self.agent.id, "engine": self.agent.engine.value, "model": self.agent.model,
             "agent_spec_sha256": hashlib.sha256(self.agent.model_dump_json().encode()).hexdigest(),
         }
+
+    def write_manifest(self, **fields: Any) -> None:
+        data = self._manifest()
         data.update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
     def provenance(self) -> dict[str, Any]:
         """The manifest fields round records need, sent with the result instead of read from this disk."""
         try:
-            data = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            data = json.loads(read_owned(self.dir, "manifest.json") or "")
+        except ValueError:
+            return {}
+        if not isinstance(data, dict):
             return {}
         keep = ("started_at", "ended_at", "engine", "model", "model_id", "engine_cli_version", "plugins", "turns")
         runs = {tid: {k: run[k] for k in keep if k in run}
@@ -124,9 +131,6 @@ class TaskWorkspace:
 
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
-        p = self.dir / "manifest.json"
-        if not p.exists():
-            self.write_manifest()
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = self._manifest()
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))

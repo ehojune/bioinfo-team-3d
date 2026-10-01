@@ -79,6 +79,27 @@ def write_owned(root: Path, relative: str, text: str) -> Path:
     return target
 
 
+def read_owned(root: Path, relative: str) -> str | None:
+    """Text of one labhq file in a workspace; None when it is missing, a link or not a file, or a folder on the way
+    is a link. An agent can swap manifest.json for a link to a file it may not read; reading it back into labhq's own
+    records would copy that file into the workspace (#165)."""
+    rel = PurePath(relative)
+    current = Path(root)
+    try:
+        for part in rel.parent.parts:
+            current /= part
+            if is_link(current) or not current.is_dir():
+                return None
+        target = current / rel.name
+        if is_link(target) or not target.is_file():
+            return None
+        fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except OSError:  # missing, or swapped for a link after the check (O_NOFOLLOW)
+        return None
+    with open(fd, encoding="utf-8") as source:
+        return source.read()
+
+
 def append_owned(root: Path, relative: str, text: str) -> None:
     """Append to one labhq log in a workspace. A link at the file is removed first; the append never follows one."""
     rel = PurePath(relative)

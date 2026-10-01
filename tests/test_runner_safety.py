@@ -53,7 +53,7 @@ def test_manifest_updates_use_atomic_write(tmp_path, monkeypatch):
     workspace.update_run(task.id, started_at=1.0)
     workspace.update_run(task.id, ended_at=2.0)
     manifest = workspace.dir / "manifest.json"
-    assert writes == [manifest, manifest, manifest]
+    assert writes == [manifest, manifest], "one atomic write per update; a missing manifest is not written twice"
     assert not list(manifest.parent.glob(f".{manifest.name}.*.tmp"))
 
 

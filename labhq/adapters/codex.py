@@ -18,7 +18,7 @@ from pathlib import Path
 from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
-from .owned import write_owned
+from .owned import read_owned, write_owned
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
 WEB_TOOLS = {"WebSearch", "WebFetch"}
@@ -184,7 +184,8 @@ class CodexAdapter(AgentAdapter):
             st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
 
     def finalize(self, st: RunState, ctx: RunContext, returncode: int | None):
-        last = ctx.meta_dir / "last_message.txt"
-        if last.exists() and last.read_text(encoding="utf-8").strip():
-            st.final_text = last.read_text(encoding="utf-8")
+        # Never through a link the agent put there (#165): the stream's own text stands instead.
+        last = read_owned(ctx.workdir, ".labhq/last_message.txt")
+        if last and last.strip():
+            st.final_text = last
         return super().finalize(st, ctx, returncode)

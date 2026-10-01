@@ -179,6 +179,55 @@ async def test_labhq_does_not_write_results_through_a_link_the_agent_made_while_
     assert any("outputs" in text for text in _logs(runner, "alert"))
 
 
+SECRET = '{"sample": "DUA-ROW-1", "runs": {}}'
+
+
+@pytest.mark.asyncio
+async def test_labhq_does_not_read_its_records_through_a_link_the_agent_made(tmp_path, monkeypatch, spawned):
+    """An agent may link manifest.json or .labhq/last_message.txt to a file it must not read. labhq reading it back
+    would copy that file into the workspace manifest or into the result the gateway publishes (#165)."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "cohort.json"
+    secret.write_text(SECRET, encoding="utf-8")
+    _link_file(tmp_path / "probe", secret)  # skip here, before the run, where file links cannot be made
+
+    def link_records(cwd: Path):
+        (cwd / "manifest.json").unlink(missing_ok=True)
+        os.symlink(secret, cwd / "manifest.json")
+        os.symlink(secret, cwd / ".labhq" / "last_message.txt")
+
+    seen = spawned(Engine.codex, during=link_records)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff())
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    assert len(seen) == 1 and result.ok, result.error
+    manifest = Path(seen[0][2]) / "manifest.json"
+    assert not manifest.is_symlink() and "DUA-ROW-1" not in manifest.read_text(encoding="utf-8")
+    assert "DUA-ROW-1" not in result.text and "DUA-ROW-1" not in json.dumps(result.provenance)
+    assert secret.read_text(encoding="utf-8") == SECRET
+
+
+@pytest.mark.asyncio
+async def test_codex_does_not_read_its_last_message_through_a_linked_scratch_folder(tmp_path, monkeypatch, spawned):
+    """The same through `.labhq` swapped for a folder link (a junction on Windows): the stream's answer stands."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "last_message.txt").write_text(SECRET, encoding="utf-8")
+
+    def swap_scratch(cwd: Path):
+        import shutil
+
+        shutil.rmtree(cwd / ".labhq")
+        _link_dir(cwd / ".labhq", outside)
+
+    seen = spawned(Engine.codex, during=swap_scratch)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff())
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    assert len(seen) == 1 and result.ok, result.error
+    assert result.text == "answer" and "DUA-ROW-1" not in json.dumps(result.provenance)
+    assert sorted(os.listdir(outside)) == ["last_message.txt"]
+
+
 # ---------------- #165 3: a contract skill name with no copy labhq installed ----------------
 
 def _ctx(tmp_path, agent, settings, workdir):
