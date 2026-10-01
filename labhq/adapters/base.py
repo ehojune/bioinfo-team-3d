@@ -167,6 +167,9 @@ class RunContext:
     resume_baseline: dict | None = None  # runner-local snapshot, taken before this invocation
     # A consult or follow-up: the agent is `read_only_profile(...)` and the adapter adds the engine's own off switches.
     read_only: bool = False
+    # Runner hook, called after prepare() wrote the adapter's files and just before the CLI starts. A non-empty
+    # return refuses the run (the read-only file check could not take its baseline).
+    before_spawn: Callable[[], str | None] | None = None
 
     @property
     def meta_dir(self) -> Path:
@@ -353,6 +356,9 @@ class AgentAdapter(ABC):
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
         payload = self.stdin_payload(ctx)
+        refused = ctx.before_spawn() if ctx.before_spawn else None
+        if refused:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})

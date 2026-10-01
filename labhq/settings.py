@@ -40,6 +40,9 @@ class RunnerSettings(BaseModel):
     # A reference folder is listed for links and mounts before it is exposed; past these caps it is refused.
     reference_scan_max_entries: int = Field(default=20000, ge=1)
     reference_scan_max_depth: int = Field(default=16, ge=0)
+    # A consult or follow-up lists every entry it could write to (workspace, writable project/upstream/reference
+    # folders) before and after the run; past this many it is refused rather than run unchecked (#36).
+    read_only_check_max_entries: int = Field(default=50000, ge=1)
 
 
 class EngineBin(BaseModel):

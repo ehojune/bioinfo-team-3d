@@ -159,6 +159,8 @@ function apply(ev, replay = false) {
       if (d.level === 'debug' || d.level === 'thinking') break;
       const a = ag(id); if (!a || !d.text) break;
       a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
+      // An alert (a read-only run changed files) always reaches the feed, never throttled with ordinary talk.
+      if (d.level === 'alert') { feed({ who: id, text: short(d.text, 300), cls: 'alert' }, ts, rid); break; }
       if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
       break;
     }

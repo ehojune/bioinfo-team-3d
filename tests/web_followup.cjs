@@ -39,3 +39,13 @@ test('the 2.5D request view asks follow-ups through the gateway', () => {
   const live = fs.readFileSync(path.join(web, 'lab3d/src/live.js'), 'utf8');
   assert.match(live, /q\.followups/);
 });
+
+test('a read-only run that changed files reaches the feed as an alert, unthrottled', () => {
+  const {S, apply} = globalThis.LabHQState.createOfficeState({now: () => 10});
+  apply({type: 'snapshot', data: {agents: [{id: 'cso', name: 'CSO'}], requests: []}});
+  apply({type: 'agent.log', agent_id: 'cso', ts: 10, data: {text: '답을 찾는 중'}});
+  apply({type: 'agent.log', agent_id: 'cso', ts: 11, data: {level: 'alert', text: '읽기 전용 실행이 파일을 바꿨습니다: + workdir/x'}});
+  assert.equal(S.feed[0].cls, 'alert');
+  assert.match(S.feed[0].text, /읽기 전용 실행이 파일을 바꿨습니다/);
+  assert.equal(S.feed.length, 2, 'the alert is not swallowed by the 6 s talk throttle');
+});

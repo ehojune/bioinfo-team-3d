@@ -224,3 +224,211 @@ def test_claude_probe_hooks_ran_with_the_old_read_only_flags_and_not_with_the_pr
     assert init["plugins"] == "<2 items>" and init["mcp_servers"] == []  # built-in agents-md and telemetry only
     result = next(e for e in profile if e.get("type") == "result")
     assert result["subtype"] == "success" and result["is_error"] is False
+
+
+# ---------------- backstop: a read-only run that changed files fails ----------------
+
+def _events(runner, kind):
+    return [e for e in runner.store.pending() if e["type"] == kind]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["consult", "followup"])
+async def test_read_only_run_that_writes_its_workspace_fails_and_alerts_the_pi(tmp_path, monkeypatch, kind):
+    runner = _runner(tmp_path)
+    workdir = tmp_path / "runs" / "earlier_step"
+    (workdir / "outputs").mkdir(parents=True)
+    (workdir / "outputs" / "table.tsv").write_text("a\t1\n", encoding="utf-8")
+
+    def hook_writes(ctx):  # what a plugin's Stop hook did in the probe, outside the engine's own tools
+        (ctx.workdir / "outputs" / "table.tsv").write_text("a\t2\n", encoding="utf-8")
+        (ctx.workdir / "canary.txt").write_text("x", encoding="utf-8")
+
+    seen = []
+    _wire(runner, monkeypatch, _staff(tmp_path), seen, hook_writes)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": kind, "workdir": str(workdir)}))
+    assert result.ok is False and "읽기 전용" in result.error and "(read-only policy)" in result.error
+    assert "+ workdir/canary.txt" in result.error and "~ workdir/outputs/table.tsv" in result.error
+    assert str(tmp_path) not in result.error, "labels, not local paths: errors reach reports"
+    from labhq.orchestrator.cso import failure_kind
+    assert failure_kind(result) == "terminal", "never retried: a retry would run the same channel again"
+    alerts = [e for e in _events(runner, "agent.log") if e["data"].get("level") == "alert"]
+    assert alerts and "canary.txt" in alerts[0]["data"]["text"]
+    manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+    run = next(iter(manifest["runs"].values()))
+    assert run["read_only_changes"] == ["+ workdir/canary.txt", "~ workdir/outputs/table.tsv"]
+    assert Path(run["read_only_roots"]["workdir"]) == workdir.resolve()
+    assert (workdir / "canary.txt").exists(), "nothing is undone; the PI decides"
+
+
+@pytest.mark.asyncio
+async def test_read_only_run_that_writes_a_writable_project_folder_fails(tmp_path, monkeypatch):
+    runner = _runner(tmp_path)
+    project = tmp_path / "project"
+    (project / "results").mkdir(parents=True)
+    staff = _staff(tmp_path).model_copy(update={"project_dirs": [str(project)]})
+
+    def hook_writes(ctx):
+        (project / "results" / "new.tsv").write_text("x", encoding="utf-8")
+
+    _wire(runner, monkeypatch, staff, [], hook_writes)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert result.ok is False and "+ dir1/results/new.tsv" in result.error
+
+
+@pytest.mark.asyncio
+async def test_labhq_own_files_and_the_adapter_prepare_step_are_not_changes(tmp_path, monkeypatch):
+    runner = _runner(tmp_path)
+    workdir = tmp_path / "runs" / "codex_step"
+    workdir.mkdir(parents=True)
+    seen = []
+    # Codex prepare() rewrites AGENTS.md in the workspace; the runner writes manifest.json and events.jsonl.
+    _wire(runner, monkeypatch, _staff(tmp_path, Engine.codex), seen)
+    for _ in range(2):
+        result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                            meta={"kind": "followup", "workdir": str(workdir)}))
+        assert result.ok, result.error
+    assert (workdir / "AGENTS.md").exists() and (workdir / "outputs" / "RESULT.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_run_rebaselines_after_prepare(tmp_path, monkeypatch):
+    """base.run calls before_spawn after prepare(): Codex's AGENTS.md rewrite is not the agent's change."""
+    import asyncio
+
+    runner = _runner(tmp_path)
+    workdir = tmp_path / "runs" / "codex_real"
+    workdir.mkdir(parents=True)
+    (workdir / "AGENTS.md").write_text("old role\n", encoding="utf-8")
+    monkeypatch.setattr(runner.registry, "get", lambda _id: _staff(tmp_path, Engine.codex))
+    spawned = []
+
+    class Proc:
+        returncode = 0
+        stdin = None
+
+        def __init__(self):
+            self.stdout = self._lines([b'{"type":"thread.started","thread_id":"t1"}\n',
+                                       b'{"type":"item.completed","item":{"type":"agent_message","text":"answer"}}\n',
+                                       b'{"type":"turn.completed","usage":{}}\n'])
+            self.stderr = self._lines([])
+
+        @staticmethod
+        async def _lines(lines):
+            for line in lines:
+                yield line
+
+        async def wait(self):
+            return 0
+
+    async def fake_exec(*cmd, **kwargs):
+        spawned.append(cmd)
+        return Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda cmd, env, engine: cmd)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+    assert spawned and result.ok, result.error
+    assert "old role" not in (workdir / "AGENTS.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_read_only_run_over_the_listing_cap_is_refused_before_it_starts(tmp_path, monkeypatch):
+    runner = _runner(tmp_path, read_only_check_max_entries=5)
+    workdir = tmp_path / "runs" / "big"
+    (workdir / "work").mkdir(parents=True)
+    for i in range(10):
+        (workdir / "work" / f"part{i}.bam").write_text("x", encoding="utf-8")
+    seen = []
+    _wire(runner, monkeypatch, _staff(tmp_path), seen)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "consult", "workdir": str(workdir)}))
+    assert seen == [], "fail closed: a run whose writes cannot be checked never starts"
+    assert result.ok is False and "상한 5개" in result.error and "(read-only policy)" in result.error
+    assert _events(runner, "task.result")[-1]["data"]["ok"] is False
+    big = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                     meta={"kind": "step", "workdir": str(workdir)}))
+    assert big.ok and seen, "an ordinary step is not listed at all"
+
+
+@pytest.mark.asyncio
+async def test_a_folder_another_task_is_writing_is_left_out_with_a_note(tmp_path, monkeypatch):
+    runner = _runner(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    staff = _staff(tmp_path).model_copy(update={"project_dirs": [str(project)]})
+    runner.active_roots["other-step"] = (False, [tmp_path / "runs" / "other", project.resolve()])
+
+    def concurrent_step_writes(ctx):
+        (project / "step_output.tsv").write_text("x", encoding="utf-8")
+
+    _wire(runner, monkeypatch, staff, [], concurrent_step_writes)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert result.ok, "a step running next to it may write its own project folder"
+    notes = [e["data"]["text"] for e in _events(runner, "agent.log") if "쓰기 확인에서 제외" in e["data"]["text"]]
+    assert notes and "dir1" in notes[0]
+
+
+@pytest.mark.asyncio
+async def test_a_step_that_started_and_ended_during_the_run_is_not_blamed_on_it(tmp_path, monkeypatch):
+    import time
+
+    runner = _runner(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    staff = _staff(tmp_path).model_copy(update={"project_dirs": [str(project)]})
+
+    def step_ran_meanwhile(ctx):
+        (project / "step_output.tsv").write_text("x", encoding="utf-8")
+        runner.ended_roots.append((time.time(), "late-step", False, [project.resolve()]))
+        (ctx.workdir / "hook.txt").write_text("x", encoding="utf-8")  # still this run's own change
+
+    _wire(runner, monkeypatch, staff, [], step_ran_meanwhile)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert result.ok is False and "+ workdir/hook.txt" in result.error and "step_output" not in result.error
+    notes = [e["data"]["text"] for e in _events(runner, "agent.log") if "다른 작업이 쓰던 폴더" in e["data"]["text"]]
+    assert notes and "1개" in notes[0]
+
+
+def test_labhq_rewriting_a_nested_workspace_manifest_is_not_a_change(tmp_path):
+    """A workspace inside a watched project folder: the atomic manifest rewrite changes the workspace folder's
+    mtime and (POSIX) ctime, which is labhq's write, not the run's."""
+    from labhq.runner.integrity import ReadOnlyWatch, watch_roots
+    from labhq.util import atomic_write_text
+
+    project = tmp_path / "project"
+    ws = project / "runs" / "task_w"
+    (ws / "outputs").mkdir(parents=True)
+    atomic_write_text(ws / "manifest.json", "{}")
+    roots, skip, _ = watch_roots(ws, [str(project)], [])
+    assert [label for label, _ in roots] == ["dir1"], "the workspace is covered by the project folder around it"
+    watch = ReadOnlyWatch(roots, 100, {ws.resolve()}, skip)
+    assert watch.take_baseline() is None
+    atomic_write_text(ws / "manifest.json", '{"runs": {}}')
+    (ws / "events.jsonl").write_text("{}\n", encoding="utf-8")
+    assert watch.changed() == ([], 0)
+    (ws / "outputs" / "x.tsv").write_text("x", encoding="utf-8")
+    assert watch.changed() == (["+ dir1/runs/task_w/outputs/x.tsv"], 0)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_read_only_run_still_reports_what_it_changed(tmp_path, monkeypatch):
+    import asyncio
+
+    runner = _runner(tmp_path)
+    workdir = tmp_path / "runs" / "cancelled"
+    workdir.mkdir(parents=True)
+
+    def write_then_cancel(ctx):
+        (ctx.workdir / "hook.txt").write_text("x", encoding="utf-8")
+        raise asyncio.CancelledError()
+
+    _wire(runner, monkeypatch, _staff(tmp_path), [], write_then_cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                   meta={"kind": "followup", "workdir": str(workdir)}))
+    run = next(iter(json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))["runs"].values()))
+    assert run["read_only_changes"] == ["+ workdir/hook.txt"]
+    assert [e for e in _events(runner, "agent.log") if e["data"].get("level") == "alert"]
