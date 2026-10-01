@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #63 README 맨 위 배지 — 종류별 개수 대신 대상 하나씩
+
+- 결론: README 제목 바로 아래 배지가 "builtin MCP 3" 같은 개수가 아니라 대상 이름과 역할을 보여 준다. 누르면 그 대상의 공식 페이지나 README 해당 절로 간다. 없는 대상(Slurm #120, Gemini·Antigravity 직원, LICENSE)은 배지를 만들지 않는다.
+- 바뀐 것: `scripts/integrations.py`가 `<!-- badges:start -->` 블록을 만든다. 엔진(Claude Code 직원 8명·Codex 직원 3명과 모델), 지원 스케줄러(`HpcSettings.scheduler` Literal을 ast로 읽어 SGE·PBS, mock·none 제외), labhq MCP(approval·ask·hpc 한 배지), PubMed, bioRxiv / medRxiv, bioinfo-agent plugin, Paper2Agent skill이 한 줄, CI(push·PR workflow `test`)·Python 3.10+(requires-python)·패치노트가 둘째 줄이다. logo는 shields.io에서 그려지는 것을 확인한 simple-icons slug 표(`LOGOS`)만 받는다. §2의 개수 배지는 지웠고 표는 그대로다. 손으로 적던 test·패치노트 배지는 생성 블록으로 옮겼고, `pyproject.toml`에 `[project.urls] Repository`를 넣었다.
+- 실행한 것: 생성된 배지 URL을 모두 받아 제목과 logo(`<image>`)를 확인했고 링크 9개가 200이었다. `tests/test_integrations.py` 20개(없는 대상 미생성, settings Literal fixture, workflow·LICENSE 유무, 비공개 값·로컬 경로 미노출, badge anchor가 README 제목과 일치, 검증 안 된 logo 거부). 전체 pytest 1416 passed/20 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과. 로컬 Codex 리뷰는 지적 없음.
+- 미해결: Codex(openai)와 bioRxiv는 simple-icons logo가 그려지지 않아 logo 없이 둔다. SGE는 하나로 정해진 공식 페이지가 없어 PBS와 함께 README §8로 링크한다. Python 3.10 실행은 못 했고 문법만 확인했다(3.10 CI가 본다).
+- 근거: `scripts/integrations.py`, `tests/test_integrations.py`, `README.md`, `pyproject.toml`.
+
 ## 2026-10-01 · #36 PR A 리뷰 2회차 검증 — prefix_args 옵션, Claude·Codex 우회 실측
 
 - 결론: 남은 통로 하나를 닫았다. 읽기 전용 실행은 PI `extra_args`를 빼지만 `prefix_args`는 그대로 앞에 붙였고, Codex가 `exec` 앞의 `--dangerously-bypass-approvals-and-sandbox`로 `-s read-only`에서 파일을 썼다. 이제 `prefix_args`에 옵션이 있으면 읽기 전용 실행을 거부한다.

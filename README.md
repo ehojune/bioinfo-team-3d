@@ -1,7 +1,21 @@
 # labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.2)
 
-[![test](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
-[![패치노트](https://img.shields.io/badge/%ED%8C%A8%EC%B9%98%EB%85%B8%ED%8A%B8-changelog-5B5BD6)](patch_notes/README.md)
+<!-- badges:start -->
+[![Claude Code: 직원 8명 · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=%EC%A7%81%EC%9B%90%208%EB%AA%85%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
+[![Codex: 직원 3명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol](https://img.shields.io/static/v1?label=Codex&message=%EC%A7%81%EC%9B%90%203%EB%AA%85%20%C2%B7%20gpt-6-astra%2Fgpt-6-luna%2Fgpt-6.1-sol&color=10A37F)](https://github.com/openai/codex)
+[![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](#8-설정-포인트)
+[![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](#8-설정-포인트)
+[![labhq MCP: approval · ask · hpc](https://img.shields.io/static/v1?label=labhq%20MCP&message=approval%20%C2%B7%20ask%20%C2%B7%20hpc&color=5B5BD6&logo=modelcontextprotocol)](#연결된-도구)
+[![PubMed: MCP · 논문 검색](https://img.shields.io/static/v1?label=PubMed&message=MCP%20%C2%B7%20%EB%85%BC%EB%AC%B8%20%EA%B2%80%EC%83%89&color=007EC6&logo=pubmed)](https://pubmed.ncbi.nlm.nih.gov/)
+[![bioRxiv / medRxiv: MCP · preprint 검색](https://img.shields.io/static/v1?label=bioRxiv%20%2F%20medRxiv&message=MCP%20%C2%B7%20preprint%20%EA%B2%80%EC%83%89&color=007EC6)](https://www.biorxiv.org/)
+[![bioinfo-agent: Claude Code plugin](https://img.shields.io/static/v1?label=bioinfo-agent&message=Claude%20Code%20plugin&color=8A2BE2)](https://github.com/ehojune/bioinfo-agent)
+[![Paper2Agent: skill · 파견직 채용](https://img.shields.io/static/v1?label=Paper2Agent&message=skill%20%C2%B7%20%ED%8C%8C%EA%B2%AC%EC%A7%81%20%EC%B1%84%EC%9A%A9&color=228B22)](https://github.com/jmiao24/Paper2Agent)
+
+[![test: GitHub Actions](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml/badge.svg)](https://github.com/ehojune/bioinfo-team-3d/actions/workflows/test.yml)
+[![Python: 3.10+](https://img.shields.io/static/v1?label=Python&message=3.10%2B&color=3776AB&logo=python)](https://www.python.org/)
+[![패치노트: changelog](https://img.shields.io/static/v1?label=%ED%8C%A8%EC%B9%98%EB%85%B8%ED%8A%B8&message=changelog&color=5B5BD6)](patch_notes/README.md)
+<!-- badges:end -->
+
 저장소: https://github.com/ehojune/bioinfo-team-3d
 
 Claude Code와 Codex를 **연구소 직원**처럼 운영하는 플랫폼입니다. Gemini와 직접 만든 CLI도 어댑터로 연결할 수 있습니다.
@@ -178,11 +192,10 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 ### 연결된 도구
 
 정규직 설정(`agents/core/*.yaml`)과 labhq 배선 코드에서 만든 목록입니다. 설치·로그인·네트워크 연결 성공을 뜻하지 않으며, 파견직 예시와 PI 개인 커넥터는 제외합니다.
-설정 변경 후 `python scripts/integrations.py --write`로 갱신하고 `--check`로 일치 여부를 확인합니다. 배지 숫자는 표의 항목 수입니다.
+설정 변경 후 `python scripts/integrations.py --write`로 갱신하고 `--check`로 일치 여부를 확인합니다.
+배지는 README 맨 위에 대상마다 하나씩 있고, 같은 설정과 저장소 파일(`pyproject.toml`·`labhq/settings.py`·`.github/workflows`)에서 만듭니다.
 
 <!-- integrations:start -->
-![builtin MCP: 3](https://img.shields.io/static/v1?label=builtin%20MCP&message=3&color=5B5BD6) ![external MCP: 2](https://img.shields.io/static/v1?label=external%20MCP&message=2&color=007EC6) ![plugin: 1](https://img.shields.io/static/v1?label=plugin&message=1&color=8A2BE2) ![skill: 2](https://img.shields.io/static/v1?label=skill&message=2&color=228B22) ![engine: 3](https://img.shields.io/static/v1?label=engine&message=3&color=555555)
-
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
 | 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](agents/core/analyst.yaml), [bioinfo-agent](agents/core/bioinfo-agent.yaml), [biologist](agents/core/biologist.yaml), [chief_of_staff](agents/core/chief_of_staff.yaml), [cso](agents/core/cso.yaml), [data_steward](agents/core/data_steward.yaml), [qc_reviewer](agents/core/qc_reviewer.yaml), [recruiter](agents/core/recruiter.yaml) | [runner](labhq/runner/daemon.py) · [직원 설정](agents/core/) |
