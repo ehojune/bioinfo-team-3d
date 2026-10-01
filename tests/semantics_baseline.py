@@ -19,7 +19,7 @@ from labhq.evidence import independent_groups
 from labhq.evidence.claims import normalize_artifact_path, normalize_id, normalize_uri
 from labhq.research.semantics import Records
 
-PILOT_STATE = "change1"   # which expected.yaml state this baseline answers (#127 pilot changes move it)
+PILOT_STATE = "change2"   # which expected.yaml state this baseline answers (#127 pilot changes move it)
 DEPTH_LIMIT = 64
 UNKNOWN, NONE = "unknown", "none"
 
@@ -269,6 +269,10 @@ def project(records: Records) -> Registry:
         probes = bool(((contract or {}).get("verification") or {}).get("probe_tools"))
         db.execute("UPDATE agent SET contract_status = ?, probes = ? WHERE id = ?",
                    ((contract or {}).get("status") or UNKNOWN if contract else None, int(probes), agent))
+    for (aid,) in db.execute("SELECT id FROM artifact").fetchall():
+        meaning = artifact_row(reg, aid)["data_type"]
+        if meaning != UNKNOWN:
+            rel(aid, "means", f"type:{meaning}", "declared")
     db.commit()
     return reg
 
@@ -362,9 +366,20 @@ def artifact_row(reg: Registry, aid: str) -> dict:
     return row
 
 
+# Declared data meanings (pilot change 2). broader is kept for reference only: never inherited.
+VOCABULARY = {"raw_counts": {"broader": "expression_counts"}, "normalized_counts": {"broader": "expression_counts"},
+              "de_table": {}}
+
+
 def data_type(generator: str, output_types: str | None, path: str, unknown: dict) -> str:
-    """v1 records carry no per-artifact data meaning; pack values and broader types never fill it."""
-    unknown["data_type"] = "no_data_type_source"
+    """Only the generating run's declared task meta output_types; pack values and broader types never fill it."""
+    if generator == UNKNOWN:
+        unknown["data_type"] = "generator_unknown"
+        return UNKNOWN
+    declared = {normalize_artifact_path(k): v for k, v in (json.loads(output_types or "null") or {}).items()}
+    if declared.get(path) in VOCABULARY:
+        return declared[path]
+    unknown["data_type"] = "not_declared"
     return UNKNOWN
 
 

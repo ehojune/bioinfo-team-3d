@@ -167,9 +167,11 @@ def test_models_agree_on_edge_cases_outside_the_17_queries():
         outs[name] = {"run": pilot.result_of(impl.audit_lineage(p, run="run:t1_ws/t1")),
                       "art": pilot.result_of(impl.audit_lineage(p, artifact="art:req_c/t0_ws/outputs/o.tsv"))}
     for key in ("run", "art"):
-        if len(states) > 1:   # mid-change the two answer different reuse scopes; compare the rest
+        if len(states) > 1:   # mid-change: drop the fields the two changes move, compare the rest
             for out in (outs["B"][key], outs["A"][key]):
                 out.pop("uses", None)
+                out["node"].pop("data_type", None)
+                (out["node"].get("unknown") or {}).pop("data_type", None)
         assert pilot.canon(outs["B"][key]) == pilot.canon(outs["A"][key])
     node = outs["B"]["run"]["node"]
     assert (node["resumes"], node["unknown"]["resumes"]) == ("unknown", "no_matching_session")
