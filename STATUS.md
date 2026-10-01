@@ -2,6 +2,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #189 Windows CI flaky test 조건 대기
+
+- 결론: bench process tree, e2e 이벤트·wake 결과, semantics breaker 저장을 고정 시간 대신 상한 있는 polling으로 확인한다. 검사는 그대로 두고 실패 시 PID·프로세스 상태·이벤트 순서·breaker 상태를 출력한다.
+- 실행한 것: 수정 중 e2e 6회차에서 `recruit.suggested`·HPC 이벤트 누락을 재현했다. 최종 변경 파일별 20회 실패 0, 전체 pytest 3회 각각 1889 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 바뀐 파일: `tests/test_bench.py`, `tests/test_e2e_mock.py`, `tests/test_semantics_shadow_breaker.py`, `STATUS.md`. 새 의존성과 patch note 변경은 없다.
+
 ## 2026-10-01 · PR #164 2회차 봇 리뷰 P1 — 읽기 전용 workspace 지시 경계 통합
 
 - 결론: 읽기 전용 실행이 workspace에서 읽을 수 있는 지시·memory·skill·설정 이름을 한 판정 함수로 모았다. 깊이와 숨김 폴더에 관계없이 Claude Code는 차단 목록으로 제외하고, 끌 수 없는 agents-md와 Codex project 지시는 실행 전에 거부한다.
