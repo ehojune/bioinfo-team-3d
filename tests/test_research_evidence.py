@@ -225,6 +225,17 @@ def test_only_countable_rows_fill_evidence_slots():
     rejects(result(evidence=[evidence("e1", slots=["e1", "e1"])]), "evidence e1 lists slot e1 more than once")
 
 
+@pytest.mark.parametrize("kind", ["inference", "hypothesis"])
+@pytest.mark.parametrize("cited", [{"id_scheme": "doi", "id_value": "10.1038/s41586-020-2649-2"},
+                                   {"uri": "https://example.org/pathway.html"}])
+def test_reasoning_rows_that_cite_an_external_source_keep_its_access_date(kind, cited):
+    # #129 (R06): the access date belongs to the source a row actually used, whatever the row kind.
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind=kind, source=cited)]),
+            "evidence e2 cites an external source without accessed_at")
+    dated = evidence("e2", kind=kind, source={**cited, "accessed_at": "2026-10-01"})
+    assert rc.ResearchResult.model_validate(result(evidence=[evidence("e1"), dated])).evidence[1].kind == kind
+
+
 # --- R05: directness, independence, source level and reasons ------------------------------------
 
 @pytest.mark.parametrize("field", ["directness", "source_level", "independence_group", "assessment_reason"])

@@ -237,6 +237,9 @@ class Evidence(StrictModel):
                 raise ValueError(f"evidence {self.id} lists an empty slot id")
             if self.slots.count(slot) > 1:
                 raise ValueError(f"evidence {self.id} lists slot {slot} more than once")
+        # R06 holds for every row kind: an inference that read an external page keeps the day it read it.
+        if self.source and self.source.external and not _present(self.source.accessed_at):
+            raise ValueError(f"evidence {self.id} cites an external source without accessed_at")
         if self.countable:
             if self.status is None or self.source is None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) needs status and source")
@@ -245,8 +248,6 @@ class Evidence(StrictModel):
             if missing:
                 raise ValueError(f"evidence {self.id} ({self.kind}) must state {', '.join(missing)}")
             source = self.source
-            if source.external and not _present(source.accessed_at):
-                raise ValueError(f"evidence {self.id} cites an external source without accessed_at")
             if self.status == "observed" and not _present(source.locator):
                 raise ValueError(f"evidence {self.id} is observed but its source has no locator")
             if self.status == "not_found" and not _present(source.query):
@@ -264,6 +265,15 @@ class Evidence(StrictModel):
     @property
     def countable(self) -> bool:
         return self.kind in COUNTABLE_EVIDENCE_KINDS
+
+    @property
+    def cites_source(self) -> bool:
+        """Whether the row relies on its source, so the source must resolve.
+
+        A failed or unavailable retrieval never reached its source. A finished search with no hits did: the
+        place it searched is cited and must exist, while what it looked for belongs in ``source.query``.
+        """
+        return self.source is not None and not (self.countable and self.status in {"failed", "unavailable"})
 
     @property
     def counts(self) -> bool:

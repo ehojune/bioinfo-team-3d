@@ -288,3 +288,34 @@ def test_artifact_paths_match_the_manifest_across_separators():
     clash = asyncio.run(verify_sources(result, observed_artifacts={"out/de.tsv": "c" * 64,
                                                                    "out\\de.tsv": "d" * 64}))
     assert clash.evidence[0].resolution.status == "conflicting" and clash.ok is False
+
+
+def searched(eid, scheme, value):
+    """A completed search with no hits: the source is where it searched, the query what it searched for."""
+    found_nothing = row(eid, scheme, value)
+    found_nothing["status"] = "not_found"
+    found_nothing["source"]["query"] = "gene == IL6, all samples"
+    return found_nothing
+
+
+def test_a_zero_result_search_still_resolves_where_it_searched():
+    # #129: unlike a failed lookup, a finished search names a real place; a made-up or malformed one is a defect.
+    result = build([claim("c1")], [row("e1", "doi", DOI), searched("e2", "geo", "GSE99999999"),
+                                   searched("e3", "dbsnp", "rs-12")], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    assert {c.evidence_id: c.resolution.status for c in report.evidence} == {
+        "e1": "found", "e2": "not_found", "e3": "insufficient"}
+    assert report.defective_evidence == ["e2", "e3"] and report.ok is False
+    real_scope = build([claim("c1")], [row("e1", "doi", DOI), searched("e2", "refseq", "NM_004985")],
+                       [link("c1", "e1")])
+    assert asyncio.run(verify_sources(real_scope, resolver())).ok is True
+
+
+def test_failed_and_unavailable_retrievals_are_still_not_resolved():
+    rows = [row("e1", "doi", DOI)]
+    for eid, status in (("e2", "failed"), ("e3", "unavailable")):
+        attempt = row(eid, "geo", "GSE99999999", group="mirror")
+        attempt.update(status=status, status_detail="the GEO mirror returned 503")
+        rows.append(attempt)
+    report = asyncio.run(verify_sources(build([claim("c1")], rows, [link("c1", "e1")]), resolver()))
+    assert [c.evidence_id for c in report.evidence] == ["e1"] and report.ok is True

@@ -310,9 +310,9 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
     cache: dict[tuple[str, str, str | None], Resolution] = {}
     checks: dict[str, EvidenceCheck] = {}
     for row in result.evidence:
-        # A failed, empty or unavailable retrieval is not cited as a source of anything. Every other row
-        # with a source is checked, context and reasoning rows included: a made-up ID is a defect anywhere.
-        if row.source is None or (row.countable and row.status != "observed"):
+        # Every row that relied on its source is checked: context, reasoning and zero-result rows included.
+        # A made-up ID is a defect anywhere; only a retrieval that never reached its source is skipped.
+        if not row.cites_source:
             continue
         resolutions = await _resolve(row.source, resolver, artifact_paths, observed, timeout_s, cache)
         if not resolutions:
