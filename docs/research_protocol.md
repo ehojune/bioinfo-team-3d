@@ -54,7 +54,7 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `failures` | 검색·도구·분석 실패. 0건과 구별 |
 | `method_changes` | 계획값과 실제값, 이유, 결론 영향 여부 |
 
-근거 행의 `slots`에는 그 행이 채운 step의 evidence slot ID를 적는다. 필수 slot마다 채운 행이 하나는 있어야 하고, 선언하지 않은 slot은 거부한다. 조회가 실패했거나 0건이어도 그 행에 slot을 적는다. 시도하고 비었다는 것이 CP2에 그대로 보여야 하기 때문이다. 추론·가설 행은 slot을 채우지 못한다.
+근거 행의 `slots`에는 그 행이 채운 step의 evidence slot ID를 적는다. 한 step 안에서 slot ID는 겹칠 수 없다(겹치면 CP1 전에 PLAN을 거부한다, #187). 필수 slot마다 채운 행이 하나는 있어야 하고, 선언하지 않은 slot은 거부한다. 조회가 실패했거나 0건이어도 그 행에 slot을 적는다. 시도하고 비었다는 것이 CP2에 그대로 보여야 하기 때문이다. 추론·가설 행은 slot을 채우지 못한다.
 
 evidence 종류는 `observation`, `database_annotation`, `experimental`, `literature_claim`, `inference`, `hypothesis`다. 앞의 넷만 근거로 센다. `inference`·`hypothesis`는 `derived_from`을 적고 `context`로만 연결한다.
 
@@ -86,9 +86,9 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 | `not_found` | 조회가 끝났고 기록이 없음 | 결함 |
 | `insufficient` | ID 형식이 틀려 조회하지 않음. 추측해 고치지 않는다 | 결함 |
 | `conflicting` | 다른 scheme·ID·version의 기록, 여러 기록, 인용 뒤 바뀐 artifact hash | 결함 |
-| `requires_verification` | 네트워크 오류·timeout·resolver 오류·live 꺼짐·미지원 체계·manifest 없음 | 미확인. 결함도 부재도 아니다 |
+| `requires_verification` | 네트워크 오류·timeout·resolver 오류·live 꺼짐·미지원 체계·manifest 없음, base accession은 같고 한쪽에 version·isoform이 없는 기록 | 미확인. 결함도 부재도 아니다 |
 
-claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 URI를 함께 적으면 URI도 그 ID를 가리키는지 검사한다. 레지스트리 URL이 같은 체계의 다른 accession을 가리키면 코드가 바로 `conflicting`으로 본다. 체계가 다르거나(DOI 옆 PubMed URL) 한 기록을 여러 표기로 쓰는 체계(Ensembl·RefSeq version, UniProt isoform, ClinVar VCV)라면 같은 기록인지 코드가 모르므로, 그 밖의 URL처럼 resolver가 uri 조회로 ID를 알려 줄 때 비교한다. 다르면 `conflicting`, 비교하지 못하면 미확인이다. 레지스트리 경로라도 accession 형식이 아닌 검색·도움말 페이지(`/search`, `/docs`)는 일반 URI다. URI만 있는 출처도 레지스트리 URL이면 그 ID로 조회한다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행, 0건 검색(`not_found`) 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. 0건 행의 출처는 검색한 곳(DB·dataset)이고 찾던 ID는 `query`에 적는다. `failed`·`unavailable` 행은 출처에 닿지 못했으므로 검사하지 않는다. URI는 scheme·host만 대소문자를 무시한다.
+claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 URI를 함께 적으면 URI도 그 ID를 가리키는지 검사한다. 레지스트리 URL이 같은 체계의 다른 accession을 가리키면 코드가 바로 `conflicting`으로 본다. 한 기록을 여러 표기로 쓰는 체계(Ensembl·RefSeq version, UniProt isoform, ClinVar VCV)는 version·isoform·VCV 자리채움을 뗀 base accession으로 비교한다. base가 다르거나, base가 같아도 양쪽에 적힌 version·isoform이 다르면(`ENSG…17`과 `ENSG…16`) `conflicting`이다. 한쪽에 version·isoform이 없으면 같은 기록인지 코드가 모르므로 resolver에 넘긴다(#167). 체계가 다른 URL(DOI 옆 PubMed URL)도 그 밖의 URL처럼 resolver가 uri 조회로 ID를 알려 줄 때 비교한다. resolver가 돌려준 기록도 같은 함수로 비교해서, 다르면 `conflicting`, base만 같거나 비교하지 못하면 미확인이다. ID 조회 응답에 인용한 표기와 같은 base의 다른 표기가 함께 오면 하나를 골라 주지 않고 `conflicting`으로 둔다. 레지스트리 경로라도 accession 형식이 아닌 검색·도움말 페이지(`/search`, `/docs`)는 일반 URI다. URI만 있는 출처도 레지스트리 URL이면 그 ID로 조회한다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행, 0건 검색(`not_found`) 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. 0건 행의 출처는 검색한 곳(DB·dataset)이고 찾던 ID는 `query`에 적는다. `failed`·`unavailable` 행은 출처에 닿지 못했으므로 검사하지 않는다. URI는 scheme·host만 대소문자를 무시한다. 원장은 행에 적힌 표기만으로 재인용을 보므로 DOI 행과 같은 논문의 PMID 행을 다른 출처로 둔다. resolver가 찾은 기록의 `same_as`로 다른 체계 ID(DOI↔PMID↔PMCID)를 알려 주면 verifier가 그 대응까지 넣어 다시 보고, 다른 independence group으로 적은 행은 `recitations`에 남겨 보고 전체를 통과시키지 않는다(#168).
 
 조회는 한 번에 최대 `concurrency`(기본 4)개씩 돌고, 조회마다 `timeout_s`(기본 20초), 보고 전체는 `deadline_s`(기본 120초) 안에 끝난다. deadline을 넘긴 출처는 `failed/timeout`이라 미확인이며, 부재(`not_found`)로 적지 않는다. live resolver는 아직 없고 기본값은 조회 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.
@@ -97,7 +97,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 
 작성자와 다른 reviewer가 ID·인용 지지·조건·통계·반례·과장·재현 범위를 claim별로 감사한다. reviewer 정체성과 실제 model/vendor를 기록한다. 중대 결함이 남으면 accept할 수 없다.
 
-연구 결과 검토는 REVIEW v2(`labhq/research/review.py`, R13의 앞부분)로 받는다. claim마다 인용 지지, 부재를 근거로 씀, 직접성, 독립성, 비교 가능성을 모두 판정한다. 관찰 문장에 "0 hits"라고만 적은 0건 검색처럼 코드가 읽지 못하는 것은 reviewer가 본다. 부재를 근거로 쓴 것은 늘 중대 결함이다. countable 근거를 단 claim은 앞의 네 항목을, quantity를 비교한 claim은 비교 가능성을 `not_applicable`로 넘길 수 없다. 검토는 결과의 plan hash·step·claim 전부에 묶이고, 결과를 쓴 직원은 검토하지 못한다. 아직 실행 경로에 연결하지 않았고 일반 요청의 `REVIEW_SCHEMA`는 그대로다.
+연구 결과 검토는 REVIEW v2(`labhq/research/review.py`, R13의 앞부분)로 받는다. claim마다 인용 지지, 부재를 근거로 씀, 직접성, 독립성, 비교 가능성을 모두 판정한다. 관찰 문장에 "0 hits"라고만 적은 0건 검색처럼 코드가 읽지 못하는 것은 reviewer가 본다. 부재를 근거로 쓴 것은 늘 중대 결함이다. countable 근거를 단 claim은 앞의 네 항목을, quantity를 비교한 claim은 비교 가능성을 `not_applicable`로 넘길 수 없다. 검토는 결과의 plan hash·step·claim 전부에 묶이고, 결과를 쓴 직원은 검토하지 못한다. 결과에는 작성자 field가 없으므로 검증할 때 작성자(task의 agent id)를 꼭 넘겨야 하며, 빠지면 독립성을 확인하지 않은 검토로 보고 거부한다(#169, #188). 아직 실행 경로에 연결하지 않았고 일반 요청의 `REVIEW_SCHEMA`는 그대로다.
 
 ## 5. PI checkpoint와 완료
 
@@ -138,7 +138,7 @@ active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acc
 
 `count_scale`의 허용값은 `raw_counts`·`log_transformed`다. `single_cell_de@2`에서 `normalized_counts`를 뺐다. 받아 주는 조합이 없어서 field 검사는 통과하고 rule에서만 막혔기 때문이다(#114). 이제 field 단계에서 한 가지 이유로 거절한다.
 
-pack 내용을 바꾸면 version을 올린다. 승인된 계획은 `id@version`과 hash로 pack을 가리키므로, 같은 version의 내용이 바뀌면 그 계획이 무엇을 승인했는지 알 수 없다. 내장 pack hash는 `tests/test_research_protocol.py`에 고정했다. 설정에 없어진 version을 적으면 남아 있는 version을 함께 알린다.
+pack 내용을 바꾸면 version을 올린다. 승인된 계획은 `id@version`과 hash로 pack을 가리키므로, 같은 version의 내용이 바뀌면 그 계획이 무엇을 승인했는지 알 수 없다. 내장 pack hash는 `tests/test_research_protocol.py`에 고정했다. 설정에 없어진 version을 적으면 gateway가 시작할 때 남아 있는 version을 함께 알리고 멈춘다(#170).
 
 `conclusion_mode: condition_effect`는 적용된 통계 계획을 요구한다. `descriptive_only`는 batch 혼동이 없어도 설명·비교 study type, 주가설, 추론 통계, estimand를 금지한다. `model_rationale` 같은 설명 문장은 판정에 쓰지 않는다.
 

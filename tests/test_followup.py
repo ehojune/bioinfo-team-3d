@@ -214,6 +214,63 @@ def test_gateway_restart_marks_a_running_followup_interrupted(tmp_path):
     assert [f["id"] for f in shown] == [f"fu_{i}" for i in range(5, 25)], "snapshots stay bounded"
 
 
+def test_snapshot_carries_only_the_head_of_long_followup_answers(tmp_path):
+    """#126: 25 long answers must not make every WebSocket connect carry megabytes; the full answer stays fetchable."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    full = "답" * 20000  # what run_followup keeps at most, 3 bytes each in UTF-8
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate",
+                         "followups": [{"id": f"fu_{i}", "text": "q", "status": "done", "answer": full}
+                                       for i in range(24)] + [{"id": "fu_24", "text": "q", "status": "done", "answer": "짧은 답"}]}
+    for i in range(25):  # the same answers also sit in the replayed events
+        hub.events.append({"type": "request.followup_done", "seq": i + 1, "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full}})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # whole answers would be about 2.6 MB
+    shown = snap["data"]["requests"][0]["followups"]
+    assert len(shown) == 20 and shown[0]["answer"] == full[:2000]
+    assert shown[0]["answer_truncated"] is True and shown[0]["answer_chars"] == 20000
+    assert shown[-1] == hub.requests["r"]["followups"][-1], "a short answer is sent unchanged"
+    replayed = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "request.followup_done"]
+    assert len(replayed) == 25 and all(len(d["answer"]) <= 2000 for d in replayed)
+    assert replayed[0]["answer_truncated"] is True
+    assert len(hub.requests["r"]["followups"][0]["answer"]) == 20000, "the stored request keeps the full answer"
+    assert len(hub.events[0]["data"]["answer"]) == 20000, "the live event buffer keeps the full answer"
+    detail = TestClient(app).get("/api/requests/r", headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert detail.status_code == 200 and detail.json()["followups"][0]["answer"] == full
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cuts_the_same_answer_in_the_runners_task_result(tmp_path):
+    """#126: the runner's task.result for a follow-up carries the answer again, unclipped; a snapshot cuts it too."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    full = "답" * 25000  # the runner's text is not clipped to 20,000 like the stored answer
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate", "followups": []}
+    for i in range(25):  # the events the gateway records for each answered follow-up, through its own paths
+        result = TaskResult(task_id=f"t_{i}", agent_id="cso", ok=True, text=full)
+        await hub.on_runner_message("runner", {"type": "task.result", "task_id": f"t_{i}", "agent_id": "cso",
+                                               "request_id": "r", "data": result.model_dump(mode="json")})
+        await hub.publish({"type": "request.followup_done", "ts": time.time(), "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full[:20000]}})
+    short_result = TaskResult(task_id="t_short", agent_id="cso", ok=True, text="짧은 결과").model_dump(mode="json")
+    await hub.on_runner_message("runner", {"type": "task.result", "task_id": "t_short", "agent_id": "cso",
+                                           "request_id": "r", "data": short_result})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # the task.result copies alone would be about 1.9 MB
+    results = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "task.result"]
+    assert len(results) == 26 and results[0]["text"] == full[:500]
+    assert results[0]["text_truncated"] is True and results[0]["text_chars"] == 25000
+    assert results[-1] == short_result, "a short result is sent unchanged"
+    assert all(len(e["data"]["text"]) == 25000 for e in list(hub.events)[:-1] if e["type"] == "task.result"), \
+        "the live event buffer keeps the whole text"
+
+
 @pytest.mark.asyncio
 async def test_runner_gives_followups_no_ask_tool(tmp_path, monkeypatch):
     settings = Settings()

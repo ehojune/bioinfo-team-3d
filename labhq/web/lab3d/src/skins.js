@@ -46,16 +46,20 @@ export function selectionsFor(roster,params) {
   return selected;
 }
 
+// #184: a name tag sits over its own character's head. A tag anchored at the desk front projected next to
+// the front-row colleague, so every skin kind derives the tag point from its head anchor here.
+export const LABEL_LIFT=.62;
+export function labelPoint(skin,out=new THREE.Vector3()){skin.anchors.head.getWorldPosition(out);out.y+=LABEL_LIFT;return out;}
+
 function stateGuard(state){if(!STATES.includes(state))throw new RangeError(`Unknown agent.status: ${state}`);}
 
 export function buildProcedural(ctx) {
   const {shapes:s,parent,def,index}=ctx;
   const c=makeCharacter(s,parent,def,index);
   const head=s.group(c.head,[0,2-c.headY,0]);
-  const label=s.group(c.root,[0,.60,1.60]);
   const box=s.bounds(c.body),height=box.max.y-box.min.y;
   return {
-    root:c.root,anchors:{head,handL:c.arms[0],handR:c.arms[1],label},
+    root:c.root,anchors:{head,handL:c.arms[0],handR:c.arms[1]},
     budget:s.budget(c.root),kind:'procedural',bodyHeight:height,bodyCenterY:(box.min.y+box.max.y)/2,bodyBottom:box.min.y,
     setState(state){stateGuard(state);c.state=state;},
     update(dt,t,{reduced=false,silhouette=false}={}){
@@ -160,7 +164,6 @@ export async function buildGLTF(ctx,entry) {
       handRoutes[key]={route:target?(target===node?'anchor':'inferred'):'body',node:target?.name||null};
     }
   }
-  sources.label=new THREE.Group();sources.label.name='source:label';sources.label.position.set(0,.60,1.60);root.add(sources.label);
   const attachments=sceneAnchors(ctx.shapes.scene,sources),anchors=attachments.anchors;
   const mixer=new THREE.AnimationMixer(model),materials=new Set(),geometries=new Set(),textures=new Set(),skeletons=new Set();
   let triangles=0,drawCalls=0;

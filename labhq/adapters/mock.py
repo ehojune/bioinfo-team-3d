@@ -138,14 +138,22 @@ class MockAdapter(AgentAdapter):
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",
-                                                        "summary": "Bash: rm -rf tmp/ (mock)",
+                                                        "summary": "Bash: Rscript scripts/qc_plots.R (mock)",
                                                         "timeout_s": self.settings.policy.approvals.timeout_s})
             text += f" · 승인 결과={'허가' if dec.get('approved') else '거절'}"
 
         if "[hpc]" in own and not t.resume_session_id:
-            await self._broker(ctx, "/jobs/track", {"task_id": t.id, "agent_id": a.id,
-                                                    "job_id": f"mock-{t.id[-4:]}", "name": "mock_align"})
-            text += " · HPC 작업 제출 후 대기"
+            if self.settings.hpc.scheduler == "mock":  # a stand-in agent never submits to a real cluster
+                # Like hpc_submit: the runner submits the script and records the id (no caller-reported job ids).
+                script = ctx.workdir / "jobs" / f"mock_align_{t.id[-4:]}.sh"
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_text("#!/bin/bash\necho mock\n", encoding="utf-8")
+                out = await self._broker(ctx, "/jobs/submit", {
+                    "task_id": t.id, "agent_id": a.id, "script": str(script), "name": "mock_align",
+                    "cores": 1, "mem": "1G", "walltime": "00:05:00", "reason": "mock"})
+                text += " · HPC 작업 제출 후 대기" if out.get("submitted") else " · HPC 제출 안 됨"
+            else:
+                text += " · HPC 생략(mock 스케줄러가 아님)"
         if t.resume_session_id:
             text += " · (깨어나서) 작업 결과 확인 후 마무리"
 

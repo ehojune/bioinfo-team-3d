@@ -10,9 +10,10 @@ from pathlib import Path
 
 import yaml
 
-from . import doctor
+from . import doctor, hpc_consult
 from .adapters.base import _resolve_command
-from .settings import Settings
+from .settings import HpcSettings, Settings
+from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
 
 
 class InitError(ValueError):
@@ -77,6 +78,56 @@ def _ask(prompt: str, default: str, yes: bool) -> str:
     return answer or default
 
 
+def _hpc_query(argv: list[str]):
+    """One read-only cluster query for the HPC consult (tests replace it with fixture output)."""
+    return hpc_consult.run_query(argv)
+
+
+def _hpc_backend(hpc: HpcSettings) -> Scheduler:
+    return Scheduler(hpc)
+
+
+def _hpc_consult(hpc: dict, scheduler: str, dry_run: bool) -> bool:
+    """Show the `hpc:` draft from read-only queries; True when a trial job may follow."""
+    if scheduler == "none":
+        print(hpc_consult.NO_CLUSTER)
+        return False
+    if scheduler not in SCHEDULER_COMMANDS:
+        return False
+    if not _has(*SCHEDULER_COMMANDS[scheduler]):
+        print(f"{'/'.join(SCHEDULER_COMMANDS[scheduler])}가 이 PC에 없어 HPC 상담을 건너뜁니다. "
+              "제출하는 노드에서 init을 돌리거나 hpc:를 직접 채우세요.")
+        return False
+    if dry_run:
+        print("dry-run: HPC 상담 조회와 시험 잡을 건너뜁니다.")
+        return False
+    draft, notes = hpc_consult.draft(scheduler, hpc_consult.survey(scheduler, _hpc_query))
+    for key, value in draft.items():
+        if isinstance(value, dict):
+            hpc.setdefault(key, {}).update(value)
+        else:
+            hpc[key] = value
+    print("HPC 설정 초안(읽기 전용 조회 결과, 설정에 넣음, 고쳐 써도 됨):")
+    print(yaml.safe_dump({"hpc": draft}, allow_unicode=True, sort_keys=False).rstrip())
+    for note in notes:
+        print("- " + note)
+    return True
+
+
+def _hpc_trial(settings: Settings, yes: bool) -> None:
+    if yes:
+        print("시험 잡은 PI 승인이 필요해 --yes에서는 묻지 않고 건너뜁니다.")
+        return
+
+    def confirm(command: str) -> bool:
+        return _ask(command + "\n시험 잡을 제출할까요? (y/N)", "n", False).strip().lower() in ("y", "yes")
+
+    result = hpc_consult.trial_job(settings.hpc, settings.path(settings.runner.workspace_root) / "_hpc_trial",
+                                   confirm, policy=settings.policy, backend=_hpc_backend(settings.hpc))
+    job = f" (job {result['job_id']})" if result.get("job_id") else ""
+    print(f"시험 잡: {result['message']}{job}")
+
+
 def _login_command(settings: Settings) -> str:
     """Use shell home variables so neither the user name nor home path is printed."""
     if _is_windows():
@@ -136,6 +187,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         if scheduler == "slurm":
             print("partition은 hpc.default_queue, 계정·QOS는 hpc.slurm.sbatch_args에 더하세요.")
         print("hpc.scheduler: " + hpc["scheduler"])
+        trial = _hpc_consult(hpc, scheduler, dry_run)
         if _is_windows():
             policy = data.setdefault("policy", {})
             policy["data_zones"] = [z for z in policy.get("data_zones", [])
@@ -174,6 +226,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             if staff_home:
                 staff_home.mkdir(parents=True, exist_ok=True)
             print("설정 저장 완료 (token과 로컬 경로 출력 생략)")
+            if trial:  # after the save, so the draft survives an interrupted or failed trial
+                _hpc_trial(settings, yes)
         if staff_home:
             print("로그인은 직접 실행하세요: " + _login_command(settings))
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
