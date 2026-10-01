@@ -140,7 +140,8 @@ async def test_the_listing_stops_at_the_entry_and_depth_caps_and_says_so(tmp_pat
     runner = _runner(tmp_path, monkeypatch, lambda wd: _files(wd, {f"outputs/e{i}.tsv": str(i) for i in range(6)}),
                      settings)
     wide = await runner.run_task(_direct("task-e"))
-    assert wide.outputs == ["outputs/e0.tsv", "outputs/e1.tsv", "outputs/e2.tsv", "outputs/e3.tsv"]
+    # Which four depends on the file system's listing order (ext4 is not name order), not on the cap.
+    assert len(wide.outputs) == 4 and set(wide.outputs) < {f"outputs/e{i}.tsv" for i in range(6)}
     settings = Settings()
     settings.runner.reference_scan_max_depth = 1
     deep = _runner(tmp_path / "deep", monkeypatch, lambda wd: _files(wd, {
@@ -149,6 +150,28 @@ async def test_the_listing_stops_at_the_entry_and_depth_caps_and_says_so(tmp_pat
     assert result.outputs == ["outputs/top.tsv", "outputs/a/one.tsv"]
     assert any("상한 4개" in text for text in _warnings(runner))
     assert any("깊이가 상한 1단계" in text for text in _warnings(deep))
+
+
+@pytest.mark.asyncio
+async def test_a_name_that_is_not_utf8_is_left_out_and_the_run_still_reports(tmp_path, monkeypatch):
+    # A CP949 name unpacked on Linux reads back with surrogates; sending it as JSON text crashed the finished run.
+    name = "\udcc7\udcd1"
+
+    def write(wd: Path) -> None:
+        _files(wd, {"outputs/ok.tsv": "ok"})
+        try:
+            open(os.path.join(wd, "outputs", f"{name}.tsv"), "w").close()
+            os.mkdir(os.path.join(wd, "outputs", name))
+            open(os.path.join(wd, "outputs", name, "inner.tsv"), "w").close()
+        except (OSError, UnicodeError):
+            pytest.skip("this file system refuses names that are not UTF-8")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_direct("task-u"))
+    assert result.ok and result.outputs == ["outputs/ok.tsv"]
+    sent = [e for e in runner.store.pending() if e["type"] == "task.result"]
+    assert [e["data"]["outputs"] for e in sent] == [["outputs/ok.tsv"]] and sent[0]["data"]["ok"]
+    assert any("UTF-8로 읽을 수 없는 이름" in text for text in _warnings(runner))
 
 
 def test_the_file_cap_is_the_shadow_hash_cap():

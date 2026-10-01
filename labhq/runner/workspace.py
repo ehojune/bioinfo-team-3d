@@ -41,6 +41,15 @@ def _is_link(path: Path) -> bool:
         getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
+def _utf8_name(name: str) -> bool:
+    """False for a name the OS decoded with surrogates (non-UTF-8 bytes on POSIX, an unpaired surrogate on Windows)."""
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _is_mount(path: Path) -> bool:
     """Another file system mounted here. On Windows a mount point is a reparse point, which ``_is_link`` sees."""
     return os.name != "nt" and os.path.ismount(path)
@@ -196,6 +205,10 @@ class TaskWorkspace:
                 seen += 1
                 if seen > max_entries:
                     return found, f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다"
+                if not _utf8_name(entry.name):
+                    # A CP949 name unpacked on Linux: the result could not be sent as JSON text and the run would fail.
+                    note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
+                    continue
                 path = Path(entry.path)
                 try:
                     info = entry.stat(follow_symlinks=False)
