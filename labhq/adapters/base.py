@@ -283,6 +283,8 @@ def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: st
 class AgentAdapter(ABC):
     engine = "base"
     supports_resume = True
+    # True only when the engine itself (sandbox, tool list) applies READ_ONLY_OVERRIDES, not just the prompt.
+    enforces_read_only = False
 
     def __init__(self, settings: Settings):
         self.settings = settings

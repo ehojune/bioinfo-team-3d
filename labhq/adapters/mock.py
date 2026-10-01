@@ -17,6 +17,7 @@ from .base import AgentAdapter, RunContext, RunState
 
 class MockAdapter(AgentAdapter):
     engine = "mock"
+    enforces_read_only = True  # runs no commands and writes only labhq's own result files
 
     def build_command(self, ctx: RunContext) -> list[str]:  # not used
         return []

@@ -234,6 +234,70 @@ async def test_runner_gives_followups_no_ask_tool(tmp_path, monkeypatch):
     assert seen["servers"] == [[], ["labhq_ask"]]
 
 
+def test_read_only_capability_is_decided_per_engine_in_one_place():
+    from labhq.adapters import enforces_read_only
+
+    # Claude gets plan mode and Read,Glob,Grep only; Codex gets `-s read-only`; mock writes nothing.
+    # A cli command template, Gemini and Antigravity ignore sandbox and tool overrides.
+    assert {engine.value: enforces_read_only(engine) for engine in Engine} == {
+        "claude_code": True, "codex": True, "mock": True, "cli": False, "gemini": False, "antigravity": False}
+    assert enforces_read_only("unknown") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", ["cli", "gemini", "antigravity"])
+async def test_followup_is_refused_on_an_engine_that_cannot_enforce_read_only(engine):
+    hub = FakeHub(answer(), mode="direct")
+    hub.agents["worker"]["engine"] = engine
+    entry = hub.ask("Rerun it with a log scale?")
+    entry["agent_id"] = "worker"
+    await Orchestrator(hub).run_followup("r", "fu_1")
+    assert hub.calls == [], "nothing is dispatched: the CLI would run with full write access"
+    assert entry["status"] == "failed" and "읽기 전용" in entry["error"] and engine in entry["error"]
+    done = [e for e in hub.events if e["type"] == "request.followup_done"]
+    assert done and done[-1]["data"]["ok"] is False and done[-1]["data"]["error"] == entry["error"]
+    assert hub.requests["r"]["status"] == "done"
+
+
+def test_followup_endpoint_refuses_an_agent_whose_engine_cannot_stay_read_only(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    client = TestClient(app)
+    hub.agents = {"worker": {"id": "worker", "engine": "cli"}}
+    hub.requests["d"] = {"id": "d", "text": "t", "mode": "direct", "agent_id": "worker", "status": "done"}
+    response = client.post("/api/requests/d/followup", json={"text": "q"},
+                           headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert response.status_code == 409 and "읽기 전용" in response.json()["detail"]
+    assert not hub.requests["d"].get("followups")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [{"kind": "followup"}, {"kind": "consult"},
+                                  {"kind": "step", "agent_overrides": {"sandbox": "read-only"}}])
+async def test_runner_never_runs_a_read_only_task_on_an_engine_that_cannot_enforce_it(tmp_path, monkeypatch, meta):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.cli, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    ran = []
+
+    class Adapter:
+        async def run(self, ctx):
+            ran.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="rewrote outputs")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta=meta))
+    assert ran == [] and result.ok is False and "읽기 전용" in result.error
+    from labhq.orchestrator.cso import failure_kind
+    assert failure_kind(result) == "terminal", "a refusal is never retried"
+    assert [e["type"] for e in runner.store.pending() if e["type"] == "task.result"] == ["task.result"]
+
+
 async def _until(predicate, timeout=30.0):
     started = time.time()
     while not predicate():

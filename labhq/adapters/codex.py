@@ -35,6 +35,7 @@ def _is_windows() -> bool:
 
 class CodexAdapter(AgentAdapter):
     engine = "codex"
+    enforces_read_only = True  # -s read-only
 
     def prepare(self, ctx: RunContext) -> None:
         (ctx.workdir / "AGENTS.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")

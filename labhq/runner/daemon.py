@@ -17,7 +17,7 @@ from pathlib import Path
 
 import websockets
 
-from ..adapters import get_adapter
+from ..adapters import get_adapter, read_only_refusal
 from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
@@ -450,6 +450,15 @@ class Runner:
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
+        read_only = (task.meta.get("kind") in {"consult", "followup"}
+                     or (task.meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
+        refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
+        if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
+            result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
+            base = dict(task_id=task.id, agent_id=agent.id, request_id=task.request_id)
+            await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
+            await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
+            return result
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         ws = TaskWorkspace(self.ws_root, task, agent, override)
         self.workspaces[task.id] = ws

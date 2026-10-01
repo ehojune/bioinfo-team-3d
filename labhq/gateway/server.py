@@ -24,7 +24,7 @@ from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
-from ..adapters import get_adapter
+from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator
 from ..settings import Settings
 from ..security import token_matches
@@ -935,6 +935,9 @@ class Hub:
         agent = req.get("agent_id") if req.get("mode") == "direct" else self.s.orchestrator.cso_agent
         if agent not in self.agents:
             raise ValueError(f"agent {agent!r} is not on any connected runner")
+        refusal = read_only_refusal(agent, self.agents[agent].get("engine"))
+        if refusal:
+            raise ValueError(refusal)
         entry = {"id": new_id("fu"), "text": text.strip(), "agent_id": agent, "status": "running",
                  "asked_at": time.time()}
         req.setdefault("followups", []).append(entry)

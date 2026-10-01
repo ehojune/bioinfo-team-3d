@@ -137,6 +137,7 @@ def plugin_provenance(name: str, path: Path) -> dict:
 
 class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
+    enforces_read_only = True  # --permission-mode plan and --tools Read,Glob,Grep
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]

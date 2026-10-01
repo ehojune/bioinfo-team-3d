@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..adapters import read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
@@ -556,6 +557,11 @@ class Orchestrator:
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
                 **{"from": "labhq", "routed_to": routed}))
             return
+        refusal = read_only_refusal(routed, self.hub.agents[routed].get("engine"))
+        if refusal:  # a consult runs with READ_ONLY_OVERRIDES; an engine that ignores them could write
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=refusal, **{"from": "labhq", "routed_to": routed}))
+            return
 
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
@@ -597,6 +603,14 @@ class Orchestrator:
         req = self.hub.requests[rid]
         entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
         agent, direct = entry["agent_id"], req.get("mode") == "direct"
+        refusal = read_only_refusal(agent, (self.hub.agents.get(agent) or {}).get("engine"))
+        if refusal:  # the same workspace and session, with an engine that would not keep it read-only
+            entry.update(status="failed", answer="", error=refusal, answered_at=time.time())
+            self.hub.save_request(rid)
+            await self._emit(rid, "request.followup_done", {
+                "id": fid, "ok": False, "answer": "", "error": refusal,
+                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
+            return
         if direct:
             session_id, workdir = self._last_agent_session(rid, agent)
         else:
