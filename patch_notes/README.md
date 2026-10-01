@@ -12,6 +12,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:49 | [`34d0231`](https://github.com/ehojune/bioinfo-team-3d/pull/111/commits/34d0231) | **이어받은 consult 비용이 병렬 task 비용과 겹쳐 두 번 더해지지 않게 했습니다** (#93). task별로 이미 더한 비용을 기억해 한 번만 더하고, 재개 직후 roster가 비었을 때 다른 직원(facilities)의 consult를 CSO 것으로 이어받아 session을 덮어쓰지 않도록 같은 직원의 consult만 이어받습니다 |
+| 10:36 | [`432d6b2`](https://github.com/ehojune/bioinfo-team-3d/pull/111/commits/432d6b2) | **STATUS에 재시작 consult와 pack 조합 규칙 작업 보고를 추가했습니다** (#93·#109) |
+| 10:36 | [`89ef3aa`](https://github.com/ehojune/bioinfo-team-3d/pull/111/commits/89ef3aa) | **이어받은 consult의 비용·선택 순서·남은 재시도를 맞췄습니다** (#93). 가장 최근에 시작한 consult를 고르고(격리 재실행은 시도 번호가 다시 1부터라 옛 시도를 집었습니다), 이어받은 결과의 비용을 예산 총액에도 반영하며, 일시 실패면 남은 횟수만큼만 새 작업 공간에서 이어 돕니다 |
+| 10:25 | [`f4b2c91`](https://github.com/ehojune/bioinfo-team-3d/pull/111/commits/f4b2c91) | **single_cell_de 연구 계획의 count scale·모델 조합과 결론 방식을 기계가 판정합니다** (#109). 전에는 log 변환 값으로 pseudobulk를 하겠다는 계획도 설명 문장만 있으면 승인 단계까지 갔습니다. 이제 count likelihood와 pseudobulk는 원시 count만, 개체 의존 선형 모델은 log 변환 값만 통과하고, 결론 방식(조건 효과·기술만)에 맞는 통계 계획 요구와 금지 항목도 규칙으로 확인합니다 |
+| 10:22 | [`db7b2cf`](https://github.com/ehojune/bioinfo-team-3d/pull/111/commits/db7b2cf) | **서버가 다시 켜진 뒤에도 같은 질문이 CSO 작업 공간을 두 번 쓰지 않게 했습니다** (#93). 전에는 질의 도중 gateway가 재시작되면 끝나지 않은 consult를 놓치고 같은 session·폴더로 하나를 더 띄웠습니다. 이제 끝나지 않은 consult도 사용 중으로 보고, 같은 러너에 남은 것은 결과를 기다려 쓰며, 세대가 바뀌었거나 포기된 것은 새 session·폴더에서 따로 돌립니다 |
 | 10:09 | [`3b23239`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/3b23239) | **main 병합에서 bench report 표에 legacy 결과 열을 남겼습니다** (#105의 구조화 열과 함께) |
 | 10:03 | [`79580f0`](https://github.com/ehojune/bioinfo-team-3d/pull/110/commits/79580f0) | **main 병합에서 #103의 GitHub 재시도 구조 위에 #107 판정 규칙을 얹었습니다.** 토큰 누락 뒤 재시작 복구는 그대로 둡니다 |
 | 10:02 | [`5c8747d`](https://github.com/ehojune/bioinfo-team-3d/pull/100/commits/5c8747d) | **main 병합에서 README 설정 절의 두 변경을 함께 살렸습니다.** 연구 규약 pilot 줄과 #103의 라운드 기록 rate limit 설명을 둘 다 둡니다 |
