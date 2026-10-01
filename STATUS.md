@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #36 접수·참고 자료 PR A — 구조화 확인 질문, 참고 포인터, 이어 묻기
+
+- 결론: CSO 확인 질문이 선택지 버튼·자유 입력·깊이(약 30/60/90분)로 폰에 뜨고, 답은 #34 경로로 재계획에 들어간다. 요청에 GitHub·DOI·PMID·URL·러너 경로 포인터를 붙이면 브리핑·계획·단계 prompt에 들어가며 경로는 쓰기 권한 없이 열린다. 끝난 요청은 같은 CSO 세션에 이어 물을 수 있다.
+- 바뀐 것: `PLAN_SCHEMA.clarifying_questions`가 `{question, options 2-4, allow_free_text, depth?}`이고 문자열도 읽는다. PR 1 연구 PLAN도 같은 구조를 받되 문자열 질문은 그대로 둬서 기존 hash가 그대로다. `RequestIn.references`·`default_references`, `pi_profile.references`·`runner.reference_roots`(example은 빈 값), `labhq send --ref`·`--no-default-refs`, 2.5D **참고** 칩을 넣었다. 경로는 게이트웨이가 루트·통제 구역으로 거르고 러너가 실제 경로로 다시 확인한다. Claude는 `--add-dir`과 Edit·Write 거부, Codex는 `--add-dir` 없이 읽고, 쓰기 가능한 참고 경로는 러너가 한 번 경고한다. 프로젝트 GitHub 보고에서는 경로 참고를 가린다. `POST /api/requests/{id}/followup`은 읽기 전용으로 resume하고 요청 상태를 바꾸지 않는다. 4열 작업판이 패널 폭을 넓히던 문제도 고쳤다.
+- 실행한 것: 기능마다 회귀 테스트를 먼저 썼다. 새 테스트를 main 위에서 돌려 실패함을 확인했다(pytest 61개: 질문 8·참고 44·이어 묻기 8·e2e 1, Node 3·4·2. 기존 승인 게이트 동작을 고정하는 테스트 1개는 main에서도 통과). 수정 후 전체 pytest 1222 passed/19 skipped, `node tests/*.cjs` 10개, `bash scripts/check_public.sh` 통과. 로컬 게이트웨이와 mock 러너로 2.5D·3D 질문 카드, 참고 칩, 이어 묻기를 브라우저에서 눌러 확인했다(375px 폭 포함). 로컬 Codex 리뷰(branch 대 main): P1 미리 허용된 셸이 참고 경로에 쓸 수 있음 → prompt 규칙·쓰기 가능 경고·README로 대응(셸 sandbox는 범위 밖), P2 이어 묻기 초안이 다른 요청으로 넘어감 → 고침.
+- 미해결: 미리 허용된 셸 명령의 참고 경로 쓰기는 OS 권한으로만 막힌다. 실제 Claude·Codex CLI로는 돌리지 않았다. Codex가 `--add-dir` 없이 참고 경로를 읽는다는 것은 sandbox 기본 동작에 기댄 것이고, Windows elevated sandbox에서 확인하지 않았다. Gemini·Antigravity·cli 직원은 경로를 prompt로만 받는다. 범위 정책·`labhq_kb` 색인·브리핑 현실화는 PR B·C다. patch notes는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/intake.py`, `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/runner/daemon.py`, `labhq/web/ui/decide.js`, `labhq/web/ui/refs.js`, `tests/test_intake_questions.py`, `tests/test_intake_references.py`, `tests/test_followup.py`, `tests/web_clarify_options.cjs`, `tests/web_refs.cjs`, `tests/web_followup.cjs`.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
 
 - 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
