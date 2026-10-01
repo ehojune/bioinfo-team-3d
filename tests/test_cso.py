@@ -1049,22 +1049,37 @@ def test_output_normalization_touches_only_root_references_to_own_outputs():
 
 def test_output_normalization_rewrites_instruction_paths_case_insensitively_and_deduplicates():
     raw = [{"id": "a", "agent_id": "analyst", "outputs": [" answer.md ", "./answer.md"],
-            "instruction": "Save /abs/ANSWER.md, ~/answer.md, and 작업 폴더의 Answer.md."}]
+            "instruction": "Save /abs/ANSWER.md"}]
     steps, warnings = validate_steps(raw, {"analyst"}, 10)
     assert steps[0]["outputs"] == ["outputs/answer.md"]
-    assert steps[0]["instruction"].count("./outputs/answer.md") == 3
+    assert steps[0]["instruction"] == "Save ./outputs/answer.md"
     assert len([w for w in warnings if "moved under outputs/" in w]) == 1
+
+
+def test_bare_workspace_output_path_is_rewritten_from_a_postposed_action():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["Answer.md"],
+            "instruction": "작업 폴더의 answer.md에 저장"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == "작업 폴더의 ./outputs/Answer.md에 저장"
 
 
 @pytest.mark.parametrize("instruction", [
     "Read /datasets/report.md, then write report.md",
     "Write report.md after reading /datasets/report.md",
+    "Save a summary of /datasets/report.md to report.md",
 ])
 def test_same_basename_input_path_is_not_rewritten_as_the_declared_output(instruction):
     raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"], "instruction": instruction}]
     with pytest.raises(ValueError, match="ambiguous instruction paths"):
         validate_steps(raw, {"analyst"}, 10)
     assert "/datasets/report.md" in raw[0]["instruction"]
+
+
+def test_nested_home_output_path_is_rewritten_as_one_reference():
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "Save ~/documents/reports/report.md"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == "Save ./outputs/report.md"
 
 
 def test_normalized_output_names_drive_dependency_inference():

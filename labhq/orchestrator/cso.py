@@ -314,7 +314,7 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
 def _output_reference(inner: str) -> re.Pattern[str]:
     """A root, absolute, home, or bare instruction reference to one declared output (#229)."""
     body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
-    prefix = (r"(?:\.[/\\]|~[/\\]|[A-Za-z]:[/\\](?:[^\s\"'`/\\]+[/\\])*|"
+    prefix = (r"(?:\.[/\\]|~[/\\](?:[^\s\"'`/\\]+[/\\])*|[A-Za-z]:[/\\](?:[^\s\"'`/\\]+[/\\])*|"
               r"[/\\](?:[^\s\"'`/\\]+[/\\])*)?")
     return re.compile(r"(?<![A-Za-z0-9_.\-/\\])" + prefix + body +
                       r"(?![A-Za-z0-9_\-/\\]|\.[A-Za-z0-9_])", re.IGNORECASE)
@@ -358,6 +358,15 @@ def _instruction_path_action(instruction: str, start: int, end: int) -> str | No
 
 def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[str, int, list[str]]:
     pattern = _output_reference(inner)
+    matches = list(pattern.finditer(instruction))
+    # More than one same-basename reference that includes an absolute/home path can mix an input and output.
+    # This shape is ambiguous regardless of wording, so do not rely on an open-ended language list.
+    def external_form(match: re.Match[str]) -> bool:
+        value = match.group(0).replace("\\", "/")
+        return value.startswith(("/", "~/")) or re.match(r"^[A-Za-z]:/", value) is not None
+
+    if len(matches) > 1 and any(external_form(match) for match in matches):
+        return instruction, 0, [match.group(0) for match in matches]
     rewritten = 0
     ambiguous = []
 
