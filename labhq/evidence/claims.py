@@ -230,6 +230,13 @@ class Evidence(StrictModel):
 
     @model_validator(mode="after")
     def kind_shape(self) -> "Evidence":
+        if self.slots and not self.countable:
+            raise ValueError(f"{self.kind} row {self.id} is not evidence and cannot fill evidence slots {self.slots}")
+        for slot in self.slots:
+            if not _present(slot):
+                raise ValueError(f"evidence {self.id} lists an empty slot id")
+            if self.slots.count(slot) > 1:
+                raise ValueError(f"evidence {self.id} lists slot {slot} more than once")
         if self.countable:
             if self.status is None or self.source is None:
                 raise ValueError(f"evidence {self.id} ({self.kind}) needs status and source")

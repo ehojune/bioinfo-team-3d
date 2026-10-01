@@ -45,7 +45,7 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 
 | 필드 | 의미 |
 |---|---|
-| `plan_sha256`, `step_id` | 어떤 동결 계획의 어느 step인지. 동결 계획과 다르면 거부 |
+| `plan_sha256`, `step_id` | 어떤 동결 계획의 어느 step인지. 동결 계획과 다르면 거부. 그 step이 선언한 `claim_ids` 밖의 claim도 거부 |
 | `claims` | 한 줄 한 주장. `kind`(finding/inference/hypothesis)·`status`·중요도·`status_reason`·한계, `revision`·`supersedes`, 정량 `comparisons` |
 | `evidence` | 아래 6종 행. 관찰, 조회 상태, 출처, 평가, `quantities` |
 | `links` | claim revision과 evidence, `supports/contradicts/context`, `rationale` |
@@ -53,6 +53,8 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `not_established` | 이번 작업으로 확립하지 못한 내용 |
 | `failures` | 검색·도구·분석 실패. 0건과 구별 |
 | `method_changes` | 계획값과 실제값, 이유, 결론 영향 여부 |
+
+근거 행의 `slots`에는 그 행이 채운 step의 evidence slot ID를 적는다. 필수 slot마다 채운 행이 하나는 있어야 하고, 선언하지 않은 slot은 거부한다. 조회가 실패했거나 0건이어도 그 행에 slot을 적는다. 시도하고 비었다는 것이 CP2에 그대로 보여야 하기 때문이다. 추론·가설 행은 slot을 채우지 못한다.
 
 evidence 종류는 `observation`, `database_annotation`, `experimental`, `literature_claim`, `inference`, `hypothesis`다. 앞의 넷만 근거로 센다. `inference`·`hypothesis`는 `derived_from`을 적고 `context`로만 연결한다.
 

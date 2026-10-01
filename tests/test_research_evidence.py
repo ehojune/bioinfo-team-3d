@@ -184,6 +184,47 @@ def test_result_binds_to_the_frozen_plan_revision_and_step():
         rc.validate_research_result(result(plan_sha256=digest), plan=changed)
 
 
+def _slotted_plan():
+    plan = minimal_plan()
+    plan["steps"][0]["evidence_slots"] = [{"id": "e1", "required": True, "description": "IL6 donor-level DE row"},
+                                          {"id": "e_rep", "required": False, "description": "replication cohort"}]
+    return plan, rc.plan_sha256(plan)
+
+
+def test_result_binds_to_the_selected_steps_claims_and_required_slots():
+    # #128: step s1 declared claim c1 and the required slot e1; a result reporting only c999 is not its answer.
+    plan, digest = _slotted_plan()
+    declared = result(plan_sha256=digest, evidence=[evidence("e1", slots=["e1"])])
+    assert rc.validate_research_result(declared, plan=plan).evidence[0].slots == ["e1"]  # optional e_rep may stay empty
+    outside = result(plan_sha256=digest, claims=[claim("c999")], links=[link("c999", "e1")],
+                     evidence=[evidence("e1", slots=["e1"])])
+    with pytest.raises(ValueError, match=r"claim c999 is outside the claim_ids \['c1'\] that step s1 declared"):
+        rc.validate_research_result(outside, plan=plan)
+    with pytest.raises(ValueError, match="required evidence slot e1 of step s1 has no evidence row"):
+        rc.validate_research_result(result(plan_sha256=digest), plan=plan)
+    undeclared = result(plan_sha256=digest, evidence=[evidence("e1", slots=["e1", "e9"])])
+    with pytest.raises(ValueError, match="evidence e1 fills slot e9 that step s1 does not declare"):
+        rc.validate_research_result(undeclared, plan=plan)
+    # Every binding defect comes back at once, so one correction can fix them all.
+    with pytest.raises(ValueError, match="c999.*required evidence slot e1"):
+        rc.validate_research_result(result(plan_sha256=digest, claims=[claim("c999")], links=[link("c999", "e1")]),
+                                    plan=plan)
+
+
+def test_a_failed_attempt_still_addresses_a_required_slot():
+    # The gap is recorded, not hidden: CP2 shows the slot as tried and failed instead of silently absent.
+    plan, digest = _slotted_plan()
+    tried = result(plan_sha256=digest, claims=[claim(status="unresolved")], links=[link("c1", "e1", "context")],
+                   evidence=[evidence("e1", status="failed", slots=["e1"])])
+    assert rc.validate_research_result(tried, plan=plan).evidence[0].status == "failed"
+
+
+def test_only_countable_rows_fill_evidence_slots():
+    rejects(result(evidence=[evidence("e1"), evidence("e2", kind="inference", slots=["e1"])]),
+            "inference row e2 is not evidence and cannot fill evidence slots")
+    rejects(result(evidence=[evidence("e1", slots=["e1", "e1"])]), "evidence e1 lists slot e1 more than once")
+
+
 # --- R05: directness, independence, source level and reasons ------------------------------------
 
 @pytest.mark.parametrize("field", ["directness", "source_level", "independence_group", "assessment_reason"])
