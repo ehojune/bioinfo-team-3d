@@ -368,6 +368,58 @@ def test_reader_shares_a_live_wal_and_cannot_write(tmp_path):
         writer.close()
 
 
+def _wal_db_without_wal(path):
+    """A WAL-mode state DB whose last connection closed, so no -wal or -shm file is beside it."""
+    import sqlite3
+    pilot.write_state_db(path, [{"kind": "task", "key": "t", "body": {}}])
+    setup = sqlite3.connect(path)
+    setup.execute("PRAGMA journal_mode=WAL")
+    setup.close()
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
+
+
+def test_reader_leaves_no_side_files_beside_a_wal_db_without_a_writer(tmp_path):
+    from labhq.research.semantics import read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    before = path.read_bytes()
+    assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.db"] and path.read_bytes() == before
+
+
+@pytest.mark.parametrize("when", ["before_open", "after_open"])
+def test_reader_does_not_miss_a_writer_that_starts_around_the_open(tmp_path, monkeypatch, when):
+    """#141: with no -wal the reader opens immutable (no locks); a writer that commits just before or just
+    after that open keeps its commit in -wal, which the immutable read cannot see. The read is redone."""
+    import sqlite3
+    from labhq.research.semantics import read_records
+    path = tmp_path / "state.db"
+    _wal_db_without_wal(path)
+    real_connect, writers = sqlite3.connect, []
+
+    def start_writer():
+        if not writers:
+            writer = real_connect(path)
+            writer.execute("INSERT INTO state VALUES ('task', 'u', '{}')")
+            writer.commit()
+            writers.append(writer)   # kept open: the commit stays in -wal, the main file is unchanged
+
+    def connect(*args, **kwargs):
+        if when == "before_open":
+            start_writer()
+        db = real_connect(*args, **kwargs)
+        if when == "after_open":
+            start_writer()
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    try:
+        assert sorted(read_records(tmp_path, state_db=path).tasks) == ["t", "u"]
+    finally:
+        for writer in writers:
+            writer.close()
+
+
 # ---------------------------------------------------------------- isolation from the execution path
 
 ROOT = FIXTURE.parents[2]

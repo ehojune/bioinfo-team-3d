@@ -109,23 +109,69 @@ def _relative_inside(rel: str, where: str) -> PurePosixPath:
     return path
 
 
-def _open_state_readonly(path: Path) -> sqlite3.Connection:
+def _wal_path(path: Path) -> Path:
+    return path.with_name(path.name + "-wal")
+
+
+def _wal_mode(path: Path) -> bool:
+    """True when the database header says WAL (file format read and write versions 2)."""
+    with open(path, "rb") as handle:
+        header = handle.read(20)
+    return len(header) == 20 and header[:16] == b"SQLite format 3\x00" and header[18:20] == b"\x02\x02"
+
+
+def _stamp(path: Path) -> tuple[int, int]:
+    stat = path.stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _open_state_readonly(path: Path, *, immutable: bool | None = None) -> sqlite3.Connection:
     """Open an existing gateway state DB without writing to it or to its directory.
 
-    ``mode=ro`` still creates -wal/-shm files beside a WAL database that has none, so a database
-    without a live WAL is opened ``immutable``; with a WAL present (a writer may be active) plain
-    ``mode=ro`` shares the existing files. ``query_only`` refuses writes either way.
+    ``mode=ro`` with ``query_only`` always. ``immutable=1`` is added only for a WAL database with no
+    -wal file beside it, where ``mode=ro`` would create -wal/-shm; immutable takes no locks, so
+    ``_read_state`` checks for a writer again after the read. ``immutable=None`` decides from the files.
     """
     if not path.is_file():
         raise RecordsError("state database: not found")
-    wal = path.with_name(path.name + "-wal")
-    uri = f"file:{quote(path.resolve().as_posix())}?mode=ro" + ("" if wal.exists() else "&immutable=1")
+    if immutable is None:
+        immutable = not _wal_path(path).exists() and _wal_mode(path)
+    uri = f"file:{quote(path.resolve().as_posix())}?mode=ro" + ("&immutable=1" if immutable else "")
     try:
         db = sqlite3.connect(uri, uri=True)
         db.execute("PRAGMA query_only = ON")
     except sqlite3.Error as exc:
         raise RecordsError(f"state database: cannot open read-only ({exc})") from None
     return db
+
+
+def _read_state(path: Path, sql: str, attempts: int = 3) -> list[tuple]:
+    """Rows of ``sql``, read without writing to the DB or its directory (#141).
+
+    A rollback-journal DB, or a WAL DB whose -wal exists (a writer may be active), is read with plain
+    ``mode=ro``: shared locks, and the writer's WAL is shared. A WAL DB with no -wal is read immutable.
+    A writer that starts around that read leaves a -wal (its commits are invisible to the immutable read)
+    or changes the main file (pages may be torn), so either sends the read round again, now sharing the
+    WAL. If the writer closes between the check and the open, ``mode=ro`` may leave SQLite's -wal/-shm
+    behind; the data is still read consistently.
+    """
+    if not path.is_file():
+        raise RecordsError("state database: not found")
+    for _ in range(attempts):
+        immutable = not _wal_path(path).exists() and _wal_mode(path)
+        before = _stamp(path)
+        db = _open_state_readonly(path, immutable=immutable)
+        try:
+            rows: list[tuple] | None = db.execute(sql).fetchall()
+        except sqlite3.Error as exc:
+            if not immutable:
+                raise RecordsError(f"state database: cannot read state rows ({exc})") from None
+            rows = None   # possibly a page torn by a writer that started meanwhile: read again
+        finally:
+            db.close()
+        if rows is not None and (not immutable or (not _wal_path(path).exists() and _stamp(path) == before)):
+            return rows
+    raise RecordsError("state database: a writer kept changing it during the read; try again")
 
 
 def read_records(root: Path, *, state_db: Path, observed: Path | None = None, registry: Path | None = None,
@@ -138,14 +184,8 @@ def read_records(root: Path, *, state_db: Path, observed: Path | None = None, re
     - ``registry``: directory holding ``contract/<agent_id>.yaml`` for contract staff.
     - ``overlay``: JSON ``{"task_meta": {task_id: {...}}}`` merged into ``payload.meta``.
     """
-    db = _open_state_readonly(state_db)
-    try:
-        rows = db.execute("SELECT kind, key, body FROM state WHERE kind IN ('request', 'task') "
-                          "ORDER BY kind, key").fetchall()
-    except sqlite3.Error as exc:
-        raise RecordsError(f"state database: cannot read state rows ({exc})") from None
-    finally:
-        db.close()
+    rows = _read_state(state_db, "SELECT kind, key, body FROM state WHERE kind IN ('request', 'task') "
+                                 "ORDER BY kind, key")
     requests: dict[str, dict] = {}
     tasks: dict[str, dict] = {}
     for kind, key, body in rows:
