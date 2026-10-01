@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #220 — CSO 계획의 산출 경로를 실행 전에 outputs/ 안으로
+
+- 결론: 단계 결과 계약은 작업 폴더 `outputs/` 아래만 센다. penguins 계획은 `answer.md`를 선언하고 지시문에 `./answer.md`(작업 폴더 루트)를 적어, analyst가 만든 파일을 찾지 못해 INCOMPLETE가 됐다. 이제 계획 검증이 dispatch 전에 고치거나 다시 받는다.
+- 바뀐 것: `validate_steps`가 단계 자기 산출을 가리키는 루트 경로(`./answer.md`, `.\answer.md`)를 `./outputs/answer.md`로 고치고 선언도 `outputs/answer.md`로 바꿔 경고를 남긴다. 절대 경로·드라이브·`..`는 `PlanOutputsError`로 CSO 교정 계획을 한 번 받고, 그래도 틀리거나 교정 계획이 새 질문을 내면 단계 없이 실패한다. PLAN_PROMPT 산출 규칙에 `outputs/<name>`과 루트·절대 경로 금지를 적었고, 단계 prompt 끝에 선언 산출 경로를 싣는다. README §7에 한 문단.
+- 실행한 것: penguins 재현 fixture(`tests/fixtures/plans/penguins_outputs_root.json`)를 포함한 회귀 test 10건이 수정 전 실패함을 봤다. 전체 pytest 2132 passed/25 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. Codex 리뷰 P2 1건(교정 계획의 새 질문이 PI 확인 없이 dispatch됨)을 고치고 test를 더했다. 실제 CLI(Sonnet 대체) penguins 재실행: 요청 done, CSO가 `outputs/answer.md`로 선언, analyst·qc_reviewer 단계 모두 done($0.65, 309초).
+- 미해결: 같은 재실행에서 bench 형식은 FAIL이다. 최종 보고서 끝에 붙는 "Step status and output paths" 감사 줄이 결과 블록 뒤에 와서 "structured result block is not last"가 된다. qc_reviewer의 `labhq_ask`가 `wait: none`으로 broker 500, tool_permission 미스크립트 거절 2건(Temp/claude 경로)도 별도 문제다. 연구 lane 계획은 산출 경로를 검사하지 않는다(PR 1 pilot은 단계를 실행하지 않음). 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/fixtures/plans/penguins_outputs_root.json`, `README.md`.
+
 ## 2026-10-01 · PR #136·#158 후속 12건 — 계보 순회·resume 이유·그림자 breaker·hash·mark
 
 - 결론: #154 #155 #156 #157 #159 #160 #161 #163 #173 #174 #175를 issue별 커밋으로 고쳤다. #162는 이미 main(dc01c50)에 고쳐져 있어 issue의 두 모양만 test에 더했다. #163과 #174는 같은 결함이라 한 커밋이다.
