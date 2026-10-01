@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import ntpath
 from pathlib import Path
+from typing import Any  # semantics-hook
 from typing import Literal
 
 import yaml
@@ -320,6 +321,7 @@ class Settings(BaseModel):
     github: GitHubSettings = GitHubSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
+    semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
