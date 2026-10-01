@@ -8,7 +8,11 @@ whether a source really supports a sentence stays a reviewer judgment.
 from __future__ import annotations
 
 import datetime as _dt
+import posixpath
+import re
+from collections.abc import Mapping
 from typing import Literal
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -38,6 +42,29 @@ QUANTITY_UNKNOWABLE = (*QUANTITY_REQUIRED, "method", "uncertainty")
 # Which countable link relation a claim status asserts.
 STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "contradicted": "contradicts"}
 
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_DOI_HOSTS = frozenset({"doi.org", "dx.doi.org"})
+
+
+def normalize_uri(uri: str) -> str:
+    """Fold only what is case-insensitive in a URI (scheme and host); path and query keep their case."""
+    uri = uri.strip()
+    parts = urlsplit(uri)
+    if not parts.scheme or not parts.netloc:
+        return uri
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
+
+
+def normalize_id(scheme: str, value: str) -> str:
+    """Comparison form of an identifier. Registry accessions are case-insensitive; URIs are not."""
+    return normalize_uri(value) if scheme == "uri" else value.strip().casefold()
+
+
+def normalize_artifact_path(path: str) -> str:
+    """One spelling per workspace path: forward slashes, no leading ./ or redundant segments."""
+    cleaned = path.strip().replace("\\", "/")
+    return posixpath.normpath(cleaned) if cleaned else cleaned
+
 
 class SourceRef(StrictModel):
     uri: str | None = None
@@ -56,25 +83,38 @@ class SourceRef(StrictModel):
         if not any(_present(value) for value in (self.uri, self.id_value, self.artifact_id)):
             raise ValueError("source needs a uri, an id_scheme/id_value pair, or an artifact_id")
         if self.accessed_at is not None:
+            # fromisoformat alone is not enough: 3.11+ also reads week dates such as 2026-W40-4.
             try:
+                if not _ISO_DATE.fullmatch(self.accessed_at):
+                    raise ValueError
                 _dt.date.fromisoformat(self.accessed_at)
             except ValueError:
                 raise ValueError("source accessed_at must be a YYYY-MM-DD date") from None
-            if len(self.accessed_at) != 10:
-                raise ValueError("source accessed_at must be a YYYY-MM-DD date")
         return self
 
     @property
     def external(self) -> bool:
         return _present(self.uri) or _present(self.id_value)
 
-    def identity(self) -> str:
-        """Stable key for 'the same source', used to detect re-citation of one dataset."""
-        if self.id_scheme and self.id_value:
-            return f"{self.id_scheme}:{self.id_value.strip().casefold()}"
-        if self.artifact_id:
-            return f"artifact:{self.artifact_id}"
-        return f"uri:{(self.uri or '').strip().casefold()}"
+    def identities(self, artifact_paths: Mapping[str, str] | None = None) -> list[str]:
+        """Every key under which this source is 'the same source', used to detect re-citation.
+
+        A row may name one dataset several ways (identifier, resolver URL, downloaded artifact), and two
+        artifact ids may point at one file, so each spelling gets its own key.
+        """
+        keys: list[str] = []
+        if self.id_scheme and _present(self.id_value):
+            keys.append(f"{self.id_scheme}:{normalize_id(self.id_scheme, self.id_value or '')}")
+        if _present(self.uri):
+            uri = normalize_uri(self.uri or "")
+            parts = urlsplit(uri)
+            if parts.netloc in _DOI_HOSTS and parts.path.strip("/"):
+                keys.append(f"doi:{unquote(parts.path.strip('/')).casefold()}")
+            keys.append(f"uri:{uri}")
+        if _present(self.artifact_id):
+            path = (artifact_paths or {}).get(self.artifact_id or "")
+            keys.append(f"artifact:{normalize_artifact_path(path)}" if path else f"artifact_id:{self.artifact_id}")
+        return list(dict.fromkeys(keys))
 
 
 class Quantity(StrictModel):
@@ -234,8 +274,12 @@ def _present(value: object) -> bool:
 
 
 def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[EvidenceLink], *,
-                  artifact_ids: set[str] | frozenset[str] = frozenset()) -> list[str]:
-    """Every reference, revision and countability defect in one result, so one correction can fix all."""
+                  artifact_paths: Mapping[str, str] | None = None) -> list[str]:
+    """Every reference, revision and countability defect in one result, so one correction can fix all.
+
+    ``artifact_paths`` maps each artifact id in the result's ``artifact_refs`` to its workspace path.
+    """
+    artifact_paths = artifact_paths or {}
     errors: list[str] = []
     claim_by_id: dict[str, Claim] = {}
     for claim in claims:
@@ -254,20 +298,23 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
                 errors.append(f"evidence {row.id} cannot be derived_from itself")
             elif ref not in evidence_by_id:
                 errors.append(f"evidence {row.id} derived_from unknown evidence {ref}")
-        if row.source and row.source.artifact_id and row.source.artifact_id not in artifact_ids:
+        if row.source and row.source.artifact_id and row.source.artifact_id not in artifact_paths:
             errors.append(f"evidence {row.id} cites artifact {row.source.artifact_id} missing from artifact_refs")
+    errors += _grounding_errors(evidence, evidence_by_id)
 
-    # Re-citing one dataset is not independent support: one source identity, one independence group.
+    # Re-citing one dataset is not independent support: one source, one independence group, however the
+    # rows spell that source.
     groups_by_source: dict[str, tuple[str, str]] = {}
     for row in evidence:
         if not (row.countable and row.source and row.independence_group):
             continue
-        identity = row.source.identity()
-        first = groups_by_source.setdefault(identity, (row.id, row.independence_group))
-        if first[1] != row.independence_group:
-            errors.append(f"evidence {first[0]} and {row.id} cite the same source {identity} but declare "
-                          f"independence groups {first[1]} and {row.independence_group}; re-citation is not "
-                          "independent")
+        for identity in row.source.identities(artifact_paths):
+            first = groups_by_source.setdefault(identity, (row.id, row.independence_group))
+            if first[1] != row.independence_group:
+                errors.append(f"evidence {first[0]} and {row.id} cite the same source {identity} but declare "
+                              f"independence groups {first[1]} and {row.independence_group}; re-citation is not "
+                              "independent")
+                break
 
     seen_pairs: set[tuple[str, str]] = set()
     asserted: dict[str, set[str]] = {}
@@ -312,6 +359,29 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
     return errors
 
 
+def _grounding_errors(evidence: list[Evidence], evidence_by_id: dict[str, Evidence]) -> list[str]:
+    """An inference or hypothesis row must reach a recorded retrieval through derived_from, not a loop."""
+    errors: list[str] = []
+    for row in evidence:
+        if row.countable or not all(ref in evidence_by_id for ref in row.derived_from):
+            continue  # unknown refs are already reported
+        seen: set[str] = set()
+        pending = list(row.derived_from)
+        grounded = False
+        while pending and not grounded:
+            ref = pending.pop()
+            if ref in seen:
+                continue
+            seen.add(ref)
+            parent = evidence_by_id[ref]
+            grounded = parent.countable
+            pending.extend(r for r in parent.derived_from if r in evidence_by_id)
+        if not grounded:
+            errors.append(f"evidence {row.id} ({row.kind}) does not trace back to any observation or lookup "
+                          "through derived_from")
+    return errors
+
+
 def _comparison_errors(claims: list[Claim], evidence: list[Evidence], links: list[EvidenceLink]) -> list[str]:
     errors: list[str] = []
     owner: dict[str, str] = {}
@@ -337,7 +407,10 @@ def _comparison_errors(claims: list[Claim], evidence: list[Evidence], links: lis
             gaps = sorted({name for item in items for name in QUANTITY_REQUIRED if name in item.unknown})
             units = {(item.unit or "").strip().casefold() for item in items}
             conditions = {frozenset(c.strip().casefold() for c in item.conditions) for item in items}
-            differs = [name for name, values in (("unit", units), ("conditions", conditions)) if len(values) > 1]
+            # A different assay or model is a different measurement even when unit and conditions match.
+            methods = {(item.method or "").strip().casefold() for item in items if _present(item.method)}
+            differs = [name for name, values in (("unit", units), ("conditions", conditions), ("method", methods))
+                       if len(values) > 1]
             if gaps or differs:
                 problem = (f"unknown {', '.join(gaps)}" if gaps else f"different {' and '.join(differs)}")
                 errors.append(f"claim {claim.key} calls {comparison.quantity_ids} comparable with {problem}; "

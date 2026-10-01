@@ -233,6 +233,52 @@ def test_recited_source_is_not_independent_support():
     assert independent_groups("c1", parsed.evidence, parsed.links) == ["cohort1", "paper2"]
 
 
+DOI = "10.1038/s41586-020-2649-2"
+
+
+def cited(eid, group, source_value, kind="literature_claim"):
+    return {**evidence(eid), "kind": kind, "source": source_value, "independence_group": group}
+
+
+@pytest.mark.parametrize("second_source, artifacts, shared", [
+    # The same file reached through two artifact ids, written with different separators.
+    ({"artifact_id": "a2", "locator": "row IL6"}, [{"artifact_id": "a2", "path": ".\\out\\pseudobulk_de.tsv"}],
+     "artifact:out/pseudobulk_de.tsv"),
+    # The same DOI cited once as an identifier and once as its resolver URL.
+    ({"uri": f"https://doi.org/{DOI.upper()}", "accessed_at": "2026-10-01", "locator": "Fig. 2b"}, [],
+     f"doi:{DOI}"),
+    # One row carries both an identifier and the downloaded artifact; the other only the artifact.
+    ({"artifact_id": "a1", "locator": "row IL6"}, [], "artifact:out/pseudobulk_de.tsv"),
+])
+def test_recitation_is_caught_through_every_identifier_of_a_source(second_source, artifacts, shared):
+    first = cited("e1", "cohort1", {"artifact_id": "a1", "id_scheme": "doi", "id_value": DOI,
+                                    "accessed_at": "2026-10-01", "locator": "row IL6"})
+    value = result(evidence=[first, cited("e2", "paper2", second_source)],
+                   links=[link("c1", "e1"), link("c1", "e2")])
+    value["artifact_refs"] += artifacts
+    rejects(value, f"e1 and e2 cite the same source {shared}")
+
+
+def test_uri_paths_are_case_sensitive_when_judging_recitation():
+    base = {"accessed_at": "2026-10-01", "locator": "row 1"}
+    rows = [cited("e1", "lab1", {"uri": "https://Example.org/Data.tsv", **base}),
+            cited("e2", "lab2", {"uri": "https://example.ORG/data.tsv", **base})]
+    parsed = rc.ResearchResult.model_validate(result(evidence=rows, links=[link("c1", "e1"), link("c1", "e2")]))
+    assert [row.independence_group for row in parsed.evidence] == ["lab1", "lab2"]
+    same_host_case = [rows[0], cited("e2", "lab2", {"uri": "HTTPS://EXAMPLE.ORG/Data.tsv", **base})]
+    rejects(result(evidence=same_host_case, links=[link("c1", "e1"), link("c1", "e2")]),
+            "e1 and e2 cite the same source uri:https://example.org/Data.tsv")
+
+
+def test_inference_rows_must_trace_back_to_a_recorded_retrieval():
+    loop = [evidence("e1"), evidence("e2", kind="inference", derived_from=["e3"]),
+            evidence("e3", kind="hypothesis", derived_from=["e2"])]
+    links = [link("c1", "e1"), link("c1", "e2", "context")]
+    rejects(result(evidence=loop, links=links), r"e2 \(inference\) does not trace back to any observation")
+    grounded = [loop[0], loop[1], evidence("e3", kind="hypothesis", derived_from=["e1"])]
+    assert rc.ResearchResult.model_validate(result(evidence=grounded, links=links))
+
+
 # --- R06: where the source is, when it was read, what was searched -------------------------------
 
 def external(**extra):
@@ -245,6 +291,8 @@ def external(**extra):
      "external source without accessed_at"),
     ({**evidence("e1"), "source": external(accessed_at="2026/10/01")}, "YYYY-MM-DD"),
     ({**evidence("e1"), "source": external(accessed_at="20261001")}, "YYYY-MM-DD"),
+    # Python 3.11+ fromisoformat also reads ISO week dates of the same length; 3.10 does not.
+    ({**evidence("e1"), "source": external(accessed_at="2026-W40-4")}, "YYYY-MM-DD"),
     ({**evidence("e1"), "source": {"artifact_id": "a1"}}, "observed but its source has no locator"),
     ({**evidence("e1", status="not_found"), "source": {"artifact_id": "a1"}}, "record the searched scope"),
     ({k: v for k, v in evidence("e1", status="failed").items() if k != "status_detail"},
@@ -328,3 +376,12 @@ def test_comparison_references_quantities_the_claim_links():
     rejects(with_quantities(qty(), qty(), comparisons=[]), "duplicate quantity id q1")
     rejects(with_quantities(qty(), qty("q2"), comparisons=[{**comparison(), "quantity_ids": ["q1", "q1"]}]),
             "must be distinct")
+
+
+def test_comparable_quantities_must_share_a_stated_method():
+    other_assay = qty("q2", method="Wilcoxon rank-sum on cell-level counts")
+    rejects(with_quantities(qty(), other_assay, comparisons=[comparison()]), "comparable with different method")
+    assert rc.ResearchResult.model_validate(with_quantities(qty(), qty("q2", method=" Negative binomial GLM "),
+                                                            comparisons=[comparison()]))
+    assert rc.ResearchResult.model_validate(with_quantities(qty(), other_assay,
+                                                            comparisons=[comparison("not_comparable")]))

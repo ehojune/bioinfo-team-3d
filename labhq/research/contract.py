@@ -245,7 +245,8 @@ class ResearchResult(StrictModel):
         artifact_ids = [ref.artifact_id for ref in self.artifact_refs]
         errors = [f"duplicate artifact id {artifact_id}" for artifact_id in sorted(set(artifact_ids))
                   if artifact_ids.count(artifact_id) > 1]
-        errors += ledger_errors(self.claims, self.evidence, self.links, artifact_ids=set(artifact_ids))
+        errors += ledger_errors(self.claims, self.evidence, self.links,
+                                artifact_paths={ref.artifact_id: ref.path for ref in self.artifact_refs})
         if errors:
             raise ValueError("; ".join(errors))
         return self
