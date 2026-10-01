@@ -178,6 +178,26 @@ def test_doctor_runs_staff_adapter_preflight_with_engine_environment(tmp_path, m
     assert next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")["status"] == "ok"
 
 
+def test_doctor_names_missing_codex_elevated_setup_without_starting_it(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: codex\n", encoding="utf-8")
+    staff_home = tmp_path / "codex-staff"
+    staff_home.mkdir()
+    (staff_home / "auth.json").write_text("{}", encoding="utf-8")
+    settings.engines.codex.env = {"CODEX_HOME": str(staff_home)}
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: "available")
+    monkeypatch.setattr(doctor, "_resolve_command", lambda cmd, env, engine: cmd)
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+
+    result = doctor.collect(settings)
+
+    row = next(r for r in result["checks"] if r["group"] == "staff" and r["name"] == "worker")
+    assert row["status"] == "fail"
+    assert "elevated sandbox setup" in row["detail"] and "setup_marker.json" in row["detail"]
+    assert "대화형" in row["hint"] and "elevated sandbox setup" in row["hint"]
+
+
 def test_doctor_shows_enabled_dev_log_target_and_exit_conditions(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     settings.dev_log.repo = "records/private"
