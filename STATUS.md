@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
+
+- 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
+- 바뀐 것: 각 요청이 끝날 때 같은 host runner가 허용했다고 manifest에 남긴 reference의 입력 hash를 불투명 키 아래 보존하고, 과거 요청 입력은 다시 읽지 않는다. 요청문에서 계획의 출력 이름을 뺀 입력 이름만 쓰며 증거 없는 path는 `input_unknown`이다. 공개 accession·URL은 기록된 link만 쓰고 GitHub ref의 대소문자를 보존한다. 이 입력 정체성과 PI가 이름을 적은 산출의 #249 선언 data type이 모두 일치해야 후보가 된다. 제외 결과는 네 고정 사유의 개수만 남기고 필터 뒤에 순위를 매긴다.
+- 실행한 것: 핵심 회귀 3건이 수정 전 실패했다. 자동 리뷰 두 차례의 P1 2건과 같은 정체성 부류 P2 3건을 고친 뒤 관련 66건(3 skipped), 전체 pytest 2450 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다. #264 정보 경계 검사는 새 고정 사유만 허용하고 경로·파일명을 기록하지 않는 회귀로 확인했다.
+- 미해결: 2차 원본에서 #261 자동 off 뒤 네 live 요청은 정답표가 없어 혼동행렬에서 제외했다. 15건 전체 replay의 최종 후보도 같은 3개였으며, B2 전환 근거로 쓰지 않는다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_provenance.py`, `tests/test_semantics_shadow_hash.py`, `tests/test_direct_outputs.py`.
+
 ## 2026-10-02 · #262 — Windows Codex elevated sandbox setup 사전 차단
 
 - 결론: 직원 Codex는 격리한 `CODEX_HOME`에서 떴지만 그 홈에는 elevated sandbox setup marker가 없었다. LabHQ가 `--ignore-user-config`와 `windows.sandbox="elevated"`를 명시하므로 개인 설정은 원인이 아니다. Codex가 무인 실행 중 관리자 helper를 띄우려다 사용자가 취소해 Windows 1223으로 실패했고, 기존 처리는 최종 응답이 있다는 이유로 성공처럼 넘긴 뒤 `missing_outputs`로 바꿨다.

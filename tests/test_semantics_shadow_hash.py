@@ -8,6 +8,7 @@ import os
 
 import pytest
 
+from labhq import vocab as output_vocab
 from labhq.research import semantics_shadow as shadow
 from labhq.settings import DataZone
 from tests.semantics_shadow_lab import fake_hub, line_for, request_row, task_row, workspace
@@ -20,6 +21,16 @@ def _lab(tmp_path, *, files=None, host=None, outputs=("outputs/counts.tsv",), ty
     wd_b, _ = workspace(tmp_path, "task_b1", "analyst", {})
     requests = {"req_a": request_row("req_a", [("s1", "analyst")], created_at=1.0),
                 "req_b": request_row("req_b", [("s1", "analyst")], created_at=2.0)}
+    vocab = output_vocab.current()
+    names = ", ".join(outputs)
+    for req in requests.values():
+        req["text"] = f"Create {names}."
+        req["references"] = [{"kind": "doi", "value": "10.0000/reuse-input"}]
+        req["plan"]["steps"][0].update({
+            "outputs": list(outputs),
+            "output_types": [{"name": name, "data_type": "raw_counts", "format": "tsv",
+                              "vocab": vocab.sha256} for name in outputs],
+        })
     tasks = {"task_a1": task_row("req_a", "task_a1", "s1", "analyst", wd, list(outputs), output_types=types),
              "task_b1": task_row("req_b", "task_b1", "s1", "analyst", wd_b, [])}
     return fake_hub(tmp_path, requests, tasks, **hub_options), wd
