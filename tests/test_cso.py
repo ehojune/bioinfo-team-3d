@@ -1113,6 +1113,25 @@ def test_external_input_basename_does_not_drive_dependency_inference(source):
     assert by["independent"]["depends_on"] == []
 
 
+@pytest.mark.parametrize("reference", ["outputs/report.md", "./outputs/report.md"])
+def test_canonical_output_path_drives_dependency_inference(reference):
+    raw = [{"id": "producer", "agent_id": "analyst", "outputs": ["report.md"],
+            "instruction": "write report.md"},
+           {"id": "consumer", "agent_id": "analyst", "outputs": [],
+            "instruction": f"Read {reference}", "depends_on": []}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    by = {step["id"]: step for step in steps}
+    assert by["consumer"]["depends_on"] == ["producer"]
+
+
+@pytest.mark.parametrize("name", ["input.csv", "read.txt", "input/report.md"])
+def test_action_words_inside_output_path_are_not_instruction_actions(name):
+    raw = [{"id": "a", "agent_id": "analyst", "outputs": [name],
+            "instruction": f"Save {name}"}]
+    steps, _ = validate_steps(raw, {"analyst"}, 10)
+    assert steps[0]["instruction"] == f"Save ./outputs/{name}"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("corrected", [True, False])
 async def test_plan_with_output_outside_outputs_is_replanned_before_dispatch(corrected):

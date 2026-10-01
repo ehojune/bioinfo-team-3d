@@ -342,6 +342,8 @@ def _instruction_path_action(instruction: str, start: int, end: int) -> str | No
     actions = []
     for kind, pattern in (("output", _OUTPUT_ACTION), ("input", _INPUT_ACTION)):
         for action in pattern.finditer(instruction, left, right):
+            if action.start() < end and action.end() > start:
+                continue
             if action.end() <= start:
                 distance = start - action.end()
             elif action.start() >= end:
@@ -375,7 +377,8 @@ def _external_reference(match: re.Match[str]) -> bool:
 
 def _instruction_references_artifact(instruction: str, inner: str) -> bool:
     """Match only workspace artifact forms; absolute/home paths are external inputs or destinations."""
-    return any(not _external_reference(match) for match in _output_reference(inner).finditer(instruction))
+    patterns = (_output_reference(inner), _output_reference(f"outputs/{inner}"))
+    return any(not _external_reference(match) for pattern in patterns for match in pattern.finditer(instruction))
 
 
 def _rewrite_output_references(instruction: str, inner: str, rel: str) -> tuple[str, int, list[str]]:
