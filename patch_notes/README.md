@@ -12,9 +12,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:32 | [`db89121`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/db89121) | **main 병합에서 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** direct 산출 등록(#230)의 줄과 이 PR의 두 줄을 모두 두고 시간 역순으로 맞췄습니다. 동작 변경은 없습니다 |
 | 02:16 | [`c67eec7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/c67eec7) | direct 산출 목록이 검사한 outputs 폴더를 열린 핸들로만 읽어, 검사 뒤 링크로 바뀐 폴더를 따라가지 않게 함 (#221 검증) |
-| 02:01 | [`2341a0c`](https://github.com/ehojune/bioinfo-team-3d/commit/2341a0c) | **POSIX timeout test가 SIGTERM을 무시하는 손자가 준비된 뒤에만 판정합니다** (#227). 손자가 SIG_IGN을 설치한 뒤 ready를 알리고 leader는 그 뒤에 pids 파일을 씁니다. 1초 안에 준비되지 않으면 5초 timeout으로 한 번 더 돌립니다 |
-| 02:01 | [`8fde4df`](https://github.com/ehojune/bioinfo-team-3d/commit/8fde4df) | **POSIX timeout test가 좀비 회수 순간을 '살아 있음'으로 읽지 않습니다** (#227). 대기 loop가 좀비를 보고 끝난 뒤 assert가 다시 확인하는 사이 init이 좀비를 거두면, kill(0)은 성공하고 /proc 읽기는 실패해 assert False가 났습니다. 이제 마지막 확인으로 판정하고 /proc 읽기가 실패하면 kill(0)을 다시 묻습니다. 회귀 test는 수정 전 실패했습니다 |
+| 02:01 | [`2341a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/2341a0c) | **POSIX timeout test가 SIGTERM을 무시하는 손자가 준비된 뒤에만 판정합니다** (#227). 손자가 SIG_IGN을 설치한 뒤 ready를 알리고 leader는 그 뒤에 pids 파일을 씁니다. 1초 안에 준비되지 않으면 5초 timeout으로 한 번 더 돌립니다 |
+| 02:01 | [`8fde4df`](https://github.com/ehojune/bioinfo-team-3d/pull/245/commits/8fde4df) | **POSIX timeout test가 좀비 회수 순간을 '살아 있음'으로 읽지 않습니다** (#227). 대기 loop가 좀비를 보고 끝난 뒤 assert가 다시 확인하는 사이 init이 좀비를 거두면, kill(0)은 성공하고 /proc 읽기는 실패해 assert False가 났습니다. 이제 마지막 확인으로 판정하고 /proc 읽기가 실패하면 kill(0)을 다시 묻습니다. 회귀 test는 수정 전 실패했습니다 |
 | 01:43 | [`7a0d834`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/7a0d834) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #219 항목과 행을 이 PR 쪽과 시각순으로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
 | 01:43 | [`18f2aa7`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/18f2aa7) | **`manifest.json`을 링크·FIFO로 바꿔도 산출 목록이 읽지 않는다는 test를 모든 OS에 두었습니다** (Codex 리뷰 P1). `b0d3f5e`의 test는 symlink를 만들 수 없는 Windows에서 skip되었습니다. owned 규칙이 manifest를 링크로 본다고 꾸민 test는 모든 OS에서 돌고, FIFO로 바꾼 run이 멈추지 않는지 보는 test는 POSIX에서 돕니다. 수정을 되돌리면 세 test 모두 실패했습니다 |
 | 01:23 | [`12a8534`](https://github.com/ehojune/bioinfo-team-3d/pull/230/commits/12a8534) | **main 병합에서 STATUS.md와 패치노트 표의 충돌을 양쪽 모두 살려 풀었습니다.** main에 들어온 #220 항목을 이 PR 항목 아래로 이었고, 패치노트는 두 쪽 행을 날짜별로 합쳤습니다. 코드 충돌은 없고 동작 변경도 없습니다 |
