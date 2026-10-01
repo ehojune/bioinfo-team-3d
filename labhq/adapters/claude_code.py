@@ -35,9 +35,11 @@ PLUGIN_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def workspace_memory_excludes(workdir: Path) -> list[str]:
-    """Memory files a previous run could have left in a reused workspace (HPC wake-up, follow-up)."""
-    wd = Path(workdir).resolve()
-    return [(wd / n).as_posix() for n in WORKSPACE_MEMORY] + [(wd / ".claude" / "rules").as_posix() + "/**"]
+    """Memory files a previous run could have left in a reused workspace (HPC wake-up, follow-up). Claude also loads
+    a subfolder's CLAUDE.md once it reads a file there (outputs/CLAUDE.md), so every depth is excluded (#147)."""
+    wd = Path(workdir).resolve().as_posix()
+    return ([f"{wd}/{n}" for n in WORKSPACE_MEMORY] + [f"{wd}/**/{n}" for n in WORKSPACE_MEMORY] +
+            [f"{wd}/.claude/rules/**", f"{wd}/**/.claude/rules/**"])
 
 
 def user_config_isolation(env: dict[str, str], cwd: Path) -> dict:

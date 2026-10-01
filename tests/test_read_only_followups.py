@@ -4,6 +4,7 @@ instructions or configuration. Nothing here runs a real CLI; the spawn is replac
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -332,6 +333,42 @@ async def test_a_read_only_claude_run_excludes_the_workspace_memory_files(tmp_pa
     excludes = json.loads(argv[argv.index("--settings") + 1])["claudeMdExcludes"]
     wd = workdir.resolve().as_posix()
     assert {f"{wd}/CLAUDE.md", f"{wd}/CLAUDE.local.md", f"{wd}/.claude/CLAUDE.md", f"{wd}/.claude/rules/**"} <= set(excludes)
+
+
+def _glob(pattern: str, path: str) -> bool:
+    """Glob as Claude's claudeMdExcludes reads it, with the matcher defaults: `**/` is any number of folders (none
+    too) whose names do not start with a dot, a trailing `/**` is anything below, `*` stays inside one name."""
+    regex, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            regex, i = regex + r"(?:[^/.][^/]*/)*", i + 3
+        elif pattern.startswith("/**", i) and i + 3 == len(pattern):
+            regex, i = regex + "/.+", i + 3
+        elif pattern[i] == "*":
+            regex, i = regex + "[^/]*", i + 1
+        else:
+            regex, i = regex + re.escape(pattern[i]), i + 1
+    return re.fullmatch(regex, path) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_read_only_claude_run_excludes_memory_files_in_workspace_subfolders(tmp_path, monkeypatch, spawned):
+    """Claude loads a subfolder's CLAUDE.md when it reads a file there, and a follow-up reads outputs/ first."""
+    seen = spawned(Engine.claude_code)
+    nested = ["outputs/CLAUDE.md", "outputs/run1/CLAUDE.local.md", "outputs/.claude/CLAUDE.md",
+              "outputs/.claude/rules/x.md"]
+    workdir = _workdir(tmp_path, *nested)
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff(Engine.claude_code))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+    assert result.ok, result.error
+    argv = seen[0][0]
+    excludes = json.loads(argv[argv.index("--settings") + 1])["claudeMdExcludes"]
+    wd = workdir.resolve().as_posix()
+    assert _glob(f"{wd}/**/CLAUDE.md", f"{wd}/CLAUDE.md") and not _glob(f"{wd}/**/CLAUDE.md", f"{wd}/x/README.md")
+    for name in nested:
+        assert any(_glob(pattern, f"{wd}/{name}") for pattern in excludes), name
+    assert not any(_glob(pattern, f"{wd}/outputs/result.md") for pattern in excludes), "only memory files"
 
 
 # ---------------- #148: Codex project config in a reused workspace ----------------
