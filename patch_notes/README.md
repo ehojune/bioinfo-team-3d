@@ -12,6 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:39 | [`316f325`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/316f325) | **다른 cluster로 간 잡과 여러 잡을 고르는 잡 번호를 막았습니다** (#120 검증). 직원 스크립트에 `#SBATCH -M`·`--clusters`가 있으면 제출 전에 거부하고, 제출 뒤 `번호;cluster`가 돌아오면 같은 번호의 다른 잡을 가리킬 수 있어 추적하지 않고 오류로 알립니다. 잡 번호는 숫자로 시작해야만 받아서 `qdel all` 같은 일괄 선택도 막았습니다. |
+| 16:26 | [`bb8a40d`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/bb8a40d) | **Slurm 클러스터에서도 labhq로 잡을 돌릴 수 있습니다** (#120). 설정에서 `hpc.scheduler: slurm`을 고르면 sbatch로 제출하고 squeue·sacct로 상태와 종료 코드를 보며 scancel로 취소합니다. PI 승인, 실패와 잡 없음의 구분, 재시도 금지는 SGE·PBS와 같습니다. `labhq init`은 sbatch·sinfo로 스케줄러를 알아보고, doctor는 Slurm 명령 네 개를 점검합니다. 가짜 Slurm 명령으로 제출부터 취소까지 시험했고, 실제 클러스터 제출은 하지 않았습니다. |
+| 16:10 | [`74e29ca`](https://github.com/ehojune/bioinfo-team-3d/pull/171/commits/74e29ca) | **README 배지 생성기가 두 블록이 겹치면 파일을 쓰지 않습니다** (#153). `integrations --write`가 배지 블록과 연결 대상 블록의 위치를 먼저 재서, 한쪽이 다른 쪽에 포함되거나 걸치면 README를 건드리지 않고 실패합니다. 겹친 채로 쓰면 README가 조용히 깨졌기 때문입니다. |
 | 14:29 | [`58db9ca`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/58db9ca) | **의미 모델이 실제 runner 기록을 읽을 수 있게 했습니다** (Codex 리뷰). runner는 작업 폴더를 절대 경로로 저장하는데 reader가 절대 경로를 모두 거부해서, 실제 기록을 넣으면 정상 task가 전부 실패했습니다. 기록 폴더 안의 절대 경로는 받고, 밖은 계속 거부합니다. 다음 그림자 모드(#150)가 실제 기록을 읽으려면 필요한 수정입니다 |
 | 14:16 | [`6fc62ee`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/6fc62ee) | **main 병합에서 STATUS.md와 패치노트 표에 두 변경을 함께 살렸습니다.** main에 새로 들어온 #63 README 배지와 #36 접수 PR A 항목이 이 PR의 #127 pilot 항목과 같은 자리를 고쳐 충돌했습니다. 코드 충돌은 없었고, 문서는 어느 쪽도 지우지 않고 둘 다 남겼습니다. |
 | 14:05 | [`5c26a93`](https://github.com/ehojune/bioinfo-team-3d/pull/136/commits/5c26a93) | **후속 6건을 고친 뒤 다시 재고 판정을 바꿔 적었습니다: 중단 기준은 충족했지만 접지 않고 opt-in으로 둡니다** (#127). PI 결정입니다. A·B 모두 17/17 그대로이고, 17문항 밖 반례도 모두 고쳐 회귀 test로 남겼습니다. 실데이터는 다음 PR의 그림자 모드로 모아 #121에서 다시 평가합니다 |
