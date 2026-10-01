@@ -56,15 +56,18 @@ QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
 URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})((?:[^/\\?#\s@\"'<>]|\\(?!/))+)@")
 USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
 # Webhook URLs carry the credential in the path, under no parameter name (#134). Only these hosts are known;
-# a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count.
+# a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count, and so
+# do percent-encoded ones (`?next=https%3A%2F%2Fhooks.slack.com%2Fservices%2F...`, once or twice encoded, #180); the
+# tail then stops at the `&` that starts the outer URL's next parameter.
+_HOOK_SLASH = r"(?:\\?/|%(?:25)?2F)"
 WEBHOOK_PATH = re.compile(
-    r"(?<![\w.-])((?:https?:(?:\\?/){2})?(?:"
-    r"hooks\.slack\.com(?:\\?/)(?:services|workflows|triggers)"
-    r"|(?:[\w-]+\.)?discord(?:app)?\.com(?:\\?/)api(?:(?:\\?/)v\d+)?(?:\\?/)webhooks"
-    r"|[\w-]+\.webhook\.office\.com(?:\\?/)webhookb2"
-    r"|outlook\.office(?:365)?\.com(?:\\?/)webhook"
-    r"|api\.telegram\.org(?:\\?/)(?:file(?:\\?/))?bot"
-    r"))(\\?/)?[^\s\"'<>)\]?#]+", re.IGNORECASE)
+    rf"(?<![\w.-])((?:https?(?::|%(?:25)?3A){_HOOK_SLASH}{{2}})?(?:"
+    rf"hooks\.slack\.com{_HOOK_SLASH}(?:services|workflows|triggers)"
+    rf"|(?:[\w-]+\.)?discord(?:app)?\.com{_HOOK_SLASH}api(?:{_HOOK_SLASH}v\d+)?{_HOOK_SLASH}webhooks"
+    rf"|[\w-]+\.webhook\.office\.com{_HOOK_SLASH}webhookb2"
+    rf"|outlook\.office(?:365)?\.com{_HOOK_SLASH}webhook"
+    rf"|api\.telegram\.org{_HOOK_SLASH}(?:file{_HOOK_SLASH})?bot"
+    rf"))({_HOOK_SLASH})?[^\s\"'<>)\]?#&]+", re.IGNORECASE)
 
 
 def _decoded(name: str) -> str:
