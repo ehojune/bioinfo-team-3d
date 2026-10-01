@@ -432,7 +432,7 @@ class Runner:
                                        self.s.runner.reference_scan_max_depth)
         if links:
             more = f" 외 {len(links) - 1}개" if len(links) > 1 else ""
-            return f"하위 링크 {links[0].relative_to(directory).as_posix()}{more}이 통제 데이터 구역을 가리키거나 풀 수 없음"
+            return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
         return incomplete
 
     async def _project_links(self, directories: list[str], zones: list[Path], emit) -> list[str]:
