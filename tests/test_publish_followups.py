@@ -27,6 +27,20 @@ def test_a_percent_encoded_webhook_does_not_reach_a_published_text():
         "https://hooks.slack.com/services/T0AAA/B0BBB/plainSECRET5"), "the plain form is hidden as before"
 
 
+def test_an_encoded_webhook_right_after_another_percent_escape_is_hidden_too():
+    """A percent escape before the webhook (`%2F%2F` of a scheme-less URL, the `%3D` of a nested query) is a
+    separator, not part of a longer host name."""
+    text = ("a https://app.example/r?u=%2F%2Fhooks.slack.com%2Fservices%2FT0DDD%2FB0DDD%2Fsl4ckSECRET6 "
+            "b https://app.example/r?u=https%3A%2F%2Fsso.example%2Fin%3Fnext%3Dhttps%253A%252F%252Fdiscord.com"
+            "%252Fapi%252Fwebhooks%252F456%252Fd1scordSECRET7 "
+            "c https://app.example/r?u=x%26hook%3Dhooks.slack.com%2Fworkflows%2FT0EEE%2Fsl4ckSECRET8")
+    out = _published(text)
+    for secret in ("sl4ckSECRET6", "T0DDD", "d1scordSECRET7", "sl4ckSECRET8", "T0EEE"):
+        assert secret not in out, (secret, out)
+    assert "notahooks.slack.com/services/T0FFF" in _published("notahooks.slack.com/services/T0FFF"), (
+        "a longer host name is still not a webhook")
+
+
 # ---------------- #181: a PI default repository on a self-hosted GitHub ----------------
 
 def _with_default(kind: str, value: str) -> Settings:
