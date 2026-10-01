@@ -563,7 +563,11 @@ def main(argv: list[str] | None = None) -> None:
 
         from .security import gateway_log_config
 
-        uvicorn.run(create_app(s), host=s.gateway.host, port=s.gateway.port, log_level="info",
+        try:
+            app = create_app(s)
+        except ValueError as exc:  # e.g. a retired research pack version (#170)
+            p.exit(1, f"gateway: {exc}\n")
+        uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
                     log_config=gateway_log_config())
     elif args.cmd == "runner":
         from .runner.daemon import Runner

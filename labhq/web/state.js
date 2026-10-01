@@ -67,6 +67,12 @@ function stripPrompt(p) {
   const m = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(p || '');
   return m ? `${m[1]}: ${m[2]}` : (p || '');
 }
+// #184: every way an approval ends (승인·거절·timeout, gateway restart, decided elsewhere) drops it and
+// tells the page to clear the notice it raised for that approval.
+function endApproval(id, effects) {
+  S.approvals.delete(id);
+  effects.push({ type: 'toast.clear', approval_id: id });
+}
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   S.current = (all.find(r => r.status === 'running') || all[0] || {}).id || null;
@@ -103,6 +109,7 @@ function apply(ev, replay = false) {
   const t = ev.type, d = ev.data || {}, id = ev.agent_id, rid = ev.request_id, ts = ev.ts || now();
   switch (t) {
     case 'snapshot': {
+      const pendingBefore = [...S.approvals.keys()];
       resetSnapshotState();
       (d.agents || []).forEach(upsertAgent);
       S.projects = d.projects || [];
@@ -137,6 +144,7 @@ function apply(ev, replay = false) {
       S.cost = (d.requests || []).reduce((total, r) => total + (Number(r.cost_usd) || 0), 0);
       S.approvals.clear();
       (d.approvals || []).forEach(x => S.approvals.set(x.id, x));
+      for (const id of pendingBefore) if (!S.approvals.has(id)) effects.push({ type: 'toast.clear', approval_id: id });
       for (const a of S.agents.values()) if (a.state === 'done' || a.state === 'error' || a.state === 'queued') a.state = 'idle';
       pickCurrent();
       break;
@@ -207,10 +215,11 @@ function apply(ev, replay = false) {
     case 'approval.requested': {
       S.approvals.set(d.id, { ...d, agent_id: d.agent_id || id, request_id: d.request_id || rid });
       feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
-      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}` });
+      if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
       break;
     }
-    case 'approval.resolved': S.approvals.delete(d.id); feed({ who: 'pi', text: d.approved ? '승인했어요' : `거절했어요${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
+    case 'approval.expired': case 'approval.stale': endApproval(d.id, effects); break;
+    case 'approval.resolved': endApproval(d.id, effects); feed({ who: 'pi', text: d.approved ? '승인했어요' : `거절했어요${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
@@ -292,6 +301,8 @@ function apply(ev, replay = false) {
     case 'request.followup_done': {
       const q = req(rid), prev = q.followups.find(f => f.id === d.id);
       const entry = { ...(prev || { id: d.id, text: '' }), status: d.ok ? 'done' : 'failed', answer: d.answer || '', error: d.error || '' };
+      delete entry.answer_truncated; delete entry.answer_chars;
+      if (d.answer_truncated) Object.assign(entry, { answer_truncated: true, answer_chars: d.answer_chars });  // a snapshot replay (#126)
       q.followups = prev ? q.followups.map(f => (f.id === d.id ? entry : f)) : [...q.followups, entry];
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
@@ -305,6 +316,21 @@ function apply(ev, replay = false) {
   }
   return effects;
 }
+// #126: a snapshot carries only the head of a long follow-up answer. The full request
+// (GET /api/requests/{id}, fetched by the page) fills the answers in; returns how many it filled.
+function fillFollowups(rid, request) {
+  const q = S.requests.get(rid), full = new Map(((request && request.followups) || []).map(f => [f && f.id, f]));
+  if (!q) return 0;
+  let filled = 0;
+  q.followups = q.followups.map(f => {
+    const whole = full.get(f.id);
+    if (!f.answer_truncated || !whole || typeof whole.answer !== 'string') return f;
+    filled++;
+    const { answer_truncated, answer_chars, ...rest } = f;
+    return { ...rest, answer: whole.answer };
+  });
+  return filled;
+}
 function toolLabel(name) {
   const n = String(name || '').split('__').pop();
   return ({ hpc_submit: 'HPC 제출', hpc_status: 'HPC 확인', WebSearch: '웹 검색', WebFetch: '문헌 읽기', google_web_search: '웹 검색',
@@ -312,7 +338,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, nick, req, setPlan, feed, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState };
 })(globalThis);

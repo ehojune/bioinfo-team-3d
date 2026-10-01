@@ -613,3 +613,31 @@ async def test_log_scale_pseudobulk_replans_before_cp1():
     frozen = hub.requests["r"]["plan"]["pack_values"][PACK]["fields"]
     assert frozen["count_scale"] == "raw_counts"
     assert hub.requests["r"]["outcome"] == "plan_approved"
+
+
+def test_gateway_refuses_to_start_with_a_retired_pack_version(tmp_path):
+    # #170: a stale @1 used to start the gateway and fail only at the first research plan.
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.research.active_packs = ["single_cell_de@1"]
+    with pytest.raises(ValueError, match=r"single_cell_de@1.*available: single_cell_de@2"):
+        create_app(settings)
+    assert not (tmp_path / "state").exists()  # refused before any state was opened
+    settings.research.active_packs = [PACK]
+    assert create_app(settings).state.hub.s is settings
+
+
+def test_labhq_gateway_stops_with_the_available_pack_version(tmp_path, monkeypatch, capsys):
+    from labhq import cli
+
+    started = []
+    monkeypatch.setattr("uvicorn.run", lambda *args, **kwargs: started.append(args))
+    config = tmp_path / "labhq.yaml"
+    config.write_text(yaml.safe_dump({"gateway": {"state_dir": str(tmp_path / "state")},
+                                      "research": {"active_packs": ["single_cell_de@1"]}}), encoding="utf-8")
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["--config", str(config), "gateway"])
+    assert stopped.value.code == 1 and not started
+    assert "available: single_cell_de@2" in capsys.readouterr().err

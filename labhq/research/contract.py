@@ -159,6 +159,15 @@ class ResearchStep(StrictModel):
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
 
+    @model_validator(mode="after")
+    def unique_slot_ids(self) -> "ResearchStep":
+        # Results bind to slots by id; two required slots of one id would be met by a single row (#187).
+        ids = [slot.id for slot in self.evidence_slots]
+        duplicates = sorted({slot_id for slot_id in ids if ids.count(slot_id) > 1})
+        if duplicates:
+            raise ValueError(f"step {self.id} declares evidence slot {', '.join(duplicates)} more than once")
+        return self
+
 
 class RecruitProposal(StrictModel):
     paper: str

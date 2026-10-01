@@ -25,7 +25,8 @@ from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator
+from ..orchestrator.cso import Orchestrator, holds_session
+from ..research.packs import check_configured_packs
 from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
@@ -33,6 +34,35 @@ from ..util import short
 
 log = logging.getLogger(__name__)
 TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
+# #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
+# The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
+SNAPSHOT_ANSWER_CHARS = 2000
+# A step card shows this much of a task's result text; a replayed task.result needs no more.
+SNAPSHOT_RESULT_CHARS = 500
+
+
+def snapshot_followup(entry: dict) -> dict:
+    """The snapshot copy of a follow-up or of its `request.followup_done` data: one rule for both (#126)."""
+    answer = entry.get("answer")
+    if not isinstance(answer, str) or len(answer) <= SNAPSHOT_ANSWER_CHARS:
+        return entry
+    return {**entry, "answer": answer[:SNAPSHOT_ANSWER_CHARS], "answer_truncated": True, "answer_chars": len(answer)}
+
+
+def snapshot_event(event: dict) -> dict:
+    """The snapshot copy of a replayed event. A follow-up's answer is also the text of its task's `task.result`,
+    sent by the runner unclipped, so that text is cut too. A replay never shows it whole: the web keeps
+    task.result text only for plan steps, and the snapshot's `step_details` replace it with the same head."""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return event
+    if event.get("type") == "request.followup_done":
+        return {**event, "data": snapshot_followup(data)}
+    text = data.get("text")
+    if event.get("type") == "task.result" and isinstance(text, str) and len(text) > SNAPSHOT_RESULT_CHARS:
+        return {**event, "data": {**data, "text": text[:SNAPSHOT_RESULT_CHARS], "text_truncated": True,
+                                  "text_chars": len(text)}}
+    return event
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
@@ -607,8 +637,9 @@ class Hub:
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
             if task:
-                self.store.put("task", tid, {**task, "completed": True,
-                                              "result": result.model_dump(mode="json")})
+                # A reported result supersedes an abandonment: the task did finish (#112).
+                self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
+                                              "completed": True, "result": result.model_dump(mode="json")})
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
@@ -836,6 +867,62 @@ class Hub:
         return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0,
                                                                                       "task_id": tid})
 
+    async def wait_session_free(self, agent_id: str, session_id: str | None, workdir: str | None, *,
+                                request_id: str | None = None, step_id: str | None = None
+                                ) -> tuple[str | None, str | None]:
+        """The session and workdir a task may resume once no earlier task still uses them (#112, #144).
+
+        An earlier task, such as a consult whose ask a restart left unanswered, keeps running on its
+        runner. While the agent's connected runner generation accepted it, or it is in flight to that
+        runner from this gateway, wait for its result; its turn may rotate the session, so the latest
+        turn is resumed. No clock releases such a holder: the runner accepts a task before it leaves
+        the queue and starts its task timeout only when the CLI spawns, and it always reports a result
+        (#204). While the agent's runner is offline, wait up to ``resume_wait_s`` from the disconnect
+        for it to reconnect. Otherwise its outcome is unknown: return ``(None, None)`` so the task
+        opens a new session and workdir.
+        """
+        loop = asyncio.get_running_loop()
+        offline_deadline: float | None = None
+        resumed: set[str] = set()
+        announced = False
+        while True:
+            holders = [(tid, entry) for tid, entry in self.store.all("task").items()
+                       if holds_session(entry, agent_id, session_id, workdir)]
+            if not holders:
+                turns = [self.store.get("task", tid) or {} for tid in resumed]
+                latest = max(((float(e.get("dispatched_at") or 0), (e.get("result") or {}).get("session_id"))
+                              for e in turns if (e.get("result") or {}).get("session_id")), default=(0.0, None))[1]
+                if latest and latest != session_id:
+                    session_id, resumed = latest, set()
+                    continue
+                return session_id, workdir
+            runner = self.agent_runner.get(agent_id)
+            online = runner in self.runners
+            # Same rule as _await_prior_task: resume_wait_s bounds a reconnect, measured from the
+            # disconnect, never the work of a task the runner accepted.
+            if online:
+                offline_deadline = None
+            elif offline_deadline is None:
+                offline_deadline = loop.time() + self.s.gateway.resume_wait_s
+            for tid, entry in holders:
+                running = (online and bool(entry.get("accepted")) and
+                           self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
+                if entry.get("abandoned"):
+                    return None, None
+                # An unaccepted task the connected runner does not run (a delivery this gateway gave
+                # up on, or one a previous gateway sent) has an unknown outcome.
+                if not (running or (online and tid in self.futures) or
+                        (not online and loop.time() < offline_deadline)):
+                    return None, None
+                if session_id and (entry.get("payload") or {}).get("resume_session_id") == session_id:
+                    resumed.add(tid)
+            if not announced:
+                announced = True
+                await self.publish({"type": "request.step_wait", "ts": time.time(), "request_id": request_id,
+                                    "data": {"step_id": step_id, "agent_id": agent_id,
+                                             "reason": "an earlier task still uses this session or workdir"}})
+            await asyncio.sleep(0.1)
+
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:
             return self.jobs_done[task_id]
@@ -1024,7 +1111,8 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "usage", "usage_known", "agent_id", "references")},
-                          "followups": (r.get("followups") or [])[-20:],  # the full list stays on the request
+                          # the full list and full answers stay on the request (GET /api/requests/{id})
+                          "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
@@ -1034,7 +1122,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
-            "recent_events": list(self.events)[-200:],
+            "recent_events": [snapshot_event(e) for e in list(self.events)[-200:]],
         }}
 
     def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:
@@ -1052,7 +1140,7 @@ class Hub:
                 "attempts": max((int(entry.get("attempt") or 1) for _, entry in matches), default=0),
                 "outputs": result.get("outputs") or [],
                 "missing_outputs": result.get("missing_outputs") or [],
-                "text": short(result.get("text") or "", 500),
+                "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
@@ -1060,6 +1148,7 @@ class Hub:
 
 
 def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    check_configured_packs(settings)  # before any state opens: a stale pack key stops the start (#170)
     hub = Hub(settings, github_transport)
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub

@@ -10,6 +10,38 @@
 - 미해결: Windows에서 hash 중인 파일 위로 다른 파일을 `os.replace`하는 쓰기는 여전히 실패할 수 있다(README §10). `finished` job은 최종 상태(성공·실패)를 모른다. derived_from 깊이 경계는 A(64)와 B(65)가 한 단계 다르다(이번 범위 밖).
 - 근거: `labhq/research/semantics.py`, `labhq/research/semantics_v1.yaml`, `labhq/research/semantics_shadow.py`, `labhq/research/semantics_objects.py`, `tests/semantics_baseline.py`, `tests/test_semantics_pilot.py`, `tests/test_semantics_shadow_*.py`, `tests/test_semantics_objects.py`.
 
+## 2026-10-01 · #112 #113 #144 — 재시작 뒤 CSO session·질의 route 후속
+
+- 결론: 재시작으로 gateway가 놓친 상담·이어 묻기가 runner에서 계속 도는 동안, CSO 계획·최종 보고서·새 이어 묻기가 같은 session·workdir로 겹쳐 dispatch되지 않는다. 재시작 전 facilities가 받던 질의는 roster가 빈 동안 CSO로 넘어가지 않는다.
+- 바뀐 것: `holds_session` 하나로 "결과가 기록되지 않은 task가 session·workdir를 쥐었나"를 판정한다(abandoned 포함). 상담은 쥔 task가 있으면 바로 격리하고, 계획·종합·이어 묻기는 `Hub.wait_session_free`로 지금 runner 세대가 수락한 task를 결과가 올 때까지, runner가 끊기면 끊긴 때부터 `resume_wait_s`까지 기다린 뒤 그 turn의 session에서 잇는다. 끝났는지 모르면 새 session·workdir로 연다(#112 #144). 질의 원장의 `routed_to`로 재시작 전 담당자를 유지하고, 그 runner를 `resume_wait_s`까지 기다리며, facilities가 끝내 안 돌아오면 CSO가 답한다(#113). README §8을 맞췄다.
+- 실행한 것: 회귀 12건 중 10건은 수정 전 실패, 2건(facilities 없는 설정 무대기, fallback)은 guard다. 로컬 리뷰 P2 2건(끊긴 runner로 전달 중인 task의 대기 상한, abandoned 뒤 도착한 결과의 점유 해제)을 #112 커밋에 반영했다. 봇 리뷰 P1(queue에서 기다린 수락 task를 dispatch 시각+timeout으로 놓아 줌)은 시계로 점유를 푸는 규칙을 빼서 고쳤고, 재접속 유예도 시작 시각이 아니라 끊긴 때부터 센다(회귀 2건, 수정 전 실패). 전체 pytest 1939 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 기다린 이전 이어 묻기의 답은 그 항목에 붙이지 않는다(interrupted 그대로). 수락된 task에는 대기 상한이 없다. runner가 queue·task timeout을 거쳐 결과를 꼭 보내므로 그것을 기다린다. 격리된 실행은 session 맥락 없이 prompt의 보고서·결과로 답한다. 재시작 전 CSO가 받던 facilities 질의는 facilities가 돌아와도 CSO가 잇는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `tests/test_consult_restart.py`, `tests/test_followup.py`.
+
+## 2026-10-01 · #119 #172 #185 #186 — HPC 첫 설정 상담과 #171 후속
+
+- 결론: `labhq init`이 읽기 전용 조회로 `hpc:` 초안을 만들고, PI가 `y`라고 한 시험 잡 1회만 제출해 끝까지 추적한다. #171 후속 P2(#172 여섯 항목, #185, #186)를 닫았다.
+- 바뀐 것: 스크립트에 스케줄러 지시가 있으면 임계값과 무관하게 승인, `hpc_cancel`은 broker가 추적한 그 직원의 잡만, 스케줄러 명령 env는 허용 목록, 셸 승인 목록 확대, cluster 판정은 `slurm_cluster_option` 하나(묶은 짧은 옵션 포함), accounting 없음·`REVOKED`·모르는 상태도 종료로 깨움. 시험 잡 파일은 시험마다 새 개인 폴더에 배타 생성한다. 패치노트는 건드리지 않았다.
+- 실행한 것: issue별 회귀 테스트가 수정 전 실패, 수정 뒤 통과했다. 로컬 Codex 리뷰 P2 3건(비소모성 `mem_free`를 코어로 나눔, mock id 취소, 시험 잡 상태 timeout)도 회귀 테스트와 함께 고쳤다. 독립 검증 리뷰의 P1(시험 잡 고정 파일명에 남은 링크를 따라 씀)은 hardlink·symlink 회귀 테스트와 함께 고쳤다. 전체 pytest 2028 passed/24 skipped, Node 11개, `scripts/check_public.sh` 통과.
+- 미해결: SGE `.sge_request`(제출 폴더·home)는 직원이 셸로 쓰면 승인 계산 밖 자원을 요청할 수 있다(README §10). 실제 클러스터에서는 돌리지 않았다.
+- 근거: `labhq/hpc_consult.py`, `labhq/init_wizard.py`, `labhq/tools/scheduler.py`, `labhq/tools/hpc_mcp.py`, `labhq/settings.py`, `tests/test_hpc_consult.py`, `tests/test_hpc_followups.py`.
+
+## 2026-10-01 · #126 #184 — 웹 화면 후속: snapshot 답 길이, 승인 알림·이름표·하단 줄
+
+- 결론: snapshot의 이어 묻기 답은 앞 2,000자만 싣고 전문은 펼칠 때 받는다(#126). 승인 알림은 승인이 끝나는 모든 경로에서 지우고, 3D 이름표는 자기 머리 위에 두고, 2.5D 데스크톱은 사무실·Command Center·직원 줄·입력창이 겹치지 않게 화면을 나눴다(#184).
+- 바뀐 것: gateway `snapshot_followup` 하나가 요청 followups와 replay 이벤트를 함께 자르고, 같은 답이 다시 실리는 replay `task.result` 본문은 step 카드 길이(500자)로 자른다. 공용 reducer에 `fillFollowups`, 승인 종료 공통 `endApproval`(resolved·timeout·expired·stale, snapshot에서 사라진 승인)과 `toast.clear` effect를 넣었다. 3D는 skin별 label anchor 대신 head anchor 기준 `labelPoint`를 쓴다. mock 승인 예시는 `Rscript scripts/qc_plots.R`로 바꿨다. README §6을 맞췄고 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 실행한 것: 확인 조건마다 회귀를 먼저 썼고 수정 전 모두 실패했다. 긴 답 25개 snapshot은 2,644,490에서 276,687 bytes, 러너 `task.result`까지 실제 경로로 쌓은 경우 2,044,888에서 208,507 bytes. 1200×750 브라우저 측정에서 사무실·Command Center 87–527px, 직원 줄 541–677px, 입력창 685–750px로 겹침 0, 페이지 스크롤 없이 마지막 행과 메신저 끝이 각자 안쪽 스크롤로 보인다. 전체 pytest 1928 passed/23 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 가로 621–999px 단일 열에서는 직원 줄이 sticky라 스크롤 중 내용을 덮는다. snapshot 크기는 여전히 요청 수에 비례한다. README 움직이는 화면은 다시 녹화하지 않았다.
+- 근거: `labhq/gateway/server.py`, `labhq/web/state.js`, `labhq/web/index.html`, `labhq/web/lab3d/src/{live,skins,main}.js`, `tests/test_followup.py`, `tests/web_issue126.cjs`, `tests/web_issue184.cjs`.
+
+## 2026-10-01 · PR #166 후속 여섯 건(#167 #168 #169 #170 #187 #188) — 연구 근거 검증과 계획·검토 결속
+
+- 결론: 여러 표기 accession 비교, 체계가 다른 같은 논문의 재인용, REVIEW v2 작성자 결속, 없어진 pack version, PLAN slot id 중복을 닫았다. #169와 #188은 같은 부류라 `author` 필수화 하나로 닫았다.
+- 바뀐 것: `compare_accessions`가 version·isoform·VCV 자리채움을 뗀 base로 판정하고 레지스트리 URL 로컬 판정, uri resolver 경로, ID 조회 응답이 함께 쓴다. base가 다르거나 양쪽에 적힌 version·isoform이 다르면 `conflicting`, 한쪽에 version·isoform이 없으면 `base_match_only` 미확인이다. ID 조회 응답에 인용 표기와 같은 base의 다른 표기가 함께 오면 `conflicting`이다(#167). resolver 기록의 `same_as`(DOI↔PMID↔PMCID)를 재인용 키에 더해 `VerificationReport.recitations`로 보고하고 `ok`를 막는다(#168). `validate_research_review`는 `author`가 없거나 비면 거부한다(#169 #188). gateway는 상태를 열기 전에 pack을 불러 `available: single_cell_de@2`를 담은 오류로 멈춘다(#170). 한 step 안 evidence slot id 중복은 CP1 전에 거부한다(#187). 패치노트는 건드리지 않았다.
+- 실행한 것: 새 회귀 17건이 수정 전 main에서 모두 실패하고 수정 뒤 통과했다. 리뷰에서 나온 P2(uri 후보에 다른 accession이 섞이면 conflicting) 1건을 고치고 회귀를 더했다. 독립 검증에서 다른 version·isoform 응답이 미확인이나 `found`로 내려가던 회귀(main은 `conflicting`)를 찾아 고치고 회귀 10건을 더했다. 전체 pytest 1947 passed/23 skipped, Node 11개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 같은 기록의 다른 version(ENSG…17과 ENSG…16)을 재인용으로 보지는 않는다. 대응 ID는 resolver가 `same_as`로 줄 때만 쓰며 live resolver는 아직 없다. REVIEW v2와 pack 검사는 연구 실행 경로(#90 PR 3) 전이라 호출하는 쪽이 작성자를 넘겨야 한다.
+- 근거: `labhq/evidence/verify.py`, `labhq/research/review.py`, `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/gateway/server.py`, `labhq/cli.py`, `tests/test_evidence_verify.py`, `tests/test_research_review.py`, `tests/test_research_protocol.py`, `tests/test_research_evidence.py`.
+
 ## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
 
 - 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.

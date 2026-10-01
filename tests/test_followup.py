@@ -1,6 +1,7 @@
 """#36 PR A: a finished request takes follow-up questions in the same CSO session and workspace."""
 
 import asyncio
+import json
 import shutil
 import time
 from pathlib import Path
@@ -213,6 +214,63 @@ def test_gateway_restart_marks_a_running_followup_interrupted(tmp_path):
     assert [f["id"] for f in shown] == [f"fu_{i}" for i in range(5, 25)], "snapshots stay bounded"
 
 
+def test_snapshot_carries_only_the_head_of_long_followup_answers(tmp_path):
+    """#126: 25 long answers must not make every WebSocket connect carry megabytes; the full answer stays fetchable."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    full = "답" * 20000  # what run_followup keeps at most, 3 bytes each in UTF-8
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate",
+                         "followups": [{"id": f"fu_{i}", "text": "q", "status": "done", "answer": full}
+                                       for i in range(24)] + [{"id": "fu_24", "text": "q", "status": "done", "answer": "짧은 답"}]}
+    for i in range(25):  # the same answers also sit in the replayed events
+        hub.events.append({"type": "request.followup_done", "seq": i + 1, "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full}})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # whole answers would be about 2.6 MB
+    shown = snap["data"]["requests"][0]["followups"]
+    assert len(shown) == 20 and shown[0]["answer"] == full[:2000]
+    assert shown[0]["answer_truncated"] is True and shown[0]["answer_chars"] == 20000
+    assert shown[-1] == hub.requests["r"]["followups"][-1], "a short answer is sent unchanged"
+    replayed = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "request.followup_done"]
+    assert len(replayed) == 25 and all(len(d["answer"]) <= 2000 for d in replayed)
+    assert replayed[0]["answer_truncated"] is True
+    assert len(hub.requests["r"]["followups"][0]["answer"]) == 20000, "the stored request keeps the full answer"
+    assert len(hub.events[0]["data"]["answer"]) == 20000, "the live event buffer keeps the full answer"
+    detail = TestClient(app).get("/api/requests/r", headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert detail.status_code == 200 and detail.json()["followups"][0]["answer"] == full
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cuts_the_same_answer_in_the_runners_task_result(tmp_path):
+    """#126: the runner's task.result for a follow-up carries the answer again, unclipped; a snapshot cuts it too."""
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    full = "답" * 25000  # the runner's text is not clipped to 20,000 like the stored answer
+    hub.requests["r"] = {"id": "r", "status": "done", "text": "t", "mode": "orchestrate", "followups": []}
+    for i in range(25):  # the events the gateway records for each answered follow-up, through its own paths
+        result = TaskResult(task_id=f"t_{i}", agent_id="cso", ok=True, text=full)
+        await hub.on_runner_message("runner", {"type": "task.result", "task_id": f"t_{i}", "agent_id": "cso",
+                                               "request_id": "r", "data": result.model_dump(mode="json")})
+        await hub.publish({"type": "request.followup_done", "ts": time.time(), "request_id": "r",
+                           "data": {"id": f"fu_{i}", "ok": True, "answer": full[:20000]}})
+    short_result = TaskResult(task_id="t_short", agent_id="cso", ok=True, text="짧은 결과").model_dump(mode="json")
+    await hub.on_runner_message("runner", {"type": "task.result", "task_id": "t_short", "agent_id": "cso",
+                                           "request_id": "r", "data": short_result})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"  # the task.result copies alone would be about 1.9 MB
+    results = [e["data"] for e in snap["data"]["recent_events"] if e["type"] == "task.result"]
+    assert len(results) == 26 and results[0]["text"] == full[:500]
+    assert results[0]["text_truncated"] is True and results[0]["text_chars"] == 25000
+    assert results[-1] == short_result, "a short result is sent unchanged"
+    assert all(len(e["data"]["text"]) == 25000 for e in list(hub.events)[:-1] if e["type"] == "task.result"), \
+        "the live event buffer keeps the whole text"
+
+
 @pytest.mark.asyncio
 async def test_runner_gives_followups_no_ask_tool(tmp_path, monkeypatch):
     settings = Settings()
@@ -374,3 +432,124 @@ async def test_followup_end_to_end_with_mock_runner(tmp_path):
         await asyncio.sleep(0.2)
         for t in tasks:
             t.cancel()
+
+
+# ---- #144: a follow-up after a gateway restart never shares the interrupted one's session ----
+
+CSO_ONLY = [{"id": "cso", "engine": "claude_code"}]
+
+
+class CaptureSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, body):
+        self.sent.append(json.loads(body))
+
+    async def close(self, code=1000):
+        pass
+
+
+def restart_settings(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.gateway.resume_wait_s = 2
+    settings.orchestrator.step_max_attempts = 1
+    return settings
+
+
+def followup_frames(socket):
+    return [frame["task"] for frame in socket.sent
+            if frame["type"] == "task.dispatch" and frame["task"]["meta"].get("kind") == "followup"]
+
+
+def result_frame(task_id, text, session):
+    result = TaskResult(task_id=task_id, agent_id="cso", ok=True, text=text, session_id=session)
+    return {"type": "task.result", "task_id": task_id, "request_id": "r", "data": result.model_dump(mode="json")}
+
+
+async def _within(predicate, timeout=3.0):
+    for _ in range(int(timeout / 0.01)):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+async def followup_running_then_restart(settings, workdir):
+    """Gateway 1 sends a follow-up, the runner accepts it, and the gateway dies before the answer."""
+    first = Hub(settings)
+    first.requests["r"] = {"id": "r", "text": "Compare cohorts", "mode": "orchestrate", "status": "done",
+                           "report": "Final report: cohort A wins", "cso_session_id": "cso-1",
+                           "cso_workdir": workdir, "followups": []}
+    first.save_request("r")
+    socket = CaptureSocket()
+    first.register_runner("local", socket, CSO_ONLY, "inc-1")
+    first.start_followup("r", "Why cohort A?")
+    await _within(lambda: followup_frames(socket))
+    running = followup_frames(socket)[0]
+    assert running["resume_session_id"] == "cso-1" and running["meta"]["workdir"] == workdir
+    await first.on_runner_message("local", {"type": "task.accepted", "task_id": running["id"], "request_id": "r"})
+    lost = [t for t in asyncio.all_tasks() if getattr(t.get_coro(), "__qualname__", "") == "Orchestrator.run_followup"]
+    for task in lost:
+        task.cancel()
+    await asyncio.gather(*lost, return_exceptions=True)
+    first.store.close()
+    return running
+
+
+@pytest.mark.asyncio
+async def test_followup_after_restart_waits_for_the_interrupted_one_still_running(tmp_path):
+    settings = restart_settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    running = await followup_running_then_restart(settings, workdir)
+    hub = Hub(settings)
+    socket = CaptureSocket()
+    seen, publish = [], hub.publish
+
+    async def tap(event, **kwargs):
+        seen.append(event)
+        await publish(event, **kwargs)
+
+    hub.publish = tap
+    try:
+        assert hub.requests["r"]["followups"][0]["status"] == "interrupted"
+        hub.register_runner("local", socket, CSO_ONLY, "inc-1")  # same generation: it still runs there
+        hub.start_followup("r", "And the effect size?")
+        await _within(lambda: followup_frames(socket) or any(
+            e["type"] == "request.step_wait" and e["data"].get("step_id") == "followup" for e in seen))
+        assert followup_frames(socket) == [], "never two CLIs in one session and workdir"
+        await hub.on_runner_message("local", result_frame(running["id"], "Cohort A had more donors", "cso-2"))
+        await _within(lambda: followup_frames(socket))
+        follow = followup_frames(socket)[0]
+        assert follow["resume_session_id"] == "cso-2", "the interrupted turn is the latest one in the session"
+        assert follow["meta"]["workdir"] == workdir
+        await hub.on_runner_message("local", result_frame(follow["id"], "Cohen's d was 0.4", "cso-3"))
+        await _within(lambda: hub.requests["r"]["followups"][-1]["status"] != "running")
+        assert hub.requests["r"]["followups"][-1]["answer"] == "Cohen's d was 0.4"
+        assert hub.requests["r"]["cso_session_id"] == "cso-3"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_followup_after_restart_isolates_when_the_interrupted_outcome_is_unknown(tmp_path):
+    settings = restart_settings(tmp_path)
+    workdir = str(tmp_path / "cso-workdir")
+    await followup_running_then_restart(settings, workdir)
+    hub = Hub(settings)
+    socket = CaptureSocket()
+    try:
+        # The runner restarted too: the old follow-up is abandoned, but its CLI may still hold the session.
+        hub.register_runner("local", socket, CSO_ONLY, "inc-2")
+        hub.start_followup("r", "And the effect size?")
+        await _within(lambda: followup_frames(socket))
+        follow = followup_frames(socket)[0]
+        assert follow["resume_session_id"] is None and "workdir" not in follow["meta"]
+        await hub.on_runner_message("local", result_frame(follow["id"], "Cohen's d was 0.4", "fresh"))
+        await _within(lambda: hub.requests["r"]["followups"][-1]["status"] != "running")
+        assert hub.requests["r"]["followups"][-1]["status"] == "done"
+        assert hub.requests["r"]["cso_session_id"] == "fresh"
+    finally:
+        hub.store.close()
