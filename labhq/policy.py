@@ -219,6 +219,16 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
 MAX_RESOLVED_CANDIDATES = 256
 
 
+class Unresolved(str):
+    """`touches_resolved` gave up before every candidate was resolved: unknown, not clear (#131).
+
+    `path_field` says whether the cap was reached among structured path fields (always an access) or only
+    in free text, which for file tools is content or a search pattern rather than a path being opened.
+    """
+
+    path_field: bool = False
+
+
 def _real(p: str) -> str | None:
     try:
         return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
@@ -231,13 +241,14 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
 
     `reference/link/raw.tsv` names no zone, yet reads one when `link` points there. This only means something
     where the files are (the runner's approval gate) and only for calls the gate sees. Structured path fields
-    are checked first, then up to MAX_RESOLVED_CANDIDATES other candidates; the lexical check still covers the rest.
+    are checked first, then distinct other candidates. Past MAX_RESOLVED_CANDIDATES it returns `Unresolved`
+    rather than None: 257 decoy paths must not make the 258th, a link into a zone, pass (#131).
     """
     zones = [(p, zone) for p in paths if p for zone in {_norm(p), _real(p)} if zone]
     if not zones:
         return None
     strings = sorted(_strings(obj), key=lambda item: not item[1])  # path fields first, e.g. Write before content
-    checked = 0
+    seen: set[str] = set()
     for s, path_field in strings:
         for token in (s,) if path_field else _candidate_paths(s):
             if not token or _drive_relative(token):
@@ -246,9 +257,13 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
                 if not workdir:
                     continue
                 token = os.path.join(workdir, token)
-            checked += 1
-            if checked > MAX_RESOLVED_CANDIDATES:
-                return None
+            if token in seen:
+                continue  # a repeated path costs nothing more and proves nothing new
+            seen.add(token)
+            if len(seen) > MAX_RESOLVED_CANDIDATES:
+                unresolved = Unresolved(f"more than {MAX_RESOLVED_CANDIDATES} path candidates")
+                unresolved.path_field = path_field
+                return unresolved
             real = _real(token)
             for original, zone in zones:
                 if real and _inside(real, zone):
@@ -309,6 +324,15 @@ def evaluate_tool(
     # Lexical first, then the real path: a link below an allowed folder can lead into a zone (#36).
     hit = touches(tool_input, rp, workdir=workdir) or touches_resolved(
         tool_input, [z.path for z in policy.data_zones if z.level == "restricted"], workdir=workdir)
+    if isinstance(hit, Unresolved):
+        # A file tool's free text is content or a search pattern, not a path it opens, and its path fields
+        # were all resolved. Anything else (a shell command, an MCP call, a Glob pattern) goes to the PI.
+        if not hit.path_field and tool_name in (READ_LIKE | WRITE_LIKE) - {"Glob"}:
+            hit = None
+        else:
+            shown = str(tool_input.get("command") or tool_input)[:200]
+            return Decision("ask", f"{tool_name} names {hit}; links among them were not all resolved, so a "
+                                   f"restricted zone may be reached: `{shown}`")
 
     if hit and tool_name in READ_LIKE | WRITE_LIKE:
         return Decision(

@@ -522,6 +522,35 @@ def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path
                          allowed_roots=[ws], workdir=ws).action == "allow"
 
 
+def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_path):
+    # #131: past 256 candidates the real-path check returned "no hit", so 257 decoys let the link through.
+    from labhq.policy import MAX_RESOLVED_CANDIDATES, evaluate_tool
+
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "raw.tsv").write_text("donor", encoding="utf-8")
+    workdir = tmp_path / "ws"
+    (workdir / "ref").mkdir(parents=True)
+    _link_dir(workdir / "ref" / "link", tmp_path / "vault")
+    policy = Settings().policy
+    policy.data_zones = [DataZone(path=str(tmp_path / "vault"))]
+    ws = str(workdir)
+    decoys = " ".join(f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1))
+    for tool, tool_input in [("Bash", {"command": f"cat {decoys} ref/link/raw.tsv"}),
+                             ("PowerShell", {"command": f"Get-Content {decoys} ref/link/raw.tsv"}),
+                             ("mcp__x__read", {"files": f"{decoys} ref/link/raw.tsv"}),
+                             ("Glob", {"pattern": f"{decoys} ref/link/*.tsv"})]:
+        decision = evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws)
+        assert decision.action == "ask" and "not all resolved" in decision.reason, (tool, decision)
+    # Repeats are one candidate, and a file's content is not a path it opens: these still pass.
+    repeated = " ".join(["d0.txt"] * (MAX_RESOLVED_CANDIDATES + 5))
+    assert evaluate_tool("Bash", {"command": f"cat {repeated}"}, policy, allowed_roots=[ws], workdir=ws).action == "allow"
+    write = {"file_path": str(workdir / "notes.md"), "content": decoys}
+    assert evaluate_tool("Write", write, policy, allowed_roots=[ws], workdir=ws).action == "allow"
+    # Without restricted zones nothing can be reached through a link, so the cap never asks.
+    assert evaluate_tool("Bash", {"command": f"cat {decoys}"}, Settings().policy,
+                         allowed_roots=[ws], workdir=ws).action == "allow"
+
+
 def test_shell_writes_into_a_reference_dir_go_to_the_pi_when_the_gate_sees_them(tmp_path):
     from labhq.policy import evaluate_tool
 
