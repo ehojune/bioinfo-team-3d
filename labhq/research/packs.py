@@ -75,7 +75,8 @@ class PackPredicate(StrictModel):
 class PackRule(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
     description: str = Field(min_length=1)
-    when: PackPredicate | None = None
+    # One predicate, or a list of predicates that must all hold (e.g. model x likelihood family).
+    when: PackPredicate | list[PackPredicate] | None = None
     require: PackPredicate | None = None
     forbid: PackPredicate | None = None
 
@@ -83,7 +84,15 @@ class PackRule(StrictModel):
     def exactly_one_outcome(self) -> "PackRule":
         if (self.require is None) == (self.forbid is None):
             raise ValueError("pack rule requires exactly one of require or forbid")
+        if isinstance(self.when, list) and not self.when:
+            raise ValueError("pack rule when list requires at least one predicate")
         return self
+
+    @property
+    def conditions(self) -> list[PackPredicate]:
+        if self.when is None:
+            return []
+        return self.when if isinstance(self.when, list) else [self.when]
 
 
 _PLAN_RULE_FIELDS = {
@@ -131,7 +140,7 @@ class DomainRulePack(StrictModel):
             if unknown:
                 raise ValueError(f"domain pack validator {rule.id}: unknown required fields {unknown}")
         for rule in self.rules:
-            for predicate in (rule.when, rule.require, rule.forbid):
+            for predicate in (*rule.conditions, rule.require, rule.forbid):
                 if predicate is None:
                     continue
                 if predicate.field not in known and predicate.field not in _PLAN_RULE_FIELDS:

@@ -2,7 +2,7 @@
 
 대상: 연구를 승인하는 PI와 계획·실행·검토를 맡는 직원. 버전 `v0.1`(2026-10-01).
 
-> 현재 구현은 opt-in PR 1 pilot이다. 연구 요청은 계획 검증과 CP1 승인까지만 진행하며 직원 연구 step은 실행하지 않는다. `research.enabled: false`가 기본값이다.
+> 현재 구현은 opt-in pilot이다. 연구 요청은 계획 검증과 CP1 승인까지만 진행하며 직원 연구 step은 실행하지 않는다. `research.enabled: false`가 기본값이다. 결과 원장(§3)과 출처 verifier는 schema·검사로만 있고 아직 실행 경로에 연결하지 않았다.
 
 ## 1. 접수
 
@@ -41,25 +41,53 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 
 ## 3. 직원 결과 계약
 
-연구 직원은 향후 실행 단계에서 `result v2`를 반환한다.
+연구 직원은 향후 실행 단계에서 `result v2`를 반환한다. 원장은 `labhq/evidence/claims.py`, 출처 검사는 `labhq/evidence/verify.py`이며 #58 증거 계층과 같은 원장을 쓴다.
 
 | 필드 | 의미 |
 |---|---|
-| `plan_sha256`, `step_id` | 어떤 동결 계획의 어느 step인지 |
-| `findings` | 한 문장 claim, `finding/inference/hypothesis`, evidence ref, 한계 |
-| `evidence` | 관찰, 출처 ref, `observed/unavailable/not_found/failed` |
+| `plan_sha256`, `step_id` | 어떤 동결 계획의 어느 step인지. 동결 계획과 다르면 거부 |
+| `claims` | 한 줄 한 주장. `kind`(finding/inference/hypothesis)·`status`·중요도·`status_reason`·한계, `revision`·`supersedes`, 정량 `comparisons` |
+| `evidence` | 아래 6종 행. 관찰, 조회 상태, 출처, 평가, `quantities` |
+| `links` | claim revision과 evidence, `supports/contradicts/context`, `rationale` |
 | `artifact_refs` | 논리 artifact ID와 경로 |
 | `not_established` | 이번 작업으로 확립하지 못한 내용 |
 | `failures` | 검색·도구·분석 실패. 0건과 구별 |
 | `method_changes` | 계획값과 실제값, 이유, 결론 영향 여부 |
 
-값에는 단위·분모·대상·조건·불확실성을 붙인다. 조건이 다르면 비교 불가를 표시한다. 구조·상관·예측을 인과·친화도·효능으로 확대하지 않는다. 통제접근 원자료는 허용 환경 밖, LLM 입력, 외부 로그로 보내지 않는다.
+evidence 종류는 `observation`, `database_annotation`, `experimental`, `literature_claim`, `inference`, `hypothesis`다. 앞의 넷만 근거로 센다. `inference`·`hypothesis`는 `derived_from`을 적고 `context`로만 연결한다.
+
+| 코드가 거부하는 것 | 규칙 |
+|---|---|
+| 없는 claim·evidence·artifact 참조, 중복 ID, 옛 claim revision을 가리키는 link | R04 |
+| `supported`·`partially_supported`·`contradicted`인데 관찰된 근거 link가 없음. `supported`인데 반대 근거가 있음 | R04 |
+| 추론·가설, 또는 `unavailable`·`not_found`·`failed` 행으로 지지·반박 | R04 |
+| 추론·가설 행이 `derived_from`을 따라가도 관찰·조회 행에 닿지 않음(순환 포함) | R04 |
+| 근거 행의 `directness`·`source_level`·`independence_group`·`assessment_reason` 누락, link `rationale`·claim `status_reason` 누락 | R05 |
+| 같은 출처를 다른 independence group으로 적음(재인용을 독립 근거로 셈). ID, doi.org URL, 같은 파일을 가리키는 artifact를 모두 같은 출처로 본다 | R05 |
+| 외부 출처의 `accessed_at`(YYYY-MM-DD), 관찰 행의 `locator`, 0건 행의 `query`, 실패 행의 `status_detail` 누락 | R06 |
+| quantity의 `value`·`unit`·`conditions`·`denominator` 누락. 모르면 `unknown`에 항목과 결론에 주는 영향을 적는다 | R07 |
+| 단위·조건·적어 둔 `method`가 다르거나 모르는 값을 `comparable`로 비교. `not_comparable`로 두거나 가정을 적은 `comparable_with_assumptions`로 쓴다 | R07 |
+
+신뢰도는 확률 대신 이유와 한계로 적는다. 구조·상관·예측을 인과·친화도·효능으로 확대하지 않는다. 통제접근 원자료는 허용 환경 밖, LLM 입력, 외부 로그로 보내지 않는다.
 
 ## 4. 근거·감사·변경
 
 - claim은 `finding|inference|hypothesis`, 상태는 `proposed|supported|partially_supported|contradicted|unresolved|withdrawn`으로 나눈다.
 - evidence는 질문 적합성 → 직접성 → 품질·편향 → 독립성·재검증 순으로 본다. 재인용은 독립 근거가 아니다.
 - ID 해소와 문장 지지는 별도 검사다. `unavailable`, 성공한 한정 검색의 `not_found`, 도구 `failed`는 모두 부재 증명이 아니다.
+- verifier는 조회 결과(`succeeded/failed/skipped`)와 ID 상태를 따로 남긴다.
+
+| ID 상태 | 뜻 | claim 판정 |
+|---|---|---|
+| `found` | 인용한 ID·version과 맞는 기록이 하나 | 근거 확인. 문장 지지는 reviewer가 본다 |
+| `not_found` | 조회가 끝났고 기록이 없음 | 결함 |
+| `insufficient` | ID 형식이 틀려 조회하지 않음. 추측해 고치지 않는다 | 결함 |
+| `conflicting` | 다른 scheme·ID·version의 기록, 여러 기록, 인용 뒤 바뀐 artifact hash | 결함 |
+| `requires_verification` | 네트워크 오류·timeout·resolver 오류·live 꺼짐·미지원 체계·manifest 없음 | 미확인. 결함도 부재도 아니다 |
+
+claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. URI는 scheme·host만 대소문자를 무시한다.
+
+live resolver는 아직 없고 기본값은 조회 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.
 - 입력·검색식·명령·코드/환경·seed·exit·출력 hash를 기록한다. `documented`, `replayable`, `rerun_verified`를 구별한다.
 - 근거나 방법 revision이 바뀌면 종속 claim·분석·감사·승인을 stale 처리한다. 옛 결과는 이력으로만 둔다.
@@ -91,10 +119,18 @@ rules:
     description: A fully confounded design is limited to descriptive reporting.
 ```
 
-predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
+predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. `when`에 predicate 목록을 주면 모두 맞을 때만 rule이 걸린다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
 
 active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다.
 
-예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor·condition·batch, count scale, replicate, model, 식별 가능성, 결론 모드를 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
+예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor·condition·batch, count scale, replicate, model과 likelihood family, 식별 가능성, 결론 모드를 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
+
+| `model` | `model_family` | 허용 `count_scale` |
+|---|---|---|
+| `pseudobulk` | 전부 | `raw_counts` |
+| `donor_dependent` | `negative_binomial`, `poisson` | `raw_counts` |
+| `donor_dependent` | `linear` | `log_transformed` |
+
+`conclusion_mode: condition_effect`는 적용된 통계 계획을 요구한다. `descriptive_only`는 batch 혼동이 없어도 설명·비교 study type, 주가설, 추론 통계, estimand를 금지한다. `model_rationale` 같은 설명 문장은 판정에 쓰지 않는다.
 
 이 규약은 라이선스가 확인되지 않은 inco 저장소에서 문구·표·template을 가져오지 않았다. 여러 연구 workflow의 구조만 비교 대상으로 참고했고, labhq 계약과 표현은 새로 작성했다.

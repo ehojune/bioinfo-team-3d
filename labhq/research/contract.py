@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..intake import ClarifyingQuestion
+from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
 
 
 class StrictModel(BaseModel):
@@ -216,21 +217,6 @@ class ResearchPlan(StrictModel):
         return self
 
 
-class Finding(StrictModel):
-    claim_id: str = Field(min_length=1)
-    statement: str = Field(min_length=1)
-    kind: Literal["finding", "inference", "hypothesis"]
-    evidence_refs: list[str]
-    limitations: list[str]
-
-
-class EvidenceResult(StrictModel):
-    evidence_id: str = Field(min_length=1)
-    observation: str = Field(min_length=1)
-    status: Literal["observed", "unavailable", "not_found", "failed"]
-    source_ref: str = Field(min_length=1)
-
-
 class ArtifactRef(StrictModel):
     artifact_id: str = Field(min_length=1)
     path: str = Field(min_length=1)
@@ -248,12 +234,24 @@ class ResearchResult(StrictModel):
     schema_version: Literal[2]
     plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     step_id: str = Field(min_length=1)
-    findings: list[Finding]
-    evidence: list[EvidenceResult]
+    claims: list[Claim]
+    evidence: list[Evidence]
+    links: list[EvidenceLink]
     artifact_refs: list[ArtifactRef]
     not_established: list[str]
     failures: list[str]
     method_changes: list[MethodChange]
+
+    @model_validator(mode="after")
+    def ledger_is_consistent(self) -> "ResearchResult":
+        artifact_ids = [ref.artifact_id for ref in self.artifact_refs]
+        errors = [f"duplicate artifact id {artifact_id}" for artifact_id in sorted(set(artifact_ids))
+                  if artifact_ids.count(artifact_id) > 1]
+        errors += ledger_errors(self.claims, self.evidence, self.links,
+                                artifact_paths={ref.artifact_id: ref.path for ref in self.artifact_refs})
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
 
 
 RESEARCH_PLAN_SCHEMA: dict[str, Any] = ResearchPlan.model_json_schema()
@@ -334,7 +332,8 @@ def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
 
         plan_values = plan.model_dump(mode="python")
         for rule in pack.rules:
-            if rule.when is not None and not _pack_predicate_matches(rule.when, supplied.fields, plan_values):
+            if not all(_pack_predicate_matches(condition, supplied.fields, plan_values)
+                       for condition in rule.conditions):
                 continue
             if rule.require is not None:
                 passed = _pack_predicate_matches(rule.require, supplied.fields, plan_values)
@@ -362,6 +361,17 @@ def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str
                             plan.intake.scope_status != expected_intake.scope_status):
         raise ValueError("research PLAN intake does not match the request intake decision")
     return plan
+
+
+def validate_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> ResearchResult:
+    """Parse one step result and bind it to the frozen plan revision and step it claims to answer."""
+    result = ResearchResult.model_validate(value)
+    parsed = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    if result.plan_sha256 != plan_sha256(parsed):
+        raise ValueError("research result plan_sha256 does not match the frozen plan")
+    if result.step_id not in {step.id for step in parsed.steps}:
+        raise ValueError(f"research result step_id {result.step_id} is not in the frozen plan")
+    return result
 
 
 def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:
