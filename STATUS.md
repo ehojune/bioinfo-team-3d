@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #165 #177 #178 #180 #181 #182 #183 #190 #193 — 작업 폴더 쓰기·Claude 규칙 경로·공개 가드 후속
+
+- 결론: 부류마다 공통 판정 하나로 닫았다. 러너가 작업 폴더에 쓰는 경로(#165·#190·#193), Claude 거부 규칙을 붙일 수 없는 경로(#177·#182), 공개 가드의 표기 빈틈(#180·#181·#183)이다. #165는 1–3번만, #178은 문서만 고쳤다(둘 다 실측이 남아 Refs).
+- 바뀐 것: `adapters/owned.py`가 labhq 소유 경로 쓰기를 맡는다. 링크를 따라가지 않고, 재사용 폴더에 링크가 있으면 실행을 거부한다. 계약 skill 상위 링크도 지우지 않고 거부한다. 계약 skill은 원본과 같을 때만 면제하고, Windows·macOS에서는 지시 파일 이름을 대소문자 없이 비교한다. 재사용 폴더 검사 중 이벤트는 모았다가 로컬 로그에 쓴다. `claude_rule_ready`가 UNC 링크·참고를 거른다. mount 뒤도 계속 훑는다. 공개 가드는 percent-encoded webhook, 사내 forge의 owner/repo, 공백·`\uXXXX`가 든 계정 home을 가린다.
+- 실행한 것: 확인 조건 test는 수정 전 실패를 확인했다. 이 PC에서 skip된 것은 file symlink 12건과 POSIX 전용 3건이다. 전체 pytest 1966 passed/38 skipped, Node 11개, `scripts/check_public.sh`, `git diff --check` 통과. 로컬 Codex 리뷰(branch diff)는 결함을 찾지 못했다.
+- 미해결: 실제 CLI 실측 셋. #148 신뢰 경로 probe(#165 4번), 하위 폴더 CLAUDE.md 제외 probe(#165 5번), Claude 규칙의 대소문자·8.3 비교(#178)다. #178은 `allow_runner_read_restricted`와 대소문자 무시 파일 시스템이 겹칠 때만 남는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/adapters/owned.py`, `labhq/adapters/read_only.py`, `labhq/runner/daemon.py`, `labhq/runner/workspace.py`, `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_workspace_boundary.py`, `tests/test_publish_followups.py`.
+
 ## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
 
 - 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.
