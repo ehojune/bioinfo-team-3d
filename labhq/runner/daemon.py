@@ -435,23 +435,33 @@ class Runner:
             return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
         return incomplete
 
-    async def _project_links(self, directories: list[str], zones: list[Path], emit) -> list[str]:
+    async def _project_links(self, directories: list[str], zones: list[Path], emit,
+                             fail_closed: bool = False) -> tuple[list[str], str | None]:
         """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
 
         The folder itself stays open: the task works there, and refusing it would stop every step of the
-        project. A listing that cannot finish (a large clone) is said once instead of refused.
+        project. A listing that cannot finish (a large clone) is said once instead of refused. A reused
+        workspace passes ``fail_closed`` because every engine can read its cwd without an approval gate (#191).
         """
         denied: list[str] = []
         if not zones:
-            return denied
+            return denied, None
         for directory in dict.fromkeys(directories):
             path = Path(directory)
             if not path.is_dir():
+                if fail_closed:
+                    return denied, "경로를 폴더로 열 수 없음"
                 continue
             # In a thread: a large clone on a network file system must not stall the runner's connection.
             links, incomplete = await asyncio.to_thread(zone_links, path, zones, self.s.runner.reference_scan_max_entries,
                                                         self.s.runner.reference_scan_max_depth)
             denied += [str(link) for link in links]
+            if fail_closed and (links or incomplete):
+                if links:
+                    names = ", ".join(link.relative_to(path).as_posix() for link in links[:5])
+                    more = f" 외 {len(links) - 5}개" if len(links) > 5 else ""
+                    return denied, f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {names}{more}"
+                return denied, incomplete
             key = (str(path), tuple(map(str, links)), incomplete)
             if (links or incomplete) and key not in self.project_link_warned:
                 self.project_link_warned.add(key)
@@ -464,7 +474,7 @@ class Runner:
                     await emit("agent.log", {"level": "warn", "text": (
                         f"프로젝트 폴더 {path.name}의 링크를 다 확인하지 못했습니다({incomplete}). "
                         "그 너머의 링크가 통제 구역을 가리켜도 막지 못합니다")})
-        return denied
+        return denied, None
 
     def _reference_dirs(self, task: Task, writable: list[str]) -> tuple[list[str], list[str], list[str]]:
         """Re-check path references with resolved paths on this runner (#36).
@@ -560,9 +570,16 @@ class Runner:
         if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
             agent = read_only_profile(agent)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
-        ws = TaskWorkspace(self.ws_root, task, agent, override)
-        self.workspaces[task.id] = ws
-        self.task_req[task.id] = task.request_id
+        workspace_dir = Path(override) if override else self.ws_root / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
+        reused = os.path.lexists(workspace_dir)
+        # Do not let TaskWorkspace create files through links left by an earlier run. Fresh workspaces keep
+        # the old event ordering; reused ones are registered only after their preflight succeeds (#191).
+        ws = None if reused else TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+        if reused:
+            self.workspaces.pop(task.id, None)  # emit() must not append through the previous workspace yet
+        if ws:
+            self.workspaces[task.id] = ws
+            self.task_req[task.id] = task.request_id
 
         async def emit(typ: str, data: dict) -> None:
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
@@ -572,10 +589,31 @@ class Runner:
         semaphore = self.consult_sem if consult else self.sem
         async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
+            zones = self._zones()
+            if reused:
+                reason = None
+                try:
+                    resolved = workspace_dir.resolve()
+                except (OSError, RuntimeError, ValueError):
+                    reason = "경로를 풀 수 없음"
+                if reason is None and overlaps_zone(resolved, zones):
+                    reason = "폴더 자체가 통제 데이터 구역과 겹침"
+                if reason is None:
+                    _links, reason = await self._project_links([str(workspace_dir)], zones, emit, fail_closed=True)
+                if reason:
+                    error = f"재사용 작업 폴더를 안전하게 열 수 없어 실행을 거부합니다: {reason}"
+                    result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
+                    await emit("agent.log", {"level": "alert", "text": error})
+                    await emit("agent.status", {"state": "error", "error": short(error, 200)})
+                    await emit("task.result", result.model_dump(mode="json"))
+                    return result
+                ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
+                self.workspaces[task.id] = ws
+                self.task_req[task.id] = task.request_id
+            assert ws is not None
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
-            zones = self._zones()
-            denied_links = await self._project_links(extra_dirs, zones, emit)
+            denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
             root = self.ws_root.resolve()
             for directory in task.meta.get("upstream_dirs", []):
                 upstream = Path(directory).resolve()

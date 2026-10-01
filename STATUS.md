@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #191 — 재사용 workdir 통제 링크 차단
+
+- 결론: resume·retry가 기존 workdir을 열기 전에 통제 구역 링크를 검사하고, 링크나 검사 불완전이 있으면 실행을 거부한다.
+- 바뀐 것: #132의 공용 `zone_links` 경로를 재사용했다. adapter와 `TASK.md` 생성보다 검사를 앞세웠으며 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 2건은 수정 전 실패, 수정 뒤 통과했다. 관련 test 97 passed/1 skipped, 전체 pytest 1923 passed/23 skipped, Node 11개와 `scripts/check_public.sh`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/runner/daemon.py`, `tests/test_intake_references.py`.
+
 ## 2026-10-01 · #189 Windows CI flaky test 조건 대기
 
 - 결론: bench process tree, e2e 이벤트·wake 결과, semantics breaker 저장을 고정 시간 대신 상한 있는 polling으로 확인한다. 검사는 그대로 두고 실패 시 PID·프로세스 상태·이벤트 순서·breaker 상태를 출력한다.
