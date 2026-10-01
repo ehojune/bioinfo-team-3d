@@ -15,7 +15,7 @@ if git remote get-url origin >/dev/null 2>&1; then
   git push -u origin main
 else
   gh repo create "$NAME" --public --source . --remote origin --push \
-    --description "Bio lab HQ: Claude Code · Codex · Gemini agents as a bioinformatics lab — CSO orchestration, HPC (SGE/PBS), Paper2Agent contract agents, live web office"
+    --description "Bio lab HQ: Claude Code · Codex · Gemini agents as a bioinformatics lab — CSO orchestration, HPC (SGE/PBS/Slurm), Paper2Agent contract agents, live web office"
 fi
 gh repo view --web >/dev/null 2>&1 || true
 echo "✓ 올렸습니다: $(gh repo view --json url -q .url)"

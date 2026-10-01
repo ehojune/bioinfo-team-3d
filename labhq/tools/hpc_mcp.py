@@ -18,7 +18,7 @@ import httpx
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
 from ._mcpcompat import ToolError, make_server
-from .scheduler import Scheduler, build_script, sanitize_job_name
+from .scheduler import Scheduler, build_script, sanitize_job_name, slurm_cluster_directive
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 SCHED = Scheduler(S.hpc)
@@ -31,7 +31,7 @@ WORKDIR = Path(os.environ.get("LABHQ_WORKDIR", ".")).resolve()
 server = make_server(
     "labhq-hpc",
     instructions=(
-        "Submit and monitor batch jobs on the lab's HPC (SGE or PBS). Use this for anything heavy "
+        "Submit and monitor batch jobs on the lab's HPC (SGE, PBS or Slurm). Use this for anything heavy "
         "(alignment, variant calling, large downloads, anything touching restricted data). Submissions "
         "may wait for the PI's approval on their phone. After submitting, do not poll in a loop: "
         "summarize what you are waiting for and end your turn. You will be resumed when jobs finish."
@@ -149,6 +149,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     Returns JSON: {"submitted": true, "job_id": ...} or a normal PI denial.
     Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
+    if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
+        raise ToolError(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
+                        "remove -M/--clusters and submit again")
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
     output_dir = WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR

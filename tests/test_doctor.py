@@ -219,3 +219,16 @@ def test_doctor_reuses_submit_prefix_account_guard(tmp_path, monkeypatch, case):
     assert row["status"] == "fail"
     assert "test-user" not in json.dumps(result) and "test-group" not in json.dumps(result)
     assert not list((tmp_path / "state").glob("*.sqlite3"))
+
+
+@pytest.mark.parametrize("missing,status", [(None, "ok"), ("sacct", "warn"), ("scancel", "warn")])
+def test_doctor_checks_slurm_commands(tmp_path, monkeypatch, missing, status):
+    settings = _settings(tmp_path)
+    settings.hpc.scheduler = "slurm"
+    tools = {"sbatch", "squeue", "sacct", "scancel"} - {missing}
+    monkeypatch.setattr(doctor.shutil, "which", lambda name, **kw: name if name in tools else None)
+    result = doctor.collect(settings)
+    row = next(r for r in result["checks"] if r["name"] == "scheduler")
+    assert row["status"] == status
+    assert row["detail"].startswith("slurm; local sbatch/squeue/sacct/scancel ")
+    assert result["runner_capabilities"]["scheduler"] == "slurm" and result["runner_capabilities"]["hpc_tools"]

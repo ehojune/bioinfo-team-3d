@@ -10,6 +10,14 @@
 - 미해결: 원격 runner 산출 hash(생성 시점 hash를 provenance에 싣기)는 별도 issue가 필요하다. 판정 기한 issue(병합+90일, 중간 +30일)와 semantics CI job은 이 PR에 없다. B2(CSO advisory)·팔란티어식 액션·EDAM(#151)은 PI 결정으로 보류다. symlink test는 이 Windows 계정에 권한이 없어 skip했고 junction test는 통과했다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
 - 근거: `labhq/research/semantics_shadow.py`, `labhq/research/semantics_objects.py`, `scripts/semantics_shadow_remove.py`, `tests/test_semantics_shadow_*.py`, `tests/test_semantics_objects.py`, `tests/semantics_shadow_lab.py`.
 
+## 2026-10-01 · #120 Slurm 스케줄러, #153 README 생성 블록 겹침
+
+- 결론: `hpc.scheduler: slurm`으로 HPC 직원 도구가 Slurm 클러스터에 붙는다. 제출 전 PI 승인, 실패와 '잡 없음' 구분, 제출 재시도 없음, 수면·기상, `ssh_host`·`submit_prefix`·`job_group`이 SGE·PBS와 같은 경로로 돈다. README 배지에 SLURM이 settings Literal에서 저절로 생겼다. `integrations.py --write`는 두 생성 블록이 겹치면 아무것도 쓰지 않고 실패한다.
+- 바뀐 것: `labhq/tools/scheduler.py`(`sbatch --parsable`, `squeue` 다음 `sacct`, `scancel`, 배열·het 기록 묶기), `HpcSettings.slurm.sbatch_args`(기본 `--export=NONE`, 알 수 없는 placeholder는 load 때 거부), `labhq init`의 `sbatch`·`sinfo` 판별(Slurm의 Torque wrapper `pbsnodes`는 PBS로 보지 않고, 두 종류가 보이면 묻는다), doctor의 Slurm 명령 점검. 같은 부류는 공통 판정으로 닫았다: 직원이 준 job id는 세 스케줄러 모두 숫자로 시작해야 받는다(옵션 `scancel --user=…`, Torque `qdel all`, SGE 잡 이름 같은 일괄 선택 차단), 스크립트 머리의 주석·지시는 세 종류 모두 preamble 위에 둔다, 셸 직접 실행 확인 목록에 `srun`·`salloc`·`scancel`·`qrsh`·`qlogin`을 더해 Bash·PowerShell이 같은 상수를 쓴다. 제출 시간 초과·id 해석 실패는 "제출됐을 수 있으니 hpc_queue부터 보라"고 알린다.
+- 실행한 것: 가짜 `sbatch/squeue/sacct/scancel`(`tests/fixtures/fake_slurm.py`)로 제출→대기·보류→실행→완료·실패·OOM·시간 초과·취소, accounting 지연, 러너 watcher의 수면·한 번 기상을 확인했다. MCP stdio fixture로 Slurm 오류 5종과 잘못된 job id가 직원 tool error로 가는지 봤다. 회귀 test는 수정 전 코드에서 실패를 확인했다(#153 중첩 순서, MCP 6, init 4, doctor 3, 수정 전 import가 없는 `test_slurm.py` 전체). 로컬 Codex 리뷰 P2 2건(압축된 array id `4100_[1,8]`이 `hpc_status`에서 거부됨, `--clusters` 제출의 추적 대상 소실)은 `squeue -r`과 `-M`/`--clusters` 거부로 고쳤다. 독립 검증에서 같은 부류가 두 군데 더 나와 고쳤다. 직원 스크립트의 `#SBATCH -M`/`--clusters`는 제출 전에 거부하고, 다른 경로로 다른 cluster에 간 제출(`id;cluster`)은 로컬 id로 추적하지 않고 오류로 알린다. job id 판정을 '옵션 모양 거부'에서 '숫자로 시작'으로 바꿨다. 전체 pytest 1645 passed/21 skipped, `node tests/*.cjs` 11개, `bash scripts/check_public.sh` 통과.
+- 미해결: 실제 Slurm 클러스터 제출은 하지 않았다. accounting이 없는 클러스터, `PrivateData=jobs`에서 다른 계정이 낸 잡, `--export=NONE`과 잡 안의 `srun`, `#SBATCH --array`가 core-hour에 안 들어가는 점은 README §10에 적었다. 패치노트 행은 PR 번호가 생긴 뒤 따로 쓴다.
+- 근거: `labhq/tools/scheduler.py`, `labhq/settings.py`, `labhq/init_wizard.py`, `labhq/doctor.py`, `scripts/integrations.py`, `tests/test_slurm.py`, `tests/fixtures/fake_slurm.py`.
+
 ## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot (PR A: opt-in으로 main에)
 
 - 결론: 중단 기준은 충족했다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). 그러나 PI 결정(2026-10-01)으로 접지 않고 opt-in·실행 경로 미연결로 유지한다. 그림자 모드로 실데이터를 모아 #121에서 재평가한다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
