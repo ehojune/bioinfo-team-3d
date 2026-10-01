@@ -11,6 +11,7 @@ import json
 
 from ..util import short
 from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, record_model_id, wrap_cwd
+from .owned import write_owned
 
 APPROVAL_MAP = {"plan": "plan", "acceptEdits": "auto_edit", "auto": "auto_edit",
                 "bypassPermissions": "yolo", "default": "default", "manual": "default"}
@@ -36,10 +37,8 @@ class GeminiAdapter(AgentAdapter):
                 servers[s.name] = {"command": command, "args": args, "env": expand_env(s.env)}
             else:
                 servers[s.name] = {"httpUrl": s.url, "headers": expand_env(s.headers)}
-        gdir = ctx.workdir / ".gemini"
-        gdir.mkdir(exist_ok=True)
-        (gdir / "settings.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
-        (ctx.workdir / "GEMINI.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
+        write_owned(ctx.workdir, ".gemini/settings.json", json.dumps({"mcpServers": servers}, indent=2))
+        write_owned(ctx.workdir, "GEMINI.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.gemini

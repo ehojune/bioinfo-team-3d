@@ -38,11 +38,10 @@ class CliAdapter(AgentAdapter):
         return ctx.agent.cli
 
     def prepare(self, ctx: RunContext) -> None:
-        md = ctx.meta_dir
-        (md / "prompt.md").write_text(ctx.prompt, encoding="utf-8")
-        (md / "role.md").write_text(ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER, encoding="utf-8")
+        ctx.write_meta("prompt.md", ctx.prompt)
+        ctx.write_meta("role.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
         if ctx.task.output_schema:
-            (md / "output_schema.json").write_text(json.dumps(ctx.task.output_schema), encoding="utf-8")
+            ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
         servers: dict[str, dict] = {}
         for s in ctx.mcp_servers:
             if s.type == "stdio":
@@ -50,7 +49,7 @@ class CliAdapter(AgentAdapter):
                 servers[s.name] = {"type": "stdio", "command": command, "args": args, "env": expand_env(s.env)}
             else:
                 servers[s.name] = {"type": "http", "url": s.url, "headers": expand_env(s.headers)}
-        (md / "mcp.json").write_text(json.dumps({"mcpServers": servers}, indent=2), encoding="utf-8")
+        ctx.write_meta("mcp.json", json.dumps({"mcpServers": servers}, indent=2))
         ctx.env.update(expand_env(self._spec(ctx).env))
 
     def _values(self, ctx: RunContext) -> _Keep:
