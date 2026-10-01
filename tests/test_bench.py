@@ -127,6 +127,20 @@ def _bench_process_exited(pid):
     return stat.is_file() and stat.read_text().rsplit(")", 1)[1].split()[0] == "Z"
 
 
+async def _wait_for_bench_processes(pids, timeout=10):
+    deadline = time.monotonic() + timeout
+    while remaining := [pid for pid in pids if not _bench_process_exited(pid)]:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"baseline left live pids: {remaining}")
+        await asyncio.sleep(0.05)
+
+
+def test_wait_for_bench_processes_reports_remaining_pids(monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_bench_process_exited", lambda _pid: False)
+    with pytest.raises(TimeoutError, match=r"live pids: \[11, 12\]"):
+        asyncio.run(_wait_for_bench_processes([11, 12], timeout=0))
+
+
 @pytest.mark.parametrize("arm", ["sonnet-max", "astra-ultra"])
 @pytest.mark.parametrize("stop", ["case-timeout", "runner-timeout", "cancel"])
 def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, stop):
@@ -181,8 +195,7 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
                 assert run["error"] == "timeout after 1s"
                 assert json.loads((tmp_path / "run.json").read_text())["error"] == run["error"]
             assert time.monotonic() - started < 5
-            await bench._until(lambda: all(_bench_process_exited(pid) for pid in pids),
-                               2, "baseline left a live descendant")
+            await _wait_for_bench_processes(pids)
         finally:
             # Keep the deliberately failing pre-fix regression from leaking its fake CLI.
             task.cancel()

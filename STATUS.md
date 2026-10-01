@@ -10,6 +10,15 @@
 - 미해결: 격리된 consult가 끝나면 `cso_session_id`가 그 session으로 바뀌는 기존 동작은 그대로다. cell 의사반복과 조건별 replicate 수는 구조화 field가 없어 rule로 만들지 않았다. `single_cell_de@1` 내용 hash가 바뀌어 이전에 고정한 PLAN은 다시 계획해야 한다(pilot, 기본 꺼짐). patch notes는 push 뒤 따로 쓴다. 후속 P2 3건(재개 중 CSO 비consult task의 busy 검사, facilities 재route, `normalized_counts`가 통과할 조합 없음)은 issue로 넘긴다.
 - 근거: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/research/packs.py`, `labhq/research/contract.py`, `labhq/research/packs/single_cell_de.yaml`, `tests/test_consult_restart.py`, `tests/test_research_protocol.py`.
 
+## 2026-10-01 · 후속 #104 #106 #107 #108
+
+- #104: bench CLI tree 종료 검사를 남은 PID 조건 대기(10초 상한)로 바꾸고 timeout에 PID를 표시한다.
+- #106: 같은 step은 running을 hibernating보다 우선하고 같은 상태면 최신 dispatch를 고른다. task board에 HPC 대기와 실행 중 task 취소를 복원한다.
+- #107: 403 reset header는 remaining=0일 때만 rate limit으로 보고 reset·Retry-After까지 기다린다. 그 밖의 403은 1회 뒤 failed다.
+- #108: 예전 `checks_passed`를 legacy 결과로 보존하고 구조화 채점 세 열은 N/A로 구분한다. report에 `bench rescore --all` 안내를 넣었다.
+- 테스트: 수정 전 회귀 5건 실패 확인. 전체 pytest 연속 3회 각 1131 passed/18 skipped, Node 8개, `bash scripts/check_public.sh`, diff 검사가 통과했다.
+- 한계: 실제 GitHub rate limit 응답은 호출하지 않았고 MockTransport로 header·대기·재시도를 검증했다. 기존 FastAPI deprecation warning 196건은 남아 있다.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
 
 - 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
