@@ -105,17 +105,22 @@ class ResearchReview(StrictModel):
 RESEARCH_REVIEW_SCHEMA: dict[str, Any] = ResearchReview.model_json_schema()
 
 
-def validate_research_review(value: Any, *, result: ResearchResult, author: str | None = None) -> ResearchReview:
+def validate_research_review(value: Any, *, result: ResearchResult, author: str) -> ResearchReview:
     """Parse a review and bind it to the result it reviews: same plan and step, every claim, known rows.
+
+    ``author`` is the agent that wrote the result (the task's agent id). It is required: ``ResearchResult``
+    does not record its author, and a review whose independence was never checked must not pass (#169, #188).
 
     A check may be ``not_applicable`` only where it cannot apply: the evidence checks when the claim links
     no countable evidence, comparability when the claim compares no quantities.
     """
+    if not isinstance(author, str) or not author.strip():
+        raise ValueError("review validation needs the result's author to check that the reviewer is another agent")
     review = ResearchReview.model_validate(value)
     errors: list[str] = []
     if (review.plan_sha256, review.step_id) != (result.plan_sha256, result.step_id):
         errors.append(f"review of {review.step_id} reviews a different result than {result.step_id}")
-    if author is not None and review.reviewer == author:
+    if review.reviewer.strip().casefold() == author.strip().casefold():
         errors.append(f"reviewer {review.reviewer} wrote the result; the review needs another agent")
     expected = {claim.key: claim for claim in result.claims}
     reviewed = {item.claim: item for item in review.claims}

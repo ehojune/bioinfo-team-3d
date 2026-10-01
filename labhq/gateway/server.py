@@ -26,6 +26,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator
+from ..research.packs import check_configured_packs
 from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
@@ -1060,6 +1061,7 @@ class Hub:
 
 
 def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    check_configured_packs(settings)  # before any state opens: a stale pack key stops the start (#170)
     hub = Hub(settings, github_transport)
     app = FastAPI(title="labhq gateway", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.hub = hub
