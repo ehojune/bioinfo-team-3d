@@ -259,3 +259,72 @@ def test_source_records_access_date_location_and_search_scope(row, match):
 def test_complete_external_source_is_accepted():
     parsed = rc.ResearchResult.model_validate(result(evidence=[{**evidence("e1"), "source": external(version="v1")}]))
     assert parsed.evidence[0].source.locator == "Fig. 2b" and parsed.evidence[0].source.external
+
+
+# --- R07: value, unit, conditions and denominator ----------------------------------------------
+
+def qty(qid="q1", **extra):
+    value = {"id": qid, "measure": "IL6 log2 fold change, case vs control", "value": 1.8, "unit": "log2 ratio",
+             "conditions": ["pseudobulk", "batch-adjusted"], "denominator": "6 case vs 6 control donors",
+             "method": "negative binomial GLM", "uncertainty": "95% CI 1.1-2.5"}
+    value.update(extra)
+    return value
+
+
+def with_quantities(*quantities, comparisons=(), status="supported"):
+    rows = [{**evidence(f"e{i + 1}"), "quantities": [q]} for i, q in enumerate(quantities)]
+    return result(claims=[claim(status=status, comparisons=list(comparisons))], evidence=rows,
+                  links=[link("c1", row["id"]) for row in rows])
+
+
+@pytest.mark.parametrize("field", ["value", "unit", "conditions", "denominator"])
+def test_quantity_requires_value_unit_conditions_and_denominator(field):
+    missing = qty()
+    del missing[field]
+    rejects(with_quantities(missing), f"quantity q1 needs {field}, or an unknown entry with its impact")
+    rejects(with_quantities(qty(**{field: [] if field == "conditions" else " "})), f"quantity q1 needs {field}")
+    # Saying it was not reported, and what that costs, is allowed; a blank impact is not.
+    parsed = rc.ResearchResult.model_validate(
+        with_quantities({**missing, "unknown": {field: "cannot judge effect size against the sample"}}))
+    assert field in parsed.evidence[0].quantities[0].unknown
+    rejects(with_quantities({**missing, "unknown": {field: " "}}), f"unknown {field} needs its impact")
+
+
+def test_quantity_unknown_entries_are_checked():
+    rejects(with_quantities(qty(unknown={"unit": "not reported"})), "gives unit and also marks it unknown")
+    rejects(with_quantities(qty(unknown={"p_value": "not reported"})), "unknown may only name")
+    rejects(with_quantities(qty(value=True)), "quantity value must be a number or the reported string")
+    assert rc.ResearchResult.model_validate(with_quantities(qty(value="<0.001")))
+
+
+def comparison(kind="comparable", **extra):
+    return {"quantity_ids": ["q1", "q2"], "comparability": kind, "reason": "same assay and cohort", **extra}
+
+
+def test_comparable_quantities_must_share_unit_and_conditions():
+    same = rc.ResearchResult.model_validate(with_quantities(qty(), qty("q2", value=0.4), comparisons=[comparison()]))
+    assert same.claims[0].comparisons[0].comparability == "comparable"
+    rejects(with_quantities(qty(), qty("q2", unit="log10 ratio"), comparisons=[comparison()]),
+            r"calls \['q1', 'q2'\] comparable with different unit; mark not_comparable")
+    rejects(with_quantities(qty(), qty("q2", conditions=["cell-level"]), comparisons=[comparison()]),
+            "comparable with different conditions")
+    unknown_unit = {k: v for k, v in qty("q2").items() if k != "unit"}
+    unknown_unit["unknown"] = {"unit": "supplement does not say"}
+    rejects(with_quantities(qty(), unknown_unit, comparisons=[comparison()]), "comparable with unknown unit")
+    # Different assays can still be set side by side when the claim says it cannot rank them,
+    # or states what has to hold for the ranking.
+    differ = (qty(), qty("q2", conditions=["cell-level"]))
+    assert rc.ResearchResult.model_validate(with_quantities(*differ, comparisons=[comparison("not_comparable")]))
+    rejects(with_quantities(*differ, comparisons=[comparison("comparable_with_assumptions")]), "must list the assumptions")
+    assert rc.ResearchResult.model_validate(with_quantities(*differ, comparisons=[
+        comparison("comparable_with_assumptions", assumptions=["cell-level and pseudobulk effects share a scale"])]))
+
+
+def test_comparison_references_quantities_the_claim_links():
+    rejects(with_quantities(qty(), comparisons=[comparison()]), r"compares unknown quantities \['q2'\]")
+    value = with_quantities(qty(), qty("q2"), comparisons=[comparison()])
+    value["links"] = [link("c1", "e1")]
+    rejects(value, r"compares \['q2'\] from evidence it does not link")
+    rejects(with_quantities(qty(), qty(), comparisons=[]), "duplicate quantity id q1")
+    rejects(with_quantities(qty(), qty("q2"), comparisons=[{**comparison(), "quantity_ids": ["q1", "q1"]}]),
+            "must be distinct")

@@ -1,4 +1,4 @@
-"""Typed claim, evidence and link rows for research results (#90 R04-R06, #58 claim ledger).
+"""Typed claim, evidence and link rows for research results (#90 R04-R07, #58 claim ledger).
 
 The schema keeps three things apart: what is asserted (claim), what was observed or looked up
 (evidence), and how one bears on the other (link). Code checks enums, revisions and references;
@@ -30,6 +30,10 @@ EvidenceStatus = Literal["observed", "unavailable", "not_found", "failed"]
 Relation = Literal["supports", "contradicts", "context"]
 Directness = Literal["direct", "indirect"]
 SourceLevel = Literal["primary", "secondary", "tertiary"]
+
+# R07: a recorded quantity states these, or names each one it cannot give with the impact of not knowing.
+QUANTITY_REQUIRED = ("value", "unit", "conditions", "denominator")
+QUANTITY_UNKNOWABLE = (*QUANTITY_REQUIRED, "method", "uncertainty")
 
 # Which countable link relation a claim status asserts.
 STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "contradicted": "contradicts"}
@@ -73,6 +77,61 @@ class SourceRef(StrictModel):
         return f"uri:{(self.uri or '').strip().casefold()}"
 
 
+class Quantity(StrictModel):
+    id: str = Field(pattern=ID_PATTERN)
+    measure: str = Field(min_length=1)  # what was measured on what subject
+    value: float | int | str | None = None  # a number or the reported form, e.g. "<0.001"
+    unit: str | None = None  # "dimensionless" for ratios; never implied
+    conditions: list[str] = []  # assay, population, timepoint, threshold...
+    denominator: str | None = None  # the base of the value: "6 vs 6 donors", "312 of 4,500 cells"
+    method: str | None = None
+    uncertainty: str | None = None  # CI, SE, range
+    unknown: dict[str, str] = {}  # field -> how not knowing it limits the conclusion
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def not_a_flag(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("quantity value must be a number or the reported string")
+        return value
+
+    @model_validator(mode="after")
+    def stated_or_declared_unknown(self) -> "Quantity":
+        invalid = sorted(set(self.unknown) - set(QUANTITY_UNKNOWABLE))
+        if invalid:
+            raise ValueError(f"quantity {self.id} unknown may only name {', '.join(QUANTITY_UNKNOWABLE)}")
+        for name, impact in self.unknown.items():
+            if not _present(impact):
+                raise ValueError(f"quantity {self.id} unknown {name} needs its impact on the conclusion")
+            if self.given(name):
+                raise ValueError(f"quantity {self.id} gives {name} and also marks it unknown")
+        missing = [name for name in QUANTITY_REQUIRED if not self.given(name) and name not in self.unknown]
+        if missing:
+            raise ValueError(f"quantity {self.id} needs {', '.join(missing)}, or an unknown entry with its impact")
+        return self
+
+    def given(self, name: str) -> bool:
+        value = getattr(self, name)
+        if isinstance(value, list):
+            return bool(value) and all(_present(item) for item in value)
+        return _present(value)
+
+
+class Comparison(StrictModel):
+    quantity_ids: list[str] = Field(min_length=2)
+    comparability: Literal["comparable", "comparable_with_assumptions", "not_comparable"]
+    assumptions: list[str] = []  # what must hold to pool or rank values measured differently
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def assumptions_stated(self) -> "Comparison":
+        if len(set(self.quantity_ids)) != len(self.quantity_ids):
+            raise ValueError("comparison quantity_ids must be distinct")
+        if self.comparability == "comparable_with_assumptions" and not any(_present(a) for a in self.assumptions):
+            raise ValueError("comparable_with_assumptions must list the assumptions")
+        return self
+
+
 class Claim(StrictModel):
     id: str = Field(pattern=ID_PATTERN)
     revision: int = Field(ge=1)
@@ -84,6 +143,7 @@ class Claim(StrictModel):
     status_reason: str = Field(min_length=1)  # why the evidence earns this status, not a probability
     limitations: list[str] = []
     supersedes: str | None = None  # "<claim id>@<earlier revision>"
+    comparisons: list[Comparison] = []
 
     @field_validator("statement")
     @classmethod
@@ -118,6 +178,7 @@ class Evidence(StrictModel):
     derived_from: list[str] = []  # evidence ids an inference/hypothesis row reasons from
     method: str | None = None
     conditions: list[str] = []
+    quantities: list[Quantity] = []
     # R05 assessment: fit to the question comes first, then these. Counts never add up to a grade.
     directness: Directness | None = None
     source_level: SourceLevel | None = None
@@ -235,6 +296,7 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
         else:
             asserted.setdefault(link.claim_id, set()).add(link.relation)
 
+    errors += _comparison_errors(claims, evidence, links)
     for link in links:
         if not link.rationale.strip():
             errors.append(f"link {link.claim_id}->{link.evidence_id} needs a rationale")
@@ -247,6 +309,39 @@ def ledger_errors(claims: list[Claim], evidence: list[Evidence], links: list[Evi
             errors.append(f"claim {claim.key} is {claim.status} but no observed countable evidence {needed} it")
         if claim.status == "supported" and "contradicts" in relations:
             errors.append(f"claim {claim.key} has contradicting evidence; use partially_supported or contradicted")
+    return errors
+
+
+def _comparison_errors(claims: list[Claim], evidence: list[Evidence], links: list[EvidenceLink]) -> list[str]:
+    errors: list[str] = []
+    owner: dict[str, str] = {}
+    quantity: dict[str, Quantity] = {}
+    for row in evidence:
+        for item in row.quantities:
+            if item.id in quantity:
+                errors.append(f"duplicate quantity id {item.id}")
+            owner[item.id], quantity[item.id] = row.id, item
+    linked = {(link.claim_id, link.evidence_id) for link in links}
+    for claim in claims:
+        for comparison in claim.comparisons:
+            unknown_ids = [qid for qid in comparison.quantity_ids if qid not in quantity]
+            if unknown_ids:
+                errors.append(f"claim {claim.key} compares unknown quantities {unknown_ids}")
+                continue
+            unlinked = [qid for qid in comparison.quantity_ids if (claim.id, owner[qid]) not in linked]
+            if unlinked:
+                errors.append(f"claim {claim.key} compares {unlinked} from evidence it does not link")
+            if comparison.comparability != "comparable":
+                continue
+            items = [quantity[qid] for qid in comparison.quantity_ids]
+            gaps = sorted({name for item in items for name in QUANTITY_REQUIRED if name in item.unknown})
+            units = {(item.unit or "").strip().casefold() for item in items}
+            conditions = {frozenset(c.strip().casefold() for c in item.conditions) for item in items}
+            differs = [name for name, values in (("unit", units), ("conditions", conditions)) if len(values) > 1]
+            if gaps or differs:
+                problem = (f"unknown {', '.join(gaps)}" if gaps else f"different {' and '.join(differs)}")
+                errors.append(f"claim {claim.key} calls {comparison.quantity_ids} comparable with {problem}; "
+                              "mark not_comparable or comparable_with_assumptions")
     return errors
 
 
