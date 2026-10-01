@@ -1362,6 +1362,7 @@ class ShadowService:
             snap["busy_skipped"] = self.busy_skipped
             with self.lock:
                 job = (self.gen, self.queue, snap)
+                self.yield_followup()  # semantics-hook: actions (a waiting follow-up never takes this slot)
                 try:
                     self.queue.put_nowait(job)
                     self.pending += 1
@@ -1416,6 +1417,21 @@ class ShadowService:
         except Exception as exc:  # noqa: BLE001 - the follow-up itself must never see this
             log.warning("semantics actions skipped a follow-up observation (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
+
+    def yield_followup(self) -> None:
+        """Event loop side, under self.lock, just before a request job is queued: a follow-up observation still
+        waiting in the queue of one steps back to the front of the backlog, so a request job finds the queue as
+        it would without actions and B1's busy count never sees a follow-up. With actions off it does nothing."""
+        if not self.cfg.actions or not self.queue.full():
+            return
+        try:
+            job = self.queue.get_nowait()
+        except queue.Empty:  # the worker took it first
+            return
+        if isinstance(job[2], Mapping) and job[2].get("job") == "followup":
+            self.action_backlog.appendleft((job[0], job[2]))  # still pending: work_backlog runs it next
+        else:
+            self.queue.put_nowait(job)  # a request job: only putters hold self.lock, so its slot is still free
 
     def work_backlog(self, jobs: queue.Queue) -> None:
         """Worker side, after each job: the follow-up observations that found the queue busy, oldest first, and

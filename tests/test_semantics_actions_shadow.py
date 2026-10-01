@@ -293,6 +293,28 @@ async def test_a_full_queue_keeps_followup_observations_behind_it_without_the_b1
     assert acts_report(lines)["followup"]["ended"]["done"] == 1  # one follow-up, however often it was seen
 
 
+async def test_a_waiting_followup_observation_never_takes_a_request_jobs_place(tmp_path, monkeypatch):
+    """A follow-up observation waiting in the queue of one while the worker is busy: the request that ends next is
+    still queued, not counted busy, and both lines are written."""
+    from labhq.research import semantics_shadow as shadow
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    monkeypatch.setattr(service, "ensure_thread", lambda: None)  # the worker is busy elsewhere: nothing takes a job
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done", "followups": [{"id": "fu_1", "status": "done"}]}
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.queue.full() and not service.action_backlog
+    _finish(hub, "req_c1")
+    assert service.busy == service.busy_skipped == 0 and service.counts["busy"] == 0
+    assert service.queue.queue[0][2]["rid"] == "req_c1" and len(service.action_backlog) == 1
+    _finish(hub, "req_c2")  # a request job is waiting: busy exactly as B1 without actions
+    assert service.busy == service.busy_skipped == 1 and len(service.action_backlog) == 1
+    shadow.ShadowService.ensure_thread(service)
+    assert service.drain(20)
+    lines = _lines(tmp_path)
+    assert [l["request_id"] for l in lines if l["type"] == "request"] == ["req_c1"]
+    assert [l["phase"] for l in lines if l["type"] == "followup"] == ["ended"]
+
+
 async def test_the_backlog_never_overtakes_a_queued_request_job(tmp_path):
     hub = _hub(tmp_path)
     service = hub.semantics_shadow
@@ -402,7 +424,7 @@ async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_p
     hub.save_request("req_inflight1")
     summary = removal.check(tmp_path / "lab" / "state", only="actions")
     assert summary["files"] == removal.ACTIONS_OWNED
-    assert summary["hook_lines"] == 8 + 22 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 22
+    assert summary["hook_lines"] == 8 + 23 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 23
     assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
                                 "actions_field": False}
     assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]
