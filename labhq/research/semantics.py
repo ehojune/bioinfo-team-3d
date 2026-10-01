@@ -671,7 +671,7 @@ def project(model: SemanticModel, records: Records) -> Projection:
         reported = []
         for out in (task.get("result") or {}).get("outputs") or []:
             art = artifact(row["request"], row["workspace"], normalize_artifact_path(out))
-            if art:
+            if art and art not in reported:   # one file under two spellings is one report
                 p.artifacts[art]["reported_by"].append(run)
                 reported.append(art)
         run_reported[run] = reported
@@ -716,6 +716,8 @@ def project(model: SemanticModel, records: Records) -> Projection:
         used: list[str] = []
         for ref in (step or {}).get("input_refs") or []:
             dst = resolve_input(ref, row["request"])
+            if dst is not None and dst in used:
+                continue
             if dst is None:
                 p.check_reason("unresolved_input_ref")
                 p.add_edge(run, "used", UNKNOWN, "declared", unknown={"dst": "unresolved_input_ref"})
@@ -732,7 +734,8 @@ def project(model: SemanticModel, records: Records) -> Projection:
             p.add_edge(run, "resumes", row["resumes"], "reported")
         elif row["resumes"] == UNKNOWN:
             p.add_edge(run, "resumes", UNKNOWN, "reported", unknown={"dst": row["unknown"]["resumes"]},
-                       candidates={"dst": row.get("candidates", {}).get("resumes", [])})
+                       candidates={"dst": row["candidates"]["resumes"]} if row.get("candidates", {}).get("resumes")
+                       else None)
         if row["wake_of"] not in (NONE, UNKNOWN):
             p.add_edge(run, "wake_of", row["wake_of"], "reported")
 

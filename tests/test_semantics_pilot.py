@@ -158,7 +158,6 @@ def edge_case_records():
     return type(records)(**{**records.__dict__, "tasks": tasks})
 
 
-@pytest.mark.xfail(strict=True, reason="B reports a spelling-duplicate output twice and an empty candidate list; fixed in the next commit")
 def test_models_agree_on_edge_cases_outside_the_17_queries():
     outs = {}
     for name in ("B", "A"):
