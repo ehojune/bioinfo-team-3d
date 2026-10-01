@@ -258,6 +258,15 @@ def test_baseline_reads_a_claim_revision_reported_twice():
     assert out["independent_groups"] == ["g_q1_de", "g_q2_de", "g_q2_de_retry"]
 
 
+def test_independent_groups_cover_every_result_that_reported_the_claim():
+    """#139: bears_on and independent_groups name the same reporting results; B used to judge the last one only."""
+    outs = {name: claim_reported_twice(name) for name in ("B", "A")}
+    supports = outs["B"]["bears_on"]["supports"]
+    assert sorted({ev.split("/")[1] for ev in supports}) == ["task_q2de", "task_q2de2"]
+    assert outs["B"]["independent_groups"] == ["g_q1_de", "g_q2_de", "g_q2_de_retry"]
+    assert pilot.canon(outs["B"]) == pilot.canon(outs["A"])
+
+
 # ---------------------------------------------------------------- shared reader
 
 def test_reader_refuses_a_missing_database_without_creating_it(tmp_path):

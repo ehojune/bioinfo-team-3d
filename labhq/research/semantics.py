@@ -505,8 +505,9 @@ def judge_verification(rule: VerificationRule, spec: Mapping[str, Any] | None) -
             "method_validation": Judged(rule.method_validation)}
 
 
-def judge_independence(claim_id: str, result: ResearchResult) -> list[str]:
-    return independent_groups(claim_id, result.evidence, result.links)
+def judge_independence(claim_id: str, results: Iterable[ResearchResult]) -> list[str]:
+    """The ledger's groups, judged per reporting result and joined: evidence ids are local to one result."""
+    return sorted({group for result in results for group in independent_groups(claim_id, result.evidence, result.links)})
 
 
 JUDGES: dict[str, Callable[..., Any]] = {
@@ -546,7 +547,7 @@ class Projection:
     out_edges: dict[str, list[dict]] = field(default_factory=dict)
     in_edges: dict[str, list[dict]] = field(default_factory=dict)
     run_cautions: dict[str, list[dict]] = field(default_factory=dict)
-    results: dict[str, ResearchResult] = field(default_factory=dict)  # claim id -> result that records it
+    results: dict[str, list[ResearchResult]] = field(default_factory=dict)  # claim id -> every result reporting it
 
     def add_edge(self, src: str, rel: str, dst: str, basis: str, **extra: Any) -> dict:
         spec = self.model.spec.relations.get(rel)
@@ -776,9 +777,9 @@ def project(model: SemanticModel, records: Records) -> Projection:
                 p.externals[target]["cited_by"].append(run)
         for claim in result.claims:
             cid = judge_identity("claim", row["request"], claim.id, str(claim.revision))
-            p.claims[cid] = {"id": cid, "request": row["request"], "recorded_by": run, "status": claim.status,
-                             "_claim_id": claim.id}
-            p.results[cid] = result
+            p.claims.setdefault(cid, {"id": cid, "request": row["request"], "recorded_by": run, "status": claim.status,
+                                      "_claim_id": claim.id})   # first reporter; every one is in p.results
+            p.results.setdefault(cid, []).append(result)
         for link in result.links:
             cid = judge_identity("claim", row["request"], link.claim_id, str(link.claim_revision))
             ev_id = judge_identity("evidence", row["workspace"], row["task_id"], link.evidence_id)
