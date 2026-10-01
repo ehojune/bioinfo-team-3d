@@ -448,8 +448,9 @@ class Runner:
             path = Path(directory)
             if not path.is_dir():
                 continue
-            links, incomplete = zone_links(path, zones, self.s.runner.reference_scan_max_entries,
-                                           self.s.runner.reference_scan_max_depth)
+            # In a thread: a large clone on a network file system must not stall the runner's connection.
+            links, incomplete = await asyncio.to_thread(zone_links, path, zones, self.s.runner.reference_scan_max_entries,
+                                                        self.s.runner.reference_scan_max_depth)
             denied += [str(link) for link in links]
             key = (str(path), tuple(map(str, links)), incomplete)
             if (links or incomplete) and key not in self.project_link_warned:
@@ -579,7 +580,7 @@ class Runner:
             for directory in task.meta.get("upstream_dirs", []):
                 upstream = Path(directory).resolve()
                 if upstream.is_dir() and upstream.is_relative_to(root):
-                    reason = self._upstream_refusal(upstream, zones)
+                    reason = await asyncio.to_thread(self._upstream_refusal, upstream, zones)
                     if reason:
                         await emit("agent.log", {"level": "warn", "text": f"이전 단계 폴더 제외: {upstream.name} ({reason})"})
                         continue
