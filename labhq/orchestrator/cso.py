@@ -661,6 +661,11 @@ class Orchestrator:
             session_id, workdir = self._last_agent_session(rid, agent)
         else:
             session_id, workdir = req.get("cso_session_id"), req.get("cso_workdir")
+        await self._emit(rid, "request.followup", {"id": fid, "text": entry["text"], "agent_id": agent,
+                                                   "status": "running"})
+        # A restart marks the running follow-up interrupted, but its runner may still answer it in this
+        # session and workdir (#144).
+        session_id, workdir = await self._free_session(agent, session_id, workdir, rid=rid, step="followup")
         resumable = bool(session_id and self.hub.supports_resume(agent))
         earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
         history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
@@ -676,8 +681,6 @@ class Orchestrator:
                           "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
                           "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
                           **({"workdir": workdir} if workdir else {})})
-        await self._emit(rid, "request.followup", {"id": fid, "text": entry["text"], "agent_id": agent,
-                                                   "status": "running"})
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
         try:
             result = await self.run_step(task)
