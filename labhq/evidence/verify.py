@@ -395,10 +395,10 @@ async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tu
     same = [r for r, kind in zip(named_records, kinds) if kind == "same"]
     if same:
         return Resolution(**base, status="found", record=same[0])
-    if "base_only" in kinds:
-        return _base_only("uri", uri, resolver.name, named_records, "the uri")
-    return Resolution(**base, status="conflicting", candidates=named_records,
-                      detail=f"the uri resolves to a different {scheme} than the cited {value}")
+    if "different" in kinds:
+        return Resolution(**base, status="conflicting", candidates=named_records,
+                          detail=f"the uri resolves to a different {scheme} than the cited {value}")
+    return _base_only("uri", uri, resolver.name, named_records, "the uri")
 
 
 async def _resolve(source: SourceRef, lookups: _Lookups, artifact_paths: Mapping[str, str],

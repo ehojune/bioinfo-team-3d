@@ -578,3 +578,15 @@ def test_a_shared_alias_links_pmcid_and_doi_rows_and_unchecked_rows_stay_unjudge
     assert len(asyncio.run(verify_sources(result, mapping)).recitations) == 1
     # Without an authority answer the verifier cannot know; it does not guess a correspondence.
     assert asyncio.run(verify_sources(result)).recitations == []
+
+
+def test_a_uri_resolved_to_the_base_and_another_accession_is_conflicting():
+    # A base-only match does not hide another gene the same uri names.
+    url = "https://example.org/tp53-record"
+    cited = "ENSG00000141510.17"
+    mapping = StaticResolver({("ensembl", cited): [{"id_scheme": "ensembl", "id_value": cited}],
+                              ("uri", url): [{"id_scheme": "ensembl", "id_value": "ENSG00000141510"},
+                                             {"id_scheme": "ensembl", "id_value": "ENSG00000139618"}]})
+    result = build([claim("c1")], [cited_with_uri("e1", "ensembl", cited, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert report.evidence[0].resolutions[1].status == "conflicting" and report.defective_evidence == ["e1"]
