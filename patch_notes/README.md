@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:45 | [`df9ed20`](https://github.com/ehojune/bioinfo-team-3d/pull/214/commits/df9ed20) | HPC 잡 취소 소유를 러너가 직접 제출해 받은 id로만 인정, 직원이 신고한 id·이벤트는 근거에서 뺌 |
 | 21:33 | [`84b9308`](https://github.com/ehojune/bioinfo-team-3d/pull/214/commits/84b9308) | **시험 잡을 시험마다 새 개인 폴더에 만듭니다** (Codex 독립 검증 P1). 고정 파일명에 symlink나 hard link가 남아 있으면 스크립트와 잡 로그가 그 대상, 곧 통제 구역 원본으로 쓰일 수 있었습니다. 이제 `mkdtemp`로 새 폴더를 만들고 통제 구역 검사를 한 번 더 거친 뒤 스크립트를 새 파일로만 만듭니다. hardlink 회귀 테스트는 수정 전 실패, 수정 뒤 통과했습니다 |
 | 21:17 | [`c83243a`](https://github.com/ehojune/bioinfo-team-3d/pull/198/commits/c83243a) | **이어 묻기 답이 작업 결과 이벤트로 한 번 더 실려 snapshot이 다시 커지던 길을 막았습니다** (#126 검증 후속). 러너가 보내는 task.result 본문에도 같은 답이 잘리지 않은 채 있어 실제로는 2,044,888 bytes였습니다. 이제 replay되는 본문은 작업판 카드와 같은 500자로 자르고, 같은 경우 208,507 bytes입니다 |
 | 21:14 | [`11c214b`](https://github.com/ehojune/bioinfo-team-3d/pull/214/commits/11c214b) | **HPC 첫 설정의 빈틈을 메웠습니다** (Codex 로컬 리뷰). `mem_free`처럼 호스트 조건인 값은 코어 수로 나누지 않습니다. 시험 스크립트를 쓰지 못하거나 `qsub`이 실패하면 제출하지 않았다고 알리고, 제출 뒤 상태 명령이 시간 초과되면 job id와 함께 `status_failed`로 끝냅니다. 어느 경우에도 다시 제출하지 않습니다 |
