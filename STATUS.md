@@ -2,13 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
-## 2026-10-01 · PR #176 봇 리뷰 P1 2건 — 짧은 home 참고와 긴 구분자 run
+## 2026-10-01 · PR #176 봇 리뷰 P1 3건 — 짧은 home 참고와 공용 경로 scanner
 
-- 결론: P1 2건을 닫았다. `~`·`~/x` 같은 짧은 참고도 literal과 어느 러너 계정의 home 표현에서든 공개 전에 가린다. 통제 구역 fallback은 separator run 첫머리에서만 match를 시작해 입력 길이에 비례해 돈다.
-- 바뀐 것: path mask의 길이 필터를 없애고 `~` 단독도 `_ANY_HOME`으로 처리했다. POSIX·UNC 통제 구역의 literal fallback에는 separator run 시작 guard를 붙였다. 패치노트는 건드리지 않았다.
-- 실행한 것: 수정 전 짧은 tilde 회귀 2건은 가림 0회로 실패했고, POSIX 통제 구역을 포함한 60 KB 회귀는 18.0초로 5초 기준을 넘었다. 수정 뒤 관련 33개 test, 전체 pytest 1557 passed/21 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
+- 결론: P1 3건을 닫았다. 짧은 home 참고를 모든 러너 표현에서 가리고, 경로·통제 구역 탐색은 공용 scanner로 입력 길이에 비례해 돈다.
+- 바뀐 것: path mask의 길이 필터를 없앴다. `mentions_zone`·`touches`·`touches_resolved`·`sanitize`는 separator run 첫머리만 검사하는 scanner를 함께 쓴다. 패치노트는 건드리지 않았다.
+- 실행한 것: 2회차 회귀 4개는 수정 전 각각 약 3초로 2초 상한을 넘었고 수정 뒤 합계 0.84초였다. 전체 pytest 1881 passed/22 skipped, Node 11개, `scripts/check_public.sh`가 통과했다.
 - 미해결: 없음.
-- 근거: `labhq/intake.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`.
+- 근거: `labhq/intake.py`, `labhq/policy.py`, `labhq/integrations/github.py`, `tests/test_intake_references.py`, `tests/test_policy.py`, `tests/test_github_reporter.py`.
 
 ## 2026-10-01 · #36 PR A 후속 8건 — 참고 자료 정보 경계와 폴더 링크 검사를 판정 하나로
 

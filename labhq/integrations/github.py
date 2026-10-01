@@ -24,7 +24,7 @@ from urllib.parse import unquote
 import httpx
 
 from ..intake import mask_references, public_url, published_reference_masks, url_pattern
-from ..policy import mentions_zone, restricted_paths
+from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -106,29 +106,70 @@ def strip_reference_url_queries(text: str, requests: Any) -> str:
     return text
 
 
-NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
-
-
-def _outside_network_url(m: re.Match) -> str:
-    """Redact a zone match unless it is the path part of a network URL (https://host/data/…)."""
-    line_start = max(m.string.rfind(c, 0, m.start()) for c in " \t\r\n") + 1
-    url = NETWORK_URL_PREFIX.search(m.string[line_start:m.start()])
-    return m.group(0) if url and url.group(1).casefold() != "file" else "<restricted-zone>"
-
-
 def root_zone_restricted(policy: PolicySettings) -> bool:
     """`/` or a drive root (`E:/`) is a restricted zone: nothing about the lab can be published safely."""
     return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
 
 
-def _literal_zone_pattern(zone: str) -> str:
-    """Match a normalized zone with either separator without rescanning inside one separator run."""
-    separator = r"[/\\]+"
-    parts = [re.escape(part) for part in zone.split("/") if part]
-    body = separator.join(parts)
-    # A POSIX or UNC path starts only at the beginning of its separator run. Without this guard, a failed
-    # `////.../restricted` match retries the greedy separator at every slash and takes quadratic time.
-    return (r"(?<![/\\])" + separator if zone.startswith("/") else "") + body
+def _path_starts(scan: _PathTextScan) -> Iterable[int]:
+    """Merge the scanner's two ordered start lists without sorting by input size."""
+    separators, drives = scan.separator_starts, scan.drive_starts
+    i = j = 0
+    while i < len(separators) or j < len(drives):
+        if j >= len(drives) or (i < len(separators) and separators[i] <= drives[j]):
+            yield separators[i]
+            i += 1
+        else:
+            yield drives[j]
+            j += 1
+
+
+def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
+    """Match one normalized zone at a scanner-provided path start."""
+    pos = start
+    parts = tuple(part for part in zone.split("/") if part)
+    if zone.startswith("/"):
+        if pos >= len(text) or text[pos] not in "/\\":
+            return None
+        while pos < len(text) and text[pos] in "/\\":
+            pos += 1
+    for index, part in enumerate(parts):
+        end = pos + len(part)
+        if text[pos:end].casefold() != part.casefold():
+            return None
+        pos = end
+        if index + 1 < len(parts):
+            if pos >= len(text) or text[pos] not in "/\\":
+                return None
+            while pos < len(text) and text[pos] in "/\\":
+                pos += 1
+    if pos < len(text) and (text[pos].isalnum() or text[pos] in "_.-"):
+        return None
+    return pos
+
+
+def _literal_zone_start(text: str, zones: Iterable[str], scan: _PathTextScan) -> int | None:
+    """Find the first literal zone, trying only the head of each separator run."""
+    zones = tuple(zones)
+    ranges = scan.network_ranges
+    network = 0
+    for start in _path_starts(scan):
+        while network < len(ranges) and ranges[network][1] <= start:
+            network += 1
+        if network < len(ranges) and ranges[network][0] <= start < ranges[network][1]:
+            continue
+        for zone in zones:
+            if _literal_zone_end(text, start, zone) is not None:
+                return start
+    return None
+
+
+def _sanitize_path_line(line: str, zones: Iterable[str]) -> str:
+    scan = _scan_path_text(line)
+    if _scan_mentions_zone(line, zones, scan):
+        return "<restricted-zone>"
+    start = _literal_zone_start(line, zones, scan)
+    return line if start is None else line[:start] + "<restricted-zone>"
 
 
 def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = (),
@@ -140,19 +181,14 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         # A filesystem root (`/`, `E:/`) is restricted: every path on that root is controlled, and no text
         # boundary reliably separates one from prose or URLs. Publish nothing (fail closed).
         return "<restricted-zone>" if out else ""
-    # 1) A line the access policy would treat as touching a zone is withheld whole. This reuses the policy's
+    # A line the access policy would treat as touching a zone is withheld whole. The same scanner also catches
+    # literal paths glued to prose, starting only once at the head of each separator run.
+    # This reuses the policy's
     #    candidate extraction and lexical normalization (`/data/tmp/../cohort`, `file:///data/./cohort`,
     #    quoted or spaced names), and like the policy it ignores network URLs.
     if normalized:
-        out = "\n".join("<restricted-zone>" if mentions_zone(line, normalized) else line for line in out.split("\n"))
-    # 2) Literal zone text glued to other words (e.g. Korean "경로/data/…") is not a path candidate for the
-    #    policy, so it is matched here. Names below a zone may contain spaces or quotes, so where the path ends
-    #    is unknowable: fail closed to the end of the line.
-    tail = r"[^\r\n]*"
-    for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
-        pattern = _literal_zone_pattern(zone)
-        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
-        out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
+        zones = sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True)
+        out = "\n".join(_sanitize_path_line(line, zones) for line in out.split("\n"))
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     out = redact_url_credentials(out)

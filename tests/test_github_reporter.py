@@ -124,6 +124,14 @@ def test_publish_guard_and_codex_mention():
     assert codex_comment("@codex 이 부분 다시 봐줘") == "@codex 이 부분 다시 봐줘"
 
 
+def test_sanitize_stays_linear_on_long_separator_runs():
+    policy = PolicySettings(data_zones=[DataZone(path="/restricted", level="restricted")])
+    text = "/" * 65_536 + "\\" * 65_536 + ":" * 600_000
+    started = time.perf_counter()
+    assert sanitize(text, policy, limit=None) == text
+    assert time.perf_counter() - started < 2, "publish path scanning must stay linear in the text length"
+
+
 def test_restricted_zones_match_separators_case_and_directory_boundary():
     policy = PolicySettings(data_zones=[
         DataZone(path="/data/cohort", level="restricted"),
