@@ -178,6 +178,26 @@ async def test_cso_on_carries_normalized_declarations_to_dispatch():
 
 
 @pytest.mark.asyncio
+async def test_cso_vocab_loader_exception_falls_back_to_the_off_contract(monkeypatch):
+    def broken_load(*_args, **_kwargs):
+        raise RuntimeError("unexpected loader failure")
+
+    monkeypatch.setattr(vocab, "load", broken_load)
+    vocab.reset_cache()
+    try:
+        hub = penguins_hub([declared_penguins()])
+        hub.s.plan.declare_output_types = True
+        await Orchestrator(hub).run_request("r")
+        req = hub.requests["r"]
+        plan_task = next(t for t in hub.calls if t.meta["kind"] == "plan")
+        assert req["status"] == "done"
+        assert sha(plan_task.output_schema) == PLAN_SCHEMA_SHA and "output_types" not in plan_task.prompt
+        assert all(not (TYPE_META & set(t.meta)) for t in hub.calls)
+    finally:
+        vocab.reset_cache()
+
+
+@pytest.mark.asyncio
 async def test_off_after_planning_keeps_stored_declarations_and_stops_using_them():
     hub = penguins_hub([declared_penguins()])
     hub.s.plan.declare_output_types = True
@@ -233,6 +253,29 @@ async def test_runner_attaches_records_only_to_collected_outputs(tmp_path):
     assert plain.output_types == {} and "output_types" not in plain.model_dump(mode="json")
 
 
+@pytest.mark.asyncio
+async def test_runner_record_exception_keeps_the_successful_task_result(tmp_path, monkeypatch):
+    from labhq.models import AgentSpec, Engine
+
+    settings = Settings()
+    settings.gateway.state_dir = settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    settings.hpc.scheduler = "none"
+    runner = Runner(settings)
+    runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.mock)
+
+    def broken_records(*_args, **_kwargs):
+        raise RuntimeError("record failure")
+
+    monkeypatch.setattr(declare, "runner_records", broken_records)
+    result = await runner.run_task(Task(
+        agent_id="worker", request_id="r", prompt="Your step: make [artifact]",
+        meta={"kind": "step", "outputs": ["artifact.txt"], "output_types_vocab": V.sha256}))
+    assert result.ok and result.outputs == ["outputs/artifact.txt"] and result.output_types == {}
+
+
 def test_task_result_drops_a_malformed_value_and_keeps_the_result():
     for bad in ([1, 2], "x", {f"o{i}": {} for i in range(declare.MAX_RECORDS + 1)}):
         parsed = TaskResult.model_validate({"task_id": "t", "agent_id": "a", "ok": True, "output_types": bad})
@@ -278,9 +321,19 @@ def test_reader_marks_conflicts_and_malformed_records_unknown():
     assert read({}, {"output_types": {"outputs/a.tsv": "table"}})["outputs/a.tsv"]["format"].reason == "invalid_declaration"
 
 
-def test_reader_keeps_legacy_strings_for_the_model_to_judge():
-    field = read({"output_types": {"outputs/a.tsv": "raw_counts"}})["outputs/a.tsv"]["data_type"]
-    assert field.legacy and field.value == "raw_counts"
+def test_reader_judges_legacy_strings_once_against_the_local_vocabulary():
+    fields = read({"output_types": {"outputs/a.tsv": "raw_counts", "outputs/b.tsv": "nonsense"}})
+    assert fields["outputs/a.tsv"]["data_type"].legacy
+    assert fields["outputs/a.tsv"]["data_type"].value == "raw_counts"
+    assert fields["outputs/b.tsv"]["data_type"].reason == "not_declared"
+
+
+def test_inferred_runner_record_cannot_override_a_plan_declaration():
+    meta = {"output_types_vocab": V.sha256, "output_types": {"outputs/a.csv": {"format": "tsv"}}}
+    inferred = declare.runner_records(
+        ["outputs/a.csv"], {"output_types_vocab": V.sha256, "output_types": {}}, V)
+    field = read(meta, {"output_types": inferred})["outputs/a.csv"]["format"]
+    assert field.basis == "unknown" and field.reason == "declaration_conflict"
 
 
 def test_staff_declarations_count_only_under_the_dispatch_version_and_conflicts_are_unknown():
@@ -290,6 +343,7 @@ def test_staff_declarations_count_only_under_the_dispatch_version_and_conflicts_
     assert fields["outputs/a.tsv"]["data_type"].reason == "declaration_conflict"
     assert (fields["outputs/b.tsv"]["data_type"].value, fields["outputs/b.tsv"]["data_type"].source) == ("table", "staff")
     assert read({}, staff=staff)["outputs/b.tsv"]["data_type"].reason == "vocab_changed"
+    assert read({"output_types_vocab": V.sha256}, staff=staff, v=None)["outputs/b.tsv"]["data_type"].reason == "no_vocab"
 
 
 # ---------------------------------------------------------------- review follow-ups (one cap, staff duplicates)
