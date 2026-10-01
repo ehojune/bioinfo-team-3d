@@ -165,6 +165,32 @@ async def test_tilde_reference_opens_in_the_runner_accounts_home(tmp_path, monke
     assert not [t for t in _log_texts(runner) if t.startswith("참고 경로 제외")]
 
 
+def test_reference_masks_never_hide_a_zone_from_the_publish_guard(tmp_path):
+    # A reference that is part of a zone path (`/refs` in `/srv/refs/vault`) was masked before the zone
+    # check ran, so the line no longer named the zone and the donor file name was posted.
+    from labhq.integrations.github import publish_clean
+
+    s = settings_with_roots(tmp_path)
+    s.policy.data_zones = [DataZone(path="/srv/refs/vault")]
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "/refs", "source": "request"}]}
+    for clean in (hub.reporter._clean, lambda text: publish_clean(text, s, hub.requests.values())):
+        cleaned = clean("Read /srv/refs/vault/donor123.tsv\nthen /refs/notes.md")
+        assert "donor123" not in cleaned and "<restricted-zone>" in cleaned, cleaned
+        assert "then <reference-path>/notes.md" in cleaned
+
+
+def test_ipv6_url_references_lose_their_query_and_are_masked(tmp_path):
+    # `urlsplit().hostname` drops the brackets of an IPv6 host, so the pattern matched no written URL.
+    s = settings_with_roots(tmp_path)
+    s.pi_profile.references = [ref("url", "https://[2001:db8::2]/wiki")]
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "url", "value": "https://[2001:db8::1]/notes?dl=x", "source": "request"}]}
+    cleaned = hub.reporter._clean("a https://[2001:db8::1]/notes?dl=opaquePRIVATE b https://[2001:db8::2]/wiki/page c")
+    assert "opaquePRIVATE" not in cleaned and "https://[2001:db8::1]/notes b" in cleaned
+    assert "2001:db8::2" not in cleaned and "<private-reference> c" in cleaned
+
+
 def test_project_reports_mask_a_tilde_reference_wherever_the_runner_expanded_it(tmp_path):
     s = settings_with_roots(tmp_path)
     hub = create_app(s).state.hub

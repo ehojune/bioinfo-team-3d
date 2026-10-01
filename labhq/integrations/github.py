@@ -121,7 +121,8 @@ def root_zone_restricted(policy: PolicySettings) -> bool:
     return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
 
 
-def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
+def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = (),
+             limit: int | None = MAX_BODY) -> str:
     out = text or ""
     # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
     normalized = restricted_paths(policy)
@@ -148,18 +149,20 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
-    return clip(out, MAX_BODY)
+    return clip(out, limit) if limit else out
 
 
 def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> str:
     """The one cleaner for every text labhq posts: project reports and round records (#130).
 
-    Reference values are masked before `sanitize` clips the body, so a cut never leaves half a private path.
+    Zones and secrets go first: a reference that is part of a zone path (`/refs` in `/srv/refs/vault`) would
+    otherwise be masked out of the line the zone check reads. The body is clipped last, so a cut never leaves
+    half a private path.
     """
     requests = list(requests)
     out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
-    out = mask_references(out, published_reference_masks(settings, requests))
-    return sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token])
+    out = sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token], limit=None)
+    return clip(mask_references(out, published_reference_masks(settings, requests)), MAX_BODY)
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:

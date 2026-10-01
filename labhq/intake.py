@@ -637,9 +637,10 @@ def url_pattern(url: str, *, trailing_slash: bool = True) -> str:
     port_re = (rf":{port}" if port and port != {"http": 80, "https": 443}.get(parts.scheme.lower())
                else r"(?::(?:80|443))?")
     path = "".join(_SLASH + _text(segment) for segment in parts.path.rstrip("/").split("/")[1:])
+    host_re = rf"\[{_text(host)}\]" if ":" in host else _text(host)  # `hostname` drops an IPv6 host's brackets
     # Scheme and userinfo are bounded (see SEPARATOR); a longer userinfo is left to the credential guard.
     return (rf"(?<![\w.-])(?:[A-Za-z][A-Za-z0-9+.-]{{0,31}}:{_SLASH}{_SLASH})?(?:[^\s/\\@\"'<>]{{1,256}}@)?"
-            rf"(?:www\.)?{_text(host)}{port_re}{path}" + (rf"(?:{_SLASH})?" if trailing_slash else ""))
+            rf"(?:www\.)?{host_re}{port_re}{path}" +(rf"(?:{_SLASH})?" if trailing_slash else ""))
 
 
 def link_patterns(kind: str, value: str) -> list[str]:
