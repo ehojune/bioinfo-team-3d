@@ -583,6 +583,22 @@ def test_publish_guard_redacts_query_credentials_but_keeps_plain_parameters():
     assert "https://lab.s3.amazonaws.com/a.bam?" in out
 
 
+def test_publish_guard_reads_encoded_parameter_names_and_url_userinfo():
+    from labhq.integrations.github import sanitize
+
+    # A URL pasted into the request body never went through intake, so the guard is the last check.
+    text = ("a https://h.example/x?X%2DAmz%2DSignature=encSIG1&%74oken=encTOK2 "
+            "b https://h.example/x?v=1;token=semiTOK3&x=1 "
+            "c https://alice:pa55WORD4@h.example/x d https://ghTOKEN5@github.com/o/r.git "
+            "e postgres://u:dbPASS6@db.example/lab f ssh://git@github.com/o/r.git")
+    out = sanitize(text, Settings().policy)
+    for secret in ("encSIG1", "encTOK2", "semiTOK3", "pa55WORD4", "alice", "ghTOKEN5", "dbPASS6"):
+        assert secret not in out, secret
+    assert "?X%2DAmz%2DSignature=<redacted-secret>&%74oken=<redacted-secret>" in out
+    assert "?v=1;token=<redacted-secret>&x=1" in out and "https://<redacted-secret>@h.example/x" in out
+    assert "ssh://git@github.com/o/r.git" in out, "an account name alone is not a credential"
+
+
 def test_project_reports_drop_the_query_of_legacy_url_references(tmp_path):
     s = settings_with_roots(tmp_path)
     hub = create_app(s).state.hub

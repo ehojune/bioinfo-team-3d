@@ -19,6 +19,7 @@ import os
 import re
 import time
 from typing import TYPE_CHECKING, Any, Callable
+from urllib.parse import unquote
 
 import httpx
 
@@ -39,10 +40,41 @@ SECRET_PATTERNS = [
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
 ]
 # A credential carried as a URL query or fragment parameter (signed S3/GCS/Azure/CloudFront URLs, API keys,
-# OAuth tokens): the parameter name stays, its value is dropped.
-QUERY_SECRET = re.compile(
-    r"([?&;#](?:[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
-    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy)=)[^&#\s\"'<>)\]]+", re.IGNORECASE)
+# OAuth tokens): the parameter name stays, its value is dropped. Names are compared percent-decoded
+# (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
+QUERY_SECRET_NAME = re.compile(
+    r"[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
+    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy", re.IGNORECASE)
+QUERY_PARAM = re.compile(r"[?&;#]([^=&#;?\s\"'<>)\]]+)=")
+QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
+# `scheme://user:password@host` or `https://TOKEN@host`: the whole userinfo is a credential. `ssh://git@host`
+# names only an account and stays.
+URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*://)([^/?#\s@\"'<>]+)@")
+USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
+
+
+def _decoded(name: str) -> str:
+    for _ in range(3):  # `%252D` is `-` encoded twice
+        decoded = unquote(name)
+        if decoded == name:
+            break
+        name = decoded
+    return name
+
+
+def redact_url_credentials(text: str) -> str:
+    """Drop URL userinfo and the values of credential-named query or fragment parameters."""
+    text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
+        m.group(1)[:-3].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    out, last = [], 0
+    for m in QUERY_PARAM.finditer(text):
+        if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
+            continue
+        value = QUERY_VALUE.match(text, m.end())
+        if value:
+            out += [text[last:m.end()], "<redacted-secret>"]
+            last = value.end()
+    return "".join(out) + text[last:]
 
 
 def strip_reference_url_queries(text: str, requests: Any) -> str:
@@ -92,7 +124,7 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
-    out = QUERY_SECRET.sub(lambda m: m.group(1) + "<redacted-secret>", out)
+    out = redact_url_credentials(out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
