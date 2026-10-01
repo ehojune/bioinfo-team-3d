@@ -91,10 +91,18 @@ rules:
     description: A fully confounded design is limited to descriptive reporting.
 ```
 
-predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
+predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. `when`에 predicate 목록을 주면 모두 맞을 때만 rule이 걸린다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
 
 active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다.
 
-예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor·condition·batch, count scale, replicate, model, 식별 가능성, 결론 모드를 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
+예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor·condition·batch, count scale, replicate, model과 likelihood family, 식별 가능성, 결론 모드를 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
+
+| `model` | `model_family` | 허용 `count_scale` |
+|---|---|---|
+| `pseudobulk` | 전부 | `raw_counts` |
+| `donor_dependent` | `negative_binomial`, `poisson` | `raw_counts` |
+| `donor_dependent` | `linear` | `log_transformed` |
+
+`conclusion_mode: condition_effect`는 적용된 통계 계획을 요구한다. `descriptive_only`는 batch 혼동이 없어도 설명·비교 study type, 주가설, 추론 통계, estimand를 금지한다. `model_rationale` 같은 설명 문장은 판정에 쓰지 않는다.
 
 이 규약은 라이선스가 확인되지 않은 inco 저장소에서 문구·표·template을 가져오지 않았다. 여러 연구 workflow의 구조만 비교 대상으로 참고했고, labhq 계약과 표현은 새로 작성했다.

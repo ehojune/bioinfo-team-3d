@@ -308,7 +308,9 @@ class Hub:
                     int(entry.get("revision") or 0) == int(task.meta.get("revision") or 0) and
                     int(entry.get("parse_attempt", prior_meta.get("parse_attempt")) or 0) ==
                     int(task.meta.get("parse_attempt") or 0) and
-                    entry.get("parent_task") == task.meta.get("parent_task"))
+                    entry.get("parent_task") == task.meta.get("parent_task") and
+                    # A consult belongs to one ask; another ask's consult is not its prior attempt.
+                    prior_meta.get("ask_id") == task.meta.get("ask_id"))
 
     @staticmethod
     def _same_runner_generation(entry: dict, runner_id: str | None, incarnation: str | None) -> bool:
@@ -426,7 +428,8 @@ class Hub:
         result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
                             error="runner generation changed; prior task delivery or outcome unknown; "
                                   "manual recovery required")
-        self.store.put("task", tid, {**entry, "completed": True, "result": result.model_dump(mode="json")})
+        self.store.put("task", tid, {**entry, "completed": True, "abandoned": True,
+                                     "result": result.model_dump(mode="json")})
         future = self.futures.get(tid)
         if future and not future.done():
             future.set_result(result)
@@ -662,41 +665,7 @@ class Hub:
                                                     self.runner_incarnations.get(current_runner)):
                     self.recovered_tasks.add(tid)
                     return self._abandon_previous_generation(tid, entry)
-                future = asyncio.get_running_loop().create_future()
-                self.futures[tid] = future
-                await self.publish({"type": "request.step_wait", "ts": time.time(),
-                                    "request_id": task.request_id,
-                                    "data": {"step_id": sid, "reason": "recovering prior task result"}})
-                try:
-                    if not entry.get("accepted") and entry.get("payload"):
-                        runner_id = self.agent_runner.get(task.agent_id)
-                        if runner_id:
-                            try:
-                                await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
-                            except RunnerUnavailable:
-                                pass  # delivery is uncertain; never retry this work under a new task ID
-                    # resume_wait_s bounds connection/acceptance, not a running task. The
-                    # runner's own task_timeout governs work after task.accepted.
-                    deadline = None
-                    while not future.done():
-                        accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
-                        online = self.agent_runner.get(task.agent_id) in self.runners
-                        if accepted and online:
-                            deadline = None
-                        elif deadline is None:
-                            deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
-                        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
-                            return TaskResult(task_id=tid, agent_id=task.agent_id, ok=False,
-                                              error="recovery runner unavailable; manual restart required")
-                        try:
-                            await asyncio.wait_for(asyncio.shield(future), 0.1)
-                        except asyncio.TimeoutError:
-                            pass
-                    result = future.result()
-                    self.recovered_tasks.add(tid)
-                    return result
-                finally:
-                    self.futures.pop(tid, None)
+                return await self._await_prior_task(tid, entry, task.agent_id, task.request_id, sid)
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
@@ -752,6 +721,90 @@ class Hub:
             self.store.delete("task", task.id)
             raise
         return await fut
+
+    async def _await_prior_task(self, tid: str, entry: dict, agent_id: str, request_id: str | None,
+                                sid: str | None, reason: str = "recovering prior task result") -> TaskResult:
+        """Wait for a task that a previous gateway dispatched to the current runner generation."""
+        future = asyncio.get_running_loop().create_future()
+        self.futures[tid] = future
+        await self.publish({"type": "request.step_wait", "ts": time.time(), "request_id": request_id,
+                            "data": {"step_id": sid, "reason": reason}})
+        try:
+            if not entry.get("accepted") and entry.get("payload"):
+                runner_id = self.agent_runner.get(agent_id)
+                if runner_id:
+                    try:
+                        await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
+                    except RunnerUnavailable:
+                        pass  # delivery is uncertain; never retry this work under a new task ID
+            # resume_wait_s bounds connection/acceptance, not a running task. The
+            # runner's own task_timeout governs work after task.accepted.
+            deadline = None
+            while not future.done():
+                accepted = bool((self.store.get("task", tid) or {}).get("accepted"))
+                online = self.agent_runner.get(agent_id) in self.runners
+                if accepted and online:
+                    deadline = None
+                elif deadline is None:
+                    deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
+                if deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                    return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                                      error="recovery runner unavailable; manual restart required")
+                try:
+                    await asyncio.wait_for(asyncio.shield(future), 0.1)
+                except asyncio.TimeoutError:
+                    pass
+            result = future.result()
+            self.recovered_tasks.add(tid)
+            return result
+        finally:
+            self.futures.pop(tid, None)
+
+    def consult_attempts(self, ask_id: str, agent_id: str) -> list[tuple[str, dict]]:
+        """Consults one agent ran for one ask, from any gateway generation.
+
+        Another agent's consult is never adopted: its session and workdir would replace the
+        routed agent's (a facilities ask falls back to the CSO while the roster is empty).
+        """
+        return [(tid, entry) for tid, entry in self.store.all("task").items()
+                if entry.get("kind") == "consult" and
+                (entry.get("payload") or {}).get("agent_id") == agent_id and
+                ((entry.get("payload") or {}).get("meta") or {}).get("ask_id") == ask_id]
+
+    async def adopt_consult(self, ask_id: str, agent_id: str) -> tuple[int, TaskResult | None]:
+        """Adopt the consult a previous gateway started for this ask (#93).
+
+        Returns ``(attempt, result)`` for the latest prior consult, or ``(0, None)`` without one.
+        ``result`` is ``None`` when its outcome is unknown (another runner generation, or
+        abandoned). The caller then runs a new consult in a separate session and workdir,
+        because the old one may still hold them.
+        """
+        prior = self.consult_attempts(ask_id, agent_id)
+        if not prior:
+            return 0, None
+        for tid, _ in prior:
+            self.recovered_tasks.add(tid)  # handled here; dispatch recovery must not re-adopt it
+        # Latest dispatch first: an isolated rerun restarts its attempt numbering.
+        tid, entry = max(prior, key=lambda pair: (pair[1].get("dispatched_at", 0),
+                                                  int(pair[1].get("attempt") or 1)))
+        attempt = int(entry.get("attempt") or 1)
+        if not entry.get("completed") and self.agent_runner.get(agent_id) not in self.runners:
+            # Resume approval can precede the runner's reconnect; its generation decides adoption.
+            await self.wait_agent_online(agent_id, self.s.gateway.resume_wait_s)
+            entry = self.store.get("task", tid) or entry
+        if not entry.get("completed"):
+            runner = self.agent_runner.get(agent_id)
+            if not self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)):
+                return attempt, None
+            await self._await_prior_task(tid, entry, agent_id, entry.get("request_id"), "consult",
+                                         reason="adopting consult started before gateway restart")
+            entry = self.store.get("task", tid) or entry
+        if not entry.get("completed") or entry.get("abandoned") or not entry.get("result"):
+            return attempt, None
+        # The task.result handler already added its cost to the durable request total; the
+        # orchestrator adds it by task ID, which this ledger entry owns.
+        return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0,
+                                                                                      "task_id": tid})
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:

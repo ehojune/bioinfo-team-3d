@@ -26,6 +26,7 @@ def valid_pack_values():
                 "independent_replicates": 4,
                 "replicate_definition": "one biological donor",
                 "model": "pseudobulk",
+                "model_family": "negative_binomial",
                 "model_rationale": "The count model consumes raw counts and preserves donor independence.",
                 "batch_design": "identifiable",
                 "conclusion_mode": "condition_effect",
@@ -41,6 +42,14 @@ def valid_pack_values():
                 "single_cell_de.confounded_hypothesis": "Not active because the design is identifiable.",
                 "single_cell_de.confounded_statistics": "Not active because the design is identifiable.",
                 "single_cell_de.confounded_estimand": "Not active because the design is identifiable.",
+                "single_cell_de.pseudobulk_raw_counts": "Pseudobulk sums raw counts.",
+                "single_cell_de.count_likelihood_raw_counts": "The negative binomial model uses raw counts.",
+                "single_cell_de.donor_linear_log_scale": "Not active because the model is pseudobulk.",
+                "single_cell_de.condition_effect_statistics": "Statistics are fixed before CP1.",
+                "single_cell_de.descriptive_study_type": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_hypothesis": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_statistics": "Not active because a condition effect is estimated.",
+                "single_cell_de.descriptive_estimand": "Not active because a condition effect is estimated.",
             },
         }
     }
@@ -428,3 +437,130 @@ def test_applied_statistics_must_fix_each_decision_before_approval(field, empty)
 def test_statistics_waiver_cannot_skip_core_fields():
     with pytest.raises(ValidationError):
         _stats(estimand=None, not_applicable={"estimand": "exploratory"})
+
+
+def _single_cell_plan(**fields):
+    settings = Settings()
+    settings.research.active_packs = ["single_cell_de@1"]
+    selected = configured_packs(settings)
+    refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for loaded in selected.values()]
+    plan = valid_plan(refs, pack_values=valid_pack_values())
+    plan["pack_values"]["single_cell_de@1"]["fields"].update(fields)
+    return plan, selected
+
+
+def _validate_single_cell(plan, selected):
+    return validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(selected),
+                                  pack_definitions=selected)
+
+
+@pytest.mark.parametrize(
+    ("model", "family", "scale", "rule_id"),
+    [
+        ("pseudobulk", "negative_binomial", "raw_counts", None),
+        ("pseudobulk", "linear", "raw_counts", None),
+        ("pseudobulk", "negative_binomial", "log_transformed", "single_cell_de.pseudobulk_raw_counts"),
+        ("pseudobulk", "linear", "log_transformed", "single_cell_de.pseudobulk_raw_counts"),
+        ("pseudobulk", "linear", "normalized_counts", "single_cell_de.pseudobulk_raw_counts"),
+        ("donor_dependent", "negative_binomial", "raw_counts", None),
+        ("donor_dependent", "poisson", "raw_counts", None),
+        ("donor_dependent", "negative_binomial", "log_transformed", "single_cell_de.count_likelihood_raw_counts"),
+        ("donor_dependent", "poisson", "normalized_counts", "single_cell_de.count_likelihood_raw_counts"),
+        ("donor_dependent", "linear", "log_transformed", None),
+        ("donor_dependent", "linear", "raw_counts", "single_cell_de.donor_linear_log_scale"),
+        ("donor_dependent", "linear", "normalized_counts", "single_cell_de.donor_linear_log_scale"),
+    ],
+)
+def test_count_scale_and_model_combinations_are_machine_rules(model, family, scale, rule_id):
+    plan, selected = _single_cell_plan(model=model, model_family=family, count_scale=scale)
+    if rule_id is None:
+        _validate_single_cell(plan, selected)
+    else:
+        with pytest.raises(ValueError, match=rule_id.replace(".", r"\.")):
+            _validate_single_cell(plan, selected)
+
+
+def test_log_scale_pseudobulk_is_rejected_whatever_the_rationale_says():
+    # The rationale is free text and claims a raw-count model; only the declared values decide.
+    plan, selected = _single_cell_plan(count_scale="log_transformed", model="pseudobulk",
+                                       model_rationale="Raw-count negative binomial model on donor sums.")
+    with pytest.raises(ValueError, match=r"single_cell_de\.pseudobulk_raw_counts"):
+        _validate_single_cell(plan, selected)
+    plan["pack_values"]["single_cell_de@1"]["fields"]["count_scale"] = "raw_counts"
+    _validate_single_cell(plan, selected)
+
+
+@pytest.mark.parametrize(
+    ("conclusion", "changes", "rule_id"),
+    [
+        ("condition_effect", {("protocol", "statistics", "applicable"): False},
+         "single_cell_de.condition_effect_statistics"),
+        ("descriptive_only", {}, "single_cell_de.descriptive_study_type"),
+        ("descriptive_only", {("brief", "study_type"): "exploratory"}, "single_cell_de.descriptive_hypothesis"),
+        ("descriptive_only", {("brief", "study_type"): "exploratory", ("brief", "primary_hypothesis"): None},
+         "single_cell_de.descriptive_statistics"),
+        ("descriptive_only", {("brief", "study_type"): "exploratory", ("brief", "primary_hypothesis"): None,
+                              ("protocol", "statistics", "applicable"): False},
+         "single_cell_de.descriptive_estimand"),
+        ("descriptive_only", {("brief", "study_type"): "exploratory", ("brief", "primary_hypothesis"): None,
+                              ("protocol", "statistics", "applicable"): False,
+                              ("protocol", "statistics", "estimand"): None}, None),
+    ],
+)
+def test_conclusion_mode_is_enforced_without_confounding(conclusion, changes, rule_id):
+    # batch_design stays identifiable: the conclusion mode itself carries the constraint.
+    plan, selected = _single_cell_plan(conclusion_mode=conclusion)
+    for path, value in changes.items():
+        target = plan
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+    if rule_id is None:
+        _validate_single_cell(plan, selected)
+    else:
+        with pytest.raises(ValueError, match=rule_id.replace(".", r"\.")):
+            _validate_single_cell(plan, selected)
+
+
+@pytest.mark.parametrize(
+    ("when", "message"),
+    [
+        ([], "at least one"),
+        ([{"field": "model", "value": "pseudobulk"}, {"field": "unknown_pack_field", "value": "x"}],
+         "unknown_pack_field"),
+        ([{"field": "model", "equals": "pseudobulk"}], "equals"),
+    ],
+)
+def test_pack_loader_checks_every_predicate_of_a_when_list(tmp_path, when, message):
+    source = Path("labhq/research/packs/single_cell_de.yaml")
+    raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    raw["rules"] = [{"id": "single_cell_de.invalid_list", "description": "Invalid conjunction.",
+                     "when": when, "require": {"field": "count_scale", "value": "raw_counts"}}]
+    (tmp_path / "invalid.yaml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    with pytest.raises((ValidationError, ValueError), match=message):
+        load_pack_catalog([tmp_path])
+
+
+@pytest.mark.asyncio
+async def test_log_scale_pseudobulk_replans_before_cp1():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = ["single_cell_de@1"]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    mismatched, _ = _single_cell_plan(count_scale="log_transformed", model="pseudobulk")
+    corrected, _ = _single_cell_plan(count_scale="raw_counts", model="pseudobulk")
+    replies = [mismatched, corrected]
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=replies.pop(0))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "plan"]
+    assert "single_cell_de.pseudobulk_raw_counts" in hub.calls[1].prompt
+    assert len(hub.approvals) == 1
+    frozen = hub.requests["r"]["plan"]["pack_values"]["single_cell_de@1"]["fields"]
+    assert frozen["count_scale"] == "raw_counts"
+    assert hub.requests["r"]["outcome"] == "plan_approved"
