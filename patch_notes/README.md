@@ -12,6 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:18 | [`f2f447d`](https://github.com/ehojune/bioinfo-team-3d/pull/277/commits/f2f447d) | PR #277의 검증 결과와 남은 범위를 STATUS에 기록했다. |
+| 07:17 | [`ea31a16`](https://github.com/ehojune/bioinfo-team-3d/pull/277/commits/ea31a16) | legacy 선언과 runner 충돌 판정을 공용 reader에서 일치시켰다. |
+| 07:17 | [`42eb462`](https://github.com/ehojune/bioinfo-team-3d/pull/277/commits/42eb462) | 어휘·subset·runner 기록 예외를 선언 기능 안에 격리했다. |
 | 06:49 | [`83cc18d`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/83cc18d) | 요청별 입력 hash를 첫 그림자 관측에 보존하고 계획의 출력 이름을 입력에서 제외함 |
 | 06:35 | [`258bf48`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/258bf48) | 러너가 허용한 입력 증거만 쓰고 파일명과 Git ref의 대소문자를 보존함 |
 | 06:18 | [`be52c34`](https://github.com/ehojune/bioinfo-team-3d/pull/267/commits/be52c34) | 재사용 후보를 입력 정체성과 목표 data type으로 먼저 걸러 정밀도를 높임 |
