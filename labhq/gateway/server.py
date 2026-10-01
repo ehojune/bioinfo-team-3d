@@ -35,8 +35,9 @@ log = logging.getLogger(__name__)
 TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 
 
-def _semantics_wanted(raw: Any) -> bool:  # semantics-hook
-    return not (raw in (None, False, "off") or raw in ({"mode": False}, {"mode": "off"}))  # semantics-hook
+def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
+    mode = raw.get("mode", "off") if isinstance(raw, dict) else raw  # semantics-hook
+    return mode not in (None, False, "off")  # semantics-hook
 
 
 class UTF8JSONResponse(JSONResponse):

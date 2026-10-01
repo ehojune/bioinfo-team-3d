@@ -26,6 +26,7 @@ import os
 import platform
 import queue
 import re
+import sqlite3
 import stat
 import statistics
 import threading
@@ -170,6 +171,13 @@ def inside_git_tree(path: Path) -> bool:
     return any((parent / ".git").exists() for parent in (resolved, *resolved.parents))
 
 
+def _when(entry: Mapping[str, Any]) -> float:
+    try:
+        return float(entry.get("at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -311,6 +319,45 @@ def _light_task(task: Mapping[str, Any], research: set) -> dict:
     return light
 
 
+_TASK_SQL = ("SELECT key, json_remove(body, '$.payload.prompt', '$.payload.context', '$.result.text') FROM state "
+             "WHERE kind = 'task' AND json_extract(body, '$.request_id') {} ORDER BY key LIMIT ?")
+
+
+def _task_rows(store: Any, rid: str, history: set, limit: int) -> tuple[dict, dict, bool]:
+    """(this request's tasks, the history's tasks, truncated), read by request id without prompt or answer text.
+
+    Rows past ``limit`` are never decoded. A store without SQL (a test double) or without SQLite's JSON
+    functions falls back to filtering a full read.
+    """
+    db = getattr(store, "db", None)
+    try:
+        if db is None:
+            raise sqlite3.OperationalError("no SQL store")
+        own = {k: json.loads(b) for k, b in db.execute(_TASK_SQL.format("= ?"), (rid, limit + 1))}
+        rest = {k: json.loads(b) for k, b in db.execute(_TASK_SQL.format("IN (SELECT value FROM json_each(?))"),
+                                                        (json.dumps(sorted(history)), limit + 1))}
+    except sqlite3.OperationalError:
+        rows = store.all("task")
+        own = {k: v for k, v in sorted(rows.items()) if v.get("request_id") == rid}
+        rest = {k: v for k, v in sorted(rows.items()) if v.get("request_id") in history}
+    truncated = len(own) + len(rest) > limit
+    own = dict(list(own.items())[:limit])
+    return own, dict(list(rest.items())[:max(0, limit - len(own))]), truncated
+
+
+def _decision_rows(store: Any, rid: str) -> dict:
+    db = getattr(store, "db", None)
+    try:
+        if db is None:
+            raise sqlite3.OperationalError("no SQL store")
+        return {k: json.loads(b) for k, b in db.execute(
+            "SELECT key, body FROM state WHERE kind = 'approval_decision' "
+            "AND json_extract(body, '$.approval.request_id') = ?", (rid,))}
+    except sqlite3.OperationalError:
+        return {k: v for k, v in store.all("approval_decision").items()
+                if (v.get("approval") or {}).get("request_id") == rid}
+
+
 def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
     """A copy of what the two models need, taken on the event loop. Shares nothing with live state."""
     started = time.perf_counter()
@@ -321,23 +368,14 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
     chosen = [req, *others[:cfg.history_requests - 1]]
     rids = {r.get("id") for r in chosen}
     research = {r.get("id") for r in chosen if r.get("research_contract")}
-    own: dict[str, dict] = {}
-    history: dict[str, dict] = {}
-    for tid, task in hub.store.all("task").items():
-        if task.get("request_id") == rid:
-            own[tid] = task
-        elif task.get("request_id") in rids:
-            history[tid] = task
-    tasks_truncated = len(own) + len(history) > MAX_TASK_ROWS
-    kept = {**own, **dict(sorted(history.items())[:max(0, MAX_TASK_ROWS - len(own))])}
-    tasks = {tid: _light_task(task, research) for tid, task in sorted(kept.items())}
+    own, history, tasks_truncated = _task_rows(hub.store, rid, rids - {rid}, MAX_TASK_ROWS)
+    tasks = {tid: _light_task(task, research) for tid, task in sorted({**own, **history}.items())}
     approvals = []
-    for aid, decision in hub.store.all("approval_decision").items():
+    for aid, decision in sorted(_decision_rows(hub.store, rid).items()):
         approval = decision.get("approval") or {}
-        if approval.get("request_id") == rid:
-            state = decision.get("state") or ("approved" if decision.get("approved") else "denied")
-            approvals.append({"id": aid, "kind": approval.get("kind"), "task_id": approval.get("task_id"),
-                              "request_id": rid, "state": state})
+        state = decision.get("state") or ("approved" if decision.get("approved") else "denied")
+        approvals.append({"id": aid, "kind": approval.get("kind"), "task_id": approval.get("task_id"),
+                          "request_id": rid, "state": state})
     for aid, entry in hub.approvals.items():
         approval = entry.get("approval") or {}
         if approval.get("request_id") == rid:
@@ -523,6 +561,10 @@ class Reader:
             return "remote"  # a manifest written on another host: the runner's disk is not this one
         return "ok"
 
+    def trusted_manifests(self) -> dict[str, dict]:
+        """Manifests of same-host workspaces in allowed zones: run fields the gateway rows do not carry."""
+        return {w: m for w, m in self.manifests.items() if self.workspace_state.get(w) == "ok" and isinstance(m, dict)}
+
     def _small_json(self, path: str) -> Any:
         try:
             st = os.lstat(path)
@@ -645,7 +687,11 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
     try:
         rid = snap["rid"]
         model = _model()
-        records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"])
+        for task in snap["tasks"].values():  # this request's workspaces: their manifests fill the run fields
+            result = task.get("result")
+            if task.get("request_id") == rid and isinstance(result, dict):
+                reader.workspace(result.get("workdir"))
+        records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests())
         check()
         first = sem.project(model, records)
         check()
@@ -699,7 +745,8 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             if hash_state[art] in ("observed", "verified"):
                 seen_now.setdefault(row["workspace"], {})[row["path"]] = seen["sha256"]
         check()
-        records, _ = sem.records_from_rows(snap["requests"], snap["tasks"], observed=seen_now)
+        records, _ = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests(),
+                                           observed=seen_now)
         p = sem.project(model, records)
         check()
         incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
@@ -999,15 +1046,17 @@ class ShadowService:
             self.trip("worker_stuck")
 
     def load_observed(self) -> dict[str, dict]:
+        """First observations, read once; entries past RETENTION_DAYS drop out on every job and are saved."""
         if self.observed is None:
             try:
                 value = _read_json(self.paths.observed) if self.paths.observed.exists() else {}
             except (OSError, ValueError):
                 value = {}
             self.observed = value if isinstance(value, dict) else {}
-            horizon = time.time() - RETENTION_DAYS * 86400
-            self.observed = {k: v for k, v in self.observed.items()
-                             if isinstance(v, dict) and float(v.get("at") or 0) >= horizon}
+        horizon = time.time() - RETENTION_DAYS * 86400
+        kept = {k: v for k, v in self.observed.items() if isinstance(v, dict) and _when(v) >= horizon}
+        if len(kept) != len(self.observed):
+            self.observed, self.observed_dirty = kept, True
         return self.observed
 
     def save_observed(self) -> None:

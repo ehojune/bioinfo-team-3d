@@ -201,3 +201,17 @@ def test_old_parts_are_pruned_and_the_log_is_capped(tmp_path, monkeypatch):
     os.utime(service.paths.log_old, (stale, stale))
     shadow.prune(service.paths, time.time())
     assert not service.paths.log.exists() and not service.paths.log_old.exists()
+
+
+def test_expired_observations_are_dropped_while_running(tmp_path):
+    service = _service(tmp_path)
+    fresh, stale = time.time(), time.time() - 91 * 86400
+    service.paths.root.mkdir(parents=True, exist_ok=True)
+    service.paths.observed.write_text(json.dumps({"k_fresh": {"sha256": "a", "size": 1, "at": fresh},
+                                                  "k_stale": {"sha256": "b", "size": 1, "at": stale}}),
+                                      encoding="utf-8")
+    _run(service, ["req_001"])  # no output of its own: only the expiry changes the file
+    assert set(json.loads(service.paths.observed.read_text(encoding="utf-8"))) == {"k_fresh"}
+    service.observed["k_late"] = {"sha256": "c", "size": 1, "at": time.time() - 91 * 86400}
+    _run(service, ["req_002"])
+    assert "k_late" not in json.loads(service.paths.observed.read_text(encoding="utf-8"))

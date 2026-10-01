@@ -173,3 +173,11 @@ def test_a_junction_inside_the_workspace_is_not_followed(tmp_path, reads):
     _winapi.CreateJunction(str(outside), os.path.join(wd, "outputs", "sub"))
     line = line_for(hub, "req_a", {})
     assert line["hash"]["skipped"] == {"not_regular": 1} and reads == []
+
+
+def test_a_same_host_manifest_fills_the_run_fields(tmp_path):
+    """No output to hash, so only the manifest read differs: agent_spec_sha256 and the run's session."""
+    same = line_for(_lab(tmp_path / "same", outputs=(), types=None)[0], "req_a", {})
+    remote = line_for(_lab(tmp_path / "remote", outputs=(), types=None, host="another-host")[0], "req_a", {})
+    assert same["hash"]["workspaces"] == {"ok": 1} and remote["hash"]["workspaces"] == {"remote": 1}
+    assert same["provenance"]["unknown_ratio"] < remote["provenance"]["unknown_ratio"]

@@ -9,7 +9,7 @@ from tests.semantics_shadow_lab import run_lab
 
 ROOT = Path(__file__).resolve().parents[1]
 # file -> number of marked lines; a new hook must be marked and counted here
-HOOKS = {"labhq/settings.py": 2, "labhq/gateway/server.py": 8, "labhq/cli.py": 13}
+HOOKS = {"labhq/settings.py": 2, "labhq/gateway/server.py": 9, "labhq/cli.py": 13}
 
 
 def test_every_hook_is_marked_and_counted():

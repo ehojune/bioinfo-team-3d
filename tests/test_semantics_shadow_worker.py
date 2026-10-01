@@ -78,7 +78,8 @@ asyncio.run(main())
 """
 
 
-@pytest.mark.parametrize("value", [None, False, "off", {"mode": False}, {"mode": "off"}])
+@pytest.mark.parametrize("value", [None, False, "off", {"mode": False}, {"mode": "off"},
+                                   {"mode": "off", "timeout_s": 2}])
 def test_off_never_loads_the_shadow_or_the_model(tmp_path, value):
     done = subprocess.run([sys.executable, "-c", OFF_PROCESS, str(tmp_path / "state"), json.dumps(value)],
                           capture_output=True, text=True, cwd=ROOT, timeout=120,
@@ -184,3 +185,35 @@ async def test_lines_carry_ids_kinds_hashes_and_counts_only(tmp_path):
         text = path.read_text(encoding="utf-8")
         assert marker not in text and "shadowproj" not in text and "outputs/" not in text, path.name
         assert str(tmp_path) not in text and str(tmp_path).replace("\\", "/") not in text
+
+
+async def test_the_snapshot_reads_only_the_rows_it_needs(tmp_path, monkeypatch):
+    """The event loop reads the finished request's tasks and its project's history by request id,
+    without prompts or answer text, and never the whole task table."""
+    from labhq.research import semantics_shadow as shadow
+    from tests.semantics_shadow_lab import task_row
+    hub = _hub(tmp_path)
+    for rid, project in (("req_hist1", None), ("req_other", "elsewhere")):
+        hub.requests[rid] = {"id": rid, "status": "done", "project_id": project, "created_at": 1.0}
+    rows = {"task_own1": "req_unit1", "task_own2": "req_unit1", "task_h1": "req_hist1", "task_h2": "req_hist1",
+            "task_x1": "req_other", "task_x2": "req_other", "task_x3": "req_other"}
+    for tid, rid in rows.items():
+        hub.store.put("task", tid, task_row(rid, tid, "s1", "analyst", None, []))
+    hub.store.put("approval_decision", "appr_own", {"approval": {"kind": "clarify", "request_id": "req_unit1"},
+                                                     "approved": True})
+    real = hub.store.all
+
+    def no_full_scan(kind):
+        assert kind not in ("task", "approval_decision"), f"full scan of {kind}"
+        return real(kind)
+
+    monkeypatch.setattr(hub.store, "all", no_full_scan)
+    hub.requests["req_unit1"] = {"id": "req_unit1", "status": "done", "text": "unit request", "created_at": 2.0}
+    snap = shadow.take_snapshot(hub, "req_unit1", shadow.ShadowConfig())
+    assert sorted(snap["tasks"]) == ["task_h1", "task_h2", "task_own1", "task_own2"]
+    assert [a["id"] for a in snap["approvals"]] == ["appr_own"]
+    assert "secret prompt text" not in json.dumps(snap) and "answer body" not in json.dumps(snap)
+    monkeypatch.setattr(shadow, "MAX_TASK_ROWS", 3)
+    capped = shadow.take_snapshot(hub, "req_unit1", shadow.ShadowConfig())
+    assert capped["tasks_truncated"] is True and {"task_own1", "task_own2"} <= set(capped["tasks"])
+    assert len(capped["tasks"]) == 3
