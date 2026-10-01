@@ -995,6 +995,19 @@ def _mentioned_names(req: Mapping[str, Any]) -> set[str]:
     return {m.group(1) for m in _INPUT_NAME.finditer(text[:100_000])}
 
 
+def _output_names(req: Mapping[str, Any]) -> set[str]:
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    found: set[str] = set()
+    for step in plan.get("steps") or []:
+        if not isinstance(step, Mapping):
+            continue
+        values = list(step.get("outputs") or [])
+        values += [entry.get("name") for entry in step.get("output_types") or [] if isinstance(entry, Mapping)]
+        found.update(Path(value.replace("\\", "/")).name.casefold()
+                     for value in values if isinstance(value, str))
+    return found
+
+
 def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
     """Declared types of outputs the PI named, not incidental plan-added reports or QC files."""
     if vocab is None:
@@ -1041,9 +1054,9 @@ def _request_input_hashes(req: Mapping[str, Any]) -> set[str]:
     return found
 
 
-def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader,
-                          hashes: dict) -> dict[str, set[str]]:
-    """Hash named files only under same-host reference directories the runner recorded as accepted."""
+def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
+                          current: str, hashes: dict) -> dict[str, set[str]]:
+    """Persist each request's input digest at its own shadow observation; never re-hash history."""
     found: dict[str, set[str]] = {}
     for task_id, task in records.tasks.items():
         request = task.get("request_id")
@@ -1052,18 +1065,28 @@ def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Rea
         run = ((manifest or {}).get("runs") or {}).get(task_id)
         if not isinstance(request, str) or not isinstance(run, Mapping):
             continue
-        names = _mentioned_names(requests.get(request) or {})
+        req = requests.get(request) or {}
+        outputs = _output_names(req)
+        names = {name for name in _mentioned_names(req) if name.casefold() not in outputs}
         for root in run.get("reference_dirs") or []:
             if not isinstance(root, str) or not root:
                 continue
             for name in sorted(names, key=str.casefold):
-                status, seen = reader.accepted_reference_file(root, name)
-                if status not in ("hashed", "cached") or seen is None:
-                    continue
-                found.setdefault(request, set()).add("file:" + seen["sha256"])
-                if status == "hashed":
-                    hashes["hashed"] += 1
-                    hashes["bytes"] += seen["size"]
+                link = _norm(os.path.join(root, name))
+                key = opaque("input", request, link)
+                seen = observed.get(key)
+                if seen is None and request == current:
+                    status, seen = reader.accepted_reference_file(root, name)
+                    if status in ("hashed", "cached") and seen is not None:
+                        observed[key] = {"sha256": seen["sha256"], "size": seen["size"], "at": time.time()}
+                        hashes["observed_new"] += 1
+                        if status == "hashed":
+                            hashes["hashed"] += 1
+                            hashes["bytes"] += seen["size"]
+                    else:
+                        seen = None
+                if isinstance(seen, Mapping) and isinstance(seen.get("sha256"), str):
+                    found.setdefault(request, set()).add("file:" + seen["sha256"])
     return found
 
 
@@ -1181,7 +1204,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         check()
         direct_inputs = {request: _request_input_hashes(req)
                          for request, req in snap["requests"].items()}
-        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, hashes),
+        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes),
                          _declared_artifact_inputs(p)):
             for request, identities in evidence.items():
                 direct_inputs.setdefault(request, set()).update(identities)

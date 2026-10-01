@@ -294,12 +294,12 @@ def test_a_same_host_runner_accepted_reference_is_an_opaque_input_link(tmp_path)
     inputs.mkdir()
     (inputs / "same.tsv").write_text("same\n", encoding="utf-8")
     requests = {
-        "req_old": _target_request("req_old", "same.tsv", "same.tsv", created_at=1.0),
+        "req_old": _target_request("req_old", "same.tsv", "old.tsv", created_at=1.0),
         "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
     }
     for req in requests.values():
         req["references"] = [{"kind": "path", "value": str(inputs)}]
-    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "same.tsv", "table")}
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
     wd, _ = workspace(tmp_path, "task_now", "analyst", {})
     tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
     for task in tasks.values():
@@ -311,18 +311,41 @@ def test_a_same_host_runner_accepted_reference_is_an_opaque_input_link(tmp_path)
     assert prov["candidates"] == 1 and prov["excluded"]["input_unknown"] == 0
 
 
+def test_a_history_input_keeps_its_observed_digest_when_the_reference_file_changes(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    source = inputs / "same.tsv"
+    source.write_text("before\n", encoding="utf-8")
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "old.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    for req in requests.values():
+        req["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    for task in tasks.values():
+        _accepted_reference(task, inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    source.write_text("after\n", encoding="utf-8")
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["input_mismatch"] == 1
+
+
 def test_an_accepted_reference_keeps_the_filename_case_used_on_disk(tmp_path):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     (inputs / "Sample.TSV").write_text("same\n", encoding="utf-8")
     requests = {
-        "req_old": _target_request("req_old", "same.tsv", "same.tsv", created_at=1.0),
-        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+        "req_old": _target_request("req_old", "Sample.TSV", "old.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "Sample.TSV", created_at=2.0),
     }
     for req in requests.values():
         req["references"] = [{"kind": "path", "value": str(inputs)}]
-        req["text"] = "Read Sample.TSV and save outputs/wanted.tsv."
-    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "same.tsv", "table")}
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
     wd, _ = workspace(tmp_path, "task_now", "analyst", {})
     tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
     for task in tasks.values():

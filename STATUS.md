@@ -5,8 +5,8 @@
 ## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
 
 - 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
-- 바뀐 것: 같은 host runner가 실제로 허용했다고 manifest에 남긴 reference 아래 요청문에 적힌 파일만 기존 hash 예산·zone·link guard로 읽는다. 증거 없는 path는 `input_unknown`이다. 공개 accession·URL은 기록된 link만 쓰고 GitHub ref의 대소문자를 보존한다. 이 입력 정체성과 PI가 이름을 적은 산출의 #249 선언 data type이 모두 일치해야 후보가 된다. 제외 결과는 네 고정 사유의 개수만 남기고 필터 뒤에 순위를 매긴다.
-- 실행한 것: 핵심 회귀 3건이 수정 전 실패했다. 자동 리뷰의 P1 1건과 같은 정체성 부류 P2 2건을 고친 뒤 관련 65건(3 skipped), 전체 pytest 2449 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다. #264 정보 경계 검사는 새 고정 사유만 허용하고 경로·파일명을 기록하지 않는 회귀로 확인했다.
+- 바뀐 것: 각 요청이 끝날 때 같은 host runner가 허용했다고 manifest에 남긴 reference의 입력 hash를 불투명 키 아래 보존하고, 과거 요청 입력은 다시 읽지 않는다. 요청문에서 계획의 출력 이름을 뺀 입력 이름만 쓰며 증거 없는 path는 `input_unknown`이다. 공개 accession·URL은 기록된 link만 쓰고 GitHub ref의 대소문자를 보존한다. 이 입력 정체성과 PI가 이름을 적은 산출의 #249 선언 data type이 모두 일치해야 후보가 된다. 제외 결과는 네 고정 사유의 개수만 남기고 필터 뒤에 순위를 매긴다.
+- 실행한 것: 핵심 회귀 3건이 수정 전 실패했다. 자동 리뷰 두 차례의 P1 2건과 같은 정체성 부류 P2 3건을 고친 뒤 관련 66건(3 skipped), 전체 pytest 2450 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다. #264 정보 경계 검사는 새 고정 사유만 허용하고 경로·파일명을 기록하지 않는 회귀로 확인했다.
 - 미해결: 2차 원본에서 #261 자동 off 뒤 네 live 요청은 정답표가 없어 혼동행렬에서 제외했다. 15건 전체 replay의 최종 후보도 같은 3개였으며, B2 전환 근거로 쓰지 않는다.
 - 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_provenance.py`, `tests/test_semantics_shadow_hash.py`, `tests/test_direct_outputs.py`.
 
