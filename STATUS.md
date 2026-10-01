@@ -2,6 +2,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · PR #164 봇 리뷰 P1 — 재사용 workspace의 계약 skill 변조 차단
+
+- 결론: 계약 skill은 매 실행 직전에 원본에서 새로 복사한다. 이전 writable step이 설치본 내용을 바꾸거나 skill 디렉터리를 symlink·Windows junction으로 교체해도 read-only run은 그 지침을 읽지 않는다.
+- 바뀐 것: `TaskWorkspace.install_skill()`이 링크가 아닌 상위 폴더에서 임시 복사본을 만든 뒤 기존 설치본을 링크 대상까지 따라가지 않고 교체한다. 상위 폴더가 링크이거나 일반 폴더가 아니면 건드리지 않아 기존 workspace 검사가 read-only run을 거부한다.
+- 실행한 것: 내용 변조와 junction 치환 회귀 2건이 수정 전 실패하고 수정 후 통과했다. 관련 테스트 48개, 전체 pytest 1562 passed/21 skipped, Node 테스트 11개, `bash scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 근거: `labhq/runner/workspace.py`, `tests/test_read_only_followups.py`.
+
 ## 2026-10-01 · PR #122 후속 다섯 건(#135 #145 #146 #147 #148) — 읽기 전용 실행의 env·작업 폴더 지침 파일
 
 - 결론: 이어 묻기·상담의 허용 목록을 argv 밖까지 넓혔다. 엔진 env는 로그인·설정 위치·API 접속 변수만 받고, 러너가 물려받은 `CODEX_*` 세션 변수는 모든 직원 실행에서 빠지며, 엔진이 작업 폴더에서 지침·설정으로 읽는데 끌 플래그가 없는 파일이 있으면 읽기 전용 실행을 띄우지 않는다. 실측할 수 없던 동작(신뢰된 경로 아래 Codex project config, Claude built-in agents-md)은 거부 쪽으로 뒀다.

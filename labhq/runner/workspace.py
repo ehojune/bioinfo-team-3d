@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import shutil
+import stat
 import time
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePath
 from typing import Any
 
 from .. import __version__
@@ -25,6 +28,41 @@ from ..models import AgentSpec, Task
 from ..util import atomic_write_text
 
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
+
+
+def _is_link(path: Path) -> bool:
+    """A symlink or Windows reparse point (including a junction), without following it."""
+    info = path.lstat()
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def _plain_directory(root: Path, relative: PurePath) -> Path | None:
+    """Create plain directory components, but never traverse a file, symlink or junction."""
+    current = root
+    for part in relative.parts:
+        current /= part
+        if os.path.lexists(current):
+            if _is_link(current) or not current.is_dir():
+                return None
+        else:
+            current.mkdir()
+    return current
+
+
+def _remove_entry(path: Path) -> None:
+    """Remove one entry without following a symlink or Windows junction."""
+    if not os.path.lexists(path):
+        return
+    if _is_link(path):
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
 
 
 class TaskWorkspace:
@@ -48,14 +86,22 @@ class TaskWorkspace:
                 f"Instruction summary: {t.prompt[:2000]}")
 
     def install_skill(self, skill_dir: Path) -> None:
-        """Contract agents carry their paper skill; project-level skill dirs for Claude Code and Codex."""
+        """Install a fresh contract skill copy for this run, without traversing workspace links."""
         skill_dir = Path(skill_dir)
-        if not (skill_dir / "SKILL.md").exists():
+        if not (skill_dir / "SKILL.md").is_file():
             return
-        for base in SKILL_DIRS:  # a read-only run exempts exactly these copies
+        for base in SKILL_DIRS:  # a read-only run exempts only these freshly replaced copies
             dst = self.dir / base / skill_dir.name
-            if not dst.exists():
-                shutil.copytree(skill_dir, dst)
+            parent = _plain_directory(self.dir, PurePath(base))
+            if parent is None:
+                continue  # the read-only workspace check refuses this linked or non-directory parent
+            fresh = parent / f".{skill_dir.name}.labhq-{uuid.uuid4().hex}"
+            try:
+                shutil.copytree(skill_dir, fresh)
+                _remove_entry(dst)
+                fresh.replace(dst)
+            finally:
+                _remove_entry(fresh)
 
     def append_event(self, ev: dict[str, Any]) -> None:
         with open(self.dir / "events.jsonl", "a", encoding="utf-8") as f:
