@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · 재시작 뒤 consult 겹침 #93 · single_cell_de 조합 규칙 #109
+
+- 결론: gateway가 consult 도중 재시작돼도 같은 ask가 같은 CSO session·workdir로 consult를 하나 더 띄우지 않는다. `single_cell_de@1`의 count scale·model 조합과 결론 모드는 rule로 판정해 맞지 않는 PLAN을 CP1 전에 재계획시킨다.
+- 바뀐 것: 미완료 consult도 busy로 본다. 같은 ask의 이전 consult는 같은 runner 세대면 결과를 기다려 쓰고, 아니면 새 session·workdir로 다시 묻는다. 재개 중 roster가 비면 runner 재접속을 기다리고, dispatch 복구는 ask_id로 consult를 맞춘다. adopt 결과의 비용을 예산 총액에 맞추고 transient 실패는 남은 재시도만 돈다. pack rule `when`에 predicate 목록(모두 참)을 허용하고 `model_family` field와 rule 8개를 더했다. README §8, `docs/research_protocol.md` §6을 맞췄다.
+- 실행한 것: 수정 전 #93 회귀 5건·리뷰 회귀 3건, #109 회귀(log_transformed + pseudobulk 통과, CP1 직행 포함)가 실패함을 확인했다. 수정 뒤 전체 pytest 1193 passed/19 skipped, `node tests/*.cjs` 7개, `bash scripts/check_public.sh`, `git diff --check` 통과. 로컬 Codex 리뷰 P2 3건은 이 브랜치에서 고쳤다.
+- 미해결: 격리된 consult가 끝나면 `cso_session_id`가 그 session으로 바뀌는 기존 동작은 그대로다. cell 의사반복과 조건별 replicate 수는 구조화 field가 없어 rule로 만들지 않았다. `single_cell_de@1` 내용 hash가 바뀌어 이전에 고정한 PLAN은 다시 계획해야 한다(pilot, 기본 꺼짐). patch notes는 push 뒤 따로 쓴다.
+- 근거: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/research/packs.py`, `labhq/research/contract.py`, `labhq/research/packs/single_cell_de.yaml`, `tests/test_consult_restart.py`, `tests/test_research_protocol.py`.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 1 — 2회차 리뷰
 
 - 결론: active pack의 acceptance를 machine rule로 판정한다. 모든 rule을 통과해야 PLAN을 동결하고 CP1을 열며, correction 계획 뒤 budget 거절도 즉시 중단한다. pilot은 여전히 CP1 뒤 멈춘다.
