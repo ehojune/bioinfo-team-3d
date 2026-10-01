@@ -61,11 +61,12 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 | 없는 claim·evidence·artifact 참조, 중복 ID, 옛 claim revision을 가리키는 link | R04 |
 | `supported`·`partially_supported`·`contradicted`인데 관찰된 근거 link가 없음. `supported`인데 반대 근거가 있음 | R04 |
 | 추론·가설, 또는 `unavailable`·`not_found`·`failed` 행으로 지지·반박 | R04 |
+| 추론·가설 행이 `derived_from`을 따라가도 관찰·조회 행에 닿지 않음(순환 포함) | R04 |
 | 근거 행의 `directness`·`source_level`·`independence_group`·`assessment_reason` 누락, link `rationale`·claim `status_reason` 누락 | R05 |
-| 같은 출처 ID를 다른 independence group으로 적음(재인용을 독립 근거로 셈) | R05 |
+| 같은 출처를 다른 independence group으로 적음(재인용을 독립 근거로 셈). ID, doi.org URL, 같은 파일을 가리키는 artifact를 모두 같은 출처로 본다 | R05 |
 | 외부 출처의 `accessed_at`(YYYY-MM-DD), 관찰 행의 `locator`, 0건 행의 `query`, 실패 행의 `status_detail` 누락 | R06 |
 | quantity의 `value`·`unit`·`conditions`·`denominator` 누락. 모르면 `unknown`에 항목과 결론에 주는 영향을 적는다 | R07 |
-| 단위·조건이 다르거나 모르는 값을 `comparable`로 비교. `not_comparable`로 두거나 가정을 적은 `comparable_with_assumptions`로 쓴다 | R07 |
+| 단위·조건·적어 둔 `method`가 다르거나 모르는 값을 `comparable`로 비교. `not_comparable`로 두거나 가정을 적은 `comparable_with_assumptions`로 쓴다 | R07 |
 
 신뢰도는 확률 대신 이유와 한계로 적는다. 구조·상관·예측을 인과·친화도·효능으로 확대하지 않는다. 통제접근 원자료는 허용 환경 밖, LLM 입력, 외부 로그로 보내지 않는다.
 
@@ -83,6 +84,8 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 | `insufficient` | ID 형식이 틀려 조회하지 않음. 추측해 고치지 않는다 | 결함 |
 | `conflicting` | 다른 scheme·ID·version의 기록, 여러 기록, 인용 뒤 바뀐 artifact hash | 결함 |
 | `requires_verification` | 네트워크 오류·timeout·resolver 오류·live 꺼짐·미지원 체계·manifest 없음 | 미확인. 결함도 부재도 아니다 |
+
+claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. URI는 scheme·host만 대소문자를 무시한다.
 
 live resolver는 아직 없고 기본값은 조회 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.

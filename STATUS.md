@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 리뷰 보강
+
+- 결론: verifier는 지지·반박 출처가 모두 확인돼야 claim을 `verified`로 둔다. context 행·추론 행에 든 가짜 ID도 보고 전체를 실패로 만든다. 같은 출처를 ID·doi.org URL·artifact 별칭으로 나눠 독립 근거로 세던 길도 막았다.
+- 바뀐 것: `verify.py`는 출처가 가진 식별자(외부 ID 또는 URI, artifact)를 모두 검사해 가장 나쁜 판정을 남기고(`resolutions`), 결함 행을 `defective_evidence`로 모은다. URI는 scheme·host만 대소문자를 무시하고 artifact 경로 구분자는 정규화한다. `claims.py`는 재인용을 출처의 모든 표기로 판정한다. 추론·가설 행은 관찰·조회 행까지 이어져야 하고, `comparable`은 적어 둔 method도 같아야 한다. `accessed_at`은 YYYY-MM-DD만 받는다(3.11+의 주 날짜 차단). 규약 문서 §3·§4를 맞췄다.
+- 실행한 것: Codex 독립 리뷰 1회(P2 2건, 둘 다 고침)와 반대 관점 검토(P1 1건·P2 5건 고침). 새 회귀 12건이 수정 전 코드에서 모두 실패함을 확인했다. 수정 후 전체 pytest 1242 passed/19 skipped, `node tests/*.cjs` 7개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 조회는 순차이고 전체 시간 상한이 없다. ID와 URI를 함께 적으면 URI는 검사하지 않는다. 0건 검색을 observed로 적는 우회와 REVIEW_SCHEMA의 R05·R07 판정은 R13 범위다. 셋 다 후속 issue로 넘긴다.
+- 근거: `labhq/evidence/verify.py`, `labhq/evidence/claims.py`, `tests/test_evidence_verify.py`, `tests/test_research_evidence.py`, `docs/research_protocol.md`.
+
 ## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 증거 원장 R04–R07
 
 - 결론: 연구 결과 schema가 claim·evidence·link를 따로 받는다. 끊긴 참조, 근거 없는 supported/contradicted, 실패·0건 조회로 지지한 link, 평가·출처·정량 필수값 누락을 한 번에 거부한다. 출처 verifier는 조회 실패와 ID 부재를 나눠 남긴다. 연구 실행은 여전히 opt-in·기본 꺼짐이고 원장·verifier는 실행 경로에 아직 연결하지 않았다.
