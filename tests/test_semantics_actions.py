@@ -341,3 +341,42 @@ def test_the_followup_line_shape_allows_fixed_names_and_values_only(bad):
     line = _follow("asked")
     bad(line)
     assert acts.shape_problems(line) == ["followup_shape"]
+
+
+# ---------------------------------------------------------------- report
+
+def _request_line(rid, section, **rows):
+    return {"v": 1, "type": "request", "request_id": rid, "rows": rows, "actions": section}
+
+
+def test_the_report_counts_each_window_and_followup_once():
+    section = _section()
+    asked, ended = _follow("asked"), _follow("ended", outcome="done")
+    lines = [_request_line("req_a1", section), _request_line("req_a1", section), _request_line("req_b2", section),
+             {"v": 1, "type": "request", "request_id": "req_c3"},  # written with actions off
+             asked, dict(asked), ended, dict(ended), _follow("refused", followups=[]), _follow("refused", followups=[]),
+             {"v": 1, "type": "followup", "phase": "asked", "status": "error", "error_kind": "RuntimeError"},
+             {"v": 1, "type": "auto_off", "reason": "info_boundary"}]
+    rep = acts.report(lines, setting="shadow", on=True)
+    assert rep["executable"] == [] and rep["observed"]["requests"] == 2 and rep["observed"]["unobserved"] == 1
+    fu = rep["followup"]
+    assert (fu["windows"], fu["asked"], fu["refused"], fu["ended"]["done"], fu["unterminated"]) == (2, 1, 2, 1, 0)
+    assert fu["refused_while_open"] == 2 and fu["taken_while_blocked"] == 0 and fu["line_failures"] == 1
+    assert rep["past"]["approval.decide"]["windows"] == 14 and rep["mismatch"]["approval.decide"]["checked"] == 8
+    assert rep["gate"] == {"followup_windows": 2, "unknown_share": 0.0, "mismatch": 2 + 2, "boundary_off": 1,
+                           "auto_off": 1}
+    text = "\n".join(acts.render({"actions": rep}))
+    assert "실행 허용 목록: 없음" in text and "refused_p3" in text and "안전 증거 아님" in text
+
+
+def test_the_report_skips_a_broken_section_and_proposes_removal_only_with_enough_requests():
+    broken = _section()
+    broken["exec"]["hpc.submit"] = "shadow_only"
+    rep = acts.report([_request_line("req_x", broken)], setting="shadow", on=True)
+    assert rep["observed"]["broken"] == 1 and rep["observed"]["requests"] == 0
+    few = acts.report([_follow("refused", followups=[], agents={"cso": {}})], setting="shadow", on=True)
+    assert few["propose"] == []
+    many = [_request_line(f"req_m{i}", _section()) for i in range(15)]  # 1 mismatch in 12 windows each
+    assert acts.report(many, setting="shadow", on=True)["propose"] == []
+    many += [_follow("refused", followups=[]) for _ in range(5)]  # refused while the model said open
+    assert any(p.startswith("불일치") for p in acts.report(many, setting="shadow", on=True)["propose"])

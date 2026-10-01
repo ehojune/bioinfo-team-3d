@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import statistics
 from collections.abc import Callable, Iterable, Mapping
 from types import MappingProxyType
 from typing import Any
@@ -481,3 +482,143 @@ def shape_problems(line: Mapping[str, Any]) -> list[str]:
     if line.get("type") == "followup":
         problems += _followup_problems(line)
     return problems
+
+
+# ---------------------------------------------------------------- report (local, no network)
+
+def _ratio(part: int, whole: int) -> float | None:
+    return round(part / whole, 4) if whole else None
+
+
+def report(lines: Iterable[Mapping[str, Any]], *, setting: str, on: bool) -> dict:
+    """The A1 section of ``labhq semantics report``. One window per request (its last line) and one follow-up per
+    key, so a line written twice counts once. Thresholds are unmeasured proposals and not A2 safety evidence."""
+    by_request: dict[str, Mapping[str, Any]] = {}
+    unobserved = broken = truncated = 0
+    failed = {"timeout": 0, "error": 0}
+    asked: dict[str, Mapping[str, Any]] = {}
+    ended: dict[str, Mapping[str, Any]] = {}
+    refused: list[Mapping[str, Any]] = []
+    followup_failed = busy = boundary = auto_off = 0
+    for line in lines:
+        kind = line.get("type")
+        if kind == "auto_off":
+            auto_off += 1
+            boundary += line.get("reason") == "info_boundary"
+        elif kind == "request":
+            sec = line.get("actions")
+            if sec is None:
+                unobserved += 1
+            elif _section_problems(sec):
+                broken += 1
+            elif sec.get("status") != "ok":
+                failed[sec["status"]] += 1
+            elif isinstance(line.get("request_id"), str):
+                by_request[line["request_id"]] = line
+                truncated += bool((line.get("rows") or {}).get("tasks_truncated"))
+        elif kind == "followup":
+            if _followup_problems(line):
+                broken += 1
+                continue
+            busy += int(line.get("busy_skipped") or 0)
+            if line.get("status") != "ok":
+                followup_failed += 1
+            elif line.get("phase") == "refused":
+                refused.append(line)
+            elif isinstance(line.get("key"), str):
+                (asked if line.get("phase") == "asked" else ended).setdefault(line["key"], line)
+
+    now = {name: _tally(name) for name in EVALUATED}
+    past = {name: _windows(name) for name in WINDOWED}
+    mismatch = {name: {k: 0 for k in MISMATCH_KEYS} for name in CHECKED}
+    lengths: dict[str, list[float]] = {name: [] for name in WINDOWED}
+    for line in by_request.values():
+        sec = line["actions"]
+        for name, tally in sec["now"].items():
+            for k in ("n", "open", "blocked", "unknown"):
+                now[name][k] += tally[k]
+            for k in ("blocked_by", "unknown_by"):
+                for cond, n in tally[k].items():
+                    now[name][k][cond] += n
+        for name, win in sec["past"].items():
+            for k in ("windows", "closed", "unbounded", "taken", "taken_unknown"):
+                past[name][k] += win[k]
+            lengths[name] += [float(x) for x in win["lengths_s"]]
+            past[name]["lengths_truncated"] = past[name]["lengths_truncated"] or win["lengths_truncated"]
+            for kind_name, n in (win.get("by_kind") or {}).items():
+                past[name]["by_kind"][kind_name] += n
+        for name, m in sec["mismatch"].items():
+            for k in MISMATCH_KEYS:
+                mismatch[name][k] += m[k]
+    for name in WINDOWED:
+        past[name].pop("lengths_s")
+        past[name]["length_median_s"] = round(statistics.median(lengths[name]), 1) if lengths[name] else None
+
+    fu_verdicts = [now["request.followup"][k] for k in ("open", "blocked", "unknown")]
+    attempts = [*asked.values(), *refused]
+    unknown_attempts = sum(1 for l in attempts if l.get("verdict_open") is None)
+    verdicts = sum(fu_verdicts) + len(attempts)
+    unknown_share = _ratio(now["request.followup"]["unknown"] + unknown_attempts, verdicts)
+    taken_blocked = sum(1 for l in asked.values() if (l.get("mismatch") or {}).get("taken_while_blocked") is True)
+    refused_open = sum(1 for l in [*refused, *ended.values()]
+                       if (l.get("mismatch") or {}).get("refused_while_open") is True)
+    mismatch_unknown = sum(1 for l in [*asked.values(), *refused, *ended.values()]
+                           for v in (l.get("mismatch") or {}).values() if v is None)
+    outcomes = {o: sum(1 for l in ended.values() if l.get("outcome") == o) for o in OUTCOMES}
+    followup = {"windows": len(by_request), "asked": len(asked), "refused": len(refused),
+                "ended": outcomes, "unterminated": len(set(asked) - set(ended)),
+                "ended_without_asked": len(set(ended) - set(asked)),
+                "taken_while_blocked": taken_blocked, "refused_while_open": refused_open,
+                "mismatch_unknown": mismatch_unknown, "unknown_share": unknown_share,
+                "line_failures": followup_failed, "busy_skipped": busy}
+    mismatches = taken_blocked + refused_open + sum(m["taken_while_blocked"] for m in mismatch.values())
+    gate = {"followup_windows": len(by_request), "unknown_share": unknown_share, "mismatch": mismatches,
+            "boundary_off": boundary, "auto_off": auto_off}
+    proposals = []
+    n = len(by_request)
+    if n >= 15 and unknown_share is not None and unknown_share > 0.5:
+        proposals.append("기록 공백: request.followup 판정 unknown > 50% — 기록 보강 issue 또는 A1 제거")
+    windows = sum(past[name]["windows"] for name in WINDOWED)
+    if n >= 15 and windows and mismatches / windows >= 0.1:
+        proposals.append(f"불일치: mismatch {mismatches}건이 창 {windows}개의 10% 이상")
+    return {"setting": setting, "on": on, "executable": sorted(EXECUTABLE),
+            "observed": {"requests": n, "unobserved": unobserved, "failed": failed, "broken": broken,
+                         "tasks_truncated": truncated},
+            "now": now, "past": past, "mismatch": mismatch, "followup": followup, "gate": gate,
+            "propose": proposals}
+
+
+def render(rep: Mapping[str, Any]) -> list[str]:
+    a = rep.get("actions")
+    if not isinstance(a, Mapping):
+        return []
+
+    def v(x: Any) -> str:
+        return "-" if x is None else str(x)
+
+    obs, fu, gate = a["observed"], a["followup"], a["gate"]
+    out = ["", "액션 층 그림자 A1 (#149 결정 13, 실행 없음)",
+           f"설정 actions {a['setting']} · {'on' if a['on'] else 'off'} · 실행 허용 목록: "
+           f"{', '.join(a['executable']) or '없음'} · hpc.* 항상 refused_p3",
+           f"관측 요청 {obs['requests']} · 미관측 {obs['unobserved']} · 실패 timeout {obs['failed']['timeout']}/"
+           f"error {obs['failed']['error']} · 깨진 칸 {obs['broken']} · task 행 잘림 {obs['tasks_truncated']}",
+           "", "| 액션 | 창 | 닫힘 | 미종결 | taken | taken 미상 | 길이 중앙값 s | 지금 open/blocked/unknown |",
+           "|---|---|---|---|---|---|---|---|"]
+    for name in ACTIONS:
+        win = a["past"].get(name)
+        now = a["now"].get(name)
+        cells = (f"{win['windows']} | {win['closed']} | {win['unbounded']} | {win['taken']} | {win['taken_unknown']} | "
+                 f"{v(win['length_median_s'])}") if win else "- | - | - | - | - | -"
+        state = f"{now['open']}/{now['blocked']}/{now['unknown']}" if now else "refused_p3"
+        out.append(f"| {name} | {cells} | {state} |")
+    out += ["", f"이어 묻기: 창 {fu['windows']} · 물음 {fu['asked']} · 거부 {fu['refused']} · 끝 "
+                + ", ".join(f"{k} {n}" for k, n in fu["ended"].items())
+                + f" · 미종결 {fu['unterminated']} · busy 건너뜀 {fu['busy_skipped']}",
+            f"불일치: taken_while_blocked {fu['taken_while_blocked']} · refused_while_open {fu['refused_while_open']} · "
+            + " · ".join(f"{k} {m['taken_while_blocked']}/{m['checked']}" for k, m in a["mismatch"].items())
+            + f" · 판정 불가 {fu['mismatch_unknown']}",
+            f"A2 검토 자료(안전 증거 아님, 기준은 미측정 제안치): 이어 묻기 창 {gate['followup_windows']} (≥20) · "
+            f"unknown {v(gate['unknown_share'])} (≤0.1) · mismatch {gate['mismatch']} (0) · "
+            f"경계 off {gate['boundary_off']} (0) · 자동 off {gate['auto_off']} (0) · PI 확인 필요"]
+    out += ["PROPOSE_REMOVAL — A1(결정은 PI): " + p for p in a["propose"]]
+    return out

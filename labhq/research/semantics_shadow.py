@@ -1146,6 +1146,15 @@ def _actions_config(cfg: ShadowConfig, value: Any, raw: Any) -> ShadowConfig:
     return cfg
 
 
+def actions_setting(settings: Any) -> str:
+    """What the setting asks of the action layer: shadow, off, held (confirm) or invalid."""
+    if configured(settings) != "shadow":
+        return "off"
+    raw = getattr(settings, "semantics", None)
+    mode = _mode(raw.get("actions") if isinstance(raw, Mapping) else None)
+    return mode if mode in ("off", "shadow") else "held" if mode in ACTIONS_HELD else "invalid"
+
+
 def _actions_inputs(hub: Any, rid: str) -> dict:
     """Event loop side: states, times and booleans from memory, like take_snapshot."""
     from ..adapters import enforces_read_only
@@ -1203,6 +1212,17 @@ def _actions_failed(line: Mapping[str, Any]) -> bool:
     return line.get("type") == "followup" and line.get("status") != "ok"
 
 
+def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
+    """Add the A1 section to the report when actions are set or recorded; otherwise the report stays as it was."""
+    setting = actions_setting(settings)
+    lines, _ = read_lines(paths)
+    if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
+        return
+    rep["actions"] = _actions().report(lines, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+
+
+def _actions_render(rep: Mapping[str, Any]) -> list[str]:
+    return _actions().render(rep) if "actions" in rep else []
 # semantics-actions: end
 
 
@@ -1822,6 +1842,7 @@ def render_report(rep: Mapping[str, Any]) -> str:
         out.append("제거: semantics: off → scripts/semantics_shadow_remove.py → state_dir/semantics 삭제(선택)")
     else:
         out.append("제거 제안: 없음")
+    out += _actions_render(rep)  # semantics-hook: actions
     return "\n".join(out)
 
 
@@ -1887,6 +1908,7 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
         if args.semantics_cmd == "report":
             today = date.fromisoformat(args.today) if args.today else None
             rep = build_report(paths, today, configured(settings))
+            _actions_report(rep, paths, settings)  # semantics-hook: actions
             print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_report(rep))
         elif args.semantics_cmd == "enable":
             print(enable(paths))

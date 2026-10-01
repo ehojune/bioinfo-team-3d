@@ -290,6 +290,7 @@ async def test_a_full_queue_keeps_followup_observations_behind_it_without_the_b1
     lines = [line for line in _lines(tmp_path) if line["type"] == "followup"]
     assert len(lines) == shadow.ACTION_BACKLOG and len({line["key"] for line in lines}) == 1
     assert sum(line["busy_skipped"] for line in lines) == 5  # the drops are written, with no later follow-up
+    assert acts_report(lines)["followup"]["ended"]["done"] == 1  # one follow-up, however often it was seen
 
 
 async def test_the_backlog_never_overtakes_a_queued_request_job(tmp_path):
@@ -306,6 +307,11 @@ async def test_the_backlog_never_overtakes_a_queued_request_job(tmp_path):
     service.queue.get_nowait()
     service.work_backlog(service.queue)
     assert not service.action_backlog and len(_lines(tmp_path)) == 2
+
+
+def acts_report(lines):
+    from labhq.research import semantics_actions as acts
+    return acts.report(lines, setting="shadow", on=True)
 
 
 async def test_a_latched_shadow_observes_no_followup(tmp_path):
@@ -347,9 +353,13 @@ async def test_texts_of_followups_approvals_and_proposals_never_reach_a_line_log
     assert hub.semantics_shadow.drain(10)
     lines = _lines(tmp_path)
     assert {line["type"] for line in lines} == {"request", "followup"} and lines[0]["actions"]["status"] == "ok"
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=True), hub.s) == 0
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=False), hub.s) == 0
+    out = capsys.readouterr().out
+    assert "액션 층 그림자 A1" in out and '"actions"' in out
     for path in (tmp_path / "state" / "semantics").iterdir():
         assert marker not in path.read_text(encoding="utf-8"), path.name
-    assert all(marker not in r.getMessage() for r in caplog.records)
+    assert marker not in out and all(marker not in r.getMessage() for r in caplog.records)
 
 
 async def test_a_line_carrying_a_followup_text_is_refused(tmp_path, monkeypatch):
@@ -366,3 +376,17 @@ async def test_a_line_carrying_a_followup_text_is_refused(tmp_path, monkeypatch)
     assert hub.semantics_shadow.drain(10)
     assert hub.semantics_shadow.latched == "info_boundary"
     assert marker not in (tmp_path / "state" / "semantics" / "shadow.jsonl").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- report and removal
+
+def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path, capsys):
+    from labhq.research import semantics_shadow as shadow
+    s = _settings(tmp_path, {"mode": "shadow"})
+    paths = shadow.ShadowPaths(shadow.shadow_root(s))
+    shadow.append_line(paths, {"v": 1, "type": "request", "ts": 1.0, "request_id": "req_r1"})
+    rep = shadow.build_report(paths, None, shadow.configured(s))
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=True), s) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert "actions" not in printed and printed.keys() == rep.keys()
+    assert shadow.render_report(rep) == shadow.render_report(json.loads(json.dumps(rep)))
