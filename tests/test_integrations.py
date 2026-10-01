@@ -173,6 +173,9 @@ def test_non_identifier_staff_values_fail_without_writing(tmp_path, field, value
     f"{BADGES_END}\n{BADGES_START}\n{START}\n{END}",
     f"{BADGES_START}\n{BADGES_START}\n{BADGES_END}\n{START}\n{END}",
     f"{START}\n{BADGES_START}\n{END}\n{BADGES_END}",  # overlapping pairs
+    f"{BADGES_START}\n{START}\n{BADGES_END}\n{END}",
+    f"{START}\n{BADGES_START}\n{BADGES_END}\n{END}",  # badges nested in integrations (#153)
+    f"{BADGES_START}\n{START}\n{END}\n{BADGES_END}",  # integrations nested in badges
 ])
 def test_bad_markers_fail_without_writing(tmp_path, markers):
     staff(tmp_path, "one.yaml", id="one")
@@ -180,6 +183,7 @@ def test_bad_markers_fail_without_writing(tmp_path, markers):
     path.write_text(markers, encoding="utf-8")
     assert main(["--root", str(tmp_path), "--write"]) == 1
     assert path.read_text(encoding="utf-8") == markers
+    assert main(["--root", str(tmp_path), "--check"]) == 1
 
 
 def test_removed_configuration_removes_badges_and_rows(tmp_path):
