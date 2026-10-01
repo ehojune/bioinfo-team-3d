@@ -138,7 +138,7 @@ class MockAdapter(AgentAdapter):
             structured = {"blocking_decision": "Choose sample group (a) cases or (b) controls."}
         if "[needs-approval]" in own and not t.resume_session_id:
             dec = await self._broker(ctx, "/approval", {"task_id": t.id, "agent_id": a.id, "kind": "tool_permission",
-                                                        "summary": "Bash: rm -rf tmp/ (mock)",
+                                                        "summary": "Bash: Rscript scripts/qc_plots.R (mock)",
                                                         "timeout_s": self.settings.policy.approvals.timeout_s})
             text += f" · 승인 결과={'허가' if dec.get('approved') else '거절'}"
 
