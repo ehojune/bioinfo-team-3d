@@ -12,6 +12,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:07 | [`dc01c50`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/dc01c50) | **모양이 틀린 request 줄은 깨진 줄로 세도록 고쳤습니다** (#150). provenance·objects·hash가 object가 아니거나 안쪽 값이 유한한 숫자가 아니면 그 줄만 `broken_lines`로 세고 나머지는 집계합니다. `run_cli`는 traceback 대신 예외 이름 한 줄과 종료 코드 1을 냅니다. 회귀 test 10개는 수정 전 실패를 확인했습니다. |
+| 17:05 | [`c375ece`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/c375ece) | **그림자 zone 동률은 더 엄격한 level로 정했습니다** (#150). 길이가 같은 zone끼리 겹치면 public < internal < restricted 순으로 엄격한 쪽을 씁니다. 설정에 없는 level은 허용하지 않습니다. 회귀 test 3개는 수정 전 실패를 확인했습니다. |
 | 16:10 | [`e200a10`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/e200a10) | **독립 검증에서 나온 P1 두 건을 고쳤습니다: 링크로 적힌 통제 구역, 잘못된 모양의 row에 죽던 worker** (#150). 통제 구역을 symlink·junction으로 적고 그 대상이 internal 안이면 실제 경로로 읽던 우회를 막았습니다. 저장된 `result.outputs`가 목록이 아니어도 worker가 죽지 않고 실패로 세어서, 연속 3건이면 자동 off 조건이 정상 작동합니다. 회귀 test 3개는 수정 전 실패를 확인했습니다. |
 | 15:52 | [`578c647`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/578c647) | **문서를 채웠습니다: 설정 절, 알려진 한계, 현재 상태** (#150). README §8에 켜는 법·기록 위치와 내용·hash를 읽는 조건·자동 off 조건·지우는 법을 넣고, §10에 후보가 0인 게 정상인 이유와 hash가 생성 증명이 아니라는 점 같은 한계를 적었습니다. STATUS.md 맨 위에 이 PR 보고를 남겼습니다. |
 | 15:47 | [`9ca3539`](https://github.com/ehojune/bioinfo-team-3d/pull/158/commits/9ca3539) | **다섯 번째 리뷰 지적을 고쳤습니다: 멈춘 작업도 한 줄 남기고, 경로 표기를 하나로 맞췄습니다** (#150). 시간 상한에 걸린 작업이 실패 수만 늘고 줄이 없어 report의 요청 수와 p95에서 빠지던 것을 고쳤습니다. `outputs\a.tsv`와 `outputs/a.tsv`가 서로 다른 산출로 세지던 것도 출처 모델과 같은 정규화로 맞췄습니다. 리뷰는 여기서 멈췄고 P1은 없었습니다. |
