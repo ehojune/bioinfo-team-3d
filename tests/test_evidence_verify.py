@@ -382,3 +382,65 @@ def test_lookups_past_the_report_deadline_are_unverified_not_absent():
 def test_concurrency_must_allow_at_least_one_lookup():
     with pytest.raises(ValueError, match="concurrency"):
         asyncio.run(verify_sources(many_sources(1), PacedResolver(0), concurrency=0))
+
+
+def cited_with_uri(eid, scheme, value, uri, **extra):
+    both = row(eid, scheme, value, **extra)
+    both["source"]["uri"] = uri
+    return both
+
+
+def test_an_id_with_a_registry_url_naming_another_record_is_conflicting():
+    # #117: the DOI resolves, but the URL beside it names a different DOI.
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, "https://doi.org/10.1000/elsewhere")],
+                   [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(result, fixed))
+    check = report.evidence[0]
+    assert [(r.id_scheme, r.status) for r in check.resolutions] == [("doi", "found"), ("uri", "conflicting")]
+    assert check.resolution.resolver == "registry_url" and "doi:10.1000/elsewhere" in check.resolution.detail
+    assert by_claim(report)["c1@1"].state == "defective" and report.ok is False
+    # The URL of the cited DOI itself adds nothing to check and costs no extra lookup.
+    same = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, f"https://doi.org/{DOI.upper()}")],
+                 [link("c1", "e1")])
+    fixed = resolver()
+    report = asyncio.run(verify_sources(same, fixed))
+    assert [r.status for r in report.evidence[0].resolutions] == ["found"] and report.ok is True
+    assert fixed.calls == [("doi", DOI.casefold())]
+
+
+@pytest.mark.parametrize("answer, status", [
+    ([{"id_scheme": "doi", "id_value": "10.1000/elsewhere"}], "conflicting"),
+    ([{"id_scheme": "doi", "id_value": DOI.upper()}], "found"),
+    ([], "not_found"),
+    ([{"id_scheme": "uri", "id_value": "https://example.org/paper.html"}], "requires_verification"),
+])
+def test_a_resolver_that_maps_uris_checks_any_url_against_the_cited_id(answer, status):
+    url = "https://example.org/paper.html"
+    mapping = StaticResolver({("doi", DOI): [{"id_scheme": "doi", "id_value": DOI}], ("uri", url): answer})
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    uri_check = report.evidence[0].resolutions[1]
+    assert (uri_check.id_scheme, uri_check.status) == ("uri", status)
+    assert report.ok is (status == "found")
+
+
+def test_an_unchecked_url_beside_an_id_leaves_the_source_unverified():
+    # Without URI lookup nobody knows where the URL points, so the row cannot be verified.
+    result = build([claim("c1")], [cited_with_uri("e1", "doi", DOI, "https://example.org/paper.html")],
+                   [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver()))
+    uri_check = report.evidence[0].resolutions[1]
+    assert (uri_check.status, uri_check.error_kind) == ("requires_verification", "unsupported_scheme")
+    assert by_claim(report)["c1@1"].state == "unverified" and report.ok is False
+
+
+def test_a_registry_url_alone_is_looked_up_as_its_identifier():
+    geo = StaticResolver({("geo", "GSE79973"): [{"id_scheme": "geo", "id_value": "GSE79973"}]})
+    source = {"uri": "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973", "accessed_at": "2026-10-01",
+              "locator": "series matrix"}
+    result = build([claim("c1")], [{**row("e1", "geo", "GSE79973"), "source": source}], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, geo))
+    resolution = report.evidence[0].resolution
+    assert (resolution.id_scheme, resolution.id_value, resolution.status) == ("geo", "GSE79973", "found")
+    assert geo.calls == [("geo", "gse79973")] and report.ok is True

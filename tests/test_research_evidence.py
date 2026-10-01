@@ -311,6 +311,40 @@ def test_recitation_is_caught_through_every_identifier_of_a_source(second_source
     rejects(value, f"e1 and e2 cite the same source {shared}")
 
 
+@pytest.mark.parametrize("uri, scheme, value", [
+    ("https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79973", "geo", "GSE79973"),
+    ("https://identifiers.org/geo:GSE79973", "geo", "GSE79973"),
+    ("https://identifiers.org/GEO/GSE79973", "geo", "GSE79973"),
+    ("https://pubmed.ncbi.nlm.nih.gov/22140103/", "pmid", "22140103"),
+    ("https://www.ncbi.nlm.nih.gov/pubmed/22140103", "pmid", "22140103"),
+    ("https://identifiers.org/pubmed:22140103", "pmid", "22140103"),
+    ("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3084216/", "pmcid", "PMC3084216"),
+    ("https://pmc.ncbi.nlm.nih.gov/articles/PMC3084216/", "pmcid", "PMC3084216"),
+    ("https://identifiers.org/doi:10.1038/s41586-020-2649-2", "doi", "10.1038/s41586-020-2649-2"),
+    ("https://dx.doi.org/10.1038/S41586-020-2649-2", "doi", "10.1038/s41586-020-2649-2"),
+    ("https://www.ncbi.nlm.nih.gov/bioproject/PRJNA257197", "bioproject", "PRJNA257197"),
+    ("https://www.ncbi.nlm.nih.gov/snp/rs7412", "dbsnp", "rs7412"),
+    ("https://www.uniprot.org/uniprotkb/P05231/entry", "uniprot", "P05231"),
+    ("https://www.rcsb.org/structure/1ALU", "pdb", "1ALU"),
+    ("https://identifiers.org/hgnc:6018", "hgnc", "HGNC:6018"),
+])
+def test_registry_urls_are_the_same_source_as_their_identifier(uri, scheme, value):
+    # #117: a resolver URL and the bare ID are one source, so they cannot be two independence groups.
+    base = {"accessed_at": "2026-10-01", "locator": "summary"}
+    rows = [cited("e1", "lab1", {"id_scheme": scheme, "id_value": value, **base}),
+            cited("e2", "lab2", {"uri": uri, **base})]
+    rejects(result(evidence=rows, links=[link("c1", "e1"), link("c1", "e2")]),
+            f"e1 and e2 cite the same source {scheme}:{value.casefold()}")
+
+
+@pytest.mark.parametrize("uri", ["https://pubmed.ncbi.nlm.nih.gov/?term=IL6", "https://www.ncbi.nlm.nih.gov/geo/",
+                                 "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=",
+                                 "https://example.org/geo/query/acc.cgi?acc=GSE79973"])
+def test_search_pages_and_other_hosts_are_not_read_as_identifiers(uri):
+    from labhq.evidence.claims import registry_id
+    assert registry_id(uri) is None
+
+
 def test_uri_paths_are_case_sensitive_when_judging_recitation():
     base = {"accessed_at": "2026-10-01", "locator": "row 1"}
     rows = [cited("e1", "lab1", {"uri": "https://Example.org/Data.tsv", **base}),

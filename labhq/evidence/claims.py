@@ -12,7 +12,7 @@ import posixpath
 import re
 from collections.abc import Mapping
 from typing import Literal
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -44,6 +44,31 @@ STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "con
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _DOI_HOSTS = frozenset({"doi.org", "dx.doi.org"})
+_NCBI = "ncbi.nlm.nih.gov"
+# Registry pages whose path names exactly one record: (host without www., path pattern, scheme).
+_REGISTRY_PATHS: tuple[tuple[str, re.Pattern[str], str], ...] = tuple(
+    (host, re.compile(pattern), scheme) for host, pattern, scheme in (
+        ("pubmed.ncbi.nlm.nih.gov", r"/(\d+)/?", "pmid"),
+        (_NCBI, r"/pubmed/(\d+)/?", "pmid"),
+        (_NCBI, r"/pmc/articles/(PMC\d+)/?", "pmcid"),
+        ("pmc.ncbi.nlm.nih.gov", r"/articles/(PMC\d+)/?", "pmcid"),
+        (_NCBI, r"/bioproject/([^/]+)/?", "bioproject"),
+        (_NCBI, r"/biosample/([^/]+)/?", "biosample"),
+        (_NCBI, r"/sra/([^/]+)/?", "sra"),
+        (_NCBI, r"/snp/([^/]+)/?", "dbsnp"),
+        (_NCBI, r"/clinvar/variation/(\d+)/?", "clinvar"),
+        ("uniprot.org", r"/(?:uniprot|uniprotkb)/([^/]+?)(?:/entry)?/?", "uniprot"),
+        ("rest.uniprot.org", r"/uniprotkb/([^/.]+)(?:\.[a-z]+)?", "uniprot"),
+        ("rcsb.org", r"/structure/([^/]+)/?", "pdb"),
+        ("ebi.ac.uk", r"/chembl/(?:compound_report_card|target_report_card|explore/compound|explore/target)"
+                      r"/([^/]+)/?", "chembl"),
+        ("ensembl.org", r"/id/([^/]+)/?", "ensembl"),
+    ))
+# identifiers.org prefixes -> labhq schemes (https://identifiers.org/<prefix>:<id> or /<prefix>/<id>).
+_IDENTIFIERS_ORG = {"doi": "doi", "pubmed": "pmid", "pmc": "pmcid", "geo": "geo", "bioproject": "bioproject",
+                    "biosample": "biosample", "insdc.sra": "sra", "refseq": "refseq", "ensembl": "ensembl",
+                    "uniprot": "uniprot", "dbsnp": "dbsnp", "clinvar": "clinvar", "pdb": "pdb",
+                    "chembl.compound": "chembl", "chembl.target": "chembl", "hgnc": "hgnc"}
 
 
 def normalize_uri(uri: str) -> str:
@@ -58,6 +83,42 @@ def normalize_uri(uri: str) -> str:
 def normalize_id(scheme: str, value: str) -> str:
     """Comparison form of an identifier. Registry accessions are case-insensitive; URIs are not."""
     return normalize_uri(value) if scheme == "uri" else value.strip().casefold()
+
+
+def registry_id(uri: str) -> tuple[str, str] | None:
+    """The (scheme, value) a major registry URL names, or None for any other URL, search page or listing.
+
+    doi.org, identifiers.org, PubMed, PMC, GEO, NCBI BioProject/BioSample/SRA/dbSNP/ClinVar, UniProt, RCSB
+    PDB, ChEMBL and Ensembl. The value is not format-checked here; a malformed one is reported by the
+    verifier, never corrected.
+    """
+    try:
+        parts = urlsplit(uri.strip())
+        host = (parts.hostname or "").removeprefix("www.")
+    except ValueError:  # e.g. an unbalanced IPv6 bracket: not a registry address
+        return None
+    if parts.scheme.lower() not in {"http", "https"} or not host:
+        return None
+    path = unquote(parts.path)
+    found: tuple[str, str] | None = None
+    if host in _DOI_HOSTS:
+        found = ("doi", path.strip("/")) if path.strip("/") else None
+    elif host == "identifiers.org":
+        match = re.fullmatch(r"/([A-Za-z][A-Za-z0-9._]*)[:/](.+?)/?", path)
+        scheme = _IDENTIFIERS_ORG.get(match[1].casefold()) if match else None
+        if match and scheme:
+            value = match[2]
+            found = (scheme, f"HGNC:{value}" if scheme == "hgnc" and value.isdigit() else value)
+    elif host == _NCBI and path.rstrip("/") == "/geo/query/acc.cgi":
+        accession = (parse_qs(parts.query).get("acc") or [""])[0].strip()
+        found = ("geo", accession) if accession else None
+    else:
+        for registry_host, pattern, scheme in _REGISTRY_PATHS:
+            match = pattern.fullmatch(path) if host == registry_host else None
+            if match:
+                found = (scheme, match[1])
+                break
+    return (found[0], found[1].strip()) if found and found[1].strip() else None
 
 
 def normalize_artifact_path(path: str) -> str:
@@ -99,17 +160,18 @@ class SourceRef(StrictModel):
     def identities(self, artifact_paths: Mapping[str, str] | None = None) -> list[str]:
         """Every key under which this source is 'the same source', used to detect re-citation.
 
-        A row may name one dataset several ways (identifier, resolver URL, downloaded artifact), and two
-        artifact ids may point at one file, so each spelling gets its own key.
+        A row may name one dataset several ways (identifier, registry URL, downloaded artifact), and two
+        artifact ids may point at one file, so each spelling gets its own key. A registry URL also gets the
+        key of the identifier it names (``registry_id``).
         """
         keys: list[str] = []
         if self.id_scheme and _present(self.id_value):
             keys.append(f"{self.id_scheme}:{normalize_id(self.id_scheme, self.id_value or '')}")
         if _present(self.uri):
             uri = normalize_uri(self.uri or "")
-            parts = urlsplit(uri)
-            if parts.netloc in _DOI_HOSTS and parts.path.strip("/"):
-                keys.append(f"doi:{unquote(parts.path.strip('/')).casefold()}")
+            named = registry_id(uri)
+            if named:
+                keys.append(f"{named[0]}:{normalize_id(*named)}")
             keys.append(f"uri:{uri}")
         if _present(self.artifact_id):
             path = (artifact_paths or {}).get(self.artifact_id or "")

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from .claims import STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id
+from .claims import STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id, registry_id
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -30,7 +30,8 @@ LookupState = Literal["succeeded", "failed", "skipped"]
 IdStatus = Literal["found", "not_found", "insufficient", "conflicting", "requires_verification"]
 FAILURE_KINDS = frozenset({"network", "timeout", "rate_limited", "auth", "server", "invalid_response",
                            "resolver_error"})
-SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable"})
+SKIP_KINDS = frozenset({"disabled", "unsupported_scheme", "malformed_id", "manifest_unavailable",
+                        "uri_unmapped"})
 
 # Format checks run before any lookup so a malformed ID is reported, not guessed at or "corrected".
 ID_FORMATS: dict[str, str] = {
@@ -302,20 +303,61 @@ async def _resolve_external(scheme: str, value: str, version: str | None, lookup
     return _judge(scheme, value, version, outcome, resolver.name)
 
 
+async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tuple[str, str],
+                              lookups: _Lookups) -> Resolution | None:
+    """Does the URI beside a cited ID point at that ID? None when it is that ID's own registry address."""
+    scheme, value = cited
+    if named is not None:
+        if named[0] == scheme and normalize_id(*named) == normalize_id(scheme, value):
+            return None  # already checked as the ID itself
+        return Resolution(id_scheme="uri", id_value=uri, lookup="succeeded", status="conflicting",
+                          resolver="registry_url", candidates=[SourceRecord(id_scheme=named[0], id_value=named[1],
+                                                                            url=uri)],
+                          detail=f"the uri names {named[0]}:{named[1]}, not the cited {scheme}:{value}")
+    resolver = lookups.resolver
+    if resolver is None:
+        return _skipped("uri", uri, "none", "requires_verification", "disabled", "live source lookup is off")
+    if not resolver.supports("uri"):
+        return _skipped("uri", uri, resolver.name, "requires_verification", "unsupported_scheme",
+                        f"{resolver.name} cannot resolve the uri to compare it with {scheme}:{value}")
+    outcome = await lookups.fetch("uri", uri)
+    if isinstance(outcome, Resolution):
+        return outcome
+    base = {"id_scheme": "uri", "id_value": uri, "lookup": "succeeded", "resolver": resolver.name}
+    if not outcome:
+        return Resolution(**base, status="not_found", detail="the uri does not resolve")
+    named_records = [record for record in outcome if record.id_scheme == scheme]
+    if not named_records:
+        return _skipped("uri", uri, resolver.name, "requires_verification", "uri_unmapped",
+                        f"{resolver.name} resolved the uri but did not say which {scheme} it is")
+    same = [r for r in named_records if normalize_id(scheme, r.id_value) == normalize_id(scheme, value)]
+    if not same:
+        return Resolution(**base, status="conflicting", candidates=named_records,
+                          detail=f"the uri resolves to a different {scheme} than the cited {value}")
+    return Resolution(**base, status="found", record=same[0])
+
+
 async def _resolve(source: SourceRef, lookups: _Lookups, artifact_paths: Mapping[str, str],
                    observed: Mapping[str, set[str]] | None) -> list[Resolution]:
     """Check every identifier the source carries; skipping one would let it stand unchecked.
 
-    ``version`` describes the external record when there is one; on an artifact-only source it is the
-    cited sha256.
+    A registry URL is checked as the identifier it names. A URI beside an external ID must point at that
+    ID (#117). ``version`` describes the external record when there is one; on an artifact-only source it
+    is the cited sha256.
     """
     resolutions: list[Resolution] = []
+    uri = (source.uri or "").strip() or None
+    named = registry_id(uri) if uri else None
     external: tuple[str, str] | None = None
     if source.id_scheme and source.id_value and source.id_value.strip():
         external = (source.id_scheme, source.id_value.strip())
-    elif source.uri and source.uri.strip():
-        external = ("uri", source.uri.strip())
-    if external:
+        resolutions.append(await _resolve_external(*external, source.version, lookups))
+        if uri:
+            uri_check = await _resolve_uri_for_id(uri, named, external, lookups)
+            if uri_check is not None:
+                resolutions.append(uri_check)
+    elif uri:
+        external = named or ("uri", uri)
         resolutions.append(await _resolve_external(*external, source.version, lookups))
     if source.artifact_id:
         resolutions.append(_resolve_artifact(source.artifact_id, None if external else source.version,
