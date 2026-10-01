@@ -31,6 +31,11 @@ test('the 2.5D request view asks follow-ups through the gateway', () => {
   assert.match(html, /id="fu-text"/);
   assert.match(html, /id="fu-send"/);
   assert.match(html, /q\.costKnown, q\.references, q\.followups\]/, 'a follow-up event re-renders the request view');
+  // A draft belongs to its request: switching requests must not move it to another session (Codex review P2).
+  assert.match(html, /id="fu-text" data-rid="\$\{esc\(q\.id\)\}"/);
+  assert.match(html, /fuDrafts\.get\(q\.id\)/);
+  assert.match(html, /rid = box\.dataset\.rid/);
+  assert.doesNotMatch(html, /text = box\.value\.trim\(\), rid = S\.current/);
   const live = fs.readFileSync(path.join(web, 'lab3d/src/live.js'), 'utf8');
   assert.match(live, /q\.followups/);
 });

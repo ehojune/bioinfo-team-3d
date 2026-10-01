@@ -173,6 +173,10 @@ def test_gateway_restart_marks_a_running_followup_interrupted(tmp_path):
     assert followups[0]["status"] == "interrupted" and "restart" in followups[0]["error"]
     assert followups[1]["status"] == "done"
     assert restarted.snapshot()["data"]["requests"][0]["followups"] == followups
+    restarted.requests["r"]["followups"] = [{"id": f"fu_{i}", "text": "q", "status": "done", "answer": "a"}
+                                            for i in range(25)]
+    shown = restarted.snapshot()["data"]["requests"][0]["followups"]
+    assert [f["id"] for f in shown] == [f"fu_{i}" for i in range(5, 25)], "snapshots stay bounded"
 
 
 @pytest.mark.asyncio

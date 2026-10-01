@@ -946,8 +946,8 @@ class Hub:
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
-                                                                  "usage", "usage_known", "agent_id", "references",
-                                                                  "followups")},
+                                                                  "usage", "usage_known", "agent_id", "references")},
+                          "followups": (r.get("followups") or [])[-20:],  # the full list stays on the request
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),

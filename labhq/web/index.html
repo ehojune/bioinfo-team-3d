@@ -687,6 +687,7 @@ function dagSVG(q) {
 }
 /* follow-ups (#36): a finished request takes more questions in the same CSO session; it is not a new request */
 const FINISHED = ['done', 'failed', 'cancelled', 'rejected'];
+const fuDrafts = new Map();  // request id -> half-typed follow-up; a draft never follows the selector to another request
 function followupHTML(q) {
   const list = (q.followups || []).map(f => `<li class="fu"><p class="fu-q">${esc(f.text)}</p>${
     f.status === 'running' ? '<p class="fu-wait">답을 기다리는 중…</p>'
@@ -694,7 +695,7 @@ function followupHTML(q) {
       : `<p class="fu-err">${esc(f.error || '답을 받지 못했어요')}</p>`}</li>`).join('');
   const busy = (q.followups || []).some(f => f.status === 'running');
   const form = FINISHED.includes(q.status) && api?.followup ? `<div class="fu-in"><label class="sr" for="fu-text">이어 묻기</label>
-<textarea id="fu-text" rows="2" placeholder="이 결과에 대해 더 물어보기. 같은 CSO 세션이 이어서 답해요"></textarea>
+<textarea id="fu-text" data-rid="${esc(q.id)}" rows="2" placeholder="이 결과에 대해 더 물어보기. 같은 CSO 세션이 이어서 답해요"></textarea>
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
@@ -705,7 +706,6 @@ function renderRequest() {
   const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costKnown, q.references, q.followups]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
-  const draft = $('#fu-text') ? $('#fu-text').value : '';  // a live update must not wipe a half-typed question
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
@@ -716,7 +716,7 @@ function renderRequest() {
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>${q.costKnown ? `비용 $${q.cost.toFixed(2)}` : `비용 $${q.cost.toFixed(2)} + 비용 미집계`}</span><span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
 ${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
-  if ($('#fu-text')) $('#fu-text').value = draft;
+  if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick, onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null });
 }
 function renderStaff() {
@@ -838,12 +838,13 @@ $('#approvals').addEventListener('click', async e => {
   } catch (err) { btn.disabled = false; toast(`처리하지 못했어요: ${err.message}`); }
 });
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
+$('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
   if (e.target.id !== 'fu-send') return;
-  const box = $('#fu-text'), text = box.value.trim(), rid = S.current;
+  const box = $('#fu-text'), text = box.value.trim(), rid = box.dataset.rid;
   if (!text) { toast('물어볼 내용을 적어 주세요'); box.focus(); return; }
   e.target.disabled = true;
-  try { await api.followup(rid, text); box.value = ''; toast('같은 CSO 세션에 이어서 물었어요'); }
+  try { await api.followup(rid, text); fuDrafts.delete(rid); box.value = ''; toast('같은 CSO 세션에 이어서 물었어요'); }
   catch (err) { e.target.disabled = false; toast(`보내지 못했어요: ${err.message}`); }
 });
 $('#zones').addEventListener('click', e => { const s = e.target.closest('.seat[data-agent]'); if (s) openSheet(s.dataset.agent); });

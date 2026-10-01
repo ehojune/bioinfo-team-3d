@@ -626,7 +626,7 @@ class Orchestrator:
         except Exception as error:  # the follow-up must end in a recorded state, never stay "running"
             result = TaskResult(task_id=task.id, agent_id=agent, ok=False, error=f"{type(error).__name__}: {error}")
         answered = result.ok and bool(result.text.strip())
-        entry.update(status="done" if answered else "failed", answer=result.text.strip() if answered else "",
+        entry.update(status="done" if answered else "failed", answer=clip(result.text.strip(), 20000) if answered else "",
                      error=None if answered else (result.error or "empty answer"), task_id=result.task_id,
                      resumed_session=task.resume_session_id, answered_at=time.time())
         if not direct and result.session_id and self.hub.supports_resume(agent):
