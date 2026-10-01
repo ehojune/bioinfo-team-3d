@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..adapters import READ_ONLY_OVERRIDES, read_only_refusal
+from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
@@ -564,7 +564,7 @@ class Orchestrator:
                 **{"from": "labhq", "routed_to": routed}))
             return
         refusal = read_only_refusal(routed, self.hub.agents[routed].get("engine"))
-        if refusal:  # a consult runs with READ_ONLY_OVERRIDES; an engine that ignores them could write
+        if refusal:  # a consult runs as the runner's read-only profile; an engine that ignores it could write
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
@@ -769,7 +769,7 @@ class Orchestrator:
         res = await dispatch_with_retry(task, start=initial_attempt)
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
-        read_only = overrides.get("sandbox") == "read-only"
+        read_only = is_read_only_task(task.meta)
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,

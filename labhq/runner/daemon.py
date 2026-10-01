@@ -17,7 +17,7 @@ from pathlib import Path
 
 import websockets
 
-from ..adapters import READ_ONLY_OVERRIDES, get_adapter, read_only_refusal
+from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
@@ -344,7 +344,8 @@ class Runner:
 
     def _resolve_agent(self, task: Task) -> AgentSpec:
         agent = self.registry.get(task.agent_id)
-        if task.meta.get("agent_overrides"):
+        # A read-only task takes nothing from the sender: run_task rebuilds it as read_only_profile.
+        if task.meta.get("agent_overrides") and not is_read_only_task(task.meta):
             agent = agent.model_copy(update=task.meta["agent_overrides"])
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
@@ -450,8 +451,7 @@ class Runner:
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
-        read_only = (task.meta.get("kind") in {"consult", "followup"}
-                     or (task.meta.get("agent_overrides") or {}).get("sandbox") == "read-only")
+        read_only = is_read_only_task(task.meta)
         refusal = read_only_refusal(agent.id, agent.engine) if read_only else None
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal)
@@ -459,8 +459,8 @@ class Runner:
             await self.emit(Event(type="agent.status", data={"state": "error", "error": short(refusal, 200)}, **base))
             await self.emit(Event(type="task.result", data=result.model_dump(mode="json"), **base))
             return result
-        if read_only:  # what a read-only task reaches is fixed here, not trusted to the sender's overrides
-            agent = agent.model_copy(update=READ_ONLY_OVERRIDES)
+        if read_only:  # an allowlist built from the staff member's identity, never the sender's overrides
+            agent = read_only_profile(agent)
         override = workdir_override or (Path(task.meta["workdir"]) if task.meta.get("workdir") else None)
         ws = TaskWorkspace(self.ws_root, task, agent, override)
         self.workspaces[task.id] = ws
@@ -510,8 +510,9 @@ class Runner:
                 env["LABHQ_CONFIG"] = self.s.config_path
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
-                # A consult or a follow-up answers once from existing work; it does not ask anyone in turn.
-                mcp_servers=self._mcp_servers(agent, env, allow_ask=task.meta.get("kind") not in {"consult", "followup"}),
+                # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
+                # MCP server at all (the profile has none, and labhq_ask would be one).
+                mcp_servers=[] if read_only else self._mcp_servers(agent, env),
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
                 emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
@@ -519,6 +520,7 @@ class Runner:
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),
+                read_only=read_only,
             )
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,

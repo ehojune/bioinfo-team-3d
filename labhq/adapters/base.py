@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..util import extract_json, merge_staff_env, short
+from .read_only import read_only_mismatch
 
 Emit = Callable[[str, dict], Awaitable[None]]  # (event_type, data)
 
@@ -164,6 +165,8 @@ class RunContext:
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts
     resume_baseline: dict | None = None  # runner-local snapshot, taken before this invocation
+    # A consult or follow-up: the agent is `read_only_profile(...)` and the adapter adds the engine's own off switches.
+    read_only: bool = False
 
     @property
     def meta_dir(self) -> Path:
@@ -283,7 +286,8 @@ def child_config_dirs(env: dict[str, str], cwd: Path, var: str, default_name: st
 class AgentAdapter(ABC):
     engine = "base"
     supports_resume = True
-    # True only when the engine itself (sandbox, tool list) applies READ_ONLY_OVERRIDES, not just the prompt.
+    # True only when the engine itself (sandbox, tool list, hooks off) keeps `read_only_profile` read-only,
+    # not just the prompt. Such an adapter must honour `ctx.read_only` in build_command.
     enforces_read_only = False
 
     def __init__(self, settings: Settings):
@@ -329,7 +333,8 @@ class AgentAdapter(ABC):
 
     async def run(self, ctx: RunContext) -> TaskResult:
         env = merge_staff_env(dict(os.environ), self.engine_env(), ctx.env)
-        refused = self.preflight_error(ctx, env)
+        refused = (read_only_mismatch(ctx.agent, ctx.mcp_servers) if ctx.read_only else None) or \
+            self.preflight_error(ctx, env)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
