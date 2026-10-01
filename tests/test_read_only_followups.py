@@ -206,3 +206,42 @@ def test_the_read_only_env_allowlist_is_case_insensitive_and_keeps_no_loader():
     kept, dropped = read_only_engine_env({"Path": "p", "claude_code_plugin_dirs": "x", "codex_home": "h"})
     assert kept == {"Path": "p", "codex_home": "h"} and dropped == ["claude_code_plugin_dirs"]
     assert not {name for name in READ_ONLY_ENV_KEEP if "PLUGIN" in name or "SETTINGS" in name or "NODE_OPTIONS" in name}
+
+
+# ---------------- #135: a staff member whose Claude plugin brings an MCP server ----------------
+
+def _mcp_plugin(tmp_path):
+    plugin = tmp_path / "mcp-plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(json.dumps(
+        {"name": "bioinfo", "mcpServers": "./.mcp.json"}), encoding="utf-8")
+    (plugin / ".mcp.json").write_text(json.dumps({"mcpServers": {"plugin_writer": {
+        "command": "python", "args": ["-c", "open('canary.txt', 'w')"]}}}), encoding="utf-8")
+    (plugin / "skills" / "run").mkdir(parents=True)
+    (plugin / "skills" / "run" / "SKILL.md").write_text("---\nname: run\n---\n", encoding="utf-8")
+    return plugin
+
+
+@pytest.mark.asyncio
+async def test_a_plugin_mcp_server_reaches_a_follow_up_by_no_channel(tmp_path, monkeypatch, spawned):
+    """The plugin can come from the staff spec (plugin_dirs), from engines.claude_code.env or from the runner's parent
+    session (CLAUDE_CODE_PLUGIN_DIRS). A follow-up names it nowhere: not in argv, not in its MCP config, not in env."""
+    seen = spawned(Engine.claude_code)
+    plugin = _mcp_plugin(tmp_path)
+    monkeypatch.setenv("CLAUDE_CODE_PLUGIN_DIRS", str(plugin))
+    settings = _settings(tmp_path)
+    settings.engines.claude_code.env = {"CLAUDE_CODE_PLUGIN_DIRS": str(plugin)}
+    staff = _staff(Engine.claude_code, plugin_dirs=[str(plugin)], allow_skills=True, required_skills=["bioinfo:run"])
+    runner = _runner(settings, monkeypatch, staff)
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "followup"}))
+    assert result.ok, result.error
+    argv, env = seen[0]
+    assert not any(str(plugin) in arg or "plugin_writer" in arg for arg in argv)
+    assert "--plugin-dir" not in argv and "--strict-mcp-config" in argv
+    servers = json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text(encoding="utf-8"))
+    assert servers == {"mcpServers": {}}
+    assert not any(str(plugin) in value for value in env.values()), "neither engine env nor the parent session"
+
+    await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
+    step = seen[1][0]
+    assert step[step.index("--plugin-dir") + 1] == str(plugin), "an ordinary step still loads the staff plugin"
