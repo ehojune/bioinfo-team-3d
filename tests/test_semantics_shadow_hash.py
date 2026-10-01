@@ -253,3 +253,38 @@ def test_a_public_alias_of_an_internal_folder_is_not_read_for_a_public_project(t
     line = line_for(hub, "req_a", observed)
     assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
     assert reads == [] and observed == {}
+
+
+def test_hashing_stops_at_its_share_and_the_models_still_finish(tmp_path, monkeypatch):
+    """#159: an output too big to hash in time ends the hash step, not the job: incomplete, never a timeout."""
+    from labhq.research.semantics_shadow import ShadowConfig, take_snapshot
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 1)
+    hub, _ = _lab(tmp_path, files={"outputs/counts.tsv": b"x" * 400})
+    calls = [0]
+
+    def check():   # the whole job's cap: 200 looks
+        calls[0] += 1
+        if calls[0] > 200:
+            raise shadow.ShadowTimeout("time cap")
+
+    snap = take_snapshot(hub, "req_a", ShadowConfig())
+    line = shadow.compute_line(snap, {}, check, epoch=1, hash_over=lambda: calls[0] > 100)
+    assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
+    assert line["hash"]["skipped"] == {"hash_time": 1} and line["hash"]["hashed"] == 0
+    assert line["objects"]["status"] == "ok"
+
+
+def test_the_worker_gives_hashing_half_of_the_time_cap(tmp_path, monkeypatch):
+    """#159 through the worker: a file that takes longer than the whole cap to hash leaves an ok line."""
+    from tests.test_semantics_shadow_breaker import _lines, _service
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 1)
+    service = _service(tmp_path)
+    service.cfg = shadow.ShadowConfig(timeout_s=2.0)
+    target = tmp_path / "runs" / "2026-10-01" / "task_a1_analyst" / "outputs" / "counts.tsv"
+    target.write_bytes(b"x" * (64 * 1024 ** 2))   # one byte per read: far more than 2 s to hash
+    service.after_request("req_000")
+    assert service.drain(30)
+    (line,) = _lines(tmp_path, "request")
+    assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
+    assert line["hash"]["skipped"] == {"hash_time": 1} and service.counts["failures"] == 0
+    assert line["ms"] < 2000

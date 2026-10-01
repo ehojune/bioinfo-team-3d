@@ -61,6 +61,7 @@ HASH_MAX_FILES = 200
 HASH_MAX_TOTAL = 2 * 1024 ** 3
 HASH_MAX_FILE = 512 * 1024 ** 2
 HASH_CHUNK = 8 * 1024 ** 2
+HASH_SHARE = 0.5                 # of timeout_s: hashing stops there and the models get the rest (#159)
 MANIFEST_MAX = 1024 ** 2
 MAX_TASK_ROWS = 20_000
 MAX_EDGES = 50_000
@@ -587,13 +588,15 @@ class HashBudget:
 class Reader:
     """Read-only access to workspace files on this disk, inside allowed zones, within the budget."""
 
-    def __init__(self, snap: Mapping[str, Any], check: Callable[[], None]):
+    def __init__(self, snap: Mapping[str, Any], check: Callable[[], None],
+                 hash_over: Callable[[], bool] | None = None):
         self.zones = [tuple(z) for z in snap.get("zones") or []]
         self.zone_forms = zone_forms(self.zones)  # None: a zone did not resolve, so nothing is read
         self.visibility = (snap.get("project") or {}).get("visibility")
         self.root = snap.get("workspace_root") or ""
         self.host = snap.get("host")
         self.check = check
+        self.hash_over = hash_over or (lambda: False)  # True once hashing has used its share of the time cap
         self.budget = HashBudget()
         self.manifests: dict[str, dict | None] = {}
         self.workspace_state: dict[str, str] = {}
@@ -675,6 +678,9 @@ class Reader:
         if self.budget.files >= HASH_MAX_FILES or self.budget.bytes + st.st_size > HASH_MAX_TOTAL:
             self.budget.exhausted = True
             return "budget", None
+        if self.hash_over():
+            self.budget.exhausted = True
+            return "hash_time", None
         self.budget.files += 1
         self.budget.bytes += st.st_size
         digest = hashlib.sha256()
@@ -684,6 +690,9 @@ class Reader:
                 return "not_regular", None  # replaced between the check and the open
             while True:
                 self.check()
+                if self.hash_over():  # past the hash share: the request is incomplete, the models still run
+                    self.budget.exhausted = True
+                    return "hash_time", None
                 chunk = handle.read(HASH_CHUNK)
                 if not chunk:
                     break
@@ -892,8 +901,10 @@ def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epo
 
 
 def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Callable[[], None], *,
-                 epoch: int) -> dict:
-    """One request line: both models side by side, ids, kinds, hashes and counts only."""
+                 epoch: int, hash_over: Callable[[], bool] | None = None) -> dict:
+    """One request line: both models side by side, ids, kinds, hashes and counts only.
+
+    ``hash_over`` says when output hashing has used its share of the time cap (#159)."""
     started = time.perf_counter()
     read_rows(snap, check)
     rid = snap["rid"]
@@ -910,7 +921,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
         "rows_ms": snap.get("rows_ms"),
     }
     line["objects"] = compute_objects(snap, check)
-    reader = Reader(snap, check)
+    reader = Reader(snap, check, hash_over)
     line["provenance"], hashes = compute_provenance(snap, reader, observed, check)
     workspaces: dict[str, int] = {}
     for state in reader.workspace_state.values():
@@ -1110,6 +1121,7 @@ class ShadowService:
         watchdog.start()
 
         next_look = [started + EXTERNAL_LOOK_S]
+        hash_until = started + self.cfg.timeout_s * HASH_SHARE
 
         def check() -> None:
             if self.gen != gen:
@@ -1126,7 +1138,8 @@ class ShadowService:
         try:
             observed = self.load_observed()
             known = len(observed)
-            line = compute_line(snap, observed, check, epoch=self.epoch)
+            line = compute_line(snap, observed, check, epoch=self.epoch,
+                                hash_over=lambda: time.monotonic() > hash_until)
             self.observed_dirty = self.observed_dirty or len(observed) != known
         except ShadowTimeout as exc:  # stopped before the models ran: still one line, so the report counts it
             line = failed_line(snap, "timeout", exc, epoch=self.epoch, ms=round((time.monotonic() - started) * 1000, 2))
