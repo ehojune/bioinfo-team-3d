@@ -168,8 +168,15 @@ def shadow_root(settings: Any) -> Path:
 
 
 def inside_git_tree(path: Path) -> bool:
-    resolved = Path(os.path.abspath(path))
-    return any((parent / ".git").exists() for parent in (resolved, *resolved.parents))
+    """True when the path, or where a symlink or junction on it leads, is inside a git work tree.
+
+    The shadow's local records must never land in a repository (this one is public). Unknown means yes.
+    """
+    try:
+        places = {Path(os.path.abspath(path)), Path(os.path.realpath(path))}
+    except (OSError, ValueError):
+        return True
+    return any((parent / ".git").exists() for place in places for parent in (place, *place.parents))
 
 
 def _when(entry: Mapping[str, Any]) -> float:
@@ -1361,6 +1368,9 @@ def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
 
 def run_cli(args: argparse.Namespace, settings: Any) -> int:
     paths = ShadowPaths(shadow_root(settings))
+    if args.semantics_cmd != "report" and inside_git_tree(paths.root):
+        print(f"semantics {args.semantics_cmd}: gateway.state_dir is inside a git work tree; nothing written")
+        return 1
     try:
         if args.semantics_cmd == "report":
             today = date.fromisoformat(args.today) if args.today else None

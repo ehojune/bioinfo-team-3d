@@ -263,3 +263,23 @@ def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monk
     release.set()
     assert service.drain(10)
     assert service.latched == "wrong_identity" and _lines(tmp_path, "request") == []
+
+
+def test_a_state_dir_linked_into_a_git_work_tree_is_refused(tmp_path):
+    import os
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "inside").mkdir()
+    link = tmp_path / "outside"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(repo / "inside"), str(link))
+        else:
+            os.symlink(repo / "inside", link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a directory link here")
+    hub = fake_hub(tmp_path, {}, {})
+    hub.s.gateway.state_dir = str(link / "state")
+    assert shadow.ShadowService.start(hub) is None
+    assert not (repo / "inside" / "state").exists()

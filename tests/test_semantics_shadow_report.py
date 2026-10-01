@@ -117,3 +117,16 @@ def test_the_report_says_off_when_the_setting_is_off(tmp_path, capsys, text, set
         main(["--config", str(path), "semantics", "report", "--json"])
     state = json.loads(capsys.readouterr().out)["state"]
     assert state["on"] is False and state["setting"] == setting
+
+
+@pytest.mark.parametrize("args", [["enable"], ["mark", "req_abc", "sem:0a1b2c3d", "wrong_identity"]],
+                         ids=["enable", "mark"])
+def test_the_cli_writes_nothing_inside_a_git_work_tree(tmp_path, capsys, args):
+    (tmp_path / ".git").mkdir()
+    path = tmp_path / "labhq.yaml"
+    path.write_text(f"gateway: {{state_dir: '{(tmp_path / 'state').as_posix()}'}}\nsemantics: shadow\n",
+                    encoding="utf-8")
+    with pytest.raises(SystemExit) as done:
+        main(["--config", str(path), "semantics", *args])
+    assert done.value.code == 1 and "git work tree" in capsys.readouterr().out
+    assert not (tmp_path / "state").exists()
