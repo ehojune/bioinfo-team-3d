@@ -59,9 +59,10 @@ def test_unknown_types_carry_a_declared_reason(meta_records, reason):
     assert reason in MODEL.spec.reasons.unknown
 
 
-def test_legacy_bare_keys_keep_the_model_s_own_vocabulary():
+def test_legacy_bare_keys_use_the_shared_output_vocabulary():
     assert artifact(rows({"output_types": {"outputs/a.tsv": "raw_counts"}}))["data_type"] == "raw_counts"
-    legacy_outside = artifact(rows({"output_types": {"outputs/a.tsv": "table"}}))
+    assert artifact(rows({"output_types": {"outputs/a.tsv": "table"}}))["data_type"] == "table"
+    legacy_outside = artifact(rows({"output_types": {"outputs/a.tsv": "nonsense"}}))
     assert legacy_outside["data_type"] == sem.UNKNOWN and legacy_outside["unknown"]["data_type"] == "not_declared"
 
 
