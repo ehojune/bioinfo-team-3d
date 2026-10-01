@@ -34,7 +34,7 @@ include = ["labhq*"]
 labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*", "web/lab3d/assets/*",
          "bench_data/cases/*.yaml", "bench_data/references/*.md", "bench_data/references/*.tsv",
          "bench_data/checks/*.py",
-         "research/packs/*.yaml", "research/semantics_v1.yaml", "vocab/*.yaml", "vocab/NOTICE.md",
+         "research/packs/*.yaml", "research/semantics_v1.yaml", "vocab/*.yaml",
          "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]
