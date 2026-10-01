@@ -755,10 +755,15 @@ class Hub:
         finally:
             self.futures.pop(tid, None)
 
-    def consult_attempts(self, ask_id: str) -> list[tuple[str, dict]]:
-        """Consult tasks the durable ledger holds for one ask, from any gateway generation."""
+    def consult_attempts(self, ask_id: str, agent_id: str) -> list[tuple[str, dict]]:
+        """Consults one agent ran for one ask, from any gateway generation.
+
+        Another agent's consult is never adopted: its session and workdir would replace the
+        routed agent's (a facilities ask falls back to the CSO while the roster is empty).
+        """
         return [(tid, entry) for tid, entry in self.store.all("task").items()
                 if entry.get("kind") == "consult" and
+                (entry.get("payload") or {}).get("agent_id") == agent_id and
                 ((entry.get("payload") or {}).get("meta") or {}).get("ask_id") == ask_id]
 
     async def adopt_consult(self, ask_id: str, agent_id: str) -> tuple[int, TaskResult | None]:
@@ -769,7 +774,7 @@ class Hub:
         abandoned). The caller then runs a new consult in a separate session and workdir,
         because the old one may still hold them.
         """
-        prior = self.consult_attempts(ask_id)
+        prior = self.consult_attempts(ask_id, agent_id)
         if not prior:
             return 0, None
         for tid, _ in prior:
@@ -791,8 +796,10 @@ class Hub:
             entry = self.store.get("task", tid) or entry
         if not entry.get("completed") or entry.get("abandoned") or not entry.get("result"):
             return attempt, None
-        # The task.result handler already added its cost to the durable request total.
-        return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0})
+        # The task.result handler already added its cost to the durable request total; the
+        # orchestrator adds it by task ID, which this ledger entry owns.
+        return attempt, TaskResult.model_validate(entry["result"]).model_copy(update={"cost_usd": 0.0,
+                                                                                      "task_id": tid})
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:

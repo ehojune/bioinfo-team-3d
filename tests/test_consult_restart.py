@@ -207,8 +207,9 @@ async def test_recovery_never_answers_an_ask_with_another_asks_consult(tmp_path)
         hub.store.close()
 
 
-def ledger_consult(hub, tid, *, attempt, dispatched_at, completed, result=None, abandoned=False, workdir=None):
-    task = Task(id=tid, agent_id="cso", request_id="r", prompt="answer", resume_session_id=None,
+def ledger_consult(hub, tid, *, attempt, dispatched_at, completed, result=None, abandoned=False, workdir=None,
+                   agent="cso"):
+    task = Task(id=tid, agent_id=agent, request_id="r", prompt="answer", resume_session_id=None,
                 meta={"kind": "consult", "ask_id": "the-ask", "attempt": attempt,
                       **({"workdir": workdir} if workdir else {})})
     hub.store.put("task", tid, {"request_id": "r", "kind": "consult", "attempt": attempt, "accepted": True,
@@ -283,5 +284,65 @@ async def test_adopted_transient_failure_uses_only_the_remaining_retries(tmp_pat
         assert all(task.resume_session_id is None and "workdir" not in task.meta for task in calls)
         answer = hub.store.get("ask", "the-ask")["answer"]
         assert answer["status"] == ("answered" if expected_calls else "rejected")
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("baseline_has_consult", [False, True])
+async def test_adopted_consult_cost_is_counted_once_beside_uncounted_parallel_results(tmp_path,
+                                                                                    baseline_has_consult):
+    hub = Hub(settings(tmp_path))
+    try:
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        # A parallel step's result already reached the durable total; its run_step adds it on resume.
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running",
+                             "cost_usd": 0.5, "cost_by_task": {"parallel": 0.5}}
+        hub.orchestrator.cost["r"] = 0.0
+        done = TaskResult(task_id="old", agent_id="cso", ok=True, text="Use cohort C7", cost_usd=0.75)
+        ledger_consult(hub, "old", attempt=1, dispatched_at=1, completed=True, result=done)
+        hub.requests["r"]["cost_by_task"]["old"] = 0.75
+        hub.requests["r"]["cost_usd"] = 1.25
+        if baseline_has_consult:  # run_request took its baseline after the consult result arrived
+            hub.orchestrator.cost["r"] = 0.75
+            vars(hub.orchestrator).setdefault("cost_tasks", {})["r"] = {"old"}
+
+        async def dispatch(task):
+            raise AssertionError("the finished consult is adopted, not rerun")
+
+        hub.dispatch = dispatch
+        await hub.orchestrator.answer_ask(question("the-ask"), "local")
+        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use cohort C7"
+        assert hub.orchestrator.cost["r"] == 0.75
+        hub.orchestrator.cost["r"] += 0.5  # the parallel run_step resumes and adds its own result
+        assert hub.orchestrator.cost["r"] == hub.requests["r"]["cost_usd"]
+    finally:
+        hub.store.close()
+
+
+async def test_adoption_never_takes_another_agents_consult_or_session(tmp_path):
+    hub = Hub(settings(tmp_path))
+    try:
+        # The roster is still empty of facilities, so this facilities ask now routes to the CSO.
+        hub.agents = {aid["id"]: aid for aid in ROSTER}
+        hub.requests["r"] = {"id": "r", "text": "compare cohorts", "status": "running",
+                             "cso_session_id": "cso-session"}
+        done = TaskResult(task_id="facilities-consult", agent_id="facilities", ok=True, text="Bay 3 is free",
+                          session_id="facilities-session")
+        ledger_consult(hub, "facilities-consult", attempt=1, dispatched_at=1, completed=True, result=done,
+                       agent="facilities")
+        assert await hub.adopt_consult("the-ask", "cso") == (0, None)
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="Use bay 2", session_id="cso-next")
+
+        hub.dispatch = dispatch
+        ask = AskRequest(id="the-ask", task_id="source", agent_id="worker", request_id="r", to="facilities",
+                         question="Which bay is free?", why_blocked="bay unknown")
+        await hub.orchestrator.answer_ask(ask, "local")
+        assert [task.agent_id for task in calls] == ["cso"]
+        assert hub.requests["r"]["cso_session_id"] == "cso-next"
+        assert hub.store.get("ask", "the-ask")["answer"]["answer"] == "Use bay 2"
     finally:
         hub.store.close()

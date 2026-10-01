@@ -392,6 +392,8 @@ class Orchestrator:
         self.hub = hub
         self.cfg = hub.s.orchestrator
         self.cost: dict[str, float] = {}
+        # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
+        self.cost_tasks: dict[str, set[str]] = {}
         self.attempts: dict[str, dict[str, int]] = {}
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
@@ -553,7 +555,7 @@ class Orchestrator:
             prior, result = await adopt(ask.id, routed) if adopt else (0, None)
             first_attempt = 1
             if result is not None:
-                self._sync_durable_cost(ask.request_id)
+                self._count_adopted_cost(ask.request_id, result.task_id)
                 if failure_kind(result) == "transient" and prior < self.cfg.step_max_attempts:
                     result, first_attempt = None, prior + 1  # only the retries that are left
             elif prior:
@@ -585,11 +587,20 @@ class Orchestrator:
             answer=answer if answered else None, reason=None if answered else answer,
             **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
 
-    def _sync_durable_cost(self, rid: str | None) -> None:
-        """Include costs the gateway recorded outside run_step, e.g. an adopted consult (#93)."""
-        if rid and rid in self.hub.requests:
-            durable = float(self.hub.requests[rid].get("cost_usd") or 0)
-            self.cost[rid] = max(self.cost.get(rid, 0.0), durable)
+    def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
+        """Add an adopted task's recorded cost once (#93).
+
+        The durable request total can already hold parallel tasks whose run_step has not
+        added them yet, so copying that total would count those tasks twice.
+        """
+        if not rid or rid not in self.hub.requests:
+            return
+        counted = self.cost_tasks.setdefault(rid, set())
+        if task_id in counted:
+            return
+        counted.add(task_id)
+        amount = float((self.hub.requests[rid].get("cost_by_task") or {}).get(task_id) or 0)
+        self.cost[rid] = self.cost.get(rid, 0.0) + amount
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
@@ -633,6 +644,7 @@ class Orchestrator:
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
                     self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
+                    self.cost_tasks.setdefault(rid, set()).add(res.task_id)
                     kind = failure_kind(res)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
@@ -986,6 +998,7 @@ class Orchestrator:
         text = req["text"] + "".join("\n\nPI clarification (questions and answer):\n" + qa_text(c)
                                      for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
+        self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
