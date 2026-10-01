@@ -162,6 +162,16 @@ def test_depth_limit_ends_with_a_caution(name):
     assert check["edges"] < 70 * 4
 
 
+@pytest.mark.parametrize("length, cycle", [(3, True), (70, False)])
+def test_models_agree_on_cycle_and_depth_limit(length, cycle):
+    outs = []
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(pilot.chain_records(length, cycle=cycle))
+        outs.append(pilot.canon(pilot.result_of(impl.audit_lineage(p, artifact=f"art:req_c/t{length - 1}_ws/outputs/o.tsv"))))
+    assert outs[0] == outs[1]
+
+
 def test_diamond_lineage_is_walked_by_node_not_by_path():
     """#140: 20 layers that each split into two outputs and merge in the next run (2^19 paths, 60 nodes)."""
     checks = {name: pilot.diamond_check(pilot.IMPLS[name](), 20) for name in ("B", "A")}

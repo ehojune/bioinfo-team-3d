@@ -2,12 +2,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
-## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot
+## 2026-10-01 · #127 출처·재사용 의미 모델 비교 pilot (PR A: opt-in으로 main에)
 
-- 결론: 중단 기준 충족, 접기를 권고한다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). B는 독립 결함 유형이 더 많았고(17문항 밖 반례 B 3유형, A 2유형) 변경 시간도 짧지 않았다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
-- 바뀐 것: 새 파일 `labhq/research/semantics_v1.yaml`·`semantics.py`(B, 공유 read_records), `tests/semantics_baseline.py`(A), `tests/test_semantics_pilot.py`·`test_semantics_public.py`, `scripts/semantics_pilot.py`, `docs/reference/semantics_pilot.md`. `expected.yaml`은 고정 전 보정 1회(답 변경 없음, 규칙 원천·측정 규약 고정). `pyproject.toml` package-data 1줄. 설정·실행 경로·CSO·state_dir은 그대로다.
-- 실행한 것: 기대 답 독립 검토 1회 반영(동의하지 않은 두 건은 코드 근거로 유지). 측정 script(1× warm 200회·5 batch, 50× 복제, tracemalloc, cycle·깊이 70). 격리 test(fresh process import, AST, CSO prompt hash, 파일 bytes, socket·subprocess 차단). 전체 pytest 1373 passed/20 skipped, `node tests/*.cjs` 8개, `bash scripts/check_public.sh`, `git diff --check` 통과.
-- 미해결: 접는 커밋(semantics.py·YAML·script 삭제, fixture·기대 답·제약 test는 남김)은 리뷰 뒤 결정한다. 변경 내용을 구현 전에 알아 B에 분기를 미리 넣었으므로 변경 시간 지표는 변경 비용을 재지 못했다. A의 N+1 SQL 탓에 성능 비교는 근거가 약하다. 구현 뒤 독립 리뷰(Codex 1회)의 P2 3건과 검증에서 찾은 A의 diamond DAG 지수 시간은 고치지 않고 후속으로 넘긴다. patch notes는 PR 번호가 생긴 뒤 쓴다.
+- 결론: 중단 기준은 충족했다. 기준선 A(메모리 SQLite + 관계 표 + 재귀 CTE)가 모델 B와 같은 의미·정확도를 냈다(base·변경 1·변경 2 모두 17/17, 잘못된 동일시 0, 소비자 불일치 0). 그러나 PI 결정(2026-10-01)으로 접지 않고 opt-in·실행 경로 미연결로 유지한다. 그림자 모드로 실데이터를 모아 #121에서 재평가한다. 합성 fixture 결과이고 실제 요청의 효과가 아니다.
+- 바뀐 것: 새 파일 `labhq/research/semantics_v1.yaml`·`semantics.py`(B, 공유 read_records), `tests/semantics_baseline.py`(A), `tests/test_semantics_pilot.py`·`test_semantics_public.py`, `scripts/semantics_pilot.py`, `docs/reference/semantics_pilot.md`. 후속 6건을 고쳤다: B resume 시각 unknown(#137), A claim 반복 보고(#138), B independent_groups(#139), A 노드 단위 순회(#140), reader immutable 경쟁(#141), LLM 0 차단·script import 검사(#142). `expected.yaml`·hash·모델 YAML은 그대로다. `pyproject.toml` package-data 1줄. 설정·실행 경로·CSO·state_dir은 그대로다.
+- 실행한 것: 후속마다 수정 전 실패하던 회귀 test(#137 TypeError, #138 IntegrityError, #139 group 누락, #140 16층 1.83초, #141 writer 행 놓침, #142 os 함수 실제 실행 시도). 측정 다시 실행(1× warm 200회·5 batch, 50× 복제, 20층 diamond A 1.9 ms·B 0.2 ms). Codex 리뷰 1회(새 결함 없음). 전체 pytest 1401 passed/20 skipped, `node tests/*.cjs` 8개, `bash scripts/check_public.sh`, `git diff --check` 통과. 격리 test(설정 키 0, 실행 경로 import 0, settings.py diff 0, CSO prompt 동일)도 그대로 통과한다.
+- 미해결: #143(접는 커밋 순서)은 접지 않으므로 닫는다. 변경 내용을 구현 전에 알아 B에 분기를 미리 넣었으므로 변경 시간 지표는 변경 비용을 재지 못했다. A의 N+1 SQL 탓에 성능 비교는 근거가 약하다. 그림자 모드·팔란티어식 운영 객체 뷰는 다음 PR.
 - 근거: `docs/reference/semantics_pilot.md`, `tests/fixtures/semantics/expected.yaml`, `scripts/semantics_pilot.py`, `tests/test_semantics_pilot.py`.
 
 ## 2026-10-01 · #90 연구 수행 규약 PR 2 앞부분 — 리뷰 보강

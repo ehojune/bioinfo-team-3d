@@ -598,8 +598,9 @@ def adapter_lines() -> dict[str, dict[str, int]]:
     files = {"B": ROOT / "labhq" / "research" / "semantics.py", "A": ROOT / "tests" / "semantics_baseline.py"}
     adapters = {"B": {"_public", "_advisory", "_sorted_edges", "_gap", "SemanticsAdvisory"},
                 "A": {"run_row", "artifact_row", "edge_dict", "edges_of", "agent_row", "uses_of", "gap"}}
-    shared = {"B": {"read_records", "_open_state_readonly", "_parse_json", "_unique_pairs", "load_yaml_unique",
-                    "_construct_unique_mapping", "_relative_inside", "Records", "RecordsError", "_UniqueKeyLoader"},
+    shared = {"B": {"read_records", "_open_state_readonly", "_read_state", "_wal_path", "_wal_mode", "_stamp",
+                    "_parse_json", "_unique_pairs", "load_yaml_unique", "_construct_unique_mapping", "_relative_inside",
+                    "Records", "RecordsError", "_UniqueKeyLoader"},
               "A": set()}
     out = {}
     for name, path in files.items():
@@ -632,7 +633,9 @@ def main(argv: list[str] | None = None) -> int:
         with fixture_copy() as paths:
             report["scores"] = {name: score_impl(impl, paths, expected) for name, impl in impls.items()}
             report["traversal"] = {name: {"cycle": traversal_check(impl, 3, True),
-                                          "depth_70": traversal_check(impl, 70, False)}
+                                          "depth_70": traversal_check(impl, 70, False),
+                                          "diamond_20": {k: v for k, v in diamond_check(impl, 20).items()
+                                                         if k != "result"}}
                                    for name, impl in impls.items()}
             report["perf_1x"] = measure(impls, paths, expected, warmup=2 if args.quick else 20,
                                         runs=5 if args.quick else 200, batches=2 if args.quick else 5,
@@ -668,7 +671,8 @@ def render(report: dict) -> str:
                   f"B {warm_b / 1e3:.0f} us (B/A {warm_b / warm_a:.2f}, worst query {worst:.2f}); "
                   f"tracemalloc peak A {a['tracemalloc_peak_bytes'] / 1e6:.1f} MB, B {b['tracemalloc_peak_bytes'] / 1e6:.1f} MB"]
     for name, t in report["traversal"].items():
-        lines.append(f"{name} traversal: cycle {t['cycle']['cautions']}, depth 70 {t['depth_70']['cautions']}")
+        lines.append(f"{name} traversal: cycle {t['cycle']['cautions']}, depth 70 {t['depth_70']['cautions']}, "
+                     f"diamond 20 layers {t['diamond_20']['seconds'] * 1e3:.1f} ms ({t['diamond_20']['edges']} edges)")
     return "\n".join(lines)
 
 
