@@ -117,9 +117,103 @@ def test_gateway_root_check_is_lexical_across_operating_systems():
     s.projects = [ProjectSettings(id="p", local_dir="/home/pi/projects/p1")]
     for value in ("/srv/refs/yuan", "C:\\Lab\\refs\\papers", "c:/lab/refs/notes", "/home/pi/projects/p1/docs"):
         assert check_reference_path(value, s) == value
-    for value in ("/srv/other", "/srv/refs2", "D:\\Lab\\refs\\x", "/home/pi/projects/p2"):
+    for value in ("/srv/other", "/srv/refs2", "D:\\Lab\\refs\\x", "/home/pi/projects/p2",
+                  "/home/other/projects/p1/docs"):  # home-relative matching is only for `~` values (#124)
         with pytest.raises(ValueError):
             check_reference_path(value, s)
+
+
+def _home(monkeypatch, path):
+    for name in ("HOME", "USERPROFILE"):  # POSIX and Windows expanduser
+        monkeypatch.setenv(name, str(path))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("root", ["~/refs", "/home/pi/refs"])
+async def test_tilde_reference_opens_in_the_runner_accounts_home(tmp_path, monkeypatch, root):
+    # #124: a Windows gateway expanded `~` with its own account and stored C:\Users\<gateway>\refs\x; a POSIX
+    # runner (WSL, HPC) then looked there and dropped the reference as missing. The gateway's roots may be
+    # written for the runner (`~/refs` or `/home/pi/refs`).
+    from labhq.intake import reference_dirs, render_references
+
+    gateway_home, runner_home = tmp_path / "gateway-home", tmp_path / "runner-home"
+    (runner_home / "refs" / "x").mkdir(parents=True)
+    _home(monkeypatch, gateway_home)
+    s = Settings()
+    s.gateway.state_dir = str(tmp_path / "state")
+    s.runner.reference_roots = [root]
+    s.policy.data_zones = [DataZone(path="~/refs/vault")]
+    client = TestClient(create_app(s))
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    rid = client.post("/api/requests", json={"text": "t", "mode": "plan_only", "references": [
+        {"kind": "path", "value": "~/refs/x"}]}, headers=auth).json()["request_id"]
+    stored = client.app.state.hub.requests[rid]["references"]
+    assert stored[0]["value"] == "~/refs/x", "stored as written, for the runner to expand"
+    for bad in ("~/refs/vault/raw", "~/other/x"):
+        response = client.post("/api/requests", json={"text": "t", "references": [{"kind": "path", "value": bad}]},
+                               headers=auth)
+        assert response.status_code == 422, bad
+
+    _home(monkeypatch, runner_home)  # the runner, on its own account
+    runner_settings = Settings()
+    runner_settings.runner.reference_roots = ["~/refs"]
+    runner, seen = _reference_runner(tmp_path, monkeypatch, runner_settings)
+    await runner.run_task(Task(id="task-h", request_id="r1", agent_id="worker",
+                               prompt="Compare" + render_references(stored), meta={"reference_dirs": reference_dirs(stored)}))
+    assert seen["ctx"].read_dirs == [str((runner_home / "refs" / "x").resolve())]
+    assert f"[path] {os.path.expanduser('~/refs/x')} (read-only on the runner)" in seen["ctx"].prompt
+    assert not [t for t in _log_texts(runner) if t.startswith("참고 경로 제외")]
+
+
+def test_reference_masks_never_hide_a_zone_from_the_publish_guard(tmp_path):
+    # A reference that is part of a zone path (`/refs` in `/srv/refs/vault`) was masked before the zone
+    # check ran, so the line no longer named the zone and the donor file name was posted.
+    from labhq.integrations.github import publish_clean
+
+    s = settings_with_roots(tmp_path)
+    s.policy.data_zones = [DataZone(path="/srv/refs/vault")]
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "/refs", "source": "request"}]}
+    for clean in (hub.reporter._clean, lambda text: publish_clean(text, s, hub.requests.values())):
+        cleaned = clean("Read /srv/refs/vault/donor123.tsv\nthen /refs/notes.md")
+        assert "donor123" not in cleaned and "<restricted-zone>" in cleaned, cleaned
+        assert "then <reference-path>/notes.md" in cleaned
+
+
+def test_ipv6_url_references_lose_their_query_and_are_masked(tmp_path):
+    # `urlsplit().hostname` drops the brackets of an IPv6 host, so the pattern matched no written URL.
+    s = settings_with_roots(tmp_path)
+    s.pi_profile.references = [ref("url", "https://[2001:db8::2]/wiki")]
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "url", "value": "https://[2001:db8::1]/notes?dl=x", "source": "request"}]}
+    cleaned = hub.reporter._clean("a https://[2001:db8::1]/notes?dl=opaquePRIVATE b https://[2001:db8::2]/wiki/page c")
+    assert "opaquePRIVATE" not in cleaned and "https://[2001:db8::1]/notes b" in cleaned
+    assert "2001:db8::2" not in cleaned and "<private-reference> c" in cleaned
+
+
+def test_project_reports_mask_a_tilde_reference_wherever_the_runner_expanded_it(tmp_path):
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "~/refs/llm-wiki", "source": "request"}]}
+    text = ("a ~/refs/llm-wiki/a.md b /home/pi/refs/llm-wiki/b.md c /BiO/home/u01/refs/llm-wiki d "
+            r"C:\Users\pi\refs\llm-wiki\d.md e /Users/pi/refs/llm-wiki f $HOME/refs/llm-wiki keep /srv/refs/llm-wiki")
+    cleaned = hub.reporter._clean(text)
+    assert cleaned.count("<reference-path>") == 6 and "keep /srv/refs/llm-wiki" in cleaned
+
+
+@pytest.mark.parametrize(("reference", "text"), [
+    ("~", r"a ~ b ~/notes.md c /home/worker/notes.md d C:\Users\worker\notes.md"),
+    ("~/x", r"a ~/x b ~/x/notes.md c /home/worker/x/notes.md d C:\Users\worker\x\notes.md"),
+])
+def test_project_reports_mask_short_tilde_references_in_every_runner_home(tmp_path, reference, text):
+    # A valid short reference must not fall through a length cutoff. The gateway cannot know which account
+    # expands it, so both the literal tilde and any runner account's expanded home form are private.
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": reference, "source": "request"}]}
+    cleaned = hub.reporter._clean(text)
+    assert cleaned.count("<reference-path>") == 4, cleaned
+    assert "worker" not in cleaned and "~/" not in cleaned and " a ~ " not in f" {cleaned} "
 
 
 def test_pi_profile_path_outside_roots_blocks_requests_loudly(tmp_path):
@@ -409,6 +503,148 @@ async def test_runner_fails_closed_when_a_reference_is_too_big_to_check(tmp_path
     assert any("상한" in t for t in _log_texts(runner) if t.startswith("참고 경로 제외"))
 
 
+def _upstream(runner, name):
+    directory = runner.ws_root / "r1" / name
+    (directory / "outputs").mkdir(parents=True)
+    (directory / "outputs" / "summary.tsv").write_text("gene\tlog2fc", encoding="utf-8")
+    return directory
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_steps_folder_linking_into_a_zone_is_not_opened_to_the_next_step(tmp_path, monkeypatch):
+    # #132: `outputs/link -> zone` made by an earlier agent reached the next step through --add-dir, where
+    # Claude reads without asking the gate. Links elsewhere (a shared genome) are fine; two hops are found.
+    settings = _vault_settings(tmp_path)
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    direct, chained, clean, genome = (_upstream(runner, n) for n in ("task-a", "task-b", "task-c", "task-d"))
+    _link_dir(direct / "outputs" / "link", tmp_path / "vault")
+    (tmp_path / "elsewhere" / "hop").mkdir()
+    _link_dir(tmp_path / "elsewhere" / "hop" / "raw", tmp_path / "vault")
+    _link_dir(chained / "outputs" / "cache", tmp_path / "elsewhere")
+    (tmp_path / "genome").mkdir()
+    _link_dir(genome / "outputs" / "hg38", tmp_path / "genome")
+    await runner.run_task(Task(id="task-n", request_id="r1", agent_id="worker", prompt="next step",
+                               meta={"upstream_dirs": [str(d) for d in (direct, chained, clean, genome)]}))
+    ctx = seen["ctx"]
+    opened = [str(clean.resolve()), str(genome.resolve())]
+    assert ctx.extra_dirs == opened and ctx.env["LABHQ_EXTRA_ROOTS"].split(os.pathsep) == opened
+    refused = [t for t in _log_texts(runner) if t.startswith("이전 단계 폴더 제외")]
+    assert len(refused) == 2 and all("통제 데이터 구역" in t for t in refused)
+    assert "task-a" in refused[0] and "outputs/link" in refused[0] and "cache" in refused[1]
+    assert str(tmp_path / "vault") not in " ".join(refused), "the zone path is not echoed into logs"
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_steps_folder_too_big_to_check_is_not_opened(tmp_path, monkeypatch):
+    settings = _vault_settings(tmp_path)
+    settings.runner.reference_scan_max_entries = 3
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    upstream = _upstream(runner, "task-a")
+    for i in range(5):
+        (upstream / "outputs" / f"f{i}.tsv").write_text("x", encoding="utf-8")
+    await runner.run_task(Task(id="task-n", request_id="r1", agent_id="worker", prompt="next",
+                               meta={"upstream_dirs": [str(upstream)]}))
+    assert seen["ctx"].extra_dirs == []
+    assert any("상한" in t for t in _log_texts(runner) if t.startswith("이전 단계 폴더 제외"))
+
+
+@pytest.mark.asyncio
+async def test_a_project_folder_stays_open_but_claude_is_denied_its_links_into_a_zone(tmp_path, monkeypatch):
+    # #132: refusing a project clone would stop every step of the project, so its zone links get deny rules.
+    from labhq.policy import claude_rule_path
+
+    settings = _vault_settings(tmp_path)
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    _link_dir(project / "data", tmp_path / "vault")
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    for task_id in ("task-p1", "task-p2"):
+        await runner.run_task(Task(id=task_id, request_id="r1", agent_id="worker", prompt="work",
+                                   meta={"project_dirs": [str(project)]}))
+    ctx = seen["ctx"]
+    assert ctx.extra_dirs == [str(project)]
+    deny = ctx.claude_settings["permissions"]["deny"]
+    link = claude_rule_path(str(project / "data"))
+    for tool in ("Read", "Edit", "Write"):
+        assert f"{tool}(/{link})" in deny and f"{tool}(/{link}/**)" in deny
+    warned = [t for t in _log_texts(runner) if t.startswith("프로젝트 폴더")]
+    assert len(warned) == 1 and "data" in warned[0], "said once, not on every task"
+    # Without restricted zones nothing is listed: a large clone costs nothing.
+    plain = Settings()
+    runner2, seen2 = _reference_runner(tmp_path / "plain", monkeypatch, plain)
+    await runner2.run_task(Task(id="task-p3", request_id="r1", agent_id="worker", prompt="work",
+                                meta={"project_dirs": [str(project)]}))
+    assert "permissions" not in seen2["ctx"].claude_settings
+
+
+@pytest.mark.asyncio
+async def test_every_alias_of_a_project_link_into_a_zone_is_denied_to_claude(tmp_path, monkeypatch):
+    # Claude matches deny rules against the path as written, so `b` naming the same folder as `a`, `c`
+    # naming a subfolder that holds the zone link, and `loop` naming the project itself each need a rule.
+    # A link to an unrelated folder (a genome) stays open.
+    from labhq.policy import claude_rule_path
+
+    settings = _vault_settings(tmp_path)
+    project = tmp_path / "project"
+    (project / "sub").mkdir(parents=True)
+    _link_dir(project / "sub" / "data", tmp_path / "vault")
+    _link_dir(tmp_path / "elsewhere" / "raw", tmp_path / "vault")
+    (tmp_path / "genome").mkdir()
+    for name, target in (("a", tmp_path / "elsewhere"), ("b", tmp_path / "elsewhere"), ("c", project / "sub"),
+                         ("loop", project), ("hg38", tmp_path / "genome")):
+        _link_dir(project / name, target)
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    await runner.run_task(Task(id="task-p", request_id="r1", agent_id="worker", prompt="work",
+                               meta={"project_dirs": [str(project)]}))
+    deny = seen["ctx"].claude_settings["permissions"]["deny"]
+
+    def denied(*parts):
+        rule = claude_rule_path(str(project.joinpath(*parts)))
+        return any(f"Read(/{rule})" == d or (d.startswith("Read(/") and d.endswith("/**)")
+                                              and rule.startswith(d[len("Read(/"):-len("/**)")] + "/"))
+                   for d in deny)
+
+    for route in (("sub", "data"), ("a", "raw"), ("b", "raw"), ("c", "data"), ("loop", "sub", "data"),
+                  ("loop", "loop", "c", "data"), ("loop", "b", "raw")):
+        assert denied(*route), route
+    assert not denied("hg38", "chr1.fa") and not denied("sub", "notes.md")
+
+
+@pytest.mark.asyncio
+async def test_a_link_into_a_zone_is_not_listed_through(tmp_path, monkeypatch):
+    # Listing the zone through `data -> vault` read its entries on the runner, logged the names of links
+    # inside it (`cohort-EGA123`) and spent the entry cap there, so a later link went unseen.
+    import labhq.intake as intake
+
+    settings = _vault_settings(tmp_path)
+    settings.runner.reference_scan_max_entries = 40
+    (tmp_path / "vault" / "sub").mkdir()
+    for i in range(60):
+        (tmp_path / "vault" / "sub" / f"donor{i}.tsv").write_text("x", encoding="utf-8")
+    _link_dir(tmp_path / "vault" / "cohort-EGA123", tmp_path / "vault" / "sub")
+    project = tmp_path / "project"
+    project.mkdir()
+    _link_dir(project / "data", tmp_path / "vault")
+    _link_dir(project / "zz", tmp_path / "elsewhere")
+    _link_dir(tmp_path / "elsewhere" / "raw", tmp_path / "vault")
+    # A zone inside the project folder itself is not listed either.
+    (project / "controlled" / "x").mkdir(parents=True)
+    _link_dir(project / "controlled" / "cohort-EGA123", project / "controlled" / "x")
+    settings.policy.data_zones.append(DataZone(path=str(project / "controlled")))
+    listed = []
+    real_scandir = os.scandir
+    monkeypatch.setattr(intake.os, "scandir", lambda p: listed.append(Path(p)) or real_scandir(p))
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    await runner.run_task(Task(id="task-z", request_id="r1", agent_id="worker", prompt="work",
+                               meta={"project_dirs": [str(project)]}))
+    for zone in (tmp_path / "vault", project / "controlled"):
+        assert not [p for p in listed if p.resolve().is_relative_to(zone.resolve())], zone
+    deny = " ".join(seen["ctx"].claude_settings["permissions"]["deny"])
+    logs = " ".join(_log_texts(runner))
+    assert "cohort-EGA123" not in deny and "cohort-EGA123" not in logs and "donor" not in logs
+    assert "zz/raw" in deny and "다 확인하지 못했습니다" not in logs
+
+
 def test_withholding_a_refused_path_leaves_kept_paths_that_share_its_prefix_intact():
     from labhq.intake import render_references, withhold_reference_paths
 
@@ -418,6 +654,66 @@ def test_withholding_a_refused_path_leaves_kept_paths_that_share_its_prefix_inta
     assert "[path] /srv/refs/atlas (read-only on the runner)" in out and "/srv/refs/atlas/summary.md" in out
     assert "[path] /srv/refs/a b (read-only on the runner)" in out and "/srv/refs/a b/x.md" in out
     assert "/srv/refs/a/" not in out and "/srv/refs/a (" not in out and out.count("withheld by the runner") == 2
+
+
+def test_reference_masks_stay_linear_on_long_unbroken_tokens(tmp_path):
+    # A report or a published file may hold a long run with no space (a comma-joined path list, a `+`
+    # chain, a separator run). Unbounded prefixes in the masks rescanned it from every position: 40 KB
+    # took seconds per pattern on the gateway's event loop, and published files can be far larger.
+    import time
+
+    from labhq.intake import withhold_reference_paths
+
+    s = settings_with_roots(tmp_path)
+    # Keep a POSIX restricted root even on Windows: this is the production shape on Linux runners, where
+    # sanitize's literal-zone fallback used to rescan every suffix of a long separator run.
+    s.policy.data_zones = [DataZone(path="/restricted")]
+    s.pi_profile.references = [ref("url", "https://wiki.example.org/pi/notes"), ref("github", "owner/Yuan")]
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "~/refs/llm-wiki", "source": "request"},
+                                        {"kind": "path", "value": "C:\\Lab\\refs", "source": "request"},
+                                        {"kind": "url", "value": "https://share.example.org/f/a.tsv?dl=x",
+                                         "source": "request"}]}
+    n = 60_000
+    tokens = ["/a" * (n // 2), "a," * (n // 2), "a+" * (n // 2), "a:" * (n // 2), "/" * n, "\\" * n]
+    started = time.perf_counter()
+    for token in tokens:
+        hub.reporter._clean(f"x {token} ~/refs/llm-wiki/a.md")
+        withhold_reference_paths(f"x {token}", ["/srv/refs/x", "~/refs/llm-wiki"], [])
+    assert time.perf_counter() - started < 5, "every mask must be linear in the text length"
+    assert hub.reporter._clean("see ~/refs/llm-wiki/a.md") == "see <reference-path>/a.md"
+    # Linear without capping a run: a path written with many separators is still the same path.
+    many = "/" * 12
+    assert hub.reporter._clean(f"see C:{many}Lab{many}refs{many}a.md") == f"see <reference-path>{many}a.md"
+    assert hub.reporter._clean(f"see {many}home{many}pi{many}refs{many}llm-wiki/a") == "see <reference-path>/a"
+    out = withhold_reference_paths(f"read /srv{many}refs{many}x/a and \\\\?\\C:\\Lab\\refs", ["/srv/refs/x", "C:\\Lab\\refs"], [])
+    assert "refs" not in out and out.count("<withheld reference path>") == 2, out
+
+
+@pytest.mark.asyncio
+async def test_refused_references_leave_task_md_in_json_escaped_forms_too(tmp_path, monkeypatch):
+    # #133: a plan quoted with json.dumps doubles backslashes and escapes non-ASCII (`\uc5f0`); another
+    # encoder may escape slashes (`\/`). The refused name must not survive in any of those forms.
+    from labhq.intake import render_references
+
+    (tmp_path / "refs" / "notes").mkdir(parents=True)
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path / "refs")]
+    runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
+    windows, posix, kept = "C:\\Lab\\refs\\연구노트", "/srv/연구/private notes", str(tmp_path / "refs" / "notes")
+    plan = {"steps": [{"id": "s1", "instruction": f"Read {windows}\\summary.md, {posix}/a.md and {kept}"}]}
+    prompt = ("Compare" + render_references([{"kind": "path", "value": v} for v in (windows, posix, kept)])
+              + "\nPlan: " + json.dumps(plan) + "\nEscaped: " + json.dumps(plan, ensure_ascii=False).replace("/", "\\/"))
+    await runner.run_task(Task(id="task-j", request_id="r1", agent_id="worker", prompt=prompt,
+                               context="Upstream plan: " + json.dumps(plan),
+                               meta={"reference_dirs": [windows, posix, kept]}))
+    md = (runner.workspaces["task-j"].dir / "TASK.md").read_text(encoding="utf-8")
+    for form in (windows, json.dumps(windows)[1:-1], posix, json.dumps(posix)[1:-1], posix.replace("/", "\\/")):
+        assert form not in md, form
+    for leftover in ("연구", "\\uc5f0", "private notes", "Lab\\\\refs"):
+        assert leftover not in md, leftover
+    assert seen["ctx"].read_dirs == [str((tmp_path / "refs" / "notes").resolve())]
+    assert f"[path] {kept} (read-only on the runner)" in md and json.dumps(kept)[1:-1] in md
 
 
 def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path(tmp_path):
@@ -440,6 +736,39 @@ def test_reads_through_a_link_into_a_restricted_zone_are_denied_by_the_real_path
     shell = evaluate_tool("Bash", {"command": "head reference/link/raw.tsv"}, policy, allowed_roots=[ws], workdir=ws)
     assert shell.action == "ask"
     assert evaluate_tool("Read", {"file_path": "reference/other.md"}, policy,
+                         allowed_roots=[ws], workdir=ws).action == "allow"
+
+
+def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_path):
+    # #131: past 256 candidates the real-path check returned "no hit", so 257 decoys let the link through.
+    from labhq.policy import MAX_RESOLVED_CANDIDATES, evaluate_tool
+
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "raw.tsv").write_text("donor", encoding="utf-8")
+    workdir = tmp_path / "ws"
+    (workdir / "ref").mkdir(parents=True)
+    _link_dir(workdir / "ref" / "link", tmp_path / "vault")
+    policy = Settings().policy
+    policy.data_zones = [DataZone(path=str(tmp_path / "vault"))]
+    ws = str(workdir)
+    decoys = " ".join(f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1))
+    for tool, tool_input in [("Bash", {"command": f"cat {decoys} ref/link/raw.tsv"}),
+                             ("PowerShell", {"command": f"Get-Content {decoys} ref/link/raw.tsv"}),
+                             ("mcp__x__read", {"files": f"{decoys} ref/link/raw.tsv"}),
+                             ("Glob", {"pattern": f"{decoys} ref/link/*.tsv"})]:
+        decision = evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws)
+        assert decision.action == "ask" and "not all resolved" in decision.reason, (tool, decision)
+    # Repeats are one candidate, and a file's content is not a path it opens: these still pass.
+    repeated = " ".join(["d0.txt"] * (MAX_RESOLVED_CANDIDATES + 5))
+    assert evaluate_tool("Bash", {"command": f"cat {repeated}"}, policy, allowed_roots=[ws], workdir=ws).action == "allow"
+    write = {"file_path": str(workdir / "notes.md"), "content": decoys}
+    assert evaluate_tool("Write", write, policy, allowed_roots=[ws], workdir=ws).action == "allow"
+    for tool, tool_input in [("Task", {"prompt": decoys}), ("WebFetch", {"url": "https://example.org", "prompt": decoys})]:
+        assert evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws).action == "allow", tool
+    many_paths = {"paths": [f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1)]}
+    assert evaluate_tool("Task", many_paths, policy, allowed_roots=[ws], workdir=ws).action == "ask"
+    # Without restricted zones nothing can be reached through a link, so the cap never asks.
+    assert evaluate_tool("Bash", {"command": f"cat {decoys}"}, Settings().policy,
                          allowed_roots=[ws], workdir=ws).action == "allow"
 
 
@@ -528,6 +857,32 @@ def test_project_reports_never_carry_reference_paths(tmp_path):
     assert "https://github.com/lab/protocols" in cleaned
 
 
+@pytest.mark.parametrize(("kind", "reference", "written", "mask"), [
+    pytest.param("path", "/srv/refs/private", r"/SRV/refs/private/notes.md", "<reference-path>", id="path-posix"),
+    pytest.param("path", r"C:\Lab\Private", r"c:/lab/private/notes.md", "<reference-path>", id="path-drive"),
+    pytest.param("path", r"C:\Lab\Private", r"\\?\C:\LAB\Private\notes.md", "<reference-path>", id="path-unc"),
+    pytest.param("path", "~/refs/private", r"C:\Users\runner\refs\private\notes.md", "<reference-path>",
+                 id="path-home"),
+    pytest.param("github", "owner/Yuan", "https://github.com/owner/Yuan/tree/main", "<private-reference>",
+                 id="github-url"),
+    pytest.param("github", "owner/Yuan", "/srv/clones/owner/Yuan/README.md", "<private-reference>",
+                 id="github-posix-clone"),
+    pytest.param("github", "owner/Yuan", r"C:\src\OWNER\YUAN\README.md", "<private-reference>",
+                 id="github-drive-clone"),
+    pytest.param("github", "owner/Yuan", r"\\server\clones\owner\Yuan\README.md", "<private-reference>",
+                 id="github-unc-clone"),
+    pytest.param("github", "owner/Yuan", r"owner\Yuan", "<private-reference>", id="github-backslashes"),
+    pytest.param("github", "owner/Yuan", "~/src/Yuan", "<private-reference>", id="github-home-clone"),
+    pytest.param("github", "owner/Yuan", "clone Yuan locally", "<private-reference>", id="github-clone-name"),
+])
+def test_published_references_mask_every_path_and_repository_spelling(tmp_path, kind, reference, written, mask):
+    s = settings_with_roots(tmp_path)
+    s.pi_profile.references = [ref(kind, reference)]
+    cleaned = create_app(s).state.hub.reporter._clean(f"before {written} after")
+    secret = "private" if kind == "path" else "yuan"
+    assert mask in cleaned and secret not in cleaned.replace(mask, "").casefold(), cleaned
+
+
 def test_project_reports_mask_reference_paths_in_any_case_or_separator(tmp_path):
     s = settings_with_roots(tmp_path)
     s.pi_profile.references = [ref("path", r"C:\Users\pi\Yuan", "private"), ref("path", "/home/pi/llm-wiki")]
@@ -597,6 +952,47 @@ def test_publish_guard_reads_encoded_parameter_names_and_url_userinfo():
     assert "?X%2DAmz%2DSignature=<redacted-secret>&%74oken=<redacted-secret>" in out
     assert "?v=1;token=<redacted-secret>&x=1" in out and "https://<redacted-secret>@h.example/x" in out
     assert "ssh://git@github.com/o/r.git" in out, "an account name alone is not a credential"
+    # A Windows domain account (`CORP\alice`) keeps its userinfo hidden, raw or JSON-escaped.
+    domain = sanitize(r'g https://CORP\alice:d0mainPW7@proxy.example/x {"u": "https://CORP\\alice:d0mainPW8@p.example"}',
+                      Settings().policy)
+    assert "d0mainPW7" not in domain and "d0mainPW8" not in domain and "alice" not in domain, domain
+
+
+def test_publish_guard_hides_webhook_paths_session_ids_and_codes():
+    # #134: these secrets sit in a URL path or under a name that is not credential-like.
+    from labhq.integrations.github import sanitize
+
+    text = ("a https://hooks.slack.com/services/T0AAA/B0BBB/sl4ckSECRET1 "
+            "b https://discord.com/api/webhooks/123456/d1scordSECRET2 "
+            r"c https:\/\/hooks.slack.com\/services\/T0AAA\/B0BBB\/sl4ckSECRET3 "
+            "d https://lab.webhook.office.com/webhookb2/abc@def/IncomingWebhook/t3amsSECRET4/xyz "
+            "e https://api.telegram.org/bot123456:t3legramSECRET5/sendMessage "
+            "f https://h.example/app;jsessionid=JSESS6 g https://app.example/cb?code=0authCODE7&state=s1 "
+            "h https://h.example/x?session=SESS8&PHPSESSID=php9 "
+            r"i https:\/\/alice:pa55WORD10@h.example\/x")
+    out = sanitize(text, Settings().policy)
+    for secret in ("sl4ckSECRET1", "d1scordSECRET2", "sl4ckSECRET3", "t3amsSECRET4", "t3legramSECRET5", "JSESS6",
+                   "0authCODE7", "SESS8", "php9", "pa55WORD10", "T0AAA"):
+        assert secret not in out, secret
+    assert "https://hooks.slack.com/services/<redacted-secret> b" in out
+    assert "https://api.telegram.org/bot<redacted-secret> f" in out and "state=s1" in out
+    assert "https://h.example/app;jsessionid=<redacted-secret> g" in out
+
+
+def test_reference_url_queries_are_dropped_with_a_default_port_or_json_escapes(tmp_path):
+    # #134: the query of a legacy URL reference survived when the text wrote `host:443` or escaped slashes.
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "url", "value": "https://share.example.org/f/cohort.tsv?dl=x",
+                                         "source": "request"}]}
+    text = ("a https://share.example.org:443/f/cohort.tsv?dl=opaque1 "
+            r"b https:\/\/share.example.org\/f\/cohort.tsv?dl=opaque2 "
+            "c HTTPS://Share.Example.org/f/cohort.tsv#opaque3 d https://share.example.org/f/cohort.tsv;jsession=opaque4 "
+            "e https://share.example.org/f/cohort.tsv; then")
+    cleaned = hub.reporter._clean(text)
+    for secret in ("opaque1", "opaque2", "opaque3", "opaque4"):
+        assert secret not in cleaned, secret
+    assert "https://share.example.org:443/f/cohort.tsv b" in cleaned and "cohort.tsv; then" in cleaned
 
 
 def test_project_reports_drop_the_query_of_legacy_url_references(tmp_path):

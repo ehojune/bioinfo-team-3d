@@ -1,11 +1,38 @@
+import time
+
 import pytest
 
-from labhq.policy import claude_rule_path, claude_settings, core_hours, evaluate_tool, hpc_needs_approval, touches
+from labhq.policy import (
+    claude_rule_path, claude_settings, core_hours, evaluate_tool, hpc_needs_approval,
+    mentions_zone, touches, touches_resolved,
+)
 from labhq.settings import DataZone, PolicySettings
 
 
 def _policy(**kw):
     return PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")], **kw)
+
+
+def _long_separator_runs():
+    return "/" * 65_536 + "\\" * 65_536 + ":" * 600_000
+
+
+def _assert_linear(call):
+    started = time.perf_counter()
+    assert call(_long_separator_runs()) is None
+    assert time.perf_counter() - started < 2, "path scanning must stay linear in the text length"
+
+
+def test_mentions_zone_stays_linear_on_long_separator_runs():
+    _assert_linear(lambda text: True if mentions_zone(text, ["/restricted"]) else None)
+
+
+def test_touches_stays_linear_on_long_separator_runs():
+    _assert_linear(lambda text: touches({"command": text}, ["/restricted"]))
+
+
+def test_touches_resolved_stays_linear_on_long_separator_runs():
+    _assert_linear(lambda text: touches_resolved({"command": text}, ["/restricted"]))
 
 
 def test_restricted_read_denied_and_bash_asks():

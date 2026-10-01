@@ -93,43 +93,151 @@ def _drive_relative(p: str) -> bool:
     return bool(re.match(r"^[A-Za-z]:(?![/\\])", p))
 
 
+@dataclass(frozen=True)
+class _PathTextScan:
+    candidates: tuple[str, ...]
+    separator_starts: tuple[int, ...]
+    drive_starts: tuple[int, ...]
+    network_ranges: tuple[tuple[int, int], ...]
+
+
+_URI_PREFIX = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*)://")
+_TOKEN_BREAKS = frozenset(" \t\r\n'\"`|;&<>")
+_CHUNK_BREAKS = frozenset("=<>(),")
+_SCHEME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-")
+
+
+def _file_uri_path(uri: str) -> str | None:
+    """Return the local/UNC path named by a file URI."""
+    parts = urlsplit(uri)
+    host, path = parts.netloc, unquote(parts.path)
+    if re.fullmatch(r"[A-Za-z]:", host):  # file://C:/x (non-standard but seen)
+        host, path = "", host + path
+    elif host and host.casefold() != "localhost":
+        path = "//" + host + path  # a remote host is a UNC path
+    if re.match(r"^/[A-Za-z]:[/\\]", path):  # file:///C:/x → C:/x
+        path = path[1:]
+    return path or None
+
+
+def _token_candidates(token: str) -> Iterator[str]:
+    """Split one lexical token without retrying at every delimiter in a run."""
+    chunk_start = 0
+    length = len(token)
+    while chunk_start < length:
+        while chunk_start < length and token[chunk_start] in _CHUNK_BREAKS:
+            chunk_start += 1
+        if chunk_start >= length:
+            break
+        chunk_end = chunk_start
+        while chunk_end < length and token[chunk_end] not in _CHUNK_BREAKS:
+            chunk_end += 1
+        left, right = chunk_start, chunk_end
+        while left < right and token[left] in "[]{}":
+            left += 1
+        while right > left and token[right - 1] in "[]{}":
+            right -= 1
+        part_start = left
+        while part_start < right:
+            while part_start < right and token[part_start] in "[]{}":
+                part_start += 1
+            if part_start >= right:
+                break
+            uri = _URI_PREFIX.match(token, part_start, right)
+            if uri and len(uri.group(1)) > 1:
+                if uri.group(1).casefold() == "file":
+                    path = _file_uri_path(token[part_start:right])
+                    if path:
+                        yield path
+                break
+            colon = part_start
+            while colon < right:
+                if token[colon] == ":" and not (
+                        colon == part_start + 1 and token[part_start].isalpha()):
+                    break
+                colon += 1
+            if colon == right:
+                yield token[part_start:right]
+                break
+            if colon > part_start:
+                yield token[part_start:colon]
+            part_start = colon + 1
+            while part_start < right and token[part_start] == ":":
+                part_start += 1
+        chunk_start = chunk_end + 1
+
+
+def _network_url_ranges(text: str) -> tuple[tuple[int, int], ...]:
+    """Locate non-file URL tokens without retrying a greedy scheme at every character."""
+    ranges: list[tuple[int, int]] = []
+    search_from = 0
+    while (slashes := text.find("://", search_from)) >= 0:
+        start = slashes
+        while start and text[start - 1] in _SCHEME_CHARS:
+            start -= 1
+        scheme = text[start:slashes]
+        if (scheme and scheme[0].isalpha() and (start == 0 or text[start - 1] not in _SCHEME_CHARS)
+                and scheme.casefold() != "file"):
+            end = slashes + 3
+            while end < len(text) and not text[end].isspace():
+                end += 1
+            ranges.append((start, end))
+            search_from = end
+        else:
+            search_from = slashes + 3
+    return tuple(ranges)
+
+
+def _scan_path_text(s: str) -> _PathTextScan:
+    """Scan path-like text in linear time; separator runs have one start only."""
+    separator_starts: list[int] = []
+    drive_starts: list[int] = []
+    for i, char in enumerate(s):
+        if char in "/\\" and (i == 0 or s[i - 1] not in "/\\"):
+            separator_starts.append(i)
+        if (char.isalpha() and i + 2 < len(s) and s[i + 1] == ":"
+                and s[i + 2] in "/\\"):
+            drive_starts.append(i)
+
+    candidates: list[str] = []
+    i = 0
+    while i < len(s):
+        char = s[i]
+        if char in "'\"":
+            end = s.find(char, i + 1)
+            if end < 0:
+                i += 1
+                continue
+            candidates.extend(_token_candidates(s[i + 1:end]))
+            i = end + 1
+            continue
+        if char in _TOKEN_BREAKS:
+            i += 1
+            continue
+        start = i
+        escaped: list[str] | None = None
+        while i < len(s) and s[i] not in _TOKEN_BREAKS:
+            if s[i] == "\\" and i + 1 < len(s) and s[i + 1] in " \t":
+                if escaped is None:
+                    escaped = []
+                escaped.append(s[start:i])
+                escaped.append(s[i + 1])
+                i += 2
+                start = i
+                continue
+            i += 1
+        if escaped is None:
+            token = s[start:i]
+        else:
+            escaped.append(s[start:i])
+            token = "".join(escaped)
+        candidates.extend(_token_candidates(token))
+    network_ranges = _network_url_ranges(s)
+    return _PathTextScan(tuple(candidates), tuple(separator_starts), tuple(drive_starts), network_ranges)
+
+
 def _candidate_paths(s: str) -> Iterator[str]:
-    # Keep quoted and backslash-escaped whitespace intact; start embedded paths
-    # only after explicit separators.
-    for match in re.finditer(r'''"([^"]*)"|'([^']*)'|((?:\\[ \t]|[^\s'"`|;&<>])+)''', s):
-        token = next((v for v in match.groups() if v is not None), "")
-        if match.group(3) is not None:
-            token = re.sub(r"\\([ \t])", r"\1", token)
-        separator_pattern = r"[=<>(),]"
-        for chunk in re.split(separator_pattern, token):
-            while chunk:
-                chunk = chunk.strip("[]{}")
-                if not chunk:
-                    break
-                uri = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*)://", chunk)
-                if uri and len(uri.group(1)) > 1:
-                    if uri.group(1).casefold() == "file":
-                        # RFC 8089: parse the URI, keep only the path component (not ?query or #fragment),
-                        # percent-decode it, and treat "localhost" or an empty authority as this machine.
-                        parts = urlsplit(chunk)
-                        host, path = parts.netloc, unquote(parts.path)
-                        if re.fullmatch(r"[A-Za-z]:", host):  # file://C:/x (non-standard but seen)
-                            host, path = "", host + path
-                        elif host and host.casefold() != "localhost":
-                            path = "//" + host + path  # a remote host is a UNC path
-                        if re.match(r"^/[A-Za-z]:[/\\]", path):  # file:///C:/x → C:/x
-                            path = path[1:]
-                        if path:
-                            yield path
-                    break
-                separator = next((i for i, char in enumerate(chunk)
-                                  if char == ":" and not (i == 1 and chunk[0].isalpha())), None)
-                if separator is None:
-                    yield chunk
-                    break
-                if separator:
-                    yield chunk[:separator]
-                chunk = chunk[separator + 1:]
+    yield from _scan_path_text(s).candidates
 
 
 def restricted_paths(policy: PolicySettings) -> list[str]:
@@ -169,13 +277,9 @@ def _raw_spaced_zone(s: str, zone: str) -> bool:
     return False
 
 
-def mentions_zone(text: str, zones: Iterable[str]) -> bool:
-    """The publish guard's view of `touches`: same candidates and lexical normalization, case-folded.
-
-    Over-matching is safe when deciding what not to publish, so case is ignored on every host.
-    """
+def _scan_mentions_zone(text: str, zones: Iterable[str], scan: _PathTextScan) -> bool:
     folded = [z.casefold().rstrip("/") or "/" for z in zones if z]
-    for token in _candidate_paths(text):
+    for token in scan.candidates:
         if _drive_relative(token):
             if any(re.match(r"^[a-z]:/", z) and token[0].casefold() == z[0] for z in folded):
                 return True
@@ -183,6 +287,14 @@ def mentions_zone(text: str, zones: Iterable[str]) -> bool:
         if _absolute(token) and any(_inside(_norm(token).casefold(), z) for z in folded):
             return True
     return any(_raw_spaced_zone(text.casefold(), z) for z in folded)
+
+
+def mentions_zone(text: str, zones: Iterable[str]) -> bool:
+    """The publish guard's view of `touches`: same candidates and lexical normalization, case-folded.
+
+    Over-matching is safe when deciding what not to publish, so case is ignored on every host.
+    """
+    return _scan_mentions_zone(text, zones, _scan_path_text(text))
 
 
 def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
@@ -196,7 +308,7 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
     """
     paths = [(p, _norm(p)) for p in paths if p]
     for s, path_field in _strings(obj):
-        for token in (s,) if path_field else _candidate_paths(s):
+        for token in (s,) if path_field else _scan_path_text(s).candidates:
             if _drive_relative(token):
                 for original, zone in paths:
                     if re.match(r"^[A-Za-z]:/", zone) and token[0].casefold() == zone[0].casefold():
@@ -219,6 +331,16 @@ def touches(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str |
 MAX_RESOLVED_CANDIDATES = 256
 
 
+class Unresolved(str):
+    """`touches_resolved` gave up before every candidate was resolved: unknown, not clear (#131).
+
+    `path_field` says whether the cap was reached among structured path fields (always an access) or only
+    in free text, which for file tools is content or a search pattern rather than a path being opened.
+    """
+
+    path_field: bool = False
+
+
 def _real(p: str) -> str | None:
     try:
         return _norm(os.path.realpath(os.path.expandvars(os.path.expanduser(p))))
@@ -231,24 +353,29 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
 
     `reference/link/raw.tsv` names no zone, yet reads one when `link` points there. This only means something
     where the files are (the runner's approval gate) and only for calls the gate sees. Structured path fields
-    are checked first, then up to MAX_RESOLVED_CANDIDATES other candidates; the lexical check still covers the rest.
+    are checked first, then distinct other candidates. Past MAX_RESOLVED_CANDIDATES it returns `Unresolved`
+    rather than None: 257 decoy paths must not make the 258th, a link into a zone, pass (#131).
     """
     zones = [(p, zone) for p in paths if p for zone in {_norm(p), _real(p)} if zone]
     if not zones:
         return None
     strings = sorted(_strings(obj), key=lambda item: not item[1])  # path fields first, e.g. Write before content
-    checked = 0
+    seen: set[str] = set()
     for s, path_field in strings:
-        for token in (s,) if path_field else _candidate_paths(s):
+        for token in (s,) if path_field else _scan_path_text(s).candidates:
             if not token or _drive_relative(token):
                 continue
             if not _absolute(token):
                 if not workdir:
                     continue
                 token = os.path.join(workdir, token)
-            checked += 1
-            if checked > MAX_RESOLVED_CANDIDATES:
-                return None
+            if token in seen:
+                continue  # a repeated path costs nothing more and proves nothing new
+            seen.add(token)
+            if len(seen) > MAX_RESOLVED_CANDIDATES:
+                unresolved = Unresolved(f"more than {MAX_RESOLVED_CANDIDATES} path candidates")
+                unresolved.path_field = path_field
+                return unresolved
             real = _real(token)
             for original, zone in zones:
                 if real and _inside(real, zone):
@@ -284,6 +411,21 @@ def claude_settings(policy: PolicySettings) -> dict:
     return {"permissions": {"deny": deny}} if deny else {}
 
 
+def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
+    """Read/Edit/Write deny rules for link paths inside an open folder that lead into a zone (#132).
+
+    Claude compares rules with the path as written, so the link itself (a file) and anything below it (a
+    directory) are both named; the zone rules only cover the zone's own spelling.
+    """
+    rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
+             for tool in ("Read", "Edit", "Write") for tail in ("", "/**")]
+    if not rules:
+        return settings
+    permissions = dict(settings.get("permissions") or {})
+    permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
+    return {**settings, "permissions": permissions}
+
+
 def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
     """Add Edit/Write deny rules for directories a task may only read (reference paths, #36)."""
     rules = [f"{tool}(/{claude_rule_path(d)}/**)" for d in directories for tool in ("Edit", "Write")]
@@ -309,6 +451,15 @@ def evaluate_tool(
     # Lexical first, then the real path: a link below an allowed folder can lead into a zone (#36).
     hit = touches(tool_input, rp, workdir=workdir) or touches_resolved(
         tool_input, [z.path for z in policy.data_zones if z.level == "restricted"], workdir=workdir)
+    if isinstance(hit, Unresolved):
+        # Free text opens paths only in a shell command, an MCP call or a Glob pattern; elsewhere it is file
+        # content, a search pattern or a prompt, and the structured path fields were all resolved.
+        if not (hit.path_field or tool_name in {"Bash", "PowerShell", "Glob"} or tool_name.startswith("mcp__")):
+            hit = None
+        else:
+            shown = str(tool_input.get("command") or tool_input)[:200]
+            return Decision("ask", f"{tool_name} names {hit}; links among them were not all resolved, so a "
+                                   f"restricted zone may be reached: `{shown}`")
 
     if hit and tool_name in READ_LIKE | WRITE_LIKE:
         return Decision(

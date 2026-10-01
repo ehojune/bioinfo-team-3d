@@ -18,13 +18,13 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 from urllib.parse import unquote
 
 import httpx
 
-from ..intake import public_url
-from ..policy import mentions_zone, restricted_paths
+from ..intake import mask_published_references, public_url, url_pattern
+from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
 
@@ -44,13 +44,27 @@ SECRET_PATTERNS = [
 # (`X%2DAmz%2DSignature`), so a separator inside a name never hides the parameter after it.
 QUERY_SECRET_NAME = re.compile(
     r"[\w.-]*(?:token|secret|passw(?:or)?d|signature|credential|key|keyid)|pwd|sig|auth|authorization"
-    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy", re.IGNORECASE)
+    r"|x-amz-[\w-]+|x-goog-[\w-]+|key-pair-id|policy"
+    # A session id (`;jsessionid=`, `PHPSESSID`, `?session=`) or an OAuth authorization code (#134).
+    r"|[\w.-]*sess(?:ion)?(?:[_-]?id)?|sid|code|auth_?code|authorization_code", re.IGNORECASE)
 QUERY_PARAM = re.compile(r"[?&;#]([^=&#;?\s\"'<>)\]]+)=")
 QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
 # `scheme://user:password@host` or `https://TOKEN@host`: the whole userinfo is a credential. `ssh://git@host`
 # names only an account and stays.
-URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*://)([^/?#\s@\"'<>]+)@")
+# JSON-escaped slashes (`https:\/\/user:pw@host`) count (#134); a backslash that escapes no slash stays part
+# of the userinfo, as in a Windows domain account (`CORP\alice:pw@proxy`).
+URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})((?:[^/\\?#\s@\"'<>]|\\(?!/))+)@")
 USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
+# Webhook URLs carry the credential in the path, under no parameter name (#134). Only these hosts are known;
+# a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count.
+WEBHOOK_PATH = re.compile(
+    r"(?<![\w.-])((?:https?:(?:\\?/){2})?(?:"
+    r"hooks\.slack\.com(?:\\?/)(?:services|workflows|triggers)"
+    r"|(?:[\w-]+\.)?discord(?:app)?\.com(?:\\?/)api(?:(?:\\?/)v\d+)?(?:\\?/)webhooks"
+    r"|[\w-]+\.webhook\.office\.com(?:\\?/)webhookb2"
+    r"|outlook\.office(?:365)?\.com(?:\\?/)webhook"
+    r"|api\.telegram\.org(?:\\?/)(?:file(?:\\?/))?bot"
+    r"))(\\?/)?[^\s\"'<>)\]?#]+", re.IGNORECASE)
 
 
 def _decoded(name: str) -> str:
@@ -63,9 +77,11 @@ def _decoded(name: str) -> str:
 
 
 def redact_url_credentials(text: str) -> str:
-    """Drop URL userinfo and the values of credential-named query or fragment parameters."""
+    """Drop URL userinfo, known webhook path tails and the values of credential-named query or fragment
+    parameters, JSON-escaped URLs included."""
     text = URL_USERINFO.sub(lambda m: m.group(1) + "<redacted-secret>@" if (
-        m.group(1)[:-3].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+        m.group(1).partition(":")[0].casefold() in USERINFO_SCHEMES or ":" in m.group(2)) else m.group(0), text)
+    text = WEBHOOK_PATH.sub(lambda m: m.group(1) + (m.group(2) or "") + "<redacted-secret>", text)
     out, last = [], 0
     for m in QUERY_PARAM.finditer(text):
         if m.start() < last or not QUERY_SECRET_NAME.fullmatch(_decoded(m.group(1))):
@@ -78,22 +94,16 @@ def redact_url_credentials(text: str) -> str:
 
 
 def strip_reference_url_queries(text: str, requests: Any) -> str:
-    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it."""
+    """URL references saved before intake dropped the query still hold it; a text quoting one must not post it.
+
+    The base is found as `url_pattern` finds it, so `host:443` and JSON-escaped URLs lose the query too (#134).
+    """
     bases = {public_url(str(ref.get("value") or "")) for req in requests
              for ref in (req.get("references") or []) if ref.get("kind") == "url"}
     for base in sorted((b for b in bases if b), key=len, reverse=True):
-        text = re.sub(re.escape(base) + r"[?#][^\s\"'<>)\]]*", lambda _m, b=base: b, text, flags=re.IGNORECASE)
+        tail = r"(?:[?#][^\s\"'<>)\]]*|;[^\s\"'<>)\]]+)"  # `;jsessionid=` too, but not a `;` ending prose
+        text = re.sub(f"({url_pattern(base)}){tail}", lambda m: m.group(1), text, flags=re.IGNORECASE)
     return text
-
-
-NETWORK_URL_PREFIX = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*)://\S*$")
-
-
-def _outside_network_url(m: re.Match) -> str:
-    """Redact a zone match unless it is the path part of a network URL (https://host/data/…)."""
-    line_start = max(m.string.rfind(c, 0, m.start()) for c in " \t\r\n") + 1
-    url = NETWORK_URL_PREFIX.search(m.string[line_start:m.start()])
-    return m.group(0) if url and url.group(1).casefold() != "file" else "<restricted-zone>"
 
 
 def root_zone_restricted(policy: PolicySettings) -> bool:
@@ -101,7 +111,69 @@ def root_zone_restricted(policy: PolicySettings) -> bool:
     return any(re.fullmatch(r"/?|[a-z]:/?", z.rstrip("/"), flags=re.IGNORECASE) for z in restricted_paths(policy))
 
 
-def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = ()) -> str:
+def _path_starts(scan: _PathTextScan) -> Iterable[int]:
+    """Merge the scanner's two ordered start lists without sorting by input size."""
+    separators, drives = scan.separator_starts, scan.drive_starts
+    i = j = 0
+    while i < len(separators) or j < len(drives):
+        if j >= len(drives) or (i < len(separators) and separators[i] <= drives[j]):
+            yield separators[i]
+            i += 1
+        else:
+            yield drives[j]
+            j += 1
+
+
+def _literal_zone_end(text: str, start: int, zone: str) -> int | None:
+    """Match one normalized zone at a scanner-provided path start."""
+    pos = start
+    parts = tuple(part for part in zone.split("/") if part)
+    if zone.startswith("/"):
+        if pos >= len(text) or text[pos] not in "/\\":
+            return None
+        while pos < len(text) and text[pos] in "/\\":
+            pos += 1
+    for index, part in enumerate(parts):
+        end = pos + len(part)
+        if text[pos:end].casefold() != part.casefold():
+            return None
+        pos = end
+        if index + 1 < len(parts):
+            if pos >= len(text) or text[pos] not in "/\\":
+                return None
+            while pos < len(text) and text[pos] in "/\\":
+                pos += 1
+    if pos < len(text) and (text[pos].isalnum() or text[pos] in "_.-"):
+        return None
+    return pos
+
+
+def _literal_zone_start(text: str, zones: Iterable[str], scan: _PathTextScan) -> int | None:
+    """Find the first literal zone, trying only the head of each separator run."""
+    zones = tuple(zones)
+    ranges = scan.network_ranges
+    network = 0
+    for start in _path_starts(scan):
+        while network < len(ranges) and ranges[network][1] <= start:
+            network += 1
+        if network < len(ranges) and ranges[network][0] <= start < ranges[network][1]:
+            continue
+        for zone in zones:
+            if _literal_zone_end(text, start, zone) is not None:
+                return start
+    return None
+
+
+def _sanitize_path_line(line: str, zones: Iterable[str]) -> str:
+    scan = _scan_path_text(line)
+    if _scan_mentions_zone(line, zones, scan):
+        return "<restricted-zone>"
+    start = _literal_zone_start(line, zones, scan)
+    return line if start is None else line[:start] + "<restricted-zone>"
+
+
+def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple[str, ...] = (),
+             limit: int | None = MAX_BODY) -> str:
     out = text or ""
     # Zones are normalized exactly as the access policy does (`.`/`..`, separators, case on Windows).
     normalized = restricted_paths(policy)
@@ -109,26 +181,34 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         # A filesystem root (`/`, `E:/`) is restricted: every path on that root is controlled, and no text
         # boundary reliably separates one from prose or URLs. Publish nothing (fail closed).
         return "<restricted-zone>" if out else ""
-    # 1) A line the access policy would treat as touching a zone is withheld whole. This reuses the policy's
+    # A line the access policy would treat as touching a zone is withheld whole. The same scanner also catches
+    # literal paths glued to prose, starting only once at the head of each separator run.
+    # This reuses the policy's
     #    candidate extraction and lexical normalization (`/data/tmp/../cohort`, `file:///data/./cohort`,
     #    quoted or spaced names), and like the policy it ignores network URLs.
     if normalized:
-        out = "\n".join("<restricted-zone>" if mentions_zone(line, normalized) else line for line in out.split("\n"))
-    # 2) Literal zone text glued to other words (e.g. Korean "경로/data/…") is not a path candidate for the
-    #    policy, so it is matched here. Names below a zone may contain spaces or quotes, so where the path ends
-    #    is unknowable: fail closed to the end of the line.
-    tail = r"[^\r\n]*"
-    for zone in sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True):
-        pattern = r"[/\\]+".join(re.escape(part) for part in zone.split("/"))
-        # The lookahead keeps the directory boundary: /data/cohort2 is not inside /data/cohort.
-        out = re.sub(pattern + r"(?![\w.-])" + tail, _outside_network_url, out, flags=re.IGNORECASE)
+        zones = sorted({p.rstrip("/") for p in normalized}, key=len, reverse=True)
+        out = "\n".join(_sanitize_path_line(line, zones) for line in out.split("\n"))
     for pat in SECRET_PATTERNS:
         out = re.sub(pat, "<redacted-secret>", out)
     out = redact_url_credentials(out)
     for secret in extra_secrets:
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
-    return clip(out, MAX_BODY)
+    return clip(out, limit) if limit else out
+
+
+def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> str:
+    """The one cleaner for every text labhq posts: project reports and round records (#130).
+
+    Zones and secrets go first: a reference that is part of a zone path (`/refs` in `/srv/refs/vault`) would
+    otherwise be masked out of the line the zone check reads. The body is clipped last, so a cut never leaves
+    half a private path.
+    """
+    requests = list(requests)
+    out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
+    out = sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token], limit=None)
+    return clip(mask_published_references(out, settings, requests), MAX_BODY)
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:
@@ -344,29 +424,7 @@ class ProjectReporter:
         return self.s.project((self.hub.requests.get(rid) or {}).get("project_id"))
 
     def _clean(self, text: str) -> str:
-        out = strip_reference_url_queries(text or "", self.hub.requests.values())  # before sanitize rewrites it
-        out = sanitize(out, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
-        for pattern in self._reference_path_patterns():
-            out = pattern.sub("<reference-path>", out)
-        return out
-
-    def _reference_path_patterns(self) -> list[re.Pattern[str]]:
-        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project.
-
-        Agents echo paths with either separator, another letter case, or Git Bash's `/c/...` drive form, so the
-        match ignores case and separators instead of comparing the stored text literally.
-        """
-        values = {os.path.expanduser(r.value) for r in self.s.pi_profile.references if r.kind == "path"}
-        values |= {r.value for r in self.s.pi_profile.references if r.kind == "path"}
-        for req in self.hub.requests.values():
-            values |= {str(r.get("value")) for r in req.get("references") or [] if r.get("kind") == "path"}
-        patterns = []
-        for value in sorted((v.rstrip("\\/") for v in values if len(v) >= 4), key=len, reverse=True):
-            drive = re.match(r"([A-Za-z]):(.*)$", value)
-            head, rest = (rf"(?:{drive[1]}:|/{drive[1]}(?=[\\/]))", drive[2]) if drive else ("", value)
-            body = r"[\\/]+".join(re.escape(part) for part in rest.replace("\\", "/").split("/"))
-            patterns.append(re.compile(head + body, re.IGNORECASE))
-        return patterns
+        return publish_clean(text, self.s, self.hub.requests.values())
 
     @staticmethod
     def _action_key(ev: dict, action: str) -> str:
