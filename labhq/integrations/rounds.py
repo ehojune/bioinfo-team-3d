@@ -19,8 +19,7 @@ from .. import __version__
 from ..models import TaskResult
 from ..orchestrator.cso import failure_kind
 from ..util import short
-from .github import (GitHubClient, GitHubHTTPError, MAX_BODY, root_zone_restricted, sanitize,
-                     strip_reference_url_queries)
+from .github import GitHubClient, GitHubHTTPError, MAX_BODY, publish_clean, root_zone_restricted
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
@@ -385,10 +384,9 @@ class RoundRecorder:
             token = os.environ.get(self.s.github.token_env, "")
             if not token and self.transport is None:
                 raise RoundPublicationDeferred(f"{self.s.github.token_env} is not set")
+            # Same cleaner as project reports: reference paths are masked here too (#130).
             self.client = GitHubClient(token or "test-token", self.s.github.api_url, self.transport,
-                                       lambda value: sanitize(
-                                           strip_reference_url_queries(value, self.hub.requests.values()),
-                                           self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token]))
+                                       lambda value: publish_clean(value, self.s, self.hub.requests.values()))
         gh = self.client
         record = json.loads((self.directory / f"{rid}.json").read_text(encoding="utf-8"))
         clean = gh.clean

@@ -6,6 +6,7 @@ and an optional depth (about 30/60/90 minutes of work). Older plans used plain s
 
 from __future__ import annotations
 
+import functools
 import os
 import re
 import stat
@@ -450,6 +451,35 @@ def path_pattern(value: str, *, boundary: bool) -> str:
         head, rest = rf"(?:{drive[1]}:|{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
     body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
     return head + body + (_PATH_END if boundary else "")
+
+
+REFERENCE_PATH_MASK = "<reference-path>"
+
+
+def published_reference_masks(settings: Any, requests: Any) -> tuple[tuple[re.Pattern[str], str], ...]:
+    """What a published text (project report, round record) must not carry, as (pattern, replacement).
+
+    Path references from the PI's defaults and from any stored request: a runner path names a private folder
+    (#36). Project reports and round records share this one rule (#130).
+    """
+    paths = {r.value for r in settings.pi_profile.references if r.kind == "path"}
+    for req in requests:
+        paths |= {str(r.get("value")) for r in req.get("references") or []
+                  if isinstance(r, dict) and r.get("kind") == "path" and r.get("value")}
+    return _compiled_masks(frozenset(paths | {os.path.expanduser(v) for v in paths}))
+
+
+@functools.lru_cache(maxsize=32)
+def _compiled_masks(paths: frozenset[str]) -> tuple[tuple[re.Pattern[str], str], ...]:
+    values = {v.rstrip("\\/") for v in paths if len(v) >= 4}
+    return tuple((re.compile(path_pattern(v, boundary=False), re.IGNORECASE), REFERENCE_PATH_MASK)
+                 for v in sorted(values, key=len, reverse=True) if v)
+
+
+def mask_references(text: str, masks: tuple[tuple[re.Pattern[str], str], ...]) -> str:
+    for pattern, replacement in masks:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 def withhold_reference_paths(text: str, refused: list[str], kept: list[str] | tuple[str, ...] = ()) -> str:

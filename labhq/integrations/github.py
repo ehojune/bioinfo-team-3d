@@ -18,12 +18,12 @@ import logging
 import os
 import re
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 from urllib.parse import unquote
 
 import httpx
 
-from ..intake import public_url
+from ..intake import mask_references, public_url, published_reference_masks
 from ..policy import mentions_zone, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -129,6 +129,17 @@ def sanitize(text: str, policy: PolicySettings, extra_secrets: list[str] | tuple
         if secret and len(secret) >= 8:
             out = out.replace(secret, "<redacted-secret>")
     return clip(out, MAX_BODY)
+
+
+def publish_clean(text: str, settings: Settings, requests: Iterable[dict]) -> str:
+    """The one cleaner for every text labhq posts: project reports and round records (#130).
+
+    Reference values are masked before `sanitize` clips the body, so a cut never leaves half a private path.
+    """
+    requests = list(requests)
+    out = strip_reference_url_queries(text or "", requests)  # before sanitize rewrites the query
+    out = mask_references(out, published_reference_masks(settings, requests))
+    return sanitize(out, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token])
 
 
 def codex_comment(body: str, mention: str = "@codex") -> str:
@@ -344,29 +355,7 @@ class ProjectReporter:
         return self.s.project((self.hub.requests.get(rid) or {}).get("project_id"))
 
     def _clean(self, text: str) -> str:
-        out = strip_reference_url_queries(text or "", self.hub.requests.values())  # before sanitize rewrites it
-        out = sanitize(out, self.s.policy, [self.s.gateway.client_token, self.s.gateway.runner_token])
-        for pattern in self._reference_path_patterns():
-            out = pattern.sub("<reference-path>", out)
-        return out
-
-    def _reference_path_patterns(self) -> list[re.Pattern[str]]:
-        """Runner paths the PI gave as references (#36), e.g. a private notes folder: never posted to a project.
-
-        Agents echo paths with either separator, another letter case, or Git Bash's `/c/...` drive form, so the
-        match ignores case and separators instead of comparing the stored text literally.
-        """
-        values = {os.path.expanduser(r.value) for r in self.s.pi_profile.references if r.kind == "path"}
-        values |= {r.value for r in self.s.pi_profile.references if r.kind == "path"}
-        for req in self.hub.requests.values():
-            values |= {str(r.get("value")) for r in req.get("references") or [] if r.get("kind") == "path"}
-        patterns = []
-        for value in sorted((v.rstrip("\\/") for v in values if len(v) >= 4), key=len, reverse=True):
-            drive = re.match(r"([A-Za-z]):(.*)$", value)
-            head, rest = (rf"(?:{drive[1]}:|/{drive[1]}(?=[\\/]))", drive[2]) if drive else ("", value)
-            body = r"[\\/]+".join(re.escape(part) for part in rest.replace("\\", "/").split("/"))
-            patterns.append(re.compile(head + body, re.IGNORECASE))
-        return patterns
+        return publish_clean(text, self.s, self.hub.requests.values())
 
     @staticmethod
     def _action_key(ev: dict, action: str) -> str:

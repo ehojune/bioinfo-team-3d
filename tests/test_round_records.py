@@ -515,3 +515,30 @@ async def test_round_records_drop_url_reference_queries_before_posting(tmp_path)
     body = remote.issue["body"]
     assert "opaqueSHAREcode99" not in body and "tok123456" not in body
     assert "https://share.example.org/f/cohort.tsv" in body
+
+
+@pytest.mark.asyncio
+async def test_round_records_mask_reference_paths_like_project_reports(tmp_path):
+    # #130: the round cleaner only dropped URL queries and zones; a private reference folder quoted in the
+    # plan, review or report went to the records repository as is.
+    from labhq.intake import Reference
+
+    cfg = settings(tmp_path)
+    cfg.dev_log.repo = "records/private"
+    cfg.pi_profile.references = [Reference(kind="path", value=r"C:\Users\pi\Yuan")]
+    remote = FakeGitHub()
+    hub = Hub(cfg, httpx.MockTransport(remote))
+    round_request(hub, "req-ref", "done")
+    request = hub.requests["req-ref"]
+    request["references"] = [{"kind": "path", "value": "/srv/private-notes/cohort", "source": "request"}]
+    request["plan"]["steps"][0]["instruction"] = "Read /srv/private-notes/cohort/summary.md first"
+    request["review"]["issues"] = [{"step_id": "a", "problem": "missed c:/users/pi/yuan/lessons.md"}]
+    request["report"] = r"Used /srv/private-notes/cohort/a.tsv and C:\Users\pi\Yuan\b.md."
+    hub.save_request("req-ref")
+    hub.rounds.write("req-ref")
+    assert await hub.rounds.publish("req-ref")
+    body = remote.issue["body"]
+    assert "private-notes" not in body and "yuan" not in body.casefold()
+    assert body.count("<reference-path>") >= 4
+    text = "see /srv/private-notes/cohort/x.md"
+    assert hub.rounds.client.clean(text) == hub.reporter._clean(text) == "see <reference-path>/x.md"
