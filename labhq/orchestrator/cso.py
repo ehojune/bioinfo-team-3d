@@ -22,8 +22,9 @@ from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, 
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..research.contract import (canonical_plan_json, classify_intake, freeze_plan, refresh_plan_approval,
-                                 research_plan_schema, validate_research_plan)
-from ..research.packs import configured_packs, pack_snapshot, render_pack_catalog
+                                 research_plan_errors, research_plan_schema, validate_research_plan,
+                                 with_pack_refs)
+from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -124,7 +125,7 @@ Chief of staff briefing:
 Authoritative intake decision (copy it into `intake`):
 {intake}
 
-Selected domain packs (copy their exact id, version, and sha256 into `protocol.packs`):
+Configured domain packs (labhq writes `protocol.packs` from this snapshot; leave it empty):
 {packs}
 
 Contract rules:
@@ -134,10 +135,12 @@ Contract rules:
   Exploratory/technical work uses its purpose and does not invent H0/H1.
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
+  Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.{output_types_rule}
 - Put QC after data generation. {question_rule}
-- For every selected domain pack, fill top-level `pack_values[pack_key]` with its declared `fields`,
-  a non-empty explanation for every `validators` id, and a non-empty result for every `acceptance` id.
+- For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
+  a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
+  acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
   the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
@@ -433,6 +436,35 @@ def prepare_research_declarations(plan: Any, vocab: output_vocab.Vocab | None, s
             step["output_types"] = entries
         stats.update(output_types.add_stats(stats, output_types.stats(outputs, entries, issues)))
     return plan
+
+
+MAX_PLAN_PROBLEMS = 30
+
+
+def _problem_lines(problems: list[str], bullet: str) -> list[str]:
+    lines = [(f"{index}. " if bullet == "1." else bullet) + short(problem, 1500)
+             for index, problem in enumerate(problems[:MAX_PLAN_PROBLEMS], 1)]
+    if len(problems) > MAX_PLAN_PROBLEMS:
+        lines.append(f"... +{len(problems) - MAX_PLAN_PROBLEMS}")
+    return lines
+
+
+def plan_correction(problems: list[str]) -> str:
+    """Every problem of the rejected PLAN, so one correction can fix them all (#222)."""
+    return "\n".join(["The previous research PLAN failed validation. Fix every problem below and return one complete "
+                      "corrected PLAN. Do not remove steps by truncation. labhq writes protocol.packs.",
+                      *_problem_lines(problems, "1.")])
+
+
+def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
+    """What the PI reads when the corrected PLAN still fails: the problems, and the packs it was held to."""
+    lines = [f"연구 계획 검증 실패: CSO가 한 번 고친 계획도 계약 검사를 통과하지 못해 CP1 승인 카드를 만들지 "
+             f"않았습니다(남은 문제 {len(problems)}건).", "", "남은 문제:", *_problem_lines(problems, "- ")]
+    if packs:
+        lines += ["", "설정된 domain pack: " + "; ".join(f"{key} ({loaded.pack.applies_when})"
+                                                      for key, loaded in sorted(packs.items())),
+                  "요청 대상이 이 pack과 다르면 pack 값을 채울 수 없습니다. 그때는 `research.active_packs`를 확인하세요."]
+    return "\n".join(lines)
 
 
 class BudgetExceeded(RuntimeError):
@@ -1423,38 +1455,55 @@ class Orchestrator:
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 if research_lane:
-                    invalid = ""
                     vocab = self._output_vocab()
+                    workers = sorted(known - orchestration)
+
+                    def plan_problems(candidate: Any) -> list[str]:
+                        try:
+                            problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
+                                                            active_packs=active_pack_hashes,
+                                                            expected_intake=intake, pack_definitions=packs)
+                        except (ValueError, TypeError) as error:
+                            problems = [str(error)]
+                        drafted = candidate.get("steps") if isinstance(candidate, dict) else None
+                        # A non-string agent_id is already a schema problem; only ids are compared with the roster.
+                        drafted_ids = [step.get("agent_id") for step in drafted if isinstance(step, dict)
+                                       and isinstance(step.get("agent_id"), str)] if isinstance(drafted, list) else []
+                        bad_agents = [agent for agent in drafted_ids if agent not in known or agent in orchestration]
+                        if bad_agents:
+                            problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
+                                            f"use roster ids {workers}")
+                        return problems
+
                     for attempt in (1, 2):
                         type_stats = {}
                         # Declarations are normalized (or, when off, removed) before the contract sees them,
                         # so a malformed one is dropped and counted instead of failing the plan or asking again.
                         plan = prepare_research_declarations(plan, vocab, type_stats)
-                        try:
+                        # The pack snapshot is configuration, so labhq writes protocol.packs, not the CSO (#222).
+                        plan = with_pack_refs(plan, pack_refs(packs))
+                        problems = plan_problems(plan)
+                        if not problems:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                active_packs=active_pack_hashes,
                                                                expected_intake=intake, pack_definitions=packs)
-                            bad_agents = [step.agent_id for step in validated.steps
-                                          if step.agent_id not in known or step.agent_id in orchestration]
-                            if bad_agents:
-                                raise ValueError(f"research plan uses unavailable or orchestration agents: {bad_agents}")
                             break
-                        except (ValueError, TypeError) as error:
-                            invalid = str(error)
-                            if attempt == 2:
-                                raise ValueError(f"research plan invalid after correction: {invalid}") from error
-                            correction = (text + "\n\nThe previous research PLAN failed validation: " + invalid +
-                                          "\nReturn a complete corrected PLAN. Do not remove steps by truncation.")
-                            plan_res = await make_plan(correction)
-                            if not plan_res.ok:
-                                self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
-                                return
-                            if rid in self.budget_denials:
-                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
-                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
-                                return
-                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
-                                    else extract_json(plan_res.text) or {})
+                        if attempt == 2:
+                            req["outcome"] = "plan_invalid"
+                            req["plan_validation"] = {"attempts": attempt, "errors": problems}
+                            report = plan_invalid_report(problems, packs)
+                            self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
+                            return
+                        plan_res = await make_plan(text + "\n\n" + plan_correction(problems))
+                        if not plan_res.ok:
+                            self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
+                            return
+                        if rid in self.budget_denials:
+                            self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                         {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                            return
+                        plan = (plan_res.structured if isinstance(plan_res.structured, dict)
+                                else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
@@ -1640,7 +1689,8 @@ class Orchestrator:
             else:
                 await self._emit(rid, "request.failed", failed)
 
-    def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None) -> None:
+    def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
+                error: str | None = None) -> None:
         req = self.hub.requests[rid]
         if req.get("plan", {}).get("steps") and results:
             audit = []
@@ -1674,6 +1724,8 @@ class Orchestrator:
         data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
+        if error:  # one readable line for the office feed and `labhq send`, beside the full report
+            req["error"] = data["error"] = error
         if hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.

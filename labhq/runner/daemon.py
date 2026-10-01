@@ -718,7 +718,8 @@ class Runner:
                 mcp_servers=[] if read_only else self._mcp_servers(agent, env),
                 env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
                                                           ASK_MAX_WAIT_S) + 120) * 1000)},
-                emit=emit, prompt=prompt, extra_dirs=extra_dirs, read_dirs=read_dirs,
+                emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
+                read_dirs=read_dirs,
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=claude_deny_links(claude_read_only(
                     claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
