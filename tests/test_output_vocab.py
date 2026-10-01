@@ -150,7 +150,7 @@ def test_shared_yaml_loader_refuses_duplicate_keys_without_a_path():
 
 
 def test_vocabulary_import_loads_no_semantics_module():
-    code = ("import sys, labhq.vocab; "
+    code = ("import sys, labhq.vocab, labhq.vocab.declare; "
             "print(sorted(m for m in sys.modules if 'semantics' in m))")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, timeout=60)
     assert done.returncode == 0, done.stderr[-2000:]

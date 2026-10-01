@@ -32,6 +32,8 @@ from ..settings import Settings
 from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
+from .. import vocab as output_vocab
+from ..vocab import declare as output_types
 from .approvals import Broker
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
@@ -780,6 +782,8 @@ class Runner:
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
                 found.append(relative)
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
+        if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
+            result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
         try:
             for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
                 write_owned(ws.dir, f"outputs/{name}", result.text or "")
