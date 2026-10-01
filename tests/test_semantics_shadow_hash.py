@@ -218,3 +218,38 @@ def test_a_restricted_zone_written_as_a_link_is_compared_at_its_target(tmp_path,
     line = line_for(hub, "req_a", observed)
     assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
     assert reads == [] and observed == {}
+
+
+@pytest.mark.parametrize("order", ["internal_first", "public_first"])
+def test_two_zones_of_the_same_length_take_the_stricter_level(tmp_path, order):
+    """One folder named by an internal and a public zone ties on length: the stricter level decides, never the
+    level name that sorts last."""
+    runs = str(tmp_path / "runs")
+    zones = [(runs, "internal"), (runs, "public")]
+    zones = zones if order == "internal_first" else zones[::-1]
+    path = os.path.join(runs, "task_a1", "outputs", "counts.tsv")
+    assert shadow.zone_allows(path, zones, "public") is False
+    assert shadow.zone_allows(path, zones, "private") is True
+    assert shadow.zone_allows(path, [(runs, "public"), (runs, "restricted")], "private") is False
+    assert shadow.zone_allows(path, [(runs, "public"), (runs, "secret")], "private") is False
+
+
+def test_a_public_alias_of_an_internal_folder_is_not_read_for_a_public_project(tmp_path, reads):
+    """A public zone written as a link to an internal folder covers the same real folder; a public project's
+    shadow must not hash it."""
+    runs = tmp_path / "runs"
+    hub, _ = _lab(tmp_path, zones=[], visibility="public")
+    link = tmp_path / "public_alias"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(runs), str(link))
+        else:
+            os.symlink(runs, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a directory link here")
+    hub.s.policy.data_zones = [DataZone(path=str(runs), level="internal"), DataZone(path=str(link), level="public")]
+    observed: dict = {}
+    line = line_for(hub, "req_a", observed)
+    assert line["hash"]["workspaces"] == {"zone_excluded": 1} and line["hash"]["hashed"] == 0
+    assert reads == [] and observed == {}

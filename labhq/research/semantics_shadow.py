@@ -521,11 +521,23 @@ class ShadowTimeout(ShadowStop):
     pass
 
 
+# strictest last; a level the settings do not define ranks above restricted, so it is never allowed
+ZONE_STRICTNESS = {"public": 0, "internal": 1, "restricted": 2}
+
+
 def _zone_level(path: str, zones: list[tuple[str, str]]) -> str | None:
+    """Restricted anywhere wins; otherwise the longest zone, and among zones of that length the strictest level.
+
+    Two spellings of one folder (a public alias of an internal folder) tie on length; the tie must not fall to
+    whichever level name sorts last."""
     inside = [(len(z), level) for z, level in zones if _inside(path, z)]
     if any(level == "restricted" for _, level in inside):
         return "restricted"
-    return max(inside)[1] if inside else None
+    if not inside:
+        return None
+    longest = max(n for n, _ in inside)
+    return max((level for n, level in inside if n == longest),
+               key=lambda level: ZONE_STRICTNESS.get(level, len(ZONE_STRICTNESS)))
 
 
 def zone_forms(zones: Iterable[Iterable[str]]) -> list[tuple[str, str]] | None:
