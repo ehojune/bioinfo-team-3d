@@ -20,6 +20,7 @@ from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner.versions import _probe, _version
 from .settings import Settings
+from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
 from .util import parent_claude_markers
 
 SOURCES = {
@@ -242,12 +243,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                      "Run labhq setup-paper2agent and enable recruiter skill visibility."))
 
     scheduler = settings.hpc.scheduler
-    if scheduler in ("sge", "pbs"):
-        tools = ("qsub", "qstat")
+    if scheduler in SCHEDULER_COMMANDS:
+        tools = SCHEDULER_COMMANDS[scheduler]
         present = all(shutil.which(tool) for tool in tools)
         remote = bool(settings.hpc.ssh_host)
         rows.append(_row("compute", "scheduler", "ok" if present else "warn",
-                         f"{scheduler}; local qsub/qstat {'present' if present else 'missing'}" +
+                         f"{scheduler}; local {'/'.join(tools)} {'present' if present else 'missing'}" +
                          ("; remote host configured, not contacted" if remote else ""),
                          "Check scheduler tools on the runner or configured login host."))
     else:
