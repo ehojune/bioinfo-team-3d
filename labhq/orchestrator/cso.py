@@ -21,11 +21,13 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..research.contract import (RESEARCH_PLAN_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
-                                 refresh_plan_approval, research_plan_errors, validate_research_plan,
+from ..research.contract import (canonical_plan_json, classify_intake, freeze_plan, refresh_plan_approval,
+                                 research_plan_errors, research_plan_schema, validate_research_plan,
                                  with_pack_refs)
 from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog
 from ..util import clip, extract_json, output_relpath, short
+from .. import vocab as output_vocab
+from ..vocab import declare as output_types
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
@@ -50,6 +52,15 @@ PLAN_SCHEMA: dict[str, Any] = {
     },
     "required": ["clarifying_questions", "steps", "recruit", "notes"],
 }
+
+
+def plan_schema(declare: bool) -> dict[str, Any]:
+    """PLAN_SCHEMA itself when output type declarations are off; with them, steps take optional output_types."""
+    if not declare:
+        return PLAN_SCHEMA
+    schema = json.loads(json.dumps(PLAN_SCHEMA))
+    schema["properties"]["steps"]["items"] = output_types.with_output_types(PLAN_SCHEMA["properties"]["steps"]["items"])
+    return schema
 
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
@@ -90,7 +101,7 @@ Rules:
 - Declare each step's expected output files in outputs so dependencies can be checked. Each one is a
   path inside that step's own workspace outputs/ folder, written as outputs/<name> (for example
   outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
-  or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.
+  or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -125,7 +136,7 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
-- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.
+- Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on.{output_types_rule}
 - Put QC after data generation. {question_rule}
 - For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
@@ -322,8 +333,13 @@ def _contain_outputs(step: dict) -> tuple[list[str], str | None]:
 
 
 def validate_steps(raw: list[dict], known: set[str], max_steps: int,
-                   excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES) -> tuple[list[dict], list[str]]:
+                   excluded: frozenset[str] | set[str] = ORCHESTRATION_ROLES, *,
+                   vocab: output_vocab.Vocab | None = None, stats: dict | None = None) -> tuple[list[dict], list[str]]:
+    """Steps ready to dispatch, plus warnings. With ``vocab`` (plan.declare_output_types on), each step's
+    ``output_types`` is normalized against its final outputs and per-request counts go into ``stats``; without it,
+    any ``output_types`` the CSO sent is dropped and the steps are exactly what they were before #221."""
     warnings, steps, seen = [], [], set()
+    raw_types: dict[str, Any] = {}
     for i, s in enumerate(raw[:max_steps]):
         if s.get("agent_id") in excluded:
             warnings.append(f"step {s.get('id') or i + 1}: orchestration role removed")
@@ -335,6 +351,7 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
         steps.append({"id": sid, "agent_id": s.get("agent_id", ""), "instruction": s.get("instruction", ""),
                       "depends_on": [str(d) for d in s.get("depends_on") or []],
                       "outputs": [str(o) for o in s.get("outputs") or []]})
+        raw_types[sid] = s.get("output_types")
     ids = {s["id"] for s in steps}
     producers: dict[str, list[str]] = {}
     for s in steps:
@@ -371,6 +388,16 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if problems:
         raise PlanOutputsError("; ".join(problems) + ". Declare each output as outputs/<name> inside the "
                                "step's own workspace and save it at that path.")
+    if vocab is not None:  # after _contain_outputs, so names pair with the outputs the runner will collect
+        for s in steps:
+            entries, issues = output_types.normalize_entries(s["outputs"], raw_types.get(s["id"]), vocab)
+            if entries:
+                s["output_types"] = entries
+            warning = output_types.issue_warning(s["id"], issues)
+            if warning:
+                warnings.append(warning)
+            if stats is not None:
+                stats.update(output_types.add_stats(stats, output_types.stats(s["outputs"], entries, issues)))
     # Reject cycles before dispatch.
     indeg = {s["id"]: len(s["depends_on"]) for s in steps}
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
@@ -388,6 +415,27 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if visited != len(steps):
         raise ValueError("plan has a dependency cycle")
     return steps, warnings
+
+
+def prepare_research_declarations(plan: Any, vocab: output_vocab.Vocab | None, stats: dict) -> Any:
+    """A copy of a fresh research PLAN whose steps carry normalized ``output_types`` (or none when off).
+
+    Only plans the CSO just returned go through here; a stored plan keeps the declarations it was approved with."""
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return plan
+    plan = {**plan, "steps": [dict(step) if isinstance(step, dict) else step for step in plan["steps"]]}
+    for step in plan["steps"]:
+        if not isinstance(step, dict):
+            continue
+        raw = step.pop("output_types", None)
+        if vocab is None:
+            continue
+        outputs = [str(o) for o in step.get("outputs") or []] if isinstance(step.get("outputs"), list) else []
+        entries, issues = output_types.normalize_entries(outputs, raw, vocab)
+        if entries:
+            step["output_types"] = entries
+        stats.update(output_types.add_stats(stats, output_types.stats(outputs, entries, issues)))
+    return plan
 
 
 MAX_PLAN_PROBLEMS = 30
@@ -528,6 +576,25 @@ class Orchestrator:
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
+
+    def _output_vocab(self) -> output_vocab.Vocab | None:
+        """The vocabulary when plan.declare_output_types is on and it loads; None means today's plan, unchanged."""
+        plan = getattr(self.hub.s, "plan", None)
+        return output_vocab.current() if getattr(plan, "declare_output_types", False) else None
+
+    def _type_meta(self, step: dict) -> dict[str, Any]:
+        """Dispatch meta for a step's declarations. Off: nothing (stored declarations stay in the plan, unused).
+        Declarations keep the vocabulary version they were made under, never today's."""
+        vocab = self._output_vocab()
+        if vocab is None:
+            return {}
+        entries = [e for e in step.get("output_types") or [] if isinstance(e, dict)]
+        version = entries[0].get("vocab") if entries else vocab.sha256
+        kept = [e for e in entries if e.get("vocab") == version]
+        meta: dict[str, Any] = {"output_types_vocab": version}
+        if kept:
+            meta["output_types"] = output_types.meta_declarations(kept)
+        return meta
 
     def _last_agent_session(self, request_id: str | None, agent_id: str) -> tuple[str | None, str | None]:
         candidates = []
@@ -1043,6 +1110,7 @@ class Orchestrator:
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
+                               **self._type_meta(step),
                                **({"workdir": decision["workdir"]} if decision and decision.get("workdir") else
                                   {"workdir": previous.workdir} if previous and previous.workdir and feedback
                                   and step["id"] in feedback else {})})
@@ -1316,19 +1384,23 @@ class Orchestrator:
                         self.cfg.cso_agent, req.get("cso_session_id") if continuation else None,
                         req.get("cso_workdir") if continuation else None, rid=rid, step="plan")
                     if research_lane:
+                        vocab = self._output_vocab()
                         prompt = RESEARCH_PLAN_PROMPT.format(
                             request=plan_request, roster=format_roster(roster),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE)
-                        schema = RESEARCH_PLAN_SCHEMA
+                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
+                            output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                        schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
+                        vocab = self._output_vocab()
                         prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
-                                                    max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE)
-                        schema = PLAN_SCHEMA
+                                                    max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
+                                                    output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                        schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
@@ -1383,6 +1455,7 @@ class Orchestrator:
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 if research_lane:
+                    vocab = self._output_vocab()
                     workers = sorted(known - orchestration)
 
                     def plan_problems(candidate: Any) -> list[str]:
@@ -1403,6 +1476,10 @@ class Orchestrator:
                         return problems
 
                     for attempt in (1, 2):
+                        type_stats = {}
+                        # Declarations are normalized (or, when off, removed) before the contract sees them,
+                        # so a malformed one is dropped and counted instead of failing the plan or asking again.
+                        plan = prepare_research_declarations(plan, vocab, type_stats)
                         # The pack snapshot is configuration, so labhq writes protocol.packs, not the CSO (#222).
                         plan = with_pack_refs(plan, pack_refs(packs))
                         problems = plan_problems(plan)
@@ -1428,13 +1505,17 @@ class Orchestrator:
                         plan = (plan_res.structured if isinstance(plan_res.structured, dict)
                                 else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
+                    if vocab is not None:
+                        req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     warnings: list[str] = []
                     steps = req["plan"]["steps"]
                 else:
+                    vocab = self._output_vocab()
                     for attempt in (1, 2):
+                        type_stats: dict = {}
                         try:
                             steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
-                                                             orchestration)
+                                                             orchestration, vocab=vocab, stats=type_stats)
                             break
                         except PlanOutputsError as error:
                             if attempt == 2:
@@ -1457,6 +1538,8 @@ class Orchestrator:
                                 self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
                                 return
                     req["plan"] = {**plan, "steps": steps, "warnings": warnings}
+                    if vocab is not None:
+                        req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 await self._emit(rid, "request.plan", req["plan"])
                 for rec in plan.get("recruit") or []:
                     if rec.get("repo") or rec.get("paper"):

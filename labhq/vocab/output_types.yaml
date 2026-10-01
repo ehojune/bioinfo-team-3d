@@ -1,0 +1,216 @@
+# Output data type vocabulary (#221 todo 2, #151). Local keys only: no EDAM label or id is written here.
+# labhq/vocab/__init__.py loads this file with the duplicate-key-rejecting loader of labhq.util.
+# The CSO sees the key names only. EDAM ids, when present, come from an optional
+# generated edam_subset.yaml; nobody types an id by hand.
+#
+# Per key: branch (data | format | operation), definition (labhq's own words), extensions (format only,
+# lower case, a single trailing .gz is peeled off first), ok / not (examples), review (pending until the PI
+# or a named reviewer checks the definition and the examples).
+# At most 40 keys. Adding one requires its own review.
+version: 1
+
+terms:
+  raw_counts:
+    branch: data
+    definition: "per-feature counts per sample before any library-size or variance scaling"
+    ok: ["gene x sample integer count matrix from featureCounts or STAR"]
+    not: ["TPM or CPM table", "DESeq2 normalized counts"]
+    review: pending
+  normalized_counts:
+    branch: data
+    definition: "a count matrix after library-size or variance scaling, still per feature and sample"
+    ok: ["CPM, TPM, vst or log-normalized expression matrix"]
+    not: ["raw integer counts", "a table of fold changes"]
+    review: pending
+  de_table:
+    branch: data
+    definition: "one row per feature with an effect size and a test statistic between groups"
+    ok: ["DESeq2 or limma results with log2FC and adjusted p-value"]
+    not: ["a count matrix", "a list of gene names without statistics"]
+    review: pending
+  enrichment_table:
+    branch: data
+    definition: "gene sets or terms with an enrichment score or over-representation test result"
+    ok: ["GSEA or ORA result table"]
+    not: ["a differential expression table", "a gene set definition file"]
+    review: pending
+  network:
+    branch: data
+    definition: "nodes and edges between biological entities, such as interactions or pathways"
+    ok: ["STRING interaction edge list", "pathway graph export"]
+    not: ["a correlation matrix without edges chosen", "a plot of a network"]
+    review: pending
+  sample_metadata:
+    branch: data
+    definition: "one row per sample with its design variables and annotations"
+    ok: ["samplesheet with condition, batch and pairing columns"]
+    not: ["a list of downloaded files", "per-gene annotation"]
+    review: pending
+  data_manifest:
+    branch: data
+    definition: "a list of data files or accessions with where they came from and how they were checked"
+    ok: ["accession list with source, checksum and download date"]
+    not: ["sample design table", "an analysis report"]
+    review: pending
+  qc_report:
+    branch: data
+    definition: "a report of quality checks on data or results, with pass, warn or fail per check"
+    ok: ["MultiQC summary", "QC review notes per step"]
+    not: ["the final analysis report", "raw QC metric dumps without judgement"]
+    review: pending
+  report:
+    branch: data
+    definition: "a human-readable write-up of what was done, found and left open"
+    ok: ["RESULT.md style step report", "final answer document"]
+    not: ["a QC checklist", "a data table"]
+    review: pending
+  sequence_reads:
+    branch: data
+    definition: "unaligned reads as they come from a sequencer, with or without qualities"
+    ok: ["paired FASTQ files of a sequencing run"]
+    not: ["an assembled contig", "aligned reads"]
+    review: pending
+  sequence:
+    branch: data
+    definition: "one or more biological sequences that are not raw reads"
+    ok: ["protein sequences of a gene family", "a reference contig"]
+    not: ["sequencing reads", "an alignment"]
+    review: pending
+  alignment:
+    branch: data
+    definition: "sequences or reads placed against each other or against a reference"
+    ok: ["read alignments to a genome", "a multiple sequence alignment"]
+    not: ["unaligned reads", "a variant list"]
+    review: pending
+  variants:
+    branch: data
+    definition: "positions where samples differ from a reference, with alleles and calls"
+    ok: ["germline SNV and indel calls"]
+    not: ["read alignments", "gene annotation"]
+    review: pending
+  assembly:
+    branch: data
+    definition: "contigs or scaffolds built from reads"
+    ok: ["de novo plastome assembly"]
+    not: ["a reference download", "read alignments"]
+    review: pending
+  features:
+    branch: data
+    definition: "annotated regions on a sequence, such as genes, exons or peaks"
+    ok: ["gene annotation of an assembled genome", "peak calls"]
+    not: ["the sequence itself", "variant calls"]
+    review: pending
+  protein_structure:
+    branch: data
+    definition: "three-dimensional coordinates of a protein or complex"
+    ok: ["PDB entry or predicted model coordinates"]
+    not: ["a protein sequence", "a picture of a structure"]
+    review: pending
+  plot:
+    branch: data
+    definition: "a figure made from data for people to look at"
+    ok: ["volcano plot", "QC histogram"]
+    not: ["the table behind the figure"]
+    review: pending
+  table:
+    branch: data
+    definition: "tabular data that fits none of the more specific data keys"
+    ok: ["summary statistics table of a small dataset"]
+    not: ["a count matrix", "a DE result table"]
+    review: pending
+
+  fastq:
+    branch: format
+    definition: "FASTQ text with sequence and quality lines"
+    extensions: [".fastq", ".fq"]
+    review: pending
+  fasta:
+    branch: format
+    definition: "FASTA text with header and sequence lines"
+    extensions: [".fasta", ".fa", ".fna", ".faa"]
+    review: pending
+  bam:
+    branch: format
+    definition: "binary SAM alignment file"
+    extensions: [".bam"]
+    review: pending
+  vcf:
+    branch: format
+    definition: "variant call format text"
+    extensions: [".vcf"]
+    review: pending
+  bed:
+    branch: format
+    definition: "BED interval text"
+    extensions: [".bed"]
+    review: pending
+  gff3:
+    branch: format
+    definition: "GFF version 3 feature text; a bare .gff is not inferred because it may be GFF2"
+    extensions: [".gff3"]
+    review: pending
+  genbank:
+    branch: format
+    definition: "GenBank flat file"
+    extensions: [".gb", ".gbk"]
+    review: pending
+  tsv:
+    branch: format
+    definition: "tab-separated values"
+    extensions: [".tsv"]
+    review: pending
+  csv:
+    branch: format
+    definition: "comma-separated values"
+    extensions: [".csv"]
+    review: pending
+  json:
+    branch: format
+    definition: "JSON text"
+    extensions: [".json"]
+    review: pending
+  markdown:
+    branch: format
+    definition: "Markdown text"
+    extensions: [".md"]
+    review: pending
+  pdf:
+    branch: format
+    definition: "PDF document"
+    extensions: [".pdf"]
+    review: pending
+  png:
+    branch: format
+    definition: "PNG image"
+    extensions: [".png"]
+    review: pending
+  h5ad:
+    branch: format
+    definition: "AnnData HDF5 file"
+    extensions: [".h5ad"]
+    review: pending
+
+  statistical_analysis:
+    branch: operation
+    definition: "a statistical test or model fit on data"
+    review: pending
+  de_analysis:
+    branch: operation
+    definition: "testing features for differences between groups"
+    review: pending
+  enrichment_analysis:
+    branch: operation
+    definition: "testing gene sets or terms for enrichment"
+    review: pending
+  read_mapping:
+    branch: operation
+    definition: "aligning reads to a reference"
+    review: pending
+  variant_calling:
+    branch: operation
+    definition: "calling variants from alignments"
+    review: pending
+  data_retrieval:
+    branch: operation
+    definition: "fetching data from a public or local source"
+    review: pending

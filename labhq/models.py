@@ -6,7 +6,7 @@ import uuid
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
 
 ASK_WAIT_SECONDS = {"cso": 300, "facilities": 1200, "colleague": 900, "pi": 0}
@@ -173,6 +173,8 @@ class TaskResult(BaseModel):
     workdir_id: str | None = None
     outputs: list[str] = []  # paths relative to workdir
     missing_outputs: list[str] = []
+    # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
+    output_types: dict[str, Any] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     partial_results: bool = False
     revision_failed: str | None = None
@@ -184,6 +186,21 @@ class TaskResult(BaseModel):
         if self.cost_known is None:
             self.cost_known = self.cost_usd is not None
         return self
+
+    @field_validator("output_types", mode="before")
+    @classmethod
+    def bounded_output_types(cls, value: Any) -> dict[str, Any]:
+        # A malformed or oversized value from another runner version drops the declarations, never the result.
+        from .vocab.declare import bounded_records
+        return bounded_records(value) if value is not None else {}
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
+        # Results without declarations serialize exactly as before the field existed.
+        data = handler(self)
+        if isinstance(data, dict) and not data.get("output_types"):
+            data.pop("output_types", None)
+        return data
 
 
 def waiting(result: TaskResult | dict[str, Any], *, jobs_finished: bool = False) -> bool:

@@ -83,3 +83,98 @@ def test_another_project_is_never_read(tmp_path):
     requests["req_a"]["project_id"] = "other"
     line = line_for(fake_hub(tmp_path, requests, tasks), "req_b")
     assert line["rows"]["requests"] == 1 and line["provenance"]["history_artifacts"] == 0
+
+
+# ---------------------------------------------------------------- typed output declarations (#221 todo 2)
+
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+
+from labhq import vocab as output_vocab  # noqa: E402
+from labhq.research import semantics_shadow as shadow  # noqa: E402
+from labhq.settings import DataZone  # noqa: E402
+from labhq.vocab import declare  # noqa: E402
+
+V = output_vocab.current()
+CANARY = "CANARY-shadow-5d1e"
+
+
+def bucket(key):
+    return V.edam_id(key) or "local"
+
+
+def typed_row(rid, tid, step, agent, wd, outputs, decl, *, version=None):
+    row = task_row(rid, tid, step, agent, wd, outputs)
+    meta = {"output_types_vocab": version or V.sha256, "output_types": decl}
+    row["payload"]["meta"].update(meta)
+    row["result"]["output_types"] = declare.runner_records(outputs, meta, V)
+    return row
+
+
+def _typed_pair(tmp_path, *, version=None, zones=None):
+    wd, _ = workspace(tmp_path, "task_a1", "analyst", {"outputs/counts.tsv": b"gene\tn\nX\t1\n"})
+    wd_b, _ = workspace(tmp_path, "task_b1", "analyst", {})
+    requests = {"req_a": request_row("req_a", [("s1", "analyst")], created_at=1.0),
+                "req_b": request_row("req_b", [("s1", "analyst")], created_at=2.0)}
+    tasks = {"task_a1": typed_row("req_a", "task_a1", "s1", "analyst", wd, ["outputs/counts.tsv"],
+                                  {"outputs/counts.tsv": {"data_type": "raw_counts"}}, version=version),
+             "task_b1": task_row("req_b", "task_b1", "s1", "analyst", wd_b, [])}
+    return fake_hub(tmp_path, requests, tasks, zones=zones), requests
+
+
+def test_a_runner_record_types_an_orchestrate_output_so_a_later_request_sees_a_candidate(tmp_path):
+    hub, _ = _typed_pair(tmp_path)
+    observed: dict = {}
+    first = line_for(hub, "req_a", observed)
+    assert first["vocab_sha256"] == V.sha256
+    assert first["provenance"]["types"] == {"data_type": {bucket("raw_counts"): {"declared": 1}},
+                                            "format": {bucket("tsv"): {"inferred": 1}}}
+    second = line_for(hub, "req_b", observed)["provenance"]
+    assert second["candidates"] == 1 and second["excluded"]["type_unknown"] == 0
+    assert "raw_counts" not in json.dumps(second) and "counts" not in json.dumps(second)
+
+
+def test_a_declaration_made_under_another_vocabulary_is_never_reinterpreted(tmp_path):
+    hub, _ = _typed_pair(tmp_path, version="0" * 64)
+    observed: dict = {}
+    first = line_for(hub, "req_a", observed)["provenance"]
+    assert first["types"] == {"data_type": {"unknown": {"unknown": 1}}, "format": {"unknown": {"unknown": 1}}}
+    second = line_for(hub, "req_b", observed)["provenance"]
+    assert second["candidates"] == 0 and second["excluded"]["type_unknown"] == 1
+
+
+def test_outputs_outside_an_allowed_zone_count_only_as_withheld(tmp_path):
+    hub, _ = _typed_pair(tmp_path, zones=[DataZone(path=str(tmp_path / "runs"), level="restricted")])
+    types = line_for(hub, "req_a")["provenance"]["types"]
+    assert types == {"data_type": {"withheld": {"declared": 1}}, "format": {"withheld": {"inferred": 1}}}
+
+
+def test_the_line_carries_declaration_counts_rebuilt_from_fixed_fields(tmp_path):
+    hub, requests = _typed_pair(tmp_path)
+    requests["req_a"]["output_types_stats"] = {"outputs": 3, "data_declared": 1, "format_declared": 0,
+                                               "issues": {"unknown_key": 2, CANARY: 1}, "vocab": V.sha256,
+                                               "note": CANARY}
+    line = line_for(hub, "req_a")
+    assert line["provenance"]["declarations"] == {"outputs": 3, "data_declared": 1, "format_declared": 0,
+                                                  "issues": {"unknown_key": 2}}
+    assert CANARY not in json.dumps(line) and shadow.type_problems(line, V.edam_ids) == []
+
+
+@pytest.mark.parametrize("change, problem", [
+    (lambda l: l["provenance"]["types"]["data_type"].update({"data_" + "9999": {"declared": 1}}), "type_bucket"),
+    (lambda l: l["provenance"]["types"]["data_type"].update({CANARY: {"declared": 1}}), "type_bucket"),
+    (lambda l: l["provenance"]["types"]["format"].update({"local": {"guessed": 1}}), "type_bucket"),
+    (lambda l: l["provenance"]["types"]["format"].update({"local": {"declared": "1"}}), "type_bucket"),
+    (lambda l: l["provenance"]["types"].update({"method": {}}), "type_fields"),
+    (lambda l: l["provenance"]["declarations"]["issues"].update({CANARY: 1}), "type_declarations"),
+    (lambda l: l["objects"]["artifact_types"]["format"].update({"declared": CANARY}), "type_objects"),
+    (lambda l: l.update(vocab_sha256=CANARY), "type_version"),
+])
+def test_type_fields_are_a_finite_allow_list_for_keys_and_values(tmp_path, change, problem):
+    hub, _ = _typed_pair(tmp_path)
+    line = line_for(hub, "req_a")
+    line["provenance"]["declarations"] = {"outputs": 1, "data_declared": 1, "format_declared": 0, "issues": {}}
+    assert shadow.type_problems(line, V.edam_ids) == []
+    change(line)
+    assert problem in shadow.type_problems(line, V.edam_ids)

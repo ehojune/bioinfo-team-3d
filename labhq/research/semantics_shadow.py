@@ -39,10 +39,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from .. import vocab as output_vocab
 from ..policy import _inside, _norm
 from ..util import atomic_write_text
+from ..vocab import declare as output_types
 from . import semantics as sem
-from .semantics_objects import build_view, opaque, summarize
+from .semantics_objects import build_view, opaque, summarize, type_artifacts
 
 log = logging.getLogger("labhq.semantics")
 
@@ -82,6 +84,10 @@ SENSITIVE_MIN = 6
 RUN_FIELDS = ("agent_spec_sha256", "kind", "attempt", "retry", "revision", "session_id", "method", "resumes",
               "wake_of")
 ART_FIELDS = ("generated_by", "generator_inputs", "method", "packs", "sha256", "data_type")
+TYPE_BUCKETS = ("local", "unknown", "withheld")  # besides the EDAM ids of the loaded subset (#221)
+TYPE_BASIS = ("declared", "inferred", "unknown")
+DECLARATION_COUNTS = ("outputs", "data_declared", "format_declared")
+SHA_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 # ---------------------------------------------------------------- settings
@@ -316,7 +322,8 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     if research:
         plan_copy: Any = plan  # validated as a ResearchPlan by the provenance model
     else:
-        plan_copy = {"steps": [{k: s.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction")}
+        plan_copy = {"steps": [{k: s.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction",
+                                                      "output_types") if k in s or k != "output_types"}
                                for s in plan.get("steps") or [] if isinstance(s, dict)]}
     results = {sid: {k: r.get(k) for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id", "workdir")}
                for sid, r in (req.get("results") or {}).items() if isinstance(r, dict)}
@@ -325,6 +332,7 @@ def _light_request(req: Mapping[str, Any]) -> dict:
             "status": req.get("status"), "created_at": req.get("created_at"), "lane": _lane(req),
             "research_contract": {"plan_sha256": contract.get("plan_sha256")} if research else None,
             "plan": plan_copy, "results": results, "text": req.get("text"),
+            "output_types_stats": req.get("output_types_stats") if isinstance(req.get("output_types_stats"), dict) else None,
             "references": [{"kind": r.get("kind"), "value": r.get("value")} for r in req.get("references") or []
                            if isinstance(r, dict)]}
 
@@ -335,11 +343,12 @@ def _light_task(task: Mapping[str, Any], research: set) -> dict:
     payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     light["payload"] = {k: payload.get(k) for k in ("id", "agent_id", "resume_session_id") if k in payload}
-    light["payload"]["meta"] = {k: meta.get(k) for k in ("output_types", "outputs") if k in meta}
+    light["payload"]["meta"] = {k: meta.get(k) for k in ("output_types", "output_types_vocab", "outputs") if k in meta}
     result = task.get("result")
     if isinstance(result, dict):
         kept = {k: result.get(k) for k in ("task_id", "agent_id", "ok", "session_id", "workdir", "workdir_id",
-                                           "outputs", "missing_outputs", "pending_jobs", "pending_asks", "error_kind")
+                                           "outputs", "missing_outputs", "pending_jobs", "pending_asks", "error_kind",
+                                           "output_types")
                 if k in result}
         runs = ((result.get("provenance") or {}).get("runs") or {}) if isinstance(result.get("provenance"), dict) else {}
         kept["provenance"] = {"runs": {tid: {k: run.get(k) for k in ("started_at", "ended_at") if k in run}
@@ -779,6 +788,14 @@ class Reader:
 # ---------------------------------------------------------------- the two models
 
 _MODEL: list[Any] = []
+
+
+class _NoVocab:
+    sha256 = None
+    edam_ids: frozenset = frozenset()
+
+
+_NO_VOCAB = _NoVocab()
 _SERVICES = itertools.count(1)
 
 
@@ -799,7 +816,7 @@ def _failed(status: str, exc: BaseException, started: float) -> dict:
 def compute_objects(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
     started = time.perf_counter()
     try:
-        summary = summarize(build_view(snap))
+        summary = summarize(type_artifacts(build_view(snap), snap, output_vocab.current()))
         check()
         return {"status": "ok", "ms": _ms(started), **summary}
     except ShadowTimeout as exc:
@@ -943,6 +960,8 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             check()
         own_runs = [(row, RUN_FIELDS) for row in p.runs.values() if row["request"] == rid]
         own_arts = [(row, ART_FIELDS) for row in p.artifacts.values() if row["request"] == rid]
+        types = type_counts(p, rid, lambda row: reader.workspace(locations.get((row["workspace"], row["path"]))))
+        check()
         candidates.sort(reverse=True)
         summary = {
             "status": "ok", "ms": _ms(started), "model_sha256": model.sha256, "rows_invalid": invalid,
@@ -950,7 +969,8 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             "unknown_ratio": _unknown_ratio(own_runs + own_arts), "incomplete": incomplete,
             "history_artifacts": population, "candidates": len(candidates),
             "candidate_refs": ["sem:" + opaque("art", art)[:8] for _, art in candidates[:MAX_CANDIDATE_REFS]],
-            "excluded": excluded, "lineage": lineage,
+            "excluded": excluded, "lineage": lineage, "types": types,
+            "declarations": declaration_counts((snap["requests"].get(rid) or {}).get("output_types_stats")),
         }
         return summary, hashes
     except ShadowTimeout as exc:
@@ -959,6 +979,82 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         raise
     except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
         return _failed("error", exc, started), hashes
+
+
+def type_counts(p: Any, rid: str, workspace_state: Callable[[Mapping[str, Any]], str]) -> dict:
+    """This request's artifacts by EDAM id (or local / unknown) and basis, per field (#221).
+
+    The zone gate comes first: an artifact whose workspace is not a readable same-host folder in an allowed zone
+    is counted only as ``withheld``, so restricted or unchecked outputs never add to a per-type count. Data types
+    are the provenance model's judged value; formats come from the same reader (declarations, then extensions)."""
+    vocab = output_vocab.current()
+    types: dict[str, dict[str, dict[str, int]]] = {name: {} for name in output_types.FIELDS}
+    for _, row in sorted(p.artifacts.items()):
+        if row["request"] != rid:
+            continue
+        visible = workspace_state(row) == "ok"
+        fields = row.get("_types") or {}
+        for name in output_types.FIELDS:
+            if name == "data_type":
+                key = row["data_type"] if row["data_type"] != sem.UNKNOWN else None
+                basis = "declared" if key else "unknown"
+            else:
+                field = fields.get(name)
+                key = field.value if field is not None and field.basis != "unknown" else None
+                basis = field.basis if key else "unknown"
+            bucket = ("withheld" if not visible else
+                      ((vocab.edam_id(key) if vocab else None) or "local") if key else "unknown")
+            cell = types[name].setdefault(bucket, {})
+            cell[basis] = cell.get(basis, 0) + 1
+    return {name: dict(sorted(cells.items())) for name, cells in types.items()}
+
+
+def declaration_counts(stats: Any) -> dict | None:
+    """The plan's declaration counts, rebuilt from fixed fields only (outputs is the denominator)."""
+    if not isinstance(stats, Mapping):
+        return None
+    out = {k: int(stats.get(k) or 0) for k in DECLARATION_COUNTS if isinstance(stats.get(k) or 0, int)}
+    issues = stats.get("issues") if isinstance(stats.get("issues"), Mapping) else {}
+    out["issues"] = {k: int(issues[k]) for k in output_types.ISSUES if isinstance(issues.get(k), int)}
+    return out
+
+
+def type_problems(line: Mapping[str, Any], allowed_ids: Iterable[str]) -> list[str]:
+    """Why a line's type fields may not be written: a finite allow-list, keys and values both (#221).
+
+    Bucket keys are the EDAM ids of the loaded subset or local / unknown / withheld; never a key, label, name,
+    path or a string merely shaped like an id."""
+    problems: list[str] = []
+    allowed = set(allowed_ids) | set(TYPE_BUCKETS)
+    version = line.get("vocab_sha256")
+    if version is not None and not (isinstance(version, str) and SHA_HEX.fullmatch(version)):
+        problems.append("type_version")
+
+    def counts(cells: Any, keys: Iterable[str]) -> bool:
+        return isinstance(cells, Mapping) and all(k in set(keys) and isinstance(v, int) and not isinstance(v, bool)
+                                                  and v >= 0 for k, v in cells.items())
+
+    prov = line.get("provenance") if isinstance(line.get("provenance"), Mapping) else {}
+    types = prov.get("types")
+    if types is not None:
+        if not isinstance(types, Mapping) or set(types) - set(output_types.FIELDS):
+            problems.append("type_fields")
+        else:
+            for cells in types.values():
+                if not isinstance(cells, Mapping) or not all(k in allowed and counts(v, TYPE_BASIS)
+                                                             for k, v in cells.items()):
+                    problems.append("type_bucket")
+    decl = prov.get("declarations")
+    if decl is not None and not (isinstance(decl, Mapping) and set(decl) <= {*DECLARATION_COUNTS, "issues"}
+                                 and counts({k: v for k, v in decl.items() if k != "issues"}, DECLARATION_COUNTS)
+                                 and counts(decl.get("issues", {}), output_types.ISSUES)):
+        problems.append("type_declarations")
+    objects = line.get("objects") if isinstance(line.get("objects"), Mapping) else {}
+    seen = objects.get("artifact_types")
+    if seen is not None and not (isinstance(seen, Mapping) and set(seen) <= set(output_types.FIELDS)
+                                 and all(counts(v, TYPE_BASIS) for v in seen.values())):
+        problems.append("type_objects")
+    return problems
 
 
 def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
@@ -991,7 +1087,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
                  "history_truncated": bool(snap.get("history_truncated")),
                  "tasks_truncated": bool(snap.get("tasks_truncated"))},
         "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"),
-        "rows_ms": snap.get("rows_ms"),
+        "rows_ms": snap.get("rows_ms"), "vocab_sha256": (output_vocab.current() or _NO_VOCAB).sha256,
     }
     line["objects"] = compute_objects(snap, check)
     reader = Reader(snap, check, hash_over)
@@ -1271,6 +1367,7 @@ class ShadowService:
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
         try:
             problems = boundary_problems(line, sensitive_strings(snap))
+            problems += type_problems(line, (output_vocab.current() or _NO_VOCAB).edam_ids)
         except Exception as exc:  # noqa: BLE001 - an unchecked line is never written
             log.warning("semantics shadow boundary check failed (%s); record not written", type(exc).__name__)
             self.outcome(failed=True)
@@ -1443,6 +1540,27 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
                        pending_jobs=sum(int(r.get("pending_jobs") or 0) for r in ok))
         return out
 
+    versions: dict[str, int] = {}
+    for r in requests:  # model file and output type vocabulary, so a vocabulary change is not hidden (#221)
+        model = (r.get("provenance") or {}).get("model_sha256") if isinstance(r.get("provenance"), Mapping) else None
+        key = f"{str(model or '-')[:12]}/{str(r.get('vocab_sha256') or '-')[:12]}"
+        versions[key] = versions.get(key, 0) + 1
+    types: dict[str, dict[str, dict[str, int]]] = {name: {} for name in output_types.FIELDS}
+    declarations = {**{k: 0 for k in DECLARATION_COUNTS}, "issues": {}}
+    for r in requests:
+        prov = r.get("provenance") if isinstance(r.get("provenance"), Mapping) else {}
+        if prov.get("status") != "ok":
+            continue
+        for name, cells in (prov.get("types") or {}).items() if isinstance(prov.get("types"), Mapping) else ():
+            for bucket, basis in (cells or {}).items() if isinstance(cells, Mapping) else ():
+                into = types.setdefault(str(name), {}).setdefault(str(bucket), {})
+                for k, n in (basis or {}).items() if isinstance(basis, Mapping) else ():
+                    into[str(k)] = into.get(str(k), 0) + int(n or 0)
+        decl = prov.get("declarations") if isinstance(prov.get("declarations"), Mapping) else {}
+        for k in DECLARATION_COUNTS:
+            declarations[k] += int(decl.get(k) or 0)
+        for code, n in (decl.get("issues") or {}).items() if isinstance(decl.get("issues"), Mapping) else ():
+            declarations["issues"][str(code)] = declarations["issues"].get(str(code), 0) + int(n or 0)
     research_with_candidates = sum(1 for r in requests if r.get("lane") == "research"
                                    and ((r.get("provenance") or {}).get("candidates") or 0) > 0)
     marks = [l for l in lines if l.get("type") == "mark"]
@@ -1475,6 +1593,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "workspaces": {k: sum(int(((r.get("hash") or {}).get("workspaces") or {}).get(k) or 0) for r in requests)
                        for k in WORKSPACE_STATES},
         "research_with_candidates": research_with_candidates,
+        "versions": dict(sorted(versions.items())),
+        "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "marks": {"reviewed": len(marks), "wrong": wrong},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason")}
                      for l in lines if l.get("type") == "auto_off"],
@@ -1512,6 +1632,15 @@ def render_report(rep: Mapping[str, Any]) -> str:
         + ", ".join(f"{k} {n}" for k, n in rep["workspaces"].items()),
         f"후보 있는 연구 요청 {rep['research_with_candidates']} · 검토 표시 {rep['marks']['reviewed']}"
         f"(wrong {rep['marks']['wrong']})",
+        "판본(model/vocab): " + (", ".join(f"{k} {n}" for k, n in rep["versions"].items()) or "-"),
+        "산출 종류 선언: 계획 산출 {outputs} · data 선언 {data_declared} · format 선언 {format_declared}".format(
+            **rep["declarations"]) + " · 버림 " + (", ".join(f"{k} {n}" for k, n in rep["declarations"]["issues"].items())
+                                                 or "0"),
+        *[f"{name}: " + (", ".join(f"{bucket} " + "/".join(f"{b} {n}" for b, n in sorted(cells.items()))
+                                   for bucket, cells in rep["types"][name].items()) or "-")
+          for name in rep["types"]],
+        "declared는 CSO 선언, inferred는 확장자로 본 이름일 뿐이다. 어느 쪽도 내용 검증이 아니다. withheld는 zone·host를 "
+        "확인하지 못해 종류별로 세지 않은 산출이다.",
         "",
         "자동 off 이력:" + ("" if rep["auto_off"] else " 없음"),
     ]

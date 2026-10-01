@@ -284,6 +284,15 @@ class OrchestratorSettings(BaseModel):
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
 
 
+class PlanSettings(BaseModel):
+    """CSO plan options. ``declare_output_types`` asks the CSO to declare each output's data type and format
+    from ``labhq/vocab/output_types.yaml`` (#221 todo 2). Off by default until a schema probe on both engines
+    and a limited real CLI run pass; off sends today's prompt and schema unchanged, and stored declarations
+    stay as they were (nothing is deleted or rewritten)."""
+
+    declare_output_types: bool = False
+
+
 class PiProfileSettings(BaseModel):
     """The PI's default reference pointers, added to every request unless the request turns them off.
 
@@ -343,6 +352,7 @@ class Settings(BaseModel):
     policy: PolicySettings = PolicySettings()
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
+    plan: PlanSettings = PlanSettings()
     research: ResearchSettings = ResearchSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
