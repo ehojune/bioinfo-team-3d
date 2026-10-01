@@ -1,0 +1,32 @@
+{
+  "_source": "#220: CSO plan shape from the 2026-10-01 real CLI bench run of public-penguins-qc (Palmer Penguins, CC0). Instructions shortened; declared outputs and path wording kept as the CSO wrote them.",
+  "request": "제공한 Palmer Penguins 공개 데이터 발췌본을 QC하라. 산출물은 Markdown 보고서 하나로 작성한다. 작업 폴더의 answer.md에 저장하고, 저장하지 못하면 응답 본문에 보고서 전체를 제시한다.",
+  "plan": {
+    "clarifying_questions": [],
+    "recruit": [],
+    "notes": "",
+    "steps": [
+      {
+        "id": "materialize_data",
+        "agent_id": "data_steward",
+        "instruction": "PI가 제공한 Palmer Penguins 발췌본(5행)을 ./outputs/penguins_excerpt.csv로 저장하라. 출처와 sha256 체크섬을 ./outputs/data_manifest.md에 기록하라.",
+        "depends_on": [],
+        "outputs": ["outputs/penguins_excerpt.csv", "outputs/data_manifest.md"]
+      },
+      {
+        "id": "compute_qc_metrics",
+        "agent_id": "analyst",
+        "instruction": "outputs/penguins_excerpt.csv를 읽어 row_count, species_count, body_mass_missing_count, flipper_length_mm 범위를 계산하라. 계산 코드와 원값을 ./outputs/qc_calculations.md에 남기고, 이어서 ./answer.md에 최종 Markdown 보고서를 작성한다. answer.md 저장에 실패하면 응답 본문에 보고서 전체를 제시하라.",
+        "depends_on": ["materialize_data"],
+        "outputs": ["outputs/qc_calculations.md", "answer.md"]
+      },
+      {
+        "id": "qc_review",
+        "agent_id": "qc_reviewer",
+        "instruction": "penguins_excerpt.csv를 직접 재계산하여 answer.md의 LABHQ_BENCH_RESULT 블록 수치와 대조하고, 결과를 ./outputs/qc_review.md에 PASS/WARN/FAIL로 기록하라.",
+        "depends_on": ["compute_qc_metrics"],
+        "outputs": ["outputs/qc_review.md"]
+      }
+    ]
+  }
+}
