@@ -625,9 +625,15 @@ def test_pilot_runs_with_network_and_subprocess_blocked(fixture_paths, expected)
             assert len(pilot.run_queries(impl, impl.project(records), expected)) == 17
 
 
-def test_settings_have_no_semantics_key():
+def test_settings_have_no_semantics_key_but_the_marked_shadow_switch():
+    """The model adds no setting. #150 B1 adds one untyped top-level switch, default off, on a hook line."""
     from labhq.settings import ResearchSettings, Settings
-    assert "semantics" not in ResearchSettings.model_fields and "semantics" not in Settings.model_fields
+    assert "semantics" not in ResearchSettings.model_fields
+    field = Settings.model_fields.get("semantics")
+    if field is not None:  # gone again after scripts/semantics_shadow_remove.py
+        assert field.default is None
+        source = (ROOT / "labhq" / "settings.py").read_text(encoding="utf-8").splitlines()
+        assert [line for line in source if "semantics" in line and "# semantics-hook" not in line] == []
 
 
 def test_script_hash_helpers_match_the_pinned_constants():
