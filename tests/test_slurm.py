@@ -8,6 +8,7 @@ import pytest
 
 from labhq.policy import evaluate_tool
 from labhq.runner.daemon import Runner
+from labhq.runner.hpc_jobs import submit_job
 from labhq.settings import HpcSettings, PolicySettings, Settings
 from labhq.tools.scheduler import (
     Scheduler, build_script, parse_slurm_sacct, parse_slurm_squeue, slurm_cluster_directive, slurm_job,
@@ -151,7 +152,8 @@ def test_submit_timeout_warns_that_the_job_may_exist():
     ("squeue", (1, "", "slurm_load_jobs error: Unable to contact slurm controller"), r"squeue failed \(1\)"),
     ("squeue", (0, "squeue: warning: unexpected banner\n", ""), "squeue returned unexpected output"),
     ("sacct", (1, "", "sacct: error: Problem talking to the database: Connection refused"), r"sacct failed \(1\)"),
-    ("sacct", (0, "Slurm accounting storage is disabled\n", ""), "sacct returned unexpected output"),
+    # "accounting storage is disabled" is no longer a lookup failure (#172, tests/test_hpc_followups.py).
+    ("sacct", (0, "sacct: warning: unexpected banner\n", ""), "sacct returned unexpected output"),
 ])
 def test_failed_lookup_is_not_missing(command, stub, match):
     backend, fake = slurm()
@@ -190,7 +192,7 @@ async def test_runner_hibernates_until_slurm_job_finishes_then_wakes_once(tmp_pa
     fake = FakeSlurm()
     runner.scheduler._run = fake
     job_id = runner.scheduler.submit("/w/j.sh", "align")
-    await runner._on_track({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+    await runner._track_job({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
 
     def woke():
         return [e for e in runner.store.pending() if e["type"] == "jobs.finished"]
@@ -232,9 +234,14 @@ async def test_hpc_submit_asks_pi_before_sbatch_and_never_after_denial(tmp_path,
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(body, encoding="utf-8")
 
+    async def approve(payload):
+        order.append("/approval")
+        return decision
+
     async def broker(path, payload, timeout):
         order.append(path)
-        return decision if path == "/approval" else {}
+        assert path == "/jobs/submit"  # the runner asks the PI and runs sbatch (fixture: same fake backend)
+        return await submit_job(settings, backend, tmp_path, payload, approve)
 
     monkeypatch.setattr(hpc, "S", settings)
     monkeypatch.setattr(hpc, "WORKDIR", tmp_path)
@@ -243,12 +250,12 @@ async def test_hpc_submit_asks_pi_before_sbatch_and_never_after_denial(tmp_path,
     monkeypatch.setattr(hpc, "_broker", broker)
     denied = json.loads(await hpc.hpc_submit("#SBATCH --gres=gpu:1\necho ok", "align", cores=2))
     assert denied["submitted"] is False and "Do not resubmit" in denied["note"]
-    assert order == ["/approval"] and fake.calls == []
+    assert order == ["/jobs/submit", "/approval"] and fake.calls == []
 
     decision = {"approved": True}
     result = json.loads(await hpc.hpc_submit("#SBATCH --gres=gpu:1\necho ok", "align", cores=2))
     assert result["submitted"] and result["job_id"] == "4100"
-    assert order == ["/approval", "/approval", "/jobs/track"]
+    assert order == ["/jobs/submit", "/approval", "/jobs/submit", "/approval"]
     (call,) = fake.calls
     assert call[:5] == [*PREFIX, "sbatch"] and "--partition=short" in call and "--cpus-per-task=2" in call
     script = (tmp_path / "jobs").glob("align_*.sh")
@@ -363,3 +370,69 @@ def test_cluster_directive_is_found_before_submission(body, option):
                                   "#SBATCH --cluster-constraint=fast\necho hi"])
 def test_other_directives_are_not_cluster_choices(body):
     assert slurm_cluster_directive(body) is None
+
+
+def _runner(tmp_path) -> tuple[Runner, FakeSlurm]:
+    s = Settings()
+    s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
+    s.runner.workspace_root = str(tmp_path / "runs")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    s.runner.talent_dir = str(tmp_path / "talent")
+    s.hpc.scheduler, s.hpc.user = "slurm", "fixture"
+    runner = Runner(s)
+    fake = FakeSlurm()
+    runner.scheduler._run = fake
+    return runner, fake
+
+
+@pytest.mark.parametrize("controller_holds_it", [True, False])
+def test_revoked_federation_sibling_is_a_terminal_failure(controller_holds_it):
+    # #186: REVOKED (a finished federation sibling) read as "unknown", so the watcher never woke the agent.
+    backend, fake = slurm()
+    job_id = backend.submit("/w/j.sh", "align")
+    fake.set(job_id, "REVOKED")
+    if not controller_holds_it:
+        fake.account(job_id)
+        fake.purge(job_id)
+    info = backend.status(job_id)
+    assert (info.state, info.raw_state, info.terminal) == ("failed", "REVOKED", True)
+
+
+async def test_runner_wakes_once_after_a_revoked_job(tmp_path):
+    runner, fake = _runner(tmp_path)
+    try:
+        job_id = runner.scheduler.submit("/w/j.sh", "align")
+        await runner._track_job({"job_id": job_id, "task_id": "t1", "agent_id": "a", "name": "align"})
+        fake.set(job_id, "REVOKED")
+        fake.account(job_id)
+        fake.purge(job_id)
+        await runner._poll_jobs()
+        woke = [e for e in runner.store.pending() if e["type"] == "jobs.finished"]
+        assert len(woke) == 1 and woke[0]["data"]["jobs"][0]["state"] == "failed"
+    finally:
+        runner.store.close()
+
+
+def test_unrecognized_state_is_finished_only_after_the_controller_forgets_the_job():
+    # Same class as #186: a state missing from SLURM_STATE must not keep a gone job "active" forever.
+    backend, fake = slurm()
+    job_id = backend.submit("/w/j.sh", "align")
+    fake.set(job_id, "FUTURE_STATE")
+    live = backend.status(job_id)
+    assert (live.state, live.terminal) == ("unknown", False)  # slurmctld still holds it: keep watching
+    fake.account(job_id)
+    fake.purge(job_id)
+    gone = backend.status(job_id)
+    assert (gone.state, gone.raw_state, gone.terminal) == ("unknown_finished", "FUTURE_STATE", True)
+    assert "FUTURE_STATE" in gone.detail
+
+
+@pytest.mark.parametrize("sbatch_args", [["--cluster=x"], ["--clusters=x"], ["-M", "x"], ["--cluster", "x"]])
+def test_every_cluster_spelling_is_refused_at_load(tmp_path, sbatch_args):
+    # #185: load and the script check must agree; "--cluster=x" passed load and sent jobs elsewhere.
+    config = tmp_path / "config.yaml"
+    config.write_text(f"hpc:\n  scheduler: slurm\n  slurm:\n    sbatch_args: {json.dumps(sbatch_args)}\n",
+                      encoding="utf-8")
+    with pytest.raises(ValueError, match="another cluster"):
+        Settings.load(str(config))
+    assert slurm_cluster_directive("#SBATCH " + " ".join(sbatch_args) + "\necho hi") == sbatch_args[0]

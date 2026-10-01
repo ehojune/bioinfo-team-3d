@@ -11,6 +11,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from labhq.models import McpServerSpec
+from labhq.runner.hpc_jobs import submit_job
 from labhq.settings import HpcSettings, Settings
 from labhq.tools._mcpcompat import list_tools
 from labhq.tools.scheduler import build_script
@@ -305,16 +306,19 @@ async def test_hpc_submit_reports_switched_output_dir(tmp_path, monkeypatch):
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(body)
 
+    async def approve(payload):
+        raise AssertionError("below the threshold with no directive: no PI approval")
+
     async def broker(path, payload, timeout):
-        return {}
+        assert path == "/jobs/submit"  # the runner's side, with a stand-in scheduler
+        return await submit_job(settings, SimpleNamespace(submit=lambda *args: "123"), tmp_path, payload, approve)
 
     monkeypatch.setattr(hpc, "S", settings)
     monkeypatch.setattr(hpc, "WORKDIR", tmp_path)
-    monkeypatch.setattr(hpc, "SCHED", SimpleNamespace(submit=lambda *args: "123"))
     monkeypatch.setattr(hpc, "_prepare_job_files", prepare)
     monkeypatch.setattr(hpc, "_broker", broker)
     result = json.loads(await hpc.hpc_submit("echo ok", "job"))
-    assert result["submitted"] and result["output_dir"] == str(tmp_path / "hpc_out")
+    assert result["submitted"] and result["job_id"] == "123" and result["output_dir"] == str(tmp_path / "hpc_out")
     assert f"cd {shlex.quote(str(tmp_path / 'hpc_out'))}" in seen["body"]
     assert "umask 007" in seen["body"]
     assert seen["group"] == "lab-jobs"
