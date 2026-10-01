@@ -274,20 +274,24 @@ def test_hashing_stops_at_its_share_and_the_models_still_finish(tmp_path, monkey
     assert line["objects"]["status"] == "ok"
 
 
-def test_the_worker_gives_hashing_half_of_the_time_cap(tmp_path, monkeypatch):
-    """#159 through the worker: a file that takes longer than the whole cap to hash leaves an ok line."""
+def test_the_worker_gives_hashing_its_share_of_the_time_cap(tmp_path, monkeypatch):
+    """#159 through the worker: a file that takes longer than the whole cap to hash leaves an ok line.
+
+    The share is shrunk to 0.5 s of a 10 s cap so the models keep 9.5 s on a slow CI machine; with the default
+    half of a 2 s cap the margin would be about 1 s of wall clock."""
     from tests.test_semantics_shadow_breaker import _lines, _service
     monkeypatch.setattr(shadow, "HASH_CHUNK", 1)
+    monkeypatch.setattr(shadow, "HASH_SHARE", 0.05)
     service = _service(tmp_path)
-    service.cfg = shadow.ShadowConfig(timeout_s=2.0)
+    service.cfg = shadow.ShadowConfig(timeout_s=10.0)
     target = tmp_path / "runs" / "2026-10-01" / "task_a1_analyst" / "outputs" / "counts.tsv"
-    target.write_bytes(b"x" * (64 * 1024 ** 2))   # one byte per read: far more than 2 s to hash
+    target.write_bytes(b"x" * (64 * 1024 ** 2))   # one byte per read: far more than 10 s to hash
     service.after_request("req_000")
     assert service.drain(30)
     (line,) = _lines(tmp_path, "request")
     assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
     assert line["hash"]["skipped"] == {"hash_time": 1} and service.counts["failures"] == 0
-    assert line["ms"] < 2000
+    assert line["ms"] < 5000   # ended at the share, not at the cap
 
 
 @pytest.mark.parametrize("change", ["remove", "rename"])
