@@ -187,10 +187,7 @@ async def test_lines_carry_ids_kinds_hashes_and_counts_only(tmp_path):
         assert str(tmp_path) not in text and str(tmp_path).replace("\\", "/") not in text
 
 
-async def test_the_snapshot_reads_only_the_rows_it_needs(tmp_path, monkeypatch):
-    """The event loop reads the finished request's tasks and its project's history by request id,
-    without prompts or answer text, and never the whole task table."""
-    from labhq.research import semantics_shadow as shadow
+def _rows_hub(tmp_path):
     from tests.semantics_shadow_lab import task_row
     hub = _hub(tmp_path)
     for rid, project in (("req_hist1", None), ("req_other", "elsewhere")):
@@ -201,19 +198,52 @@ async def test_the_snapshot_reads_only_the_rows_it_needs(tmp_path, monkeypatch):
         hub.store.put("task", tid, task_row(rid, tid, "s1", "analyst", None, []))
     hub.store.put("approval_decision", "appr_own", {"approval": {"kind": "clarify", "request_id": "req_unit1"},
                                                      "approved": True})
-    real = hub.store.all
-
-    def no_full_scan(kind):
-        assert kind not in ("task", "approval_decision"), f"full scan of {kind}"
-        return real(kind)
-
-    monkeypatch.setattr(hub.store, "all", no_full_scan)
+    hub.store.put("jobs_done", "task_own1", {"jobs": [{"job_id": "7", "state": "completed"}]})
     hub.requests["req_unit1"] = {"id": "req_unit1", "status": "done", "text": "unit request", "created_at": 2.0}
+    return hub
+
+
+class _NoTable:
+    def __getattr__(self, name):
+        raise AssertionError(f"the event loop touched the database ({name})")
+
+
+async def test_the_event_loop_reads_no_table_and_the_worker_reads_only_what_it_needs(tmp_path, monkeypatch):
+    """The loop copies requests from memory only. The worker reads this request's tasks and its project's
+    history by request id, through its own read-only connection, without prompts or answer text."""
+    from labhq.research import semantics_shadow as shadow
+    hub = _rows_hub(tmp_path)
+    real_db = hub.store.db
+    monkeypatch.setattr(hub.store, "db", _NoTable())
+    monkeypatch.setattr(hub.store, "all", lambda kind: _NoTable().all)
     snap = shadow.take_snapshot(hub, "req_unit1", shadow.ShadowConfig())
+    monkeypatch.undo()
+    assert hub.store.db is real_db and "tasks" not in snap
+    shadow.read_rows(snap, lambda: None)
     assert sorted(snap["tasks"]) == ["task_h1", "task_h2", "task_own1", "task_own2"]
     assert [a["id"] for a in snap["approvals"]] == ["appr_own"]
+    assert snap["jobs_done"] == {"task_own1": {"jobs": [{"job_id": "7", "state": "completed"}]}}
     assert "secret prompt text" not in json.dumps(snap) and "answer body" not in json.dumps(snap)
     monkeypatch.setattr(shadow, "MAX_TASK_ROWS", 3)
     capped = shadow.take_snapshot(hub, "req_unit1", shadow.ShadowConfig())
+    shadow.read_rows(capped, lambda: None)
     assert capped["tasks_truncated"] is True and {"task_own1", "task_own2"} <= set(capped["tasks"])
     assert len(capped["tasks"]) == 3
+
+
+async def test_a_slow_row_query_is_interrupted_at_the_time_cap(tmp_path):
+    from labhq.research import semantics_shadow as shadow
+    from tests.semantics_shadow_lab import task_row
+    hub = _rows_hub(tmp_path)
+    with hub.store.db:
+        hub.store.db.executemany("INSERT OR REPLACE INTO state VALUES ('task', ?, ?)",
+                                 [(f"task_bulk{i}", json.dumps(task_row("req_other", f"task_bulk{i}", "s1", "x",
+                                                                        None, [])))
+                                  for i in range(3000)])
+    snap = shadow.take_snapshot(hub, "req_unit1", shadow.ShadowConfig())
+
+    def past_the_cap():
+        raise shadow.ShadowTimeout("time cap")
+
+    with pytest.raises(shadow.ShadowTimeout):
+        shadow.read_rows(snap, past_the_cap)

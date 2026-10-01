@@ -243,3 +243,23 @@ def test_enable_after_a_stuck_worker_starts_a_fresh_one(tmp_path, monkeypatch):
     release.set()
     time.sleep(0.2)
     assert [line["request_id"] for line in _lines(tmp_path, "request")] == ["req_002"]
+
+
+def test_a_cli_mark_stops_the_running_job_without_another_request(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    started, release = threading.Event(), threading.Event()
+    real = shadow.compute_objects
+
+    def held(snap, check):
+        started.set()
+        release.wait(10)
+        time.sleep(shadow.EXTERNAL_LOOK_S + 0.05)
+        return real(snap, check)
+
+    monkeypatch.setattr(shadow, "compute_objects", held)
+    service.after_request("req_001")
+    assert started.wait(5)
+    shadow.mark(service.paths, "req_000", "sem:0a1b2c3d", "wrong_identity")
+    release.set()
+    assert service.drain(10)
+    assert service.latched == "wrong_identity" and _lines(tmp_path, "request") == []

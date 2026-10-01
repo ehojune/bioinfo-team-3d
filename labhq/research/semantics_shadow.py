@@ -52,6 +52,7 @@ KEYS = ("mode", "timeout_s", "history_requests")
 DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
+EXTERNAL_LOOK_S = 0.25           # how often a running job looks for a disabled.json written elsewhere
 BUSY_LIMIT = 5                   # consecutive requests skipped because the worker was busy
 CONSECUTIVE_FAILURES = 3
 RECENT_WINDOW, RECENT_FAILURES = 20, 3
@@ -321,75 +322,51 @@ def _light_task(task: Mapping[str, Any], research: set) -> dict:
 
 _TASK_SQL = ("SELECT key, json_remove(body, '$.payload.prompt', '$.payload.context', '$.result.text') FROM state "
              "WHERE kind = 'task' AND json_extract(body, '$.request_id') {} ORDER BY key LIMIT ?")
+_DECISION_SQL = ("SELECT key, body FROM state WHERE kind = 'approval_decision' "
+                 "AND json_extract(body, '$.approval.request_id') = ?")
+_JOBS_SQL = "SELECT key, body FROM state WHERE kind = 'jobs_done' AND key IN (SELECT value FROM json_each(?))"
 
 
-def _task_rows(store: Any, rid: str, history: set, limit: int) -> tuple[dict, dict, bool]:
-    """(this request's tasks, the history's tasks, truncated), read by request id without prompt or answer text.
-
-    Rows past ``limit`` are never decoded. A store without SQL (a test double) or without SQLite's JSON
-    functions falls back to filtering a full read.
-    """
-    db = getattr(store, "db", None)
-    try:
-        if db is None:
-            raise sqlite3.OperationalError("no SQL store")
-        own = {k: json.loads(b) for k, b in db.execute(_TASK_SQL.format("= ?"), (rid, limit + 1))}
-        rest = {k: json.loads(b) for k, b in db.execute(_TASK_SQL.format("IN (SELECT value FROM json_each(?))"),
-                                                        (json.dumps(sorted(history)), limit + 1))}
-    except sqlite3.OperationalError:
-        rows = store.all("task")
-        own = {k: v for k, v in sorted(rows.items()) if v.get("request_id") == rid}
-        rest = {k: v for k, v in sorted(rows.items()) if v.get("request_id") in history}
-    truncated = len(own) + len(rest) > limit
-    own = dict(list(own.items())[:limit])
-    return own, dict(list(rest.items())[:max(0, limit - len(own))]), truncated
+def _rows_from_sql(execute: Callable[..., Any], rid: str, history: set, limit: int) -> list[dict]:
+    own = {k: json.loads(b) for k, b in execute(_TASK_SQL.format("= ?"), (rid, limit + 1))}
+    rest = {k: json.loads(b) for k, b in execute(_TASK_SQL.format("IN (SELECT value FROM json_each(?))"),
+                                                 (json.dumps(sorted(history)), limit + 1))}
+    decisions = {k: json.loads(b) for k, b in execute(_DECISION_SQL, (rid,))}
+    jobs = {k: json.loads(b) for k, b in execute(_JOBS_SQL, (json.dumps(sorted(own)),))}
+    return [own, rest, decisions, jobs]
 
 
-def _decision_rows(store: Any, rid: str) -> dict:
-    db = getattr(store, "db", None)
-    try:
-        if db is None:
-            raise sqlite3.OperationalError("no SQL store")
-        return {k: json.loads(b) for k, b in db.execute(
-            "SELECT key, body FROM state WHERE kind = 'approval_decision' "
-            "AND json_extract(body, '$.approval.request_id') = ?", (rid,))}
-    except sqlite3.OperationalError:
-        return {k: v for k, v in store.all("approval_decision").items()
-                if (v.get("approval") or {}).get("request_id") == rid}
+def _rows_from_store(store: Any, rid: str, history: set) -> list[dict]:
+    """A store without SQL (a test double): filter full reads."""
+    tasks = store.all("task")
+    own = {k: v for k, v in tasks.items() if v.get("request_id") == rid}
+    rest = {k: v for k, v in tasks.items() if v.get("request_id") in history}
+    decisions = {k: v for k, v in store.all("approval_decision").items()
+                 if (v.get("approval") or {}).get("request_id") == rid}
+    jobs = {k: v for k, v in store.all("jobs_done").items() if k in own}
+    return [own, rest, decisions, jobs]
 
 
 def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
-    """A copy of what the two models need, taken on the event loop. Shares nothing with live state."""
+    """What the two models need from memory, taken on the event loop: no file and no database read.
+
+    Request rows are light copies; task, decision and job rows are read later by the worker (``read_rows``).
+    The copy shares nothing with live state.
+    """
     started = time.perf_counter()
     req = hub.requests[rid]
     project_id = req.get("project_id")
     others = sorted((r for r in hub.requests.values() if r.get("project_id") == project_id and r.get("id") != rid),
                     key=lambda r: r.get("created_at") or 0, reverse=True)
     chosen = [req, *others[:cfg.history_requests - 1]]
-    rids = {r.get("id") for r in chosen}
-    research = {r.get("id") for r in chosen if r.get("research_contract")}
-    own, history, tasks_truncated = _task_rows(hub.store, rid, rids - {rid}, MAX_TASK_ROWS)
-    tasks = {tid: _light_task(task, research) for tid, task in sorted({**own, **history}.items())}
-    approvals = []
-    for aid, decision in sorted(_decision_rows(hub.store, rid).items()):
-        approval = decision.get("approval") or {}
-        state = decision.get("state") or ("approved" if decision.get("approved") else "denied")
-        approvals.append({"id": aid, "kind": approval.get("kind"), "task_id": approval.get("task_id"),
-                          "request_id": rid, "state": state})
-    for aid, entry in hub.approvals.items():
-        approval = entry.get("approval") or {}
-        if approval.get("request_id") == rid:
-            approvals.append({"id": aid, "kind": approval.get("kind"), "task_id": approval.get("task_id"),
-                              "request_id": rid, "state": "pending"})
-    jobs_done = {tid: {"jobs": [{"job_id": j.get("job_id"), "state": j.get("state")}
-                                for j in (hub.jobs_done.get(tid) or {}).get("jobs") or [] if isinstance(j, dict)]}
-                 for tid in own if tid in hub.jobs_done}
+    pending = [{"id": aid, "kind": (entry.get("approval") or {}).get("kind"),
+                "task_id": (entry.get("approval") or {}).get("task_id"), "request_id": rid, "state": "pending"}
+               for aid, entry in sorted(hub.approvals.items()) if (entry.get("approval") or {}).get("request_id") == rid]
     project = hub.s.project(project_id)
-    snap = {
+    snap: dict[str, Any] = {
         "rid": rid, "ts": time.time(),
         "requests": {r.get("id"): _light_request(r) for r in chosen},
-        "history_truncated": len(others) > len(chosen) - 1, "tasks_truncated": tasks_truncated,
-        "tasks": tasks, "approvals": approvals, "jobs_done": jobs_done,
+        "history_truncated": len(others) > len(chosen) - 1, "pending_approvals": pending,
         "agents": {aid: {"engine": a.get("engine"), "employment": a.get("employment")}
                    for aid, a in hub.agents.items()},
         "project": {"id": project_id, "visibility": project.visibility if project else None,
@@ -398,9 +375,63 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
         "workspace_root": str(hub.s.path(hub.s.runner.workspace_root)),
         "host": platform.node(),
     }
+    if hasattr(hub.store, "db"):
+        snap["state_db"] = str(hub.s.path(hub.s.gateway.state_dir) / "gateway.sqlite3")
+    else:
+        snap["rows"] = _rows_from_store(hub.store, rid, {r.get("id") for r in others[:cfg.history_requests - 1]})
     snap = json.loads(json.dumps(snap, default=str))
     snap["snapshot_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return snap
+
+
+def read_rows(snap: dict, check: Callable[[], None]) -> None:
+    """Fill the snapshot's task, decision and job rows in the worker, off the event loop.
+
+    The gateway DB is opened read-only through its own connection (the #141 reader) and queried by request
+    id. Prompt and answer text are dropped inside SQLite, rows past MAX_TASK_ROWS are not decoded, and a
+    query still running past the time cap is interrupted.
+    """
+    if "tasks" in snap:
+        return
+    started = time.perf_counter()
+    rid = snap["rid"]
+    history = set(snap["requests"]) - {rid}
+    if snap.get("rows") is not None:
+        own, rest, decisions, jobs = snap.pop("rows")
+    else:
+        db = sem._open_state_readonly(Path(snap["state_db"]), immutable=False)
+
+        def interrupt() -> int:
+            try:
+                check()
+            except ShadowStop:
+                return 1
+            return 0
+
+        db.set_progress_handler(interrupt, 20_000)
+        try:
+            own, rest, decisions, jobs = _rows_from_sql(db.execute, rid, history, MAX_TASK_ROWS)
+        except sqlite3.OperationalError:
+            check()  # an interrupted query raises the timeout or stop that interrupted it
+            raise
+        finally:
+            db.close()
+    snap["tasks_truncated"] = len(own) + len(rest) > MAX_TASK_ROWS
+    own = dict(sorted(own.items())[:MAX_TASK_ROWS])
+    rest = dict(sorted(rest.items())[:max(0, MAX_TASK_ROWS - len(own))])
+    research = {r for r, req in snap["requests"].items() if req.get("research_contract")}
+    snap["tasks"] = {tid: _light_task(task, research) for tid, task in sorted({**own, **rest}.items())}
+    approvals = []
+    for aid, decision in sorted(decisions.items()):
+        approval = decision.get("approval") or {}
+        state = decision.get("state") or ("approved" if decision.get("approved") else "denied")
+        approvals.append({"id": aid, "kind": approval.get("kind"), "task_id": approval.get("task_id"),
+                          "request_id": rid, "state": state})
+    snap["approvals"] = approvals + list(snap.get("pending_approvals") or [])
+    snap["jobs_done"] = {tid: {"jobs": [{"job_id": j.get("job_id"), "state": j.get("state")}
+                                        for j in (body or {}).get("jobs") or [] if isinstance(j, dict)]}
+                         for tid, body in sorted(jobs.items())}
+    snap["rows_ms"] = _ms(started)
 
 
 # ---------------------------------------------------------------- information boundary
@@ -815,6 +846,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
                  epoch: int) -> dict:
     """One request line: both models side by side, ids, kinds, hashes and counts only."""
     started = time.perf_counter()
+    read_rows(snap, check)
     rid = snap["rid"]
     req = snap["requests"][rid]
     project = req.get("project_id")
@@ -826,6 +858,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
                  "history_truncated": bool(snap.get("history_truncated")),
                  "tasks_truncated": bool(snap.get("tasks_truncated"))},
         "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"),
+        "rows_ms": snap.get("rows_ms"),
     }
     line["objects"] = compute_objects(snap, check)
     reader = Reader(snap, check)
@@ -893,14 +926,25 @@ class ShadowService:
         if disabled is not None:
             self.latched = disabled["reason"]
 
+    def external_off(self) -> bool:
+        """A disabled.json written elsewhere (`labhq semantics mark`, another process) latches this one too."""
+        try:
+            if not self.paths.disabled.exists():
+                return False
+            if not self.latched:
+                disabled = read_disabled(self.paths) or {}
+                with self.lock:
+                    if not self.latched:
+                        self.latched, self.gen = str(disabled.get("reason") or "disabled"), self.gen + 1
+            return True
+        except (OSError, ValueError, TypeError) as exc:
+            self.trip("breaker_storage", kind=type(exc).__name__)
+            return True
+
     def refresh(self) -> None:
         """Pick up `labhq semantics enable` or a disabled.json written by `labhq semantics mark`."""
         try:
-            if self.paths.disabled.exists():
-                if not self.latched:
-                    disabled = read_disabled(self.paths) or {}
-                    with self.lock:
-                        self.latched, self.gen = str(disabled.get("reason") or "disabled"), self.gen + 1
+            if self.external_off():
                 return
             mtime = self.paths.state.stat().st_mtime if self.paths.state.exists() else None
             if mtime != self.state_mtime:
@@ -996,7 +1040,7 @@ class ShadowService:
             try:
                 if jobs is not self.queue:
                     return
-                if gen != self.gen or self.latched:
+                if gen != self.gen or self.latched or self.external_off():
                     self.counts["discarded"] += 1
                     continue
                 self.work(gen, snap)
@@ -1013,11 +1057,18 @@ class ShadowService:
         watchdog.daemon = True
         watchdog.start()
 
+        next_look = [started + EXTERNAL_LOOK_S]
+
         def check() -> None:
             if self.gen != gen:
                 raise ShadowStop("abandoned")
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 raise ShadowTimeout("time cap")
+            if now >= next_look[0]:
+                next_look[0] = now + EXTERNAL_LOOK_S
+                if self.external_off():
+                    raise ShadowStop("turned off elsewhere")
 
         line = None
         try:
@@ -1025,6 +1076,12 @@ class ShadowService:
             known = len(observed)
             line = compute_line(snap, observed, check, epoch=self.epoch)
             self.observed_dirty = self.observed_dirty or len(observed) != known
+        except ShadowTimeout:
+            line = None
+            if self.gen == gen:
+                log.warning("semantics shadow job timeout (ShadowTimeout)")
+                self.outcome(failed=True)
+                return
         except ShadowStop:
             line = None
         except Exception as exc:  # noqa: BLE001
@@ -1083,7 +1140,8 @@ class ShadowService:
                 log.warning("semantics shadow %s %s (%s)", model, line[model].get("status"),
                             line[model].get("error_kind"))
         try:
-            if self.gen != gen:
+            if self.gen != gen or self.external_off():
+                self.counts["discarded"] += 1
                 return
             append_line(self.paths, line)
             self.save_observed()
@@ -1133,7 +1191,16 @@ def _day(ts: Any) -> str:
         return "?"
 
 
-def build_report(paths: ShadowPaths, today: date | None = None) -> dict:
+def configured(settings: Any) -> str:
+    """What the setting asks for: shadow, off, invalid (off with a warning) or refused (state_dir in git)."""
+    raw = getattr(settings, "semantics", None)
+    if resolve(raw) is not None:
+        return "refused" if inside_git_tree(shadow_root(settings)) else "shadow"
+    mode = _mode(raw.get("mode", "off")) if isinstance(raw, Mapping) else _mode(raw)
+    return "off" if mode == "off" else "invalid"
+
+
+def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "unknown") -> dict:
     today = today or date.today()
     lines, broken = read_lines(paths)
     requests = [l for l in lines if l.get("type") == "request"]
@@ -1190,7 +1257,8 @@ def build_report(paths: ShadowPaths, today: date | None = None) -> dict:
     if len(marks) >= 5 and wrong / len(marks) >= 0.2:
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
     return {
-        "state": {"on": disabled is None, "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch")},
+        "state": {"on": setting == "shadow" and disabled is None, "setting": setting,
+                  "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch")},
         "requests": len(requests), "broken_lines": broken,
         "period": [_day(requests[0].get("ts")), _day(requests[-1].get("ts"))] if requests else None,
         "busy_skipped": sum(int(r.get("busy_skipped") or 0) for r in requests),
@@ -1219,7 +1287,8 @@ def render_report(rep: Mapping[str, Any]) -> str:
 
     out = [
         "semantics shadow report (로컬 기록, 네트워크 없음)",
-        f"상태: {'on' if st['on'] else 'off — ' + v(st['reason'])} · epoch {v(st['epoch'])}",
+        f"상태: {'on' if st['on'] else 'off'} · 설정 {st['setting']} · 자동 off {v(st['reason'])} · "
+        f"epoch {v(st['epoch'])}",
         f"요청 {rep['requests']}건 · 기간 {' ~ '.join(rep['period']) if rep['period'] else '-'} · "
         f"busy로 건너뜀 {rep['busy_skipped']} · 깨진 줄 {rep['broken_lines']}",
         f"계산 p95 {v(rep['total_p95_ms'])} ms · snapshot p95 {v(rep['snapshot_p95_ms'])} ms",
@@ -1295,7 +1364,7 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
     try:
         if args.semantics_cmd == "report":
             today = date.fromisoformat(args.today) if args.today else None
-            rep = build_report(paths, today)
+            rep = build_report(paths, today, configured(settings))
             print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_report(rep))
         elif args.semantics_cmd == "enable":
             print(enable(paths))

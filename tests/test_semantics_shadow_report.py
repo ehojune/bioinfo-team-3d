@@ -95,7 +95,7 @@ def test_enable_shows_the_reason_and_opens_a_new_epoch(tmp_path, config, capsys)
     assert code == 0 and "consecutive_failures" in out and "epoch 2" in out
     assert not paths.disabled.exists() and shadow.read_state(paths)["epoch"] == 2
     code, out = _cli(capsys, config, "report")
-    assert "상태: on · epoch 2" in out
+    assert "상태: on · 설정 shadow · 자동 off - · epoch 2" in out
 
 
 def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_path, config, capsys):
@@ -107,3 +107,13 @@ def test_mark_checks_its_arguments_and_wrong_identity_turns_semantics_off(tmp_pa
     assert shadow.read_disabled(paths)["reason"] == "wrong_identity"
     rep = shadow.build_report(paths)
     assert rep["state"]["on"] is False and rep["marks"] == {"reviewed": 1, "wrong": 1}
+
+
+@pytest.mark.parametrize("text,setting", [("", "off"), ("semantics: {mode: advisory}\n", "invalid")])
+def test_the_report_says_off_when_the_setting_is_off(tmp_path, capsys, text, setting):
+    path = tmp_path / "labhq.yaml"
+    path.write_text(f"gateway: {{state_dir: '{(tmp_path / 'state').as_posix()}'}}\n" + text, encoding="utf-8")
+    with pytest.raises(SystemExit):
+        main(["--config", str(path), "semantics", "report", "--json"])
+    state = json.loads(capsys.readouterr().out)["state"]
+    assert state["on"] is False and state["setting"] == setting
