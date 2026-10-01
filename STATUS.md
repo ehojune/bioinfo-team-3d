@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #247 #254 — Windows 불안정 test의 완료 조건 고정
+
+- 결론: #247은 `latched` 뒤 영속 기록이 끝나기 전 `enable`이 겹친 확인 경합, #254는 worker 대기가 아닌 호스트 지연까지 재던 1초 한계가 원인이었다. 제품 코드 결함은 아니었다.
+- 바뀐 것: #247은 `disabled.json`·`auto_off` 기록과 이전 worker 결과 폐기를 조건 대기한다. #254는 막힌 worker가 풀리기 전에 event-loop 호출이 반환하는 순서를 확인하고 worker `join`·blocking queue put도 금지한다.
+- 실행한 것: 수정 전 #247은 유휴 100회 0, 단일 CPU 과부하 100회 2 실패(PermissionError 1·부분 JSON 1), 수정 후 두 test 모두 유휴 100회와 같은 부하 100회에서 실패 0이었다. 관련 파일 69건도 통과했다.
+- 미해결: 없음.
+- 근거: `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_worker.py`.
+
 ## 2026-10-02 · PR #277 — 산출 종류 선언 reader 일치와 예외 격리
 
 - 결론: #249 후속 P2 네 건을 닫았다. legacy와 typed 선언은 공용 reader가 같은 local vocabulary로 판정하고, 계획 선언과 runner record가 다르면 basis와 무관하게 충돌로 남긴다. 기본값은 off이며 off의 prompt·schema·dispatch는 #249 main 계약 그대로다.
