@@ -180,6 +180,40 @@ def test_one_missing_scheduler_tool_suggests_none(monkeypatch, missing):
     assert _data()["hpc"]["scheduler"] == "none"
 
 
+@pytest.mark.parametrize("tools,env,expected", [
+    ({"sbatch", "sinfo"}, {}, "slurm"),
+    ({"sbatch", "sinfo", "qsub", "qstat", "pbsnodes"}, {}, "slurm"),  # Slurm's Torque wrappers
+    ({"sbatch"}, {}, "none"),  # no sinfo: not enough to call it Slurm
+    ({"qsub", "qstat", "pbsnodes"}, {}, "pbs"),
+])
+def test_slurm_is_detected_from_sbatch_and_sinfo(monkeypatch, tools, env, expected):
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in tools else None)
+    wizard.run(yes=True)
+    assert _data()["hpc"]["scheduler"] == expected
+
+
+@pytest.mark.parametrize("tools,env", [
+    ({"sbatch", "sinfo", "qsub", "qstat", "qconf"}, {}),
+    ({"sbatch", "sinfo", "qsub", "qstat"}, {"PBS_EXEC": "/opt/pbs"}),
+])
+def test_two_scheduler_families_are_not_guessed(monkeypatch, tools, env):
+    for key in ("SGE_ROOT", "PBS_HOME", "PBS_EXEC"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(wizard.shutil, "which", lambda name, **_: name if name in tools else None)
+    with pytest.raises(wizard.InitError, match="Slurm"):
+        wizard.run(yes=True)
+    assert not Path("config/labhq.yaml").exists()
+    monkeypatch.setattr("builtins.input", lambda prompt: "slurm" if "scheduler" in prompt else "")
+    wizard.run(yes=False)
+    assert _data()["hpc"]["scheduler"] == "slurm"
+
+
 def test_invalid_answer_leaves_no_files(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *_: "invalid")
     with pytest.raises(SystemExit) as exc:

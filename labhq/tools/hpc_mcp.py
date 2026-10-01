@@ -31,7 +31,7 @@ WORKDIR = Path(os.environ.get("LABHQ_WORKDIR", ".")).resolve()
 server = make_server(
     "labhq-hpc",
     instructions=(
-        "Submit and monitor batch jobs on the lab's HPC (SGE or PBS). Use this for anything heavy "
+        "Submit and monitor batch jobs on the lab's HPC (SGE, PBS or Slurm). Use this for anything heavy "
         "(alignment, variant calling, large downloads, anything touching restricted data). Submissions "
         "may wait for the PI's approval on their phone. After submitting, do not poll in a loop: "
         "summarize what you are waiting for and end your turn. You will be resumed when jobs finish."

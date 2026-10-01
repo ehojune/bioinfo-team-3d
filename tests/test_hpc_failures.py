@@ -44,6 +44,12 @@ async def call_fixture(tmp_path, scenario, tool, arguments):
     ("status", "hpc_status", {"job_id": "123"}, "qstat failed (255)"),
     ("accounting", "hpc_status", {"job_id": "123"}, "qacct failed (255)"),
     ("pbs_status", "hpc_status", {"job_id": "123"}, "qstat failed (255)"),
+    ("slurm_submit", "hpc_submit", SUBMIT, "sbatch failed (1): sbatch: fixture submission rejected"),
+    ("slurm_cancel", "hpc_cancel", {"job_id": "123"}, "allow scancel in sudoers"),
+    ("slurm_queue", "hpc_queue", {}, "squeue failed (255): ssh: fixture connection refused"),
+    ("slurm_status", "hpc_status", {"job_id": "123"}, "squeue failed (255)"),
+    ("slurm_accounting", "hpc_status", {"job_id": "123"}, "sacct failed (255)"),
+    ("slurm_cancel", "hpc_cancel", {"job_id": "--user=fixture"}, "invalid job id: '--user=fixture'"),
 ])
 async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, args, detail):
     response = await call_fixture(tmp_path, scenario, tool, args)
@@ -51,8 +57,9 @@ async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, arg
     assert payload.get("isError") is True
     text = "\n".join(block.text for block in response.content if block.type == "text")
     assert detail in text
-    if tool == "hpc_cancel":
-        assert "fixture qdel permission denied" in text
+    if tool == "hpc_cancel" and "invalid job id" not in detail:
+        command = "scancel" if scenario.startswith("slurm") else "qdel"
+        assert f"fixture {command} permission denied" in text
     assert '"state": "missing"' not in text
 
     # Feed the wire result into both staff CLI stream parsers. No real CLI is run.
