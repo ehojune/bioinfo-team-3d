@@ -593,6 +593,37 @@ def _unc(path: str) -> bool:
     return path.startswith(("\\\\", "//"))
 
 
+_KERNEL32: list[Any] = []
+
+
+def _share_delete_opener(path: str, flags: int) -> int:
+    """Windows: open for reading with FILE_SHARE_DELETE as well, so a runner can still delete the file or rename
+    it away while the shadow reads it (#161). A plain open() there would make that runner fail."""
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+    if not _KERNEL32:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+        _KERNEL32.append(kernel)
+    kernel = _KERNEL32[0]
+    # GENERIC_READ; share read, write and delete; OPEN_EXISTING; FILE_ATTRIBUTE_NORMAL
+    handle = kernel.CreateFileW(path, 0x80000000, 0x7, None, 3, 0x80, None)
+    if handle is None or handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        kernel.CloseHandle(handle)
+        raise
+
+
+READ_OPENER = _share_delete_opener if os.name == "nt" else None  # POSIX: an open file never blocks a rename
+
+
 @dataclass
 class HashBudget:
     files: int = 0
@@ -659,7 +690,7 @@ class Reader:
             st = os.lstat(path)
             if _is_link(st) or not stat.S_ISREG(st.st_mode) or st.st_size > MANIFEST_MAX:
                 return None
-            with open(path, "rb") as handle:
+            with open(path, "rb", opener=READ_OPENER) as handle:
                 return json.loads(handle.read(MANIFEST_MAX + 1).decode("utf-8"))
         except (OSError, ValueError):
             return None
@@ -699,7 +730,7 @@ class Reader:
         self.budget.files += 1
         self.budget.bytes += st.st_size
         digest = hashlib.sha256()
-        with open(path, "rb", buffering=0) as handle:
+        with open(path, "rb", buffering=0, opener=READ_OPENER) as handle:
             opened = os.fstat(handle.fileno())
             if (opened.st_ino, opened.st_dev) != (st.st_ino, st.st_dev):
                 return "not_regular", None  # replaced between the check and the open
@@ -712,9 +743,13 @@ class Reader:
                 if not chunk:
                     break
                 digest.update(chunk)
-        after = os.stat(path)
-        if (after.st_size, after.st_mtime_ns) != (st.st_size, st.st_mtime_ns):
+        try:
+            after = os.stat(path)
+        except OSError:  # deleted or moved away while hashed (#161)
             return "unstable", None
+        if (after.st_ino, after.st_dev, after.st_size, after.st_mtime_ns) != (st.st_ino, st.st_dev, st.st_size,
+                                                                             st.st_mtime_ns):
+            return "unstable", None  # changed, or another file now has this name
         return "hashed", {"sha256": digest.hexdigest(), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 

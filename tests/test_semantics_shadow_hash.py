@@ -288,3 +288,33 @@ def test_the_worker_gives_hashing_half_of_the_time_cap(tmp_path, monkeypatch):
     assert line["provenance"]["status"] == "ok" and line["provenance"]["incomplete"] is True
     assert line["hash"]["skipped"] == {"hash_time": 1} and service.counts["failures"] == 0
     assert line["ms"] < 2000
+
+
+@pytest.mark.parametrize("change", ["remove", "rename"])
+def test_a_runner_can_delete_or_move_a_file_while_it_is_hashed(tmp_path, monkeypatch, change):
+    """#161: the shadow's read never blocks a runner. On Windows the file is opened with FILE_SHARE_DELETE, so
+    deleting it or renaming it away mid-hash succeeds; the hash is then unstable, never an error."""
+    from labhq.research.semantics_shadow import ShadowConfig, take_snapshot
+    monkeypatch.setattr(shadow, "HASH_CHUNK", 2)
+    hub, wd = _lab(tmp_path)
+    target = os.path.join(wd, "outputs", "counts.tsv")
+    real, opened, runner = builtins.open, [], []
+
+    def watching(path, *args, **kwargs):
+        handle = real(path, *args, **kwargs)
+        if str(path) == target:
+            opened.append(path)
+        return handle
+
+    def check():
+        if opened and not runner:   # the runner acts while the shadow holds the file open
+            try:
+                os.remove(target) if change == "remove" else os.replace(target, target + ".moved")
+                runner.append("ok")
+            except OSError as exc:
+                runner.append(type(exc).__name__)
+
+    monkeypatch.setattr(shadow, "open", watching, raising=False)
+    line = shadow.compute_line(take_snapshot(hub, "req_a", ShadowConfig()), {}, check, epoch=1)
+    assert runner == ["ok"]
+    assert line["provenance"]["status"] == "ok" and line["hash"]["skipped"] == {"unstable": 1}
