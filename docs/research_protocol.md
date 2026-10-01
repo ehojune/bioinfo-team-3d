@@ -33,7 +33,7 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 | `protocol` | 분석 단위, 선정/제외, 비교군, 주요 지표, 검증법, 자원 상한, 중단·승인 조건, data boundary |
 | 통계 | 적용 여부와 이유. 적용 시 estimand·독립 단위·주요 outcome은 필수, 검정군·다중검정·결측·효과크기/CI는 정하거나 `not_applicable`에 사유를 적는다 |
 | step | phase, claim ID, input ref, output, check, evidence slot, dependency |
-| pack | 정확한 `id@version`과 SHA-256, `pack_values[pack_key]`의 field·validator·acceptance 설명 |
+| pack | `protocol.packs`의 `id@version`과 SHA-256은 labhq가 설정 snapshot으로 채운다. CSO는 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 쓴다. acceptance 키는 pack rule id다 |
 
 비적용 항목은 `not_applicable`과 이유를 남긴다. step 상한을 넘으면 뒤를 자르지 않고 재계획한다. schema, DAG, 직원 ID, pack snapshot이 맞아야 CP1로 간다.
 
@@ -126,7 +126,7 @@ rules:
 
 predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. `when`에 predicate 목록을 주면 모두 맞을 때만 rule이 걸린다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
 
-active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다.
+active pack마다 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다. 교정 prompt에는 schema·pack 문제를 한 번에 모두 넣는다. 교정 뒤에도 실패하면 요청을 `plan_invalid`로 끝내고 남은 문제를 보고서와 `plan_validation`에 남긴다(#222).
 
 예시는 `labhq/research/packs/single_cell_de.yaml`이다. donor·condition·batch, count scale, replicate, model과 likelihood family, 식별 가능성, 결론 모드를 CP1 전에 고정한다. donor를 독립 단위로 두고 cell 의사반복, count scale/model 불일치, donor–batch 완전 혼동을 검사한다. 도구와 QC cutoff는 요청별 PLAN에서 고정한다.
 

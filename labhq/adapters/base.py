@@ -132,6 +132,19 @@ def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[s
     raise ValueError(f"{engine}: cannot run {executable!r} with agent arguments; "
                      "set engines.<engine>.bin to a native executable or use bin: node with prefix_args")
 
+def command_line_limit() -> int | None:
+    """Characters a spawned command line may have. Windows CreateProcess stops at 32,767; POSIX allows far more."""
+    return 32_000 if os.name == "nt" else None
+
+
+def _command_too_long(cmd: list[str]) -> int | None:
+    limit = command_line_limit()
+    if limit is None:
+        return None
+    length = len(subprocess.list2cmdline(cmd).encode("utf-16-le")) // 2  # CreateProcessW counts UTF-16 units
+    return length if length > limit else None
+
+
 ROLE_FOOTER = """
 ## Lab rules (all agents)
 - Work inside your task workspace; write deliverables to ./outputs/ and cite their paths.
@@ -159,6 +172,8 @@ class RunContext:
     emit: Emit
     prompt: str
     extra_dirs: list[str] = field(default_factory=list)
+    # A short prompt that names the task file, used when `prompt` would make the command line too long (#222).
+    prompt_pointer: str | None = None
     # Readable, never writable (#36 path references). Claude gets --add-dir plus deny rules; Codex reads
     # outside its workspace without --add-dir, which would grant write access.
     read_dirs: list[str] = field(default_factory=list)
@@ -367,12 +382,25 @@ class AgentAdapter(ABC):
         self.prepare(ctx)  # may add to ctx.env (engine: cli puts CliSpec.env there)
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
-        if engine_bin is not None:
-            cmd = [os.path.expandvars(os.path.expanduser(cmd[0])), *prefix, *cmd[1:]]
+
+        def resolved(command: list[str]) -> list[str]:
+            if engine_bin is not None:
+                command = [os.path.expandvars(os.path.expanduser(command[0])), *prefix, *command[1:]]
+            return _resolve_command(command, env, self.engine)
+
         try:
-            cmd = _resolve_command(cmd, env, self.engine)
+            cmd = resolved(cmd)
+            if _command_too_long(cmd) and ctx.prompt_pointer and ctx.prompt != ctx.prompt_pointer:
+                # Windows refuses the process and Python reports a missing executable (#222): name the task file.
+                ctx.prompt = ctx.prompt_pointer
+                cmd = resolved(self.build_command(ctx))
         except ValueError as exc:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
+        too_long = _command_too_long(cmd)
+        if too_long:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              error=f"command line is {too_long:,} UTF-16 units, over the Windows limit of "
+                                    f"{command_line_limit():,}; shorten the prompt, output schema or settings")
         ctx.write_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 

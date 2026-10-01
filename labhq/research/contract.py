@@ -6,7 +6,7 @@ import re
 import time
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from ..intake import ClarifyingQuestion
 from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
@@ -104,8 +104,10 @@ class StatisticsPlan(StrictModel):
     def complete_if_applicable(self) -> "StatisticsPlan":
         if not self.applicable:
             return self
-        if not all(getattr(self, name) for name in self.CORE):
-            raise ValueError("applicable statistics requires estimand, analysis_unit, and primary_outcomes")
+        missing_core = [name for name in self.CORE if not getattr(self, name)]
+        if missing_core:
+            raise ValueError("applicable statistics requires estimand, analysis_unit, and primary_outcomes; "
+                             "missing: " + ", ".join(missing_core))
         unknown = set(self.not_applicable) - set(self.WAIVABLE)
         if unknown:
             raise ValueError(f"statistics not_applicable may only waive {', '.join(self.WAIVABLE)}")
@@ -289,86 +291,175 @@ def _pack_predicate_matches(predicate: Any, pack_fields: dict[str, Any], plan_va
     return current not in predicate.not_in
 
 
-def _validate_pack_values(plan: ResearchPlan, active_packs: dict[str, str],
-                          pack_definitions: dict[str, Any] | None) -> None:
-    if set(plan.pack_values) != set(active_packs):
-        raise ValueError(f"research plan pack_values must equal the configured snapshot: {sorted(active_packs)}")
-    if not active_packs:
-        return
-    if pack_definitions is None or set(pack_definitions) != set(active_packs):
-        raise ValueError("active research packs require their definitions before PLAN validation")
-    for key, loaded in pack_definitions.items():
-        if loaded.sha256 != active_packs[key]:
-            raise ValueError(f"research pack definition hash changed for {key}")
-        supplied = plan.pack_values[key]
-        pack = loaded.pack
+def _key_set_error(where: str, expected: list[str], supplied: Any, note: str = "") -> str | None:
+    if set(supplied) == set(expected):
+        return None
+    message = f"{where} must contain {sorted(expected)}{note}"
+    missing = sorted(set(expected) - set(supplied))
+    unexpected = sorted(set(supplied) - set(expected))
+    if missing and len(missing) < len(expected):  # all missing is already the list above
+        message += f"; missing {missing}"
+    if unexpected:
+        message += f"; unexpected {unexpected}"
+    return message
+
+
+def _section(values: dict[str, Any], name: str) -> dict[str, Any] | None:
+    section = values.get(name)
+    return section if isinstance(section, dict) else None  # another shape is a schema error reported elsewhere
+
+
+def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values: dict[str, Any] | None) -> list[str]:
+    errors: list[str] = []
+    fields = _section(supplied, "fields")
+    if fields is not None:
         declared = {field.name: field for field in pack.fields}
-        unknown = sorted(set(supplied.fields) - set(declared))
+        unknown = sorted(set(fields) - set(declared))
         if unknown:
-            raise ValueError(f"pack_values[{key}].fields contains undeclared fields: {unknown}")
+            errors.append(f"pack_values[{key}].fields contains undeclared fields: {unknown}")
         for name, field in declared.items():
-            if field.required and (name not in supplied.fields or not _present(supplied.fields.get(name))):
-                raise ValueError(f"pack_values[{key}].fields.{name} is required")
-            if name not in supplied.fields:
+            if field.required and (name not in fields or not _present(fields.get(name))):
+                errors.append(f"pack_values[{key}].fields.{name} is required")
                 continue
-            current = supplied.fields[name]
+            if name not in fields:
+                continue
+            current = fields[name]
             valid_type = ((field.value_type == "string" and isinstance(current, str)) or
                           (field.value_type == "integer" and isinstance(current, int) and not isinstance(current, bool)) or
                           (field.value_type == "boolean" and isinstance(current, bool)))
             if not valid_type:
-                raise ValueError(f"pack_values[{key}].fields.{name} must be {field.value_type}")
-            if field.allowed_values and current not in field.allowed_values:
-                raise ValueError(f"pack_values[{key}].fields.{name} must be one of {field.allowed_values}")
-            if field.minimum is not None and current < field.minimum:
-                raise ValueError(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
+                errors.append(f"pack_values[{key}].fields.{name} must be {field.value_type}")
+            elif field.allowed_values and current not in field.allowed_values:
+                errors.append(f"pack_values[{key}].fields.{name} must be one of {field.allowed_values}")
+            elif field.minimum is not None and current < field.minimum:
+                errors.append(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
+    fields_ok = fields is not None and not errors
 
-        validator_ids = {rule.id for rule in pack.validators}
-        if set(supplied.validators) != validator_ids:
-            raise ValueError(f"pack_values[{key}].validators must contain {sorted(validator_ids)}")
+    validators = _section(supplied, "validators")
+    if validators is not None:
+        mismatch = _key_set_error(f"pack_values[{key}].validators", [rule.id for rule in pack.validators], validators)
+        if mismatch:
+            errors.append(mismatch)
         for rule in pack.validators:
-            if not _present(supplied.validators[rule.id]):
-                raise ValueError(f"pack_values[{key}].validators.{rule.id} must explain how it passes")
-            missing = [name for name in rule.required_fields if not _present(supplied.fields.get(name))]
-            if missing:
-                raise ValueError(f"pack_values[{key}].validators.{rule.id} missing fields {missing}")
+            if rule.id in validators and not _present(validators[rule.id]):
+                errors.append(f"pack_values[{key}].validators.{rule.id} must explain how it passes")
+            missing = [name for name in rule.required_fields if not _present((fields or {}).get(name))]
+            if fields_ok and missing:
+                errors.append(f"pack_values[{key}].validators.{rule.id} missing fields {missing}")
 
-        acceptance_ids = {rule.id for rule in pack.rules}
-        if set(supplied.acceptance) != acceptance_ids:
-            raise ValueError(f"pack_values[{key}].acceptance must contain {sorted(acceptance_ids)}")
+    acceptance = _section(supplied, "acceptance")
+    if acceptance is not None:
+        mismatch = _key_set_error(f"pack_values[{key}].acceptance", [rule.id for rule in pack.rules], acceptance,
+                                  " (acceptance keys are the pack rule ids)")
+        if mismatch:
+            errors.append(mismatch)
         for rule in pack.rules:
-            if not _present(supplied.acceptance[rule.id]):
-                raise ValueError(f"pack_values[{key}].acceptance.{rule.id} must describe the rule outcome")
+            if rule.id in acceptance and not _present(acceptance[rule.id]):
+                errors.append(f"pack_values[{key}].acceptance.{rule.id} must describe the rule outcome")
 
-        plan_values = plan.model_dump(mode="python")
+    if fields_ok and plan_values is not None:  # rules compare typed values; skip them on a broken draft
         for rule in pack.rules:
-            if not all(_pack_predicate_matches(condition, supplied.fields, plan_values)
-                       for condition in rule.conditions):
+            if not all(_pack_predicate_matches(condition, fields, plan_values) for condition in rule.conditions):
                 continue
             if rule.require is not None:
-                passed = _pack_predicate_matches(rule.require, supplied.fields, plan_values)
-                outcome = "require"
-                predicate = rule.require
+                passed = _pack_predicate_matches(rule.require, fields, plan_values)
+                outcome, predicate = "require", rule.require
             else:
-                passed = not _pack_predicate_matches(rule.forbid, supplied.fields, plan_values)
-                outcome = "forbid"
-                predicate = rule.forbid
+                passed = not _pack_predicate_matches(rule.forbid, fields, plan_values)
+                outcome, predicate = "forbid", rule.forbid
             if not passed:
-                raise ValueError(f"pack rule {rule.id} failed: {outcome} {predicate.field}")
+                errors.append(f"pack rule {rule.id} failed: {outcome} {predicate.field}")
+    return errors
+
+
+def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_packs: dict[str, str],
+                       pack_definitions: dict[str, Any] | None) -> list[str]:
+    if not isinstance(supplied_all, dict):
+        return []
+    errors: list[str] = []
+    if set(supplied_all) != set(active_packs):
+        missing = sorted(set(active_packs) - set(supplied_all))
+        unexpected = sorted(set(supplied_all) - set(active_packs))
+        errors.append(f"research plan pack_values must equal the configured snapshot: {sorted(active_packs)}" +
+                      (f"; missing {missing}" if missing else "") + (f"; unexpected {unexpected}" if unexpected else ""))
+    if not active_packs:
+        return errors
+    if pack_definitions is None or set(pack_definitions) != set(active_packs):
+        return errors + ["active research packs require their definitions before PLAN validation"]
+    plan_values = plan.model_dump(mode="python") if plan is not None else None
+    for key, loaded in pack_definitions.items():
+        if loaded.sha256 != active_packs[key]:
+            errors.append(f"research pack definition hash changed for {key}")
+            continue
+        supplied = supplied_all.get(key)
+        if isinstance(supplied, dict):
+            errors += _one_pack_errors(key, loaded.pack, supplied, plan_values)
+    return errors
+
+
+def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, active_packs: dict[str, str],
+                     expected_intake: IntakeDecision | None,
+                     pack_definitions: dict[str, Any] | None) -> list[str]:
+    """Every check after the schema. A draft that fails the schema still gets its pack checks."""
+    raw = value if isinstance(value, dict) else {}
+    errors: list[str] = []
+    steps = plan.steps if plan is not None else raw.get("steps")
+    if isinstance(steps, list) and len(steps) > max_steps:
+        errors.append(f"research plan has {len(steps)} steps; maximum is {max_steps}; re-plan without truncation")
+    if plan is not None:
+        selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
+        if selected != active_packs:
+            changed = sorted(key for key in set(selected) & set(active_packs) if selected[key] != active_packs[key])
+            errors.append(f"research plan packs must equal the configured snapshot: {sorted(active_packs)}; "
+                          f"protocol.packs lists {sorted(selected)}" +
+                          (f"; sha256 differs for {changed}" if changed else ""))
+    supplied = ({key: item.model_dump(mode="python") for key, item in plan.pack_values.items()}
+                if plan is not None else raw.get("pack_values"))
+    errors += _pack_value_errors(supplied, plan, active_packs, pack_definitions)
+    if plan is not None and expected_intake and (plan.intake.work_kind != expected_intake.work_kind or
+                                                 plan.intake.scope_status != expected_intake.scope_status):
+        errors.append("research PLAN intake does not match the request intake decision")
+    return errors
+
+
+def schema_error_lines(error: ValidationError) -> list[str]:
+    """One `location: reason` line per schema problem, without pydantic's input echo and help URL."""
+    lines = []
+    for item in error.errors():
+        where = ".".join(str(part) for part in item.get("loc") or ()) or "plan"
+        reason = str(item.get("msg") or "invalid value")
+        lines.append(f"{where}: {reason[len('Value error, '):] if reason.startswith('Value error, ') else reason}")
+    return lines
+
+
+def research_plan_errors(value: Any, *, max_steps: int, active_packs: dict[str, str],
+                         expected_intake: IntakeDecision | None = None,
+                         pack_definitions: dict[str, Any] | None = None) -> list[str]:
+    """All problems of a PLAN at once, so one correction can fix them together (#222)."""
+    try:
+        plan: ResearchPlan | None = ResearchPlan.model_validate(value)
+        errors: list[str] = []
+    except ValidationError as error:
+        plan, errors = None, schema_error_lines(error)
+    return errors + _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+                                     expected_intake=expected_intake, pack_definitions=pack_definitions)
+
+
+def with_pack_refs(value: Any, refs: list[dict[str, str]]) -> Any:
+    """`protocol.packs` is the configured snapshot, not a CSO choice, so labhq writes it (#222)."""
+    if not isinstance(value, dict) or not isinstance(value.get("protocol"), dict):
+        return value
+    return {**value, "protocol": {**value["protocol"], "packs": [dict(ref) for ref in refs]}}
 
 
 def validate_research_plan(value: Any, *, max_steps: int, active_packs: dict[str, str],
                            expected_intake: IntakeDecision | None = None,
                            pack_definitions: dict[str, Any] | None = None) -> ResearchPlan:
     plan = ResearchPlan.model_validate(value)
-    if len(plan.steps) > max_steps:
-        raise ValueError(f"research plan has {len(plan.steps)} steps; maximum is {max_steps}; re-plan without truncation")
-    selected = {ref.key: ref.sha256 for ref in plan.protocol.packs}
-    if selected != active_packs:
-        raise ValueError(f"research plan packs must equal the configured snapshot: {sorted(active_packs)}")
-    _validate_pack_values(plan, active_packs, pack_definitions)
-    if expected_intake and (plan.intake.work_kind != expected_intake.work_kind or
-                            plan.intake.scope_status != expected_intake.scope_status):
-        raise ValueError("research PLAN intake does not match the request intake decision")
+    errors = _contract_errors(plan, value, max_steps=max_steps, active_packs=active_packs,
+                              expected_intake=expected_intake, pack_definitions=pack_definitions)
+    if errors:
+        raise ValueError("; ".join(errors))
     return plan
 
 

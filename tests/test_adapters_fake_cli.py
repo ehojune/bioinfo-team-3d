@@ -111,3 +111,49 @@ async def test_gemini_adapter(tmp_path):
     settings = json.loads((wd / ".gemini" / "settings.json").read_text())
     assert set(settings["mcpServers"]) == {"labhq_approval", "paper_x"}
     assert run_fields["model_id"] == "gemini-pro"
+
+
+async def _run_long_prompt(tmp: Path, monkeypatch, *, pointer: str | None, prompt: str = "x" * 8000):
+    """A prompt that would push the command line past a (lowered) Windows limit (#222 rerun)."""
+    from labhq.adapters import base
+    monkeypatch.setattr(base, "command_line_limit", lambda: 6000, raising=False)
+    s = Settings()
+    s.engines.claude_code.bin = sys.executable
+    s.engines.claude_code.prefix_args = [str(_fake_cli(tmp, "claude"))]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.claude_code, model="m", tools=["Read"],
+                      system_prompt="ROLE")
+    task = Task(agent_id="a1", prompt="long", output_schema={"type": "object"})
+    wd = tmp / "wd"
+    wd.mkdir()
+
+    async def emit(t, d):
+        pass
+
+    ctx = RunContext(task=task, agent=agent, workdir=wd, settings=s, mcp_servers=[], env={}, emit=emit,
+                     prompt=prompt, prompt_pointer=pointer)
+    res = await get_adapter(Engine.claude_code, s).run(ctx)
+    argv_file = tmp / "claude.argv"
+    return res, json.loads(argv_file.read_text()) if argv_file.exists() else None
+
+
+async def test_prompt_over_the_command_line_limit_goes_by_task_file(tmp_path, monkeypatch):
+    # Windows refused the CSO re-plan (33,091 characters) and Python called it a missing executable.
+    pointer = "Read TASK_wake_t1.md in the current directory (it is long) and carry out the instruction there."
+    res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=pointer)
+    assert res.ok, res.error
+    assert argv[argv.index("-p") + 1] == pointer
+
+
+async def test_command_line_still_too_long_is_reported_as_such(tmp_path, monkeypatch):
+    res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=None)
+    assert argv is None  # never started
+    assert not res.ok and "command line" in res.error and "executable not found" not in res.error
+
+
+async def test_command_line_limit_counts_utf16_code_units(tmp_path, monkeypatch):
+    # CreateProcessW counts UTF-16 units: 2,500 non-BMP characters are 5,000 units; the rest of the command
+    # (about 1,600 characters) keeps a character count under the 6,000 limit and the unit count over it.
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=pointer, prompt="\U0001F9EC" * 2500)
+    assert res.ok, res.error
+    assert argv[argv.index("-p") + 1] == pointer

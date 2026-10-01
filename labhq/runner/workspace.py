@@ -61,6 +61,7 @@ class TaskWorkspace:
             if plain_directory(self.dir, sub) is None:
                 raise OwnedPathError(f"labhq does not write in {sub}: it is a link or not a folder in the workspace")
         self.task, self.agent = task, agent
+        self.prompt_pointer: str | None = None
         self._append_refused = False
 
     def write_task_md(self) -> str:
@@ -71,10 +72,10 @@ class TaskWorkspace:
         name = (f"TASK_wake_{t.id}.md" if t.resume_session_id else
                 f"TASK_{t.id}.md" if (self.dir / "TASK.md").exists() else "TASK.md")
         write_owned(self.dir, name, body)
-        if len(body) <= INLINE_LIMIT:
-            return body
-        return (f"Read {name} in the current directory (it is long) and carry out the instruction there.\n\n"
-                f"Instruction summary: {t.prompt[:2000]}")
+        # The adapter falls back to this when the inline prompt would overflow the command line (#222).
+        self.prompt_pointer = (f"Read {name} in the current directory (it is long) and carry out the instruction "
+                               f"there.\n\nInstruction summary: {t.prompt[:2000]}")
+        return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
 
     def install_skill(self, skill_dir: Path) -> str | None:
         """Install a fresh contract skill copy for this run, without traversing workspace links.
