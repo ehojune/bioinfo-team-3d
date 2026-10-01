@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:22 | [`5b47008`](https://github.com/ehojune/bioinfo-team-3d/pull/243/commits/5b47008) | 열린 issue 작업 큐를 실제 PR과 후속 작업 기준으로 동기화 |
 | 00:19 | [`31c580c`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/31c580c) | 링크·junction으로 적힌 쓰기 폴더는 적힌 표기와 실제 경로에 Edit 규칙을 하나씩 두어 사전 허용(#219) |
 | 00:01 | [`d6eff9b`](https://github.com/ehojune/bioinfo-team-3d/pull/235/commits/d6eff9b) | Windows TEMP 아래 작업 폴더에서 Claude가 쓰는 경로를 실제 쓰는 곳으로 판정하고, 폴더 밖 쓰기는 승인으로 넘김(#219) |
 
