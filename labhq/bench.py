@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from .bench_permissions import inside
+from .policy import WRITE_LIKE
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
@@ -251,6 +253,21 @@ def _budget_answer(case: dict[str, Any], data: dict, multiplier: float | None) -
     return approved, f"실험 예산 정책: {'승인' if approved else '거절'} (case 예산 {multiplier:g}배, ${cap:g}까지)"
 
 
+def _workdir_write(data: dict, workspaces: dict) -> bool:
+    """A Write/Edit ask whose path lies in that task's own workdir: approved as a harness rule (#219).
+
+    The path is the one the gate judged and will hand back to Claude (`detail.path`), checked with the Claude
+    baseline arm's rule: resolved, below the workdir, not in `.claude`/`.git`.
+    """
+    detail = data.get("detail") or {}
+    workspace = workspaces.get(data.get("task_id"))
+    path = detail.get("path")
+    if (data.get("kind") != "tool_permission" or detail.get("tool_name") not in WRITE_LIKE
+            or workspace is None or not isinstance(path, str)):
+        return False
+    return inside(Path(workspace.dir).resolve(), path)
+
+
 async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_settings,
                      approve_budget_up_to: float | None = None) -> dict[str, Any]:
     import uvicorn
@@ -292,10 +309,11 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
     interventions = 0
     unscripted_approvals = 0
     budget_approvals = 0
+    workdir_write_approvals = 0
     original_publish = hub.publish
 
     async def publish(event: dict, *args, **kwargs) -> None:
-        nonlocal interventions, unscripted_approvals, budget_approvals
+        nonlocal interventions, unscripted_approvals, budget_approvals, workdir_write_approvals
         await original_publish(event, *args, **kwargs)
         if event.get("type") == "approval.requested":
             interventions += 1
@@ -303,6 +321,9 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             answer = _budget_answer(case, data, approve_budget_up_to)
             if answer is None:
                 answer = _scripted_answer(case, str(data.get("summary") or ""), data.get("kind"))
+            if answer is None and _workdir_write(data, getattr(runner, "workspaces", None) or {}):
+                workdir_write_approvals += 1
+                answer = (True, "bench 규칙: 그 작업 폴더 안 쓰기는 승인")
             if answer is None:
                 unscripted_approvals += 1
                 approved, note = False, "미스크립트 승인: 승인 종류 또는 질문이 스크립트와 일치하지 않아 거절"
@@ -349,6 +370,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "pi_questions_observable": True,
             "unscripted_approvals": unscripted_approvals,
             "budget_approvals": budget_approvals, "approve_budget_up_to": approve_budget_up_to,
+            "workdir_write_approvals": workdir_write_approvals,
             "cost_known": request.get("cost_known", True), "usage": request.get("usage") or {},
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),

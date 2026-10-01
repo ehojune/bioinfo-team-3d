@@ -302,6 +302,8 @@ CLAUDE_FLOWS = [
     ("claude_write_inside", "WROTE", 1, None),
     ("claude_write_ask_approved", "WROTE", 1, None),
     ("claude_write_ask_denied", "NOT_WRITTEN", 1, "P1 deny probe"),
+    ("claude_write_tmp_respelled", "/tmp/<WORKDIR_BELOW_TMP>/outputs/probe.txt", 2, None),
+    ("claude_write_tmp_outside_asks", "_outside/probe.txt", 2, "approval broker unreachable"),
     ("claude_settings_deny_enforced", "denied", 1, "denied by your permission settings"),
     ("claude_settings_deny_windows_failopen", "P1_SECRET_CANARY_4417", 1, None),
 ]

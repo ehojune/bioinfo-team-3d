@@ -10,6 +10,23 @@
 - 미해결: 연구 lane은 요청마다 모든 active pack 값을 채워야 한다. d2(엽록체 IR 가설에 `single_cell_de@2`)처럼 대상이 다르면 여전히 CP1에 못 가고, 보고서는 설정된 pack과 그 적용 대상을 알려 줄 뿐이다(README §10). 요청별 pack 선택은 범위 밖이다.
 - 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/base.py`, `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `tests/test_research_cp1.py`, `tests/fixtures/fake_claude_cso.py`, `tests/test_adapters_fake_cli.py`.
 
+## 2026-10-01 · #221 할 일 1 — direct 요청 산출을 결과 outputs로
+
+- 결론: direct 요청도 작업 폴더 `outputs/`의 산출을 결과 outputs로 남겨, 그림자 출처 모델이 artifact로 보고 hash를 잰다. 할 일 2(산출 데이터 종류 선언 자리)는 PI 판단(#149·#151) 대기라 하지 않았고 #221은 열어 둔다.
+- 바뀐 것: runner가 `kind: direct` 실행 뒤 `TaskWorkspace.scan_outputs`로 `outputs/` 아래 정규 파일을 센다. symlink·junction·mount·통제 구역은 따라가지 않고(`outputs/` 자체 포함) labhq의 `RESULT*.md`와 UTF-8로 읽을 수 없는 이름(Linux에서 푼 CP949 파일명 등)은 빼며, 최대 200개(그림자 `HASH_MAX_FILES`)와 `runner.reference_scan_max_entries`·`reference_scan_max_depth` 안에서만 센다. 상한에 닿으면 작업 로그에 경고가 남는다. 계획 단계는 그대로 선언한 산출만 보고한다. direct 이어 묻기는 orchestrate처럼 산출이 있는 작업 폴더를 읽기 전용 upstream으로 받는다. mock 직원은 direct `[artifact]`에도 파일을 쓴다. README 그림자 절을 맞췄고 패치노트는 건드리지 않았다.
+- 실행한 것: 회귀 10건이 수정 전 실패하고 수정 뒤 통과했다(step 선언 산출 guard 1건은 전후 통과). 로컬 Codex 리뷰 P2 1건(`outputs/` 자체가 mount거나 통제 구역 안이면 그대로 순회)을 고치고 회귀에 넣었다. run log의 c1·c2를 실제 Claude Code CLI(data_steward=Sonnet, 공개 palmerpenguins 발췌, 별도 state)로 다시 돌렸다. c1은 outputs 2개·`observed_new 2`(이전 0), c2는 `history_artifacts 2`·`candidates 0`·`type_unknown 2`. 전체 pytest 2133 passed/25 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. 독립 검증에서 P1 2건을 고쳤다. UTF-8이 아닌 파일명 하나가 끝난 direct 실행을 `UnicodeEncodeError` 실패로 바꾸던 것과, 항목 상한 test가 ext4 목록 순서에서 실패하던 것이다(WSL ext4에서 수정 전 실패, 수정 뒤 12 passed). main 병합 뒤 두 번째 검증에서 Codex 리뷰 P1 1건도 고쳤다. 산출 목록이 `manifest.json`을 `read_owned` 없이 읽어, 직원이 그 자리에 둔 링크나 FIFO를 따라가던 것이다(#165 우회, WSL ext4에서 수정 전 실패, 수정 뒤 13 passed).
+- 미해결: 할 일 2 전이라 live 후보는 여전히 0이다(`type_unknown`). 같은 폴더를 다시 쓰는 재시도·wake는 같은 파일을 여러 run이 보고해 `not_generated`가 된다(선언 산출과 같은 규칙). hard link는 경로로 구별하지 못한다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/adapters/mock.py`, `tests/test_direct_outputs.py`, `tests/semantics_shadow_lab.py`.
+
+## 2026-10-02 · #219 — Windows TEMP 아래 작업 폴더의 Claude 쓰기 경로
+
+- 결론: Claude 직원이 Git Bash `pwd`의 `/tmp/...`를 Write에 넣어도, 작업 폴더 안이면 승인 없이 작업 폴더에 쓴다. 폴더 밖 쓰기는 여전히 승인을 받는다.
+- 원인: Claude Code 2.1.282(Windows)의 Bash는 TEMP를 `/tmp`로 보여 주고, 파일 도구는 같은 표기를 드라이브 루트 `C:\tmp\...`에 쓴다. 게이트는 그 경로를 폴더 밖으로 보고 물었다(chief_of_staff·biologist). 맨 `Write`가 사전 허용된 직원(analyst·data_steward)은 묻지 않고 `C:\tmp`에 써서 산출이 비었다.
+- 바뀐 것: 게이트는 드라이브 없는 쓰기 경로를 Claude가 실제로 쓸 경로로 판정한다. Git Bash 뜻(`/tmp`→TMP·TEMP, `/c/`→`C:\`)이 쓰기 루트 안일 때만 그 경로로 고쳐 `updatedInput`으로 돌려준다. TMP·TEMP가 없거나 다르면 고치지 않고 지금처럼 묻는다. 승인 요청에는 실제로 쓸 경로를 `detail.path`로 싣는다. 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 바꿨다. 링크로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둔다(검증 중 발견: 실제 경로 규칙만으로는 링크 표기 절대경로 쓰기가 막혔다). bench 대본 PI는 그 task 작업 폴더 안 Write/Edit 요청을 승인하고 `workdir_write_approvals`로 따로 센다. README §8·§10을 맞췄다.
+- 실행한 것: 실제 Claude CLI(2.1.282, sonnet) probe로 경로 표기와 파일이 생긴 곳을 기록했다(가린 fixture 3개). 수정 뒤 같은 `/tmp` 쓰기는 작업 폴더에 생겼고, 폴더 밖 쓰기는 게이트가 승인으로 넘겼다. junction 표기 작업 폴더 probe 6개(`junction_*`)로 두 표기 규칙이 모두 있어야 사전 허용됨을 확인했다. bench public-protein-qc labhq arm 재실행에서 미스크립트 승인 1→0, `C:\tmp` 쓰기 0. 새 회귀 36건 중 34건이 수정 전 실패했다(2건은 guard). 전체 pytest 2160 passed/25 skipped, Node 13개, `bash scripts/check_public.sh` 통과. Codex 리뷰 지적 없음.
+- 미해결: protein-qc는 여전히 FAIL이다. CSO 계획이 `answer.md`를 `outputs/` 밖에 선언해 INCOMPLETE가 됐다(별개 원인, 그림자 실행의 penguins와 같은 부류). 사전 허용 Read의 `/tmp/...`는 "파일 없음"으로 끝난다. Bash 셸 쓰기 대상의 `/tmp`·`/c/` 표기는 그대로 승인을 받는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/policy.py`, `labhq/tools/approval_mcp.py`, `labhq/adapters/claude_code.py`, `labhq/bench.py`, `tests/test_claude_write_paths.py`, `tests/test_bench_review3.py`, `tests/fixtures/real/claude_code/claude_windows_write_paths.json`, `claude_write_tmp_*.jsonl`.
+
 ## 2026-10-01 · #220 — CSO 계획의 산출 경로를 실행 전에 outputs/ 안으로
 
 - 결론: 단계 결과 계약은 작업 폴더 `outputs/` 아래만 센다. penguins 계획은 `answer.md`를 선언하고 지시문에 `./answer.md`(작업 폴더 루트)를 적어, analyst가 만든 파일을 찾지 못해 INCOMPLETE가 됐다. 이제 계획 검증이 dispatch 전에 고치거나 다시 받는다.

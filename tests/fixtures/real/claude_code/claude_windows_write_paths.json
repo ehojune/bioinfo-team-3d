@@ -1,0 +1,205 @@
+{
+  "issue": 219,
+  "captured": "2026-10-01",
+  "host": "Windows 11, Git for Windows bash (/tmp is mounted as usertemp)",
+  "claude_code_version": "2.1.282",
+  "model": "sonnet",
+  "placeholders": {
+    "<TMP>": "the user's TEMP folder (TMP and TEMP were the same)",
+    "<TMP_POSIX>": "<TMP> in Claude's rule form, /c/... for C:\\...",
+    "<DRIVE>": "the drive of the workdir, e.g. C:",
+    "<PROJECT>": "scratch folder names below <TMP> (user name inside)",
+    "<WORKDIR>": "<TMP>\\claude\\<PROJECT>\\ws",
+    "<WORKDIR_BELOW_TMP>": "claude/<PROJECT>/ws in the redacted streams",
+    "<LINK_WORKDIR>": "a workdir spelled through a junction: <LINK>\\ws, where <LINK> is a junction to <REAL> (probes junction_*, captured 2026-10-02)",
+    "<REAL_WORKDIR>": "<REAL>\\ws, the junction target; Claude's init cwd was this resolved spelling",
+    "<LINK_POSIX>": "<LINK_WORKDIR> in Claude's rule form",
+    "<REAL_POSIX>": "<REAL_WORKDIR> in Claude's rule form"
+  },
+  "workdir": "<TMP>\\claude\\<PROJECT>\\ws",
+  "bash_pwd": "/tmp/claude/<PROJECT>/ws",
+  "probes": [
+    {
+      "id": "preapproved_tmp",
+      "allowed_tools": [
+        "Write",
+        "Bash(pwd)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "/tmp/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully",
+      "written_to": "<DRIVE>\\tmp\\claude\\<PROJECT>\\ws\\outputs\\probe.txt"
+    },
+    {
+      "id": "preapproved_msys_drive",
+      "allowed_tools": [
+        "Write",
+        "Bash(pwd)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<TMP_POSIX>/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully",
+      "written_to": "<WORKDIR>\\outputs\\probe.txt"
+    },
+    {
+      "id": "gate_tmp",
+      "allowed_tools": [
+        "Bash(pwd)"
+      ],
+      "permission_prompt_tool": "labhq approval_mcp before #219, broker unreachable",
+      "model_file_path": "/tmp/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws\\outputs\\probe.txt",
+      "tool_result": "approval broker unreachable (All connection attempts failed); ask the CSO to reschedule",
+      "written_to": null
+    },
+    {
+      "id": "gate_msys_drive",
+      "allowed_tools": [
+        "Bash(pwd)"
+      ],
+      "permission_prompt_tool": "logging gate, deny",
+      "model_file_path": "<TMP_POSIX>/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": "<TMP>\\claude\\<PROJECT>\\ws\\outputs\\probe.txt",
+      "tool_result": "probe deny",
+      "written_to": null
+    },
+    {
+      "id": "gate_updated_input",
+      "allowed_tools": [
+        "Bash(pwd)"
+      ],
+      "permission_prompt_tool": "logging gate, allow with updatedInput.file_path = <WORKDIR>\\outputs\\probe.txt",
+      "model_file_path": "/tmp/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws\\outputs\\probe.txt",
+      "tool_result": "File created successfully at: <WORKDIR>\\outputs\\probe.txt",
+      "written_to": "<WORKDIR>\\outputs\\probe.txt"
+    },
+    {
+      "id": "scoped_rule_relative",
+      "allowed_tools": [
+        "Bash(pwd)",
+        "Edit(/<TMP_POSIX>/claude/<PROJECT>/ws/**)"
+      ],
+      "permission_prompt_tool": "logging gate, deny",
+      "model_file_path": "outputs/probe.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: outputs/probe.txt",
+      "written_to": "<WORKDIR>\\outputs\\probe.txt"
+    },
+    {
+      "id": "scoped_rule_tmp",
+      "allowed_tools": [
+        "Bash(pwd)",
+        "Edit(/<TMP_POSIX>/claude/<PROJECT>/ws/**)"
+      ],
+      "permission_prompt_tool": "logging gate, deny",
+      "model_file_path": "/tmp/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws\\outputs\\probe.txt",
+      "tool_result": "probe deny",
+      "written_to": null
+    },
+    {
+      "id": "labhq_respelled",
+      "stream": "claude_write_tmp_respelled.jsonl",
+      "allowed_tools": [
+        "Bash(pwd)",
+        "Edit(/<TMP_POSIX>/claude/<PROJECT>/ws/**)"
+      ],
+      "permission_prompt_tool": "labhq approval_mcp after #219, broker unreachable",
+      "model_file_path": "/tmp/claude/<PROJECT>/ws/outputs/probe.txt",
+      "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws\\outputs\\probe.txt",
+      "tool_result": "File created successfully at: <WORKDIR>\\outputs\\probe.txt",
+      "written_to": "<WORKDIR>\\outputs\\probe.txt"
+    },
+    {
+      "id": "labhq_outside",
+      "stream": "claude_write_tmp_outside_asks.jsonl",
+      "allowed_tools": [
+        "Bash(pwd)",
+        "Edit(/<TMP_POSIX>/claude/<PROJECT>/ws/**)"
+      ],
+      "permission_prompt_tool": "labhq approval_mcp after #219, broker unreachable",
+      "model_file_path": "/tmp/claude/<PROJECT>/ws_outside/probe.txt",
+      "gate_input_file_path": "\\tmp\\claude\\<PROJECT>\\ws_outside\\probe.txt",
+      "tool_result": "approval broker unreachable (All connection attempts failed); ask the CSO to reschedule",
+      "written_to": null
+    },
+    {
+      "id": "junction_real_rule_relative",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "outputs/jrel.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: outputs/jrel.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jrel.txt"
+    },
+    {
+      "id": "junction_real_rule_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "Claude requested permissions to write to <LINK_WORKDIR>\\outputs\\jabs.txt, but you haven't granted it yet.",
+      "written_to": null
+    },
+    {
+      "id": "junction_link_rule_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jlinkabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "Claude requested permissions to write to <LINK_WORKDIR>\\outputs\\jlinkabs.txt, but you haven't granted it yet.",
+      "written_to": null
+    },
+    {
+      "id": "junction_both_rules_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)",
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jbothabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: <LINK_WORKDIR>\\outputs\\jbothabs.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jbothabs.txt"
+    },
+    {
+      "id": "junction_both_rules_relative",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<REAL_POSIX>/**)",
+        "Edit(/<LINK_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "outputs/jbothrel.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: outputs/jbothrel.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jbothrel.txt"
+    },
+    {
+      "id": "junction_labhq_rules_absolute",
+      "cwd": "<LINK_WORKDIR>",
+      "allowed_tools": [
+        "Edit(/<LINK_POSIX>/**)",
+        "Edit(/<REAL_POSIX>/**)"
+      ],
+      "permission_prompt_tool": false,
+      "model_file_path": "<LINK_WORKDIR>\\outputs\\jfixabs.txt",
+      "gate_input_file_path": null,
+      "tool_result": "File created successfully at: <LINK_WORKDIR>\\outputs\\jfixabs.txt",
+      "written_to": "<REAL_WORKDIR>\\outputs\\jfixabs.txt"
+    }
+  ]
+}

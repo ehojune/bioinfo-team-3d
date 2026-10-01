@@ -47,7 +47,7 @@ async def _until(pred, timeout: float = 60.0) -> None:
 
 
 async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: str | None = None,
-                  references: list[dict] | None = None, before=None) -> dict:
+                  references: list[dict] | None = None, before=None, request: dict | None = None) -> dict:
     """Run each request to its end; return the hub and the shadow lines written."""
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = lab_settings(tmp, semantics)
@@ -75,7 +75,8 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
     try:
         await _until(lambda: "cso" in hub.agents, 15)
         for text in texts:
-            rid = hub.create_request(RequestIn(text=text, project_id=project_id, references=references or []))
+            rid = hub.create_request(RequestIn(text=text, project_id=project_id, references=references or [],
+                                               **(request or {})))
             await _until(lambda: hub.requests[rid]["status"] not in ("running", "waiting_for_runner"), 60)
             rids.append(rid)
         if hub.semantics_shadow is not None:

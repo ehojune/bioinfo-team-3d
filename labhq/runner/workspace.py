@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import platform
 import shutil
 import time
@@ -22,12 +23,33 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from .. import __version__
+from ..adapters.held_dir import HeldDir, NotPlainFolder
 from ..adapters.owned import OwnedPathError, append_owned, plain_directory, read_owned, write_owned
+from ..adapters.owned import is_link as _is_link
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
+from ..intake import overlaps_zone
 from ..models import AgentSpec, Task
 
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
+# A direct run lists at most this many files: the shadow hashes no more per request (HASH_MAX_FILES, #221).
+OUTPUT_SCAN_MAX_FILES = 200
+
+
+def _utf8_name(name: str) -> bool:
+    """False for a name the OS decoded with surrogates (non-UTF-8 bytes on POSIX, an unpaired surrogate on Windows)."""
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _is_mount(path: Path) -> bool:
+    """Another file system mounted here. On Windows a mount point is a reparse point, which ``_is_link`` sees."""
+    return os.name != "nt" and os.path.ismount(path)
+
+
 log = logging.getLogger("labhq.runner")
 
 
@@ -129,6 +151,112 @@ class TaskWorkspace:
         runs = {tid: {k: run[k] for k in keep if k in run}
                 for tid, run in (data.get("runs") or {}).items() if isinstance(run, dict)}
         return {"engine": data.get("engine"), "model": data.get("model"), "runs": runs}
+
+    def scan_outputs(self, zones: list[Path], max_entries: int, max_depth: int,
+                     max_files: int | None = None) -> tuple[list[str], str | None]:
+        """Files a direct run left under outputs/, as `outputs/...`, and why the list is incomplete, if it is (#221).
+
+        A direct run declares no outputs, so its folder is listed instead, by the rules a declared output and
+        the shadow's hash already follow: nothing reached through a symlink, junction or mount, regular files
+        only, nothing in a restricted zone, at most ``max_files`` files within the reference scan caps.
+        labhq's own RESULT copies are not the agent's output.
+
+        Every folder is listed through a handle opened without following a link, and each subfolder is opened
+        relative to its parent's handle (#230): a process the agent left running may swap a folder for a link after
+        it was checked, and opening its path a second time would follow that link.
+        """
+        root = self.dir / "outputs"
+        if not os.path.lexists(root):
+            return [], None
+        try:
+            if _is_link(root) or not root.is_dir():
+                return [], None
+        except OSError:
+            return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
+        try:
+            top = HeldDir.hold(root)
+        except OSError:  # gone, or swapped for a link or a file since the check
+            return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
+        with top:
+            try:
+                real_root = root.resolve()
+                if not top.same_as(real_root):  # its real path must name the folder held open
+                    return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
+                # Its files would live on another file system or in a zone; a zone inside it is left out per entry.
+                if (_is_mount(root) or (top.dev is not None and top.dev != os.stat(real_root.parent).st_dev)
+                        or any(real_root.is_relative_to(zone) for zone in zones)):
+                    return [], "outputs 폴더가 다른 파일 시스템이거나 통제 구역 안이라 산출 목록을 만들지 않았습니다"
+            except (OSError, RuntimeError, ValueError):
+                return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
+            return self._list_outputs(top, root, real_root, zones, max_entries, max_depth,
+                                      OUTPUT_SCAN_MAX_FILES if max_files is None else max_files)
+
+    def _list_outputs(self, top: HeldDir, root: Path, real_root: Path, zones: list[Path], max_entries: int,
+                      max_depth: int, max_files: int) -> tuple[list[str], str | None]:
+        try:  # never through a link or FIFO the agent put in its place (#165): no runs read then
+            text = read_owned(self.dir, "manifest.json")
+            runs = json.loads(text).get("runs") if text is not None else None
+        except (ValueError, AttributeError):
+            runs = None
+        runs = runs if isinstance(runs, dict) else {}
+        own = {"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
+        found: list[str] = []
+        note: str | None = None  # a folder left out; the listing goes on without it
+        seen = 0
+
+        def walk(folder: HeldDir, relative: PurePath, depth: int) -> str | None:
+            """List one held folder, then its subfolders in name order; the reason the listing stops, if it does."""
+            nonlocal note, seen
+            shown = PurePath("outputs", relative).as_posix()
+            try:
+                entries = sorted(folder.entries(max_entries - seen + 1), key=lambda e: e.name)
+            except OSError:
+                note = note or f"{shown} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+                return None
+            folders = []
+            for entry in entries:
+                seen += 1
+                if seen > max_entries:
+                    return f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다"
+                if not _utf8_name(entry.name):
+                    # A CP949 name unpacked on Linux: the result could not be sent as JSON text and the run would fail.
+                    note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
+                    continue
+                if entry.kind in (None, "link"):
+                    continue  # gone, or a link or junction leading elsewhere: not this run's output
+                if overlaps_zone(real_root / relative / entry.name, zones):
+                    continue  # inside a restricted zone, or a folder holding one
+                if entry.kind == "dir":
+                    if _is_mount(root / relative / entry.name) or (
+                            entry.ident is not None and entry.ident[0] != top.dev):
+                        continue
+                    if depth + 1 > max_depth:
+                        note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
+                        continue
+                    folders.append(entry)
+                elif entry.kind == "file" and not (depth == 0 and entry.name in own):
+                    if len(found) >= max_files:
+                        return f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
+                    found.append(PurePath("outputs", relative, entry.name).as_posix())
+            for entry in folders:  # a folder's files first, then its subfolders in name order
+                sub = relative / entry.name
+                try:
+                    child = folder.child(entry.name, expect=entry.ident)
+                except NotPlainFolder:
+                    note = note or (f"{PurePath('outputs', sub).as_posix()} 폴더가 목록을 만드는 사이 링크나 다른 "
+                                    "폴더로 바뀌어 산출 목록에서 뺐습니다")
+                    continue
+                except OSError:
+                    note = note or f"{PurePath('outputs', sub).as_posix()} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+                    continue
+                with child:
+                    stop = walk(child, sub, depth + 1)
+                if stop:
+                    return stop
+            return None
+
+        stop = walk(top, PurePath(), 0)
+        return found, stop or note
 
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
