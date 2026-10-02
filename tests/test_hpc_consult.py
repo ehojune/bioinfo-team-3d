@@ -8,7 +8,7 @@ import pytest
 
 from labhq import hpc_consult as consult
 from labhq.settings import HpcSettings, PolicySettings
-from labhq.tools.scheduler import Scheduler
+from labhq.tools.scheduler import JobInfo, Scheduler
 
 SGE = {
     ("qconf", "-sql"): "all.q\nlong.q\n",
@@ -187,6 +187,30 @@ def test_trial_waits_a_bounded_number_of_polls(tmp_path):
                                sleep=waits.append, max_polls=4)
     assert result["outcome"] == "not_finished" and result["state"] == "running"
     assert len(waits) == 3 and len(backend.submitted()) == 1
+
+
+class StateBackend(Backend):
+    def __init__(self, states):
+        super().__init__()
+        self.states = iter(states)
+
+    def status(self, job_id):
+        return JobInfo(job_id=job_id, state=next(self.states))
+
+
+def test_trial_treats_three_consecutive_missing_polls_as_unknown_finished(tmp_path):
+    backend, waits = StateBackend(["missing", "missing", "missing"]), []
+    result = consult.trial_job(backend.cfg, tmp_path / "trial", lambda text: True, backend=backend,
+                               sleep=waits.append, max_polls=10)
+    assert (result["outcome"], result["state"]) == ("finished_not_ok", "unknown_finished")
+    assert len(waits) == 2 and len(backend.submitted()) == 1
+
+
+def test_trial_resets_missing_count_after_a_visible_state(tmp_path):
+    backend = StateBackend(["missing", "missing", "running", "missing", "missing", "running"])
+    result = consult.trial_job(backend.cfg, tmp_path / "trial", lambda text: True, backend=backend,
+                               sleep=lambda _: None, max_polls=6)
+    assert (result["outcome"], result["state"]) == ("not_finished", "running")
 
 
 def test_trial_never_runs_inside_a_restricted_zone(tmp_path):
