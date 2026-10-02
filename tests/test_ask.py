@@ -570,3 +570,57 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
         await asyncio.sleep(0.15)
         for task in tasks:
             task.cancel()
+
+
+@pytest.mark.parametrize("path,body,field", [
+    ("/ask", {"to": "cso", "question": "Which cohort?", "why_blocked": "No groups", "wait": "brief"}, "wait"),
+    ("/ask", {"to": "nobody", "question": "Which cohort?", "why_blocked": "No groups"}, "to must be"),
+    ("/approval", {"summary": "submit"}, "kind"),
+])
+async def test_broker_answers_invalid_bodies_with_400_and_the_fix(path, body, field):
+    # #331: wait="brief" raised an unhandled ValidationError (HTTP 500), read by staff as a broken environment.
+    async def record(_):
+        return None
+
+    broker = Broker(0, record, record, record, record)
+    token = broker.issue_task_token("task_a", "analyst", "req_a")
+    transport = httpx.ASGITransport(app=broker.app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
+        response = await client.post(path, headers={"X-Labhq-Token": token}, json=body)
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert field in detail
+    if body.get("wait") == "brief":
+        assert "'short'" in detail and "'hibernate'" in detail
+    assert broker.pending_asks == {} and broker.pending == {}
+
+
+async def test_ask_tool_schema_limits_wait_and_relays_a_400(tmp_path):
+    async def record(_):
+        return None
+
+    port = free_port()
+    broker = Broker(port, record, record, record, record)
+    token = broker.issue_task_token("task_a", "analyst", "req_a")
+    server_task = asyncio.create_task(broker.serve())
+    try:
+        await _until(lambda: broker.server is not None and broker.server.started)
+        env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": broker.url,
+               "LABHQ_BROKER_TOKEN": token, "LABHQ_TASK_ID": "task_a", "LABHQ_AGENT_ID": "analyst"}
+        params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.ask_mcp"], env=env)
+        async with stdio_client(params) as streams:
+            async with ClientSession(streams[0], streams[1]) as session:
+                await session.initialize()
+                tools = (await session.list_tools()).tools
+                tool = next(t for t in tools if t.name == "ask")
+                schema = getattr(tool, "input_schema", None) or tool.inputSchema  # mcp>=2 renamed it
+                wait = schema["properties"]["wait"]
+                result = await session.call_tool("ask", {"to": "nobody", "question": "q?", "why_blocked": "b"})
+        assert wait.get("enum") == ["short", "hibernate"] and wait.get("default") == "short"
+        payload = json.loads(result.content[0].text)
+        assert payload["status"] == "rejected"
+        assert "to must be" in payload["reason"] and "broker에 연결하지 못했습니다" not in payload["reason"]
+    finally:
+        broker.stop()
+        await asyncio.sleep(0.05)
+        server_task.cancel()
