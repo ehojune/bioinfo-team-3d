@@ -516,6 +516,14 @@ def main(argv: list[str] | None = None) -> None:
     sem_mark.add_argument("request_id")  # semantics-hook
     sem_mark.add_argument("ref")  # semantics-hook
     sem_mark.add_argument("verdict", choices=["ok", "wrong_identity", "wrong_other", "irrelevant"])  # semantics-hook
+    sem_act = sem_sub.add_parser("action", help="A2: the PI runs request.followup after a y/N (actions: confirm)")  # semantics-hook: actions
+    act_sub = sem_act.add_subparsers(dest="action_cmd", required=True)  # semantics-hook: actions
+    act_run = act_sub.add_parser("run", help="send one follow-up through the existing REST path, never resent")  # semantics-hook: actions
+    act_run.add_argument("action")  # semantics-hook: actions
+    act_run.add_argument("request_id")  # semantics-hook: actions
+    act_run.add_argument("--text-file", help="UTF-8 file with the question (default: asked at the prompt)")  # semantics-hook: actions
+    act_check = act_sub.add_parser("check", help="list runs, read completion, or close an unknown one")  # semantics-hook: actions
+    act_check.add_argument("exec_id", nargs="?")  # semantics-hook: actions
     args = p.parse_args(argv)
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
@@ -651,6 +659,9 @@ def main(argv: list[str] | None = None) -> None:
         for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser()):
             print(f"installed → {d}")
     elif args.cmd == "semantics":  # semantics-hook
+        if args.semantics_cmd == "action":  # semantics-hook: actions
+            from .research.semantics_actions_run import run_cli as action_cli  # semantics-hook: actions
+            raise SystemExit(action_cli(args, s))  # semantics-hook: actions
         from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
         raise SystemExit(semantics_cli(args, s))  # semantics-hook
     elif args.cmd == "demo":

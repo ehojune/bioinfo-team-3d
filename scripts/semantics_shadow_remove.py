@@ -4,7 +4,7 @@ Deletes the files the shadow owns, every line marked ``# semantics-hook`` and ev
 ``# semantics-shadow: begin`` and ``# semantics-shadow: end``. A ``semantics:`` key left in a user's config
 still loads (Settings ignores unknown top-level keys). PR #136's model files stay; folding them is #143's step.
 
-``--only actions`` takes out just the action layer's shadow (#149 결정 13 A1): its files, the lines marked
+``--only actions`` takes out just the action layer (#149 결정 13 A1, 결정 16 A2): its files, the lines marked
 ``# semantics-hook: actions`` and the ``# semantics-actions: begin``/``end`` blocks. B1 stays as it was; a config
 that still says ``actions:`` then turns semantics off with one warning (an unknown key), so delete that key.
 
@@ -24,8 +24,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ACTIONS_OWNED = [
     "labhq/research/semantics_actions.py",
+    "labhq/research/semantics_actions_run.py",
     "tests/test_semantics_actions.py",
     "tests/test_semantics_actions_shadow.py",
+    "tests/test_semantics_actions_run.py",
 ]
 OWNED = [
     "labhq/research/semantics_shadow.py",

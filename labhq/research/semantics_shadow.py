@@ -1498,7 +1498,6 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
 # The action layer's shadow (semantics_actions.py): the hook lines marked for actions call
 # these. Off by default; nothing here executes an action, and with actions off none of it runs or is imported.
 
-ACTIONS_HELD = ("confirm",)  # A2 (CLI execution of request.followup) is held for its own PR
 ACTION_BACKLOG = 20  # follow-up observations kept behind a full queue; more are dropped and counted
 
 
@@ -1508,29 +1507,30 @@ def _actions() -> Any:
 
 
 def _actions_config(cfg: ShadowConfig, value: Any, raw: Any) -> ShadowConfig:
-    """``actions: shadow`` adds the A1 observations to the shadow. Any other value keeps actions off with one
-    warning and leaves the shadow as it was; no value turns execution on."""
+    """``actions: shadow`` adds the A1 observations to the shadow; ``confirm`` adds the same and lets the PI's CLI
+    run request.followup (A2, semantics_actions_run.py), so the gateway does nothing more for it. Any other value
+    keeps actions off with one warning and leaves the shadow as it was."""
     from dataclasses import replace
     mode = _mode(value)
-    if mode == "shadow":
+    if mode in ("shadow", "confirm"):
         return replace(cfg, actions=True)
     if mode != "off":
         key = "actions:" + repr(raw)[:500]
         if key not in _warned:
             _warned.add(key)
             log.warning("semantics actions setting ignored (%s); actions stay off and the shadow goes on",
-                        "confirm is held (A2); this version records only" if mode in ACTIONS_HELD
-                        else "actions must be off or shadow")
+                        "actions must be off, shadow or confirm")
     return cfg
 
 
 def actions_setting(settings: Any) -> str:
-    """What the setting asks of the action layer: shadow, off, held (confirm) or invalid."""
+    """What the setting asks of the action layer: off, shadow, confirm (A2: the PI's CLI may run request.followup)
+    or invalid."""
     if configured(settings) != "shadow":
         return "off"
     raw = getattr(settings, "semantics", None)
     mode = _mode(raw.get("actions") if isinstance(raw, Mapping) else None)
-    return mode if mode in ("off", "shadow") else "held" if mode in ACTIONS_HELD else "invalid"
+    return mode if mode in ("off", "shadow", "confirm") else "invalid"
 
 
 def _actions_inputs(hub: Any, rid: str) -> dict:
@@ -1604,7 +1604,8 @@ def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
     if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
         return
     readable = [line for line in lines if line.get("type") != "request" or readable_request(line)]  # as B1 (#259)
-    rep["actions"] = _actions().report(readable, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+    rep["actions"] = _actions().report(readable, setting=setting,
+                                       on=setting in ("shadow", "confirm") and bool(rep["state"]["on"]))
     rep["actions"]["observed"]["broken"] += len(lines) - len(readable)
 
 

@@ -384,17 +384,23 @@ class Settings(BaseModel):
     projects: list[ProjectSettings] = []
     semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
+    # Set only in the staff copy (write_staff_config): the folder its relative paths still resolve from.
+    config_base: str | None = None
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None
+
+    def base_dir(self) -> Path:
+        if self.config_base:
+            return Path(self.config_base)
+        return Path(self.config_path).parent if self.config_path else Path.cwd()
 
     def path(self, p: str) -> Path:
         """Expand ~ and $VARS; relative paths are relative to the config file (or cwd)."""
         q = Path(os.path.expandvars(os.path.expanduser(p)))
         if q.is_absolute():
             return q
-        base = Path(self.config_path).parent if self.config_path else Path.cwd()
-        return (base / q).resolve()
+        return (self.base_dir() / q).resolve()
 
     @classmethod
     def load(cls, path: str | None = None) -> "Settings":
@@ -406,3 +412,38 @@ class Settings(BaseModel):
         if path and Path(path).exists():
             s.config_path = str(Path(path).resolve())
         return s
+
+
+STAFF_REDACTED = ("client_token", "runner_token")
+
+
+def write_staff_config(settings: Settings, directory: Path) -> str | None:
+    """The config a staff process gets as LABHQ_CONFIG: the runner's file with the gateway tokens blanked.
+
+    The MCP tools read policy, HPC and broker settings from it and no gateway credential. A client token in a file
+    staff can read lets them call every PI REST action, the follow-up the A2 action layer runs included (#149 결정
+    16). ``config_base`` keeps relative paths resolving from the original folder. One file per content: a copy is
+    never rewritten under a task that already read it. Raises when the file cannot be read or written; the caller
+    then refuses the task rather than hand over the original."""
+    if not settings.config_path:
+        return None
+    import hashlib
+
+    from .util import atomic_write_text
+
+    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError("config is not a mapping")
+    gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+    data["gateway"] = {**gateway, **{key: "" for key in STAFF_REDACTED}}
+    data["config_base"] = str(settings.base_dir())
+    text = yaml.safe_dump(data, allow_unicode=True, sort_keys=True)
+    target = directory / f"staff-config-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}.yaml"
+    if not target.is_file():
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            atomic_write_text(target, text)
+        except OSError:  # another task wrote the same content first and its reader holds it (Windows)
+            if not target.is_file():
+                raise
+    return str(target)

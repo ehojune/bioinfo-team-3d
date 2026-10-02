@@ -7,9 +7,10 @@ preconditions, and evaluates them at fixed observation points: when a request en
 follow-up is asked, refused or ends. What leaves the module is fixed names, booleans and counts on the B1 line
 boundary; texts handed in go to the boundary check only.
 
-Nothing here executes an action. The built-in execution allowlist is empty and no setting widens it, an HPC
+Nothing here executes an action. The shadow's execution allowlist is empty and no setting widens it, an HPC
 action is always ``refused_p3`` until the P3 decision, and the module imports no gateway, orchestrator, runner,
-store, network or process code (tests check the imports). Every evaluation reads a frozen copy. A precondition
+store, network or process code (tests check the imports). The one action A2 runs, ``request.followup``, runs from
+the PI's CLI only (``semantics_actions_run.py``, #149 결정 16), never from here. Every evaluation reads a frozen copy. A precondition
 the records cannot show for that moment stays unknown: it is never filled from the current roster or a later row.
 """
 
@@ -26,7 +27,8 @@ from typing import Any
 V = 1
 ACTIONS = ("approval.decide", "ask.answer", "request.followup", "task.cancel", "recruit.start",
            "contract.update", "hpc.submit")
-EXECUTABLE: frozenset[str] = frozenset()  # A1 runs nothing (sol·astra review 2026-10-02); A2 is its own PR
+EXECUTABLE: frozenset[str] = frozenset()  # the shadow runs nothing (sol·astra review 2026-10-02)
+CLI_EXECUTABLE: frozenset[str] = frozenset({"request.followup"})  # A2 (#149 결정 16): PI CLI, actions: confirm
 CONDITIONS: dict[str, tuple[str, ...]] = {
     "approval.decide": ("pending", "not_expired", "request_open", "plan_hash_matches"),
     "ask.answer": ("pending", "not_expired", "request_open", "ask_open"),
@@ -581,7 +583,7 @@ def report(lines: Iterable[Mapping[str, Any]], *, setting: str, on: bool) -> dic
     windows = sum(past[name]["windows"] for name in WINDOWED)
     if n >= 15 and windows and mismatches / windows >= 0.1:
         proposals.append(f"불일치: mismatch {mismatches}건이 창 {windows}개의 10% 이상")
-    return {"setting": setting, "on": on, "executable": sorted(EXECUTABLE),
+    return {"setting": setting, "on": on, "executable": sorted(CLI_EXECUTABLE if setting == "confirm" else EXECUTABLE),
             "observed": {"requests": n, "unobserved": unobserved, "failed": failed, "broken": broken,
                          "tasks_truncated": truncated},
             "now": now, "past": past, "mismatch": mismatch, "followup": followup, "gate": gate,
@@ -599,7 +601,7 @@ def render(rep: Mapping[str, Any]) -> list[str]:
     obs, fu, gate = a["observed"], a["followup"], a["gate"]
     out = ["", "액션 층 그림자 A1 (#149 결정 13, 실행 없음)",
            f"설정 actions {a['setting']} · {'on' if a['on'] else 'off'} · 실행 허용 목록: "
-           f"{', '.join(a['executable']) or '없음'} · hpc.* 항상 refused_p3",
+           f"{', '.join(a['executable']) + ' (PI CLI, 매번 y/N)' if a['executable'] else '없음'} · hpc.* 항상 refused_p3",
            f"관측 요청 {obs['requests']} · 미관측 {obs['unobserved']} · 실패 timeout {obs['failed']['timeout']}/"
            f"error {obs['failed']['error']} · 깨진 칸 {obs['broken']} · task 행 잘림 {obs['tasks_truncated']}",
            "", "| 액션 | 창 | 닫힘 | 미종결 | taken | taken 미상 | 길이 중앙값 s | 지금 open/blocked/unknown |",

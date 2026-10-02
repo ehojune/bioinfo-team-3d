@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 import websockets
+import yaml
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
@@ -29,7 +30,7 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
 from ..registry import Registry
-from ..settings import MODEL_NAME_PATTERN, Settings
+from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
@@ -743,14 +744,22 @@ class Runner:
             watch, notes = self._read_only_watch(task, ws, [*extra_dirs, *read_dirs]) if read_only else (None, [])
             for note in notes:
                 await emit("agent.log", {"level": "warn", "text": f"읽기 전용 쓰기 확인에서 제외: {note}"})
+            try:  # staff read a copy without the gateway tokens, never the PI's file (#149 결정 16)
+                staff_config = write_staff_config(self.s, self.s.path(self.s.runner.state_dir) / "staff")
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                error = f"직원용 설정 사본을 만들 수 없어 실행을 거부합니다 ({type(exc).__name__})"
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=error)
+                await emit("agent.status", {"state": "error", "error": error})
+                await emit("task.result", result.model_dump(mode="json"))
+                return result
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
             }
-            if self.s.config_path:
-                env["LABHQ_CONFIG"] = self.s.config_path
+            if staff_config:
+                env["LABHQ_CONFIG"] = staff_config
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
