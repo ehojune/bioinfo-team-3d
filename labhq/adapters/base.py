@@ -490,7 +490,10 @@ class AgentAdapter(ABC):
                 )
                 await asyncio.wait_for(killer.wait(), 5)
                 returncode = killer.returncode
-            except (FileNotFoundError, asyncio.TimeoutError):
+            # Windows can report ERROR_NOT_ENOUGH_MEMORY as MemoryError while
+            # starting taskkill.  The direct PID fallback must still reap the
+            # already-snapshotted tree instead of abandoning cancellation.
+            except (OSError, MemoryError, asyncio.TimeoutError):
                 pass
             if returncode != 0:
                 for pid in reversed(descendants):

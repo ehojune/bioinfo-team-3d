@@ -207,6 +207,9 @@ def test_baseline_timeout_and_cancel_kill_cli_tree(tmp_path, monkeypatch, arm, s
     original_spawn = asyncio.create_subprocess_exec
 
     async def spawn(*args, **kwargs):
+        if (os.name == "nt" and args[0] == "taskkill"
+                and stop == "cancel" and arm == "sonnet-max"):
+            raise MemoryError
         proc = await original_spawn(*args, **kwargs)
         if args[0] == sys.executable:
             processes.append(proc)
