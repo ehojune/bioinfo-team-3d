@@ -571,7 +571,7 @@ async def test_session_wait_reads_the_task_ledger_once_then_wakes_on_the_holder_
             nonlocal scans
             if kind == "task":
                 scans += 1
-                assert scans == 1, "a holder wait must not rescan the whole task ledger"
+                assert scans <= 2, "a holder wait must not poll the whole task ledger"
             return original_all(kind)
 
         hub.store.all = counted_all
@@ -587,9 +587,41 @@ async def test_session_wait_reads_the_task_ledger_once_then_wakes_on_the_holder_
         wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir,
                                                          request_id="r", step_id="synthesis"))
         await asyncio.wait_for(waiting.wait(), 2)
+        assert scans == 1
         await hub.on_runner_message("local", result_frame("orphan", "done", "shared-session"))
         assert await asyncio.wait_for(wait, 2) == ("shared-session", workdir)
-        assert scans == 1
+        assert scans == 2  # one scan to find the holders, one to confirm none took over
+    finally:
+        hub.store.close()
+
+
+async def test_session_wait_rechecks_for_a_continuation_before_releasing(tmp_path):
+    # The holder finishes and its step dispatches a continuation under a new task id in the same
+    # wake: the session is still busy (#309 review).
+    hub = Hub(settings(tmp_path))
+    workdir = str(tmp_path / "cso-workdir")
+    try:
+        orphan_consult(hub, workdir)
+        hub.register_runner("local", CaptureSocket(), ROSTER, "inc-1")
+        waiting = asyncio.Event()
+        original_publish = hub.publish
+
+        async def observe(event, **kwargs):
+            if event.get("type") == "request.step_wait":
+                waiting.set()
+            await original_publish(event, **kwargs)
+
+        hub.publish = observe
+        wait = asyncio.create_task(hub.wait_session_free("cso", "shared-session", workdir,
+                                                         request_id="r", step_id="synthesis"))
+        await asyncio.wait_for(waiting.wait(), 2)
+        orphan_consult(hub, workdir, tid="continuation")
+        await hub.on_runner_message("local", result_frame("orphan", "done", "shared-session"))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not wait.done(), "released the session while the continuation still holds it"
+        await hub.on_runner_message("local", result_frame("continuation", "done", "shared-session"))
+        assert await asyncio.wait_for(wait, 2) == ("shared-session", workdir)
     finally:
         hub.store.close()
 

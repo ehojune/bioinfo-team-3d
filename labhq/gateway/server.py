@@ -989,7 +989,9 @@ class Hub:
                 holders = [(tid, entry) for tid, entry in holders
                            if holds_session(entry, agent_id, session_id, workdir)]
                 if not holders:
-                    return session_id, workdir
+                    # The known holders finished, but a continuation (ask, job, retry) may already hold
+                    # the session under a new task id: rescan the ledger once before releasing it.
+                    break
                 runner = self.agent_runner.get(agent_id)
                 online = runner in self.runners
                 if online:
