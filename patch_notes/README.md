@@ -14,8 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:34 | [`364f5e8`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/364f5e8) | 마지막 메시지 대체는 exit guard가 프로세스를 끝낸 경우에만(평소 종료는 기존 동작) |
+| 05:24 | [`d9d36f3`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/d9d36f3) | main 병합: 실행 guard의 종료 코드와 #329의 명령 실행 기록을 함께 둠 |
+| 05:22 | [`730eab4`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/730eab4) | Codex를 유예 뒤 끝냈을 때 결과는 turn의 마지막 agent 메시지(중간 메시지를 이어 붙이지 않음) |
 | 05:12 | [`5bfbc79`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/5bfbc79) | 확인 질문 보기 글이 이미 a)로 시작하면 그 표시를 떼어 결정함·CLI의 a) a) 중복을 없앴다. |
 | 05:12 | [`15b6eb9`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/15b6eb9) | README에 실패 보고서가 단계마다 원인과 다음 할 일만 싣는다고 한 줄 적었다. |
+| 05:10 | [`6fb9a75`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/6fb9a75) | 직원 CLI가 마지막 turn 이벤트 뒤 runner.exit_grace_s(기본 45초) 안에 끝나지 않으면 프로세스 트리를 끝내고 받은 결과로 단계를 마침(#330). Codex MCP env 중 Codex가 이미 가진 값(broker token)은 env_vars로 이름만 넘김 |
 | 05:10 | [`a3586ee`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/a3586ee) | labhq_ask의 wait를 short·hibernate enum으로 묶고, broker가 잘못된 본문에 500 대신 400과 고칠 방법을 돌려준다. |
 | 05:08 | [`ea591a0`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/ea591a0) | 실패한 요청의 보고서를 단계마다 원인 한 줄·뿌리 원인·다음 할 일로 줄였다. 12단계 실패가 수십만 자에서 2만 자 아래로 준다. |
 | 05:08 | [`88a1686`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/88a1686) | 로그 token 가림 필터가 uvicorn 접근 로그 args를 비우지 않게 해 줄마다 나던 서식 오류(expected 5, got 0)를 없앴다. |
