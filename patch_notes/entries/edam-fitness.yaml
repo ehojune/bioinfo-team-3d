@@ -9,3 +9,6 @@ rows:
 - sha: c8334ce
   at: 2026-10-02 19:18
   text: 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록
+- sha: 58c8d98
+  at: 2026-10-02 19:24
+  text: 'main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지'
