@@ -1951,10 +1951,14 @@ class Orchestrator:
                     type_stats: dict = {}
                     merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
                                                       vocab=vocab, stats=type_stats)
-                    changed = [step["id"] for step in merged if step["id"] in by_id
-                               and set(step["depends_on"]) != set(by_id[step["id"]]["depends_on"])]
-                    if changed:
-                        raise ValueError(f"re-plan would add dependencies to completed steps {changed}")
+                    # A kept step already ran. A dependency inferred from its old instruction on a new step is not
+                    # one it ran with, so it keeps the dependencies it had and the inference warning is dropped.
+                    for step in merged:
+                        if step["id"] in by_id:
+                            step["depends_on"] = list(by_id[step["id"]]["depends_on"])
+                    warnings = [w for w in warnings if not any(
+                        w.startswith((f"step {sid}: added dependency on ", f"step {sid}: reference to "))
+                        for sid in by_id)]
                 except (BudgetExceeded, TypeError, ValueError) as error:  # PlanOutputsError is a ValueError
                     return record("failed", attempt, reason=str(error))
 

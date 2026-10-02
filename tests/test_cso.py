@@ -1699,6 +1699,28 @@ async def test_resume_after_review_replan_continues_from_its_phase(phase, plan_i
 
 
 @pytest.mark.asyncio
+async def test_replan_keeps_completed_step_dependencies_when_its_instruction_names_a_new_id():
+    """A completed step already ran; inferring a dependency on a new step from its old instruction must not
+    fail the re-plan, and the plan keeps the dependencies it really ran with (#271)."""
+    original = [
+        {"id": "fetch", "agent_id": "worker", "instruction": "download data", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["fetch"]},
+    ]
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="tool unavailable")
+                                   if task.meta["step_id"] == "broken" else result(task, text="ok")),
+                     lambda task: replan_plan([{"id": "data", "agent_id": "worker", "instruction": "rebuild",
+                                                "depends_on": []}]))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert req["replan_history"][0]["status"] == "applied"
+    assert {step["id"]: step["depends_on"] for step in req["plan"]["steps"]} == {"fetch": [], "data": []}
+    assert not any(warning.startswith("step fetch:") for warning in req["plan"]["warnings"])
+
+
+@pytest.mark.asyncio
 async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     async def dispatch(task):
         return result(task, text="unused")
