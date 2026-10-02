@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 from ..util import short
-from .base import (ROLE_FOOTER, AgentAdapter, child_config_dirs, RunContext, RunState, expand_env,
+from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
 from .owned import read_owned, write_owned
 
@@ -50,7 +50,7 @@ class CodexAdapter(AgentAdapter):
     enforces_read_only = True  # -s read-only, no MCP, hooks/plugins/apps off, no user config
 
     def prepare(self, ctx: RunContext) -> None:
-        write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
         if ctx.task.output_schema:
             ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
 

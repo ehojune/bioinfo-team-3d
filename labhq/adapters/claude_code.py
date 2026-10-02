@@ -17,7 +17,7 @@ from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
 from ..util import short
-from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
+from .base import (AgentAdapter, role_footer, RunContext, RunState, child_config_dirs, expand_env,
                    record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
@@ -223,7 +223,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             if s.name.startswith("labhq_") and not s.timeout_s:  # labhq_ask sets its own, longer wait
                 servers[s.name]["timeout"] = (self.settings.policy.approvals.timeout_s + 120) * 1000
         ctx.write_meta("mcp.json", json.dumps({"mcpServers": servers}, indent=2))
-        ctx.write_meta("system_prompt.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        ctx.write_meta("system_prompt.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.claude_code

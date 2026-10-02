@@ -420,7 +420,8 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     """Read/Edit/Write deny rules for link paths inside an open folder that lead into a zone (#132).
 
     Claude compares rules with the path as written, so the link itself (a file) and anything below it (a
-    directory) are both named; the zone rules only cover the zone's own spelling.
+    directory) are both named; the zone rules only cover the zone's own spelling. PI personal paths
+    (`claude_deny_private`) use the same pair, since an entry may be a file (`~/.netrc`) or a folder.
     """
     rules = [f"{tool}(/{claude_rule_path(link)}{tail})" for link in links
              for tool in ("Read", "Edit", "Write") for tail in ("", "/**")]
@@ -429,6 +430,21 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     permissions = dict(settings.get("permissions") or {})
     permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
     return {**settings, "permissions": permissions}
+
+
+def claude_deny_private(settings: dict, paths: Iterable[str]) -> dict:
+    """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`.
+
+    A path with no rule form (UNC) is left out; the approval gate still sees shell commands that name it.
+    """
+    ruled = []
+    for p in paths:
+        try:
+            claude_rule_path(p)
+        except ValueError:
+            continue
+        ruled.append(p)
+    return claude_deny_links(settings, ruled)
 
 
 def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
@@ -537,13 +553,57 @@ def evaluate_tool(
     *,
     windows: bool | None = None,
     environ: Mapping[str, str] | None = None,
+    private_paths: Iterable[str] = (),
+    home: str | None = None,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
+    private = _private_decision(tool_name, judged, list(private_paths), workdir, home, environ)
+    # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
+    if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
+        decision = private
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+_PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
+
+
+def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
+                      home: str | None, environ: Mapping[str, str] | None) -> Decision | None:
+    """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
+
+    Claude's deny rules already stop the file tools; this is the gate's copy of that rule. A file tool's free
+    text (content, a Grep pattern) is not a path being opened and is not checked.
+    """
+    if not private_paths:
+        return None
+    from .private_paths import mentioned_private_path, path_field_text
+
+    if tool_name in READ_LIKE | WRITE_LIKE:
+        keys = (*_PRIVATE_PATH_KEYS, "pattern") if tool_name == "Glob" else _PRIVATE_PATH_KEYS
+        for key in keys:
+            value = tool_input.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            spelled = path_field_text(value, workdir)
+            spellings = {spelled}
+            if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
+                try:
+                    spellings.add(os.path.realpath(spelled))
+                except (OSError, ValueError):
+                    pass
+            if any(mentioned_private_path(s, private_paths, home, environ) for s in spellings):
+                return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
+                                        "outside every staff task. Do not open it; ask the CSO if the task needs it.")
+        return None
+    if tool_name in {"Bash", "PowerShell"}:
+        cmd = str(tool_input.get("command", ""))
+        if mentioned_private_path(cmd, private_paths, home, environ):
+            return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
+    return None
 
 
 def _evaluate_tool(

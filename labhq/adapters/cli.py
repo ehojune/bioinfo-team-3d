@@ -19,7 +19,7 @@ import json
 
 from ..models import CliSpec
 from ..util import short
-from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, record_model_id,
+from .base import (AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id,
                    token_counts, wrap_cwd)
 
 
@@ -39,7 +39,7 @@ class CliAdapter(AgentAdapter):
 
     def prepare(self, ctx: RunContext) -> None:
         ctx.write_meta("prompt.md", ctx.prompt)
-        ctx.write_meta("role.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        ctx.write_meta("role.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
         if ctx.task.output_schema:
             ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
         servers: dict[str, dict] = {}

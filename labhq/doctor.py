@@ -17,6 +17,7 @@ import yaml
 from .adapters.base import RunContext, _resolve_command, expand_env
 from .adapters import get_adapter
 from .models import AgentSpec, Engine, Task
+from .private_paths import resolve_private_paths, staff_codex_homes
 from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner.versions import _probe, _version
@@ -187,6 +188,26 @@ def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     return adapter.preflight_error(ctx, {**os.environ, **adapter.engine_env(), **ctx.env})
 
 
+PRIVATE_PATHS_HINT = "See README §8 'PI 개인 경로' (policy.private_paths)."
+
+
+def _private_paths_row(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> dict:
+    """How many PI personal paths are closed to staff, and which configured ones hold a work folder."""
+    workspace = settings.path(settings.runner.workspace_root)
+    codex = forced == Engine.codex or (forced is None and any(a.engine == Engine.codex for a in agents))
+    keep = [workspace, *(settings.path(r) for r in settings.runner.reference_roots),
+            *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
+            *(os.path.expandvars(os.path.expanduser(d)) for a in agents for d in a.plugin_dirs),
+            *staff_codex_homes(settings, workspace, codex)]
+    private = resolve_private_paths(settings, keep)
+    if not private.enabled:
+        return _row("staff", "private paths", "warn", "off (policy.private_paths: [])", PRIVATE_PATHS_HINT)
+    detail = f"{len(private.labels)} active"
+    if private.skipped:
+        detail += "; skipped, holds a work folder: " + ", ".join(private.skipped)
+    return _row("staff", "private paths", "ok" if private.labels else "warn", detail, PRIVATE_PATHS_HINT)
+
+
 def _network_check(url: str) -> bool:
     for method in ("HEAD", "GET"):
         try:
@@ -348,6 +369,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
+    rows.append(_private_paths_row(settings, agents, forced))
     try:
         paper = skill_installed(settings.recruit.contract_engine)
     except OSError:
