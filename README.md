@@ -439,7 +439,7 @@ flowchart LR
 | `task.dispatched` · `task.result` | 업무 배정·완료 | 서류가 책상 사이를 이동 |
 | `approval.requested` · `approval.resolved` | 승인 요청·결과 | 폰 푸시, 책상 위 빨간 깃발 |
 | `job.submitted` · `job.state` · `jobs.finished` | HPC 작업 | 서버실 랙 불빛, 기상 알람 |
-| `request.plan` · `request.step_attempt` · `request.step_retry` · `request.step_skipped` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 실패한 가지는 skip, 일시적 실패는 최대 2회 시도 |
+| `request.plan` · `request.step_attempt` · `request.step_retry` · `request.step_skipped` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 실패한 가지는 skip, 일시적 실패는 최대 2회 시도. 실패한 요청의 보고서는 단계마다 원인 한 줄과 다음 할 일만 싣고, 지시문·출력 전문은 round 기록과 작업 폴더에 남는다(#331) |
 | `request.step_quota_wait` · `request.step_quota_resumed` | 구독 한도 주차·재개 | reset 시각과 `지금 재개` 버튼 |
 | `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` | 파견직 | 입구에 새 병아리, 명패에 만료일 |
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
