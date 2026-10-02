@@ -102,3 +102,13 @@ def test_instance_name_cannot_escape_its_directory():
     with pytest.raises(SystemExit) as exc:
         cli.main(["agents", "--instance", "../other"])
     assert exc.value.code == 2
+
+
+def test_an_uninitialised_instance_name_is_refused_instead_of_using_defaults(isolated_home, monkeypatch):
+    """#303 review: a typo must not fall back to the default ports and shared state."""
+    monkeypatch.setattr(cli, "_api", lambda *a, **kw: [])
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["agents", "--instance", "typo"])
+    assert exc.value.code == 2
+    cli.main(["init", "--instance", "typo", "--yes"])  # init itself still creates it
+    cli.main(["agents", "--instance", "typo"])

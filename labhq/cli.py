@@ -560,6 +560,9 @@ def main(argv: list[str] | None = None) -> None:
             args.config = _instance_config(args.instance)
         except ValueError as exc:
             p.error(str(exc))
+        # A typo must not fall back to the default settings and share its ports and state (#303 review).
+        if args.cmd != "init" and not Path(args.config).is_file():
+            p.error(f"instance '{args.instance}' is not initialised; run `labhq init --instance {args.instance}` first")
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
