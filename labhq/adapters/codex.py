@@ -245,7 +245,7 @@ class CodexAdapter(AgentAdapter):
         last = read_owned(ctx.workdir, ".labhq/last_message.txt")
         if last and last.strip():
             st.final_text = last
-        elif st.result_seen and st.last_message and st.last_message.strip():
+        elif st.ended_by_guard and st.last_message and st.last_message.strip():
             # Codex writes -o only after its shutdown returns; when that shutdown hangs and the exit guard ends the
             # process, the file never appears. Its final answer is the turn's last agent message, not every message
             # joined (#330 review).

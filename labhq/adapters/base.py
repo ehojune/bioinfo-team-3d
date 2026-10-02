@@ -297,6 +297,7 @@ class RunContext:
 class RunState:
     text_parts: list[str] = field(default_factory=list)
     last_message: str | None = None  # the turn's last agent message: Codex's own final answer (#330)
+    ended_by_guard: bool = False  # labhq ended the process after its final event (exit_grace_s)
     final_text: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
@@ -605,6 +606,7 @@ class AgentAdapter(ABC):
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
+        st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
         ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
