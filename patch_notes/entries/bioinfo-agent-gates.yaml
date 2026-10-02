@@ -3,3 +3,7 @@ rows:
 - sha: 9fa63ca
   at: 2026-10-02 19:09
   text: bioinfo-agent 질문은 CSO가 답하고 새 파이프라인은 공개 검사 뒤 bioinfo-agent 저장소 PR로 올림
+- sha: 803aecb
+  at: 2026-10-02 19:26
+  text: 새 pipeline 자동 PR은 기본 꺼짐(policy.bioinfo_agent.pipeline_pr로 켬). 켜도 pipeline
+    소스와 https 테스트 목록만 받고 절대경로는 모두 거부
