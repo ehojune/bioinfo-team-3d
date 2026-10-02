@@ -12,7 +12,17 @@ from labhq.settings import Settings
 def test_office_page_manifest_and_stale_approval(tmp_path):
     s = Settings()
     s.gateway.state_dir = str(tmp_path / "state")
-    client = TestClient(create_app(s))
+    app = create_app(s)
+    hub = app.state.hub
+    published = []
+    original_publish = hub.publish
+
+    async def record_publish(event, *args, **kwargs):
+        published.append(event)
+        await original_publish(event, *args, **kwargs)
+
+    hub.publish = record_publish
+    client = TestClient(app)
     page = client.get("/")
     assert page.status_code == 200 and 'window.LABHQ_BOOT={"mode":"live"}' in page.text
     assert "<!--LABHQ_BOOT-->" not in page.text and 'id="zones"' in page.text
@@ -23,6 +33,7 @@ def test_office_page_manifest_and_stale_approval(tmp_path):
         assert json.loads(ws.receive_text())["type"] == "snapshot"
         ws.send_text(json.dumps({"type": "approval.resolve", "id": "appr_gone", "approved": True}))
         assert json.loads(ws.receive_text())["type"] == "approval.stale"  # still connected
+    assert not [event for event in published if event["type"] == "approval.stale"]
 
 
 def test_demo_page_without_gateway_boot_marker():

@@ -168,6 +168,7 @@ Teammates' upstream results are in the context section. Deliver: what you did, k
 paths, caveats and open questions. If you cannot proceed without a PI decision, return JSON with
 "blocking_decision": "the specific question and choices". Do not proceed with the blocked work."""
 
+
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
                      "labhq collects only these: {paths}")
 
@@ -239,6 +240,7 @@ Do not repeat the same question."""
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
 This is a read-only, one-answer consult. Do not call labhq_ask and do not approve installations,
 destructive work, restricted-data access, budget overruns or work outside the request.
+When bioinfo-agent asks whether to build a missing reusable pipeline, answer that it should build it.
 
 From: {sender}
 Question: {question}
@@ -917,7 +919,7 @@ class Orchestrator:
 
     async def _free_session(self, agent_id: str, session_id: str | None, workdir: str | None, *,
                             rid: str, step: str) -> tuple[str | None, str | None]:
-        """The session and workdir a CSO plan, synthesis or follow-up may resume (#112, #144).
+        """The session and workdir any resumed dispatch may use (#112, #144, #208).
 
         A consult isolates at once because its asker is blocked. These wait for an earlier task
         that still holds them, and start a new session and workdir when its outcome is unknown.
@@ -967,18 +969,23 @@ class Orchestrator:
                 "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
-        stop = hard_stop_kind(ask)
+        hard_stops = (self.hub.s.policy.bioinfo_agent.hard_stops
+                      if ask.agent_id == "bioinfo-agent" else None)
+        stop = hard_stop_kind(ask, hard_stops)
         requested = ask.to
         # Who this ask went to before a gateway restart. The roster lacks that employee until its
         # runner reconnects, and the runner may still be answering it (#113).
         previous = current.get("routed_to")
+        status = self.hub.requests.get(ask.request_id or "", {}).get("status")
+        seen_agent = getattr(self.hub, "has_seen_agent", lambda _agent_id: False)
         if stop:
             routed = "pi"
         elif requested == "pi":
             routed = "cso"
         elif requested == "facilities":
             routed = (previous if previous in {"facilities", "cso"} else
-                      "facilities" if "facilities" in self.hub.agents else "cso")
+                      "facilities" if ("facilities" in self.hub.agents or
+                                       (status == "waiting_for_runner" and seen_agent("facilities"))) else "cso")
         else:
             routed = requested.removeprefix("colleague:") if requested.startswith("colleague:") else requested
 
@@ -999,7 +1006,6 @@ class Orchestrator:
             return
 
         wait_online = getattr(self.hub, "wait_agent_online", None)
-        status = self.hub.requests.get(ask.request_id or "", {}).get("status")
         if routed not in self.hub.agents and wait_online and (status == "waiting_for_runner" or routed == previous):
             # Resume approval re-routes asks before runners reconnect, and the roster is empty
             # until they do. The target's runner may also still hold this ask's consult (#93, #113).
@@ -1007,6 +1013,8 @@ class Orchestrator:
         if requested == "facilities" and routed == "facilities" and routed not in self.hub.agents:
             routed = "cso"  # its runner did not come back; the CSO answers in its own session
             self.hub.store.put("ask", ask.id, {**(self.hub.store.get("ask", ask.id) or {}), "routed_to": routed})
+            if routed not in self.hub.agents and wait_online and status == "waiting_for_runner":
+                await wait_online(routed, self.hub.s.gateway.resume_wait_s)
         if routed not in self.hub.agents:
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
@@ -1496,6 +1504,11 @@ class Orchestrator:
                 previous = TaskResult.model_validate(decision["previous_result"])
             session_id = (previous.session_id if previous and revising else
                           decision.get("session_id") if decision else None)
+            workdir = (decision.get("workdir") if decision and decision.get("workdir") else
+                       previous.workdir if previous and previous.workdir and revising else None)
+            if session_id or workdir:
+                session_id, workdir = await self._free_session(
+                    step["agent_id"], session_id, workdir, rid=rid, step=step["id"])
             can_resume = bool(session_id and self.hub.supports_resume(step["agent_id"]))
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
@@ -1510,9 +1523,7 @@ class Orchestrator:
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
                                **self._type_meta(step),
-                               **({"workdir": decision["workdir"]} if decision and decision.get("workdir") else
-                                  {"workdir": previous.workdir} if previous and previous.workdir and feedback
-                                  and step["id"] in feedback else {})})
+                               **({"workdir": workdir} if workdir else {})})
             if updates:
                 task = task.model_copy(update={
                     "prompt": continuation_prompt(task, "\n\n".join(updates), resumable=can_resume,
@@ -1790,6 +1801,8 @@ class Orchestrator:
                         return
                     briefing = b.text
 
+                reuse_advisory = ""  # semantics-hook
+
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
                     session_id, workdir = await self._free_session(
@@ -1804,6 +1817,7 @@ class Orchestrator:
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
                             packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                        prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
                         vocab = self._output_vocab()
@@ -1832,6 +1846,42 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                # semantics-shadow: begin (#149 decision 15 advisory A/B)
+                if research_lane:
+                    service = getattr(self.hub, "semantics_" + "shadow", None)
+                    if service is not None:
+                        try:
+                            draft, _ = _normalize_plan_outputs(plan)
+                            draft = prepare_research_declarations(draft, self._output_vocab(), {})
+                            snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
+                            offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
+                        except (ValueError, TypeError, PlanOutputsError):
+                            offer = None
+                        if offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
+                            req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
+                            self.hub.save_request(rid)
+                        if offer is not None and offer["offered"]:
+                            # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
+                            # prompt gains the list; the shadow arm sends its first prompt again.
+                            candidates = offer["candidates"]
+                            if candidates:
+                                lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
+                                         "If you use one, copy its artifact_id exactly into the relevant step's "
+                                         "input_refs:"]
+                                lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
+                                          f"created_request_id={c['request_id']}" for c in candidates[:5]]
+                                reuse_advisory = "\n".join(lines)
+                            plan_res = await make_plan(text)
+                            if not plan_res.ok:
+                                self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
+                                return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
+                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
+                                    else extract_json(plan_res.text) or {})
+                # semantics-shadow: end
                 details = normalize_questions(plan.get("clarifying_questions"))
                 questions = [q["question"] for q in details]
                 if questions:

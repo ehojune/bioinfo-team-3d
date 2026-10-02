@@ -1,0 +1,14 @@
+pr: 297
+rows:
+- sha: 223ea3b
+  at: 2026-10-02 18:41
+  text: '팔란티어식 액션 A2: PI CLI에서 request.followup 하나만 확인 뒤 기존 REST로 보냄. 직원에게는 gateway
+    token을 비운 설정 사본, 응답 유실은 unknown으로 두고 재전송 안 함, 모름이면 안 보냄'
+- sha: 1a77466
+  at: 2026-10-02 19:05
+  text: '리뷰 P1 고침: 실행 잠금·intent 기록의 폴더까지 fsync(Windows는 NTFS 저널), 직원용 설정 사본은 task마다
+    새 이름으로 쓰고 링크 폴더 거부·끝나면 삭제. A2 실행기는 그림자를 거쳐서만 불림(pilot 규칙)'
+- sha: d22ef09
+  at: 2026-10-02 19:20
+  text: 'main(#296 CSO A/B) 병합: ab 모드도 액션 층 설정으로 읽고, A2는 mode shadow 또는 ab에 actions:
+    confirm일 때만'

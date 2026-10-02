@@ -1,0 +1,25 @@
+pr: 304
+rows:
+- sha: 99d3674
+  at: 2026-10-02 19:19
+  text: runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가
+- sha: b14bfa1
+  at: 2026-10-02 19:26
+  text: runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리
+    ok
+- sha: de4e225
+  at: 2026-10-02 19:32
+  text: runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner
+    계정을 확인
+- sha: b3b4b00
+  at: 2026-10-02 19:38
+  text: runner 계정 절차서의 깨진 runner.yaml 경로 6곳 복구
+- sha: af48ee7
+  at: 2026-10-02 19:43
+  text: 'runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤'
+- sha: 3aef457
+  at: 2026-10-02 19:55
+  text: 'runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치'
+- sha: 972090b
+  at: 2026-10-02 20:03
+  text: 'doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로'

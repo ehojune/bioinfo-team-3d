@@ -68,6 +68,22 @@ def atomic_write_text(path: str | Path, text: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+# Windows cannot open a folder with os.open, and Python has no other folder flush. There a new or renamed entry
+# rests on NTFS's metadata journal instead, so fsync_dir does nothing rather than fail.
+DIR_FSYNC = os.name != "nt"
+
+
+def fsync_dir(path: str | Path) -> None:
+    """Make a folder's entries durable: a file just created or renamed in it survives a power loss (POSIX)."""
+    if not DIR_FSYNC:
+        return
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def short(obj: Any, n: int = 300) -> str:
     """Compact one-line preview of any object, for event payloads and logs."""
     if obj is None:

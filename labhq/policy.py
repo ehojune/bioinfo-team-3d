@@ -74,9 +74,11 @@ class Decision:
     updated_input: dict | None = None
 
 
-def _norm(p: str) -> str:
+def _norm(p: str, *, expand_vars: bool = True) -> str:
     """Lexically normalize both POSIX and Windows paths, regardless of the host OS."""
-    p = os.path.expandvars(os.path.expanduser(p))
+    p = os.path.expanduser(p)
+    if expand_vars:
+        p = os.path.expandvars(p)
     if re.match(r"^[A-Za-z]:[/\\]", p) or p.startswith(("\\\\", "//")):
         return ntpath.normpath(p).replace("\\", "/").casefold()
     normalized = posixpath.normpath(p.replace("\\", "/"))
@@ -516,12 +518,12 @@ def claude_write_input(tool_name: str, tool_input: dict[str, Any], workdir: str 
     drive = ntpath.splitdrive(workdir)[0]
     if not drive:
         return tool_input
-    folded = [_norm(r) for r in roots if r]
+    folded = [_norm(r, expand_vars=False) for r in roots if r]
     actual = ntpath.normpath(drive + raw)
     chosen = actual
-    if not any(_inside(_norm(actual), r) for r in folded):
+    if not any(_inside(_norm(actual, expand_vars=False), r) for r in folded):
         meant = _git_bash_path(raw, os.environ if environ is None else environ)
-        if meant and any(_inside(_norm(meant), r) for r in folded):
+        if meant and any(_inside(_norm(meant, expand_vars=False), r) for r in folded):
             chosen = meant
     return {**tool_input, key: chosen}
 
@@ -598,15 +600,15 @@ def _evaluate_tool(
             return Decision("ask", f"MCP tool {tool_name} references restricted zone {hit}")
         return Decision("allow")
 
-    roots = [_norm(r) for r in allowed_roots if r]
+    roots = [_norm(r, expand_vars=False) for r in allowed_roots if r]
     if tool_name in WRITE_LIKE:
         fp = tool_input.get("file_path") or tool_input.get("notebook_path")
         if fp:
             if not _absolute(fp):
                 if not workdir:
                     return Decision("ask", f"write path has no known workdir: {fp}")
-                fp = posixpath.join(_norm(workdir), fp)
-            if roots and not any(_inside(_norm(fp), r) for r in roots):
+                fp = posixpath.join(_norm(workdir, expand_vars=False), fp)
+            if roots and not any(_inside(_norm(fp, expand_vars=False), r) for r in roots):
                 return Decision("ask", f"write outside workspace/project dirs: {fp}")
 
     return Decision("allow")

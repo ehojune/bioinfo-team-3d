@@ -165,6 +165,8 @@ class Hub:
         self.agents: dict[str, dict] = {}
         self.agent_runner: dict[str, str] = {}
         self.agent_online: dict[str, asyncio.Event] = {}
+        self.session_revision = 0
+        self.session_changed = asyncio.Event()
         self.task_runner: dict[str, str] = {}
         self.clients: set[WebSocket] = set()
         self.futures: dict[str, asyncio.Future] = {}
@@ -179,6 +181,7 @@ class Hub:
         self.quota_events: dict[str, asyncio.Event] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
+        self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
         for aid, entry in list(self.approvals.items()):
@@ -308,6 +311,26 @@ class Hub:
             self.save_request(rid)
             return
         await self.resume_when_ready(rid)
+
+    def _session_state_changed(self) -> None:
+        self.session_revision += 1
+        self.session_changed.set()
+
+    async def _wait_session_change(self, revision: int, timeout: float | None = None) -> bool:
+        if self.session_revision != revision:
+            return True
+        self.session_changed.clear()
+        if self.session_revision != revision:
+            return True
+        try:
+            await asyncio.wait_for(self.session_changed.wait(), timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    def has_seen_agent(self, agent_id: str) -> bool:
+        return any(any(agent.get("id") == agent_id for agent in entry.get("agents", []))
+                   for entry in self.last_runner_rosters.values())
 
     def running_tasks(self) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
@@ -484,6 +507,13 @@ class Hub:
         req = self.requests[rid]
         if req.get("mode") == "direct":
             return set() if self.completed_direct_result(rid) else {req["agent_id"]}
+        if req.get("mode") == "plan_only":
+            if "plan" in req:
+                return set()
+            needed = {self.s.orchestrator.cso_agent}
+            if self.s.orchestrator.chief_of_staff_agent:
+                needed.add(self.s.orchestrator.chief_of_staff_agent)
+            return needed
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
@@ -575,6 +605,7 @@ class Hub:
                     (entry.get("payload") or {}).get("agent_id") in hosted_agents and
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
+        self._session_state_changed()
 
     def _record_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
                           outcome_unknown: bool = False) -> None:
@@ -621,6 +652,7 @@ class Hub:
         future = self.futures.get(tid)
         if future and not future.done():
             future.set_result(result)
+        self._session_state_changed()
         return result
 
     async def flush_decisions(self, runner_id: str) -> None:
@@ -644,6 +676,9 @@ class Hub:
                 self._start_ask(AskRequest.model_validate(entry["ask"]), entry.get("origin"))
 
     def set_roster(self, runner_id: str, agents: list[dict], capabilities: dict | None = None) -> None:
+        roster = {"agents": agents, "updated_at": time.time()}
+        self.last_runner_rosters[runner_id] = roster
+        self.store.put("runner_roster", runner_id, roster)
         if capabilities is not None:
             self.runner_capabilities[runner_id] = capabilities
         for aid in [a for a, r in self.agent_runner.items() if r == runner_id]:
@@ -665,6 +700,7 @@ class Hub:
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
+        self._session_state_changed()
 
     def unregister_runner(self, runner_id: str, ws: WebSocket) -> bool:
         if self.runners.get(runner_id) is ws:
@@ -673,6 +709,7 @@ class Hub:
             for aid, host in self.agent_runner.items():
                 if host == runner_id:
                     self.agent_online.setdefault(aid, asyncio.Event()).clear()
+            self._session_state_changed()
             return True
         return False
 
@@ -741,6 +778,7 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
+        pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
@@ -764,10 +802,33 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
+            if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr
+                    and result.ok and not waiting(result)):
+                self.store.put("pipeline_submission", tid, {
+                    "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                    "state": "ready", "submission": result.pipeline_submission,
+                })
+                pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
+                                  "agent_id": result.agent_id, "request_id": rid,
+                                  "data": {"name": result.pipeline_submission.get("name")}}
+            if result.pipeline_submission is not None:  # never published to web clients, on or off
+                result = result.model_copy(update={"pipeline_submission": None})
+                msg = {**msg, "data": result.model_dump(mode="json")}
             if task:
                 # A reported result supersedes an abandonment: the task did finish (#112).
                 self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
                                               "completed": True, "result": result.model_dump(mode="json")})
+                payload = task.get("payload") or {}
+                meta = payload.get("meta") or {}
+                request = self.requests.get(task.get("request_id") or "")
+                if (request is not None and payload.get("agent_id") == self.s.orchestrator.cso_agent and
+                        result.session_id and
+                        (payload.get("resume_session_id") == request.get("cso_session_id") or
+                         (meta.get("workdir") and meta.get("workdir") == request.get("cso_workdir")))):
+                    request["cso_session_id"] = result.session_id
+                    request["cso_workdir"] = result.workdir or meta.get("workdir") or request.get("cso_workdir")
+                    self.save_request(task["request_id"])
+                self._session_state_changed()
             if task and task.get("request_id") in self.requests and (task.get("step_id") or task.get("kind") == "direct"):
                 rid = task["request_id"]
                 sid = task.get("step_id") or "direct"
@@ -783,6 +844,31 @@ class Hub:
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
+        elif typ == "approval.timed_out":
+            aid = str((msg.get("data") or {}).get("id") or "")
+            entry = self.approvals.get(aid)
+            prior = self.store.get("approval_decision", aid)
+            queued = self.store.get("decision", aid)
+            approval = (entry or {}).get("approval")
+            same_origin = ((entry or {}).get("origin") == runner_id or
+                           (queued or {}).get("origin") == runner_id or
+                           (prior or {}).get("origin") == runner_id)
+            if approval is None and prior:
+                approval = prior.get("approval")
+            if approval is None or not same_origin:
+                if runner_seq is not None:
+                    await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
+                return
+            self.approvals.pop(aid, None)
+            self.store.delete("approval", aid)
+            self.store.delete("decision", aid)
+            self.store.put("approval_decision", aid,
+                           {"approval": approval, "origin": runner_id, "approved": False,
+                            "note": "approval timed out", "state": "timed_out",
+                            "decided_at": time.time()})
+            msg = {**msg, "type": "approval.resolved",
+                   "data": {"id": aid, "approved": False, "note": "approval timed out",
+                            "state": "timed_out"}}
         elif typ == "ask.requested":
             ask = AskRequest.model_validate(msg["data"])
             existing = self.store.get("ask", ask.id)
@@ -809,7 +895,10 @@ class Hub:
             if task:
                 self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
+                self._session_state_changed()
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+        if pipeline_event is not None:
+            await self.publish(pipeline_event)
         if runner_seq is not None:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
 
@@ -844,6 +933,9 @@ class Hub:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=f"no runner hosts agent {task.agent_id!r}")
+        if task.agent_id == "bioinfo-agent" and self.s.policy.bioinfo_agent.pipeline_pr:
+            # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
+            task.meta["pipeline_pr"] = True
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
@@ -857,6 +949,7 @@ class Hub:
                                           "parent_task": task.meta.get("parent_task"),
                                           "payload": task.model_dump(mode="json"),
                                           "accepted": False, "dispatched_at": time.time()})
+        self._session_state_changed()
         await self.publish({"type": "task.dispatched", "ts": time.time(), "task_id": task.id,
                             "agent_id": task.agent_id, "request_id": task.request_id,
                             "data": {"kind": task.meta.get("kind"), "step_id": task.meta.get("step_id"),
@@ -1001,45 +1094,83 @@ class Hub:
         """
         loop = asyncio.get_running_loop()
         offline_deadline: float | None = None
-        resumed: set[str] = set()
         announced = False
         while True:
-            holders = [(tid, entry) for tid, entry in self.store.all("task").items()
-                       if holds_session(entry, agent_id, session_id, workdir)]
-            if not holders:
-                turns = [self.store.get("task", tid) or {} for tid in resumed]
-                latest = max(((float(e.get("dispatched_at") or 0), (e.get("result") or {}).get("session_id"))
-                              for e in turns if (e.get("result") or {}).get("session_id")), default=(0.0, None))[1]
-                if latest and latest != session_id:
-                    session_id, resumed = latest, set()
+            # One ledger scan discovers both an already-finished turn and the holders for this
+            # session. Once holders are known, only their rows are read until a turn rotates the
+            # session; task and runner events wake the waiter (#205, #207).
+            ledger = self.store.all("task")
+            completed = []
+            for entry in ledger.values():
+                payload = entry.get("payload") or {}
+                result = entry.get("result") or {}
+                held_workdir = (payload.get("meta") or {}).get("workdir")
+                same_request = request_id is None or entry.get("request_id") == request_id
+                if (same_request and payload.get("agent_id") == agent_id and entry.get("completed") and
+                        not entry.get("abandoned") and result.get("session_id") and
+                        ((session_id and payload.get("resume_session_id") == session_id) or
+                         (workdir and held_workdir and Path(workdir).resolve() == Path(held_workdir).resolve()))):
+                    completed.append(entry)
+            if completed:
+                latest = max(completed, key=lambda entry: float(entry.get("dispatched_at") or 0))
+                result = latest.get("result") or {}
+                turned = result.get("session_id")
+                turned_workdir = result.get("workdir") or ((latest.get("payload") or {}).get("meta") or {}).get(
+                    "workdir") or workdir
+                if turned and turned != session_id:
+                    session_id, workdir = turned, turned_workdir
+                    offline_deadline = None
                     continue
+            holder_ids = [tid for tid, entry in ledger.items()
+                          if holds_session(entry, agent_id, session_id, workdir)]
+            while holder_ids:
+                revision = self.session_revision
+                holders = [(tid, self.store.get("task", tid) or {}) for tid in holder_ids]
+                holders = [(tid, entry) for tid, entry in holders
+                           if holds_session(entry, agent_id, session_id, workdir)]
+                if not holders:
+                    # The known holders finished, but a continuation (ask, job, retry) may already hold
+                    # the session under a new task id: rescan the ledger once before releasing it.
+                    break
+                runner = self.agent_runner.get(agent_id)
+                online = runner in self.runners
+                if online:
+                    offline_deadline = None
+                elif offline_deadline is None:
+                    offline_deadline = loop.time() + self.s.gateway.resume_wait_s
+                for tid, entry in holders:
+                    running = (online and bool(entry.get("accepted")) and
+                               self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
+                    if entry.get("abandoned"):
+                        return None, None
+                    if not (running or (online and tid in self.futures) or
+                            (not online and loop.time() < offline_deadline)):
+                        return None, None
+                if not announced:
+                    announced = True
+                    await self.publish({"type": "request.step_wait", "ts": time.time(),
+                                        "request_id": request_id,
+                                        "data": {"step_id": step_id, "agent_id": agent_id,
+                                                 "reason": "an earlier task still uses this session or workdir"}})
+                timeout = None if online else max(0.0, offline_deadline - loop.time())
+                if not await self._wait_session_change(revision, timeout):
+                    return None, None
+
+                turns = [entry for _, entry in ((tid, self.store.get("task", tid) or {})
+                                                 for tid in holder_ids)
+                         if entry.get("completed") and not entry.get("abandoned") and
+                         (entry.get("result") or {}).get("session_id")]
+                if turns:
+                    latest = max(turns, key=lambda entry: float(entry.get("dispatched_at") or 0))
+                    result = latest.get("result") or {}
+                    turned = result.get("session_id")
+                    if turned and turned != session_id:
+                        session_id = turned
+                        workdir = result.get("workdir") or workdir
+                        offline_deadline = None
+                        break
+            else:
                 return session_id, workdir
-            runner = self.agent_runner.get(agent_id)
-            online = runner in self.runners
-            # Same rule as _await_prior_task: resume_wait_s bounds a reconnect, measured from the
-            # disconnect, never the work of a task the runner accepted.
-            if online:
-                offline_deadline = None
-            elif offline_deadline is None:
-                offline_deadline = loop.time() + self.s.gateway.resume_wait_s
-            for tid, entry in holders:
-                running = (online and bool(entry.get("accepted")) and
-                           self._same_runner_generation(entry, runner, self.runner_incarnations.get(runner)))
-                if entry.get("abandoned"):
-                    return None, None
-                # An unaccepted task the connected runner does not run (a delivery this gateway gave
-                # up on, or one a previous gateway sent) has an unknown outcome.
-                if not (running or (online and tid in self.futures) or
-                        (not online and loop.time() < offline_deadline)):
-                    return None, None
-                if session_id and (entry.get("payload") or {}).get("resume_session_id") == session_id:
-                    resumed.add(tid)
-            if not announced:
-                announced = True
-                await self.publish({"type": "request.step_wait", "ts": time.time(), "request_id": request_id,
-                                    "data": {"step_id": step_id, "agent_id": agent_id,
-                                             "reason": "an earlier task still uses this session or workdir"}})
-            await asyncio.sleep(0.1)
 
     async def wait_jobs(self, task_id: str) -> dict:
         if task_id in self.jobs_done:
@@ -1146,7 +1277,7 @@ class Hub:
             raise KeyError(approval_id)
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
-                       {"approval": entry["approval"], "approved": approved,
+                       {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
                         "note": note, "decided_at": time.time()})
         if entry["origin"]:
             self.store.put("decision", approval_id, {"origin": entry["origin"],
@@ -1225,7 +1356,21 @@ class Hub:
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
         await self.orchestrator.run_request(rid)
 
+    def pipeline_prs(self) -> dict[str, dict]:
+        """Each request's latest pipeline PR status from its stored row, so a late client sees it (#301 review)."""
+        latest: dict[str, dict] = {}
+        for entry in self.store.all("pipeline_submission").values():
+            rid = entry.get("request_id")
+            if not rid or entry.get("state") not in {"pending", "open", "rejected"}:
+                continue
+            if rid not in latest or (entry.get("updated_at") or 0) >= (latest[rid].get("updated_at") or 0):
+                latest[rid] = entry
+        return {rid: {"status": e["state"], "name": (e.get("submission") or {}).get("name"),
+                      "reason": e.get("reason"), "url": e.get("url"), "number": e.get("number")}
+                for rid, e in latest.items()}
+
     def snapshot(self) -> dict[str, Any]:
+        pipeline_prs = self.pipeline_prs()
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
             "agents": list(self.agents.values()),
@@ -1239,6 +1384,7 @@ class Hub:
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],
                           "step_details": self.request_step_details(r.get("id", ""), r),
+                          **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
@@ -1353,8 +1499,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
-                        await hub.publish({"type": "approval.stale", "ts": time.time(),
-                                           "data": {"id": msg.get("id")}})
+                        await ws.send_text(json.dumps({"type": "approval.stale", "ts": time.time(),
+                                                       "data": {"id": msg.get("id")}},
+                                                      ensure_ascii=False, default=str))
         except WebSocketDisconnect:
             pass
         finally:
@@ -1495,7 +1642,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
+        boot_data = {"mode": "live"}
+        if settings.instance:
+            boot_data["instance"] = settings.instance
+        boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
+        if settings.instance:
+            html = html.replace("<title>labhq 사무실</title>", f"<title>labhq {settings.instance} 사무실</title>")
         return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
 
     # Like /, static shells are public; data and decisions require the client token.
@@ -1507,7 +1659,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/3d/", response_class=HTMLResponse)
     async def office3d() -> HTMLResponse:
         html = (WEB / "lab3d" / "index.html").read_text(encoding="utf-8")
-        boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
+        boot_data = {"mode": "live"}
+        if settings.instance:
+            boot_data["instance"] = settings.instance
+        boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
+        if settings.instance:
+            html = html.replace("<title>labhq · 종이숲 연구소</title>",
+                                f"<title>labhq {settings.instance} · 종이숲 연구소</title>")
         return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
 
     def static_file(root: Path, path: str) -> FileResponse:
@@ -1544,8 +1702,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/manifest.webmanifest")
     async def manifest() -> Response:
-        return Response((WEB / "manifest.webmanifest").read_text(encoding="utf-8"),
-                        media_type="application/manifest+json")
+        data = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+        if settings.instance:
+            data.update({"name": f"labhq {settings.instance} 사무실", "short_name": f"labhq {settings.instance}"})
+        return Response(json.dumps(data, ensure_ascii=False), media_type="application/manifest+json")
 
     @app.get("/icon.svg")
     async def icon() -> Response:
