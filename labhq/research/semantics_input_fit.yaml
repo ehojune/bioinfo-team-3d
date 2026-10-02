@@ -1,0 +1,33 @@
+# Local, reviewable operation-to-input rules (#149 decision 17, #151).
+# Judgement uses these keys only. EDAM ids are metadata, never a reasoner; null means the pinned subset has
+# no reviewed EDAM relation for the rule.
+version: 1
+pack_operations:
+  single_cell_de@2: de_analysis
+agent_operations:
+  data_steward: data_retrieval
+operations:
+  statistical_analysis:
+    fit: [raw_counts, normalized_counts, de_table, enrichment_table, sample_metadata, table]
+    mismatch: [sequence_reads, sequence, alignment, variants, assembly, features, protein_structure]
+    edam_relation: null
+  de_analysis:
+    fit: [raw_counts, normalized_counts]
+    mismatch: [sequence_reads, sequence, alignment, variants, assembly, features, protein_structure]
+    edam_relation: null
+  enrichment_analysis:
+    fit: [de_table]
+    mismatch: [raw_counts, normalized_counts, sequence_reads, sequence, alignment, variants, assembly]
+    edam_relation: null
+  read_mapping:
+    fit: [sequence_reads, sequence]
+    mismatch: [alignment, variants, assembly, features, protein_structure]
+    edam_relation: null
+  variant_calling:
+    fit: [alignment]
+    mismatch: [sequence_reads, sequence, variants, assembly, features, protein_structure]
+    edam_relation: null
+  data_retrieval:
+    fit: []
+    mismatch: []
+    edam_relation: null

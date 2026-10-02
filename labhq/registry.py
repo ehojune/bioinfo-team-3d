@@ -20,17 +20,19 @@ def _dump(spec: AgentSpec) -> str:
 
 
 class Registry:
-    def __init__(self, agents_dir: Path, talent_dir: Path):
+    def __init__(self, agents_dir: Path, talent_dir: Path, contract_dir: Path | None = None):
         self.agents_dir = Path(agents_dir)
         self.talent_dir = Path(talent_dir)
+        # Hiring, renewal and release write here; instances keep their own so one lab's contracts don't leak into another's.
+        self.contract_dir = Path(contract_dir) if contract_dir else self.agents_dir / "contract"
         self.agents: dict[str, AgentSpec] = {}
         self.paths: dict[str, Path] = {}
 
     def load(self) -> None:
         self.agents.clear()
         self.paths.clear()
-        for sub in ("core", "contract"):
-            for p in sorted((self.agents_dir / sub).glob("*.yaml")):
+        for folder in (self.agents_dir / "core", self.contract_dir):
+            for p in sorted(folder.glob("*.yaml")):
                 if p.name.startswith("_"):
                     continue
                 spec = AgentSpec.model_validate(yaml.safe_load(p.read_text(encoding="utf-8")) or {})
@@ -84,7 +86,7 @@ class Registry:
     # ----- contract lifecycle -----
     def save_contract(self, spec: AgentSpec) -> Path:
         assert spec.employment == Employment.contract and spec.contract
-        p = self.agents_dir / "contract" / f"{spec.id}.yaml"
+        p = self.contract_dir / f"{spec.id}.yaml"
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(p, _dump(spec))
         tdir = self.talent_dir / self._slug(spec)

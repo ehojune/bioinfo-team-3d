@@ -14,6 +14,20 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:34 | [`db85ace`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/db85ace) | main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림 |
+| 19:29 | [`54b71be`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/54b71be) | 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir) |
+| 19:24 | [`58c8d98`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/58c8d98) | main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지 |
+| 19:24 | [`184ab7d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/184ab7d) | --instance: 초기화되지 않은 이름은 기본 설정으로 넘어가지 않고 거부 |
+| 19:20 | [`d22ef09`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/d22ef09) | main(#296 CSO A/B) 병합: ab 모드도 액션 층 설정으로 읽고, A2는 mode shadow 또는 ab에 actions: confirm일 때만 |
+| 19:19 | [`ef7c08d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/ef7c08d) | 이름별 빈 포트·경로·token 설정 생성과 모든 명령의 --instance 선택, 웹·홈 화면 instance 이름 표시를 추가 |
+| 19:18 | [`c8334ce`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/c8334ce) | 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록 |
+| 19:17 | [`9efe399`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9efe399) | 입력 적합성 그림자 모듈·관계표·테스트를 제거 목록에 넣고 관계표를 research로 옮김 |
+| 19:05 | [`1a77466`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/1a77466) | 리뷰 P1 고침: 실행 잠금·intent 기록의 폴더까지 fsync(Windows는 NTFS 저널), 직원용 설정 사본은 task마다 새 이름으로 쓰고 링크 폴더 거부·끝나면 삭제. A2 실행기는 그림자를 거쳐서만 불림(pilot 규칙) |
+| 18:58 | [`e0d71e0`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/e0d71e0) | 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가 읽는 live 상태는 event loop에서 복사 |
+| 18:53 | [`9bb746c`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9bb746c) | 로컬 operation 관계표로 단계 입력 종류의 fit·mismatch·unknown을 그림자 집계 |
+| 18:47 | [`bb9d71b`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/bb9d71b) | A/B arm은 연구 요청에만 붙이고, 참조율은 계획 때 요청에 고정한 후보 ID로 판정하며, 그 ID를 쓴 계획이 정보 경계에 걸려 꺼지지 않게 함 |
+| 18:41 | [`223ea3b`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/223ea3b) | 팔란티어식 액션 A2: PI CLI에서 request.followup 하나만 확인 뒤 기존 REST로 보냄. 직원에게는 gateway token을 비운 설정 사본, 응답 유실은 unknown으로 두고 재전송 안 함, 모름이면 안 보냄 |
+| 18:27 | [`0aece30`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/0aece30) | 연구 요청을 advisory와 shadow로 반씩 고정 배정하고 안전한 재사용 후보 참고와 arm별 효과·실패·비용 보고를 추가 |
 | 16:52 | [`fb34d54`](https://github.com/ehojune/bioinfo-team-3d/pull/295/commits/fb34d54) | 목차 갱신 workflow를 직렬화: 최신 main에서 다시 만들고, push가 실패하면 재시도 |
 | 16:40 | [`7e2586c`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/7e2586c) | 기록 목차: 하위 폴더 기록은 오류로, PR 단계에서 원본 형식 검사, 목차 workflow는 README 배지에서 뺌 |
 | 15:40 | [`c9eef11`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/c9eef11) | PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰 |

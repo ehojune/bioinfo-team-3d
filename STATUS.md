@@ -4,6 +4,39 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · PR #303 — 한 PC 여러 labhq 인스턴스(#37 결정 ②-1 A)
+
+- 결론: `labhq init --instance <이름>`으로 한 PC의 연구소를 포트·경로·token까지 나누고, 모든 명령에서 같은 이름을 고를 수 있다. 기본 동작은 그대로다.
+- 바뀐 것: 이름별 config·state·runs·talent·runner id·빈 gateway/broker 포트·무작위 token, `--instance`/`--config` 충돌 거부, 웹 제목·홈 화면 이름, 로그인·사용량 공유 경고.
+- 실행한 것: 관련 pytest 58 passed, Node CJS 13개, `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: 없음. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/init_wizard.py`, `labhq/cli.py`, `labhq/gateway/server.py`, `tests/test_instances.py`.
+
+## 2026-10-02 · #149 결정 17 · #151 입력 종류–방법 적합성 그림자 판정
+
+- 결론: 로컬 operation 관계표로 단계 입력을 `fit`·`mismatch`·`unknown` 중 하나로 세며, 세 개의 합계만 그림자 기록과 report에 남긴다.
+- 바뀐 것: `semantics_input_fit.yaml`과 그림자 판정 모듈을 추가했다. EDAM 표가 없어도 로컬 key 판정은 유지된다.
+- 실행한 것: 관련 의미론 테스트 135건과 입력 판정 테스트를 통과시켰다. 전체 pytest는 CI에 맡긴다.
+- 미해결: 없음.
+- 근거: `labhq/research/semantics_input_fit.yaml`, `labhq/research/semantics_input_fit.py`, `tests/test_semantics_input_fit.py`.
+
+## 2026-10-02 · #297 — 팔란티어식 액션 A2(#149 결정 16)
+
+- 결론: `request.followup` 하나를 PI CLI에서 y/N 뒤 기존 `POST /api/requests/{rid}/followup`으로 보낸다. 기본 off(`semantics.actions: confirm`일 때만). 다른 액션은 그림자 기록만, `hpc.*`는 늘 거부.
+- 바뀐 것: `labhq semantics action run|check`, 러너가 직원에게 gateway token을 비운 설정 사본을 task마다 새로 줌(링크 폴더 거부, 끝나면 삭제), 보내기 전 실행 id 기록과 요청별 잠금을 폴더까지 fsync(응답 유실은 unknown, 재전송 없음), 모름이면 안 보냄, 확인 뒤 설정·자동 off 재확인.
+- 실행한 것: 새 test 55개와 관련 test 파일 28개(865 passed, 23 skipped), 고친 곳을 하나씩 되돌려 test가 실패하는지 확인, `scripts/check_public.sh`. 리뷰 P1 반영 뒤 관련 test 12파일 427 passed, 2 skipped, `semantics_shadow_remove.py --only actions --check` 통과.
+- 미해결: 러너가 PI와 같은 OS 계정이면 직원 셸이 원본 설정을 직접 읽을 수 있음(전용 계정 권장, README §10). 실제 CLI·gateway 운용 실측 없음.
+- 근거: `labhq/research/semantics_actions_run.py`, `labhq/settings.py`(`write_staff_config`), `labhq/runner/daemon.py`, `tests/test_semantics_actions_run.py`.
+
+## 2026-10-02 · PR #296 — CSO advisory A/B(#149 결정 15)
+
+- 결론: 연구 요청을 요청 ID hash로 advisory·shadow arm에 고정 배정한다. advisory arm은 #267 selector 후보가 있을 때만 경로·내용·요청 본문 없이 artifact ID·data type·생성 요청 ID를 CSO 계획 참고로 준다.
+- 바뀐 것: `semantics: ab`, arm·후보 ref 사용·비용 그림자 기록, arm별 요청·후보·참조율·실패율·비용과 10건/3주 판단 창 report, 제거 시험과 회귀.
+- 리뷰 반영: arm은 연구 요청에만 붙인다. 참조는 계획 때 요청에 고정한 후보 ID와 비교하고, 그 ID를 쓴 계획도 정보 경계를 통과한다. 후보가 있으면 두 arm 모두 한 번 더 계획하고(shadow arm은 같은 prompt), live 상태 복사는 event loop에서 한다.
+- 실행한 것: 관련 pytest 699 passed, 4 skipped(리뷰 반영 뒤). `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 지시대로 CI에 맡겼다.
+- 미해결: 없음. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/orchestrator/cso.py`, `tests/test_semantics_ab.py`.
+
 ## 2026-10-02 · #295 — 목차 갱신 workflow 직렬화(#292 후속)
 
 - 결론: 병합이 겹쳐도 목차 갱신이 최신 기록을 빠뜨리지 않는다. 한 번에 하나만 돌고, 최신 main에서 만들며, push가 실패하면 다시 만든다.

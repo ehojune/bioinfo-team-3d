@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import ntpath
 import re
+import stat
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -31,6 +32,7 @@ class RunnerSettings(BaseModel):
     workspace_root: str = "~/.labhq/runs"
     agents_dir: str = "./agents"
     talent_dir: str = "~/.labhq/talent"  # 인재풀: every contract ever hired, kept for rehire
+    contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
     job_poll_s: int = 60
@@ -395,6 +397,7 @@ class ProjectSettings(BaseModel):
 
 
 class Settings(BaseModel):
+    instance: str | None = None
     gateway: GatewaySettings = GatewaySettings()
     runner: RunnerSettings = RunnerSettings()
     engines: EnginesSettings = EnginesSettings()
@@ -411,17 +414,32 @@ class Settings(BaseModel):
     projects: list[ProjectSettings] = []
     semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
+    # Set only in the staff copy (write_staff_config): the folder its relative paths still resolve from.
+    config_base: str | None = None
+
+    @field_validator("instance")
+    @classmethod
+    def safe_instance_name(cls, value: str | None) -> str | None:
+        import re
+
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
+            raise ValueError("instance must use 1-64 letters, numbers, underscores or hyphens")
+        return value
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None
+
+    def base_dir(self) -> Path:
+        if self.config_base:
+            return Path(self.config_base)
+        return Path(self.config_path).parent if self.config_path else Path.cwd()
 
     def path(self, p: str) -> Path:
         """Expand ~ and $VARS; relative paths are relative to the config file (or cwd)."""
         q = Path(os.path.expandvars(os.path.expanduser(p)))
         if q.is_absolute():
             return q
-        base = Path(self.config_path).parent if self.config_path else Path.cwd()
-        return (base / q).resolve()
+        return (self.base_dir() / q).resolve()
 
     @classmethod
     def load(cls, path: str | None = None) -> "Settings":
@@ -433,3 +451,49 @@ class Settings(BaseModel):
         if path and Path(path).exists():
             s.config_path = str(Path(path).resolve())
         return s
+
+
+STAFF_REDACTED = ("client_token", "runner_token")
+
+
+def _is_link(info: os.stat_result) -> bool:
+    """A symlink, or on Windows any reparse point (a junction is not a symlink there)."""
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & reparse)
+
+
+def write_staff_config(settings: Settings, directory: Path) -> str | None:
+    """The config a staff process gets as LABHQ_CONFIG: the runner's file with the gateway tokens blanked.
+
+    The MCP tools read policy, HPC and broker settings from it and no gateway credential. A client token in a file
+    staff can read lets them call every PI REST action, the follow-up the A2 action layer runs included (#149 결정
+    16). ``config_base`` keeps relative paths resolving from the original folder.
+
+    Every call writes a fresh file under a name the runner draws (O_EXCL), in a folder that must not be a link or
+    junction. No existing file is trusted, so a staff process that swapped an earlier copy for a link to the PI's
+    file hands nothing to the next task. The caller deletes the copy when the task ends. Raises when the file cannot
+    be read or written, or the folder is a link; the caller then refuses the task rather than hand over the
+    original."""
+    if not settings.config_path:
+        return None
+    import tempfile
+
+    data = yaml.safe_load(Path(settings.config_path).read_text(encoding="utf-8")) or {}
+    if not isinstance(data, dict):
+        raise ValueError("config is not a mapping")
+    gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+    data["gateway"] = {**gateway, **{key: "" for key in STAFF_REDACTED}}
+    data["config_base"] = str(settings.base_dir())
+    text = yaml.safe_dump(data, allow_unicode=True, sort_keys=True)
+    directory.mkdir(parents=True, exist_ok=True)
+    info = os.lstat(directory)
+    if _is_link(info) or not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"staff config folder is a link or not a folder: {directory}")
+    fd, name = tempfile.mkstemp(prefix="staff-config-", suffix=".yaml", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(text)
+    except BaseException:
+        Path(name).unlink(missing_ok=True)
+        raise
+    return name

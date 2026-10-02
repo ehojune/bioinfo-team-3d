@@ -418,6 +418,7 @@ import {KIND_LABELS as REF_KIND, inferReference, syncReferenceChips} from './ui/
 const BOOT = window.LABHQ_BOOT || { mode: 'demo' };
 const QS = new URLSearchParams(location.search);
 const MODE = (QS.has('demo') || BOOT.mode !== 'live') ? 'demo' : 'live';
+const INSTANCE = BOOT.instance || '';
 if (MODE === 'demo') document.getElementById('view-3d').href = BOOT.mode === 'live' ? '/3d/?demo=1' : './lab3d/?demo=1';
 const SPEED = Math.max(0.25, Math.min(40, parseFloat(QS.get('speed') || '1') || 1));
 const $ = (s, r = document) => r.querySelector(s);
@@ -582,7 +583,7 @@ function renderHeader() {
   $('#note').hidden = MODE !== 'demo';
   $('#office').classList.toggle('offline', S.conn === 'offline');
   const n = S.approvals.size;
-  const title = `${n ? `(${n}) ` : ''}labhq 사무실`;
+  const title = `${n ? `(${n}) ` : ''}labhq${INSTANCE ? ` ${INSTANCE}` : ''} 사무실`;
   if (document.title !== title) document.title = title;
 }
 

@@ -167,6 +167,7 @@ Teammates' upstream results are in the context section. Deliver: what you did, k
 paths, caveats and open questions. If you cannot proceed without a PI decision, return JSON with
 "blocking_decision": "the specific question and choices". Do not proceed with the blocked work."""
 
+
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
                      "labhq collects only these: {paths}")
 
@@ -1720,6 +1721,8 @@ class Orchestrator:
                         return
                     briefing = b.text
 
+                reuse_advisory = ""  # semantics-hook
+
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
                     session_id, workdir = await self._free_session(
@@ -1734,6 +1737,7 @@ class Orchestrator:
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
                             packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                        prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
                         vocab = self._output_vocab()
@@ -1762,6 +1766,42 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                # semantics-shadow: begin (#149 decision 15 advisory A/B)
+                if research_lane:
+                    service = getattr(self.hub, "semantics_" + "shadow", None)
+                    if service is not None:
+                        try:
+                            draft, _ = _normalize_plan_outputs(plan)
+                            draft = prepare_research_declarations(draft, self._output_vocab(), {})
+                            snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
+                            offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
+                        except (ValueError, TypeError, PlanOutputsError):
+                            offer = None
+                        if offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
+                            req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
+                            self.hub.save_request(rid)
+                        if offer is not None and offer["offered"]:
+                            # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
+                            # prompt gains the list; the shadow arm sends its first prompt again.
+                            candidates = offer["candidates"]
+                            if candidates:
+                                lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
+                                         "If you use one, copy its artifact_id exactly into the relevant step's "
+                                         "input_refs:"]
+                                lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
+                                          f"created_request_id={c['request_id']}" for c in candidates[:5]]
+                                reuse_advisory = "\n".join(lines)
+                            plan_res = await make_plan(text)
+                            if not plan_res.ok:
+                                self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
+                                return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
+                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
+                                    else extract_json(plan_res.text) or {})
+                # semantics-shadow: end
                 details = normalize_questions(plan.get("clarifying_questions"))
                 questions = [q["question"] for q in details]
                 if questions:
