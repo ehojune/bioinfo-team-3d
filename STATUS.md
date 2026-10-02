@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · trial2-fixes — 2차 모의 시운전 결함 3건
+
+- 결론: 수정 재실행 순서, Codex 직원 cache 권한, 직원 간 Codex 로그인 파일 노출을 고쳤다.
+- 바뀐 것: `run_dag`가 이번 재실행의 전이적 조상을 기다린다. 쓰기 가능한 Codex task는 작업 폴더 안 cache를 쓰며 PI env가 우선한다. 다른 엔진 task에는 직원 `CODEX_HOME`을 개인 경로로 막는다.
+- 검증: 새 회귀 테스트는 수정 전 3 failed/2 passed, 수정 후 5 passed. 관련 파일은 154 passed, 34 passed/1 skipped, 235 passed/1 skipped, 30 passed. 공개 저장소 검사도 통과했다.
+- 미해결: 리뷰에서 지적되지 않은 중간 단계는 자동 재실행하지 않는다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/adapters/codex.py`, `labhq/private_paths.py`, `tests/test_cso.py`, `tests/test_read_only_followups.py`, `tests/test_private_paths.py`.
+
 ## 2026-10-03 · PR 준비 — 연구 lane CP2 뒤 리뷰·보고서 완주와 claim 앵커 검사(#90, #58 ③⑤)
 
 - 결론: CP2에서 승인하면 리뷰 한 번 → CSO 보고서 → claim 앵커 검사까지 간다. 결과는 `research_reported`, `report_incomplete`, `research_review_revise`, `research_review_unparsed` 중 하나로 끝난다.

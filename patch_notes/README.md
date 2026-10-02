@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:09 | [`ccc518a`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/ccc518a) | 리뷰 수정 재실행이 지적된 단계의 하류를 모두 다시 돌림(봇 P1) |
+| 07:01 | [`6c6c471`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/6c6c471) | 리뷰 수정 재실행이 비지적 중간 단계를 건너뛰어도 이번 실행의 전이적 조상이 끝날 때까지 기다리게 했다. |
+| 07:01 | [`d098bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/d098bdb) | 쓰기 가능한 Codex 직원의 pip·matplotlib·XDG cache 기본 경로를 작업 폴더 안으로 옮기고 PI 설정은 유지했다. |
+| 07:01 | [`f3e9f00`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/f3e9f00) | Claude 등 다른 직원에게 Codex 직원 CODEX_HOME을 개인 경로로 막고 Codex 자신에게는 계속 열어 뒀다. |
 | 06:57 | [`eefcd80`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/eefcd80) | 연구 리뷰 판정을 P1 지적에 맞추고, 앵커 표기 변형 검사·코드 안 앵커 제외(봇 지적) |
 | 06:49 | [`32adfe9`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/32adfe9) | 합성 뒤 예산 카드가 거부돼도 끝난 보고서는 남기고 앵커 검사 결과대로 끝낸다. 예산 거부는 보고서 메타데이터 줄로만 적는다. |
 | 06:36 | [`8d3b86c`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/8d3b86c) | 연구 보고서의 [[claim:step/claim]] 앵커를 원장과 대조하는 검사를 순수 함수로 더했다. 없는 claim, 거부된 근거뿐인 claim, hash 없는 artifact, 앵커 0개를 잡는다. |
