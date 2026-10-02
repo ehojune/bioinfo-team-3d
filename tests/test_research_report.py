@@ -26,7 +26,7 @@ FAILED_LOOKUP = {"id": "e2", "kind": "database_annotation", "observation": "GEO 
                  "assessment_reason": "a replication cohort would test the effect"}
 
 
-def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=False):
+def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=False, synthesis_usd=None):
     settings = _settings()
     settings.orchestrator.reviewer_agent = "sci_reviewer"
     holder = {}
@@ -48,7 +48,7 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
         if kind == "review":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=review)
         if kind == "synthesis":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=report)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text=report, cost_usd=synthesis_usd)
         raise AssertionError(f"unexpected task kind {kind}")
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
@@ -57,6 +57,8 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
 
     async def approval(**kwargs):
         hub.approvals.append(kwargs)
+        if kwargs["kind"] == "budget":
+            return {"approved": False, "note": "denied", "approval_id": "budget_no", "decided_at": 1.0}
         return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
 
     hub.request_approval = approval
@@ -87,6 +89,24 @@ async def test_approved_evidence_is_reviewed_and_reported_with_checked_anchors()
     synthesis = hub.calls[3].prompt
     assert "[[claim:s1/c1]]" in synthesis and "no external cohort" in synthesis
     assert req["research_contract"]["review"]["verdict"] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_budget_denied_after_a_finished_report_keeps_the_report():
+    # The cap is crossed by the report's own cost; the card after it is denied. The report already ran, so it
+    # stays and is checked, and the denial only fails the request (as in the generic synthesis).
+    hub = _hub(synthesis_usd=2.0)
+    hub.requests["r"]["budget_usd"] = 1.0
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review", "synthesis"]
+    assert [item["kind"] for item in hub.approvals][-1] == "budget"
+    assert req["report"].startswith(REPORT) and "stopped: the budget was not approved" not in req["report"]
+    assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
+    assert req["outcome"] == "research_reported" and req["status"] == "failed"
+    assert "failure" not in req["research_contract"]
+    assert "Budget: $2.00 > $1.00; denied." in req["report"]
 
 
 # ---------- ②③④ the anchor check marks the report incomplete ----------

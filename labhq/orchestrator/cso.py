@@ -2025,20 +2025,23 @@ class Orchestrator:
                 issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)),
             meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
                   **({"workdir": workdir} if workdir else {})}))
-        if rid in self.budget_denials:
-            budget_denied("synthesis", review)
-            return
         if not final.ok:
-            end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
-                {"stage": "synthesis", "error": final.error or "unknown error"})
+            if rid in self.budget_denials:
+                budget_denied("synthesis", review)
+            else:
+                end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
+                    {"stage": "synthesis", "error": final.error or "unknown error"})
             return
+        # A report that finished keeps its text and check even if the budget card after it was denied; the denial
+        # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
         check = check_report(final.text, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         report = _append_report_metadata(final.text, [*claim_check, cp2_audit])
-        end("report_incomplete" if check["problems"] else "research_reported", report, not check["problems"], review)
+        end("report_incomplete" if check["problems"] else "research_reported", report,
+            not check["problems"] and rid not in self.budget_denials, review)
 
     def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                           refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
