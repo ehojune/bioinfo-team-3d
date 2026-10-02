@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, expand_env, record_model_id, wrap_cwd
+from .base import AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id, wrap_cwd
 from .owned import write_owned
 
 APPROVAL_MAP = {"plan": "plan", "acceptEdits": "auto_edit", "auto": "auto_edit",
@@ -38,7 +38,7 @@ class GeminiAdapter(AgentAdapter):
             else:
                 servers[s.name] = {"httpUrl": s.url, "headers": expand_env(s.headers)}
         write_owned(ctx.workdir, ".gemini/settings.json", json.dumps({"mcpServers": servers}, indent=2))
-        write_owned(ctx.workdir, "GEMINI.md", ctx.agent.system_prompt.strip() + "\n" + ROLE_FOOTER)
+        write_owned(ctx.workdir, "GEMINI.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.gemini

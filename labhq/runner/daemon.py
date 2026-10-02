@@ -31,7 +31,9 @@ from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Eng
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
-from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
+from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
+                      claude_settings, rule_tool)
+from ..private_paths import ENV_VAR as PRIVATE_PATHS_ENV, plugin_keep_dirs, resolve_private_paths, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
 from ..registry import Registry
@@ -163,6 +165,8 @@ class Runner:
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
+        self.private_skip_warned: set[str] = set()
+        self.private_shell_warned: set[str] = set()
         self.project_link_warned: set[tuple] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
@@ -910,11 +914,35 @@ class Runner:
                 await emit("agent.status", {"state": "error", "error": error})
                 await emit("task.result", result.model_dump(mode="json"))
                 return result
+            # PI personal paths (policy.private_paths): one that holds a folder this task works in is left open.
+            keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
+                    *(self.s.path(r) for r in self.s.runner.reference_roots),
+                    *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir),
+                    *plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir),
+                    *staff_codex_homes(self.s, ws.dir, agent.engine == Engine.codex)]
+            if task.meta.get("kind") == "recruit":  # the recruiter reads the Paper2Agent skill's own files
+                from ..recruit.paper2agent import skill_path
+                keep.append(skill_path(self.s.recruit.contract_engine))
+            private = resolve_private_paths(self.s, keep)
+            for label in private.skipped:
+                if label not in self.private_skip_warned:
+                    self.private_skip_warned.add(label)
+                    await emit("agent.log", {"level": "warn", "text": (
+                        f"개인 경로 차단에서 제외: {label} (작업에 쓰는 폴더를 포함합니다). labhq doctor의 private paths를 보세요")})
+            # With private paths active no shell rule is pre-approved; without the gate Claude refuses every command.
+            if (private.paths and agent.engine == Engine.claude_code and "approval" not in agent.builtin_mcp
+                    and any(rule_tool(t) in SHELL_TOOLS for t in agent.tools)
+                    and agent.id not in self.private_shell_warned):
+                self.private_shell_warned.add(agent.id)
+                await emit("agent.log", {"level": "warn", "text": (
+                    f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
+                    "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
+                PRIVATE_PATHS_ENV: os.pathsep.join(private.paths),
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
@@ -927,8 +955,11 @@ class Runner:
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs,
                 # Other engines never read these rules; only paths a rule can name go in (#177).
-                claude_settings=claude_deny_links(claude_read_only(
+                claude_settings=claude_deny_private(claude_deny_links(claude_read_only(
                     claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
+                    private.paths),
+                private_labels=list(private.labels),
+                private_paths=list(private.paths),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

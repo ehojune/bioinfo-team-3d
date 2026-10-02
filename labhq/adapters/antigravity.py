@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 from ..util import short
-from .base import ROLE_FOOTER, AgentAdapter, RunContext, RunState, record_model_id
+from .base import AgentAdapter, role_footer, RunContext, RunState, record_model_id
 
 
 class AntigravityAdapter(AgentAdapter):
@@ -25,7 +25,7 @@ class AntigravityAdapter(AgentAdapter):
 
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.antigravity
-        prompt = a.system_prompt.strip() + "\n" + ROLE_FOOTER + "\n" + ctx.prompt
+        prompt = a.system_prompt.strip() + "\n" + role_footer(ctx) + "\n" + ctx.prompt
         cmd = [b.bin, "-p", prompt, "--output-format", "stream-json"]
         if a.model:
             cmd += ["--model", a.model]

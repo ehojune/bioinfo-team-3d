@@ -285,6 +285,10 @@ class BioinfoAgentPolicy(BaseModel):
 class PolicySettings(BaseModel):
     data_zones: list[DataZone] = []
     allow_runner_read_restricted: bool = False
+    # PI personal files staff must not open while they run under the PI's account (PI decision 2026-10-03).
+    # None (key absent) → labhq.private_paths.DEFAULT_HOME_ENTRIES plus labhq's own config and gateway state;
+    # [] turns it off. `~` expands on the runner host; paths that do not exist are skipped.
+    private_paths: list[str] | None = None
     approvals: ApprovalRules = ApprovalRules()
     budget: BudgetSettings = BudgetSettings()
     bioinfo_agent: BioinfoAgentPolicy = BioinfoAgentPolicy()

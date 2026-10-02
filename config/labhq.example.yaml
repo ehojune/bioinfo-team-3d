@@ -48,6 +48,29 @@ hpc:
 policy:
   data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: data_zones: []
     - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
+  # PI 개인 경로(README §8): 직원이 PI 계정으로 돌 때 열면 안 되는 곳. 키를 빼면 아래 기본 목록,
+  # [] 이면 끔. ~는 runner PC에서 펼치고, 없는 경로는 건너뜀. 작업 폴더를 담은 경로는 그 task에서 빠짐.
+  # private_paths:
+  #   - ~/.ssh
+  #   - ~/.aws
+  #   - ~/.azure
+  #   - ~/.gnupg
+  #   - ~/.docker
+  #   - ~/.kube
+  #   - ~/.config/gh
+  #   - ~/.config/gcloud
+  #   - ~/.git-credentials
+  #   - ~/.netrc
+  #   - ~/.claude
+  #   - ~/.claude.json
+  #   - ~/.codex
+  #   - ~/AppData/Local/Google/Chrome/User Data
+  #   - ~/AppData/Local/Microsoft/Edge/User Data
+  #   - ~/AppData/Roaming/Mozilla/Firefox
+  #   - ~/.config/google-chrome
+  #   - ~/.config/microsoft-edge
+  #   - ~/.mozilla
+  #   # 기본 목록에는 이 설정 파일과 gateway.state_dir도 들어감. 목록을 직접 쓰면 필요한 만큼 다시 적음
   approvals:
     hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인
     timeout_s: 3600
