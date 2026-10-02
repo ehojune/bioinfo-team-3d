@@ -45,6 +45,7 @@ from ..util import output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
+from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .workspace import TaskWorkspace
@@ -193,6 +194,7 @@ class Runner:
         self.connected = asyncio.Event()
         self._stopping = False
         self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
+        self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         self._finish_interrupted_tasks()
 
     def _finish_interrupted_tasks(self) -> None:
@@ -981,8 +983,9 @@ class Runner:
                 if refused:  # fail closed: a run whose writes cannot be checked does not start
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
                 else:
+                    adapter = get_adapter(agent.engine, self.s)
                     try:
-                        result = await get_adapter(agent.engine, self.s).run(ctx)
+                        result = await adapter.run(ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
@@ -990,6 +993,12 @@ class Runner:
                         raise
                     if watch and watch.baseline is not None:
                         result = await self._read_only_verdict(result, watch, emit, ws, task.id)
+                    staff_env = getattr(adapter, "staff_env", None)
+                    if agent.engine == Engine.codex and staff_env is not None:
+                        try:
+                            await self.codex_sandbox.after_run(self.s, ctx, staff_env(ctx), result, emit)
+                        except OSError:
+                            log.warning("codex sandbox record failed", exc_info=True)
                 result.pending_asks = self.broker.pending_for_task(task.id)
                 outcome = read_ask_results(self.broker.task_ask_results.get(task.id, []))
                 if outcome["status"] == "rejected":
