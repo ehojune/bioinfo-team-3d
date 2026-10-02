@@ -1,0 +1,16 @@
+pr: 332
+rows:
+- sha: 6fb9a75
+  at: 2026-10-03 05:10
+  text: 직원 CLI가 마지막 turn 이벤트 뒤 runner.exit_grace_s(기본 45초) 안에 끝나지 않으면 프로세스 트리를 끝내고
+    받은 결과로 단계를 마침(#330). Codex MCP env 중 Codex가 이미 가진 값(broker token)은 env_vars로 이름만
+    넘김
+- sha: 730eab4
+  at: 2026-10-03 05:22
+  text: Codex를 유예 뒤 끝냈을 때 결과는 turn의 마지막 agent 메시지(중간 메시지를 이어 붙이지 않음)
+- sha: d9d36f3
+  at: 2026-10-03 05:24
+  text: 'main 병합: 실행 guard의 종료 코드와 #329의 명령 실행 기록을 함께 둠'
+- sha: 364f5e8
+  at: 2026-10-03 05:34
+  text: 마지막 메시지 대체는 exit guard가 프로세스를 끝낸 경우에만(평소 종료는 기존 동작)

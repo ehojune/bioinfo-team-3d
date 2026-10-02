@@ -151,8 +151,15 @@ class CodexAdapter(AgentAdapter):
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
                 flags += ["-c", f"{key}.command={_toml(command)}", "-c", f"{key}.args={_toml(args)}"]
-                if s.env:
-                    flags += ["-c", f"{key}.env={_toml(expand_env(s.env))}"]
+                # A value Codex already holds in its own env (the broker token among them) goes by name, so no
+                # secret sits on the command line other processes of the account can read (#330).
+                env, child = expand_env(s.env), self.staff_env(ctx)
+                held = [k for k, v in env.items() if child.get(k) == v]
+                inline = {k: v for k, v in env.items() if k not in held}
+                if inline:
+                    flags += ["-c", f"{key}.env={_toml(inline)}"]
+                if held:
+                    flags += ["-c", f"{key}.env_vars={_toml(held)}"]
             else:
                 flags += ["-c", f"{key}.url={_toml(s.url)}"]
         if not ctx.read_only:  # PI extra_args could widen the sandbox; a read-only run takes none
@@ -166,6 +173,8 @@ class CodexAdapter(AgentAdapter):
         ev = json.loads(line)
         record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
         typ = ev.get("type")
+        if typ == "turn.failed":
+            st.result_seen = True  # the turn is over either way: the exit guard applies (#330)
         if typ == "thread.started":
             st.session_id = ev.get("thread_id")
             await ctx.emit("agent.status", {"state": "working", "engine": "codex"})
@@ -174,6 +183,7 @@ class CodexAdapter(AgentAdapter):
             it = item.get("type") or item.get("item_type")
             if it in ("agent_message", "assistant_message") and typ == "item.completed":
                 st.text_parts.append(item.get("text", ""))
+                st.last_message = item.get("text", "")
                 await ctx.emit("agent.log", {"text": short(item.get("text"), 2000)})
             elif it == "reasoning" and typ == "item.completed":
                 await ctx.emit("agent.log", {"level": "thinking", "text": short(item.get("text"), 400)})
@@ -235,4 +245,9 @@ class CodexAdapter(AgentAdapter):
         last = read_owned(ctx.workdir, ".labhq/last_message.txt")
         if last and last.strip():
             st.final_text = last
+        elif st.ended_by_guard and st.last_message and st.last_message.strip():
+            # Codex writes -o only after its shutdown returns; when that shutdown hangs and the exit guard ends the
+            # process, the file never appears. Its final answer is the turn's last agent message, not every message
+            # joined (#330 review).
+            st.final_text = st.last_message
         return super().finalize(st, ctx, returncode)

@@ -36,6 +36,9 @@ class RunnerSettings(BaseModel):
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
+    # After the CLI's final turn event, how long its process may take to exit before labhq ends its tree and
+    # finishes the step with the result already received (#330).
+    exit_grace_s: float = Field(default=45, ge=0)
     job_poll_s: int = 60
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000

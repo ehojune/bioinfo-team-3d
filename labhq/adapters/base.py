@@ -296,6 +296,8 @@ class RunContext:
 @dataclass
 class RunState:
     text_parts: list[str] = field(default_factory=list)
+    last_message: str | None = None  # the turn's last agent message: Codex's own final answer (#330)
+    ended_by_guard: bool = False  # labhq ended the process after its final event (exit_grace_s)
     final_text: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
@@ -541,6 +543,8 @@ class AgentAdapter(ABC):
             proc.stdin.close()
         st = RunState()
         stderr_tail: deque[str] = deque(maxlen=60)
+        result_arrived = asyncio.Event()
+        ended_after_result = False
 
         async def read_out() -> None:
             assert proc.stdout
@@ -552,6 +556,25 @@ class AgentAdapter(ABC):
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
                     await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                if st.result_seen:
+                    result_arrived.set()
+
+        async def exit_guard() -> None:
+            """The final turn event arrived but the CLI stays up (#330): end its tree and keep the result."""
+            nonlocal ended_after_result
+            await result_arrived.wait()
+            grace = self.settings.runner.exit_grace_s
+            try:
+                await asyncio.wait_for(proc.wait(), grace)
+                return
+            except asyncio.TimeoutError:
+                if proc.returncode is not None:
+                    return
+            ended_after_result = True
+            await ctx.emit("agent.log", {"level": "warn", "text": (
+                f"turn이 끝났는데 {self.engine} 프로세스가 {grace:g}s 안에 종료하지 않아 labhq가 프로세스 트리를 "
+                "끝냈습니다. 받은 결과로 단계를 마칩니다")})
+            await self._kill(proc)
 
         async def read_err() -> None:
             assert proc.stderr
@@ -559,6 +582,7 @@ class AgentAdapter(ABC):
                 stderr_tail.append(raw.decode(errors="replace").rstrip())
 
         drain = asyncio.gather(read_out(), read_err(), proc.wait())
+        guard = asyncio.create_task(exit_guard())
         try:
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
@@ -566,9 +590,15 @@ class AgentAdapter(ABC):
             await self._kill(proc)
             await drain
         except asyncio.CancelledError:
+            guard.cancel()
             await self._kill(proc)
             await asyncio.shield(drain)
             raise
+        finally:
+            if not ended_after_result:
+                guard.cancel()
+        await asyncio.gather(guard, return_exceptions=True)  # a guard that is ending the tree finishes first
+        returncode = 0 if ended_after_result else proc.returncode  # ended by labhq after the result: not a failure
         try:
             ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))
         except OwnedPathError:  # the agent replaced .labhq with a link while it ran: keep the result, drop the tail
@@ -576,12 +606,13 @@ class AgentAdapter(ABC):
                 "작업 폴더의 .labhq가 실행 중에 링크로 바뀌어 stderr 기록을 남기지 않았습니다")})
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
-        res = self.finalize(st, ctx, proc.returncode)
+        st.ended_by_guard = ended_after_result
+        res = self.finalize(st, ctx, returncode)
         ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
             res.error = f"{res.error}: {short(stderr, 500)}"
-        if proc.returncode not in (0, None) and not res.error:
-            res.error = f"exit {proc.returncode}: " + " | ".join(list(stderr_tail)[-5:])
+        if returncode not in (0, None) and not res.error:
+            res.error = f"exit {returncode}: " + " | ".join(list(stderr_tail)[-5:])
         return res
 
     @staticmethod
