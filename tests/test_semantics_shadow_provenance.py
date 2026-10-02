@@ -394,3 +394,48 @@ def test_an_explicit_artifact_input_is_reduced_to_the_same_root_input(tmp_path):
     prov = line_for(hub, "req_now", observed)["provenance"]
     assert prov["candidates"] == 2 and len(prov["candidate_refs"]) == 2
     assert prov["excluded"]["input_unknown"] == prov["excluded"]["input_mismatch"] == 0
+
+
+def test_equal_digest_without_an_explicit_artifact_edge_is_not_ancestry(tmp_path):
+    """#269: raw input bytes that match an earlier output do not inherit that output's producer roots."""
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "raw.tsv").write_bytes(b"x\n")  # the same bytes as req_old's made.tsv
+    requests = {
+        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "raw.tsv", "wanted.tsv", created_at=2.0),
+    }
+    requests["req_now"]["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "made.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    _accepted_reference(tasks["task_now"], inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["history_artifacts"] == 1 and prov["candidates"] == 0
+    assert prov["excluded"]["input_mismatch"] == 1 and prov["excluded"]["input_unknown"] == 0
+
+
+@pytest.mark.parametrize(("made_at", "candidates"), [(1.0, 1), (3.0, 0)], ids=["earlier", "later"])
+def test_an_accepted_reference_to_the_earlier_output_itself_is_ancestry(tmp_path, made_at, candidates):
+    """#269: the runner opened the earlier request's output at its own path, as in the 2nd-run replay: that file is
+    the output, so it reduces to the producer's root input like an explicit plan edge. A producer that is not
+    earlier is no ancestry."""
+    requests = {
+        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=made_at),
+        "req_now": _target_request("req_now", "made.tsv", "wanted.tsv", created_at=2.0),
+    }
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "made.tsv", "table")}
+    old_outputs = Path(tasks["task_old"]["result"]["workdir"]) / "outputs"
+    requests["req_now"]["references"] = [{"kind": "path", "value": str(old_outputs)}]
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    _accepted_reference(tasks["task_now"], old_outputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["history_artifacts"] == 1 and prov["candidates"] == candidates
+    assert prov["excluded"]["input_mismatch"] == 1 - candidates and prov["excluded"]["input_unknown"] == 0

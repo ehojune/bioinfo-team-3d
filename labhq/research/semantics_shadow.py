@@ -1085,9 +1085,11 @@ def _request_input_hashes(req: Mapping[str, Any]) -> set[str]:
 
 
 def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
-                          current: str, hashes: dict) -> dict[str, set[str]]:
-    """Persist each request's input digest at its own shadow observation; never re-hash history."""
+                          current: str, hashes: dict) -> tuple[dict[str, set[str]], dict[tuple[str, str], set[str]]]:
+    """Persist each request's input digest at its own shadow observation; never re-hash history. Also where each
+    (request, digest) was read, as normalized paths, for ``_located_artifact_inputs``."""
     found: dict[str, set[str]] = {}
+    places: dict[tuple[str, str], set[str]] = {}
     for task_id, task in records.tasks.items():
         request = task.get("request_id")
         result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
@@ -1117,12 +1119,38 @@ def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Rea
                         seen = None
                 if isinstance(seen, Mapping) and isinstance(seen.get("sha256"), str):
                     found.setdefault(request, set()).add("file:" + seen["sha256"])
-    return found
+                    places.setdefault((request, "file:" + seen["sha256"]), set()).add(link)
+    return found, places
 
 
-def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
-    """Existing #249 plan edges become input hashes only when the referenced artifact was already hashed."""
+def _located_artifact_inputs(p: Any, places: Mapping[tuple[str, str], set[str]],
+                             locations: Mapping[tuple[str, str], str],
+                             created: Mapping[str, float]) -> dict[tuple[str, str], set[str]]:
+    """(request, hash) -> producers, for an accepted reference file that is an earlier request's hashed output
+    itself: the runner opened that output's own path and saw its recorded digest. That is an explicit edge too,
+    unlike bytes that merely equal some output (#269)."""
+    where: dict[str, set[tuple[str, str]]] = {}
+    for row in p.artifacts.values():
+        producer, workdir = row.get("request"), locations.get((row.get("workspace"), row.get("path")))
+        if isinstance(producer, str) and isinstance(workdir, str) and row.get("sha256") != sem.UNKNOWN:
+            where.setdefault(_norm(os.path.join(workdir, row["path"])), set()).add((producer, "file:" + row["sha256"]))
+    ancestry: dict[tuple[str, str], set[str]] = {}
+    for (request, identity), links in places.items():
+        for link in links:
+            for producer, made in where.get(link, ()):
+                made_at, used_at = created.get(producer), created.get(request)
+                if (made == identity and producer != request and isinstance(made_at, (int, float))
+                        and isinstance(used_at, (int, float)) and made_at < used_at):
+                    ancestry.setdefault((request, identity), set()).add(producer)
+    return ancestry
+
+
+def _declared_artifact_inputs(p: Any) -> tuple[dict[str, set[str]], dict[tuple[str, str], set[str]]]:
+    """Input hashes from existing #249 plan edges to already hashed artifacts, and for each (request, hash) the
+    other requests that produced the artifact the edge names. With ``_located_artifact_inputs`` this is the only
+    ancestry (#269): a raw input whose bytes equal some other output keeps its own identity."""
     found: dict[str, set[str]] = {}
+    ancestry: dict[tuple[str, str], set[str]] = {}
     for row in p.runs.values():
         request = row.get("request")
         if not isinstance(request, str):
@@ -1130,11 +1158,15 @@ def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
         for artifact in row.get("_used") or []:
             art = p.artifacts.get(artifact)
             if art is not None and art.get("sha256") != sem.UNKNOWN:
-                found.setdefault(request, set()).add("file:" + art["sha256"])
-    return found
+                identity = "file:" + art["sha256"]
+                found.setdefault(request, set()).add(identity)
+                producer = art.get("request")
+                if isinstance(producer, str) and producer != request:
+                    ancestry.setdefault((request, identity), set()).add(producer)
+    return found, ancestry
 
 
-def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mapping[str, set[str]],
+def _root_inputs(request: str, direct: Mapping[str, set[str]], ancestry: Mapping[tuple[str, str], set[str]],
                  cache: dict[str, set[str] | None], stack: frozenset[str] = frozenset()) -> set[str] | None:
     """Replace an explicitly linked earlier artifact with that artifact's root request inputs."""
     if request in cache:
@@ -1144,15 +1176,11 @@ def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mappin
         return None
     roots: set[str] = set()
     for identity in direct[request]:
-        producers = artifacts.get(identity)
+        producers = sorted(ancestry.get((request, identity)) or ())
         if not producers:
             roots.add(identity)
             continue
-        earlier = sorted(rid for rid in producers if rid != request)
-        if not earlier:
-            roots.add(identity)
-            continue
-        resolved = [_root_inputs(rid, direct, artifacts, cache, stack | {request}) for rid in earlier]
+        resolved = [_root_inputs(rid, direct, ancestry, cache, stack | {request}) for rid in producers]
         known = [value for value in resolved if value]
         if not known or any(value != known[0] for value in known[1:]):
             cache[request] = None
@@ -1234,16 +1262,16 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         check()
         direct_inputs = {request: _request_input_hashes(req)
                          for request, req in snap["requests"].items()}
-        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes),
-                         _declared_artifact_inputs(p)):
+        accepted, places = _accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes)
+        declared, ancestry = _declared_artifact_inputs(p)
+        created = {r: (req.get("created_at") or 0) for r, req in snap["requests"].items()}
+        for key, producers in _located_artifact_inputs(p, places, locations, created).items():
+            ancestry.setdefault(key, set()).update(producers)
+        for evidence in (accepted, declared):
             for request, identities in evidence.items():
                 direct_inputs.setdefault(request, set()).update(identities)
-        artifact_inputs: dict[str, set[str]] = {}
-        for row in p.artifacts.values():
-            if row["sha256"] != sem.UNKNOWN and isinstance(row.get("request"), str):
-                artifact_inputs.setdefault("file:" + row["sha256"], set()).add(row["request"])
         input_cache: dict[str, set[str] | None] = {}
-        current_inputs = _root_inputs(rid, direct_inputs, artifact_inputs, input_cache)
+        current_inputs = _root_inputs(rid, direct_inputs, ancestry, input_cache)
         vocab = output_vocab.current()
         targets = _target_types(snap["requests"].get(rid) or {}, vocab)
         check()
@@ -1253,7 +1281,6 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         excluded = {reason: 0 for reason in REASONS}
         candidates: list[tuple[float, str]] = []
         population = 0
-        created = {r: (req.get("created_at") or 0) for r, req in snap["requests"].items()}
         for art, row in advisory.result["candidates"].items():
             if row["request"] == rid:
                 continue
@@ -1269,7 +1296,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                 reasons.append("target_type_unknown")
             elif row["data_type"] != sem.UNKNOWN and row["data_type"] not in targets:
                 reasons.append("target_type_mismatch")
-            candidate_inputs = _root_inputs(row["request"], direct_inputs, artifact_inputs, input_cache)
+            candidate_inputs = _root_inputs(row["request"], direct_inputs, ancestry, input_cache)
             if current_inputs is None or candidate_inputs is None:
                 reasons.append("input_unknown")
             elif current_inputs != candidate_inputs:
