@@ -675,7 +675,7 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
-            if result.pipeline_submission is not None:
+            if result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr:
                 self.store.put("pipeline_submission", tid, {
                     "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
                     "state": "ready", "submission": result.pipeline_submission,
@@ -683,6 +683,7 @@ class Hub:
                 pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
                                   "agent_id": result.agent_id, "request_id": rid,
                                   "data": {"name": result.pipeline_submission.get("name")}}
+            if result.pipeline_submission is not None:  # never published to web clients, on or off
                 result = result.model_copy(update={"pipeline_submission": None})
                 msg = {**msg, "data": result.model_dump(mode="json")}
             if task:
@@ -767,6 +768,9 @@ class Hub:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=f"no runner hosts agent {task.agent_id!r}")
+        if task.agent_id == "bioinfo-agent" and self.s.policy.bioinfo_agent.pipeline_pr:
+            # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
+            task.meta["pipeline_pr"] = True
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
         self.task_runner[task.id] = rid
@@ -1148,7 +1152,21 @@ class Hub:
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
         await self.orchestrator.run_request(rid)
 
+    def pipeline_prs(self) -> dict[str, dict]:
+        """Each request's latest pipeline PR status from its stored row, so a late client sees it (#301 review)."""
+        latest: dict[str, dict] = {}
+        for entry in self.store.all("pipeline_submission").values():
+            rid = entry.get("request_id")
+            if not rid or entry.get("state") not in {"pending", "open", "rejected"}:
+                continue
+            if rid not in latest or (entry.get("updated_at") or 0) >= (latest[rid].get("updated_at") or 0):
+                latest[rid] = entry
+        return {rid: {"status": e["state"], "name": (e.get("submission") or {}).get("name"),
+                      "reason": e.get("reason"), "url": e.get("url"), "number": e.get("number")}
+                for rid, e in latest.items()}
+
     def snapshot(self) -> dict[str, Any]:
+        pipeline_prs = self.pipeline_prs()
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
             "agents": list(self.agents.values()),
@@ -1163,6 +1181,7 @@ class Hub:
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                                           for sid, outcome in (r.get("results") or {}).items()},
                           "step_details": self.request_step_details(r.get("id", ""), r),
+                          **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
                          for r in self.requests.values()],
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}

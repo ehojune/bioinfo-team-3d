@@ -259,6 +259,9 @@ class BioinfoAgentPolicy(BaseModel):
     hard_stops: list[Literal["data_zone", "budget_cap", "installation", "out_of_scope", "destructive"]] = [
         "data_zone", "budget_cap", "installation",
     ]
+    # Off by default (#300): another lab running labhq may not want to contribute upstream. When off the
+    # runner sends no pipeline files and the gateway makes no GitHub call for them.
+    pipeline_pr: bool = False
     pipeline_repo: str = "ehojune/bioinfo-agent"
     pipeline_base_branch: str = "main"
 

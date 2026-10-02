@@ -56,6 +56,7 @@ policy:
     per_request_usd: 30
   bioinfo_agent:
     hard_stops: [data_zone, budget_cap, installation]
+    pipeline_pr: false                     # 기본 꺼짐. true면 새 pipeline을 아래 저장소에 branch·PR로 올림
     pipeline_repo: ehojune/bioinfo-agent   # gateway token이 branch·PR을 만들며 직원에게 token을 주지 않음
     pipeline_base_branch: main
 

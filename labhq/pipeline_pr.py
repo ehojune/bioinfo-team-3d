@@ -15,14 +15,54 @@ PIPELINE_SCHEMA = 1
 PIPELINE_MAX_FILES = 100
 PIPELINE_MAX_BYTES = 1_000_000
 PIPELINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
-PIPELINE_DATA_SUFFIXES = {
-    ".bam", ".bai", ".cram", ".crai", ".sam", ".fastq", ".fq", ".fasta", ".fa", ".fna",
-    ".vcf", ".bcf", ".bed", ".bigwig", ".bw", ".h5", ".h5ad", ".parquet", ".zip", ".gz", ".tar",
-}
+# Allowlist of pipeline source kinds (#301 review). Anything else is refused, so a new data format
+# (samples.csv, counts.tsv, reads.fastq, calls.vcf, cells.h5ad, ...) never needs a denylist entry.
+PIPELINE_SOURCE_SUFFIXES = {".nf", ".config", ".groovy", ".py", ".r", ".sh", ".md", ".yaml", ".yml", ".json"}
+# Small extensionless or .txt files: LICENSE, .gitignore, the assets/NO_* placeholders of an optional input.
+PIPELINE_SMALL_TEXT_SUFFIXES = {"", ".txt"}
+PIPELINE_SMALL_TEXT_BYTES = 4096
+# bioinfo-agent new-pipeline.md section 7: assets/ holds samplesheet examples and the test fixture list, and the
+# test profile points at remote miniature data. So a table passes only as assets/samplesheet*.csv|tsv whose
+# rows each name an https URL; a sample/phenotype/result table has no such column and is refused.
+PIPELINE_FIXTURE = re.compile(r"assets/samplesheet[A-Za-z0-9_.-]*\.(?:csv|tsv)", re.IGNORECASE)
+PIPELINE_FIXTURE_BYTES = 8192
 LOCAL_ABSOLUTE_PATH = re.compile(
-    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|~[\\/]|"
-    r"/(?:home|users|bio|scratch|private|mnt/[a-z])/)"
+    r"(?i)(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+|~[\\/])|\bfile:/"
 )
+# Every Unix absolute path: "/" opening a token (line start, after whitespace or an operator, or after an
+# opening quote) and followed by a path character. URL paths ("https://h/x"), "${dir}/x", "a/b" and
+# '"$HOME"/x' are relative to something else, so they do not match.
+UNIX_ABSOLUTE_PATH = re.compile(
+    r"""(?:^|(?<=[\s=:(\[{,;|&<>!])|(?:(?<=[\s=:(\[{,;|&<>!])|^)['"`])/(?=[A-Za-z0-9_.~$-])""", re.MULTILINE
+)
+# The only absolute paths every POSIX host has: an interpreter after "#!" and the standard streams.
+PORTABLE_ABSOLUTE_PATH = re.compile(
+    r"#!\s*/(?:usr/bin/env|bin/(?:ba)?sh)(?![A-Za-z0-9_.-])|/dev/(?:null|stdin|stdout|stderr)(?![A-Za-z0-9_.-])"
+)
+
+
+def _local_absolute_path(text: str) -> bool:
+    if LOCAL_ABSOLUTE_PATH.search(text):
+        return True
+    return bool(UNIX_ABSOLUTE_PATH.search(PORTABLE_ABSOLUTE_PATH.sub(" ", text)))
+
+
+def _file_kind_rejection(relative: PurePosixPath, content: str) -> str | None:
+    """Why one bundle file is not pipeline source. `relative` is the path inside pipelines/<name>/."""
+    suffix = relative.suffix.casefold()
+    size = len(content.encode("utf-8"))
+    if suffix in PIPELINE_SOURCE_SUFFIXES:
+        return None
+    if suffix in PIPELINE_SMALL_TEXT_SUFFIXES:
+        return None if size <= PIPELINE_SMALL_TEXT_BYTES else "small text file exceeds 4 KB"
+    if not PIPELINE_FIXTURE.fullmatch(relative.as_posix()):
+        return "file type is not pipeline source"
+    if size > PIPELINE_FIXTURE_BYTES:
+        return "test samplesheet exceeds 8 KB"
+    rows = [line for line in content.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if len(rows) < 2 or any("https://" not in row for row in rows[1:]):
+        return "test samplesheet rows must point at remote https test data"
+    return None
 
 
 def collect_pipeline_submission(workdir: Path, outputs: list[str], scan_note: str | None = None) -> dict | None:
@@ -102,10 +142,11 @@ def pipeline_rejection(submission: dict, settings: Settings) -> str | None:
         pure = PurePosixPath(path)
         if (not isinstance(content, str) or path in paths or pure.is_absolute() or "\\" in path
                 or any(part in {"", ".", ".."} for part in pure.parts)
-                or pure.parts[:2] != ("pipelines", name)):
+                or len(pure.parts) < 3 or pure.parts[:2] != ("pipelines", name)):
             return "pipeline file path or content is invalid"
-        if pure.suffix.casefold() in PIPELINE_DATA_SUFFIXES:
-            return f"data file is not allowed in pipeline PR: {path}"
+        kind = _file_kind_rejection(PurePosixPath(*pure.parts[2:]), content)
+        if kind:
+            return f"data file is not allowed in pipeline PR ({kind}): {path}"
         paths.add(path)
         texts.append(content)
     if not required.issubset(paths):
@@ -113,7 +154,7 @@ def pipeline_rejection(submission: dict, settings: Settings) -> str | None:
     for text in texts:
         if re.search(r"\bYuan\b", text, re.IGNORECASE):
             return "private knowledge-store references are not allowed"
-        if LOCAL_ABSOLUTE_PATH.search(text):
+        if _local_absolute_path(text):
             return "local absolute path is not allowed"
         if sanitize(text, settings.policy, [settings.gateway.client_token, settings.gateway.runner_token],
                     limit=None) != text:

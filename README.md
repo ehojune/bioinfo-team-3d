@@ -315,7 +315,7 @@ flowchart LR
 이슈 제목·본문·코멘트·보고서·커밋 메시지를 모두 검사합니다. `/`나 `E:/` 같은 루트를 통제 구역으로 두면 아무것도 게시하지 않습니다.
 
 bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI에게 올립니다.
-새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. 게이트웨이가 별도 GitHub token으로 public bioinfo-agent 저장소에 branch·PR을 만들며, 데이터·비밀값·로컬 절대경로가 있으면 거부합니다. 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
+새 pipeline은 `outputs/pipeline/<name>/manifest.json`과 같은 폴더의 UTF-8 text 파일로 넘깁니다. 공개 bioinfo-agent 저장소로 가는 자동 PR은 **기본 꺼짐**이고, 켜는 설정은 게이트웨이 설정의 `policy.bioinfo_agent.pipeline_pr: true` 하나입니다. 켜면 게이트웨이가 자기 GitHub token으로 branch·PR을 만듭니다. pipeline 소스(`.nf`·`.config`·`.py`·`.R`·`.sh`·`.md`·`.yaml`·`.json`, 4 KB 이하 text)와 행마다 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받고, 그 밖의 데이터 파일·비밀값·절대경로가 있으면 거부합니다. 쓰기 권한이 없으면 요청은 그대로 끝나고 웹에 `pipeline PR 대기`로 남습니다.
 
 **Codex PR 규칙**: P1은 해당 PR에서 고치고 P2는 후속 issue로 넘깁니다. codex 리뷰는 push 묶음마다 PR 상단 요청 댓글 한 번만 부르고, 인라인 답글에는 멘션을 쓰지 않으며, Running 중에는 재호출하지 않습니다. 고정 상한 대신 Claude가 깊이를 판단합니다. 같은 부류의 더 좁은 지적이 이어지면 부류를 닫는 수정 한 번 뒤 병합하고 나머지는 후속 issue로 넘깁니다. 자동 병합 워크플로(`pr-gate.yml`)는 끄고 수동 dry-run 판정만 남겼습니다.
 `labhq codex-review <project> <PR번호>`가 그 한 번의 `@codex review` 코멘트를 남기고, 에이전트 공통 규칙에도 같은 내용이 들어 있습니다.

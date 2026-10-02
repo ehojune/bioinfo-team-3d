@@ -12,10 +12,12 @@ from labhq.pipeline_pr import collect_pipeline_submission
 from labhq.settings import Settings
 
 
-def settings(tmp_path: Path) -> Settings:
+def settings(tmp_path: Path, pipeline_pr: bool = False) -> Settings:
     configured = Settings()
     configured.gateway.state_dir = configured.runner.state_dir = str(tmp_path / "state")
     configured.runner.workspace_root = str(tmp_path / "runs")
+    if pipeline_pr:  # left unset otherwise, so the off case exercises the shipped default
+        configured.policy.bioinfo_agent.pipeline_pr = True
     return configured
 
 
@@ -118,8 +120,8 @@ def fake_pipeline_api(calls, status=200):
     return httpx.MockTransport(api)
 
 
-async def run_submission(tmp_path, submission, transport):
-    hub = Hub(settings(tmp_path), github_transport=transport)
+async def run_submission(tmp_path, submission, transport, pipeline_pr=True):
+    hub = Hub(settings(tmp_path, pipeline_pr), github_transport=transport)
     hub.requests["r"] = {"id": "r", "status": "done"}
     hub.store.put("pipeline_submission", "t", {"request_id": "r", "task_id": "t",
                                                 "agent_id": "bioinfo-agent", "state": "ready",
@@ -170,3 +172,171 @@ async def test_missing_repo_permission_leaves_pipeline_pr_pending(tmp_path):
     finally:
         await hub.reporter.client().http.aclose()
         hub.store.close()
+
+
+FIXTURE = "sample,file\nsmoke,https://raw.githubusercontent.com/nf-core/test-datasets/x/test.bam\n"
+
+
+@pytest.mark.parametrize("bad", [
+    {"path": "pipelines/tiny/samples.csv", "content": "sample_id,phenotype\nKOR-0012,case\n"},
+    {"path": "pipelines/tiny/assets/counts.tsv", "content": "gene\tKOR-0012\nTP53\t41\n"},
+    {"path": "pipelines/tiny/assets/samplesheet.csv", "content": "sample,phenotype\nKOR-0012,case\n"},
+    {"path": "pipelines/tiny/assets/samplesheet.test.csv", "content": FIXTURE * 200},
+    {"path": "pipelines/tiny/ref.fasta", "content": ">chr1\nACGT\n"},
+    {"path": "pipelines/tiny/calls.vcf", "content": "##fileformat=VCFv4.2\n"},
+    {"path": "pipelines/tiny/aln.sam", "content": "@HD\tVN:1.6\n"},
+    {"path": "pipelines/tiny/cells.h5ad", "content": "HDF\n"},
+    {"path": "pipelines/tiny/notes.txt", "content": "KOR-0012 case\n" * 400},
+])
+async def test_data_files_never_reach_the_public_pipeline_pr(tmp_path, bad):
+    """#301 review P1: only pipeline source kinds pass; a table passes only as a bioinfo-agent test fixture list."""
+    calls = []
+    hub, delivered = await run_submission(tmp_path, pipeline(extra=[bad]), fake_pipeline_api(calls))
+    try:
+        saved = hub.store.get("pipeline_submission", "t")
+        assert delivered is True and calls == []
+        assert saved["state"] == "rejected" and saved["reason"].startswith("data file is not allowed")
+    finally:
+        hub.store.close()
+
+
+async def test_pipeline_source_and_test_fixture_list_still_open_a_pr(tmp_path):
+    extra = [
+        {"path": "pipelines/tiny/assets/samplesheet.test.csv", "content": "# smoke test\n" + FIXTURE},
+        {"path": "pipelines/tiny/assets/NO_TRF", "content": "# placeholder for an unset optional input\n"},
+        {"path": "pipelines/tiny/bin/summarise.py", "content": "#!/usr/bin/env python3\nimport sys\n"},
+        {"path": "pipelines/tiny/bin/plot.R", "content": "x <- 1\n"},
+        {"path": "pipelines/tiny/nextflow_schema.json", "content": "{}\n"},
+        {"path": "pipelines/tiny/conf/test.config",
+         "content": "params.input = \"${projectDir}/assets/samplesheet.test.csv\"\n"},
+        {"path": "pipelines/tiny/modules/run.nf",
+         "content": "process RUN {\n  script:\n  \"\"\"\n  #!/usr/bin/env bash\n  tool --in x 2>/dev/null\n  \"\"\"\n}\n"},
+    ]
+    calls = []
+    hub, delivered = await run_submission(tmp_path, pipeline(extra=extra), fake_pipeline_api(calls))
+    try:
+        assert delivered is True and hub.store.get("pipeline_submission", "t")["state"] == "open"
+        assert len([path for method, path, _ in calls if method == "PUT"]) == 3 + len(extra)
+    finally:
+        await hub.reporter.client().http.aclose()
+        hub.store.close()
+
+
+@pytest.mark.parametrize("line", [
+    "params.fasta = '/data/reference.fa'\n",
+    "params.tool = \"/opt/tool/bin/run\"\n",
+    "workDir = '/tmp/work'\n",
+    "params.genome = [fasta:'/srv/genomes/hg38.fa']\n",
+    "params.input = 'file:///shared/x.bam'\n",
+])
+async def test_every_unix_absolute_path_refuses_the_pipeline_pr(tmp_path, line):
+    """#301 review P2: no prefix list. Only "#!" interpreters and /dev/null-style streams are portable."""
+    submission = pipeline()
+    submission["files"][1]["content"] += line
+    calls = []
+    hub, delivered = await run_submission(tmp_path, submission, fake_pipeline_api(calls))
+    try:
+        assert delivered is True and calls == []
+        assert hub.store.get("pipeline_submission", "t")["reason"] == "local absolute path is not allowed"
+    finally:
+        hub.store.close()
+
+
+async def test_late_client_snapshot_keeps_the_pipeline_pr_status(tmp_path):
+    """#301 review P2: the status lives on the stored row, not only on a one-off event a late client misses."""
+    calls = []
+    hub, _ = await run_submission(tmp_path, pipeline(), fake_pipeline_api(calls, status=403))
+    try:
+        hub.events.clear()  # the pipeline.pr event has left the 200-event replay window
+        request = next(r for r in hub.snapshot()["data"]["requests"] if r["id"] == "r")
+        assert request["pipeline_pr"] == {"status": "pending", "name": "tiny", "url": None, "number": None,
+                                          "reason": "bioinfo-agent repository write permission required"}
+    finally:
+        await hub.reporter.client().http.aclose()
+        hub.store.close()
+    calls = []
+    hub, _ = await run_submission(tmp_path / "open", pipeline(), fake_pipeline_api(calls))
+    try:
+        request = next(r for r in hub.snapshot()["data"]["requests"] if r["id"] == "r")
+        assert request["pipeline_pr"]["status"] == "open"
+        assert request["pipeline_pr"]["url"] == "https://example.test/pr/9"
+    finally:
+        await hub.reporter.client().http.aclose()
+        hub.store.close()
+
+
+def test_pipeline_pr_is_off_by_default_in_code_and_example_configs():
+    root = Path(__file__).resolve().parents[1]
+    assert Settings().policy.bioinfo_agent.pipeline_pr is False
+    for path in (root / "config" / "labhq.example.yaml", root / "labhq" / "config" / "labhq.example.yaml"):
+        assert Settings.load(str(path)).policy.bioinfo_agent.pipeline_pr is False
+
+
+async def test_default_settings_attempt_no_pipeline_pr_and_send_nothing(tmp_path):
+    """PI decision #300: off by default. The gateway neither stores, queues, publishes nor calls GitHub."""
+    calls = []
+    hub, delivered = await run_submission(tmp_path, pipeline(), fake_pipeline_api(calls), pipeline_pr=False)
+    try:
+        assert delivered is True and calls == []
+        assert hub.store.get("pipeline_submission", "t")["state"] == "ready"
+        assert hub.reporter.enabled() is False  # no project repo: nothing reaches the reporter at all
+        result = TaskResult(task_id="t2", agent_id="bioinfo-agent", ok=True, text="done",
+                            pipeline_submission=pipeline())
+        await hub.on_runner_message("runner", {"type": "task.result", "task_id": "t2", "request_id": "r",
+                                               "data": result.model_dump(mode="json")})
+        assert hub.store.get("pipeline_submission", "t2") is None
+        assert not [e for e in hub.events if e["type"] in {"pipeline.ready", "pipeline.pr"}]
+        assert "pipelines/tiny/main.nf" not in json.dumps(list(hub.events), default=str)
+        assert calls == []
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_gateway_asks_the_runner_for_pipeline_files_only_when_turned_on(tmp_path, enabled):
+    hub = Hub(settings(tmp_path, pipeline_pr=enabled))
+    sent = []
+
+    async def send(_runner_id, message):
+        sent.append(message)
+        task_id = message["task"]["id"]
+        hub.futures[task_id].set_result(TaskResult(task_id=task_id, agent_id="bioinfo-agent", ok=True, text="done"))
+
+    hub.send_runner = send
+    hub.agent_runner["bioinfo-agent"] = "runner"
+    try:
+        await hub.dispatch(Task(agent_id="bioinfo-agent", request_id="r", prompt="build", meta={"kind": "direct"}))
+        assert sent[0]["type"] == "task.dispatch"
+        assert sent[0]["task"]["meta"].get("pipeline_pr") is (True if enabled else None)
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_path, monkeypatch, enabled):
+    from labhq.runner.daemon import Runner
+
+    configured = settings(tmp_path)
+    for name in ("agents_dir", "talent_dir"):
+        setattr(configured.runner, name, str(tmp_path / name))
+    runner = Runner(configured)
+    agent = AgentSpec(id="bioinfo-agent", name="bio", role="pipeline", engine=Engine.claude_code, builtin_mcp=[])
+
+    class Adapter:
+        async def run(self, ctx):
+            folder = Path(ctx.workdir) / "outputs" / "pipeline" / "tiny"
+            folder.mkdir(parents=True)
+            (folder / "manifest.json").write_text(json.dumps({"schema": 1, "name": "tiny"}), encoding="utf-8")
+            for name in ("main.nf", "nextflow.config", "README.md"):
+                (folder / name).write_text("x\n", encoding="utf-8")
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    meta = {"kind": "direct", **({"pipeline_pr": True} if enabled else {})}
+    result = await runner.run_task(Task(id="t", request_id="r", agent_id=agent.id, prompt="build", meta=meta))
+    if enabled:
+        assert result.pipeline_submission["state"] == "ready"
+    else:
+        assert result.pipeline_submission is None
+        assert "pipeline_submission" not in result.model_dump(mode="json")

@@ -73,6 +73,15 @@ fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'pending',name:'tin
 assert.equal(fresh.S.requests.get('r2').pipelinePr.status,'pending');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'open',name:'tiny',url:'https://example.org/pr/9',number:9}});
 assert.equal(fresh.S.requests.get('r2').github.at(-1).kind,'pipeline_pr');
+{ // #301 review: a late client restores the stored status from the snapshot, without a duplicate link
+  const late = create();
+  late.apply({type:'snapshot',data:{requests:[{id:'p',status:'done',pipeline_pr:{status:'pending',name:'tiny',reason:'write permission required'}}]}});
+  assert.equal(late.S.requests.get('p').pipelinePr.reason,'write permission required');
+  const open = {status:'open',name:'tiny',url:'https://example.org/pr/9',number:9};
+  late.apply({type:'snapshot',data:{recent_events:[{type:'pipeline.pr',request_id:'p',data:open}],
+    requests:[{id:'p',status:'done',pipeline_pr:open}]}});
+  assert.equal(late.S.requests.get('p').github.filter(g => g.kind === 'pipeline_pr').length, 1);
+}
 fresh.apply({type:'request.plan',request_id:'r3',data:{steps:[
   {id:'s1',agent_id:'analyst',instruction:'Inspect',outputs:['report.txt'],depends_on:[]},
   {id:'s2',agent_id:'analyst',instruction:'Review report',depends_on:['s1']},

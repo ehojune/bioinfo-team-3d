@@ -421,7 +421,8 @@ class ProjectReporter:
                 self._warned.add("root-zone")
                 log.warning("GitHub updates are off: a filesystem root is a restricted data zone")
             return False
-        return bool(self.s.policy.bioinfo_agent.pipeline_repo or any(p.repo for p in self.s.projects))
+        bioinfo = self.s.policy.bioinfo_agent
+        return bool((bioinfo.pipeline_pr and bioinfo.pipeline_repo) or any(p.repo for p in self.s.projects))
 
     def client(self) -> GitHubClient | None:
         if self._client is None:
@@ -517,7 +518,7 @@ class ProjectReporter:
 
     async def _handle_pipeline(self, ev: dict) -> bool:
         entry = self.hub.store.get("pipeline_submission", str(ev.get("task_id") or ""))
-        if not entry or entry.get("state") in {"open", "rejected"}:
+        if not self.s.policy.bioinfo_agent.pipeline_pr or not entry or entry.get("state") in {"open", "rejected"}:
             return True
         submission = entry.get("submission") or {}
         reason = self._pipeline_rejection(submission)
