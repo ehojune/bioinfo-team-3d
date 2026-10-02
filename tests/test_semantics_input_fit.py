@@ -101,21 +101,25 @@ def test_shadow_line_contains_counts_only(tmp_path):
         hub, "req_fit", shadow.ShadowConfig())), allowed_fields=allowed) == []
 
 
-def test_report_sums_only_fit_verdict_counts_per_table_version(tmp_path):
+def test_report_sums_only_fit_verdict_counts_per_table_and_vocabulary_version(tmp_path):
     paths = ShadowPaths(tmp_path)
     paths.root.mkdir(parents=True, exist_ok=True)
     row = ('{"v":1,"type":"request","ts":1,"rows":{},"snapshot_ms":1,"busy_skipped":0,"ms":2,'
            '"provenance":{"status":"ok","ms":1},"objects":{"status":"ok","ms":1,"objects":{},'
            '"link_total":0,"unresolved":0,"pending_jobs":0},"hash":{},'
            '"input_fit":{"fit":%d,"mismatch":1,"unknown":3}%s}\n')
-    version = ',"input_fit_sha256":"%s"'
-    paths.log.write_text(row % (2, "") + row % (1, version % ("a" * 64)) + row % (4, version % ("a" * 64))
-                         + row % (5, version % ("c" * 64)) + row % (9, version % "not-a-digest"),
+    version = ',"input_fit_sha256":"%s","vocab_sha256":"%s"'
+    paths.log.write_text(row % (2, "") + row % (1, version % ("a" * 64, "b" * 64))
+                         + row % (4, version % ("a" * 64, "d" * 64))
+                         + row % (5, version % ("c" * 64, "e" * 64))
+                         + row % (9, version % ("not-a-digest", "f" * 64)),
                          encoding="utf-8")
 
     report = build_report(paths, setting="shadow")
-    assert report["input_fit"] == {"-": {"fit": 2, "mismatch": 1, "unknown": 3},
-                                   "a" * 12: {"fit": 5, "mismatch": 2, "unknown": 6},
-                                   "c" * 12: {"fit": 5, "mismatch": 1, "unknown": 3}}
+    assert report["input_fit"] == {"-/-": {"fit": 2, "mismatch": 1, "unknown": 3},
+                                   f"{'a' * 12}/{'b' * 12}": {"fit": 1, "mismatch": 1, "unknown": 3},
+                                   f"{'a' * 12}/{'d' * 12}": {"fit": 4, "mismatch": 1, "unknown": 3},
+                                   f"{'c' * 12}/{'e' * 12}": {"fit": 5, "mismatch": 1, "unknown": 3}}
     rendered = render_report(report)
-    assert f"{'a' * 12} fit 5 · mismatch 2 · unknown 6" in rendered and "- fit 2 · mismatch 1" in rendered
+    assert f"{'a' * 12}/{'b' * 12} fit 1 · mismatch 1 · unknown 3" in rendered
+    assert "-/- fit 2 · mismatch 1" in rendered
