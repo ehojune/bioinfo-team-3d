@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · CI — 중복 실행 제거와 이미 통과한 pytest 재실행 생략
+
+- 결론: PI 요청. PR 브랜치는 pull_request로 한 번만 돌고, 패치노트만 더한 push나 STATUS·패치노트 충돌만 푼 main 병합 push는 직전 커밋의 pytest가 통과했으면 pytest를 건너뛴다(skipped). 합쳐진 조합 자체는 다시 시험하지 않고, squash 병합 뒤 main CI가 다시 돈다.
+- 바뀐 것: `.github/workflows/test.yml`(push는 main만, `changes` job, `checks: read`), `scripts/ci_skip.py`, `tests/test_ci_skip.py`.
+- 실행한 것: `tests/test_ci_skip.py` 4건. 실제 #285 기록에 적용하면 코드 커밋이 통과한 뒤의 패치노트 커밋 1건만 건너뛰고 나머지는 그대로 돈다.
+- 미해결: 없음.
+- 근거: `scripts/ci_skip.py`.
+
 ## 2026-10-02 · #274 — Biology 담당에 Claude Science와 같은 공개 과학 MCP
 
 - 결론: PI 결정 B. biologist(Claude Code)와 lit_scout(문헌·웹 검색)에 로그인 없는 공개 hosted MCP 다섯 개(PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials)를, sci_reviewer에는 인용 확인용 PubMed·bioRxiv를 붙였다(PI 제안, PR 댓글). 로그인이 필요한 BioRender·Synapse·Wiley·Owkin과 사용량 문구 표시 조건이 있는 Consensus는 뺐다.
