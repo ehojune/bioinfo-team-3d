@@ -360,9 +360,10 @@ class PiProfileSettings(BaseModel):
 
 
 class ResearchSettings(BaseModel):
-    """Opt-in research contract pilot. Research execution is intentionally disabled in PR 1."""
+    """Opt-in research contract pilot."""
 
     enabled: bool = False
+    evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     pack_dirs: list[str] = []
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 

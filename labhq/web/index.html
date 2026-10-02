@@ -408,7 +408,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {decisionNote, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
+import {decisionChoice, decisionNote, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {initTabShell} from './ui/shell.js';
@@ -849,7 +849,9 @@ $('#approvals').addEventListener('click', async e => {
         toast(li._decisionParts?.questions?._questions?.length ? '모든 질문에 답해 주세요' : '답을 적어 주세요');
         ans.focus(); btn.disabled = false; return;
       }
-      await api.approve(li.dataset.id, act === 'approve', note); toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : '거절했어요');
+      // CP2 evidence review sends its approve/revise/deny choice; the note never decides it (#90).
+      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice({ kind: li.dataset.kind }, act));
+      toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? '수정을 요청했어요' : '거절했어요');
     }
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
@@ -969,9 +971,10 @@ function startLive() {
     request: body => post('/api/requests', body),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
-    approve: async (id, ok, note = '') => {
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, approved: ok, note }));
-      else await post(`/api/approvals/${encodeURIComponent(id)}`, { approved: ok, note });
+    approve: async (id, ok, note = '', choice = null) => {
+      const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
+      else await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
     },
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
