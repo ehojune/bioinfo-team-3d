@@ -561,7 +561,7 @@ class Runner:
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise OSError("consult ref is not a regular file")
-            with os.fdopen(fd, "rb") as opened, target.open("xb") as staged:
+            with os.fdopen(fd, "rb") as opened, target.open(mode="xb") as staged:
                 fd = -1
                 while chunk := opened.read(CONSULT_REF_COPY_CHUNK):
                     copied += len(chunk)
