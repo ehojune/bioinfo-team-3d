@@ -11,10 +11,10 @@ import yaml
 from labhq.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[1]
-BAD = [3, "shadoww", "advisory", "ab", "on", True, [1], {"mode": "shadow", "timeout_s": -1},
+BAD = [3, "shadoww", "advisory", "on", True, [1], {"mode": "shadow", "timeout_s": -1},
        {"mode": "shadow", "timeout_s": "2"}, {"mode": "shadow", "timeout_s": True}, {"mode": "shadow", "timeout_s": 11},
        {"mode": "shadow", "history_requests": 5}, {"mode": "shadow", "history_requests": 2.5},
-       {"mode": "shadow", "extra": 1}, {"mode": "advisory"}, {"mode": "ab"}, {"mode": 1}, {"mode": "off", "x": 1}]
+       {"mode": "shadow", "extra": 1}, {"mode": "advisory"}, {"mode": 1}, {"mode": "off", "x": 1}]
 
 
 def _load(tmp_path, text):
@@ -53,6 +53,12 @@ def test_every_spelling_of_off_is_off_without_a_warning(tmp_path, caplog, text):
 def test_shadow(tmp_path, text, timeout, history):
     from labhq.research.semantics_shadow import ShadowConfig, resolve
     assert resolve(_load(tmp_path, text).semantics) == ShadowConfig(timeout_s=timeout, history_requests=history)
+
+
+@pytest.mark.parametrize("text", ["semantics: ab\n", "semantics: {mode: ab}\n"])
+def test_ab_is_supported_but_plain_advisory_remains_held(tmp_path, text):
+    from labhq.research.semantics_shadow import ShadowConfig, resolve
+    assert resolve(_load(tmp_path, text).semantics) == ShadowConfig(mode="ab")
 
 
 def test_default_is_off_and_the_example_configs_say_so():
