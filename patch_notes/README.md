@@ -12,6 +12,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:53 | [`88f6c3c`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/88f6c3c) | README·STATUS: 미집계 비용 분리·추정 환산·예산 판정 규칙을 적음 |
+| 15:47 | [`1e64ba1`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/1e64ba1) | 이어 묻기 완료 이벤트에는 비용 요약이 있을 때만 비용을 실음 |
+| 15:44 | [`ea777e8`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/ea777e8) | bench 비용 칸과 상한 판정에서 미집계를 따로 표시하고 test-agent를 통과로 세지 않음 |
+| 15:44 | [`a0ce450`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/a0ce450) | 웹·CLI·GitHub 보고에 확인·추정·미집계와 엔진별 소계를 표시(#270) |
+| 15:44 | [`53d8afd`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/53d8afd) | 요청 비용 집계와 예산 상한에서 미집계를 0으로 더하지 않고 따로 셈 |
+| 15:44 | [`923489f`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/923489f) | task 비용을 확인·추정·미집계로 나누는 costs 모듈과 판본 있는 Codex 가격표를 추가 |
 | 15:10 | [`986da50`](https://github.com/ehojune/bioinfo-team-3d/pull/291/commits/986da50) | CI: README만 바뀌면 README 검사만 돌리고, 가장 느린 test 15개를 출력 |
 | 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
 | 14:46 | [`c84bada`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/c84bada) | main의 CI 개선을 병합하며 STATUS·패치노트 기록을 보존하고 README의 HPC 기상 설명을 갱신했습니다. |
