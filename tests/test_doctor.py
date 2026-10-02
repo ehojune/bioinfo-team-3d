@@ -47,7 +47,7 @@ def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("same_account,expected", [
     (True, "warn"),
-    (False, "ok"),
+    (False, "skip"),  # an owner mismatch alone is not proof of isolation (#304 review)
     (None, "skip"),
 ])
 def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_account, expected):
@@ -275,3 +275,13 @@ def test_doctor_checks_slurm_commands(tmp_path, monkeypatch, missing, status):
     assert row["status"] == status
     assert row["detail"].startswith("slurm; local sbatch/squeue/sacct/scancel ")
     assert result["runner_capabilities"]["scheduler"] == "slurm" and result["runner_capabilities"]["hpc_tools"]
+
+
+@pytest.mark.parametrize("current,expected", [("labhq-runner", "ok"), (r"PC\labhq-runner", "ok"), ("pi", "warn"), (None, "skip")])
+def test_doctor_checks_the_named_runner_account(tmp_path, monkeypatch, current, expected):
+    settings = _settings(tmp_path)
+    settings.runner.os_account = "labhq-runner"
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: current)
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    row = next(r for r in doctor.collect(settings)["checks"] if r["name"] == "runner account isolation")
+    assert row["status"] == expected

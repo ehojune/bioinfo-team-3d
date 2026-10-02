@@ -126,6 +126,14 @@ def _windows_config_owner_is_current_user(path: Path) -> bool | None:
             kernel32.LocalFree(descriptor)
 
 
+def _current_os_account() -> str | None:
+    try:
+        import getpass
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - doctor never fails on an unavailable identity
+        return None
+
+
 def _config_owner_is_current_user(path: Path) -> bool | None:
     """Return an OS-backed owner comparison, or None when the OS cannot supply it."""
     if os.name == "nt":
@@ -189,11 +197,22 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     else:
         rows.append(_row("config", "file", "ok" if config else "warn",
                          _safe_path(config) if config else "defaults", "Set --config for this host."))
-    same_owner = _config_owner_is_current_user(Path(config)) if config else None
-    owner_status = "warn" if same_owner is True else "ok" if same_owner is False else "skip"
-    owner_detail = ("runner and config owner are the same OS account" if same_owner is True else
-                    "runner and config owner are different OS accounts" if same_owner is False else
-                    "OS account comparison unavailable")
+    # Only a named runner account proves isolation; an owner mismatch alone is not evidence (#304 review).
+    expected = (settings.runner.os_account or "").strip()
+    if expected:
+        current = _current_os_account()
+        if current is None:
+            owner_status, owner_detail = "skip", "current OS account unavailable"
+        elif current.lower().split("\\")[-1] == expected.lower().split("\\")[-1]:
+            owner_status, owner_detail = "ok", "runner runs as runner.os_account"
+        else:
+            owner_status, owner_detail = "warn", "runner is not running as runner.os_account"
+    else:
+        same_owner = _config_owner_is_current_user(Path(config)) if config else None
+        owner_status = "warn" if same_owner is True else "skip"
+        owner_detail = ("runner and config owner are the same OS account" if same_owner is True else
+                        "not verified: set runner.os_account to the dedicated account" if same_owner is False else
+                        "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
                      "Run the runner under a dedicated account; see docs/runner-account.md."))
     markers = parent_claude_markers(dict(os.environ))

@@ -59,6 +59,32 @@ runner 계정 PowerShell에서 다음을 확인합니다.
 - `C:\LabHQ\runner\work`와 `state`에는 임시 파일을 만들고 지울 수 있습니다.
 - `Get-ChildItem 'C:\Users\<PI계정>'`은 **액세스가 거부되었습니다**로 끝납니다.
 
+### 2-1. runner가 읽을 labhq와 직원 명단, 설정 경로
+
+PI 홈 아래 checkout과 venv는 runner가 읽지 못합니다(위의 거부 규칙). 그래서 runner가 쓸 labhq를 `C:\LabHQ\app`에 따로 둡니다. 직원 명단(`agents/`)도 그 안에 함께 들어갑니다.
+
+관리자 PowerShell 예:
+
+```powershell
+git clone https://github.com/ehojune/bioinfo-team-3d.git C:\LabHQ\app
+py -3.12 -m venv C:\LabHQ\app\.venv
+C:\LabHQ\app\.venv\Scripts\pip.exe install -e C:\LabHQ\app
+icacls 'C:\LabHQ\app' /grant:r "${RunnerAccount}:(OI)(CI)(RX)"
+```
+
+`C:\LabHQ\config\labhq.yaml`에서 runner 쪽 경로를 모두 `C:\LabHQ` 아래로 바꾸고, runner 계정 이름을 적습니다.
+
+```yaml
+runner:
+  os_account: labhq-runner              # doctor가 이 계정으로 도는지 확인한다
+  agents_dir: C:\LabHQ\app\agents       # 직원 명단: runner가 읽을 수 있어야 한다
+  talent_dir: C:\LabHQ\runner\talent
+  workspace_root: C:\LabHQ\runner\work
+  state_dir: C:\LabHQ\runner\state
+```
+
+`talent` 폴더도 `work`·`state`처럼 runner에 수정 권한을 줍니다(`New-Item C:\LabHQ\runner\talent`, `icacls ... (M)`). 아래 명령의 `labhq`는 runner 계정에서 `C:\LabHQ\app\.venv\Scripts\labhq.exe`입니다.
+
 ## 3. runner 계정에서 CLI 로그인 한 번
 
 PI 계정에서 다음 창을 열고 runner 암호를 입력합니다.
@@ -96,7 +122,7 @@ runner 계정 창에서 먼저 확인합니다.
 labhq --config C:\LabHQ\config\labhq.yaml doctor
 ```
 
-`runner account isolation`은 `ok`, 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
+`runner account isolation`은 `ok`(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
 
 PI 계정에서는 gateway를 기존 방식대로 둡니다.
 
