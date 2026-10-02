@@ -275,6 +275,9 @@ class OrchestratorSettings(BaseModel):
     chief_of_staff_agent: str | None = "chief_of_staff"
     reviewer_agent: str | None = "sci_reviewer"
     max_revisions: int = 1
+    # Opt-in (#271): after a step failure or a review `revise`, the CSO may re-plan the unfinished part of
+    # the DAG, at most this many times per request. 0 keeps the old behavior (fail, or revise in place).
+    max_replans: int = Field(default=0, ge=0)
     max_steps: int = 12
     max_parallel_steps: int = 4
     max_wake_cycles: int = 5
