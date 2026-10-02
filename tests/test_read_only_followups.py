@@ -123,6 +123,54 @@ async def test_a_codex_variable_the_pi_configures_still_reaches_a_step(tmp_path,
     assert seen[0][1]["CODEX_SQLITE_HOME"] == "staff-sqlite", "engines.codex.env is applied after the strip"
 
 
+@pytest.mark.asyncio
+async def test_writable_codex_uses_workspace_owned_cache_dirs(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.codex)
+    for name in ("PIP_CACHE_DIR", "MPLCONFIGDIR", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    settings = _settings(tmp_path)
+    ctx = _ctx(tmp_path, _staff(), settings)
+
+    result = await CodexAdapter(settings).run(ctx)
+
+    assert result.ok, result.error
+    env = seen[0][1]
+    assert env["PIP_CACHE_DIR"] == str(ctx.workdir / ".labhq" / "cache" / "pip")
+    assert env["MPLCONFIGDIR"] == str(ctx.workdir / ".labhq" / "cache" / "matplotlib")
+    assert env["XDG_CACHE_HOME"] == str(ctx.workdir / ".labhq" / "cache" / "xdg")
+
+
+@pytest.mark.asyncio
+async def test_pi_cache_env_wins_over_codex_workspace_defaults(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.codex)
+    for name in ("PIP_CACHE_DIR", "MPLCONFIGDIR", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    settings = _settings(tmp_path)
+    settings.engines.codex.env.update({"PIP_CACHE_DIR": "engine-pip", "XDG_CACHE_HOME": "engine-xdg"})
+    ctx = _ctx(tmp_path, _staff(), settings)
+    ctx.env.update({"MPLCONFIGDIR": "task-mpl", "XDG_CACHE_HOME": "task-xdg"})
+
+    result = await CodexAdapter(settings).run(ctx)
+
+    assert result.ok, result.error
+    env = seen[0][1]
+    assert (env["PIP_CACHE_DIR"], env["MPLCONFIGDIR"], env["XDG_CACHE_HOME"]) == (
+        "engine-pip", "task-mpl", "task-xdg")
+
+
+@pytest.mark.asyncio
+async def test_read_only_codex_does_not_add_workspace_cache_env(tmp_path, monkeypatch, spawned):
+    seen = spawned(Engine.codex)
+    for name in ("PIP_CACHE_DIR", "MPLCONFIGDIR", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    settings = _settings(tmp_path)
+
+    result = await CodexAdapter(settings).run(_ctx(tmp_path, _staff(), settings, read_only=True))
+
+    assert result.ok, result.error
+    assert not {"PIP_CACHE_DIR", "MPLCONFIGDIR", "XDG_CACHE_HOME"} & seen[0][1].keys()
+
+
 def test_bench_baseline_drops_the_parent_codex_session_too(tmp_path, monkeypatch):
     from labhq import bench
 

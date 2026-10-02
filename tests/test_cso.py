@@ -851,6 +851,43 @@ async def test_cancellation_skips_dependents():
 
 
 @pytest.mark.asyncio
+async def test_targeted_revision_waits_for_a_transitive_ancestor_outside_its_direct_dependencies():
+    """s9 must wait for revised s5 even though unchanged s8 is its only direct dependency."""
+    s5_started = asyncio.Event()
+    release_s5 = asyncio.Event()
+    s5_done = asyncio.Event()
+    s9_started = asyncio.Event()
+
+    async def dispatch(task):
+        sid = task.meta["step_id"]
+        if sid == "s5":
+            s5_started.set()
+            await release_s5.wait()
+            s5_done.set()
+        elif sid == "s9":
+            assert s5_done.is_set(), "s9 started before its revised transitive ancestor s5 finished"
+            s9_started.set()
+        return result(task, text=f"{sid} revised")
+
+    steps = [
+        {"id": "s5", "agent_id": "worker", "instruction": "revise source", "depends_on": []},
+        {"id": "s8", "agent_id": "worker", "instruction": "unchanged bridge", "depends_on": ["s5"]},
+        {"id": "s9", "agent_id": "worker", "instruction": "revise report", "depends_on": ["s8"]},
+    ]
+    outcomes = {sid: TaskResult(task_id=f"old-{sid}", agent_id="worker", ok=True, text=f"old {sid}")
+                for sid in ("s5", "s8", "s9")}
+    run = asyncio.create_task(Orchestrator(FakeHub(dispatch)).run_dag(
+        "r", "question", steps, outcomes, only={"s5", "s9"},
+        feedback={"s5": "fix source", "s9": "use corrected source"}))
+    await s5_started.wait()
+    await asyncio.sleep(0)
+    assert not s9_started.is_set()
+    release_s5.set()
+    await run
+    assert s9_started.is_set()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("approved", [False, True])
 async def test_parallel_budget_decision_preserves_completed_steps_and_controls_new_starts(approved):
     d_started = asyncio.Event()
@@ -1977,3 +2014,24 @@ async def test_failed_twelve_step_report_names_each_failure_without_dumping_inst
     for i in range(7, 13):
         assert f"### S{i}" in report and "S6 broke" in report
     assert report.count("Next:") == 12
+
+
+def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
+    """A revised step changes what its dependents read: unflagged dependents re-run with a note, so neither a later
+    revision nor the report reads a bridge built on the old result (PR #337 review, mock trial 2026-10-03)."""
+    from labhq.orchestrator.cso import with_downstream_revisions
+
+    def step(sid, *deps):
+        return {"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": list(deps)}
+
+    steps = [step("s2"), step("s3"), step("s4", "s3"), step("s5", "s4"), step("s6", "s5"), step("s7", "s5"),
+             step("s8", "s6", "s7"), step("s9", "s8"), step("s10", "s9", "s2")]
+    feedback = {"s5": "- use a paired model\n", "s9": "- drop the circular score\n"}
+
+    extended = with_downstream_revisions(steps, feedback)
+
+    assert set(extended) == {"s5", "s6", "s7", "s8", "s9", "s10"}
+    assert extended["s5"] == feedback["s5"] and extended["s9"] == feedback["s9"]
+    assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
+    assert "Upstream step(s) s9 were revised" in extended["s10"]
+    assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
