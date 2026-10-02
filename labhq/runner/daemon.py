@@ -174,7 +174,8 @@ class Runner:
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         self.broker = Broker(settings.runner.broker_port, self._on_approval, self._on_tool_event,
-                             self._on_submit, self._on_ask, self._owns_job)
+                             self._on_submit, self._on_ask, self._owns_job,
+                             on_approval_timeout=self._on_approval_timeout)
         self.scheduler = Scheduler(settings.hpc)
         self.connected = asyncio.Event()
         self._stopping = False
@@ -877,6 +878,13 @@ class Runner:
         await self.emit(Event(type="approval.requested", data=req.model_dump(mode="json"), **base))
         if req.task_id:
             await self.emit(Event(type="agent.status", data={"state": "waiting", "approval": req.id}, **base))
+
+    async def _on_approval_timeout(self, req: ApprovalRequest) -> None:
+        self.approval_tasks.pop(req.id, None)
+        base = dict(task_id=req.task_id, agent_id=req.agent_id, request_id=req.request_id)
+        await self.emit(Event(type="approval.timed_out", data={"id": req.id}, **base))
+        if req.task_id:
+            await self.emit(Event(type="agent.status", data={"state": "working"}, **base))
 
     async def _on_ask(self, req: AskRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")

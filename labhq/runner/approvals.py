@@ -28,7 +28,8 @@ Predicate = Callable[[dict], Awaitable[bool]]
 
 class Broker:
     def __init__(self, port: int, on_approval: Handler, on_event: Handler, on_submit: Submit,
-                 on_ask: Handler | None = None, owns_job: Predicate | None = None):
+                 on_ask: Handler | None = None, owns_job: Predicate | None = None,
+                 on_approval_timeout: Handler | None = None):
         self.port = port
         self.pending: dict[str, asyncio.Future] = {}
         self.pending_asks: dict[str, asyncio.Future] = {}
@@ -38,6 +39,7 @@ class Broker:
         self._on_approval, self._on_event, self._on_submit = on_approval, on_event, on_submit
         self._on_ask = on_ask
         self._owns_job = owns_job  # without it no job counts as owned, so hpc_cancel refuses all
+        self._on_approval_timeout = on_approval_timeout
         self.server: uvicorn.Server | None = None
         self.app = self._build_app()
 
@@ -103,7 +105,9 @@ class Broker:
             await self._on_approval(req)
             return await asyncio.wait_for(fut, req.timeout_s)
         except asyncio.TimeoutError:
-            return {"approved": False, "note": "approval timed out"}
+            if self._on_approval_timeout is not None:
+                await self._on_approval_timeout(req)
+            return {"approved": False, "note": "approval timed out", "state": "timed_out"}
         finally:
             self.pending.pop(req.id, None)
 

@@ -700,6 +700,22 @@ class Hub:
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
+        elif typ == "approval.timed_out":
+            aid = str((msg.get("data") or {}).get("id") or "")
+            entry = self.approvals.get(aid)
+            if entry is None or entry.get("origin") != runner_id:
+                if runner_seq is not None:
+                    await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
+                return
+            self.approvals.pop(aid, None)
+            self.store.delete("approval", aid)
+            self.store.put("approval_decision", aid,
+                           {"approval": entry["approval"], "approved": False,
+                            "note": "approval timed out", "state": "timed_out",
+                            "decided_at": time.time()})
+            msg = {**msg, "type": "approval.resolved",
+                   "data": {"id": aid, "approved": False, "note": "approval timed out",
+                            "state": "timed_out"}}
         elif typ == "ask.requested":
             ask = AskRequest.model_validate(msg["data"])
             existing = self.store.get("ask", ask.id)
@@ -1266,8 +1282,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
-                        await hub.publish({"type": "approval.stale", "ts": time.time(),
-                                           "data": {"id": msg.get("id")}})
+                        await ws.send_text(json.dumps({"type": "approval.stale", "ts": time.time(),
+                                                       "data": {"id": msg.get("id")}},
+                                                      ensure_ascii=False, default=str))
         except WebSocketDisconnect:
             pass
         finally:
