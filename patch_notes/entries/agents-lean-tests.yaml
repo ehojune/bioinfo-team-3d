@@ -1,0 +1,5 @@
+pr: 320
+rows:
+- sha: ebc68f9
+  at: 2026-10-02 20:48
+  text: 'AGENTS.md: 로컬은 관련 test, 전체 suite는 CI. P2는 PR 본문 남은 지적 한 줄'
