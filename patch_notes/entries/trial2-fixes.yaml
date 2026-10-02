@@ -1,0 +1,11 @@
+pr: 0
+rows:
+- sha: 6c6c471
+  at: 2026-10-03 07:01
+  text: 리뷰 수정 재실행이 비지적 중간 단계를 건너뛰어도 이번 실행의 전이적 조상이 끝날 때까지 기다리게 했다.
+- sha: d098bdb
+  at: 2026-10-03 07:01
+  text: 쓰기 가능한 Codex 직원의 pip·matplotlib·XDG cache 기본 경로를 작업 폴더 안으로 옮기고 PI 설정은 유지했다.
+- sha: f3e9f00
+  at: 2026-10-03 07:01
+  text: Claude 등 다른 직원에게 Codex 직원 CODEX_HOME을 개인 경로로 막고 Codex 자신에게는 계속 열어 뒀다.
