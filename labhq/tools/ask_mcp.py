@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Literal
 
 import httpx
 
@@ -32,7 +33,7 @@ server = make_server(
 @server.tool()
 async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None = None,
               options: list[str] | None = None, refs: list[str] | None = None,
-              wait: str = "short") -> str:
+              wait: Literal["short", "hibernate"] = "short") -> str:
     """Ask a single question and return one terminal answer or a hibernate instruction."""
     payload = {"task_id": TASK, "agent_id": AGENT, "to": to, "question": question,
                "why_blocked": why_blocked, "tried": tried or [], "options": options or [],
@@ -40,6 +41,9 @@ async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None 
     try:
         async with httpx.AsyncClient(timeout=ASK_MAX_WAIT_S + 30) as client:
             response = await client.post(f"{BROKER}/ask", headers={"X-Labhq-Token": TOKEN}, json=payload)
+            if response.status_code == 400:  # the question itself is malformed: say how to fix it (#331)
+                return json.dumps(ask_result(reason=response.json().get("detail") or response.text),
+                                  ensure_ascii=False)
             response.raise_for_status()
             return json.dumps(response.json(), ensure_ascii=False)
     except Exception as exc:

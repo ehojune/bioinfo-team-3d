@@ -81,3 +81,17 @@ def test_gateway_log_query_keys_decode_once_and_preserve_other_parameters():
 
     text = "/?%2574oken=double&other%74oken=other&to+ken=space&next=a%26token%3Db&%74oken=hidden"
     assert redact_tokens(text) == text.replace("=hidden", "=[REDACTED]")
+
+
+def test_access_record_keeps_uvicorn_args_after_redaction():
+    # #331: emptying args broke uvicorn's AccessFormatter ("expected 5, got 0") on every access line.
+    from uvicorn.logging import AccessFormatter
+
+    path = "/ws/client?since=7&token=plain-secret"
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1,
+                               '%s - "%s %s HTTP/%s" %d', ("127.0.0.1:5", "GET", path, "1.1", 101), None)
+    assert TokenRedactionFilter().filter(record)
+    assert len(record.args) == 5
+    line = AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False).format(record)
+    assert "plain-secret" not in line and "token=[REDACTED]" in line and "since=7" in line
+    assert line.startswith('127.0.0.1:5 - "GET /ws/client?') and line.endswith(" 101 Switching Protocols")

@@ -16,6 +16,7 @@ from typing import Any, Awaitable, Callable
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel, ValidationError
 
 from ..models import ASK_WAIT_SECONDS, ApprovalRequest, AskRequest, hard_stop_kind
 from ..ask_results import ask_result, read_ask_results
@@ -24,6 +25,15 @@ from ..security import token_matches
 Handler = Callable[[Any], Awaitable[None]]
 Submit = Callable[[dict], Awaitable[dict]]
 Predicate = Callable[[dict], Awaitable[bool]]
+
+
+def _validated(model: type[BaseModel], data: dict) -> Any:
+    """A caller's malformed body is a 400 it can fix, not a 500 that reads as a broken environment (#331)."""
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        problems = "; ".join(f"{'.'.join(map(str, error['loc'])) or 'body'}: {error['msg']}" for error in exc.errors())
+        raise HTTPException(400, f"invalid {model.__name__}, fix and call again: {problems}") from None
 
 
 class Broker:
@@ -73,12 +83,11 @@ class Broker:
 
         @app.post("/approval")
         async def approval(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            return await self.request_approval(ApprovalRequest.model_validate(
-                self._identity(x_labhq_token, body)))
+            return await self.request_approval(_validated(ApprovalRequest, self._identity(x_labhq_token, body)))
 
         @app.post("/ask")
         async def ask(body: dict, x_labhq_token: str = Header(default="")) -> dict:
-            return await self.request_ask(AskRequest.model_validate(self._identity(x_labhq_token, body)))
+            return await self.request_ask(_validated(AskRequest, self._identity(x_labhq_token, body)))
 
         @app.post("/event")
         async def event(body: dict, x_labhq_token: str = Header(default="")) -> dict:

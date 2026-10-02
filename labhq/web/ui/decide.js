@@ -54,11 +54,13 @@ function renderResearchPlan(list, canonical) {
 }
 
 const LETTERS = 'abcd';
+// The card adds the letter; an option written as "a) 승인" would read "a) a) 승인" (#331).
+const optionText = o => o.trim().replace(/^\(?[a-dA-D]\)\s*(?=\S)/, '');
 // Structured CSO questions (#36): options become buttons; the composed answer is the approval note (#34).
 function clarifyQuestions(approval) {
   const list = approval?.kind === 'clarify' && Array.isArray(approval.detail?.questions) ? approval.detail.questions : [];
   return list.filter(q => q && typeof q.question === 'string' && q.question.trim()).map(q => {
-    const options = Array.isArray(q.options) ? q.options.filter(o => typeof o === 'string' && o.trim()).slice(0, 4) : [];
+    const options = Array.isArray(q.options) ? q.options.filter(o => typeof o === 'string' && o.trim()).slice(0, 4).map(optionText) : [];
     return { question: q.question.trim(), options: options.length >= 2 ? options : [],
       allow_free_text: options.length < 2 || q.allow_free_text !== false, depth: [30, 60, 90].includes(q.depth) ? q.depth : null };
   });

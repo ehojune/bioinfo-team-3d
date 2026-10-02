@@ -22,6 +22,13 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator,
 QUESTION_DEPTHS = (30, 60, 90)
 OPTION_LETTERS = "abcd"
 MAX_SUMMARY_CHARS = 2000
+# A model often writes "a) 승인" itself; labhq adds the letter, so keep only the text (#331).
+_OPTION_LABEL = re.compile(r"^\(?[a-dA-D]\)\s*(?=\S)")
+
+
+def option_text(option: str) -> str:
+    return _OPTION_LABEL.sub("", option.strip(), count=1)
+
 
 CLARIFYING_QUESTION_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
@@ -58,7 +65,7 @@ class ClarifyingQuestion(BaseModel):
     @field_validator("options")
     @classmethod
     def distinct_options(cls, value: list[str]) -> list[str]:
-        options = [option.strip() for option in value]
+        options = [option_text(option) for option in value]
         if any(not option or len(option) > 200 for option in options):
             raise ValueError("options must be non-empty and at most 200 characters")
         if len(set(options)) != len(options):
@@ -80,7 +87,7 @@ def normalize_questions(raw: Any) -> list[dict[str, Any]]:
             continue
         raw_options = item.get("options")
         # Only a list holds options: a number would crash, a string would split into letters, a dict into keys.
-        options = list(dict.fromkeys(option.strip() for option in raw_options
+        options = list(dict.fromkeys(option_text(option) for option in raw_options
                                      if isinstance(option, str) and option.strip())) if isinstance(raw_options, list) else []
         free = item.get("allow_free_text") is not False
         if len(options) < 2:
