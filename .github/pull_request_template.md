@@ -15,5 +15,5 @@ P? —
 
 ## 확인
 - [ ] `scripts/check_public.sh` 통과 (비밀값, 실제 설정, 데이터 파일 없음)
-- [ ] STATUS.md 맨 위에 같은 보고 추가
+- [ ] `docs/status/<YYYY-MM-DD>-<HHMM>-<branch>.md`에 같은 보고 추가
 - [ ] ⛔ 체크포인트에 해당하면 PI 확인을 받았음

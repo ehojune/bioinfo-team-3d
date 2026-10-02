@@ -4,7 +4,7 @@
 
 개발 총괄은 Claude와 Codex가 번갈아 맡습니다(PI 결정 2026-10-01). 한쪽의 주간 사용량이 차면 다른 쪽이 이어받습니다.
 이 파일은 공개해도 되는 인수인계입니다. PI PC의 로컬 경로·진행 중 작업·보조 스크립트는 저장소 밖 노트에 있고,
-`CLAUDE.local.md`(Claude)와 PI의 Codex 전역 지침이 그 노트를 가리킵니다. 결정은 GitHub issue에, 진행 보고는 PR과 `STATUS.md`에 남깁니다.
+`CLAUDE.local.md`(Claude)와 PI의 Codex 전역 지침이 그 노트를 가리킵니다. 결정은 GitHub issue에, 진행 보고는 PR과 `docs/status/`에 남깁니다.
 
 ## 시작할 때
 
@@ -17,9 +17,9 @@
 
 | 무엇 | 어떻게 |
 |---|---|
-| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → 패치노트만 고친 커밋 → 상단에 리뷰 요청 댓글 한 번 → P1은 그 PR에서, P2는 `PR #N follow-up:` issue → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
-| 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 따로 쓴다. 쓴 뒤에는 rebase하지 말고 main을 merge한다(해시가 바뀐다). `python scripts/patch_notes.py rows --pr N`이 초안을 만든다 |
-| README 주기 | main 커밋 3개 안에 README를 한 번 고쳐야 CI가 통과한다. 병렬 PR의 병합 순서가 바뀌면 다음 PR이 README 차례가 된다 |
+| PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → `patch_notes/entries/<branch>.yaml`·`docs/status/` 기록 커밋 → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
+| 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 브랜치 전용 YAML을 쓴다. `python scripts/patch_notes.py rows --pr N`이 초안을 만든다. 공유 `patch_notes/README.md`는 main에서 자동 생성한다 |
+| README 주기 | 생성 목차만 갱신한 main 커밋은 빼고, main 커밋 3개 안에 README를 한 번 고쳐야 CI가 통과한다 |
 | 리뷰 봇 깊이 | 고정 상한은 없다. 새 라운드는 직전 수정 확인이나 다른 부류의 결함이 있을 때만. 같은 부류가 더 좁게 반복되면 그 부류를 구조로 한 번 닫고 병합한다. 보통 2~3회에 끝나고, 5회를 넘기면 계속할지 판단한 이유를 PR에 적는다 |
 | Codex에 통째 위임 | Codex sandbox는 `.git`에 쓸 수 없다. 지시서에 "commit하지 말고 `.pr-drafts/commits.json`에 [{message, files}]"를 넣고, 받는 쪽이 커밋한다. 커밋 제목을 `#`로 시작하지 않는다(rebase가 주석으로 지운다) |
 | 병렬 PR | 같은 설정을 두 PR이 다른 규칙으로 넣으면 충돌 없이 한쪽이 덮인다(#76의 MCP timeout). 병합 뒤 겹친 규칙을 테스트로 확인한다 |
@@ -76,7 +76,7 @@
 | 점검 | `labhq/doctor.py` | 실행 전 점검과 capability manifest |
 | 웹 | `labhq/web/index.html`, `state.js`, `ui/`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, 결정·작업판·메신저 탭 |
 | 직원 | `agents/core/*.yaml` | 정규직 11명(엔진·모델·도구·프롬프트), 역할 기준은 README §2 |
-| 패치노트 | `patch_notes/README.md`, `scripts/patch_notes.py` | 커밋별 변경 이력과 CI 검사 |
+| 패치노트 | `patch_notes/entries/`, `docs/status/`, `scripts/notes_index.py` | PR별 기록과 공유 목차 자동 생성 |
 
 이벤트 프로토콜과 설정은 `README.md` §7–8, 알려진 한계는 §10을 보세요.
 
