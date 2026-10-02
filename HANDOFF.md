@@ -10,7 +10,7 @@
 
 1. `STATUS.md` 맨 위 몇 항목, 열린 PR(`gh pr list`), 고정 issue #69
 2. 아래 작업 큐와 PI 결정
-3. `pytest -q`, 설정이 있는 PC면 `labhq doctor`
+3. 설정이 있는 PC면 `labhq doctor`. test는 바꾼 곳과 관련된 파일만 돌리고 전체 suite는 CI에 맡긴다(AGENTS.md)
 4. 끝낼 때: 진행 중인 것을 로컬 노트의 "지금 진행 중"에 적고, 새로 안 것은 `HARVEST.md`(gitignore)에 적는다
 
 ## 작업 방식 — 규칙(CLAUDE.md·AGENTS.md)에 더해 겪어서 안 것
