@@ -21,6 +21,8 @@ class HeldEntry(NamedTuple):
     name: str
     kind: str | None  # "dir", "file" (regular), "link" (symlink, junction or other reparse point), "other"; None: gone
     ident: tuple[int, int] | None  # (device, inode) as POSIX saw it through the held folder; None on Windows
+    size: int | None = None
+    mtime_ns: int | None = None
 
 
 class NotPlainFolder(OSError):
@@ -126,7 +128,7 @@ class HeldDir:
                 mode = info.st_mode
                 kind = ("link" if stat.S_ISLNK(mode) else "dir" if stat.S_ISDIR(mode)
                         else "file" if stat.S_ISREG(mode) else "other")
-                found.append(HeldEntry(entry.name, kind, (info.st_dev, info.st_ino)))
+                found.append(HeldEntry(entry.name, kind, (info.st_dev, info.st_ino), info.st_size, info.st_mtime_ns))
         return found
 
     def open_file(self, name: str, flags: int, mode: int = 0o666) -> int:
@@ -344,12 +346,14 @@ if os.name == "nt":
             offset = 0
             while len(found) < limit:  # FILE_FULL_DIR_INFO records, each NextEntryOffset bytes after the last
                 step, = struct.unpack_from("<I", buffer, offset)
+                last_write, end_of_file = struct.unpack_from("<q8xq", buffer, offset + 24)
                 attributes, name_bytes = struct.unpack_from("<II", buffer, offset + 56)
                 name = ctypes.wstring_at(ctypes.addressof(buffer) + offset + 68, name_bytes // 2)
                 if name not in (".", ".."):
                     kind = ("link" if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
                             else "dir" if attributes & stat.FILE_ATTRIBUTE_DIRECTORY else "file")
-                    found.append(HeldEntry(name, kind, None))
+                    mtime_ns = max(0, (last_write - 116444736000000000) * 100)
+                    found.append(HeldEntry(name, kind, None, end_of_file, mtime_ns))
                 if not step:
                     break
                 offset += step

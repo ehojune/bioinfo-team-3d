@@ -1725,14 +1725,20 @@ class Orchestrator:
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
         refused: list[dict[str, str]] = []
         unsupported: list[dict[str, str]] = []
+        artifact_sha256: dict[str, str | None] = {}
+        unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
         for step in steps:
             result = results[step["id"]]
-            upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs))
+            upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs),
+                         dict(results[d].output_sha256))
                         for d in step["depends_on"] if d in results and results[d].ok]
             bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
-                                          outputs=list(result.outputs), upstream=upstream)
+                                           outputs=list(result.outputs), upstream=upstream,
+                                           output_sha256=dict(result.output_sha256))
             refused += [{"step_id": step["id"], **row} for row in bound["refused_evidence"]]
             unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]
+            artifact_sha256.update({f"{step['id']}/{artifact_id}": value
+                                    for artifact_id, value in bound["artifact_sha256"].items()})
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
@@ -1741,6 +1747,7 @@ class Orchestrator:
                   "choices": list(EVIDENCE_CHOICES),
                   **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
+                  "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                   "results": ledgers}
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         if recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]:
@@ -1765,7 +1772,8 @@ class Orchestrator:
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
-                "refused_evidence": refused, "unsupported_claims": unsupported}
+                "refused_evidence": refused, "unsupported_claims": unsupported,
+                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         report = self.format_results(steps, results, n) + f"\n\nCP2 evidence review: {decided}."

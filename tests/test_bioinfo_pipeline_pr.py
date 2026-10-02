@@ -401,3 +401,22 @@ async def test_gateway_ignores_a_bundle_from_a_failed_or_unfinished_turn(tmp_pat
         assert not [e for e in hub.events if e["type"] == "pipeline.ready"]
     finally:
         hub.store.close()
+
+
+async def test_gateway_keeps_output_hashes_when_it_strips_pipeline_submission(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "status": "running"}
+    hub.store.put("task", "t", {"request_id": "r", "payload": {"agent_id": "worker", "meta": {}}})
+    result = TaskResult(task_id="t", agent_id="worker", ok=True, output_sha256={"outputs/a.tsv": "a" * 64},
+                        unreported_outputs=["outputs/b.tsv"], pipeline_submission=pipeline())
+    try:
+        await hub.on_runner_message("runner", {"type": "task.result", "task_id": "t", "request_id": "r",
+                                                "data": result.model_dump(mode="json")})
+        stored = hub.store.get("task", "t")["result"]
+        assert stored["output_sha256"] == {"outputs/a.tsv": "a" * 64}
+        assert stored["unreported_outputs"] == ["outputs/b.tsv"]
+        published = [event for event in hub.events if event["type"] == "task.result"][-1]["data"]
+        assert published["output_sha256"] == stored["output_sha256"]
+        assert "pipeline_submission" not in published
+    finally:
+        hub.store.close()

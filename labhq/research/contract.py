@@ -577,7 +577,7 @@ def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]
 
 
 def bind_result_artifacts(result: dict[str, Any], *, outputs: list[str],
-                          upstream: list[tuple[str | None, str | None, list[str]]]) -> dict[str, list[dict[str, str]]]:
+                          upstream: list[tuple], output_sha256: dict[str, str] | None = None) -> dict[str, Any]:
     """Evidence CP2 refuses because its artifact is not a file labhq collected, and claims left without support.
 
     A normalized ``artifact_refs[].path`` binds when it is one of the step's collected ``outputs``, or an output
@@ -586,14 +586,28 @@ def bind_result_artifacts(result: dict[str, Any], *, outputs: list[str],
     are rows derived from a refused row. A claim whose status rests only on refused rows is listed as unsupported.
     """
     known = {normalize_artifact_path(path) for path in outputs}
-    for workdir_id, workdir, paths in upstream:
+    hashes = {normalize_artifact_path(path): value for path, value in (output_sha256 or {}).items()}
+    for item in upstream:
+        workdir_id, workdir, paths, *rest = item
+        upstream_hashes = rest[0] if rest and isinstance(rest[0], dict) else {}
         root = normalize_artifact_path(workdir or "")  # forward slashes, so the join below needs no backslash
         for path in map(normalize_artifact_path, paths):
             if workdir_id:
-                known.add(normalize_artifact_path(f"{workdir_id}/{path}"))
+                joined = normalize_artifact_path(f"{workdir_id}/{path}")
+                known.add(joined)
+                if path in upstream_hashes:
+                    hashes[joined] = upstream_hashes[path]
             if root:
-                known.add(normalize_artifact_path(f"{root}/{path}"))
+                joined = normalize_artifact_path(f"{root}/{path}")
+                known.add(joined)
+                if path in upstream_hashes:
+                    hashes[joined] = upstream_hashes[path]
     known.discard("")
+    artifact_sha256 = {
+        str(ref.get("artifact_id")): hashes.get(normalized)
+        for ref in result.get("artifact_refs") or []
+        if (normalized := normalize_artifact_path(str(ref.get("path") or ""))) in known
+    }
     unbound = {str(ref.get("artifact_id")): str(ref.get("path") or "")
                for ref in result.get("artifact_refs") or []
                if normalize_artifact_path(str(ref.get("path") or "")) not in known}
@@ -621,8 +635,8 @@ def bind_result_artifacts(result: dict[str, Any], *, outputs: list[str],
             unsupported.append({"claim_id": claim["id"],
                                 "reason": f"{claim['status']} rests only on refused evidence {', '.join(cited)}"})
     return {"refused_evidence": [{"evidence_id": evidence_id, "reason": reason}
-                                 for evidence_id, reason in refused.items()],
-            "unsupported_claims": unsupported}
+                                  for evidence_id, reason in refused.items()],
+            "unsupported_claims": unsupported, "artifact_sha256": artifact_sha256}
 
 
 EVIDENCE_CHOICES = ("approve", "revise", "deny")

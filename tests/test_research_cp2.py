@@ -36,7 +36,8 @@ def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
         result = _cp2_result(hub, task)
         if artifact_path is not None:
             result["artifact_refs"][0]["path"] = artifact_path
-        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path],
+                          output_sha256={path: "a" * 64}, unreported_outputs=["outputs/extra.tsv"])
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
 
@@ -77,6 +78,19 @@ async def test_cp2_accepts_a_normalized_path_to_the_collected_output():
     assert hub.requests["r"]["outcome"] == "evidence_approved"
 
 
+@pytest.mark.asyncio
+async def test_cp2_records_bound_artifact_hash_and_unreported_outputs():
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    await Orchestrator(hub).run_request("r")
+
+    detail = hub.approvals[1]["detail"]
+    expected = {"s1/a1": "a" * 64}
+    assert detail["artifact_sha256"] == expected
+    assert detail["unreported_outputs"] == {"s1": ["outputs/extra.tsv"]}
+    receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+    assert receipt["artifact_sha256"] == expected
+
+
 def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
     from labhq.research.contract import bind_result_artifacts
 
@@ -99,14 +113,16 @@ def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
                   {"claim_id": "kept", "evidence_id": "e_ghost", "relation": "supports"},
                   {"claim_id": "lost", "evidence_id": "e_escape", "relation": "supports"}],
     }
-    bound = bind_result_artifacts(result, outputs=["outputs/a.tsv"],
-                                  upstream=[("wd_up", "C:\\work\\up", ["outputs/b.tsv"])])
+    bound = bind_result_artifacts(result, outputs=["outputs/a.tsv"], output_sha256={"outputs/a.tsv": "a" * 64},
+                                  upstream=[("wd_up", "C:\\work\\up", ["outputs/b.tsv"],
+                                             {"outputs/b.tsv": "b" * 64})])
 
     refused = {row["evidence_id"]: row["reason"] for row in bound["refused_evidence"]}
     # A bare relative path names this step's workspace, where the upstream file is not.
     assert set(refused) == {"e_ghost", "e_escape", "e_bare", "inference"}
     assert refused["inference"] == "derived from refused evidence e_ghost"
     assert [row["claim_id"] for row in bound["unsupported_claims"]] == ["lost"]
+    assert bound["artifact_sha256"] == {"own": "a" * 64, "up_id": "b" * 64, "up_abs": "b" * 64}
 
 
 # ---------- P1: the research lane never enters generic re-planning ----------

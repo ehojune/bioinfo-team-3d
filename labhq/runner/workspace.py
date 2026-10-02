@@ -197,8 +197,36 @@ class TaskWorkspace:
             return self._list_outputs(top, root, real_root, zones, max_entries, max_depth,
                                       OUTPUT_SCAN_MAX_FILES if max_files is None else max_files)
 
+    def scan_output_records(self, zones: list[Path], max_entries: int, max_depth: int,
+                            hash_max_bytes: int | None = None,
+                            max_files: int | None = None) -> tuple[list[dict[str, Any]], str | None]:
+        """Run the shared bounded, no-follow outputs walker and return metadata plus optional hashes."""
+        root = self.dir / "outputs"
+        if not os.path.lexists(root):
+            return [], None
+        try:
+            if _is_link(root) or not root.is_dir():
+                return [], None
+            top = HeldDir.hold(root)
+        except OSError:
+            return [], "outputs 폴더를 확인하지 못해 관찰 산출물 manifest가 불완전합니다"
+        with top:
+            try:
+                real_root = root.resolve()
+                if (not top.same_as(real_root) or _is_mount(root)
+                        or (top.dev is not None and top.dev != os.stat(real_root.parent).st_dev)
+                        or any(real_root.is_relative_to(zone) for zone in zones)):
+                    return [], "outputs 폴더가 안전하지 않거나 통제 구역이어서 관찰 산출물 manifest가 불완전합니다"
+            except (OSError, RuntimeError, ValueError):
+                return [], "outputs 폴더를 확인하지 못해 관찰 산출물 manifest가 불완전합니다"
+            return self._list_outputs(
+                top, root, real_root, zones, max_entries, max_depth,
+                max_entries if max_files is None else max_files,
+                detailed=True, hash_max_bytes=hash_max_bytes)
+
     def _list_outputs(self, top: HeldDir, root: Path, real_root: Path, zones: list[Path], max_entries: int,
-                      max_depth: int, max_files: int) -> tuple[list[str], str | None]:
+                      max_depth: int, max_files: int, *, detailed: bool = False,
+                      hash_max_bytes: int | None = None) -> tuple[list, str | None]:
         try:  # never through a link or FIFO the agent put in its place (#165): no runs read then
             text = read_owned(self.dir, "manifest.json")
             runs = json.loads(text).get("runs") if text is not None else None
@@ -208,7 +236,7 @@ class TaskWorkspace:
         own = {"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
         own_names = own if _case_sensitive(root) else {name.casefold() for name in own}
         own_name = (lambda name: name) if own_names is own else str.casefold
-        found: list[str] = []
+        found: list[Any] = []
         note: str | None = None  # a folder left out; the listing goes on without it
         seen = 0
 
@@ -230,8 +258,17 @@ class TaskWorkspace:
                     # A CP949 name unpacked on Linux: the result could not be sent as JSON text and the run would fail.
                     note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
                     continue
-                if entry.kind in (None, "link"):
-                    continue  # gone, or a link or junction leading elsewhere: not this run's output
+                path = PurePath("outputs", relative, entry.name).as_posix()
+                own_result = depth == 0 and own_name(entry.name) in own_names
+                if entry.kind is None or own_result:
+                    continue
+                if entry.kind == "link":
+                    if detailed:
+                        if len(found) >= max_files:
+                            return f"산출 파일이 상한 {max_files}개를 넘어 관찰 산출물 manifest가 불완전합니다"
+                        found.append({"path": path, "size": entry.size, "mtime_ns": entry.mtime_ns,
+                                      "sha256": None, "link": True, "reason": "링크는 해시하지 않음"})
+                    continue  # record the link itself when requested, never follow it
                 if overlaps_zone(real_root / relative / entry.name, zones):
                     continue  # inside a restricted zone, or a folder holding one
                 if entry.kind == "dir":
@@ -242,10 +279,32 @@ class TaskWorkspace:
                         note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
                         continue
                     folders.append(entry)
-                elif entry.kind == "file" and not (depth == 0 and own_name(entry.name) in own_names):
+                elif entry.kind == "file":
                     if len(found) >= max_files:
                         return f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
-                    found.append(PurePath("outputs", relative, entry.name).as_posix())
+                    if not detailed:
+                        found.append(path)
+                        continue
+                    try:
+                        fd = folder.open_read_file(entry.name)
+                        with os.fdopen(fd, "rb") as stream:
+                            info = os.fstat(stream.fileno())
+                            if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
+                                raise OSError(f"{path} was replaced after it was listed")
+                            record: dict[str, Any] = {"path": path, "size": info.st_size,
+                                                      "mtime_ns": info.st_mtime_ns}
+                            if hash_max_bytes is not None:
+                                if info.st_size > hash_max_bytes:
+                                    record.update(sha256=None,
+                                                  reason=f"output_hash_max_bytes 상한 초과 ({hash_max_bytes})")
+                                else:
+                                    digest = hashlib.sha256()
+                                    while chunk := stream.read(1024 * 1024):
+                                        digest.update(chunk)
+                                    record["sha256"] = digest.hexdigest()
+                            found.append(record)
+                    except OSError:
+                        note = note or f"{path}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
             for entry in folders:  # a folder's files first, then its subfolders in name order
                 sub = relative / entry.name
                 try:
