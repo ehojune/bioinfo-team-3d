@@ -3,3 +3,7 @@ rows:
 - sha: 7e552f1
   at: 2026-10-02 19:41
   text: 연구 CP1 승인 뒤 claim·evidence 계약 실행과 CP2 증거 검토 게이트를 추가했다.
+- sha: cf86bcb
+  at: 2026-10-02 20:07
+  text: CP2가 모은 산출에 묶이지 않은 artifact의 evidence를 거부하고, 연구 요청은 일반 재계획 없이 자기 실패 경로로 끝나며,
+    결정은 approve·revise·deny 선택값으로만 읽는다.
