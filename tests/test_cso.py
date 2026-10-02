@@ -1317,8 +1317,80 @@ async def test_failed_upstream_replans_only_remaining_dag_and_keeps_success():
     assert entry["retired"] == ["primary", "report"] and entry["added"] == ["alternative"]
     assert entry["prior_results"]["primary"]["error"] == "primary analysis failed"
     assert req["replan_progress"] == {"attempts": 1, "max": 1, "in_flight": False}
-    assert "Re-plan history:\n- #1 step_failure: applied; retired: primary, report; added: alternative" \
-        in req["report"]
+    # The PI still reads why the original method was replaced, not only that it was.
+    assert ("Re-plan history:\n- #1 step_failure: applied; retired: primary (primary analysis failed), report; "
+            "added: alternative") in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_reviewer_sees_which_failed_step_a_replan_replaced():
+    """A reviewer judging the fallback must know the primary method failed, or it reviews a different question."""
+    original = [{"id": "primary", "agent_id": "worker", "instruction": "primary analysis", "depends_on": []}]
+    accept = {"verdict": "accept", "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+              "issues": []}
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="primary analysis failed")
+                                   if task.meta["step_id"] == "primary" else result(task, text="fallback done")),
+                     lambda task: replan_plan([{"id": "fallback", "agent_id": "worker", "instruction": "fallback",
+                                                "depends_on": []}]),
+                     on_review=lambda task: accept)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    prompt = kinds(hub, "review")[0].prompt
+    assert "re-plan history" in prompt and "retired: primary (primary analysis failed)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_failure_replan_saves_new_plan_and_retired_results_together():
+    """A restart between two saves must never see the old plan without a result it already has (#271).
+
+    The old plan minus a failed step's result would rerun that step; the real SavedResults saves on every pop.
+    """
+    from labhq.gateway.server import SavedResults
+
+    original = [
+        {"id": "kept", "agent_id": "worker", "instruction": "keep", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["kept"]},
+        {"id": "after", "agent_id": "worker", "instruction": "use broken", "depends_on": ["broken"]},
+    ]
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="tool unavailable")
+                                   if task.meta["step_id"] == "broken" else result(task, text="ok")),
+                     lambda task: replan_plan([{"id": "fix", "agent_id": "worker", "instruction": "fix",
+                                                "depends_on": ["kept"]}]))
+    hub.clear_step_jobs = lambda rid, sid: None
+    hub.result_map = lambda rid: SavedResults(hub, rid)
+    saves = []
+
+    def save(rid):
+        req = hub.requests[rid]
+        saves.append(({step["id"] for step in (req.get("plan") or {}).get("steps") or []},
+                      set(req.get("results") or {})))
+
+    hub.save_request = save
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    ran = set()
+    for plan_ids, result_ids in saves:
+        lost = (ran & plan_ids) - result_ids
+        assert not lost, f"saved the plan {sorted(plan_ids)} without the results of {sorted(lost)}"
+        ran |= result_ids & plan_ids
+
+
+@pytest.mark.asyncio
+async def test_replan_does_not_route_around_a_cancelled_step():
+    """A cancelled task is a PI decision like a rejected question; the CSO must not plan around it."""
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error="cancelled"),
+                     lambda task: pytest.fail("a cancelled step must not be re-planned around"))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][0]["status"] == "blocked"
+    assert "A: cancelled" in req["report"] and req["replan_progress"]["attempts"] == 0
 
 
 @pytest.mark.asyncio

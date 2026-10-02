@@ -349,6 +349,27 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
     return report.rstrip() + "\n\n" + metadata
 
 
+def replan_history_lines(history: list[dict]) -> list[str]:
+    """One line per re-plan attempt (#271). A retired step that failed keeps its cause, so the PI and the
+    reviewer read why the original method was replaced, not only that it was."""
+    lines = []
+    for entry in history:
+        line = f"- #{entry.get('attempt') or '-'} {entry['trigger']}: {entry['status']}"
+        prior = entry.get("prior_results") or {}
+        if entry.get("retired"):
+            line += "; retired: " + ", ".join(
+                f"{sid} ({short(prior[sid].get('error') or 'failed', 200)})"
+                if sid in prior and not prior[sid].get("ok")
+                and not str(prior[sid].get("error") or "").startswith("skipped:") else sid
+                for sid in entry["retired"])
+        if entry.get("added"):
+            line += f"; added: {', '.join(entry['added'])}"
+        if entry.get("reason"):
+            line += f"; reason: {short(entry['reason'], 500)}"
+        lines.append(line)
+    return lines
+
+
 def _output_reference(inner: str) -> re.Pattern[str]:
     """A root, absolute, home, or bare instruction reference to one declared output (#229)."""
     body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
@@ -1787,11 +1808,21 @@ class Orchestrator:
                 by_id = {s["id"]: s for s in steps}
                 completed = [sid for sid in by_id if sid in results and results[sid].ok]
                 if review is None:
-                    blocked = [f"{sid}: a PI decision rejected this step; re-planning would route around it"
-                               if results[sid].error_kind == "ask_rejected" else
-                               f"{sid}: failed with live HPC jobs {results[sid].pending_jobs}; a new step could "
-                               "submit them again" for sid in by_id if sid in results and not results[sid].ok
-                               and (results[sid].error_kind == "ask_rejected" or results[sid].pending_jobs)]
+                    def block_reason(outcome: TaskResult) -> str | None:
+                        error = outcome.error or ""
+                        if error.startswith("skipped:"):  # its upstream carries the reason
+                            return None
+                        if outcome.error_kind == "ask_rejected":
+                            return "a PI decision rejected this step; re-planning would route around it"
+                        if outcome.pending_jobs:
+                            return (f"failed with live HPC jobs {outcome.pending_jobs}; a new step could submit "
+                                    "them again")
+                        if "cancel" in error.lower():  # failure_kind's terminal cancel: the PI's task cancel
+                            return f"{error}; a cancelled step is a decision, not a failure to plan around"
+                        return None
+
+                    blocked = [f"{sid}: {reason}" for sid in by_id if sid in results and not results[sid].ok
+                               and (reason := block_reason(results[sid]))]
                     if blocked:
                         return record("blocked", reason="; ".join(blocked))
                 if progress.get("in_flight"):
@@ -1929,7 +1960,10 @@ class Orchestrator:
                                "error_kind": results[sid].error_kind, "outputs": list(results[sid].outputs),
                                "workdir_id": results[sid].workdir_id} for sid in retired_ids if sid in results}
                 for sid in retired_ids:
-                    results.pop(sid, None)
+                    # Not SavedResults.pop: it saves at once, and the old plan without this result would rerun
+                    # the step after a restart. record() below saves the new plan and these removals together.
+                    dict.pop(results, sid, None)
+                    (req.get("results") or {}).pop(sid, None)
                     (req.get("step_decisions") or {}).pop(sid, None)
                     (req.get("pending_revisions") or {}).pop(sid, None)
                 steps = merged
@@ -1982,6 +2016,9 @@ class Orchestrator:
                 if not reviewer or reviewer not in known:
                     break
                 prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
+                if req.get("replan_history"):  # retired steps are no longer in the results above (#271)
+                    prompt += ("\n\nPlan changes during this request (labhq re-plan history):\n" +
+                               "\n".join(replan_history_lines(req["replan_history"])))
                 review = {}
                 for parse_attempt in (1, 2):
                     r = await self.run_step(Task(
@@ -2124,17 +2161,7 @@ class Orchestrator:
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
         if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
-            lines = []
-            for entry in req["replan_history"]:
-                line = f"- #{entry.get('attempt') or '-'} {entry['trigger']}: {entry['status']}"
-                if entry.get("retired"):
-                    line += f"; retired: {', '.join(entry['retired'])}"
-                if entry.get("added"):
-                    line += f"; added: {', '.join(entry['added'])}"
-                if entry.get("reason"):
-                    line += f"; reason: {short(entry['reason'], 500)}"
-                lines.append(line)
-            metadata.append("Re-plan history:\n" + "\n".join(lines))
+            metadata.append("Re-plan history:\n" + "\n".join(replan_history_lines(req["replan_history"])))
         if req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
             metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
