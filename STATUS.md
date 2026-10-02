@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · 작은 후속 세 건(#241 #244 #305)
+
+- 결론: 오류 출력 주석, pack rule 동시 검증, input-fit 집계 키를 바로잡았다.
+- 바뀐 것: extra field와 독립적인 rule 위반을 함께 알리고, input-fit을 `관계표12/vocab12`로 나눈다.
+- 실행한 것: 회귀 2건의 수정 전 실패를 확인했고, 관련 pytest 91건과 공개 저장소 검사를 통과했다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/research/contract.py`, `labhq/research/semantics_shadow.py`, `tests/test_research_protocol.py`, `tests/test_semantics_input_fit.py`.
+
 ## 2026-10-02 · Windows bench 취소 test 불안정 수정
 
 - 결론: Windows가 `taskkill` 생성 중 `MemoryError`를 내도 이미 수집한 PID로 process tree를 정리한다.
