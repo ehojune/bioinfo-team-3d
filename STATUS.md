@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #231~#234 — direct 산출 후속
+
+- 결론: direct와 wrap-up 산출을 같은 규칙으로 모으고, 볼륨의 대소문자 구분에 맞춰 labhq 결과 사본을 뺀다.
+- 바뀐 것: 대소문자 구분 판정, direct wrap-up 전체 산출 수집, 라운드 기록의 `outputs/` 경로 200개 상한 설명을 추가했다. #232는 main의 fd 기반 순회와 교체 회귀 테스트로 이미 해결돼 있었다.
+- 실행한 것: 수정 전 새 회귀 3건 실패, 수정 뒤 관련 pytest 40건 통과·2건 skip. 공개정보 검사와 diff 검사를 통과했다. README는 86,587 bytes에서 86,686 bytes로 99 bytes 늘었다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_direct_outputs.py`, `tests/test_resume_accounting.py`, `README.md`.
+
 ## 2026-10-02 · PR #313 — 3D 화면 후속 세 건
 
 - 결론: 전문 보기 클릭 유실, terminal report snapshot 팽창, 이어 묻기 글자 수 단위 불일치를 고쳤다.
