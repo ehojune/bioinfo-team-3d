@@ -90,6 +90,19 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
         logs_relative = logs.relative_to(workdir)
     except ValueError as exc:
         raise RuntimeError("job script and logs must stay inside the task workdir") from exc
+    gid = None
+    if job_group:
+        if os.name == "nt":
+            raise RuntimeError("hpc.job_group requires a POSIX runner")
+        import grp
+
+        gid = grp.getgrnam(job_group).gr_gid
+        if workdir.is_symlink():
+            raise RuntimeError(f"task workdir must not be a symlink: {workdir}")
+        if workspace_root is None or not job_user:
+            raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
+        # Validate traversal outside the managed root before creating jobs/logs.
+        _share_workspace_parents(workdir, workspace_root, gid, job_user)
     jobs_dir = plain_directory(workdir, script_relative.parent)
     logs_dir = plain_directory(workdir, logs_relative)
     if jobs_dir is None or logs_dir is None:
@@ -101,16 +114,6 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
             held_logs.chmod(0o700)
     if job_group:
-        if os.name == "nt":
-            raise RuntimeError("hpc.job_group requires a POSIX runner")
-        import grp
-
-        gid = grp.getgrnam(job_group).gr_gid
-        if workdir.is_symlink():
-            raise RuntimeError(f"task workdir must not be a symlink: {workdir}")
-        if workspace_root is None or not job_user:
-            raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
-        _share_workspace_parents(workdir, workspace_root, gid, job_user)
         output_dir = workdir / "hpc_out"
         for shared in (script_path.parent, logs, output_dir):
             if shared.is_symlink():
@@ -146,17 +149,20 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
     if job_group:
         # Hold every shared folder before changing it. A concurrent replacement is rejected; chmod/chown use the
         # handles, so a later rename cannot redirect them to an agent-controlled link target.
-        with ExitStack() as stack:
-            held_workdir = stack.enter_context(HeldDir.hold(workdir))
-            held_jobs = stack.enter_context(held_workdir.child(script_relative.parts[0]))
-            held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
-            held_output = stack.enter_context(held_workdir.child(output_dir.name))
-            for directory in (held_workdir, held_jobs, held_logs, held_output):
-                directory.chown(-1, gid)
-            held_workdir.chmod(0o710)
-            held_jobs.chmod(0o2750)
-            held_logs.chmod(0o2770)
-            held_output.chmod(0o2770)
+        try:
+            with ExitStack() as stack:
+                held_workdir = stack.enter_context(HeldDir.hold(workdir))
+                held_jobs = stack.enter_context(held_workdir.child(script_relative.parts[0]))
+                held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
+                held_output = stack.enter_context(held_workdir.child(output_dir.name))
+                for directory in (held_workdir, held_jobs, held_logs, held_output):
+                    directory.chown(-1, gid)
+                held_workdir.chmod(0o710)
+                held_jobs.chmod(0o2750)
+                held_logs.chmod(0o2770)
+                held_output.chmod(0o2770)
+        except OSError as exc:
+            raise RuntimeError("shared job path is a link or was replaced") from exc
     write_owned(workdir, script_relative.as_posix(), body)
     if os.name != "nt":
         chmod_owned(workdir, script_relative.as_posix(), 0o750, gid if job_group else None)

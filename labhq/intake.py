@@ -612,7 +612,10 @@ def _any_home(account: str) -> str:
 
 
 _ANY_HOME = _any_home(_ACCOUNT)
-_ANY_HOME_ONE_WORD = _any_home(_ACCOUNT_WORD)
+# For a bare `~`, allow spaces only when a following separator proves where the
+# account component ends. Otherwise `/home/worker finished the report` must not
+# consume ordinary prose after `worker`.
+_ANY_HOME_BARE = _any_home(rf"(?:{_ACCOUNT}(?={SEPARATOR})|{_ACCOUNT_WORD})")
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
@@ -630,7 +633,7 @@ def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
     if drive:
         head, rest = rf"(?:{drive[1]}:|{_RUN_START}{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
     elif any_home and (value == "~" or value.startswith(("~/", "~\\"))):
-        head, rest = (_ANY_HOME_ONE_WORD if value == "~" else _ANY_HOME), value[1:]
+        head, rest = (_ANY_HOME_BARE if value == "~" else _ANY_HOME), value[1:]
     elif value.startswith(("/", "\\")):
         head = _RUN_START
     body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))

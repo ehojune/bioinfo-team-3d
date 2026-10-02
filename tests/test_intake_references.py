@@ -216,6 +216,17 @@ def test_project_reports_mask_short_tilde_references_in_every_runner_home(tmp_pa
     assert "worker" not in cleaned and "~/" not in cleaned and " a ~ " not in f" {cleaned} "
 
 
+def test_bare_tilde_reference_masks_spaced_account_component_without_eating_prose(tmp_path):
+    s = settings_with_roots(tmp_path)
+    hub = create_app(s).state.hub
+    hub.requests["r"] = {"references": [{"kind": "path", "value": "~", "source": "request"}]}
+    text = r"private C:\Users\Jane Doe\private\a.txt; public /home/worker finished the report"
+
+    cleaned = hub.reporter._clean(text)
+
+    assert cleaned == r"private <reference-path>\private\a.txt; public <reference-path> finished the report"
+
+
 def test_pi_profile_path_outside_roots_blocks_requests_loudly(tmp_path):
     s = settings_with_roots(tmp_path)
     s.pi_profile.references = [ref("path", str(tmp_path / "private"))]
