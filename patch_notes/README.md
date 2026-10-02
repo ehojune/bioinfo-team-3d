@@ -14,20 +14,27 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
 | 20:00 | [`16d12b4`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/16d12b4) | session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을 놓지 않음 |
 | 19:58 | [`7a14808`](https://github.com/ehojune/bioinfo-team-3d/pull/310/commits/7a14808) | 파일 도구 경로의 환경 변수는 펼치지 않고, 셸 쓰기에는 작업 폴더의 원래 표기도 허용한다(#236 #237) |
+| 19:55 | [`3aef457`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/3aef457) | runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치 |
 | 19:54 | [`21007da`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/21007da) | consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209) |
 | 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
 | 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
+| 19:43 | [`af48ee7`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/af48ee7) | runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤 |
 | 19:38 | [`2b02934`](https://github.com/ehojune/bioinfo-team-3d/pull/306/commits/2b02934) | plan-only 재개는 계획 저장 전에는 계획 담당만, 저장 뒤에는 아무 실행 직원도 기다리지 않는다(#293) |
+| 19:38 | [`b3b4b00`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/b3b4b00) | runner 계정 절차서의 깨진 runner.yaml 경로 6곳 복구 |
 | 19:36 | [`60c3249`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/60c3249) | pipeline PR은 확장자로 코드만 받고 json·yaml·md는 정해진 pipeline 경로에서만 받음. 성공으로 끝난 turn의 산출만 제출 |
 | 19:34 | [`db85ace`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/db85ace) | main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림 |
+| 19:32 | [`de4e225`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/de4e225) | runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner 계정을 확인 |
 | 19:29 | [`54b71be`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/54b71be) | 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir) |
 | 19:26 | [`803aecb`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/803aecb) | 새 pipeline 자동 PR은 기본 꺼짐(policy.bioinfo_agent.pipeline_pr로 켬). 켜도 pipeline 소스와 https 테스트 목록만 받고 절대경로는 모두 거부 |
+| 19:26 | [`b14bfa1`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/b14bfa1) | runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리 ok |
 | 19:24 | [`58c8d98`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/58c8d98) | main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지 |
 | 19:24 | [`184ab7d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/184ab7d) | --instance: 초기화되지 않은 이름은 기본 설정으로 넘어가지 않고 거부 |
 | 19:20 | [`d22ef09`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/d22ef09) | main(#296 CSO A/B) 병합: ab 모드도 액션 층 설정으로 읽고, A2는 mode shadow 또는 ab에 actions: confirm일 때만 |
 | 19:19 | [`ef7c08d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/ef7c08d) | 이름별 빈 포트·경로·token 설정 생성과 모든 명령의 --instance 선택, 웹·홈 화면 instance 이름 표시를 추가 |
+| 19:19 | [`99d3674`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/99d3674) | runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가 |
 | 19:18 | [`c8334ce`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/c8334ce) | 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록 |
 | 19:17 | [`9efe399`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9efe399) | 입력 적합성 그림자 모듈·관계표·테스트를 제거 목록에 넣고 관계표를 research로 옮김 |
 | 19:09 | [`9fa63ca`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/9fa63ca) | bioinfo-agent 질문은 CSO가 답하고 새 파이프라인은 공개 검사 뒤 bioinfo-agent 저장소 PR로 올림 |
