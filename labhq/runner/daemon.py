@@ -50,7 +50,7 @@ from .approvals import Broker
 from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
-from .workspace import TaskWorkspace
+from .workspace import TaskWorkspace, restricted_zones
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -499,16 +499,7 @@ class Runner:
         return latest
 
     def _zones(self) -> list[Path]:
-        """Restricted zones as real paths: a zone written through a symlink or junction
-        (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at."""
-        zones: list[Path] = []
-        for zone in self.s.policy.data_zones:
-            if zone.level == "restricted":
-                try:
-                    zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
-                except (OSError, RuntimeError, ValueError):
-                    continue
-        return zones
+        return restricted_zones(self.s)
 
     def _upstream_refusal(self, directory: Path, zones: list[Path]) -> str | None:
         """Why an earlier step's workspace is not opened to this step, or None (#132).
@@ -941,7 +932,7 @@ class Runner:
                 keep.append(skill_path(self.s.recruit.contract_engine))
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             open_reads = staff_claude_project_dirs(self.s, ws.dir) if agent.engine == Engine.claude_code else []
-            private = resolve_private_paths(self.s, keep, open_reads=open_reads)
+            private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)

@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any, Callable
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
+                                     failed_lookups)
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
@@ -27,7 +29,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  validate_research_plan, validate_research_result, with_pack_refs)
-from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog
+from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -88,6 +90,26 @@ REVIEW_SCHEMA: dict[str, Any] = {
             "required": ["step_id", "problem", "request"]}},
     },
     "required": ["verdict", "scores", "issues"],
+}
+
+# The research lane's one review after CP2 approval (#58 ⑤). REVIEW_SCHEMA above stays the generic review, and
+# labhq/research/review.py keeps its per-step REVIEW v2 schema (RESEARCH_REVIEW_SCHEMA), not on this path yet.
+RESEARCH_REVIEW_CATEGORIES = ("overgeneralization", "cherry_picking", "no_comparator", "undefined_scale",
+                              "speculation_as_fact", "unsupported_by_artifact", "method_change_unstated", "other")
+RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "verdict": {"type": "string", "enum": ["accept", "revise"]},
+        "issues": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"step_id": {"type": "string"}, "claim_id": {"type": "string"},
+                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
+                           "category": {"type": "string", "enum": list(RESEARCH_REVIEW_CATEGORIES)},
+                           "evidence_quote": {"type": "string"}, "problem": {"type": "string"},
+                           "request": {"type": "string"}},
+            "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
+    },
+    "required": ["verdict", "issues"],
 }
 
 BRIEFING_PROMPT = """Prepare a briefing (≤300 words) for the CSO on this research request:
@@ -168,8 +190,10 @@ RESEARCH_CP2_RULE = (
     "result v2 ledger bound to this plan's sha256, its step id, its claim_ids and its evidence_slots, with claims "
     "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs or an upstream "
     "step's collected artifact; evidence citing any other path is refused. The request then stops at CP2, where "
-    "the PI approves, requests revision of, or denies the evidence. Review and synthesis do not run yet. A failed "
-    "step or a requested revision ends the request, and a changed plan needs a new CP1 approval.")
+    "the PI approves, requests revision of, or denies the evidence. After approval one reviewer checks the claims "
+    "against their ledgers and files, and the final report ties every conclusion to a ledger claim as "
+    "[[claim:<step_id>/<claim_id>]], which labhq checks. A failed step, a requested revision or a reviewer's revise "
+    "ends the request, and a changed plan needs a new CP1 approval.")
 RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
@@ -236,6 +260,87 @@ Team results:
 {results}
 
 Reviewer: {review}"""
+
+# Appended to SYNTH_PROMPT only when the generic review loop ended with the verdict still "revise" (2nd mock
+# trial F5); the request still fails, but the PI gets the CSO's conclusion instead of a step dump.
+UNRESOLVED_REVIEW_NOTE = (
+    "\n\nThe reviewer still asked for revisions after the last revision labhq could run. List each of the "
+    "reviewer's remaining issues, one by one, in a section titled \"해결되지 않은 리뷰 지적\", and do not state any "
+    "conclusion those issues bear on as if it were settled.")
+
+# The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
+RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
+PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
+readable files below can be opened, read them and compare what they contain with what each claim says.
+
+Return one issue per problem with:
+- step_id, and claim_id ("" when the issue is not about one claim)
+- priority: P1 if fixing it would change a conclusion, P2 if it weakens a conclusion, P3 if it is wording only
+- category: overgeneralization, cherry_picking, no_comparator, undefined_scale, speculation_as_fact,
+  unsupported_by_artifact, method_change_unstated, or other
+- evidence_quote: the exact text, from the ledger or from a file you read, that shows the problem
+- problem, and request: the specific fix
+Answer the domain pack reviewer questions below as issues where they find a problem.
+Use verdict "revise" only when there is at least one P1 issue; otherwise "accept". labhq does not re-run the frozen
+plan: a revise ends the request, and a fixed plan needs a new CP1 approval.
+
+Request: {request}
+
+Frozen plan (plan_sha256 {plan_sha256}):
+{plan}
+
+Domain packs (reviewer questions and rules):
+{packs}
+
+Evidence ledgers per step: claims, evidence, links, artifact_refs with the artifact_sha256 labhq recorded, evidence
+refused and claims left unsupported at CP2, not_established, failures and method_changes.
+{ledgers}"""
+
+RESEARCH_REVIEW_RETRY = ('\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise" and issues, each '
+                         'issue with every field. Do not add prose.')
+
+def with_p1_verdict(review: dict) -> dict:
+    """The research review's verdict follows its priorities: revise exactly when an issue is P1 (a fix would change
+    the conclusion). A reviewer verdict that disagrees is kept as ``reviewer_verdict`` (PR #336 review)."""
+    verdict = "revise" if any(issue.get("priority") == "P1" for issue in review.get("issues") or []) else "accept"
+    if review.get("verdict") == verdict:
+        return review
+    return {**review, "verdict": verdict, "reviewer_verdict": review.get("verdict")}
+
+
+RESEARCH_SYNTH_PROMPT = """Write the final research report for the PI from the frozen plan, the evidence the PI
+approved at CP2 and the research review below.
+
+Claim anchors (labhq checks them by machine):
+- End every sentence that states a conclusion or a number with the anchor of the claim it rests on, written
+  exactly [[claim:<step_id>/<claim_id>]].
+- Anchor only the citable claims listed below, each with the anchor shown there. A claim that is not listed as
+  citable is not established: do not state it as a conclusion.
+- Put the not-established items and failed lookups below in their own section titled "확립되지 않은 것", without
+  anchors. A failed or empty lookup is neither evidence nor proof of absence.
+- Report the reviewer's P1 and P2 issues as limitations.
+Structure: 1) answer, 2) evidence by claim (with anchors and file paths), 3) 확립되지 않은 것, 4) limitations,
+5) what would change the conclusion, and next steps.
+
+Request: {request}
+
+Frozen plan (plan_sha256 {plan_sha256}):
+{plan}
+
+Citable claims:
+{citable}
+
+Claims that cannot be cited:
+{uncitable}
+
+Not established, failed lookups and method changes:
+{gaps}
+
+Research review (verdict {verdict}):
+{issues}
+
+Team results:
+{results}"""
 
 WAKE_PROMPT = """Your HPC jobs finished:
 {jobs}
@@ -369,6 +474,54 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
     return report.rstrip() + "\n\n" + metadata
 
 
+def _research_plan_digest(plan: dict) -> str:
+    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps."""
+    steps = [{key: step.get(key) for key in ("id", "agent_id", "phase", "instruction", "claim_ids", "outputs",
+                                             "evidence_slots", "depends_on")} for step in plan.get("steps") or []]
+    digest = {"brief": plan.get("brief"),
+              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
+              "pack_values": plan.get("pack_values") or {}, "steps": steps}
+    return clip(json.dumps(digest, ensure_ascii=False), 8000)
+
+
+def _research_issue_lines(issues: list[dict]) -> list[str]:
+    """Research review issues, P1 first (the sort is stable within a priority)."""
+    return [f"- [{issue['priority']}] {issue['step_id']}{'/' + issue['claim_id'] if issue['claim_id'] else ''} "
+            f"{issue['category']}: {issue['problem']} Request: {issue['request']} "
+            f"Quote: \"{short(issue['evidence_quote'], 300)}\""
+            for issue in sorted(issues, key=lambda issue: issue["priority"])]
+
+
+def _without_empty(value: Any) -> Any:
+    """A ledger row without its null or empty optional fields, so the reviewer prompt carries what was stated."""
+    if isinstance(value, dict):
+        return {key: _without_empty(item) for key, item in value.items() if item not in (None, [], {}, "")}
+    if isinstance(value, list):
+        return [_without_empty(item) for item in value]
+    return value
+
+
+def _citable_claim_line(row: dict) -> str:
+    claim = row["claim"]
+    line = (f"- {anchor(row['step_id'], claim['id'])} {claim.get('status')} ({claim.get('importance')}; "
+            f"scope: {claim.get('scope')}): {claim.get('statement')}")
+    return line + (f" Limitations: {'; '.join(claim['limitations'])}" if claim.get("limitations") else "")
+
+
+def _research_gap_lines(ledgers: dict[str, Any], lookups: list[dict[str, str]]) -> list[str]:
+    """What the research report must list apart from its conclusions: not established, failures, failed lookups,
+    and method changes."""
+    lines = [f"- {sid} not established: {item}" for sid, ledger in ledgers.items()
+             for item in (ledger or {}).get("not_established") or []]
+    lines += [f"- {sid} failure: {item}" for sid, ledger in ledgers.items()
+              for item in (ledger or {}).get("failures") or []]
+    lines += failed_lookup_lines(lookups)
+    lines += [f"- {sid} method change{' (affects the conclusion)' if change.get('affects_conclusion') else ''}: "
+              f"{change.get('field')}: {change.get('planned')} -> {change.get('actual')}; {change.get('reason')}"
+              for sid, ledger in ledgers.items() for change in (ledger or {}).get("method_changes") or []]
+    return lines
+
+
 def replan_history_lines(history: list[dict]) -> list[str]:
     """One line per re-plan attempt (#271). A retired step that failed keeps its cause, so the PI and the
     reviewer read why the original method was replaced, not only that it was."""
@@ -397,6 +550,36 @@ def replan_history_note(req: dict) -> str:
         return ""
     return ("\n\nPlan changes during this request (labhq re-plan history):\n" +
             "\n".join(replan_history_lines(req["replan_history"])))
+
+
+def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> dict[str, str]:
+    """Reviewer feedback plus every step downstream of a flagged one (PR #337 review).
+
+    A revised step changes what its dependents read, so a dependent the reviewer did not flag re-runs too, with a
+    note naming the revised upstream steps; otherwise a later revision or the report reads a bridge step (s5 → s8
+    → s9) built on the old result. Flagged steps keep their own notes and get no extra one.
+    """
+    children: dict[str, list[str]] = {s["id"]: [] for s in steps}
+    for step in steps:
+        for dep in step["depends_on"]:
+            children.setdefault(dep, []).append(step["id"])
+    revised_above: dict[str, set[str]] = {}
+    pending = list(feedback)
+    while pending:
+        sid = pending.pop()
+        for child in children.get(sid, []):
+            if child in feedback:
+                continue
+            roots = {sid} if sid in feedback else revised_above.get(sid, set())
+            if not roots <= revised_above.get(child, set()):
+                revised_above.setdefault(child, set()).update(roots)
+                pending.append(child)
+    extended = dict(feedback)
+    for sid in (s["id"] for s in steps):
+        if sid in revised_above:
+            extended[sid] = (f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the "
+                             "scientific review. Redo your step on their new results and update your outputs.\n")
+    return extended
 
 
 def _output_reference(inner: str) -> re.Pattern[str]:
@@ -699,8 +882,8 @@ class BudgetExceeded(RuntimeError):
     pass
 
 
-def valid_review(value: Any) -> bool:
-    """Check every required REVIEW_SCHEMA field without a new JSON Schema dependency."""
+def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
+    """Check every required field of ``schema`` (REVIEW_SCHEMA unless given) without a new JSON Schema dependency."""
     def matches(item: Any, schema: dict) -> bool:
         typ = schema.get("type")
         if typ == "object":
@@ -720,7 +903,7 @@ def valid_review(value: Any) -> bool:
             return isinstance(item, str) and item in schema.get("enum", [item])
         return False
 
-    return matches(value, REVIEW_SCHEMA)
+    return matches(value, schema)
 
 
 def blocking_question(result: TaskResult) -> str | None:
@@ -1388,8 +1571,14 @@ class Orchestrator:
                 partial = await dispatch_turn(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else
                         "status note missing" if partial.ok else partial.error)
+                # A file the wrap-up rewrote no longer has the first run's hash: it is dropped rather than kept
+                # stale, so `labhq verify` reports it unrecorded instead of a mismatch (#58, PR #339 review).
+                rewritten = set(partial.unreported_outputs) | set(partial.output_sha256)
                 res = res.model_copy(update={"partial_results": bool(partial.outputs),
                                              "outputs": list(dict.fromkeys([*res.outputs, *partial.outputs])),
+                                             "output_sha256": {**{path: digest for path, digest in
+                                                                  res.output_sha256.items() if path not in rewritten},
+                                                               **partial.output_sha256},
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
@@ -1490,6 +1679,17 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
+        ancestors: dict[str, set[str]] = {}
+        for sid in by_id:
+            pending = list(by_id[sid]["depends_on"])
+            found: set[str] = set()
+            while pending:
+                ancestor = pending.pop()
+                if ancestor in found:
+                    continue
+                found.add(ancestor)
+                pending.extend(by_id[ancestor]["depends_on"])
+            ancestors[sid] = found
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
@@ -1585,8 +1785,9 @@ class Orchestrator:
                 return await self.run_step(task)
 
         while todo or running:
-            # ready = no dependency still pending in this run (deps outside `only` already have results)
-            ready = [sid for sid in todo if not any(d in todo or d in running for d in by_id[sid]["depends_on"])]
+            # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
+            # on every ancestor in this run prevents a downstream revision from reading the bridge's stale result.
+            ready = [sid for sid in todo if not any(d in todo or d in running for d in ancestors[sid])]
             for sid in ready:
                 todo.discard(sid)
                 if rid in self.budget_denials:
@@ -1701,14 +1902,14 @@ class Orchestrator:
                             self.hub.save_request(rid)
                         todo.add(sid)
 
-    async def _research_after_steps(self, rid: str, steps: list[dict], results: dict[str, TaskResult], n: int,
-                                    serialized: Callable[[], dict[str, dict]]) -> None:
+    async def _research_after_steps(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult],
+                                    n: int, serialized: Callable[[], dict[str, dict]], packs: dict) -> None:
         """The research lane after its steps ran: a failure ends the request, success stops at CP2 (#90).
 
         The generic re-plan, review and synthesis would change or judge the frozen PLAN without a new CP1 approval,
         so the research lane never reaches them. Evidence whose artifact labhq did not collect is refused and shown
         on the card. CP2 reads only the structured approve/revise/deny choice; an unreadable answer is not approved
-        and is asked again.
+        and is asked again. Only an approval goes on to the research review and report (``_research_report``).
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
@@ -1776,20 +1977,157 @@ class Orchestrator:
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
-        report = self.format_results(steps, results, n) + f"\n\nCP2 evidence review: {decided}."
+        audit = f"CP2 evidence review: {decided}."
         if refused:
-            report += "\nRefused evidence (not approved at CP2):\n" + "\n".join(
+            audit += "\nRefused evidence (not approved at CP2):\n" + "\n".join(
                 f"- {row['step_id']}/{row['evidence_id']}: {row['reason']}" for row in refused)
         if unsupported:
-            report += "\nUnsupported claims:\n" + "\n".join(
+            audit += "\nUnsupported claims:\n" + "\n".join(
                 f"- {row['step_id']}/{row['claim_id']}: {row['reason']}" for row in unsupported)
         if decided == "revision_requested":
-            report += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
+            audit += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
         elif decided == "unreadable":
-            report += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
+            audit += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
         if note:
-            report += f"\nPI note: {note}"
+            audit += f"\nPI note: {note}"
+        report = self.format_results(steps, results, n) + "\n\n" + audit
+        reviewer = self.cfg.reviewer_agent
+        if decided == "approved" and reviewer and reviewer in self.hub.agents:
+            receipt = contract["checkpoints"]["cp2"]
+            await self._research_report(rid, text, steps, results, n, serialized, packs, report, audit, ledgers,
+                                        refused=refused, unsupported=unsupported,
+                                        artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256)
+            return
+        if decided == "approved":
+            report += ("\nNo reviewer agent is configured (orchestrator.reviewer_agent), so the research review and "
+                       "report did not run.")
         self._finish(rid, report, serialized(), ok=decided == "approved")
+
+    async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
+                               serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
+                               cp2_audit: str, ledgers: dict[str, Any], *, refused: list[dict],
+                               unsupported: list[dict],
+                               artifact_sha256: dict[str, str | None]) -> None:
+        """After CP2 approval: one research review, then the CSO's report and its claim-anchor check (#58 ③⑤).
+
+        The plan stays frozen, so a review that asks for revision ends the request; a fixed plan needs a new CP1
+        approval. The review is saved in the contract and reused after a restart; the report is written again.
+        Failed lookups are attached to every report here, whether or not the CSO listed them (#58 ④).
+        """
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        plan_hash = contract["plan_sha256"]
+        refs = reference_meta(req)
+        reviewer = self.cfg.reviewer_agent
+        lookups = failed_lookups(ledgers)
+        lookup_section = [f"{FAILED_LOOKUP_TITLE}:\n" + "\n".join(failed_lookup_lines(lookups))] if lookups else []
+
+        def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None) -> None:
+            if failure is not None:
+                contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
+            req["outcome"] = outcome
+            self.hub.save_request(rid)
+            self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review)
+
+        def budget_denied(stage: str, review: dict | None) -> None:
+            end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
+                False, review, {"stage": stage, "budget": self.budget_denials[rid]})
+
+        stored = contract.get("review") or {}
+        review: dict = {}
+        if stored.get("plan_sha256") == plan_hash:
+            saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues")}
+            review = saved if valid_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) else {}
+        if not review:
+            prompt = RESEARCH_REVIEW_PROMPT.format(
+                request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
+                packs=render_pack_review(packs),
+                ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n))
+            reply: TaskResult | None = None
+            for parse_attempt in (1, 2):
+                reply = await self.run_step(Task(
+                    agent_id=reviewer, request_id=rid, output_schema=RESEARCH_LANE_REVIEW_SCHEMA,
+                    prompt=prompt if parse_attempt == 1 else prompt + RESEARCH_REVIEW_RETRY,
+                    meta={**refs, "kind": "review", "parse_attempt": parse_attempt, "request": text,
+                          "title": "연구 리뷰"}))
+                if rid in self.budget_denials:
+                    budget_denied("review", None)
+                    return
+                parsed = (reply.structured if valid_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
+                          else extract_json(reply.text))
+                if reply.ok and valid_review(parsed, RESEARCH_LANE_REVIEW_SCHEMA):
+                    review = with_p1_verdict(parsed)
+                    break
+            if not review:
+                reason = (reply.error if reply else None) or "missing or invalid research review"
+                end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
+                    {"status": "review_unparsed", "reason": reason})
+                return
+            contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review}
+            self.hub.save_request(rid)
+        issues = _research_issue_lines(review["issues"])
+        if review["verdict"] == "revise":
+            end("research_review_revise", "\n".join([
+                cp2_report, "", f"Research review ({reviewer}): revise.", *issues,
+                "labhq does not re-run a frozen research PLAN; a fixed plan needs a new CP1 approval of its hash."]),
+                False, review)
+            return
+
+        citable, other = claim_rows(ledgers, unsupported)
+        resumable = self.hub.supports_resume(self.cfg.cso_agent)
+        session_id, workdir = await self._free_session(
+            self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
+            req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
+        final = await self.run_step(Task(
+            agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
+            prompt=RESEARCH_SYNTH_PROMPT.format(
+                request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
+                citable="\n".join(map(_citable_claim_line, citable)) or "(none)",
+                uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
+                                    f"{row['claim'].get('statement')}" for row in other) or "(none)",
+                gaps="\n".join(_research_gap_lines(ledgers, lookups)) or "(none)", verdict=review["verdict"],
+                issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)),
+            meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
+                  **({"workdir": workdir} if workdir else {})}))
+        if not final.ok:
+            if rid in self.budget_denials:
+                budget_denied("synthesis", review)
+            else:
+                end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
+                    {"stage": "synthesis", "error": final.error or "unknown error"})
+            return
+        # A report that finished keeps its text and check even if the budget card after it was denied; the denial
+        # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
+        check = check_report(final.text, ledgers, unsupported=unsupported, refused=refused,
+                             artifact_sha256=artifact_sha256)
+        contract["report_check"] = check
+        claim_check = (["Claim check: the report is incomplete.\n" +
+                        "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
+        report = _append_report_metadata(final.text, [*claim_check, cp2_audit])
+        end("report_incomplete" if check["problems"] else "research_reported", report,
+            not check["problems"] and rid not in self.budget_denials, review)
+
+    def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
+                          refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
+                          n: int) -> str:
+        """Each step's CP2-approved ledger for the research reviewer, with recorded hashes and readable files."""
+        parts = []
+        for step in steps:
+            sid, result = step["id"], results[step["id"]]
+            ledger = dict(ledgers.get(sid) or {})
+            ledger["artifact_refs"] = [
+                {**ref, "artifact_sha256": artifact_sha256.get(f"{sid}/{ref.get('artifact_id')}")}
+                for ref in ledger.get("artifact_refs") or []]
+            ledger["refused_at_cp2"] = [row for row in refused if row.get("step_id") == sid]
+            ledger["unsupported_at_cp2"] = [row for row in unsupported if row.get("step_id") == sid]
+            # Claim, evidence and link rows lose their empty optional fields. Everything else stays as is, so an
+            # artifact without a recorded hash still reads "artifact_sha256": null.
+            ledger = {key: [_without_empty(row) for row in value] if key in {"claims", "evidence", "links"}
+                      and isinstance(value, list) else value for key, value in ledger.items()}
+            files = "\n".join(str(Path(result.workdir) / path) for path in result.outputs) if result.workdir else ""
+            parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
+                         f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
+        return "\n\n".join(parts)
 
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
@@ -2504,7 +2842,7 @@ class Orchestrator:
                             "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
 
             if research_lane:  # its own end: never the generic re-plan, review or synthesis below (#90 CP2)
-                await self._research_after_steps(rid, steps, results, n, serialized_results)
+                await self._research_after_steps(rid, text, steps, results, n, serialized_results, packs)
                 return
             await recover_failures()
             if rid in self.budget_denials or any(not r.ok for r in results.values()):
@@ -2591,12 +2929,14 @@ class Orchestrator:
                     req["review_progress"] = progress
                     self.hub.save_request(rid)
                     break
+                feedback = with_downstream_revisions(steps, feedback)
                 progress["phase"] = "revision"
                 req["review_progress"] = progress
                 pending = req.setdefault("pending_revisions", {})
                 for sid, note in feedback.items():
                     pending[sid] = {"revision": rev + 1, "feedback": note,
-                                    "previous_result": results[sid].model_dump(mode="json")}
+                                    **({"previous_result": results[sid].model_dump(mode="json")}
+                                       if sid in results else {})}
                     req.setdefault("results", {}).pop(sid, None)
                 self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
@@ -2607,22 +2947,42 @@ class Orchestrator:
                 progress.update(phase="review", last_completed_revision=rev + 1)
                 self.hub.save_request(rid)
 
-            if review.get("verdict") == "revise":
-                self._finish(rid, self.report_results(steps, results, n) + "\n\nReview: revisions unresolved.",
-                             serialized_results(), ok=False, review=review)
-                return
-
+            # Still "revise" when revising stopped (F5): the CSO writes the report with the open issues in their own
+            # section and the request stays failed. A failed or budget-denied synthesis ends with the step results.
+            unresolved = review.get("verdict") == "revise"
+            if unresolved:
+                req["outcome"] = "review_unresolved"
+                self.hub.save_request(rid)
             resumable = self.hub.supports_resume(self.cfg.cso_agent)
             # After a restart a consult the gateway lost can still run in this session and workdir (#112).
             session_id, workdir = await self._free_session(
                 self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
                 req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
-            final = await self.run_step(Task(
+            synthesis = Task(
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
-                                           review=short(review, 3000)) + replan_history_note(req),
+                                           review=short(review, 3000)) + replan_history_note(req) +
+                       (UNRESOLVED_REVIEW_NOTE if unresolved else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
-                      **({"workdir": workdir} if workdir else {})}))
+                      **({"workdir": workdir} if workdir else {})})
+            if unresolved:
+                try:
+                    final = await self.run_step(synthesis)
+                except BudgetExceeded as error:
+                    final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
+                # The CSO sees the review clipped to 3,000 characters, so labhq appends every open issue itself:
+                # the report always carries the full list, whatever the synthesis left out (PR #338 review).
+                open_issues = "\n".join(
+                    f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
+                    for issue in review.get("issues") or [])
+                self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
+                                   f"\n\nSynthesis failed: {final.error}") +
+                             "\n\nReview: revisions unresolved. The reviewer's open issues, verbatim:\n" +
+                             (open_issues or "- (no issue text)"),
+                             serialized_results(), ok=False, review=review,
+                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
+                return
+            final = await self.run_step(synthesis)
             self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)

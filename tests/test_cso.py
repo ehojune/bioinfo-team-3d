@@ -851,6 +851,43 @@ async def test_cancellation_skips_dependents():
 
 
 @pytest.mark.asyncio
+async def test_targeted_revision_waits_for_a_transitive_ancestor_outside_its_direct_dependencies():
+    """s9 must wait for revised s5 even though unchanged s8 is its only direct dependency."""
+    s5_started = asyncio.Event()
+    release_s5 = asyncio.Event()
+    s5_done = asyncio.Event()
+    s9_started = asyncio.Event()
+
+    async def dispatch(task):
+        sid = task.meta["step_id"]
+        if sid == "s5":
+            s5_started.set()
+            await release_s5.wait()
+            s5_done.set()
+        elif sid == "s9":
+            assert s5_done.is_set(), "s9 started before its revised transitive ancestor s5 finished"
+            s9_started.set()
+        return result(task, text=f"{sid} revised")
+
+    steps = [
+        {"id": "s5", "agent_id": "worker", "instruction": "revise source", "depends_on": []},
+        {"id": "s8", "agent_id": "worker", "instruction": "unchanged bridge", "depends_on": ["s5"]},
+        {"id": "s9", "agent_id": "worker", "instruction": "revise report", "depends_on": ["s8"]},
+    ]
+    outcomes = {sid: TaskResult(task_id=f"old-{sid}", agent_id="worker", ok=True, text=f"old {sid}")
+                for sid in ("s5", "s8", "s9")}
+    run = asyncio.create_task(Orchestrator(FakeHub(dispatch)).run_dag(
+        "r", "question", steps, outcomes, only={"s5", "s9"},
+        feedback={"s5": "fix source", "s9": "use corrected source"}))
+    await s5_started.wait()
+    await asyncio.sleep(0)
+    assert not s9_started.is_set()
+    release_s5.set()
+    await run
+    assert s9_started.is_set()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("approved", [False, True])
 async def test_parallel_budget_decision_preserves_completed_steps_and_controls_new_starts(approved):
     d_started = asyncio.Event()
@@ -1977,3 +2014,152 @@ async def test_failed_twelve_step_report_names_each_failure_without_dumping_inst
     for i in range(7, 13):
         assert f"### S{i}" in report and "S6 broke" in report
     assert report.count("Next:") == 12
+
+
+def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
+    """A revised step changes what its dependents read: unflagged dependents re-run with a note, so neither a later
+    revision nor the report reads a bridge built on the old result (PR #337 review, mock trial 2026-10-03)."""
+    from labhq.orchestrator.cso import with_downstream_revisions
+
+    def step(sid, *deps):
+        return {"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": list(deps)}
+
+    steps = [step("s2"), step("s3"), step("s4", "s3"), step("s5", "s4"), step("s6", "s5"), step("s7", "s5"),
+             step("s8", "s6", "s7"), step("s9", "s8"), step("s10", "s9", "s2")]
+    feedback = {"s5": "- use a paired model\n", "s9": "- drop the circular score\n"}
+
+    extended = with_downstream_revisions(steps, feedback)
+
+    assert set(extended) == {"s5", "s6", "s7", "s8", "s9", "s10"}
+    assert extended["s5"] == feedback["s5"] and extended["s9"] == feedback["s9"]
+    assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
+    assert "Upstream step(s) s9 were revised" in extended["s10"]
+    assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
+
+
+
+UNRESOLVED_REVIEW = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+                     "issues": [{"step_id": "A", "problem": "no sensitivity check", "request": "add one"}]}
+STEP_A = {"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}
+
+
+def unresolved_hub(on_synthesis, *, accept=False):
+    """A FakeHub whose reviewer asks for revision every round (or accepts with `accept`); one step A."""
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured={"steps": [STEP_A]})
+        if kind == "step":
+            return result(task, text=f"A revision {task.meta.get('revision', 0)}")
+        if kind == "review":
+            return result(task, structured={**UNRESOLVED_REVIEW, "verdict": "accept", "issues": []} if accept
+                          else UNRESOLVED_REVIEW)
+        assert kind == "synthesis", kind
+        return on_synthesis(task)
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_revisions = 1
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_unresolved_review_still_gets_a_cso_report():
+    """2nd mock trial F5: revise after the revision cap ended with a 17k-char step dump and no conclusion."""
+    hub = unresolved_hub(lambda task: result(task, text="CSO report body"))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert [task.meta["revision"] for task in kinds(hub, "review")] == [0, 1]
+    assert len(kinds(hub, "synthesis")) == 1
+    assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
+    assert req["report"].startswith("CSO report body")
+    # labhq appends every open issue verbatim: the CSO saw the review clipped to 3,000 characters (PR #338 review)
+    assert "Review: revisions unresolved. The reviewer's open issues, verbatim:\n- A: no sensitivity check → add one" \
+        in req["report"]
+    assert req["error"] == "리뷰 지적이 수정 상한 뒤에도 남아 있습니다"
+    assert req["review"]["verdict"] == "revise"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_report_lists_every_open_issue_even_past_the_prompt_clip():
+    """Five long issues overflow the 3,000-character review in the synthesis prompt; the report still lists all."""
+    issues = [{"step_id": "A", "problem": f"issue {i} " + "x" * 700, "request": f"fix {i}"} for i in range(5)]
+    hub = unresolved_hub(lambda task: result(task, text="CSO report body"))
+    UNRESOLVED_REVIEW["issues"], saved = issues, UNRESOLVED_REVIEW["issues"]
+    try:
+        await Orchestrator(hub).run_request("r")
+    finally:
+        UNRESOLVED_REVIEW["issues"] = saved
+    report = hub.requests["r"]["report"]
+    assert all(f"→ fix {i}" in report for i in range(5))
+    synthesis = kinds(hub, "synthesis")[0]
+    assert "fix 4" not in synthesis.prompt  # the clip the appended list makes up for
+
+
+@pytest.mark.asyncio
+async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_is_unchanged():
+    from labhq.orchestrator.cso import SYNTH_PROMPT, UNRESOLVED_REVIEW_NOTE, replan_history_note
+    from labhq.util import short
+
+    hub = unresolved_hub(lambda task: result(task, text="report"))
+    await Orchestrator(hub).run_request("r")
+    prompt = kinds(hub, "synthesis")[0].prompt
+    assert prompt.endswith(UNRESOLVED_REVIEW_NOTE)
+    assert "해결되지 않은 리뷰 지적" in UNRESOLVED_REVIEW_NOTE and "settled" in UNRESOLVED_REVIEW_NOTE
+    assert "no sensitivity check" in prompt  # the reviewer's open issue is in the prompt it lists from
+
+    accepted = unresolved_hub(lambda task: result(task, text="report"), accept=True)
+    orch = Orchestrator(accepted)
+    await orch.run_request("r")
+    req = accepted.requests["r"]
+    assert req["status"] == "done" and "outcome" not in req
+    results = {k: TaskResult.model_validate(v) for k, v in req["results"].items()}
+    expected = SYNTH_PROMPT.format(
+        request="question", results=orch.format_results(req["plan"]["steps"], results, orch.cfg.context_chars_per_step),
+        review=short(req["review"], 3000)) + replan_history_note(req)
+    assert kinds(accepted, "synthesis")[0].prompt == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["engine", "budget"])
+async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails(failure):
+    hub = unresolved_hub(lambda task: result(task, ok=False, error="engine crashed"))
+    resume = failure == "budget"
+    if resume:  # restarted after the loop with the budget spent: the PI denies the synthesis budget card
+        hub.requests["r"].update(
+            plan={"steps": [{**STEP_A, "outputs": []}]}, cost_usd=50.0,
+            results={"A": result(Task(agent_id="worker", prompt="a"), text="A revision 1").model_dump(mode="json")},
+            review_progress={"phase": "unresolved", "next_revision": 2, "review": UNRESOLVED_REVIEW,
+                             "last_completed_review": 1, "last_completed_revision": 1})
+        hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=resume)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
+    assert "Review: revisions unresolved." in req["report"]
+    assert "### A · worker (ok)" in req["report"] and "A revision 1" in req["report"]
+    if resume:
+        assert not kinds(hub, "synthesis") and len(hub.approvals) == 1
+        assert "Synthesis failed: budget exceeded" in req["report"]
+    else:
+        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuations):
+    """A wrap-up that rewrites a saved output must not leave the first run's hash as the record: `labhq verify`
+    would call the final file a mismatch (#58, PR #339 review). A file it did not touch keeps its hash."""
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"],
+                          output_sha256={"outputs/PARTIAL_STATUS.md": "c" * 64},
+                          unreported_outputs=["outputs/table.tsv"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", outputs=["outputs/table.tsv", "outputs/keep.tsv"],
+                      output_sha256={"outputs/table.tsv": "a" * 64, "outputs/keep.tsv": "b" * 64})
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A"}))
+    assert res.output_sha256 == {"outputs/keep.tsv": "b" * 64, "outputs/PARTIAL_STATUS.md": "c" * 64}

@@ -10,7 +10,7 @@ import pytest
 
 import labhq.private_paths as private_paths
 from labhq import doctor
-from labhq.adapters.base import ROLE_FOOTER, RunContext
+from labhq.adapters.base import ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
@@ -245,7 +245,7 @@ def test_every_staff_instruction_lists_private_paths_as_tilde_labels(tmp_path, e
     assert home not in text and Path.home().as_posix() not in text
     plain = _ctx(tmp_path / "plain", engine, [])
     adapter(Settings()).prepare(plain)
-    assert read(plain.workdir).endswith(ROLE_FOOTER)  # nothing configured: the footer is unchanged
+    assert read(plain.workdir).endswith(ROLE_FOOTER + WORKSPACE_WRITE_RULES)  # nothing configured: no private section
 
 
 # ---------------- runner ----------------
@@ -317,6 +317,37 @@ async def test_runner_leaves_codex_home_open_to_a_codex_task(tmp_path, monkeypat
     runner2, seen2 = _capture_runner(settings, monkeypatch, engine=Engine.claude_code)
     assert (await runner2.run_task(Task(id="t2", agent_id="worker", request_id="r", prompt="q"))).ok
     assert seen2["ctx"].private_labels == ["~/.codex", "~/.ssh"]  # Claude staff never need the Codex login
+
+
+@pytest.mark.asyncio
+async def test_runner_closes_configured_codex_home_to_claude_but_not_codex(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
+    staff_home = home / ".labhq" / "codex-staff"
+    staff_home.mkdir(parents=True)
+    auth = staff_home / "auth.json"
+    auth.write_text("secret", encoding="utf-8")
+    settings = _runner_settings(tmp_path, None)
+    settings.engines.codex.env = {"CODEX_HOME": str(staff_home)}
+
+    claude_runner, claude_seen = _capture_runner(settings, monkeypatch, engine=Engine.claude_code)
+    assert (await claude_runner.run_task(Task(id="claude", agent_id="worker", request_id="r", prompt="q"))).ok
+    ctx = claude_seen["ctx"]
+    private = ctx.env[ENV_VAR].split(os.pathsep)
+    for tool, tool_input, action in (
+        ("Read", {"file_path": str(auth)}, "deny"),
+        ("Grep", {"pattern": "token", "path": str(auth)}, "deny"),
+        ("Bash", {"command": f'cat "{auth}"'}, "ask"),
+    ):
+        decision = evaluate_tool(tool, tool_input, settings.policy, allowed_roots=[str(ctx.workdir)],
+                                 workdir=str(ctx.workdir), windows=False, environ={},
+                                 private_paths=private, home=str(home))
+        assert decision.action == action, (tool, decision)
+
+    codex_runner, codex_seen = _capture_runner(settings, monkeypatch, engine=Engine.codex)
+    assert (await codex_runner.run_task(Task(id="codex", agent_id="worker", request_id="r", prompt="q"))).ok
+    assert not private_paths.inside_any(str(auth), codex_seen["ctx"].env[ENV_VAR].split(os.pathsep))
 
 
 # ---------------- doctor ----------------

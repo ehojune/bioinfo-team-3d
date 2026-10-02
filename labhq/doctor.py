@@ -201,7 +201,7 @@ def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine 
             *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
             *(d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)),
             *staff_codex_homes(settings, workspace, codex)]
-    return resolve_private_paths(settings, keep)
+    return resolve_private_paths(settings, keep, cwd=workspace)
 
 
 def _private_paths_row(private: PrivatePaths) -> dict:

@@ -223,6 +223,15 @@ ROLE_FOOTER = """
 """
 
 
+# The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
+# built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
+WORKSPACE_WRITE_RULES = (
+    "- Put temporary files and scripts under ./.tmp/ in your workspace; writing to /tmp or %TEMP% outside it needs PI "
+    "approval.\n"
+    "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
+    "cannot resolve a variable path and asks the PI.\n")
+
+
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
     """The staff rule for PI personal paths (policy.private_paths). Only `~` and role labels: role files and
     prompts can reach round records and public reports, so no absolute home path goes in. `saved_output_open`:
@@ -243,8 +252,9 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
 
 
 def role_footer(ctx: "RunContext") -> str:
-    """ROLE_FOOTER plus this task's personal-path section."""
-    return ROLE_FOOTER + private_paths_section(ctx.private_labels, bool(ctx.private_open_reads))
+    """ROLE_FOOTER, the write rules unless the task is read-only, and this task's personal-path section."""
+    return (ROLE_FOOTER + ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+            private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
 
 
 @dataclass

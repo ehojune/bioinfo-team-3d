@@ -202,6 +202,17 @@ def staff_claude_project_dirs(settings: Settings, workdir: str | os.PathLike) ->
                               for c in sorted(configs) for w in sorted(cwds)))
 
 
+def configured_staff_codex_home(settings: Settings, cwd: Path) -> Path | None:
+    """The explicitly configured staff CODEX_HOME, resolved as Codex resolves it against its working folder."""
+    from .adapters.base import expand_env
+
+    raw = (expand_env(settings.engines.codex.env).get("CODEX_HOME") or "").strip()
+    if not raw:
+        return None  # the default ~/.codex is already in DEFAULT_HOME_ENTRIES
+    path = Path(os.path.expanduser(raw))
+    return path if path.is_absolute() else cwd / path
+
+
 def closed_entries(root: str, open_reads: Iterable[str]) -> list[str]:
     """What to deny inside `root` so the `open_reads` below it stay readable: every top-level entry not on the way
     to an open folder, plus CLAUDE_CONFIG_SECRETS before they exist.
@@ -230,13 +241,19 @@ def closed_entries(root: str, open_reads: Iterable[str]) -> list[str]:
             if key(name) not in ways]
 
 
-def configured_private_paths(settings: Settings, home: str | None = None) -> list[tuple[str, str]]:
+def configured_private_paths(settings: Settings, home: str | None = None,
+                             cwd: str | os.PathLike | None = None) -> list[tuple[str, str]]:
     """(absolute path, label) for every configured entry, before existence and work-folder checks."""
     home = home or host_home()
     raw = settings.policy.private_paths
     if raw is None:
         entries = [(os.path.join(home, *entry.split("/")), "~/" + entry) for entry in DEFAULT_HOME_ENTRIES]
-        return entries + _labhq_entries(settings, home)
+        entries += _labhq_entries(settings, home)
+        codex = configured_staff_codex_home(
+            settings, Path(cwd) if cwd is not None else settings.path(settings.runner.workspace_root))
+        if codex:
+            entries.append((str(codex), _label(str(codex), home)))
+        return entries
     out = []
     for item in raw:
         if not item or not item.strip():
@@ -291,7 +308,8 @@ def short_spellings(path: str) -> list[str]:
 
 
 def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike | None] = (),
-                          home: str | None = None, open_reads: Iterable[str] = ()) -> PrivatePaths:
+                          home: str | None = None, open_reads: Iterable[str] = (),
+                          cwd: str | os.PathLike | None = None) -> PrivatePaths:
     """The entries that exist and contain no folder in `keep` (task workdir, workspace root, reference and
     project folders, plugin folders, the staff CODEX_HOME). An entry that contains one is skipped, not split.
     `open_reads` (a Claude task's own project folder in the staff config folder) is carried through: an entry
@@ -306,7 +324,7 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     paths: list[str] = []
     labels: list[str] = []
     skipped: list[str] = []
-    for path, label in configured_private_paths(settings, home):
+    for path, label in configured_private_paths(settings, home, cwd):
         if not os.path.lexists(path):
             continue
         fold = _case_insensitive(path)
@@ -368,18 +386,13 @@ def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | 
 
 
 def staff_codex_homes(settings: Settings, cwd: Path, codex_task: bool) -> list[Path]:
-    """The CODEX_HOME a staff Codex uses. For other engines only an explicitly configured one counts, so the
-    PI's ~/.codex stays closed to Claude staff when Codex staff have their own login."""
+    """The CODEX_HOME a staff Codex task must use; another engine never needs this login folder open."""
     from .adapters.base import child_config_dirs, expand_env
 
-    configured = expand_env(settings.engines.codex.env)
-    if codex_task:
-        return child_config_dirs({**os.environ, **configured}, cwd, "CODEX_HOME", ".codex")
-    raw = configured.get("CODEX_HOME")
-    if not raw:
+    if not codex_task:
         return []
-    p = Path(os.path.expanduser(raw))
-    return [p if p.is_absolute() else cwd / p]
+    configured = expand_env(settings.engines.codex.env)
+    return child_config_dirs({**os.environ, **configured}, cwd, "CODEX_HOME", ".codex")
 
 
 def shell_needles(paths: Iterable[str], home: str | None = None) -> list[str]:

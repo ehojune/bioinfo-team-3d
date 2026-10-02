@@ -14,6 +14,26 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:05 | [`612af6a`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/612af6a) | main 병합: #339의 wrap-up 해시 test와 이 PR의 미해결 리뷰 test를 둘 다 유지 |
+| 07:56 | [`86a992e`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/86a992e) | 직원 작업 폴더 규칙을 영어로 맞추고 AGENTS.md test를 UTF-8로 읽음(Windows CI) |
+| 07:54 | [`7788c97`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/7788c97) | verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘) |
+| 07:41 | [`d59cba0`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/d59cba0) | ask broker 연결 실패 test를 ToolError 계약에 맞추고 400 경로의 공유 producer 단언을 따로 두었다. |
+| 07:41 | [`53abc40`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/53abc40) | labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자 규칙으로 막음). |
+| 07:39 | [`53ba01c`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/53ba01c) | 리뷰 미해결 보고서에 리뷰어 지적 전체를 labhq가 원문대로 붙임 |
+| 07:27 | [`668884f`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/668884f) | 쓰기 직원 공통 지침에 임시 파일은 작업 폴더 .tmp/, 경로는 상대 경로로 쓰라는 두 줄을 넣어 승인 카드를 줄였다. |
+| 07:25 | [`cfe88ae`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/cfe88ae) | 리뷰가 수정 상한 뒤에도 수정을 요구한 요청에 CSO가 미해결 지적을 한계로 적은 최종 보고서를 쓰게 했다(요청은 failed 유지). |
+| 07:24 | [`51c0946`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/51c0946) | 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다" 줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다. |
+| 07:24 | [`59d671c`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/59d671c) | labhq verify: 요청의 산출을 이 PC에서 다시 해시해 기록과 비교하고 보고서 앵커를 다시 검사하며, --bundle로 감사 번들 zip을 만든다. |
+| 07:24 | [`9cae5b5`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/9cae5b5) | README·HANDOFF에 labhq verify 사용법과 #58 남은 항목을 적었다. |
+| 07:09 | [`ccc518a`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/ccc518a) | 리뷰 수정 재실행이 지적된 단계의 하류를 모두 다시 돌림(봇 P1) |
+| 07:01 | [`6c6c471`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/6c6c471) | 리뷰 수정 재실행이 비지적 중간 단계를 건너뛰어도 이번 실행의 전이적 조상이 끝날 때까지 기다리게 했다. |
+| 07:01 | [`d098bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/d098bdb) | 쓰기 가능한 Codex 직원의 pip·matplotlib·XDG cache 기본 경로를 작업 폴더 안으로 옮기고 PI 설정은 유지했다. |
+| 07:01 | [`f3e9f00`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/f3e9f00) | Claude 등 다른 직원에게 Codex 직원 CODEX_HOME을 개인 경로로 막고 Codex 자신에게는 계속 열어 뒀다. |
+| 06:57 | [`eefcd80`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/eefcd80) | 연구 리뷰 판정을 P1 지적에 맞추고, 앵커 표기 변형 검사·코드 안 앵커 제외(봇 지적) |
+| 06:49 | [`32adfe9`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/32adfe9) | 합성 뒤 예산 카드가 거부돼도 끝난 보고서는 남기고 앵커 검사 결과대로 끝낸다. 예산 거부는 보고서 메타데이터 줄로만 적는다. |
+| 06:36 | [`8d3b86c`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/8d3b86c) | 연구 보고서의 [[claim:step/claim]] 앵커를 원장과 대조하는 검사를 순수 함수로 더했다. 없는 claim, 거부된 근거뿐인 claim, hash 없는 artifact, 앵커 0개를 잡는다. |
+| 06:36 | [`ccb3e63`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/ccb3e63) | 연구 lane이 CP2 승인 뒤 리뷰 한 번과 CSO 보고서까지 간다. 앵커 검사를 통과하면 research_reported, 아니면 Claim check를 붙여 report_incomplete로 끝나고, 리뷰가 revise면 plan을 다시 돌리지 않고 멈춘다. |
+| 06:36 | [`e61f822`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/e61f822) | README·연구 규약·예시 설정에 CP2 뒤 리뷰·보고서 흐름을 적었다. |
 | 06:32 | [`64d1801`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/64d1801) | 설정 폴더 Read deny를 최상위 항목으로 한정해 task가 쌓여도 명령줄이 늘지 않게 한다 |
 | 06:15 | [`2bd2574`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/2bd2574) | init이 Claude 직원 전용 ~/.labhq/claude-staff와 CLAUDE_CONFIG_DIR를 넣고 로그인 명령만 안내한다 |
 | 06:14 | [`4efe1d1`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/4efe1d1) | Claude 직원 설정 폴더를 개인 경로로 막고 그 task 몫 projects 폴더만 읽기로 연다 |

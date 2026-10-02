@@ -1,0 +1,7 @@
+## 2026-10-03 · #58 — labhq verify와 요청별 감사 번들, 내장 MCP 실패 의미(④⑥)
+
+- 결론: `labhq verify <요청>`이 runner PC에서 산출 파일이 기록 때와 같은지 다시 확인하고, 연구 요청은 보고서 앵커도 다시 검사한다. `--bundle`은 감사 번들 zip을 만든다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가고 "이 실패는 증거도 부재 증명도 아닙니다"가 붙는다.
+- 바뀐 것: 새 `labhq/evidence/audit.py`가 gateway 요청 기록과 작업 폴더를 읽어 #334의 outputs walker로 산출을 다시 해시한다. 결과는 ok·mismatch·missing·unreadable·unchecked·unrecorded로 나뉘고, exit 0은 문제 없음, 1은 불일치·없는 파일·읽지 못함·확인 못함·앵커 문제, 2는 요청이나 작업 폴더 없음이다. 보고하지 않은 산출(unreported_outputs)은 경고로만 보인다. 번들은 README.md·claims.json·artifacts.json만 담고 산출 파일은 넣지 않는다. 기록된 해시가 없는 산출도 지금 없으면 missing이다. approval broker 실패는 deny로 두고 같은 문구만 붙였다. ask는 broker 연결 실패와 HTTP 400 외 오류만 isError로 돌리고 400(질문 형식 오류)은 rejected 답으로 남겼다.
+- 검증: `tests/test_labhq_verify.py`(신규), `tests/test_hpc_failures.py`(17개 param에 문구 단언, ask broker 실패 test 추가), `tests/test_ask_review4.py`를 함께 돌려 170 passed, 1 skipped. 해시 기록이 없는 산출의 삭제 test 3건은 수정 전에 실패했다. `scripts/check_public.sh` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: #58 ① 일반 단계 결과 계약, tool_use_id, 일반 보고서의 도구 실패 경고. max_turns wrap-up이 첫 실행의 output_sha256을 두고 outputs만 합쳐 고쳐 쓴 산출이 mismatch로 나올 수 있다(기록 쪽, #334). 비어 있는 선언 폴더는 missing으로 나온다.
+- 근거: `labhq/evidence/audit.py`, `labhq/cli.py`, `labhq/runner/workspace.py`, `labhq/tools/_mcpcompat.py`, `labhq/tools/hpc_mcp.py`, `labhq/tools/ask_mcp.py`, `labhq/tools/approval_mcp.py`, `tests/test_labhq_verify.py`, `tests/test_hpc_failures.py`, `tests/test_ask_review4.py`.

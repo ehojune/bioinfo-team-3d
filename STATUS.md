@@ -4,6 +4,38 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · #58 — labhq verify와 요청별 감사 번들, 내장 MCP 실패 의미(④⑥)
+
+- 결론: `labhq verify <요청>`이 runner PC에서 산출 파일이 기록 때와 같은지 다시 확인하고, 연구 요청은 보고서 앵커도 다시 검사한다. `--bundle`은 감사 번들 zip을 만든다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가고 "이 실패는 증거도 부재 증명도 아닙니다"가 붙는다.
+- 바뀐 것: 새 `labhq/evidence/audit.py`가 gateway 요청 기록과 작업 폴더를 읽어 #334의 outputs walker로 산출을 다시 해시한다. 결과는 ok·mismatch·missing·unreadable·unchecked·unrecorded로 나뉘고, exit 0은 문제 없음, 1은 불일치·없는 파일·읽지 못함·확인 못함·앵커 문제, 2는 요청이나 작업 폴더 없음이다. 보고하지 않은 산출(unreported_outputs)은 경고로만 보인다. 번들은 README.md·claims.json·artifacts.json만 담고 산출 파일은 넣지 않는다. 기록된 해시가 없는 산출도 지금 없으면 missing이다. approval broker 실패는 deny로 두고 같은 문구만 붙였다. ask는 broker 연결 실패와 HTTP 400 외 오류만 isError로 돌리고 400(질문 형식 오류)은 rejected 답으로 남겼다.
+- 검증: `tests/test_labhq_verify.py`(신규), `tests/test_hpc_failures.py`(17개 param에 문구 단언, ask broker 실패 test 추가), `tests/test_ask_review4.py`를 함께 돌려 170 passed, 1 skipped. 해시 기록이 없는 산출의 삭제 test 3건은 수정 전에 실패했다. `scripts/check_public.sh` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: #58 ① 일반 단계 결과 계약, tool_use_id, 일반 보고서의 도구 실패 경고. max_turns wrap-up이 첫 실행의 output_sha256을 두고 outputs만 합쳐 고쳐 쓴 산출이 mismatch로 나올 수 있다(기록 쪽, #334). 비어 있는 선언 폴더는 missing으로 나온다.
+- 근거: `labhq/evidence/audit.py`, `labhq/cli.py`, `labhq/runner/workspace.py`, `labhq/tools/_mcpcompat.py`, `labhq/tools/hpc_mcp.py`, `labhq/tools/ask_mcp.py`, `labhq/tools/approval_mcp.py`, `tests/test_labhq_verify.py`, `tests/test_hpc_failures.py`, `tests/test_ask_review4.py`.
+
+## 2026-10-03 · trial2-followups — 모의 시운전 F5와 직원 지침의 승인 카드 줄이기
+
+- 결론: 리뷰가 상한 뒤에도 수정을 요구한 요청이 단계별 결과 나열 대신 CSO 최종 보고서를 남기고, 쓰기 직원이 임시 파일·변수 경로로 승인 카드를 띄우는 일을 줄인다.
+- 바뀐 것: 미해결 리뷰도 합성을 돌리고 보고서에 "해결되지 않은 리뷰 지적" 절을 둔다. 요청은 failed와 `outcome=review_unresolved`를 유지하고, 재시작도 같은 경로를 탄다. 합성 실패나 예산 거부는 기존처럼 단계별 결과로 끝난다. 쓰기 직원 지침(`role_footer`)에 `.tmp/` 임시 폴더와 상대 경로 규칙 두 줄이 붙고 read-only task에는 붙지 않는다.
+- 검증: 관련 test 4개 파일 452 passed, 1 skipped. 공개 저장소 검사 통과.
+- 미해결: 합성 프롬프트가 리뷰를 3000자로 잘라 넘겨 그 너머의 지적은 CSO에게 보이지 않는다. 합성이 성공하면 보고서·이벤트에 "왜 failed인지"가 기계적으로 남지 않는다. `req["review"]`에는 전체가 있다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/adapters/base.py`, `tests/test_cso.py`, `tests/test_state.py`, `tests/test_private_paths.py`, `tests/test_role_footer.py`.
+
+## 2026-10-03 · trial2-fixes — 2차 모의 시운전 결함 3건
+
+- 결론: 수정 재실행 순서, Codex 직원 cache 권한, 직원 간 Codex 로그인 파일 노출을 고쳤다.
+- 바뀐 것: `run_dag`가 이번 재실행의 전이적 조상을 기다린다. 쓰기 가능한 Codex task는 작업 폴더 안 cache를 쓰며 PI env가 우선한다. 다른 엔진 task에는 직원 `CODEX_HOME`을 개인 경로로 막는다.
+- 검증: 새 회귀 테스트는 수정 전 3 failed/2 passed, 수정 후 5 passed. 관련 파일은 154 passed, 34 passed/1 skipped, 235 passed/1 skipped, 30 passed. 공개 저장소 검사도 통과했다.
+- 미해결: 리뷰에서 지적되지 않은 중간 단계는 자동 재실행하지 않는다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/adapters/codex.py`, `labhq/private_paths.py`, `tests/test_cso.py`, `tests/test_read_only_followups.py`, `tests/test_private_paths.py`.
+
+## 2026-10-03 · PR 준비 — 연구 lane CP2 뒤 리뷰·보고서 완주와 claim 앵커 검사(#90, #58 ③⑤)
+
+- 결론: CP2에서 승인하면 리뷰 한 번 → CSO 보고서 → claim 앵커 검사까지 간다. 결과는 `research_reported`, `report_incomplete`, `research_review_revise`, `research_review_unparsed` 중 하나로 끝난다.
+- 바뀐 것: 연구 전용 리뷰 스키마 `RESEARCH_LANE_REVIEW_SCHEMA`와 리뷰·합성 프롬프트를 더했다. 앵커 검사는 `labhq/evidence/report_check.py`, 결과는 `research_contract.report_check`, 리뷰는 `research_contract.review`(재시작 뒤 재사용)에 남는다. 실패한 조회는 보고서 메타데이터에 따로 붙는다. generic 리뷰·합성과 `evidence_checkpoint` off의 프롬프트는 그대로다.
+- 실행한 것: 새 test 15건 중 수정 전에 돌린 14건이 모두 실패했고, 수정 뒤 15건 모두 통과했다. 관련 pytest 416 passed, 공개 저장소 검사 통과.
+- 미해결: `reviewer_agent`가 없으면 리뷰·보고서 없이 `evidence_approved`로 끝난다. 웹 피드는 연구 리뷰 이벤트를 따로 받지 않는다(웹 변경은 범위 밖).
+- 근거: `labhq/orchestrator/cso.py`, `labhq/evidence/report_check.py`, `labhq/research/packs.py`, `tests/test_research_report.py`, `tests/test_report_check.py`.
+
 ## 2026-10-03 · #298 ⑤ — Claude 직원 전용 설정 폴더와 긴 출력 다시 읽기
 
 - 결론: PI 결정 "나". Claude 직원은 Codex 직원처럼 전용 설정 폴더(`engines.claude_code.env.CLAUDE_CONFIG_DIR`, init 기본 `~/.labhq/claude-staff`)를 쓴다. PI `~/.claude`는 통째로 막힌 채 두고, 직원 폴더도 기본 개인 경로에 들어가되 그 task 몫의 `projects/<작업 폴더 slug>/`만 읽기로 열린다. 그래서 Claude가 저장한 긴 도구 출력을 직원이 다시 읽는다.

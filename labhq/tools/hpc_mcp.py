@@ -19,7 +19,7 @@ import httpx
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, write_owned
 from ..settings import Settings
-from ._mcpcompat import ToolError, make_server
+from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
     MAYBE_SUBMITTED, Scheduler, build_script, checked_job_id, sanitize_job_name, slurm_cluster_directive,
 )
@@ -182,8 +182,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
     if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
-        raise ToolError(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
-                        "remove -M/--clusters and submit again")
+        raise tool_failure(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
+                           "remove -M/--clusters and submit again")
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
     output_dir = WORKDIR / "hpc_out" if S.hpc.submit_prefix else WORKDIR
@@ -196,7 +196,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                            S.path(S.runner.workspace_root) if S.hpc.submit_prefix else None,
                            S.hpc.user if S.hpc.submit_prefix else None)
     except (OSError, KeyError, RuntimeError) as e:
-        raise ToolError(f"job file permissions: {e}") from e
+        raise tool_failure(f"job file permissions: {e}") from e
     # The runner asks the PI when needed and runs the submit command itself: the id its own call returns is the
     # only record hpc_cancel trusts later, and a broker call from the agent cannot skip the approval (#214 review).
     try:
@@ -205,11 +205,11 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
             "walltime": walltime, "queue": queue, "reason": reason,
         }, timeout=S.policy.approvals.timeout_s + S.hpc.command_timeout_s + 60)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
-        raise ToolError(f"labhq broker unreachable; the job was not submitted: {e}") from e
+        raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
     except Exception as e:  # the runner may have submitted before the answer was lost
-        raise ToolError(f"labhq broker failed: {e!r}{MAYBE_SUBMITTED}") from e
+        raise tool_failure(f"labhq broker failed: {e!r}{MAYBE_SUBMITTED}") from e
     if out.get("error"):
-        raise ToolError(str(out["error"]))
+        raise tool_failure(str(out["error"]))
     if not out.get("submitted"):
         return json.dumps({"submitted": False, "reason": out.get("reason") or "denied by the PI",
                            "note": "Do not resubmit this job unless the PI explicitly requests it."})
@@ -229,7 +229,7 @@ async def hpc_status(job_id: str) -> str:
     try:
         info = await asyncio.to_thread(SCHED.status, job_id)
     except Exception as e:
-        raise ToolError(str(e)) from e
+        raise tool_failure(str(e)) from e
     return json.dumps(info.to_dict())
 
 
@@ -239,7 +239,7 @@ async def hpc_queue() -> str:
     try:
         jobs = await asyncio.to_thread(SCHED.queue)
     except Exception as e:
-        raise ToolError(str(e)) from e
+        raise tool_failure(str(e)) from e
     return json.dumps([j.to_dict() for j in jobs])
 
 
@@ -250,19 +250,19 @@ async def hpc_cancel(job_id: str) -> str:
         if S.hpc.scheduler != "mock":  # mock ids ("mock-…") never reach a scheduler command
             checked_job_id(job_id)
     except RuntimeError as e:
-        raise ToolError(str(e)) from e
+        raise tool_failure(str(e)) from e
     # The account may be shared (submit_prefix data account): a bare id could name someone else's job (#172).
     try:
         owned = await _broker("/jobs/owned", {"task_id": TASK, "agent_id": AGENT, "job_id": job_id}, timeout=30)
     except Exception as e:  # fail closed
-        raise ToolError(f"cannot confirm that labhq tracks job {job_id}: {e}") from e
+        raise tool_failure(f"cannot confirm that labhq tracks job {job_id}: {e}") from e
     if not owned.get("owned"):
-        raise ToolError(f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
-                        "tracks for you. Ask the PI to cancel other jobs.")
+        raise tool_failure(f"job {job_id} was not submitted by you through hpc_submit; labhq cancels only jobs it "
+                           "tracks for you. Ask the PI to cancel other jobs.")
     try:
         result = await asyncio.to_thread(SCHED.cancel, job_id)
     except Exception as e:
-        raise ToolError(str(e)) from e
+        raise tool_failure(str(e)) from e
     return json.dumps({"job_id": job_id, "result": result})
 
 
