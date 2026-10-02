@@ -2,14 +2,34 @@ name: test
 
 on:
   push:
+    branches: [main]  # PR branches run once, via pull_request (PI 2026-10-02: no duplicate runs)
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+  checks: read  # ci_skip.py reads the earlier commit's pytest results
 
 jobs:
+  changes:
+    # A push that only adds patch notes or resolves STATUS/patch_notes conflicts does not rerun pytest (PI 2026-10-02).
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the base branch history decides whether a merge came from it
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - id: check
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci_skip.py "${{ github.event.pull_request.head.sha }}" "${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+
   pytest:
+    needs: changes
+    if: needs.changes.outputs.skip != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -25,6 +45,8 @@ jobs:
       - run: pytest -q
 
   pytest-windows:
+    needs: changes
+    if: needs.changes.outputs.skip != 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
