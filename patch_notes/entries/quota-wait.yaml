@@ -20,3 +20,6 @@ rows:
   at: 2026-10-02 20:17
   text: HPC·ask wake turn과 wrap-up turn도 한도 대기로 주차·재개하고, hold 해제 뒤 dispatch 전에 예산을
     다시 확인
+- sha: 5fcf1f0
+  at: 2026-10-02 20:25
+  text: 'main 병합 충돌 해소: 결과 직렬화·웹 snapshot·요청 메타가 pipeline PR과 한도 대기 상태를 함께 다룸'
