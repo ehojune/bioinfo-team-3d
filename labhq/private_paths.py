@@ -23,7 +23,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .settings import Settings
 
@@ -39,6 +39,8 @@ CONFIG_LABEL = "labhq 설정 파일"
 STATE_LABEL = "labhq gateway 상태 폴더"
 OUTSIDE_HOME_LABEL = "홈 밖 개인 경로"
 ENV_VAR = "LABHQ_PRIVATE_PATHS"  # the runner hands the approval gate this task's list (os.pathsep-joined)
+# ... and whether private paths are on at all ("1"/"0"): on with an empty list when no entry is active (PR #327).
+ENABLED_ENV_VAR = "LABHQ_PRIVATE_PATHS_ENABLED"
 
 # Variables a shell can spell a home path with; each is replaced by its value before matching.
 _PATH_VARS = ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME")
@@ -207,6 +209,18 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)))
+
+
+def gate_private_paths(environ: Mapping[str, str], resolve: Callable[[], PrivatePaths]) -> PrivatePaths:
+    """What the approval gate checks: the runner's list and switch from `environ`, else `resolve()`.
+
+    On with an empty list still runs the registry check (PR #327). Without the switch (an older runner) a
+    non-empty list means on; a non-empty list is never turned off."""
+    if ENV_VAR not in environ:
+        return resolve()
+    paths = tuple(p for p in environ[ENV_VAR].split(os.pathsep) if p)
+    switch = environ.get(ENABLED_ENV_VAR, "").strip()
+    return PrivatePaths(paths=paths, enabled=bool(paths) or switch not in ("", "0"))
 
 
 def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | os.PathLike | None = None,
@@ -443,3 +457,91 @@ def path_field_text(value: str, workdir: str | None) -> str:
         joined = workdir.replace("\\", "/").rstrip("/") + "/" + value.replace("\\", "/")
         return ntpath.normpath(joined) if re.match(r"^[A-Za-z]:/", joined) else posixpath.normpath(joined)
     return value
+
+
+# ---------------- registry access (#325) ----------------
+# The PI's GITHUB_TOKEN is a user environment variable, kept in the registry at HKCU\Environment (also
+# HKEY_USERS\<SID>\Environment). labhq strips it from staff process env (#301), but a shell under the same account
+# can read the registry directly. While private paths are on, the gate sends ANY registry access to the PI, not
+# only spellings of the Environment key: three review rounds on PR #327 each found a narrower spelling of that key
+# (`..` detours, a custom PSDrive, a line continuation inside the hive name), so the rule names the registry itself.
+#
+# Matched case-insensitively after line continuations are joined (PowerShell backtick, cmd `^` and sh `\` each
+# followed by LF or CRLF, removed as a pair), then `"`, `'`, backtick and `^` escapes removed (`"HK"CU`, ``H`KCU``,
+# `HK^CU`), a Python string prefix dropped with its quote (`r'HKCU'`), and `\` read as `/`:
+#   - a hive by name: `HKCU`/`HKLM`/`HKU`/`HKCR`/`HKCC` as a word (`HKCU:`, `reg query HKCU`, `echo HKCU`; not a
+#     path segment such as `outputs/hkcu`) and `HKEY_CURRENT_USER`, `HKEY_USERS`, `HKEY_LOCAL_MACHINE`, ... anywhere;
+#   - the PowerShell Registry provider: `Registry::` paths, `-PSProvider Registry`, `New-PSDrive`/`ndr`/`mount` with
+#     the word Registry (a drive such as `U:` created in the same command is covered by its creation); Git Bash
+#     `/proc/registry`;
+#   - `reg`/`reg.exe` with any subcommand, `regedit`, `regini`;
+#   - registry APIs: Python `winreg`/`_winreg`, .NET `Microsoft.Win32.*`, `RegistryKey`/`RegistryHive`/
+#     `RegistryView`, `[Registry]`, `Registry.CurrentUser`-style members; WMI `StdRegProv`;
+#   - WMI's copy of the environment: `Win32_Environment`, `wmic environment`; `[EnvironmentVariableTarget]::User`.
+# `[Environment]::GetEnvironmentVariable(s)` with a target other than Process, called directly or through
+# `.Invoke(`, is judged by `registry_access`; the method group held without a call (`$f = [Environment]::
+# GetEnvironmentVariable`) asks, since its later `.Invoke` cannot be followed.
+# Reads of the stripped process env (`$env:X`, `%X%`, `set`, `printenv`, `os.environ`, `Env:`) do not match.
+# Accepted false alarm: these words inside a commit message or a grep pattern ask; asking costs one PI answer, while
+# telling a search argument from a real read by text would reopen the bypasses.
+# Lexical like the private-path check: registry access built at run time (string building, a script written to the
+# workdir) passes. The first defense is the token's scope (the PI token reaches only the repositories labhq needs).
+_HIVE_LONG = r"hkey_(?:current_user|users|local_machine|classes_root|current_config|performance_data)"
+REGISTRY_ACCESS = re.compile(
+    rf"\b{_HIVE_LONG}\b|(?<![\w/.-])hk(?:cu|lm|u|cr|cc)(?![\w.-])"           # a hive by name
+    r"|registry(?:32|64)?::|/proc/registry"                                   # provider path, Git Bash
+    r"|-ps\w*\s*:?\s*registry\b|\b(?:new-psdrive|ndr|mount)\b[^;|&\n]*\bregistry\b"  # a Registry PSDrive
+    r"|(?<![\w.-])reg(?:\.exe)?[\s,]+(?:query|add|delete|copy|save|restore|load|unload|compare|export|import"
+    r"|flags)\b|(?<![\w.-])reg(?:edit|ini)(?:\.exe)?\b"                        # reg.exe, regedit, regini
+    r"|\b_?winreg\b|\bmicrosoft\.win32\b|\bregistry(?:key|hive|view)\b|\[registry\]"  # registry APIs
+    r"|\bregistry\s*(?:::|\.)\s*(?:currentuser|localmachine|users|classesroot|currentconfig|getvalue"
+    r"|openbasekey|openremotebasekey)\b|\bstdregprov\b"
+    r"|\bwin32_environment\b|\bwmic\b[^;|&\n]*\benvironment\b"                # WMI's copy
+    r"|environmentvariabletarget\]?\s*(?:::|\.)?\s*user\b",                   # the User target, anywhere
+    re.I,
+)
+_CONTINUATION = re.compile(r"[`^\\]\r?\n")
+_GET_ENV_CALL = re.compile(r"getenvironmentvariable(s?)(?:\s*\.\s*invoke)?\s*\(", re.I)
+_GET_ENV_GROUP = re.compile(r"(?:::|\.)\s*getenvironmentvariables?\b(?!\s*(?:\(|\.\s*invoke\s*\())", re.I)
+_PROCESS_TARGET = re.compile(r"^(?:\[?(?:system\.)?environmentvariabletarget\]?\s*(?:::|\.)?\s*)?"
+                             r"(?:process|0|\$null)$", re.I)
+_STRING_PREFIX = re.compile(r"(?<!\w)(?:rb|br|fr|rf|[rubf])(?=[\"'])", re.I)
+
+
+def _registry_text(command: str) -> str:
+    """`command` spelled for the patterns above: continuations joined, escapes and quotes gone, `/` for `\\`."""
+    text = _STRING_PREFIX.sub("", _CONTINUATION.sub("", command))
+    return re.sub(r"[\"'`^]", "", text).replace("\\", "/")
+
+
+def _call_args(text: str, start: int) -> list[str]:
+    """Top-level comma-separated arguments of the call whose `(` ends at `start`; unclosed text runs to the end."""
+    depth, args, current = 0, [], []
+    for ch in text[start:]:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    args.append("".join(current))
+    return [a.strip() for a in args]
+
+
+def registry_access(command: str) -> str | None:
+    """The spelling in `command` that touches the registry (the patterns above), or None."""
+    text = _registry_text(command)
+    match = REGISTRY_ACCESS.search(text) or _GET_ENV_GROUP.search(text)
+    if match:
+        return match.group(0)
+    for call in _GET_ENV_CALL.finditer(text):
+        args = _call_args(text, call.end())
+        target = args[0] if call.group(1) else (args[1] if len(args) > 1 else "")
+        if target and not _PROCESS_TARGET.match(target):
+            return call.group(0) + target
+    return None

@@ -506,7 +506,7 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     root spelled through a link or junction gets a rule for each spelling (probes junction_*). A spelling with no
     rule form (UNC) is left to the gate.
 
-    `read_roots` is given while PI personal paths are active (policy.private_paths). Claude matches rule text
+    `read_roots` is given while PI personal paths are on (policy.private_paths), even with no active path. Claude matches rule text
     literally, so a case-varied (`C:/USERS/PI/.SSH`) or aliased spelling slips past every deny and ask rule. Then no
     shell rule is pre-approved (`Bash(python *)`, bare `Bash`) and every Read/Grep/Glob rule becomes
     `Read(//root/**)` for the task's own folders: those calls reach the gate, which canonicalizes the text and
@@ -601,12 +601,16 @@ def evaluate_tool(
     windows: bool | None = None,
     environ: Mapping[str, str] | None = None,
     private_paths: Iterable[str] = (),
+    private_enabled: bool = False,
     home: str | None = None,
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
-    private = _private_decision(tool_name, judged, list(private_paths), workdir, home, environ)
+    # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
+    private_paths = list(private_paths)
+    private = (_private_decision(tool_name, judged, private_paths, workdir, home, environ)
+               if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
         decision = private
@@ -626,11 +630,10 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     (`claude_allowed_tools`), so this is where those calls are judged: the text is canonicalized (case-folded where
     the volume is, `~`, variables, admin shares, `\\\\?\\`) and paths are resolved (links, junctions, 8.3 names). A
     file tool's free text (content, a Grep pattern) is not a path being opened and is not checked; a Glob
-    pattern's folder part is.
+    pattern's folder part is. Called while private paths are on, even with no active path: then only the
+    registry check has anything to match.
     """
-    if not private_paths:
-        return None
-    from .private_paths import mentioned_private_path, path_field_text
+    from .private_paths import mentioned_private_path, path_field_text, registry_access
 
     if tool_name in READ_LIKE | WRITE_LIKE:
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
@@ -656,16 +659,22 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         return None
     if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
-        if mentioned_private_path(cmd, private_paths, home, environ):
+        if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
             return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
-        hit = touches_resolved({"command": cmd}, private_paths, workdir=workdir)
+        hit = private_paths and touches_resolved({"command": cmd}, private_paths, workdir=workdir)
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
                                    f"its paths were not all resolved: `{cmd[:200]}`")
-        if _cd_reaches_private(cmd, private_paths, workdir, home, environ):
+        if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
+        # The PI's GITHUB_TOKEN is stripped from staff env but stays readable in the user registry (#325).
+        spelled = registry_access(cmd)
+        if spelled:
+            return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
+                                   f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
+                                   f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
     return None
 
 

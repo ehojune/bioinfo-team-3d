@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 
 from ..policy import WRITE_LIKE, evaluate_tool
-from ..private_paths import ENV_VAR, resolve_private_paths
+from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
 from ..util import short
 from ._mcpcompat import make_server
@@ -29,9 +29,8 @@ AGENT = os.environ.get("LABHQ_AGENT_ID")
 WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
 WORKDIR = str(Path(WORKDIR_INPUT).resolve())
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
-# The runner sets this task's list (possibly empty); without it the gate works the list out itself.
-PRIVATE_PATHS = ([p for p in os.environ[ENV_VAR].split(os.pathsep) if p] if ENV_VAR in os.environ
-                 else list(resolve_private_paths(S, [WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS]).paths))
+# The runner sets this task's list (possibly empty) and switch; without them the gate works both out itself.
+PRIVATE = gate_private_paths(os.environ, lambda: resolve_private_paths(S, [WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS]))
 
 server = make_server("labhq-approval", instructions="Permission gate for tool calls (policy + PI approval).")
 
@@ -61,7 +60,7 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
     d = evaluate_tool(tool_name, input or {}, S.policy,
                       allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR,
-                      private_paths=PRIVATE_PATHS)
+                      private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":
