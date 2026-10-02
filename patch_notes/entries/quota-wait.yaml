@@ -1,0 +1,35 @@
+pr: 302
+rows:
+- sha: 07ad782
+  at: 2026-10-02 19:17
+  text: Claude Code·Codex·agy 구독 한도 단계를 계정 단위로 주차하고 reset 시각이나 수동 해제 뒤 재개
+- sha: e84dbfc
+  at: 2026-10-02 19:29
+  text: 요청의 active·terminal 상태 판정을 모아 한도 대기 중 ask·benchmark·상태 화면이 계속 진행
+- sha: 0c02787
+  at: 2026-10-02 19:50
+  text: 한도 reset 시각을 runner 시간대의 instant로 받아 재개하고, 재시작 복구는 한도 단계만 기다리며, 웹은 마지막 한도
+    단계 재개 때 요청을 진행 중으로 되돌림
+- sha: 30d40db
+  at: 2026-10-02 20:05
+  text: 패키지 예시 설정을 저장소 예시와 맞춰 한도 대기 설정과 시간대 상한 설명을 함께 배포
+- sha: b25c046
+  at: 2026-10-02 20:07
+  text: runner가 읽은 reset 시각을 그 날짜의 DST 규칙으로 변환해 전환 경계를 넘는 재개가 한 시간 어긋나지 않음
+- sha: ebf41ec
+  at: 2026-10-02 20:17
+  text: HPC·ask wake turn과 wrap-up turn도 한도 대기로 주차·재개하고, hold 해제 뒤 dispatch 전에 예산을
+    다시 확인
+- sha: 5fcf1f0
+  at: 2026-10-02 20:25
+  text: 'main 병합 충돌 해소: 결과 직렬화·웹 snapshot·요청 메타가 pipeline PR과 한도 대기 상태를 함께 다룸'
+- sha: 80eaf00
+  at: 2026-10-02 20:38
+  text: '한도 대기: 끝난 요청의 이어 묻기는 요청 상태를 바꾸지 않고, 재시작 때 그 대기를 지움. 연도 없는 Feb 29 reset은 기본
+    대기로'
+- sha: f0dd21f
+  at: 2026-10-02 20:38
+  text: 'main 병합: 3D 요청 정보 줄에 한도 대기 표시와 main의 보고서 보기를 함께 둠'
+- sha: 05040a6
+  at: 2026-10-02 20:45
+  text: 한도 해제가 요청 목록 사본을 순회해, 해제 중 새 요청이 들어와도 끊기지 않음

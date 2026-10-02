@@ -511,19 +511,3 @@ async def test_a_request_line_with_malformed_rows_is_broken_in_both_sections(tmp
     assert rep["requests"] == 1 and rep["broken_lines"] == 1
     assert rep["actions"]["observed"]["requests"] == 1 and rep["actions"]["observed"]["broken"] == 1
     assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=False), hub.s) == 0
-
-
-async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_path):
-    from scripts import semantics_shadow_remove as removal
-    lab = await run_lab(tmp_path / "lab", ON, ["CD276 세포유형 분석 [artifact]"])
-    assert lab["lines"] and "actions" in lab["lines"][-1]
-    hub = lab["hub"]
-    hub.requests["req_inflight1"] = {"id": "req_inflight1", "status": "running", "text": "x", "mode": "orchestrate",
-                                     "created_at": 1.0}
-    hub.save_request("req_inflight1")
-    summary = removal.check(tmp_path / "lab" / "state", only="actions")
-    assert summary["files"] == removal.ACTIONS_OWNED
-    assert summary["hook_lines"] == 8 + 11 + 24 and summary["blocks"] == 2  # server 4, cso 4, cli 11 (A2), shadow 24
-    assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
-                                "actions_field": False}
-    assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]

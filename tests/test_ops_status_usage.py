@@ -49,6 +49,28 @@ def test_request_list_health_auth_utf8_and_shutdown(tmp_path, caplog):
     assert "gateway shutdown with running requests: r1" in caplog.text
 
 
+def test_waiting_quota_request_stays_visible_and_active(tmp_path, caplog):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["quota"] = {"id": "quota", "text": "resume later", "mode": "orchestrate",
+                              "status": "waiting_quota", "created_at": 1.0, "results": {},
+                              "quota_waits": {"s1": {"engine": "codex", "resume_at": 9999999999,
+                                                       "deadline_at": 9999999999, "reason": "limit"}}}
+    hub.store.put("task", "held", {"request_id": "quota", "step_id": "s1", "accepted": True,
+                                     "completed": False, "payload": {"agent_id": "worker"}})
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert [r["id"] for r in client.get("/api/requests?status=running", headers=headers).json()] == ["quota"]
+        assert client.get("/api/health").json() == {
+            "service": "labhq gateway", "runners": [], "agents": 0,
+            "active_requests": 1, "running_tasks": 1,
+        }
+    assert "gateway shutdown with running requests: quota" in caplog.text
+
+
 def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     def api(_settings, _method, path):
         if path == "/api/health":

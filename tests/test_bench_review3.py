@@ -54,6 +54,7 @@ def harness(tmp_path, monkeypatch):
             decisions.append((approved, note))
 
     hub = Hub()
+    case["_harness_hub"] = hub
 
     class Server:
         started = True
@@ -104,6 +105,26 @@ def test_labhq_uses_case_timeout_or_runner_default(tmp_path, harness, case_timeo
     timeout, message = next(pair for pair in waits if "request timed out" in pair[1])
     assert timeout == (case_timeout or 21600)
     assert str(case_timeout or 21600) in message
+
+
+def test_labhq_benchmark_waits_through_quota_hold(tmp_path, harness):
+    case, _, _, _ = harness
+    hub = case.pop("_harness_hub")
+
+    def create_request(_request):
+        hub.requests["request"] = {"status": "waiting_quota", "report": case["mock_answer"],
+                                   "cost_usd": 0.55, "cost_known": True}
+
+        async def finish_after_reset():
+            await asyncio.sleep(0.02)
+            hub.requests["request"]["status"] = "done"
+
+        asyncio.create_task(finish_after_reset())
+        return "request"
+
+    hub.create_request = create_request
+    run = asyncio.run(bench._run_labhq(case, tmp_path, "real", Settings()))
+    assert run["status"] == "done"
 
 
 @pytest.mark.parametrize("case_timeout", [True, False])

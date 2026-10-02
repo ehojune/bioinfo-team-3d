@@ -221,8 +221,9 @@ class DataZone(BaseModel):
 # crontab and triggers; and every scontrol call but the read-only ones (#172). Bash and PowerShell share it.
 SCHEDULER_JOB_COMMANDS = (
     r"\b(?:qsub|qrsh|qsh|qlogin|qmake|qtcsh|qdel|qresub|qalter|qhold|qrls|qsig|qmod|qmove|qrerun|qorder|qrun"
+    r"|qrsub|qrdel|pbs_rsub|pbs_rdel"
     r"|sbatch|srun|salloc|scancel|scrontab|strigger)\b"
-    r"|\bscontrol\b(?!(?:\s+-[\w-]+)*\s+(?:show|ping|listpids|version|help)\b)"
+    r"|\bscontrol\b(?!(?:[ \t]+-[\w-]+)*[ \t]+(?:show|ping|listpids|version|help)\b)"
 )
 
 
@@ -322,6 +323,8 @@ class OrchestratorSettings(BaseModel):
     step_max_attempts: int = Field(default=2, ge=1)
     step_retry_backoff_s: float = Field(default=0.2, ge=0)
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
+    quota_default_wait_s: float = Field(default=3600, ge=1)
+    quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
 
     @field_validator("cso_models")
     @classmethod

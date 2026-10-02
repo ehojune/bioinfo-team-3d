@@ -78,6 +78,19 @@ def test_skipped_steps_and_unparsed_reviews_have_explicit_ui_states():
     assert "리뷰 판정 실패. PI 확인이 필요해요" in state
 
 
+def test_quota_wait_card_has_a_working_manual_resume_action():
+    from labhq.gateway import server
+
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    state = (server.WEB / "state.js").read_text(encoding="utf-8")
+    tasks = (server.WEB / "ui" / "tasks.js").read_text(encoding="utf-8")
+    assert "case 'request.step_quota_wait':" in state
+    assert "한도 대기, ${when} 재개" in tasks and "지금 재개" in tasks
+    assert "options.onQuotaResume(step.id)" in tasks
+    assert "resumeQuota: (rid, sid) => post(" in html
+    assert "/resume-quota`" in html
+
+
 def test_clarify_approval_takes_a_typed_answer():
     """A PI question is answered in the approval note; an empty note would stop the request."""
     from pathlib import Path

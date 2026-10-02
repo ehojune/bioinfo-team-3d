@@ -2,7 +2,7 @@ import {syncDecisionCards} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
-  const {S, apply, visual, fillFollowups, KIND_KO} = globalThis.LabHQState.createOfficeState();
+  const {S, apply, visual, fillRequestDetail, KIND_KO} = globalThis.LabHQState.createOfficeState();
   const $ = id => document.getElementById(id);
   const params = new URLSearchParams(location.search);
   const readToken = () => { try { return localStorage.getItem('labhq_token') || ''; } catch { return ''; } };
@@ -26,7 +26,7 @@ export function startLiveOffice(onState) {
     try {
       const response = await fetch(`/api/requests/${encodeURIComponent(rid)}`, {headers:{Authorization:`Bearer ${token}`}});
       if (!response.ok) throw new Error(String(response.status));
-      if (!fillFollowups(rid, await response.json())) notice('전문을 찾지 못했어요.');
+      if (!fillRequestDetail(rid, await response.json())) notice('전문을 찾지 못했어요.');
     } catch (error) { notice(`전문을 불러오지 못했어요: ${error.message}`); }
     finally { loadingAnswers.delete(rid); render(); }
   }
@@ -48,10 +48,15 @@ export function startLiveOffice(onState) {
           : {type:'approval.resolve', id:a.id, approved, note}));
         pending.add(a.id); render();
       }});
-    const requests = $('requests'); requests.replaceChildren();
-    if (!S.requests.size) text(requests, 'p', '요청 없음');
+    const requests = $('requests'), oldRows = new Map([...requests.children]
+      .filter(row => row.dataset?.requestId).map(row => [row.dataset.requestId, row]));
+    const rows = [];
+    if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
     for (const q of [...S.requests.values()].reverse()) {
-      const row = document.createElement('article'); requests.append(row);
+      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.review, q.error, q.followups, loadingAnswers.has(q.id)]);
+      const prior = oldRows.get(q.id);
+      if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
+      const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
       text(row, 'strong', q.text || q.id);
       text(row, 'p', `${q.status} · ${q.phase}`);
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
@@ -65,6 +70,7 @@ export function startLiveOffice(onState) {
         }
       }
     }
+    requests.replaceChildren(...rows);
     onState(S, visual);
   }
   function open() {

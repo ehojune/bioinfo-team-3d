@@ -218,7 +218,7 @@ def configured_packs(settings: Any) -> dict[str, LoadedPack]:
 def check_configured_packs(settings: Any) -> None:
     """Load the configured packs when the gateway starts, so a retired ``id@version`` or a missing pack
     directory stops it with the available versions instead of failing the first research plan (#170)."""
-    if settings.research.enabled or settings.research.active_packs:
+    if settings.research.enabled or settings.research.active_packs or settings.research.pack_dirs:
         configured_packs(settings)
 
 

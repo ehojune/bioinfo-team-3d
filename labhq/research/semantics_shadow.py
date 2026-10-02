@@ -1782,9 +1782,9 @@ class ShadowService:
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
             self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
 
-    def trip(self, reason: str, **detail: Any) -> None:
+    def trip(self, reason: str, *, expected_epoch: int | None = None, **detail: Any) -> None:
         with self.lock:
-            if self.latched:
+            if self.latched or (expected_epoch is not None and self.epoch != expected_epoch):
                 return
             self.latched, self.gen = reason, self.gen + 1
             counts = {**self.counts, "recent_failures": sum(self.recent), "consecutive": self.consecutive}
@@ -2167,11 +2167,11 @@ class ShadowService:
         else:
             self.keep_window(*window)
 
-    def keep_window(self, *window: Any) -> None:
+    def keep_window(self, seq: int, epoch: int, recent: list[bool], consecutive: int) -> None:
         try:
-            self.save_window(*window)
+            self.save_window(seq, epoch, recent, consecutive)
         except OSError as exc:  # a window that cannot be kept would forget failures at the next restart
-            self.trip("breaker_storage", kind=type(exc).__name__)
+            self.trip("breaker_storage", expected_epoch=epoch, kind=type(exc).__name__)
 
     def check_window(self) -> None:
         with self.lock:

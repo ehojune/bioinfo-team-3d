@@ -60,14 +60,17 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     # Directives (#SBATCH --array, #$ -pe, #PBS -J, …) can ask for more than cores × walltime and the command
     # line does not override all of them, so any directive sends the job to the PI whatever the threshold (#172).
     directives = script_directives(text)
-    if hpc_needs_approval(cores, walltime, s.policy) or directives:
+    approval_reasons = []
+    if s.hpc.scheduler == "pbs" and s.hpc.ssh_host:
+        approval_reasons.append("remote PBS_DPREFIX cannot be inspected locally")
+    if hpc_needs_approval(cores, walltime, s.policy) or directives or approval_reasons:
         outside = f" · 스크립트 지시 {len(directives)}개는 core-h 계산 밖" if directives else ""
         dec = await approve({
             "kind": "hpc_submit",
             "summary": f"HPC 제출: {name} · {cores} cores · {mem} · {walltime} (~{ch:.1f} core-h){outside}",
             "detail": {"reason": str(body.get("reason") or ""), "script_path": str(spath),
                        "script_preview": "\n".join(text.splitlines()[:40]), "queue": queue,
-                       "script_directives": directives[:50]},
+                        "script_directives": directives[:50], "approval_reasons": approval_reasons},
             "timeout_s": s.policy.approvals.timeout_s,
         })
         if not dec.get("approved"):

@@ -4,6 +4,62 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · Windows bench 취소 test 불안정 수정
+
+- 결론: Windows가 `taskkill` 생성 중 `MemoryError`를 내도 이미 수집한 PID로 process tree를 정리한다.
+- 바뀐 것: `_kill()`의 직접 종료 fallback에 Windows 자원 부족을 포함하고 해당 실패를 회귀 test에 주입했다.
+- 실행한 것: 대상 test 30회 통과, `tests/test_bench.py` 55건 통과, 공개 저장소 검사 통과.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어받는다.
+- 근거: `labhq/adapters/base.py`, `tests/test_bench.py`.
+
+## 2026-10-02 · 인용·pack 후속(#196 #197 #218)
+
+- 결론: accession version 재인용, URI 혼합 후보, `pack_dirs` 시작 검증을 보강했다.
+- 바뀐 것: 여러 표기의 base key를 원장에 넣고, 여러 표기 체계의 URI가 정확한 ID와 다른 accession을 함께 반환하면 충돌로 판정한다.
+- 실행한 것: 수정 전 회귀 3건 실패를 확인했고, 관련 pytest 131건과 공개 저장소 검사를 통과했다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/evidence/claims.py`, `labhq/evidence/verify.py`, `labhq/research/packs.py`, `tests/test_evidence_verify.py`, `tests/test_research_protocol.py`.
+
+## 2026-10-02 · 그림자 후속(#211 #212)
+
+- 결론: 이전 epoch의 breaker 저장 실패가 새 epoch를 끄지 않으며, `derived_from`은 A·B 모두 최대 64 artifact hop까지만 `yes`다.
+- 바뀐 것: breaker 저장 실패에 epoch 조건을 붙이고, N=64·65·66 계보 경계를 `yes`·`unknown`·`unknown`으로 고정했다.
+- 실행한 것: 수정 전 두 회귀 실패를 확인했다. 수정 뒤 관련 pytest 160건과 공개 저장소 검사·diff 검사를 통과했다. 기존 17문항 판정은 바뀌지 않았다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어받는다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/research/semantics.py`, `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_pilot.py`.
+
+## 2026-10-02 · HPC 승인·추적 후속(#215 #224)
+
+- 결론: 시험 job이 세 번 연속 사라지면 `unknown_finished`로 끝내고, 스케줄러 우회와 오래된 job 취소를 막았다.
+- 바뀐 것: 예약 명령과 줄바꿈 `scontrol`을 승인 대상으로 넣고, Slurm 지시문을 셸 규칙대로 읽는다. 원격 PBS 제출은 항상 PI 승인을 받는다.
+- 실행한 것: 수정 전 회귀 테스트 19건 실패 확인. 수정 뒤 관련 pytest 215건 통과, 2건 skip. 공개 저장소 검사 통과.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어받는다.
+- 근거: `labhq/hpc_consult.py`, `labhq/tools/scheduler.py`, `labhq/runner/daemon.py`, `labhq/runner/hpc_jobs.py`, `labhq/settings.py`, `tests/test_hpc_consult.py`, `tests/test_hpc_followups.py`.
+
+## 2026-10-02 · #231~#234 — direct 산출 후속
+
+- 결론: direct와 wrap-up 산출을 같은 규칙으로 모으고, 볼륨의 대소문자 구분에 맞춰 labhq 결과 사본을 뺀다.
+- 바뀐 것: 대소문자 구분 판정, direct wrap-up 전체 산출 수집, 라운드 기록의 `outputs/` 경로 200개 상한 설명을 추가했다. #232는 main의 fd 기반 순회와 교체 회귀 테스트로 이미 해결돼 있었다.
+- 실행한 것: 수정 전 새 회귀 3건 실패, 수정 뒤 관련 pytest 40건 통과·2건 skip. 공개정보 검사와 diff 검사를 통과했다. README는 86,587 bytes에서 86,686 bytes로 99 bytes 늘었다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_direct_outputs.py`, `tests/test_resume_accounting.py`, `README.md`.
+
+## 2026-10-02 · PR #313 — 3D 화면 후속 세 건
+
+- 결론: 전문 보기 클릭 유실, terminal report snapshot 팽창, 이어 묻기 글자 수 단위 불일치를 고쳤다.
+- 바뀐 것: 3D 요청 카드를 key로 재사용하고, 보고서 전문은 상세 API에서 받으며, 표시 길이는 Unicode 코드포인트로 센다.
+- 실행한 것: 수정 전 Node·gateway 회귀 실패를 확인했다. 수정 뒤 관련 pytest 62건, Node 회귀, 공개 저장소 검사를 통과시켰다.
+- 미해결: 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/web/lab3d/src/live.js`, `labhq/gateway/server.py`, `labhq/web/state.js`, `labhq/web/index.html`, `tests/web_issue126.cjs`, `tests/test_followup.py`.
+
+## 2026-10-02 · #312 — 긴 직원 prompt 후속
+
+- 결론: POSIX의 인자별 UTF-8 한도를 넘는 prompt도 TASK pointer로 바꾸며, Claude에 Read가 없으면 실행 전에 거부한다.
+- 바뀐 것: spawn `OSError`를 실패 결과로 돌리고 #240·#242 회귀 테스트를 추가했다.
+- 실행한 것: 수정 전 3건 실패를 확인했다. 관련 pytest 18건, Node test 12개 파일, `scripts/check_public.sh`를 통과시켰다.
+- 미해결: 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/adapters/base.py`, `labhq/adapters/claude_code.py`, `tests/test_adapters_fake_cli.py`.
+
 ## 2026-10-02 · #199 #203 — 승인 시간 초과 정리와 stale 알림 범위
 
 - 결론: 러너에서 만료된 승인은 gateway와 화면에서도 즉시 끝나며, stale 알림은 누른 화면에만 보인다.
@@ -28,6 +84,14 @@
 - 미해결: 없음. 전체 pytest와 CI는 지시대로 GitHub Actions에 맡긴다.
 - 근거: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `tests/test_consult_restart.py`, `tests/test_cso.py`.
 
+## 2026-10-02 · #308 · 느린 test 줄이기
+
+- 결론: 본 pytest job은 90초 MCP 성질을 축소 시계로 검사하고, 실제 90초 실측은 별도 `pytest-slow` job(ubuntu, `LABHQ_SLOW_TESTS=1`)이 나란히 돌린다.
+- 바뀐 것: 제거 test 둘은 한 번 만든 pristine lab state를 각자 복사해 쓴다. mock HPC polling과 종료 대기는 조건 기반으로 줄였다. `ci_skip.py`의 skip 판정에 `pytest-slow`를 넣었다.
+- 실행한 것: 지정 5개 파일 58 passed, 1 skipped(168.75→72.31초). 수정 뒤 제거·integrations·ci_skip 35 passed(역순 실행도 통과), opt-in 실측 2 passed(94초), 공개 검사 통과. 전체 pytest는 CI에 맡긴다.
+- 미해결: 없음.
+- 근거: `.github/workflows/test.yml`, `scripts/ci_skip.py`, `tests/test_long_mcp_call.py`, `tests/fixtures/fake_mcp_client.py`, `tests/test_semantics_shadow_remove.py`, `tests/semantics_shadow_lab.py`, `tests/test_e2e_mock.py`.
+
 ## 2026-10-02 · #293 — plan-only 재개 대기 범위
 
 - 결론: `plan_only` 요청은 plan 저장 뒤 gateway가 재시작돼도 실행하지 않을 직원을 기다리지 않고 계획만 끝낸다.
@@ -51,6 +115,14 @@
 - 실행한 것: 새 회귀 3건은 구현 전 실패를 확인했다. doctor·init 관련 pytest 73 passed(기존 디코딩 warning 1건), 공개정보 검사와 diff 검사 통과.
 - 미해결: 실제 계정 생성·ACL 변경·CLI 로그인은 PI가 절차서를 따라 실행해야 한다. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
 - 근거: `docs/runner-account.md`, `labhq/doctor.py`, `tests/test_doctor.py`.
+
+## 2026-10-02 · #302 — 구독 한도 단계 자동 재개
+
+- 결론: 구독 한도 오류는 실패 대신 `waiting_quota`로 주차하고 reset 시각에 자동 재개한다. reset 시각은 runner가 자기 시간대로 정한 instant를 쓰고, 병렬 ask·benchmark·재시작 복구는 한도 단계 때문에 멈추지 않는다.
+- 바뀐 것: Claude Code·Codex·agy parser, 계정 단위 hold, 재시작 복구와 session resume, 단계 카드·수동 재개, 공용 active·terminal 요청 상태 판정. runner가 `quota_reset_at`(epoch)을 보내고 gateway는 그것을 믿는다. instant가 없으면 시각 문구는 기본 대기 1시간까지만 기다린다. 재시작 뒤에는 복구를 바로 시작하고, 웹 reducer는 마지막 한도 단계가 풀리면 요청을 running으로 돌린다.
+- 실행한 것: 이번 회귀 test는 수정 전 실패했다(시간대·재시작 pytest, Node reducer). 관련 pytest 439건, `node tests/*.cjs` 13개, `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: 없음.
+- 근거: `labhq/quota.py`, `labhq/runner/daemon.py`, `labhq/models.py`, `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/request_status.py`, `labhq/web/state.js`, `tests/test_quota_wait.py`, `tests/web_state.cjs`.
 
 ## 2026-10-02 · #301 — bioinfo-agent 질문 게이트와 파이프라인 PR
 

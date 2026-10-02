@@ -243,6 +243,31 @@ def test_snapshot_carries_only_the_head_of_long_followup_answers(tmp_path):
     assert detail.status_code == 200 and detail.json()["followups"][0]["answer"] == full
 
 
+def test_snapshot_carries_only_the_head_of_terminal_reports(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    full = "보고" * 10000
+    for i in range(25):
+        rid = f"r{i}"
+        typ = "request.completed" if i % 2 == 0 else "request.failed"
+        hub.requests[rid] = {"id": rid, "status": "done" if i % 2 == 0 else "failed",
+                             "text": "t", "report": full}
+        hub.events.append({"type": typ, "seq": i + 1, "request_id": rid,
+                           "data": {"ok": True, "report": full}})
+    snap = hub.snapshot()
+    size = len(json.dumps(snap, ensure_ascii=False, default=str).encode("utf-8"))
+    assert size < 300_000, f"snapshot is {size} bytes"
+    terminal = [e["data"] for e in snap["data"]["recent_events"]
+                if e["type"] in {"request.completed", "request.failed"}]
+    assert len(terminal) == 25 and all(len(d["report"]) == 2000 for d in terminal)
+    assert terminal[0]["report_truncated"] is True and terminal[0]["report_chars"] == 20000
+    assert len(hub.events[0]["data"]["report"]) == 20000, "the stored live event stays whole"
+    detail = TestClient(app).get("/api/requests/r0", headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert detail.status_code == 200 and detail.json()["report"] == full
+
+
 @pytest.mark.asyncio
 async def test_snapshot_cuts_the_same_answer_in_the_runners_task_result(tmp_path):
     """#126: the runner's task.result for a follow-up carries the answer again, unclipped; a snapshot cuts it too."""

@@ -6,12 +6,16 @@ const root = path.resolve(__dirname, '..', 'labhq/web');
 require(path.join(root, 'state.js'));
 
 const HEAD = 'A'.repeat(2000), FULL = HEAD + 'B'.repeat(18000);
+const REPORT_HEAD = 'R'.repeat(2000), FULL_REPORT = REPORT_HEAD + 'S'.repeat(18000);
 const snapshot = {type: 'snapshot', seq: 5, data: {agents: [{id: 'cso'}], approvals: [], requests: [{id: 'r1', text: 't', status: 'done',
   followups: [{id: 'fu_long', text: 'Long?', status: 'done', answer: HEAD, answer_truncated: true, answer_chars: FULL.length},
               {id: 'fu_short', text: 'Short?', status: 'done', answer: 'short'}]}],
-  recent_events: [{type: 'request.followup_done', request_id: 'r1', data: {id: 'fu_long', ok: true, answer: HEAD,
-    answer_truncated: true, answer_chars: FULL.length}}]}};
-const detail = {id: 'r1', followups: [{id: 'fu_long', answer: FULL}, {id: 'fu_short', answer: 'short'}]};
+  recent_events: [{type: 'request.completed', request_id: 'r1', data: {ok: true, report: REPORT_HEAD,
+    report_truncated: true, report_chars: FULL_REPORT.length}},
+    {type: 'request.followup_done', request_id: 'r1', data: {id: 'fu_long', ok: true, answer: HEAD,
+      answer_truncated: true, answer_chars: FULL.length}}]}};
+const detail = {id: 'r1', report: FULL_REPORT,
+  followups: [{id: 'fu_long', answer: FULL}, {id: 'fu_short', answer: 'short'}]};
 
 // Shared reducer: the truncation mark survives the snapshot and the full request replaces it.
 const office = global.LabHQState.createOfficeState({now: () => 10});
@@ -25,6 +29,11 @@ const filled = office.S.requests.get('r1').followups;
 assert.equal(filled[0].answer, FULL); assert.equal('answer_truncated' in filled[0], false);
 assert.equal(filled[1], shown[1], 'untouched entries keep their identity');
 assert.equal(office.fillFollowups('r1', detail), 0, 'filling twice is a no-op');
+assert.equal(office.S.requests.get('r1').report, REPORT_HEAD);
+assert.equal(office.S.requests.get('r1').report_truncated, true);
+assert.equal(office.fillRequestDetail('r1', detail), 1, 'the full terminal report is filled on demand');
+assert.equal(office.S.requests.get('r1').report, FULL_REPORT);
+assert.equal('report_truncated' in office.S.requests.get('r1'), false);
 const live = global.LabHQState.createOfficeState({now: () => 10});
 live.apply({type: 'request.followup_done', request_id: 'r2', data: {id: 'fu', ok: true, answer: FULL}});
 assert.equal('answer_truncated' in live.S.requests.get('r2').followups[0], false, 'a live answer arrives whole');
@@ -33,8 +42,10 @@ assert.equal('answer_truncated' in live.S.requests.get('r2').followups[0], false
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 assert.match(html, /requestDetail: rid => get\(`\/api\/requests\/\$\{encodeURIComponent\(rid\)\}`\)/);
 assert.match(html, /class="btn fu-full"/);
-assert.match(html, /fillFollowups\(rid, await api\.requestDetail\(rid\)\)/);
+assert.match(html, /fillRequestDetail\(rid, await api\.requestDetail\(rid\)\)/);
 assert.match(html, /\$\{f\.answer_truncated \? '…' : ''\}<\/pre>\$\{fullAnswerHTML\(q, f\)\}/);
+assert.match(html, /\[\.\.\.f\.answer\]\.length\.toLocaleString\(\)/, 'shown answer length uses Unicode code points');
+assert.match(html, /class="btn report-full"/, 'a shortened terminal report can be opened on demand');
 
 // 3D: a small DOM/transport harness clicks 전문 보기 and checks the fetch and the shown answer.
 class Element {
@@ -51,7 +62,8 @@ global.document = {getElementById: element, createElement: tag => new Element(ta
 global.location = {search: '?token=test-client', pathname: '/3d/', protocol: 'http:', host: 'example.invalid'};
 global.localStorage = {getItem() { return null; }, setItem() {}};
 global.history = {replaceState() {}};
-global.setTimeout = () => 0; global.clearTimeout = () => {}; global.setInterval = () => 0;
+global.setTimeout = () => 0; global.clearTimeout = () => {};
+const intervals = []; global.setInterval = callback => { intervals.push(callback); return 0; };
 const sockets = [];
 global.WebSocket = class { constructor(url) { this.url = url; this.readyState = 0; sockets.push(this); } send() {} close() {} };
 const fetched = [];
@@ -69,6 +81,9 @@ const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').rep
   assert.equal(line(), `이어 묻기: Long? → ${HEAD}…`);
   const buttons = nodes().filter(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기');
   assert.equal(buttons.length, 1, 'only the shortened answer offers 전문 보기');
+  intervals[0]();
+  assert.equal(nodes().find(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기'), buttons[0],
+    'the approval clock render keeps the request button node and its in-progress click');
   await buttons[0].onclick();
   assert.deepEqual(fetched, [['/api/requests/r1', 'Bearer test-client']]);
   assert.equal(line(), `이어 묻기: Long? → ${FULL}`);

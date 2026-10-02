@@ -17,7 +17,7 @@ import subprocess
 import sys
 import urllib.request
 
-JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows")
+JOBS = ("pytest (3.10)", "pytest (3.12)", "pytest-windows", "pytest-slow")  # every job the skip output gates
 MAX_WALK = 5
 
 

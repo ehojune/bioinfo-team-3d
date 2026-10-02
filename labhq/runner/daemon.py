@@ -30,10 +30,11 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
+from ..quota import quota_reset_instant
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
-from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
+from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -840,7 +841,7 @@ class Runner:
                 found.append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
-        if task.meta.get("kind") == "direct":
+        if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
             # No plan declares a direct run's outputs: its folder is listed, so the shadow sees them too (#221).
             listed_outputs, output_scan_note = await asyncio.to_thread(
                 ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,
@@ -882,6 +883,8 @@ class Runner:
                       usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
+        if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
+            result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))
@@ -974,7 +977,7 @@ class Runner:
         """
         job_id = str(identity.get("job_id") or "")
         for tracked, j in self.jobs.items():
-            if (not j.get("submitted_by_runner") or not job_in_family(tracked, job_id)
+            if (not j.get("submitted_by_runner") or j.get("terminal") or not job_in_family(tracked, job_id)
                     or j.get("agent_id") != identity.get("agent_id")):
                 continue
             if j.get("task_id") == identity.get("task_id") or (
@@ -1000,9 +1003,11 @@ class Runner:
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
                 self.store.put("job", jid, j)
-                if j["missing"] < 3:
+                if j["missing"] < MISSING_POLLS_BEFORE_FINISHED:
                     continue
                 state = "unknown_finished"
+            else:
+                j["missing"] = 0
             if state != j["state"]:
                 j.update(state=state, exit_status=info.exit_status)
                 await self.emit(Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],

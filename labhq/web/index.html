@@ -236,7 +236,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .kanban-column h3{margin:0 0 6px;font-size:12px;color:var(--muted)}
 .task-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:6px;font-size:12px}
 .task-card summary{display:flex;justify-content:space-between;gap:6px;cursor:pointer}.task-card p{margin:5px 0;overflow-wrap:anywhere}.task-card ul{margin:3px 0;padding-left:18px}
-.task-working{border-color:var(--working)}.task-review,.task-error,.task-failed{border-color:var(--wait)}.task-done{opacity:.82}.task-meta{color:var(--muted)}.task-error,.missing{color:var(--error-ink)}.review{color:var(--wait-ink)}
+.task-working{border-color:var(--working)}.task-waiting_quota{border-color:var(--sleep)}.task-review,.task-error,.task-failed{border-color:var(--wait)}.task-done{opacity:.82}.task-meta{color:var(--muted)}.task-error,.missing{color:var(--error-ink)}.review{color:var(--wait-ink)}
 
 /* staff strip */
 .staff-wrap{position:sticky;z-index:18;bottom:76px;max-width:1280px;margin:0 auto 8px;padding:0 16px}
@@ -537,7 +537,7 @@ const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable=
 
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now});
-const { S, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
     if (effect.type === 'toast') toast(effect.text, effect.approval_id);
@@ -700,7 +700,7 @@ const FINISHED = ['done', 'failed', 'cancelled', 'rejected'];
 const fuDrafts = new Map();  // request id -> half-typed follow-up; a draft never follows the selector to another request
 // #126: a snapshot holds the head of a long answer; the PI opens the rest from the gateway on demand
 const fuLoading = new Set();
-const fullAnswerHTML = (q, f) => !f.answer_truncated ? '' : `<p class="fu-more">앞 ${f.answer.length.toLocaleString()}자만 보여요${
+const fullAnswerHTML = (q, f) => !f.answer_truncated ? '' : `<p class="fu-more">앞 ${[...f.answer].length.toLocaleString()}자만 보여요${
   f.answer_chars ? ` (전체 ${Number(f.answer_chars).toLocaleString()}자)` : ''}${api?.requestDetail ? ` <button class="btn fu-full" type="button" data-rid="${esc(q.id)}" data-fid="${esc(f.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>`;
 function followupHTML(q) {
   const list = (q.followups || []).map(f => `<li class="fu"><p class="fu-q">${esc(f.text)}</p>${
@@ -713,6 +713,9 @@ function followupHTML(q) {
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
+const reportHTML = q => !q.report ? '' : `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
+  q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
+    api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}</details>`;
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
@@ -723,16 +726,18 @@ function renderRequest() {
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
-    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : ''}</option>`).join('')}</select></p>` : '';
+    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : r.status === 'waiting_quota' ? ' (한도 대기)' : ''}</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'done' ? '완료' : '실패'}</span></p>
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${q.report ? `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}</pre></details>` : ''}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${reportHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
-  syncTaskBoard($('#task-board'), q, S.stepDetails, { nick, onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null });
+  syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
+    onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
+    onQuotaResume: api?.resumeQuota ? sid => api.resumeQuota(q.id, sid).then(() => toast('한도 대기를 풀었어요')).catch(err => toast(`재개하지 못했어요: ${err.message}`)) : null });
 }
 function renderStaff() {
   syncStaffCards($('#staff-strip'), S.agents.values(), { visual, toolLabel, now });
@@ -858,11 +863,11 @@ $('#approvals').addEventListener('click', async e => {
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
 $('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
-  if (e.target.classList?.contains('fu-full')) {
+  if (e.target.classList?.contains('fu-full') || e.target.classList?.contains('report-full')) {
     const rid = e.target.dataset.rid;
     if (fuLoading.has(rid)) return;
     fuLoading.add(rid); e.target.disabled = true;
-    try { if (!fillFollowups(rid, await api.requestDetail(rid))) toast('전문을 찾지 못했어요'); }
+    try { if (!fillRequestDetail(rid, await api.requestDetail(rid))) toast('전문을 찾지 못했어요'); }
     catch (err) { toast(`전문을 불러오지 못했어요: ${err.message}`); }
     finally { fuLoading.delete(rid); reqKey = ''; schedule(); }
     return;
@@ -974,6 +979,7 @@ function startLive() {
     recruit: s => post('/api/recruit', { paper: s.paper || null, repo: s.repo || null, focus: s.focus || null, request_id: s.request_id || null }),
     contract: (id, action, days) => post(`/api/contracts/${encodeURIComponent(id)}`, { action, days }),
     cancel: id => post(`/api/tasks/${encodeURIComponent(id)}/cancel`, {}),
+    resumeQuota: (rid, sid) => post(`/api/requests/${encodeURIComponent(rid)}/steps/${encodeURIComponent(sid)}/resume-quota`, {}),
     history: () => get('/api/approvals/history?limit=50'),
   };
   const open = () => {

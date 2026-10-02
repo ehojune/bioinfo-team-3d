@@ -581,6 +581,13 @@ def test_a_shared_alias_links_pmcid_and_doi_rows_and_unchecked_rows_stay_unjudge
     assert asyncio.run(verify_sources(result)).recitations == []
 
 
+def test_versioned_and_base_accessions_in_two_groups_are_rejected_without_lookup():
+    rows = [row("e1", "ensembl", "ENSG00000141510.17", group="gene_a"),
+            row("e2", "ensembl", "ENSG00000141510", group="gene_b")]
+    with pytest.raises(ValidationError, match="accession_base:ensembl:ensg00000141510"):
+        build([claim("c1")], rows, [link("c1", "e1"), link("c1", "e2")])
+
+
 def test_a_uri_resolved_to_the_base_and_another_accession_is_conflicting():
     # A base-only match does not hide another gene the same uri names.
     url = "https://example.org/tp53-record"
@@ -591,6 +598,29 @@ def test_a_uri_resolved_to_the_base_and_another_accession_is_conflicting():
     result = build([claim("c1")], [cited_with_uri("e1", "ensembl", cited, url)], [link("c1", "e1")])
     report = asyncio.run(verify_sources(result, mapping))
     assert report.evidence[0].resolutions[1].status == "conflicting" and report.defective_evidence == ["e1"]
+
+
+def test_a_uri_resolved_to_the_cited_and_another_accession_is_conflicting_for_versioned_schemes():
+    url = "https://example.org/tp53-record"
+    cited = "ENSG00000141510.17"
+    mapping = StaticResolver({("ensembl", cited): [{"id_scheme": "ensembl", "id_value": cited}],
+                              ("uri", url): [{"id_scheme": "ensembl", "id_value": cited},
+                                             {"id_scheme": "ensembl", "id_value": "ENSG00000139618"}]})
+    result = build([claim("c1")], [cited_with_uri("e1", "ensembl", cited, url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert report.evidence[0].resolutions[1].status == "conflicting"
+    assert report.defective_evidence == ["e1"]
+
+
+def test_a_multi_record_uri_may_include_the_cited_geo_series():
+    url = "https://example.org/geo-collection"
+    mapping = StaticResolver({("geo", "GSE79973"): [{"id_scheme": "geo", "id_value": "GSE79973"}],
+                              ("uri", url): [{"id_scheme": "geo", "id_value": "GSE79973"},
+                                             {"id_scheme": "geo", "id_value": "GSE96583"}]})
+    result = build([claim("c1")], [cited_with_uri("e1", "geo", "GSE79973", url)], [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, mapping))
+    assert report.evidence[0].resolutions[1].status == "found"
+    assert report.ok is True
 
 
 @pytest.mark.parametrize("scheme, cited, answer", [
