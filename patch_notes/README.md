@@ -22,8 +22,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:00 | [`d5e1ece`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/d5e1ece) | 러너 승인 시간 초과를 gateway에 반영하고 stale 알림을 요청한 socket에만 보냄(#199 #203) |
 | 20:00 | [`16d12b4`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/16d12b4) | session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을 놓지 않음 |
 | 19:58 | [`7a14808`](https://github.com/ehojune/bioinfo-team-3d/pull/310/commits/7a14808) | 파일 도구 경로의 환경 변수는 펼치지 않고, 셸 쓰기에는 작업 폴더의 원래 표기도 허용한다(#236 #237) |
+| 19:57 | [`122b259`](https://github.com/ehojune/bioinfo-team-3d/pull/308/commits/122b259) | 90초 MCP 실측을 별도 CI job(pytest-slow)으로 돌리고, 제거 test 둘이 각자 pristine state 사본에서 시작하게 했다. |
 | 19:55 | [`3aef457`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/3aef457) | runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치 |
 | 19:54 | [`21007da`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/21007da) | consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209) |
+| 19:48 | [`f24bcf3`](https://github.com/ehojune/bioinfo-team-3d/pull/308/commits/f24bcf3) | 90초 MCP 실측을 opt-in으로 분리하고 같은 timeout 경로를 축소 시계로 검증했으며 제거·mock test의 반복 대기를 줄였다. |
 | 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
 | 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
 | 19:43 | [`af48ee7`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/af48ee7) | runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤 |

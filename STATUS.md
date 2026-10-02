@@ -52,6 +52,14 @@
 - 미해결: 없음. 전체 pytest와 CI는 지시대로 GitHub Actions에 맡긴다.
 - 근거: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `tests/test_consult_restart.py`, `tests/test_cso.py`.
 
+## 2026-10-02 · #308 · 느린 test 줄이기
+
+- 결론: 본 pytest job은 90초 MCP 성질을 축소 시계로 검사하고, 실제 90초 실측은 별도 `pytest-slow` job(ubuntu, `LABHQ_SLOW_TESTS=1`)이 나란히 돌린다.
+- 바뀐 것: 제거 test 둘은 한 번 만든 pristine lab state를 각자 복사해 쓴다. mock HPC polling과 종료 대기는 조건 기반으로 줄였다. `ci_skip.py`의 skip 판정에 `pytest-slow`를 넣었다.
+- 실행한 것: 지정 5개 파일 58 passed, 1 skipped(168.75→72.31초). 수정 뒤 제거·integrations·ci_skip 35 passed(역순 실행도 통과), opt-in 실측 2 passed(94초), 공개 검사 통과. 전체 pytest는 CI에 맡긴다.
+- 미해결: 없음.
+- 근거: `.github/workflows/test.yml`, `scripts/ci_skip.py`, `tests/test_long_mcp_call.py`, `tests/fixtures/fake_mcp_client.py`, `tests/test_semantics_shadow_remove.py`, `tests/semantics_shadow_lab.py`, `tests/test_e2e_mock.py`.
+
 ## 2026-10-02 · #293 — plan-only 재개 대기 범위
 
 - 결론: `plan_only` 요청은 plan 저장 뒤 gateway가 재시작돼도 실행하지 않을 직원을 기다리지 않고 계획만 끝낸다.
