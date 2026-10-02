@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · CI — README만 바뀌면 README 검사만, 느린 test 15개 출력
+
+- 결론: PI 지적. 루트 README를 읽는 test는 `tests/test_integrations.py` 하나라서, STATUS·패치노트 말고 README만 바뀐 push는 전체 pytest를 건너뛰고 그 파일만 Ubuntu에서 돌린다. pytest job은 가장 느린 test 15개를 출력한다.
+- 바뀐 것: `scripts/ci_skip.py`(README는 `readme=true`로 따로 표시), `.github/workflows/test.yml`(`readme` job, `--durations=15`), `tests/test_ci_skip.py`.
+- 실행한 것: `tests/test_ci_skip.py` 6건.
+- 미해결: 없음.
+- 근거: `scripts/ci_skip.py`.
+
 ## 2026-10-02 · #151 #253 — EDAM 부분집합 표 병합
 
 - 결론: 저장소 라이선스가 정해져(#252: 문서·데이터 CC BY-SA 4.0, 코드 GPL-3.0) draft로 묶어 둔 EDAM 표를 넣는다. 38개 key 중 32개가 EDAM 용어 31개에 이어지고, 판정은 여전히 key로 한다.
