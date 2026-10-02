@@ -81,3 +81,12 @@ async def test_a_card_question_with_real_newlines_reaches_the_pi_and_the_step_re
     assert hub.approvals[0]["kind"] == "clarify" and CARD in hub.approvals[0]["summary"]
     assert [t.meta.get("step_id") for t in calls if t.meta["kind"] == "step"] == ["A", "A", "B"]
     assert hub.requests["r"]["step_decisions"]["A"]["question"] == CARD
+
+
+def test_replan_questions_follow_the_same_phone_card_rule_as_the_plan():
+    args = dict(roster="ROSTER", capabilities="CAPS", trigger="WHY", retired="none", drop_rule="DROP", used="A",
+                max_steps=3, output_types_rule="", empty_rule="EMPTY", request="REQ", plan="[]", results="")
+    text = cso.REPLAN_PROMPT.format(**args)
+    assert ("ask in clarifying_questions and do not plan the blocked work. " + cso.PI_CARD_QUESTION_RULE) in text
+    assert cso.PI_CARD_QUESTION_RULE in cso.PLAN_PROMPT
+    assert "at most 700 characters, the question itself first" in cso.PI_CARD_QUESTION_RULE

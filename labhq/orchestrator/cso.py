@@ -118,6 +118,10 @@ accessed (public vs controlled access, DUA constraints), and feasibility risks.
 
 Request: {request}"""
 
+# Plan and re-plan questions of the general lane go to the PI's phone card. Nothing validates their length, so
+# both prompts carry the same rule.
+PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
+
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
@@ -140,7 +144,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- {question_rule} Each question must fit the PI's phone card: at most 700 characters, the question itself first.
+- {question_rule} """ + PI_CARD_QUESTION_RULE + """
 
 PI's request: {request}"""
 
@@ -242,7 +246,7 @@ Rules:
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
-  approval must change, ask in clarifying_questions and do not plan the blocked work.
+  approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {empty_rule}
 
 PI's request: {request}
