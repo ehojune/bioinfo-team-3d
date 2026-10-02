@@ -140,7 +140,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- {question_rule}
+- {question_rule} Each question must fit the PI's phone card: at most 700 characters, the question itself first.
 
 PI's request: {request}"""
 
