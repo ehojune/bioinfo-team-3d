@@ -1,0 +1,5 @@
+pr: 309
+rows:
+- sha: 21007da
+  at: 2026-10-02 19:54
+  text: consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209)
