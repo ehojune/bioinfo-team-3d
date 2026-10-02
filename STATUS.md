@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #274 — Biology 담당에 Claude Science와 같은 공개 과학 MCP
+
+- 결론: PI 결정 B. biologist(Claude Code)에 로그인 없는 공개 hosted MCP 다섯 개(PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials)를 붙였다. 로그인이 필요한 BioRender·Synapse·Wiley·Owkin과 사용량 문구 표시 조건이 있는 Consensus는 뺐다.
+- 바뀐 것: `agents/core/biologist.yaml` mcp 목록과 prompt 한 줄(공개 ID·일반 용어만 보내고 코호트·통제 데이터는 보내지 않음), `scripts/integrations.py` 표시 이름, README 배지·연결된 도구 표.
+- 실행한 것: `tests/test_integrations.py`·`tests/test_registry.py`, `scripts/integrations.py --check`, `scripts/check_public.sh`.
+- 미해결: life-sciences skill(scvi-tools 등)은 plugin 경로가 PC마다 달라 이번에 넣지 않았다.
+- 근거: `agents/core/biologist.yaml`, `scripts/integrations.py`.
+
 ## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
 
 - 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.

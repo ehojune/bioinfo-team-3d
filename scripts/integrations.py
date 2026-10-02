@@ -56,6 +56,15 @@ EXTERNAL = {
     "https://hcls.mcp.claude.com/biorxiv/mcp": (
         "bioRxiv / medRxiv", "preprint 검색", LIFE_SCIENCES,
         Look("MCP · preprint 검색", "https://www.biorxiv.org/", "", "007EC6")),
+    "https://hcls.mcp.claude.com/chembl/mcp": (
+        "ChEMBL", "화합물·생물활성 검색", LIFE_SCIENCES,
+        Look("MCP · 화합물 검색", "https://www.ebi.ac.uk/chembl/", "", "007EC6")),
+    "https://mcp.platform.opentargets.org/mcp": (
+        "Open Targets", "표적–질병 근거 검색", LIFE_SCIENCES,
+        Look("MCP · 표적 검색", "https://platform.opentargets.org/", "", "007EC6")),
+    "https://hcls.mcp.claude.com/clinical_trials/mcp": (
+        "ClinicalTrials.gov", "임상시험 검색", LIFE_SCIENCES,
+        Look("MCP · 임상시험 검색", "https://clinicaltrials.gov/", "", "007EC6")),
 }
 BUILTIN = {
     "approval": ("labhq_approval", "PI 승인 요청"),
