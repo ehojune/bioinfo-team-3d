@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:47 | [`4afd105`](https://github.com/ehojune/bioinfo-team-3d/pull/319/commits/4afd105) | Windows taskkill의 MemoryError를 직접 PID 종료로 복구하고 bench 취소 회귀 test를 보강했다. |
 | 20:45 | [`05040a6`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/05040a6) | 한도 해제가 요청 목록 사본을 순회해, 해제 중 새 요청이 들어와도 끊기지 않음 |
 | 20:44 | [`f002a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/317/commits/f002a0c) | accession version 재인용과 URI 혼합 후보를 판정하고 pack_dirs를 시작 시 검증 |
 | 20:43 | [`638016a`](https://github.com/ehojune/bioinfo-team-3d/pull/318/commits/638016a) | 이전 epoch의 breaker 저장 실패를 격리하고 derived_from 깊이를 최대 64 artifact hop으로 맞췄다. |
