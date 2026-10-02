@@ -44,9 +44,14 @@ LOCAL_ABSOLUTE_PATH = re.compile(
 UNIX_ABSOLUTE_PATH = re.compile(
     r"""(?:^|(?<=[\s=:(\[{,;|&<>!])|(?:(?<=[\s=:(\[{,;|&<>!])|^)['"`])/(?=[A-Za-z0-9_.~$-])""", re.MULTILINE
 )
-# The only absolute paths every POSIX host has: an interpreter after "#!" and the standard streams.
+# Absolute paths every POSIX host or container image has (FHS system prefixes): they say nothing about this lab's
+# servers, unlike /data, /srv, /home, /scratch or a cluster mount, which stay refused (no internal server paths in
+# a public repo). An allowlist, so an unknown prefix is refused rather than guessed safe.
 PORTABLE_ABSOLUTE_PATH = re.compile(
     r"#!\s*/(?:usr/bin/env|bin/(?:ba)?sh)(?![A-Za-z0-9_.-])|/dev/(?:null|stdin|stdout|stderr)(?![A-Za-z0-9_.-])"
+    r"|(?<![A-Za-z0-9_.$-])/(?:usr|bin|sbin|lib|lib64|opt|etc|tmp|var/tmp|dev|proc|sys)(?=/|[\s'\"`)\]}:;,]|$)"
+    r"[^\s'\"`)\]}:;,]*",
+    re.MULTILINE,
 )
 
 

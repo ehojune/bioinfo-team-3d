@@ -32,6 +32,19 @@ def test_gateway_github_token_never_reaches_staff_environment(tmp_path, monkeypa
     assert configured.github.token_env not in get_adapter(Engine.mock, configured).staff_env(context)
 
 
+@pytest.mark.parametrize("name", ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "gh_token"])
+def test_no_github_credential_reaches_staff_whatever_its_name(tmp_path, monkeypatch, name):
+    """#301 review P1: gh reads GH_TOKEN before GITHUB_TOKEN, so staff could push to the public repo themselves."""
+    configured = settings(tmp_path)
+    monkeypatch.setenv(name, "pi-credential")
+    context = RunContext(task=Task(agent_id="bioinfo-agent", prompt="work"),
+                         agent=AgentSpec(id="bioinfo-agent", name="bio", role="pipeline", engine=Engine.mock),
+                         workdir=tmp_path, settings=configured, mcp_servers=[], env={name: "from-task"},
+                         emit=lambda *_args: None, prompt="work")
+    env = get_adapter(Engine.mock, configured).staff_env(context)
+    assert not any(key.casefold() == name.casefold() for key in env)
+
+
 @pytest.mark.parametrize(
     ("question", "pi"),
     [
@@ -236,13 +249,14 @@ async def test_pipeline_source_and_test_fixture_list_still_open_a_pr(tmp_path):
 
 @pytest.mark.parametrize("line", [
     "params.fasta = '/data/reference.fa'\n",
-    "params.tool = \"/opt/tool/bin/run\"\n",
-    "workDir = '/tmp/work'\n",
     "params.genome = [fasta:'/srv/genomes/hg38.fa']\n",
     "params.input = 'file:///shared/x.bam'\n",
+    "params.home = '/home/someone/run'\n",
+    "params.scratch = '/BiO/scratch/project/x'\n",
+    "params.mnt = '/mnt/d/runs/x'\n",
 ])
-async def test_every_unix_absolute_path_refuses_the_pipeline_pr(tmp_path, line):
-    """#301 review P2: no prefix list. Only "#!" interpreters and /dev/null-style streams are portable."""
+async def test_every_host_specific_absolute_path_refuses_the_pipeline_pr(tmp_path, line):
+    """#301 review P2: only FHS system prefixes every host or image has pass; lab server paths never reach the PR."""
     submission = pipeline()
     submission["files"][1]["content"] += line
     calls = []
@@ -251,6 +265,24 @@ async def test_every_unix_absolute_path_refuses_the_pipeline_pr(tmp_path, line):
         assert delivered is True and calls == []
         assert hub.store.get("pipeline_submission", "t")["reason"] == "local absolute path is not allowed"
     finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("line", [
+    "params.tool = \"/opt/tool/bin/run\"\n",
+    "workDir = '/tmp/work'\n",
+    "params.bin = '/usr/local/bin/samtools'\n",
+])
+async def test_standard_system_paths_do_not_refuse_the_pipeline_pr(tmp_path, line):
+    """Container and system prefixes (FHS) are the same on every host; refusing them would block real pipelines."""
+    submission = pipeline()
+    submission["files"][1]["content"] += line
+    calls = []
+    hub, delivered = await run_submission(tmp_path, submission, fake_pipeline_api(calls))
+    try:
+        assert delivered is True and hub.store.get("pipeline_submission", "t")["state"] == "open"
+    finally:
+        await hub.reporter.client().http.aclose()
         hub.store.close()
 
 
