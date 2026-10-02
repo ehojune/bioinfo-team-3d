@@ -651,6 +651,7 @@ class Hub:
 
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
+        pipeline_event = None
         if ws is not None and (self.runners.get(runner_id) is not ws or
                                self.runner_incarnations.get(runner_id) != incarnation):
             return
@@ -674,6 +675,16 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
+            if result.pipeline_submission is not None:
+                self.store.put("pipeline_submission", tid, {
+                    "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
+                    "state": "ready", "submission": result.pipeline_submission,
+                })
+                pipeline_event = {"type": "pipeline.ready", "ts": time.time(), "task_id": tid,
+                                  "agent_id": result.agent_id, "request_id": rid,
+                                  "data": {"name": result.pipeline_submission.get("name")}}
+                result = result.model_copy(update={"pipeline_submission": None})
+                msg = {**msg, "data": result.model_dump(mode="json")}
             if task:
                 # A reported result supersedes an abandonment: the task did finish (#112).
                 self.store.put("task", tid, {**{k: v for k, v in task.items() if k != "abandoned"},
@@ -720,6 +731,8 @@ class Hub:
                 self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
+        if pipeline_event is not None:
+            await self.publish(pipeline_event)
         if runner_seq is not None:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
 

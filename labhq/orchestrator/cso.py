@@ -238,6 +238,7 @@ Do not repeat the same question."""
 CONSULT_PROMPT = """Answer one blocked employee's question using the request, plan and policy context below.
 This is a read-only, one-answer consult. Do not call labhq_ask and do not approve installations,
 destructive work, restricted-data access, budget overruns or work outside the request.
+When bioinfo-agent asks whether to build a missing reusable pipeline, answer that it should build it.
 
 From: {sender}
 Question: {question}
@@ -964,7 +965,9 @@ class Orchestrator:
                 "from": "labhq", "routed_to": "cso", "remaining_asks": 0}))
             return
 
-        stop = hard_stop_kind(ask)
+        hard_stops = (self.hub.s.policy.bioinfo_agent.hard_stops
+                      if ask.agent_id == "bioinfo-agent" else None)
+        stop = hard_stop_kind(ask, hard_stops)
         requested = ask.to
         # Who this ask went to before a gateway restart. The roster lacks that employee until its
         # runner reconnects, and the runner may still be answering it (#113).

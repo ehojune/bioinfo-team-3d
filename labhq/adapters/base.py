@@ -151,8 +151,9 @@ ROLE_FOOTER = """
 - Heavy compute or anything touching restricted data goes through the labhq_hpc tools, never inline.
 - If environment, installation, login or tool errors block you, use labhq_ask(to="facilities").
 - For a method or scope decision use to="cso"; ask a colleague only for a fact only that colleague can answer.
-- Use to="pi" only for a data-zone, cost-cap, out-of-scope, installation or destructive-work hard stop.
-- A bioinfo-agent gate that says to ask and stop must use labhq_ask, then end the turn when it returns pending.
+- Use to="pi" only for the hard stops configured for your role.
+- bioinfo-agent sends every gate question to the CSO first. Build a missing reusable pipeline when the CSO says to;
+  put it under outputs/pipeline/<name>/ with manifest.json so labhq can open the upstream PR.
 - Separate observed results from hypotheses. Record tool versions and parameters.
 - Report in Korean; keep technical terms, gene names and commands in English.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
@@ -331,7 +332,9 @@ class AgentAdapter(ABC):
         engine = self.engine_env()
         if ctx.read_only:
             engine = read_only_engine_env(engine)[0]
-        return merge_staff_env(dict(os.environ), engine, ctx.env)
+        env = merge_staff_env(dict(os.environ), engine, ctx.env)
+        token_name = self.settings.github.token_env.casefold()
+        return {key: value for key, value in env.items() if key.casefold() != token_name}
 
     def stdin_payload(self, ctx: RunContext) -> bytes | None:
         """Bytes to write to the agent's stdin (then closed); None → stdin is /dev/null."""

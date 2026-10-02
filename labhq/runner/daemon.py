@@ -28,6 +28,7 @@ from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
+from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings
 from ..store import StateStore
@@ -823,14 +824,30 @@ class Runner:
             target = (ws.dir / relative).resolve()
             if target.exists() and target.is_relative_to((ws.dir / "outputs").resolve()):
                 found.append(relative)
+        listed_outputs: list[str] | None = None
+        output_scan_note: str | None = None
         if task.meta.get("kind") == "direct":
             # No plan declares a direct run's outputs: its folder is listed, so the shadow sees them too (#221).
-            listed, note = await asyncio.to_thread(ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,
-                                                   self.s.runner.reference_scan_max_depth)
-            found += listed
-            if note:
-                await emit("agent.log", {"level": "warn", "text": note})
+            listed_outputs, output_scan_note = await asyncio.to_thread(
+                ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,
+                self.s.runner.reference_scan_max_depth)
+            found += listed_outputs
+            if output_scan_note:
+                await emit("agent.log", {"level": "warn", "text": output_scan_note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
+        if agent.id == "bioinfo-agent":
+            if listed_outputs is None:
+                listed_outputs, output_scan_note = await asyncio.to_thread(
+                    ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,
+                    self.s.runner.reference_scan_max_depth)
+            result.pipeline_submission = await asyncio.to_thread(
+                collect_pipeline_submission, ws.dir, listed_outputs, output_scan_note)
+            if result.pipeline_submission is not None:
+                reason = pipeline_rejection(result.pipeline_submission, self.s)
+                if reason:
+                    result.pipeline_submission = {"state": "rejected",
+                                                  "name": result.pipeline_submission.get("name"),
+                                                  "reason": reason}
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
             try:
                 result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())

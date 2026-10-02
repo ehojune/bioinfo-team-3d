@@ -84,6 +84,7 @@ function req(rid) {
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
+    Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -353,6 +354,15 @@ function apply(ev, replay = false) {
     }
     case 'github.posted': { const q = req(rid); q.github.push({ kind: d.kind, url: d.url, number: d.number }); feed({ who: 'github', text: GH_KO[d.kind] || 'GitHub에 업데이트했어요', url: d.url }, ts, rid); break; }
     case 'github.failed': feed({ who: 'github', text: `GitHub 업데이트 실패: ${short(d.error, 110)}`, cls: 'alert' }, ts, rid); break;
+    case 'pipeline.pr': {
+      const q = req(rid); q.pipelinePr = { ...d };
+      if (d.status === 'open' && d.url) q.github.push({ kind: 'pipeline_pr', url: d.url, number: d.number });
+      feed({ who: 'github', text: d.status === 'open' ? `새 pipeline PR을 열었어요: ${d.name}`
+        : d.status === 'pending' ? `새 pipeline PR 대기: ${short(d.reason, 100)}`
+        : `새 pipeline PR 거부: ${short(d.reason, 100)}`,
+        cls: d.status === 'open' ? '' : 'alert', url: d.url || undefined }, ts, rid);
+      break;
+    }
     default: break;
   }
   return effects;

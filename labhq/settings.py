@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import ntpath
+import re
 from pathlib import Path
 from typing import Any  # semantics-hook
 from typing import Literal
@@ -252,11 +253,34 @@ class BudgetSettings(BaseModel):
     per_request_usd: float = 30.0
 
 
+class BioinfoAgentPolicy(BaseModel):
+    """Unattended gates and the public upstream for bioinfo-agent pipeline contributions."""
+
+    hard_stops: list[Literal["data_zone", "budget_cap", "installation", "out_of_scope", "destructive"]] = [
+        "data_zone", "budget_cap", "installation",
+    ]
+    pipeline_repo: str = "ehojune/bioinfo-agent"
+    pipeline_base_branch: str = "main"
+
+    @model_validator(mode="after")
+    def safe_github_target(self) -> "BioinfoAgentPolicy":
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", self.pipeline_repo):
+            raise ValueError("policy.bioinfo_agent.pipeline_repo must be owner/name")
+        branch = self.pipeline_base_branch
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}", branch)
+                or ".." in branch or "//" in branch or branch.endswith(("/", "."))):
+            raise ValueError("policy.bioinfo_agent.pipeline_base_branch is invalid")
+        if len(self.hard_stops) != len(set(self.hard_stops)):
+            raise ValueError("policy.bioinfo_agent.hard_stops must be unique")
+        return self
+
+
 class PolicySettings(BaseModel):
     data_zones: list[DataZone] = []
     allow_runner_read_restricted: bool = False
     approvals: ApprovalRules = ApprovalRules()
     budget: BudgetSettings = BudgetSettings()
+    bioinfo_agent: BioinfoAgentPolicy = BioinfoAgentPolicy()
 
 
 class RecruitSettings(BaseModel):
