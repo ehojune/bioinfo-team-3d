@@ -2,6 +2,38 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #271 #282 — 단계 실패·revise 뒤 opt-in CSO 재계획과 저장 계획 max_steps 축소 처리
+
+- 결론: 저장 계획이 현재 `max_steps`보다 길면 자르지 않고 실패한다(연구 lane은 승인 hash·상태 유지). `orchestrator.max_replans`(기본 0, 전과 같음)를 켜면 단계 실패나 revise 뒤 CSO가 남은 DAG만 다시 계획한다.
+- 바뀐 것: 완료 단계는 다시 돌리지 않고 의존성도 그대로 둔다. 새 단계는 새 id로 `validate_steps`·`max_steps`를 통과해야 반영되고, 질문은 clarify gate, 비용은 budget gate를 다시 탄다. 시도 횟수는 CSO 호출 전에 저장하고 재시작 뒤에도 현재 상한으로 판정한다. PI 거절·취소 단계와 살아 있는 HPC job이 있는 단계는 우회하지 않는다. 연구 lane은 재계획하지 않는다. 재계획 이력은 reviewer·최종 보고 prompt와 보고서 metadata에 남는다.
+- 실행한 것: 새 회귀 29건이 main 코드에서 실패하고 이 branch에서 통과했다. 전체 pytest 2513 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 후속 P2 2건(재계획 clarify 답변 뒤 재시작 시 재질문, drop하지 않은 flagged 단계 검사). Codex 사용량 한도로 Claude가 이어받았다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/settings.py`, `config/labhq.example.yaml`, `tests/test_cso.py`, `tests/test_output_types_research.py`.
+
+## 2026-10-02 · #276 — 교차 세션 inbound 거부와 90초 MCP 대기 실증
+
+- 결론: Claude 2.1.282는 `crossSessionInbound`를 지원한다. labhq가 만드는 Claude 직원·bench 명령에 `refuse`를 넣었고, 실제 CLI에서 다른 세션이 이름으로 보낸 메시지가 거부됐다. 90초 뒤 답하는 labhq MCP 호출은 fake CLI로 Claude·Codex 모두, 실제 CLI로 Claude에서 timeout 없이 한 번에 끝났다.
+- 바뀐 것: Claude 직원 `--settings`(모든 profile)와 bench Claude arm에 `crossSessionInbound: "refuse"`. 러너의 labhq MCP timeout 계산을 `labhq_mcp_timeout_s()` 하나로 모았다. 지연 MCP 서버, 각 CLI의 tool timeout 규칙을 따르는 fake CLI, 실제 CLI probe(`scripts/probe_inbound_mcp.py`)를 더했다.
+- 실행한 것: 실제 Claude 2.1.282(sonnet), 임시 폴더, 지연 90초·승인 timeout 60초·labhq MCP timeout 1320초, 세 설정을 동시에 한 번씩. 세 run 모두 서버 호출 1회·tool error 0으로 marker를 돌려줬다. refuse(97.2초)는 수신 쪽 debug log에 거부가 남고 보낸 쪽에 `Cross-session message refused` 통지가 왔다. 설정 없음(main, 102.0초)과 accept(96.5초)는 메시지가 직원 세션 큐에 들어갔고 거부 통지가 없었다. 회귀: inbound 9건·bench 1건·보낸 쪽 통지 파싱 1건이 수정 전 실패, 90초 test는 Codex `tool_timeout_sec`를 빼면 `request timed out`으로 실패했다. 전체 pytest 2500 passed/44 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 실제 Codex 장시간 probe는 Codex 사용량 한도로 돌리지 못해 #276을 열어 둔다(`python scripts/probe_inbound_mcp.py codex --output-dir <저장소 밖>`). 보낸 쪽은 `ListAgents`를 막아 모델이 PI 세션 목록을 읽지 않지만, 이름을 찾으려고 CLI가 로컬 세션에 접속하는 것은 막지 않는다. 실측 원본은 저장소 밖에만 있다.
+- 근거: `labhq/adapters/claude_code.py`, `labhq/bench.py`, `labhq/runner/daemon.py`, `scripts/probe_inbound_mcp.py`, `tests/test_claude_inbound.py`, `tests/test_long_mcp_call.py`, `tests/test_probe_inbound_mcp.py`.
+
+## 2026-10-02 · #274 — Biology 담당에 Claude Science와 같은 공개 과학 MCP
+
+- 결론: PI 결정 B. biologist(Claude Code)와 lit_scout(문헌·웹 검색)에 로그인 없는 공개 hosted MCP 다섯 개(PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials)를, sci_reviewer에는 인용 확인용 PubMed·bioRxiv를 붙였다(PI 제안, PR 댓글). 로그인이 필요한 BioRender·Synapse·Wiley·Owkin과 사용량 문구 표시 조건이 있는 Consensus는 뺐다.
+- 바뀐 것: `agents/core/biologist.yaml`·`lit_scout.yaml`·`sci_reviewer.yaml` mcp 목록과 prompt 한 줄(공개 ID·일반 용어만 보내고 코호트·통제 데이터는 보내지 않음), `scripts/integrations.py` 표시 이름, README 배지·연결된 도구 표.
+- 실행한 것: `tests/test_integrations.py`·`tests/test_registry.py`, `scripts/integrations.py --check`, `scripts/check_public.sh`.
+- 미해결: life-sciences skill(scvi-tools 등)은 plugin 경로가 PC마다 달라 이번에 넣지 않았다.
+- 근거: `agents/core/biologist.yaml`, `scripts/integrations.py`.
+
+## 2026-10-02 · #252 — 저장소 라이선스: 코드 GPL-3.0, 문서·데이터 CC BY-SA 4.0
+
+- 결론: PI 결정으로 코드는 GPL-3.0-or-later, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0이다. EDAM에서 뽑은 표(draft #253)도 CC BY-SA 4.0으로 들어갈 수 있게 됐다.
+- 바뀐 것: `LICENSE`(GPL-3.0 전문), `LICENSE-CC-BY-SA-4.0.txt`(CC BY-SA 4.0 전문, GitHub license API 원문), README 상단 배지 2개와 §14 라이선스 표(제3자 예외: three.js MIT, placeholder.gltf CC0).
+- 실행한 것: `scripts/check_public.sh`, `scripts/integrations.py --check`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `LICENSE`, `LICENSE-CC-BY-SA-4.0.txt`, `README.md` §14.
+
 ## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
 
 - 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.

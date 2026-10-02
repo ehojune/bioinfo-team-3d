@@ -1197,6 +1197,586 @@ async def test_resume_revalidates_and_normalizes_stored_plan_outputs():
 
 
 @pytest.mark.asyncio
+async def test_resume_rejects_stored_plan_when_max_steps_was_reduced():
+    """#282: a stored plan longer than today's max_steps fails loudly instead of losing its tail steps."""
+    async def dispatch(task):
+        raise AssertionError("an over-limit stored plan must not dispatch")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_steps = 1
+    hub.s.orchestrator.reviewer_agent = None
+    hub.requests["r"]["plan"] = {"steps": [
+        {"id": "A", "agent_id": "worker", "instruction": "first", "outputs": [], "depends_on": []},
+        {"id": "B", "agent_id": "worker", "instruction": "second", "outputs": [], "depends_on": ["A"]},
+    ]}
+    hub.requests["r"]["results"] = {"A": result(Task(agent_id="worker", prompt="first"),
+                                                text="A done").model_dump(mode="json")}
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert [step["id"] for step in req["plan"]["steps"]] == ["A", "B"]
+    assert "2 steps" in req["error"] and "maximum is 1" in req["error"]
+    assert "### B · worker (FAILED" in req["report"]
+    assert hub.calls == []
+
+
+def test_new_plan_keeps_truncating_to_max_steps():
+    """#282 changes only stored plans; a fresh CSO plan is still cut to max_steps as before."""
+    raw = [{"id": sid, "agent_id": "worker", "instruction": sid, "depends_on": []} for sid in ("A", "B", "C")]
+    steps, _ = validate_steps(raw, {"worker"}, 2)
+    assert [step["id"] for step in steps] == ["A", "B"]
+    with pytest.raises(ValueError, match="has 3 steps; maximum is 2"):
+        validate_steps(raw, {"worker"}, 2, reject_excess=True)
+
+
+def replan_plan(steps, drop=(), questions=(), notes="re-plan"):
+    return {"clarifying_questions": list(questions), "steps": steps, "drop": list(drop), "recruit": [],
+            "notes": notes}
+
+
+def replan_hub(original, on_step, on_replan, *, max_replans=1, on_review=None):
+    """A FakeHub whose CSO plans ``original`` once and answers every re-plan with ``on_replan``."""
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured=replan_plan(original, notes="initial"))
+        if kind == "replan":
+            return result(task, structured=on_replan(task))
+        if kind == "step":
+            return on_step(task)
+        if kind == "review" and on_review:
+            return result(task, structured=on_review(task))
+        assert kind == "synthesis", kind
+        return result(task, text="final")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_replans = max_replans
+    if on_review is None:
+        hub.s.orchestrator.reviewer_agent = None
+    return hub
+
+
+def kinds(hub, kind):
+    return [task for task in hub.calls if task.meta["kind"] == kind]
+
+
+def step_ids(hub):
+    return [task.meta["step_id"] for task in kinds(hub, "step")]
+
+
+@pytest.mark.asyncio
+async def test_replan_is_off_by_default_and_failure_report_is_unchanged():
+    assert Settings().orchestrator.max_replans == 0
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error="tool unavailable"),
+                     lambda task: pytest.fail("re-plan must stay off by default"), max_replans=0)
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert "replan_progress" not in req and "Re-plan" not in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_failed_upstream_replans_only_remaining_dag_and_keeps_success():
+    original = [
+        {"id": "seed", "agent_id": "worker", "instruction": "make seed", "outputs": ["outputs/seed.tsv"],
+         "depends_on": []},
+        {"id": "primary", "agent_id": "worker", "instruction": "primary analysis", "depends_on": ["seed"]},
+        {"id": "report", "agent_id": "worker", "instruction": "use primary", "depends_on": ["primary"]},
+    ]
+
+    def on_step(task):
+        sid = task.meta["step_id"]
+        if sid == "seed":
+            return result(task, text="seed complete", workdir="runs/seed", workdir_id="seed",
+                          outputs=["outputs/seed.tsv"])
+        if sid == "primary":
+            return result(task, ok=False, error="primary analysis failed")
+        assert sid == "alternative", sid
+        assert "outputs/seed.tsv" in task.context
+        return result(task, text="fallback complete", outputs=["outputs/alternative.md"])
+
+    def on_replan(task):
+        assert "primary analysis failed" in task.prompt and "outputs/seed.tsv" in task.prompt
+        assert task.meta["revision"] == 1
+        return replan_plan([{"id": "alternative", "agent_id": "worker", "instruction": "use seed another way",
+                             "outputs": ["outputs/alternative.md"], "depends_on": ["seed"]}])
+
+    hub = replan_hub(original, on_step, on_replan)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["seed", "primary", "alternative"]
+    assert [step["id"] for step in req["plan"]["steps"]] == ["seed", "alternative"]
+    assert set(req["results"]) == {"seed", "alternative"}
+    entry = req["replan_history"][0]
+    assert entry["status"] == "applied" and entry["trigger"] == "step_failure"
+    assert entry["retired"] == ["primary", "report"] and entry["added"] == ["alternative"]
+    assert entry["prior_results"]["primary"]["error"] == "primary analysis failed"
+    assert req["replan_progress"] == {"attempts": 1, "max": 1, "in_flight": False}
+    # The PI still reads why the original method was replaced, not only that it was.
+    assert ("Re-plan history:\n- #1 step_failure: applied; retired: primary (primary analysis failed), report; "
+            "added: alternative") in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_reviewer_sees_which_failed_step_a_replan_replaced():
+    """A reviewer judging the fallback must know the primary method failed, or it reviews a different question."""
+    original = [{"id": "primary", "agent_id": "worker", "instruction": "primary analysis", "depends_on": []}]
+    accept = {"verdict": "accept", "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+              "issues": []}
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="primary analysis failed")
+                                   if task.meta["step_id"] == "primary" else result(task, text="fallback done")),
+                     lambda task: replan_plan([{"id": "fallback", "agent_id": "worker", "instruction": "fallback",
+                                                "depends_on": []}]),
+                     on_review=lambda task: accept)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    prompt = kinds(hub, "review")[0].prompt
+    assert "re-plan history" in prompt and "retired: primary (primary analysis failed)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_failure_replan_saves_new_plan_and_retired_results_together():
+    """A restart between two saves must never see the old plan without a result it already has (#271).
+
+    The old plan minus a failed step's result would rerun that step; the real SavedResults saves on every pop.
+    """
+    from labhq.gateway.server import SavedResults
+
+    original = [
+        {"id": "kept", "agent_id": "worker", "instruction": "keep", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["kept"]},
+        {"id": "after", "agent_id": "worker", "instruction": "use broken", "depends_on": ["broken"]},
+    ]
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="tool unavailable")
+                                   if task.meta["step_id"] == "broken" else result(task, text="ok")),
+                     lambda task: replan_plan([{"id": "fix", "agent_id": "worker", "instruction": "fix",
+                                                "depends_on": ["kept"]}]))
+    hub.clear_step_jobs = lambda rid, sid: None
+    hub.result_map = lambda rid: SavedResults(hub, rid)
+    saves = []
+
+    def save(rid):
+        req = hub.requests[rid]
+        saves.append(({step["id"] for step in (req.get("plan") or {}).get("steps") or []},
+                      set(req.get("results") or {})))
+
+    hub.save_request = save
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    ran = set()
+    for plan_ids, result_ids in saves:
+        lost = (ran & plan_ids) - result_ids
+        assert not lost, f"saved the plan {sorted(plan_ids)} without the results of {sorted(lost)}"
+        ran |= result_ids & plan_ids
+
+
+@pytest.mark.asyncio
+async def test_replan_does_not_route_around_a_cancelled_step():
+    """A cancelled task is a PI decision like a rejected question; the CSO must not plan around it."""
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error="cancelled"),
+                     lambda task: pytest.fail("a cancelled step must not be re-planned around"))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][0]["status"] == "blocked"
+    assert "A: cancelled" in req["report"] and req["replan_progress"]["attempts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_review_revise_can_add_only_needed_step_without_rerunning_successes():
+    original = [
+        {"id": "evidence", "agent_id": "worker", "instruction": "collect evidence",
+         "outputs": ["outputs/evidence.tsv"], "depends_on": []},
+        {"id": "analysis", "agent_id": "worker", "instruction": "analyze evidence",
+         "outputs": ["outputs/analysis.md"], "depends_on": ["evidence"]},
+    ]
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+                "issues": [{"step_id": "analysis", "problem": "robustness",
+                            "request": "add a sensitivity check"}] if revise else []}
+
+    def on_replan(task):
+        assert "add a sensitivity check" in task.prompt and task.meta["trigger"] == "review_revise"
+        return replan_plan([{"id": "sensitivity", "agent_id": "worker", "instruction": "check robustness",
+                             "outputs": ["outputs/sensitivity.md"], "depends_on": ["analysis"]}])
+
+    hub = replan_hub(original, lambda task: result(task, text=f"{task.meta['step_id']} done",
+                                                   outputs=task.meta["outputs"]),
+                     on_replan, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["evidence", "analysis", "sensitivity"]
+    assert req["results"]["analysis"]["text"] == "analysis done"
+    assert [step["id"] for step in req["plan"]["steps"]] == ["evidence", "analysis", "sensitivity"]
+    assert len(kinds(hub, "review")) == 2
+
+
+@pytest.mark.asyncio
+async def test_review_replan_replaces_flagged_step_with_its_dependents_only():
+    original = [
+        {"id": "evidence", "agent_id": "worker", "instruction": "collect evidence",
+         "outputs": ["outputs/evidence.tsv"], "depends_on": []},
+        {"id": "analysis", "agent_id": "worker", "instruction": "analyze evidence",
+         "outputs": ["outputs/analysis.md"], "depends_on": ["evidence"]},
+        {"id": "summary", "agent_id": "worker", "instruction": "summarize", "depends_on": ["analysis"]},
+    ]
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 3, "evidence": 2, "thoroughness": 3},
+                "issues": [{"step_id": "analysis", "problem": "wrong model",
+                            "request": "use a mixed model"}] if revise else []}
+
+    def on_replan(task):
+        return replan_plan([
+            {"id": "analysis_mixed", "agent_id": "worker", "instruction": "mixed model on evidence",
+             "outputs": ["outputs/mixed.md"], "depends_on": ["evidence"]},
+            {"id": "summary_mixed", "agent_id": "worker", "instruction": "summarize the mixed model",
+             "depends_on": ["analysis_mixed"]},
+        ], drop=["analysis"])
+
+    hub = replan_hub(original, lambda task: result(task, text=f"{task.meta['step_id']} done",
+                                                   workdir_id=task.meta["step_id"], outputs=task.meta["outputs"]),
+                     on_replan, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["evidence", "analysis", "summary", "analysis_mixed", "summary_mixed"]
+    assert [step["id"] for step in req["plan"]["steps"]] == ["evidence", "analysis_mixed", "summary_mixed"]
+    entry = req["replan_history"][0]
+    assert entry["retired"] == ["analysis", "summary"] and entry["trigger"] == "review_revise"
+    assert entry["prior_results"]["analysis"] == {"ok": True, "error": None, "error_kind": None,
+                                                  "outputs": ["outputs/analysis.md"], "workdir_id": "analysis"}
+    assert set(req["results"]) == {"evidence", "analysis_mixed", "summary_mixed"}
+
+
+@pytest.mark.asyncio
+async def test_review_replan_declined_falls_back_to_targeted_revision():
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+                "issues": [{"step_id": "analysis", "problem": "typo", "request": "fix the table"}] if revise else []}
+
+    hub = replan_hub(original, lambda task: result(task, text="analysis done"),
+                     lambda task: replan_plan([], notes="revise in place"), on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["analysis", "analysis"]
+    assert "fix the table" in kinds(hub, "step")[1].prompt
+    assert req["replan_history"][0]["status"] == "declined"
+    assert [step["id"] for step in req["plan"]["steps"]] == ["analysis"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_replan_keeps_success_failure_and_reports_replan_reason():
+    original = [
+        {"id": "kept", "agent_id": "worker", "instruction": "keep", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["kept"]},
+    ]
+    hub = replan_hub(original, lambda task: (result(task, text="kept evidence") if task.meta["step_id"] == "kept"
+                                             else result(task, ok=False, error="tool unavailable")),
+                     lambda task: replan_plan([{"id": "bad", "agent_id": "worker", "instruction": "fallback",
+                                                "depends_on": ["missing"]}]))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert req["results"]["kept"]["text"] == "kept evidence"
+    assert req["results"]["broken"]["error"] == "tool unavailable"
+    assert [step["id"] for step in req["plan"]["steps"]] == ["kept", "broken"]
+    assert "tool unavailable" in req["report"]
+    assert "#1 step_failure: failed; reason: step bad: invalid dependencies ['missing']" in req["report"]
+
+
+@pytest.mark.parametrize("candidate, reason", [
+    (replan_plan([{"id": "kept", "agent_id": "worker", "instruction": "again", "depends_on": []}]),
+     "re-plan reuses step ids already in this request: ['kept']"),
+    (replan_plan([{"id": "broken", "agent_id": "worker", "instruction": "retry", "depends_on": []}]),
+     "re-plan reuses step ids already in this request: ['broken']"),
+    (replan_plan([{"id": "new", "agent_id": "worker", "instruction": "x", "depends_on": []}], drop=["kept"]),
+     "re-plan may drop only reviewer-flagged completed steps []; got ['kept']"),
+    (replan_plan([{"id": "new", "agent_id": "cso", "instruction": "x", "depends_on": []}]),
+     "re-plan uses unavailable or orchestration agents: ['cso']"),
+    (replan_plan([{"id": f"n{i}", "agent_id": "worker", "instruction": "x", "depends_on": []} for i in range(3)]),
+     "re-plan has 4 steps with the kept ones; maximum is 3"),
+    (replan_plan([], notes="impossible safely"), "impossible safely"),
+])
+@pytest.mark.asyncio
+async def test_replan_candidate_is_checked_before_anything_changes(candidate, reason):
+    original = [
+        {"id": "kept", "agent_id": "worker", "instruction": "keep", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["kept"]},
+    ]
+    hub = replan_hub(original, lambda task: (result(task, text="kept evidence") if task.meta["step_id"] == "kept"
+                                             else result(task, ok=False, error="tool unavailable")),
+                     lambda task: candidate)
+    hub.s.orchestrator.max_steps = 3
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and step_ids(hub) == ["kept", "broken"]
+    assert [step["id"] for step in req["plan"]["steps"]] == ["kept", "broken"]
+    assert reason in req["replan_history"][0]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_replan_cap_stops_repeated_failures():
+    seen = []
+
+    def on_replan(task):
+        seen.append(task.meta["revision"])
+        return replan_plan([{"id": f"retry{len(seen)}", "agent_id": "worker", "instruction": "retry",
+                             "depends_on": []}])
+
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error=f"{task.meta['step_id']} failed"), on_replan,
+                     max_replans=2)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and seen == [1, 2]
+    assert step_ids(hub) == ["A", "retry1", "retry2"]
+    assert req["replan_history"][-1] == {"attempt": None, "trigger": "step_failure", "status": "limit",
+                                         "reason": "re-plan limit reached (2/2)"}
+    assert "retry2 failed" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_replan_does_not_route_around_a_rejected_pi_decision():
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error_kind="ask_rejected", error="PI rejected: no DUA data"),
+                     lambda task: pytest.fail("a PI rejection must not be re-planned around"))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][0]["status"] == "blocked"
+    assert "A: a PI decision rejected this step" in req["report"]
+    assert req["replan_progress"]["attempts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_replan_does_not_route_around_live_jobs_at_the_wake_limit():
+    """run_step clears pending_jobs when it stops at the wake limit; those jobs can still be running (#271)."""
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, text="submitted", pending_jobs=["j1"]),
+                     lambda task: pytest.fail("a step stopped with live jobs must not be re-planned around"))
+    hub.s.orchestrator.max_wake_cycles = 0
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["results"]["A"]["error_kind"] == "wake_limit" and req["results"]["A"]["pending_jobs"] == []
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][0]["status"] == "blocked"
+    assert "pending jobs: ['j1']" in req["replan_history"][0]["reason"]
+    assert req["replan_progress"]["attempts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_replan_question_goes_through_clarify_gate_and_reports_pending_decision():
+    question = "May the fallback use the controlled cohort?"
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, ok=False, error="public data too small"),
+                     lambda task: replan_plan([], questions=[question]))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert hub.approvals[-1]["kind"] == "clarify"
+    assert req["pending_questions"] == [question]
+    assert "Pending PI decisions/questions:\n- May the fallback use the controlled cohort?" in req["report"]
+    assert "re-plan needs PI clarification that was denied or unanswered" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_replan_answered_clarification_continues_the_same_attempt():
+    calls = []
+
+    def on_replan(task):
+        calls.append((task.meta["revision"], task.meta["parse_attempt"]))
+        if len(calls) == 1:
+            return replan_plan([], questions=["Use the smaller panel?"])
+        assert "PI answer: yes, smaller panel" in task.prompt
+        return replan_plan([{"id": "panel", "agent_id": "worker", "instruction": "smaller panel",
+                             "depends_on": []}])
+
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: (result(task, ok=False, error="panel too big") if task.meta["step_id"] == "A"
+                                   else result(task, text="panel done")), on_replan)
+
+    async def answer(**kwargs):
+        hub.approvals.append(kwargs)
+        return {"approved": True, "note": "yes, smaller panel"}
+
+    hub.request_approval = answer
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert calls == [(1, 1), (1, 2)] and req["replan_progress"]["attempts"] == 1
+    assert req["clarifications"][-1]["answer"] == "yes, smaller panel"
+    assert "yes, smaller panel" in kinds(hub, "step")[-1].prompt
+
+
+@pytest.mark.asyncio
+async def test_resume_during_replan_reuses_the_interrupted_attempt():
+    """A restart while the CSO re-plans asks the same attempt again (so ledger recovery can adopt it)."""
+    def on_replan(task):
+        assert task.meta["revision"] == 1
+        return replan_plan([{"id": "B", "agent_id": "worker", "instruction": "b", "depends_on": []}])
+
+    hub = replan_hub([], lambda task: result(task, text="b done"), on_replan)
+    hub.requests["r"].update(
+        plan={"steps": [{"id": "A", "agent_id": "worker", "instruction": "a", "outputs": [], "depends_on": []}]},
+        results={"A": result(Task(agent_id="worker", prompt="a"), ok=False, error="a failed").model_dump(mode="json")},
+        replan_progress={"attempts": 1, "max": 1, "in_flight": True})
+    hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert len(kinds(hub, "replan")) == 1 and step_ids(hub) == ["B"]
+    assert req["replan_progress"] == {"attempts": 1, "max": 1, "in_flight": False}
+
+
+REVISE = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+          "issues": [{"step_id": "analysis", "problem": "robustness", "request": "add a sensitivity check"}]}
+
+
+@pytest.mark.parametrize("phase, plan_ids, reviews, replans", [
+    # Restarted during the CSO call: review again (the ledger recovers it), then finish the same attempt.
+    ("replan", ["analysis"], [0, 1], 1),
+    # Restarted after the new plan was saved: run its new step, then review the next revision.
+    ("replanned", ["analysis", "sensitivity"], [1], 0),
+])
+@pytest.mark.asyncio
+async def test_resume_after_review_replan_continues_from_its_phase(phase, plan_ids, reviews, replans):
+    def on_review(task):
+        return REVISE if task.meta["revision"] == 0 else {**REVISE, "verdict": "accept", "issues": []}
+
+    hub = replan_hub([], lambda task: result(task, text=f"{task.meta['step_id']} done"),
+                     lambda task: replan_plan([{"id": "sensitivity", "agent_id": "worker", "instruction": "check",
+                                                "depends_on": ["analysis"]}]), on_review=on_review)
+    hub.requests["r"].update(
+        plan={"steps": [{"id": sid, "agent_id": "worker", "instruction": sid, "outputs": [],
+                         "depends_on": [] if sid == "analysis" else ["analysis"]} for sid in plan_ids]},
+        results={"analysis": result(Task(agent_id="worker", prompt="a"), text="analysis done").model_dump(mode="json")},
+        review_progress={"phase": phase, "next_revision": 1, "review": REVISE, "last_completed_review": 0,
+                         "last_completed_revision": 0},
+        replan_progress={"attempts": 1, "max": 1, "in_flight": phase == "replan"})
+    hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert [task.meta["revision"] for task in kinds(hub, "review")] == reviews
+    assert len(kinds(hub, "replan")) == replans and step_ids(hub) == ["sensitivity"]
+    assert [step["id"] for step in req["plan"]["steps"]] == ["analysis", "sensitivity"]
+    assert req["review_progress"]["last_completed_revision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_replan_keeps_completed_step_dependencies_when_its_instruction_names_a_new_id():
+    """A completed step already ran; inferring a dependency on a new step from its old instruction must not
+    fail the re-plan, and the plan keeps the dependencies it really ran with (#271)."""
+    original = [
+        {"id": "fetch", "agent_id": "worker", "instruction": "download data", "depends_on": []},
+        {"id": "broken", "agent_id": "worker", "instruction": "break", "depends_on": ["fetch"]},
+    ]
+    hub = replan_hub(original,
+                     lambda task: (result(task, ok=False, error="tool unavailable")
+                                   if task.meta["step_id"] == "broken" else result(task, text="ok")),
+                     lambda task: replan_plan([{"id": "data", "agent_id": "worker", "instruction": "rebuild",
+                                                "depends_on": []}]))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert req["replan_history"][0]["status"] == "applied"
+    assert {step["id"]: step["depends_on"] for step in req["plan"]["steps"]} == {"fetch": [], "data": []}
+    assert not any(warning.startswith("step fetch:") for warning in req["plan"]["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_resume_does_not_finish_an_in_flight_replan_over_a_reduced_cap():
+    """Lowering orchestrator.max_replans before a restart is honored, as #282 does for max_steps."""
+    hub = replan_hub([], lambda task: result(task, text="b done"),
+                     lambda task: pytest.fail("the in-flight attempt is over the new cap"))
+    hub.requests["r"].update(
+        plan={"steps": [{"id": "A", "agent_id": "worker", "instruction": "a", "outputs": [], "depends_on": []}]},
+        results={"A": result(Task(agent_id="worker", prompt="a"), ok=False, error="a failed").model_dump(mode="json")},
+        replan_progress={"attempts": 2, "max": 2, "in_flight": True})
+    hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][-1]["status"] == "limit"
+    assert req["replan_history"][-1]["reason"] == "re-plan limit reached (2/1)"
+    assert req["replan_progress"]["in_flight"] is False
+
+
+@pytest.mark.asyncio
+async def test_synthesis_sees_which_failed_step_a_replan_replaced():
+    """The CSO's final report must not present the fallback as the method that was planned (#271)."""
+    hub = replan_hub([{"id": "primary", "agent_id": "worker", "instruction": "primary analysis", "depends_on": []}],
+                     lambda task: (result(task, ok=False, error="primary analysis failed")
+                                   if task.meta["step_id"] == "primary" else result(task, text="fallback done")),
+                     lambda task: replan_plan([{"id": "fallback", "agent_id": "worker", "instruction": "fallback",
+                                                "depends_on": []}]))
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    prompt = kinds(hub, "synthesis")[0].prompt
+    assert "re-plan history" in prompt and "retired: primary (primary analysis failed)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_review_replan_prompt_says_undropped_flagged_steps_are_not_revised():
+    """An applied review re-plan skips in-place revision, so the CSO must know a flagged step it keeps stays
+    as it is this round (#271)."""
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+    prompts = []
+
+    def on_replan(task):
+        prompts.append(task.prompt)
+        return replan_plan([], notes="revise in place")
+
+    def on_review(task):
+        return REVISE if task.meta["revision"] == 0 else {**REVISE, "verdict": "accept", "issues": []}
+
+    hub = replan_hub(original, lambda task: result(task, text="analysis done"), on_replan, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    assert ("If you return steps, a flagged step you do not drop keeps its result and is not revised in this "
+            "round") in prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     async def dispatch(task):
         return result(task, text="unused")
