@@ -302,3 +302,11 @@ def test_doctor_warns_when_the_runner_config_holds_the_client_token(tmp_path, mo
     settings.gateway.client_token = "change-me-client"
     names = [r["name"] for r in doctor.collect(settings)["checks"]]
     assert "runner config holds client token" not in names
+    # #304 review: the default is a working token whenever the gateway still uses it, on any account.
+    assert "default client token" in names
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "pi")
+    assert "default client token" in [r["name"] for r in doctor.collect(settings)["checks"]]
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "labhq-runner")
+    settings.gateway.client_token = ""
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" not in names and "default client token" not in names

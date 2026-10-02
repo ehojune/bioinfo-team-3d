@@ -224,7 +224,14 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                         "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
                      "Run the runner under a dedicated account; see docs/runner-account.md."))
-    if owner_status == "ok" and settings.gateway.client_token not in ("", "change-me-client"):
+    if settings.gateway.client_token == "change-me-client":
+        # The published default is a working client token for anyone while a gateway accepts it, and a runner
+        # config that drops the key falls back to it (#304 review).
+        rows.append(_row("config", "default client token", "warn",
+                         "gateway.client_token is the published default",
+                         'Set a random gateway.client_token for the gateway and client_token: "" for the runner; '
+                         "see docs/runner-account.md."))
+    elif owner_status == "ok" and settings.gateway.client_token:
         # The runner never needs the client token; staff run as this account and could approve as the PI (#304).
         rows.append(_row("config", "runner config holds client token", "warn",
                          "gateway.client_token is set in the runner's config",

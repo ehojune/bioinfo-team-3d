@@ -105,7 +105,7 @@ Remove-Item C:\LabHQ\runner\work\setup-probe.txt -ErrorAction SilentlyContinue
 
 ## 4. 설정 두 개 만들기
 
-설정은 **둘로 나눕니다.** `gateway.yaml`에는 `gateway.client_token`이 있으므로 PI만 읽습니다. `runner.yaml`은 같은 내용에서 client token 줄만 뺀 사본이고 runner는 이 파일 하나만 읽습니다. 직원은 runner 계정으로 돌기 때문에, runner가 읽는 파일에 client token이 있으면 직원이 그 token으로 PI 대신 승인할 수 있습니다. runner는 client token을 쓰지 않습니다.
+설정은 **둘로 나눕니다.** `gateway.yaml`에는 `gateway.client_token`이 있으므로 PI만 읽습니다. `runner.yaml`은 같은 내용에서 client token만 빈 값(`client_token: ""`)으로 바꾼 사본이고 runner는 이 파일 하나만 읽습니다. 직원은 runner 계정으로 돌기 때문에, 직원이 아는 client token이 있으면 그 token으로 PI 대신 승인할 수 있습니다. runner는 client token을 쓰지 않습니다. 줄을 지우지 않고 빈 값으로 두는 이유는, 줄이 없으면 공개된 기본값 `change-me-client`가 채워지기 때문입니다. 같은 이유로 gateway도 기본값을 쓰면 안 됩니다.
 
 관리자 PowerShell에서 PI가 지금 쓰는 설정 파일을 복사합니다(`$env:LABHQ_CONFIG`나 `--config`로 넘기던 파일).
 
@@ -129,11 +129,17 @@ engines:
       CODEX_HOME: C:\Users\labhq-runner\.labhq\codex-staff   # 3번에서 만든 경로
 ```
 
-저장한 뒤 client token 줄을 뺀 `runner.yaml`을 만들고 파일 권한을 겁니다.
+`gateway.client_token`이 없거나 `change-me-client`이면 무작위 값으로 바꿉니다. PI의 `labhq` 명령은 이 설정을 읽으므로 고칠 곳이 없고, 3D 화면은 주소의 `?token=`을 새 값으로 바꿔 다시 엽니다. 빈 token은 gateway가 거부하므로, `runner.yaml`로 gateway를 잘못 띄워도 누구도 접속하지 못합니다.
 
 ```powershell
-Get-Content C:\LabHQ\config\gateway.yaml | Where-Object { $_ -notmatch '^\s*client_token\s*:' } | Set-Content C:\LabHQ\config\runner.yaml -Encoding utf8
-Select-String -Path C:\LabHQ\config\runner.yaml -Pattern 'client_token'   # 아무것도 나오지 않아야 한다
+[guid]::NewGuid().ToString('N')   # 출력된 값을 gateway.yaml의 client_token에 붙여 넣는다
+```
+
+저장한 뒤 client token을 빈 값으로 바꾼 `runner.yaml`을 만들고 파일 권한을 겁니다.
+
+```powershell
+(Get-Content C:\LabHQ\config\gateway.yaml) -replace '^(\s*)client_token\s*:.*$', '$1client_token: ""' | Set-Content C:\LabHQ\config\runner.yaml -Encoding utf8
+Select-String -Path C:\LabHQ\config\runner.yaml -Pattern 'client_token'   # client_token: "" 한 줄만 나와야 한다
 icacls 'C:\LabHQ\config\runner.yaml' /grant:r "${RunnerAccount}:(R)"   # runner는 이 파일 하나만 읽는다
 icacls 'C:\LabHQ\config\gateway.yaml' /setowner $PiAccount
 icacls 'C:\LabHQ\config\runner.yaml' /setowner $PiAccount
@@ -150,7 +156,7 @@ Get-Content C:\LabHQ\config\gateway.yaml   # 액세스 거부여야 한다
 C:\LabHQ\app\.venv\Scripts\labhq.exe --config C:\LabHQ\config\runner.yaml doctor
 ```
 
-`runner account isolation`은 `ok`, `runner config holds client token` 경고는 없어야 하고(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
+`runner account isolation`은 `ok`, `runner config holds client token`·`default client token` 경고는 없어야 하고(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
 
 PI 계정에서는 gateway를 기존 `labhq`로 띄웁니다.
 
