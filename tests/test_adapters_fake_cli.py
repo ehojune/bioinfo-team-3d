@@ -101,7 +101,7 @@ async def test_codex_adapter(tmp_path):
     assert "mcp_servers.labhq_approval.tool_timeout_sec=135" in argv
     assert not any("mcp_servers.paper_x.tool_timeout_sec" in arg for arg in argv)
     assert argv[-1].startswith("<task>") and "<structured_output_contract>" in argv[-1]
-    assert (wd / "AGENTS.md").read_text().startswith("ROLE")
+    assert (wd / "AGENTS.md").read_text(encoding="utf-8").startswith("ROLE")
     assert "model_id" not in run_fields
 
 

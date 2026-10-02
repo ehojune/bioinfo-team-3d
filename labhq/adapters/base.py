@@ -226,9 +226,10 @@ ROLE_FOOTER = """
 # The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
 # built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
 WORKSPACE_WRITE_RULES = (
-    "- 임시 파일·스크립트는 작업 폴더 안 .tmp/ 아래에 둔다(작업 폴더 밖 /tmp·%TEMP%에 쓰면 PI 승인이 필요하다).\n"
-    "- 셸 명령의 경로는 셸 변수로 만들지 말고 작업 폴더 기준 상대 경로로 쓴다(변수 경로는 승인 게이트가 풀지 못해 "
-    "PI에게 묻는다).\n")
+    "- Put temporary files and scripts under ./.tmp/ in your workspace; writing to /tmp or %TEMP% outside it needs PI "
+    "approval.\n"
+    "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
+    "cannot resolve a variable path and asks the PI.\n")
 
 
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:

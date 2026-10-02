@@ -8,8 +8,8 @@ from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task
 from labhq.settings import Settings
 
-TEMP_RULE = "임시 파일·스크립트는 작업 폴더 안 .tmp/ 아래에 둔다"
-PATH_RULE = "셸 명령의 경로는 셸 변수로 만들지 말고 작업 폴더 기준 상대 경로로 쓴다"
+TEMP_RULE = "Put temporary files and scripts under ./.tmp/ in your workspace"
+PATH_RULE = "write paths relative to your workspace, not built from shell variables"
 
 
 def _ctx(tmp_path, engine, read_only):
@@ -23,8 +23,8 @@ def _ctx(tmp_path, engine, read_only):
 def test_writing_staff_get_the_temp_folder_and_relative_path_rules(tmp_path):
     """2nd mock trial: /tmp writes and $VAR paths each raised a PI approval card the gate could not settle."""
     footer = role_footer(_ctx(tmp_path, Engine.codex, read_only=False))
-    assert TEMP_RULE in footer and "/tmp·%TEMP%" in footer and "PI 승인" in footer
-    assert PATH_RULE in footer and "승인 게이트" in footer
+    assert TEMP_RULE in footer and "/tmp or %TEMP%" in footer and "needs PI approval" in footer
+    assert PATH_RULE in footer and "approval gate" in footer
     assert footer == ROLE_FOOTER + WORKSPACE_WRITE_RULES  # nothing else configured: only the two lines are added
 
 
