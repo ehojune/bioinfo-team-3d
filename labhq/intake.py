@@ -603,9 +603,16 @@ def _text(value: str) -> str:
 # non-ASCII name (#183). Words split only at a single space and never hold a separator, so this stays linear.
 _ACCOUNT_WORD = r"(?:[^\\/\s\"'<>|]|\\u[0-9a-fA-F]{4})+"
 _ACCOUNT = rf"{_ACCOUNT_WORD}(?: {_ACCOUNT_WORD}){{0,3}}"
-_ANY_HOME = (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
-             rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
-             rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}{_ACCOUNT})")
+
+
+def _any_home(account: str) -> str:
+    return (rf"(?:~|\$HOME|\$\{{HOME\}}|%USERPROFILE%|{_RUN_START}{SEPARATOR}root"
+            rf"|(?:[A-Za-z]:|{_RUN_START}{SEPARATOR}[A-Za-z](?=[\\/])|{_RUN_START})"
+            rf"(?:{SEPARATOR}[^\\/\s\"'<>|]+){{0,8}}?{SEPARATOR}(?:home|Users){SEPARATOR}{account})")
+
+
+_ANY_HOME = _any_home(_ACCOUNT)
+_ANY_HOME_ONE_WORD = _any_home(_ACCOUNT_WORD)
 
 
 def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
@@ -623,7 +630,7 @@ def path_pattern(value: str, *, boundary: bool, any_home: bool = False) -> str:
     if drive:
         head, rest = rf"(?:{drive[1]}:|{_RUN_START}{SEPARATOR}{drive[1]}(?=[\\/]))", drive[2]
     elif any_home and (value == "~" or value.startswith(("~/", "~\\"))):
-        head, rest = _ANY_HOME, value[1:]
+        head, rest = (_ANY_HOME_ONE_WORD if value == "~" else _ANY_HOME), value[1:]
     elif value.startswith(("/", "\\")):
         head = _RUN_START
     body = SEPARATOR.join(_text(part) for part in rest.replace("\\", "/").split("/"))
@@ -669,8 +676,25 @@ def _repository(kind: str, value: str) -> tuple[str, str, str] | None:
     host = (parts.hostname or "").removeprefix("www.")
     if len(segments) < 2 or not (kind == "github" or kind == "url" and _FORGE_HOST.fullmatch(host)):
         return None
-    owner, repo = segments[0], segments[1].removesuffix(".git")
-    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/{owner}/{repo}", owner, repo
+    if kind == "github":
+        repository = segments[:2]
+    else:
+        if (not host.casefold().startswith("gitlab")
+                and segments[0].casefold() in {"orgs", "users", "groups", "projects", "explore", "help", "search"}):
+            return None
+        marker = segments.index("-") if "-" in segments else None
+        if marker is not None:
+            repository = segments[:marker]
+        elif host.casefold().startswith("gitlab"):
+            repository = segments
+        else:
+            repository = segments[:2]
+    if len(repository) < 2:
+        return None
+    repository[-1] = repository[-1].removesuffix(".git")
+    owner, repo = "/".join(repository[:-1]), repository[-1]
+    base_path = "/".join([*repository[:-1], repo])
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/{base_path}", owner, repo
 
 
 def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[str]]:
@@ -682,8 +706,12 @@ def _private_reference_patterns(kind: str, value: str) -> tuple[list[str], list[
     url = url_pattern(base, trailing_slash=False) + r"(?:\.git)?" + _URL_REST
     # `SEPARATOR` accepts POSIX, drive, UNC, native backslash and JSON-escaped clone paths. The clone folder
     # alone is also repository identity: an agent may shorten `C:\src\owner\repo` to `C:\src\repo` or `repo`.
-    identities = [rf"(?<![\w.-]){_text(owner)}{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}",
-                  rf"(?<![\w.-]){_text(repo)}(?:\.git)?{_PATH_END}"]
+    owners = [owner]
+    if "/" in owner:
+        owners.append(owner.rsplit("/", 1)[1])
+    identities = [rf"(?<![\w.-]){SEPARATOR.join(_text(part) for part in group.split('/'))}"
+                  rf"{SEPARATOR}{_text(repo)}(?:\.git)?{_PATH_END}" for group in owners]
+    identities.append(rf"(?<![\w.-]){_text(repo)}(?:\.git)?{_PATH_END}")
     return [url], identities
 
 

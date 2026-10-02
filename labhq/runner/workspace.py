@@ -24,7 +24,8 @@ from typing import Any
 
 from .. import __version__
 from ..adapters.held_dir import HeldDir, NotPlainFolder
-from ..adapters.owned import OwnedPathError, append_owned, plain_directory, read_owned, write_owned
+from ..adapters.owned import (OwnedPathError, append_owned, case_sensitive_directory, plain_directory, read_owned,
+                              write_owned)
 from ..adapters.owned import is_link as _is_link
 from ..adapters.owned import remove_entry as _remove_entry
 from ..adapters.read_only import SKILL_DIRS
@@ -51,19 +52,8 @@ def _is_mount(path: Path) -> bool:
 
 
 def _case_sensitive(path: Path) -> bool:
-    """Whether differently cased names identify different entries in this folder's file system."""
-    name = path.name
-    alternate_name = next((name[:i] + char.swapcase() + name[i + 1:]
-                           for i, char in enumerate(name) if char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
-                          name)
-    if alternate_name == name:
-        return os.path.normcase("A") != os.path.normcase("a")
-    try:
-        return not os.path.samefile(path, path.with_name(alternate_name))
-    except FileNotFoundError:
-        return True
-    except OSError:
-        return os.path.normcase("A") != os.path.normcase("a")
+    """Compatibility seam for tests; the volume judgement is shared with owned paths."""
+    return case_sensitive_directory(path)
 
 
 log = logging.getLogger("labhq.runner")

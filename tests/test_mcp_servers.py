@@ -190,6 +190,35 @@ def test_linked_jobs_input_is_rejected_without_changing_source(tmp_path, link_ki
     assert not (jobs / "new.sh").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX job-group link and mode regression")
+def test_jobs_replaced_by_a_link_during_prepare_is_rejected_without_changing_target(tmp_path, monkeypatch):
+    import grp
+    import pwd
+    import labhq.tools.hpc_mcp as hpc
+
+    group = grp.getgrgid(os.getgid()).gr_name
+    user = pwd.getpwuid(os.getuid()).pw_name
+    root = tmp_path / "runs"
+    workdir = root / "task"
+    jobs = workdir / "jobs"
+    jobs.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    before = stat.S_IMODE(outside.stat().st_mode)
+    real_walk = os.walk
+
+    def swap_after_walk(*args, **kwargs):
+        yield from real_walk(*args, **kwargs)
+        jobs.rename(workdir / "checked-jobs")
+        os.symlink(outside, jobs, target_is_directory=True)
+
+    monkeypatch.setattr(os, "walk", swap_after_walk)
+    with pytest.raises(RuntimeError, match="link|replaced"):
+        hpc._prepare_job_files(workdir, jobs / "new.sh", jobs / "logs", "echo ok", group, root, user)
+    assert stat.S_IMODE(outside.stat().st_mode) == before
+    assert not (outside / "new.sh").exists()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX hard links, symlinks and chmod required")
 @pytest.mark.parametrize("link_kind", ["hard", "symlink"])
 def test_linked_task_input_is_rejected_without_changing_source(tmp_path, link_kind):
