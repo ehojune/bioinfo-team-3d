@@ -62,6 +62,14 @@ def plan_schema(declare: bool) -> dict[str, Any]:
     schema["properties"]["steps"]["items"] = output_types.with_output_types(PLAN_SCHEMA["properties"]["steps"]["items"])
     return schema
 
+
+def replan_schema(declare: bool) -> dict[str, Any]:
+    """A PLAN of new steps plus ``drop``: completed reviewer-flagged steps to retire (#271)."""
+    schema = json.loads(json.dumps(plan_schema(declare)))
+    schema["properties"]["drop"] = {"type": "array", "items": {"type": "string"}}
+    schema["required"] = [*schema["required"], "drop"]
+    return schema
+
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
@@ -169,6 +177,36 @@ issue would materially change the conclusions.
 Request: {request}
 
 Team results:
+{results}"""
+
+REPLAN_PROMPT = """Re-plan only the unfinished part of the PI's request. You do not analyze anything yourself.
+
+Team roster (use these agent ids exactly):
+{roster}
+
+Runner compute capabilities:
+{capabilities}
+
+Why labhq asks for a re-plan:
+{trigger}
+
+Rules:
+- Completed steps keep their results and outputs and are never rerun. New steps may depend on them by id.
+- Retired steps (no longer in the plan): {retired}. Return the steps that replace their work.
+- {drop_rule}
+- Give every new step a new id that this request has never used. Used ids: {used}.
+- Kept and new steps together are at most {max_steps}. Express order with depends_on.
+- Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
+- Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
+  approval must change, ask in clarifying_questions and do not plan the blocked work.
+- {empty_rule}
+
+PI's request: {request}
+
+Current plan:
+{plan}
+
+Team results so far:
 {results}"""
 
 SYNTH_PROMPT = """Write the final report for the PI.
@@ -1450,6 +1488,11 @@ class Orchestrator:
             n = self.cfg.context_chars_per_step
             packs = configured_packs(self.hub.s) if research_lane else {}
             active_pack_hashes = pack_snapshot(packs)
+            capabilities = "\n".join(  # the first plan and a re-plan after resume (#271) both need it
+                f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
+                f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
+                f"other compute={', '.join(a.get('compute_backends') or ['local CLI'])}"
+                for a in roster)
 
             async def finish_research_plan(plan: dict[str, Any]) -> None:
                 previous = (req.get("research_contract") or {}).get("approval")
@@ -1524,12 +1567,6 @@ class Orchestrator:
                         self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
                     briefing = b.text
-
-                capabilities = "\n".join(
-                    f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
-                    f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
-                    f"other compute={', '.join(a.get('compute_backends') or ['local CLI'])}"
-                    for a in roster)
 
                 async def make_plan(plan_request: str) -> TaskResult:
                     continuation = self.hub.supports_resume(self.cfg.cso_agent)
@@ -1722,6 +1759,198 @@ class Orchestrator:
                 remaining = {s["id"] for s in steps} - set(results)
                 resume_feedback = {}
 
+            async def attempt_replan(review: dict | None = None, review_progress: dict | None = None) -> str:
+                """Opt-in CSO re-plan of the unfinished DAG (#271): "disabled", "applied", "declined" or "failed".
+
+                Completed steps stay and never rerun. A failure re-plan retires the failed, skipped and unrun steps; a
+                review re-plan may also retire reviewer-flagged steps with their dependents. New steps take new ids,
+                so ledger recovery, PI step decisions and pending revisions of an old id never reach them. Nothing
+                changes until the merged DAG passes validate_steps. A review re-plan marks ``review_progress`` phase
+                "replan" before the CSO call and "replanned" in the same save as the new plan, so a restart either
+                repeats the review (recovered from the task ledger) or reviews the new steps.
+                """
+                nonlocal steps, text
+                limit = self.cfg.max_replans
+                # An approved research plan changes only through a new CP1 approval of its hash, never here.
+                if limit <= 0 or research_lane:
+                    return "disabled"
+                trigger = "step_failure" if review is None else "review_revise"
+                progress = req.setdefault("replan_progress", {"attempts": 0, "max": limit, "in_flight": False})
+                history = req.setdefault("replan_history", [])
+
+                def record(status: str, attempt: int | None = None, **entry: Any) -> str:
+                    history.append({"attempt": attempt, "trigger": trigger, "status": status, **entry})
+                    progress["in_flight"] = False
+                    self.hub.save_request(rid)
+                    return status if status in {"applied", "declined"} else "failed"
+
+                by_id = {s["id"]: s for s in steps}
+                completed = [sid for sid in by_id if sid in results and results[sid].ok]
+                if review is None:
+                    blocked = [f"{sid}: a PI decision rejected this step; re-planning would route around it"
+                               if results[sid].error_kind == "ask_rejected" else
+                               f"{sid}: failed with live HPC jobs {results[sid].pending_jobs}; a new step could "
+                               "submit them again" for sid in by_id if sid in results and not results[sid].ok
+                               and (results[sid].error_kind == "ask_rejected" or results[sid].pending_jobs)]
+                    if blocked:
+                        return record("blocked", reason="; ".join(blocked))
+                if progress.get("in_flight"):
+                    attempt = int(progress.get("attempts") or 1)  # a restart re-asks the attempt it interrupted
+                else:
+                    attempt = int(progress.get("attempts") or 0) + 1
+                    if attempt > limit:
+                        return record("limit", reason=f"re-plan limit reached ({attempt - 1}/{limit})")
+                progress.update(attempts=attempt, max=limit, in_flight=True)
+                if review_progress is not None:
+                    req["review_progress"] = {**review_progress, "phase": "replan"}
+                self.hub.save_request(rid)  # counted before the CSO call, so a restart cannot reset the cap
+
+                unfinished = [sid for sid in by_id if sid not in completed]
+                flagged = sorted({issue.get("step_id") for issue in (review or {}).get("issues") or []
+                                  if isinstance(issue, dict) and issue.get("step_id") in completed})
+                used = set(by_id) | {sid for entry in history for sid in entry.get("retired") or []}
+                vocab = self._output_vocab()
+                if review is None:
+                    why = (f"Steps {', '.join(unfinished)} failed or could not run; the causes are in the team "
+                           "results below.")
+                    drop_rule = "Leave drop empty: a failure re-plan keeps every completed step."
+                    empty_rule = "If the request cannot be completed safely, return no steps and explain why in notes."
+                else:
+                    why = "The scientific reviewer asked for revisions:\n" + json.dumps(review, ensure_ascii=False,
+                                                                                       sort_keys=True)
+                    drop_rule = (f"To redo a reviewer-flagged step ({', '.join(flagged) or 'none'}), list it in drop "
+                                 "and return its replacement. Dropping a step also retires the completed steps that "
+                                 "depend on it; return replacements for them too.")
+                    empty_rule = ("If revising the flagged steps in place is enough, return no steps and an empty "
+                                  "drop; labhq then sends the review to those steps.")
+
+                async def ask_cso(parse_attempt: int) -> dict:
+                    resumable = self.hub.supports_resume(self.cfg.cso_agent)
+                    session_id, workdir = await self._free_session(
+                        self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
+                        req.get("cso_workdir") if resumable else None, rid=rid, step="replan")
+                    planned = await self.run_step(Task(
+                        agent_id=self.cfg.cso_agent, request_id=rid, output_schema=replan_schema(vocab is not None),
+                        resume_session_id=session_id,
+                        prompt=REPLAN_PROMPT.format(
+                            roster=format_roster(roster), capabilities=capabilities or "No workers available",
+                            trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
+                            used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
+                            output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
+                            empty_rule=empty_rule, request=text, plan=json.dumps(steps, ensure_ascii=False),
+                            results=self.format_results(steps, results, n)),
+                        # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
+                        meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
+                              "parse_attempt": parse_attempt, "request": text, "roster": roster,
+                              "title": f"남은 DAG 재계획 #{attempt}", **({"workdir": workdir} if workdir else {})}))
+                    if planned.session_id:
+                        req["cso_session_id"] = planned.session_id
+                        req["cso_workdir"] = planned.workdir
+                        self.hub.save_request(rid)
+                    if not planned.ok:
+                        raise ValueError(f"CSO re-plan failed: {planned.error or 'unknown error'}")
+                    if rid in self.budget_denials:
+                        raise ValueError(self.budget_denials[rid])
+                    candidate = (planned.structured if isinstance(planned.structured, dict)
+                                 else extract_json(planned.text))
+                    if not isinstance(candidate, dict):
+                        raise ValueError("CSO re-plan is not a JSON object")
+                    return candidate
+
+                try:
+                    candidate = await ask_cso(1)
+                    details = normalize_questions(candidate.get("clarifying_questions"))
+                    if details:  # a changed scope, cost or approval goes back through the clarify gate
+                        req["pending_questions"] = [q["question"] for q in details]
+                        if has_structure(details):
+                            req["pending_question_details"] = details
+                        self.hub.save_request(rid)
+                        await self._emit(rid, "request.questions",
+                                         {"questions": req["pending_questions"], "details": details})
+                        if self.cfg.wait_for_clarification:
+                            decision = await self.hub.request_approval(
+                                kind="clarify", request_id=rid, summary=questions_summary(details),
+                                detail={"questions": details})
+                            if not decision.get("approved") or not str(decision.get("note") or "").strip():
+                                return record("failed", attempt,
+                                              reason="re-plan needs PI clarification that was denied or unanswered")
+                            entry = {"questions": req["pending_questions"], "answer": str(decision["note"]).strip()}
+                            if has_structure(details):
+                                entry["question_details"] = details
+                            req.setdefault("clarifications", []).append(entry)
+                            req["pending_questions"] = []
+                            req.pop("pending_question_details", None)
+                            text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
+                            self.hub.save_request(rid)
+                            candidate = await ask_cso(2)
+                            still = normalize_questions(candidate.get("clarifying_questions"))
+                            if still:
+                                req["pending_questions"] = [q["question"] for q in still]
+                                return record("failed", attempt, reason="re-plan still needs PI clarification")
+                    raw, drop = candidate.get("steps") or [], candidate.get("drop") or []
+                    if not isinstance(raw, list) or not isinstance(drop, list):
+                        raise ValueError("re-plan steps and drop must be lists")
+                    if not raw:
+                        if review is not None and not drop:
+                            return record("declined", attempt, notes=str(candidate.get("notes") or ""))
+                        raise ValueError(str(candidate.get("notes") or "CSO returned no replacement steps"))
+                    ids = [step.get("id") if isinstance(step, dict) else None for step in raw]
+                    if any(not isinstance(sid, str) or not sid.strip() for sid in ids):
+                        raise ValueError("every re-plan step needs a non-empty id")
+                    if len(ids) != len(set(ids)):
+                        raise ValueError("re-plan step ids must be unique")
+                    if used & set(ids):
+                        raise ValueError(f"re-plan reuses step ids already in this request: {sorted(used & set(ids))}")
+                    if not set(drop) <= set(flagged):
+                        raise ValueError(f"re-plan may drop only reviewer-flagged completed steps {flagged}; "
+                                         f"got {drop}")
+                    bad_agents = sorted({str(step.get("agent_id")) for step in raw
+                                         if step.get("agent_id") not in known - orchestration})
+                    if bad_agents:
+                        raise ValueError(f"re-plan uses unavailable or orchestration agents: {bad_agents}")
+                    retired = set(unfinished) | set(drop)
+                    retired |= {sid for sid in completed if any(_reaches(steps, sid, gone) for gone in drop)}
+                    kept = [dict(by_id[sid]) for sid in completed if sid not in retired]
+                    if len(kept) + len(raw) > self.cfg.max_steps:
+                        raise ValueError(f"re-plan has {len(kept) + len(raw)} steps with the kept ones; "
+                                         f"maximum is {self.cfg.max_steps}")
+                    type_stats: dict = {}
+                    merged, warnings = validate_steps(kept + raw, known, self.cfg.max_steps, orchestration,
+                                                      vocab=vocab, stats=type_stats)
+                    changed = [step["id"] for step in merged if step["id"] in by_id
+                               and set(step["depends_on"]) != set(by_id[step["id"]]["depends_on"])]
+                    if changed:
+                        raise ValueError(f"re-plan would add dependencies to completed steps {changed}")
+                except (BudgetExceeded, TypeError, ValueError) as error:  # PlanOutputsError is a ValueError
+                    return record("failed", attempt, reason=str(error))
+
+                retired_ids = [sid for sid in by_id if sid in retired]
+                prior = {sid: {"ok": results[sid].ok, "error": results[sid].error,
+                               "error_kind": results[sid].error_kind, "outputs": list(results[sid].outputs),
+                               "workdir_id": results[sid].workdir_id} for sid in retired_ids if sid in results}
+                for sid in retired_ids:
+                    results.pop(sid, None)
+                    (req.get("step_decisions") or {}).pop(sid, None)
+                    (req.get("pending_revisions") or {}).pop(sid, None)
+                steps = merged
+                req["plan"] = {**(req.get("plan") or {}), "steps": steps,
+                               "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings]}
+                if vocab is not None:
+                    req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
+                if review_progress is not None:
+                    req["review_progress"] = {**review_progress, "phase": "replanned"}
+                outcome = record("applied", attempt, retired=retired_ids, added=ids, prior_results=prior,
+                                 notes=str(candidate.get("notes") or ""))
+                await self._emit(rid, "request.plan", req["plan"])
+                return outcome
+
+            async def recover_failures() -> None:
+                """Opt-in (#271): re-plan around failed steps until the DAG succeeds or the cap stops it."""
+                while rid not in self.budget_denials and any(not r.ok for r in results.values()):
+                    if await attempt_replan() != "applied":
+                        return
+                    await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
+
             if remaining:
                 await self.run_dag(rid, text, steps, results, only=remaining,
                                    feedback=resume_feedback or None)
@@ -1731,13 +1960,18 @@ class Orchestrator:
                                       ("done" if v.ok else "incomplete" if v.missing_outputs else "failed"),
                             "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
 
+            await recover_failures()
             if rid in self.budget_denials or any(not r.ok for r in results.values()):
                 self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
                 return
 
             progress = req.get("review_progress") or {}
-            if progress.get("phase") == "revision":
+            if progress.get("phase") in {"revision", "replanned"}:  # its steps ran above; review them next
                 progress.update(phase="review", last_completed_revision=progress["next_revision"])
+                req["review_progress"] = progress
+                self.hub.save_request(rid)
+            elif progress.get("phase") == "replan":  # restarted while the CSO re-planned: review again, then re-plan
+                progress.update(phase="review", next_revision=progress["last_completed_review"])
                 req["review_progress"] = progress
                 self.hub.save_request(rid)
             review: dict = progress.get("review") or {}
@@ -1788,6 +2022,18 @@ class Orchestrator:
                     req["review_progress"] = progress
                     self.hub.save_request(rid)
                     break
+                if await attempt_replan(review, progress) == "applied":
+                    await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
+                    await recover_failures()
+                    if rid in self.budget_denials or any(not r.ok for r in results.values()):
+                        self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                                     review=review)
+                        return
+                    progress.update(phase="review", last_completed_revision=rev + 1)
+                    req["review_progress"] = progress
+                    self.hub.save_request(rid)
+                    continue
+                # Off, declined or failed: the reviewer's notes go to the flagged steps in place, as before #271.
                 feedback: dict[str, str] = {}
                 for issue in review.get("issues") or []:
                     if issue.get("step_id") in {s["id"] for s in steps}:
@@ -1877,6 +2123,18 @@ class Orchestrator:
         if req.get("pending_questions"):
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
+        if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
+            lines = []
+            for entry in req["replan_history"]:
+                line = f"- #{entry.get('attempt') or '-'} {entry['trigger']}: {entry['status']}"
+                if entry.get("retired"):
+                    line += f"; retired: {', '.join(entry['retired'])}"
+                if entry.get("added"):
+                    line += f"; added: {', '.join(entry['added'])}"
+                if entry.get("reason"):
+                    line += f"; reason: {short(entry['reason'], 500)}"
+                lines.append(line)
+            metadata.append("Re-plan history:\n" + "\n".join(lines))
         if req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
             metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
