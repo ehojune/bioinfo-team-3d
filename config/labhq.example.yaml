@@ -97,7 +97,7 @@ orchestrator:
   max_replans: 0                     # 1 이상이면 단계 실패·리뷰 revise 뒤 CSO가 남은 DAG만 다시 계획(요청당 횟수 상한)
   max_steps: 12
   max_parallel_steps: 4
-  quota_default_wait_s: 3600          # reset 시각을 못 읽었을 때 1시간 대기
+  quota_default_wait_s: 3600          # reset 시각을 못 읽거나 runner 시간대를 모를 때 최대 1시간 대기 뒤 재확인
   quota_max_wait_s: 604800            # 최초 감지 뒤 최대 7일; 넘으면 실패
 
 # 산출 데이터 종류 선언(#221 할 일 2). 켜면 CSO 계획에 산출마다 data_type·format key를 적게 하고(labhq/vocab),
