@@ -54,7 +54,7 @@ def test_runner_resolves_the_reset_in_its_zone_and_the_gateway_trusts_the_instan
     assert instant == datetime(2026, 10, 2, 17, 50, tzinfo=KST).timestamp()
     assert parse_quota_wait("claude_code", text, now=now, tz=timezone.utc).resume_at - instant == 9 * 3600
 
-    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: timezone.utc)  # the gateway's zone
+    monkeypatch.setattr(quota_module, "local_zone", lambda: timezone.utc)  # the gateway's zone
     trusted = received_quota_wait("claude_code", text, instant, now=now, default_wait_s=3600)
     assert trusted.resume_at == instant and trusted.parsed
     assert failure_kind(TaskResult(task_id="t", agent_id="a", ok=False, error="limit",
@@ -65,6 +65,21 @@ def test_runner_resolves_the_reset_in_its_zone_and_the_gateway_trusts_the_instan
     relative = (FIXTURES / "antigravity.txt").read_text(encoding="utf-8")
     assert received_quota_wait("antigravity", relative, None, now=now).resume_at == now + 2 * 3600 + 17 * 60
     assert received_quota_wait("codex", "ordinary failure", None, now=now) is None
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="switching the OS zone needs time.tzset")
+def test_runner_reads_a_reset_past_a_dst_switch_by_that_dates_rules(monkeypatch):
+    """#302: 2:53 AM on Nov 2 in New York is EST (07:53 UTC), though the runner reads it during EDT."""
+    text = "You've hit your usage limit. Try again at Nov 2nd, 2026 2:53 AM."
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    try:
+        now = datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc).timestamp()  # noon EDT
+        assert quota_reset_instant("codex", text, now=now) == datetime(2026, 11, 2, 7, 53,
+                                                                        tzinfo=timezone.utc).timestamp()
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 @pytest.mark.asyncio
@@ -82,7 +97,7 @@ async def test_runner_sends_the_reset_instant_in_its_own_zone(tmp_path, monkeypa
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error=text)
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
-    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: KST)  # the runner's zone
+    monkeypatch.setattr(quota_module, "local_zone", lambda: KST)  # the runner's zone
     result = await runner.run_task(Task(id="t-quota", request_id="r", agent_id="worker", prompt="work",
                                         meta={"kind": "step", "step_id": "A"}))
     expected = datetime(2026, 10, 8, 2, 53, tzinfo=KST).timestamp()
@@ -95,7 +110,7 @@ async def test_runner_sends_the_reset_instant_in_its_own_zone(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_gateway_waits_until_the_runner_instant_not_its_own_reading(tmp_path, monkeypatch):
     hub = _hub(tmp_path, max_wait=1000)
-    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: timezone.utc)
+    monkeypatch.setattr(quota_module, "local_zone", lambda: timezone.utc)
     instant = time.time() + 0.05
     waits, calls = [], []
     original_publish = hub.publish

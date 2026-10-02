@@ -26,9 +26,19 @@ _WEEKDAYS = {name.casefold(): number for number, name in enumerate(calendar.day_
 _WEEKDAYS.update({name.casefold(): number for number, name in enumerate(calendar.day_name)})
 
 
-def local_zone(stamp: float) -> tzinfo | None:
-    """This machine's zone at `stamp`, the one its CLIs print reset clock times in."""
-    return datetime.fromtimestamp(stamp).astimezone().tzinfo
+def local_zone() -> tzinfo | None:
+    """The zone this machine's CLIs print reset clock times in.
+
+    None reads a clock time by the OS rules for that date, DST included. A fixed offset taken from the current
+    moment would put a reset past a DST switch an hour off.
+    """
+    return None
+
+
+def _clock_reset(text: str, stamp: float, zone: tzinfo | None) -> float | None:
+    """The epoch of a clock time in `text`, read in `zone` (None: this machine's own rules)."""
+    target = _absolute_reset(text, datetime.fromtimestamp(stamp, zone) if zone else datetime.fromtimestamp(stamp))
+    return target.timestamp() if target else None  # a naive local wall clock converts by that date's rules
 
 
 def _clock(hour: str, minute: str | None, meridiem: str | None) -> tuple[int, int]:
@@ -124,8 +134,8 @@ def parse_quota_wait(engine: str, error: str | None, *, now: float | None = None
     seconds = _relative_seconds(text)
     if seconds:
         return QuotaWait(stamp + seconds, True)
-    target = _absolute_reset(text, datetime.fromtimestamp(stamp, tz or local_zone(stamp)))
-    return QuotaWait(target.timestamp() if target else stamp + default_wait_s, target is not None)
+    target = _clock_reset(text, stamp, tz or local_zone())
+    return QuotaWait(stamp + default_wait_s if target is None else target, target is not None)
 
 
 def quota_reset_instant(engine: str, error: str | None, *, now: float | None = None,
@@ -158,5 +168,5 @@ def received_quota_wait(engine: str, error: str | None, reset_at: object, *, now
     if seconds:
         return QuotaWait(stamp + seconds, True)
     cap = stamp + default_wait_s
-    target = _absolute_reset(text, datetime.fromtimestamp(stamp, local_zone(stamp)))
-    return QuotaWait(min(target.timestamp(), cap) if target else cap, False)
+    target = _clock_reset(text, stamp, local_zone())
+    return QuotaWait(cap if target is None else min(target, cap), False)
