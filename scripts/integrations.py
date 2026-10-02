@@ -229,6 +229,16 @@ def schedulers(root: Path) -> list[str]:
     raise ValueError("HpcSettings.scheduler Literal is missing")
 
 
+def license_name(path: Path) -> str | None:
+    """Short name of a license file written from an official text, or None when it is not one we know."""
+    head = path.read_text(encoding="utf-8")[:400]
+    if "GNU GENERAL PUBLIC LICENSE" in head and "Version 3" in head:
+        return "GPL-3.0"
+    if "Attribution-ShareAlike 4.0 International" in head:
+        return "CC BY-SA 4.0"
+    return None
+
+
 def repository_facts(root: Path) -> list[str]:
     """CI, Python and license badges from pyproject.toml, .github/workflows and LICENSE."""
     pyproject = root / "pyproject.toml"
@@ -257,9 +267,14 @@ def repository_facts(root: Path) -> list[str]:
             raise ValueError("requires-python is not a plain minimum version")
         python_look = Look("", "https://www.python.org/", "python", "3776AB")
         facts.append(shield("Python", f"{minimum.group(1)}+", python_look))
-    license_file = next((n for n in ("LICENSE", "LICENSE.md", "LICENSE.txt") if (root / n).is_file()), None)
-    if license_file and repo:
-        facts.append(f"[![license](https://img.shields.io/github/license/{repo.group(1)})]({license_file})")
+    # Code under LICENSE, docs and data under LICENSE-CC-BY-SA-4.0.txt (#252); named from the official texts.
+    docs = root / "LICENSE-CC-BY-SA-4.0.txt"
+    for path, scope in ((root / "LICENSE", "코드" if docs.is_file() else "라이선스"), (docs, "문서·데이터")):
+        name = license_name(path) if path.is_file() else None
+        if name:
+            facts.append(shield(scope, name, Look("", path.name, "", "555555")))
+        elif path.name == "LICENSE" and path.is_file() and repo:  # another license: GitHub names it
+            facts.append(f"[![license](https://img.shields.io/github/license/{repo.group(1)})](LICENSE)")
     if (root / "patch_notes" / "README.md").is_file():
         facts.append(shield("패치노트", "changelog", Look("", "patch_notes/README.md", "", "5B5BD6")))
     return facts
