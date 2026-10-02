@@ -767,7 +767,9 @@ class Runner:
                 self.broker.revoke_task_token(broker_token)
                 self.broker.finish_task(task.id)
 
-        pending = [jid for jid, j in self.jobs.items() if j["task_id"] == task.id and not j["terminal"]]
+        # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
+        # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).
+        pending = [jid for jid, j in self.jobs.items() if j["task_id"] == task.id]
         for jid in pending:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
