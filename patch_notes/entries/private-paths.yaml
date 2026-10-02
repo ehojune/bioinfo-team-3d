@@ -1,0 +1,5 @@
+pr: 324
+rows:
+- sha: 2eae8c1
+  at: 2026-10-03 01:40
+  text: 'PI 계정 실행을 기본으로: policy.private_paths로 Claude 파일 도구 거부·셸 언급 PI 승인·직원 지침 절, doctor private paths 행'
