@@ -739,7 +739,7 @@ def test_the_live_probe_cd_spellings_reach_the_gate_on_real_folders(tmp_path):
     ("Bash", "reg query HKCU /s /f GITHUB_TOKEN"),
     ("Bash", r"reg query HKU\S-1-5-21-1-2-3-1001\Environment"),
     ("Bash", r"cmd /c reg query HK^CU\Environment"),
-    ("Bash", 'reg query "HK"CU\Environment'),
+    ("Bash", r'reg query "HK"CU\Environment'),
     ("Bash", "cat /proc/registry/HKEY_CURRENT_USER/Environment/GITHUB_TOKEN"),
     ("Bash", "wmic environment get name,variablevalue"),
     ("Bash", "python -c \"import winreg; k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment')\""),
@@ -766,10 +766,38 @@ def test_the_live_probe_cd_spellings_reach_the_gate_on_real_folders(tmp_path):
     ("PowerShell", r"[Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Environment', 'GITHUB_TOKEN', $null)"),
     ("PowerShell", "Get-CimInstance Win32_Environment"),
     ("PowerShell", "gwmi win32_environment | ? UserName -like '*pi*'"),
+    # PR #327 sweep: PowerShell collapses `.` and `..`, so the key may come after a detour.
+    ("PowerShell", r"Get-ItemProperty HKCU:\Software\..\Environment"),
+    ("PowerShell", r"gp HKCU:\.\Environment"),
+    ("PowerShell", r"Get-ItemProperty HKCU:Software\..\Environment"),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Software\Microsoft\..\..\Environment"),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Software\..\Env*"),
+    # ... or a relative path after a change of location into a subkey.
+    ("PowerShell", r"cd HKCU:\Software; gp ..\Environment"),
+    ("PowerShell", r"Set-Location HKCU:\Software; (Get-ItemProperty ..\Environment).GITHUB_TOKEN"),
+    ("PowerShell", r"Push-Location Registry::HKEY_CURRENT_USER\Software; gp ..\Environment"),
+    ("PowerShell", r"Set-Location -Path HKCU:\Software\Microsoft; gci .. -Recurse"),
+    ("Bash", "cd /proc/registry/HKEY_CURRENT_USER/Software && cat ../Environment/GITHUB_TOKEN"),
+    # Python string prefixes, idiomatic for registry paths.
+    ("Bash", "python -c \"import winreg; print(winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_CURRENT_USER, "
+             "r'Environment'), 'GITHUB_TOKEN'))\""),
+    ("Bash", "python -c \"import winreg; winreg.OpenKey(winreg.HKEY_CURRENT_USER, u'Environment')\""),
+    ("Bash", "python -c \"import subprocess; subprocess.run(['reg','query',r'HKCU\\Environment','/v','GITHUB_TOKEN'])\""),
+    ("Bash", "python -c \"import subprocess; subprocess.run(['reg','query','HKCU','/s'])\""),
+    # The .NET method group through .Invoke, or held for a later call.
+    ("PowerShell", "[Environment]::GetEnvironmentVariable.Invoke('GITHUB_TOKEN','User')"),
+    ("PowerShell", "$f=[Environment]::GetEnvironmentVariable; $f.Invoke('GITHUB_TOKEN','User')"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariables.Invoke('User')"),
+    # A subexpression between the separator and the key name.
+    ("PowerShell", "Get-ItemProperty \"HKCU:\\$('Environment')\""),
+    # The whole hive through the provider, Git Bash or regedit.
+    ("PowerShell", "gci Registry::HKEY_CURRENT_USER -Recurse"),
+    ("Bash", "ls -R /proc/registry/HKEY_CURRENT_USER"),
+    ("Bash", "regedit /e out.reg HKEY_CURRENT_USER"),
 ])
 def test_a_user_environment_registry_read_goes_to_the_pi(tool, command):
     decision = _gate(tool, {"command": command})
-    assert decision.action == "ask" and "HKCU\Environment" in decision.reason, command
+    assert decision.action == "ask" and r"HKCU\Environment" in decision.reason, command
 
 
 @pytest.mark.parametrize("tool,command", [
@@ -792,6 +820,15 @@ def test_a_user_environment_registry_read_goes_to_the_pi(tool, command):
     ("Bash", "conda env list"),
     ("Bash", "python setup_environment.py --out outputs/env.txt"),
     ("Bash", "cat docs/environment.md"),
+    # PR #327 sweep false alarms: a bare HKCU word outside reg.exe, and Process targets spelled other ways.
+    ("Bash", "echo HKCU"),
+    ("Bash", "ls outputs/hkcu"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('TEMP', $null)"),
+    ("Bash", "dotnet script -e 'Console.WriteLine(Environment.GetEnvironmentVariable(\"PATH\", "
+             "EnvironmentVariableTarget.Process));'"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable.Invoke('PATH')"),
+    ("Bash", "cd docs/../tests && python -c \"print(r'raw', b'bytes')\""),
+    ("PowerShell", r"cd HKCU:\Software\Python; gp ."),
 ])
 def test_ordinary_env_reads_and_unrelated_commands_stay_allowed(tool, command):
     assert _gate(tool, {"command": command}).action == "allow", command

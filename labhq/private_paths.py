@@ -451,35 +451,63 @@ def path_field_text(value: str, workdir: str | None) -> str:
 # can read the registry directly. While private paths are active the gate sends such a read to the PI.
 #
 # One alternation, matched case-insensitively on the command with `"`, `'`, PowerShell backtick and cmd `^`
-# escapes removed (`"HK"CU`, ``H`KCU``, `HK^CU`), either slash:
+# escapes removed (`"HK"CU`, ``H`KCU``, `HK^CU`), a Python string prefix dropped with its quote (`r'Environment'`),
+# `$(` removed (`"HKCU:\$('Environment')"`), `.` and `..` segments collapsed as PowerShell does
+# (`HKCU:\Software\..\Environment`), either slash:
 #   - the key by name: `HKCU\Environment`, `HKCU:Environment`, `HKEY_CURRENT_USER/Environment`,
 #     `Registry::HKEY_CURRENT_USER\Environment`, `/proc/registry/HKEY_CURRENT_USER/Environment` (Git Bash),
 #     `HKU\<SID>\Environment`, a wildcard first key (`HKCU:\Env*`), or the bare hive (`reg query HKCU /s`,
-#     `gci HKCU:\ -Recurse`, `Set-Location HKCU:`), since a whole-hive read includes Environment;
+#     `gci HKCU:\ -Recurse`, `Set-Location HKCU:`), since a whole-hive read includes Environment. A bare hive
+#     without `:`, `Registry::` or `/proc/registry/` counts only after `reg`/`regedit` (`echo HKCU` is not a read);
 #   - WMI's copy: `Win32_Environment` (Get-CimInstance, gwmi), `wmic environment`;
 #   - a registry API in code next to the word Environment: Python `winreg`/`_winreg`,
 #     .NET `Microsoft.Win32.Registry`/`RegistryKey`/`[Registry]`;
+#   - a change of location into the user hive next to the word Environment or a `..` segment
+#     (`cd HKCU:\Software; gp ..\Environment`);
 #   - `[EnvironmentVariableTarget]::User` anywhere.
-# `[Environment]::GetEnvironmentVariable(s)` with a target other than Process is judged by `user_env_registry_read`.
+# `[Environment]::GetEnvironmentVariable(s)` with a target other than Process, called directly or through
+# `.Invoke(`, is judged by `user_env_registry_read`; the method group held without a call (`$f = [Environment]::
+# GetEnvironmentVariable`) asks, since its later `.Invoke` cannot be followed.
 # Reads of the stripped process env (`$env:X`, `%X%`, `set`, `printenv`, `os.environ`, `Env:`) do not match.
 # Lexical like the private-path check: a name built at run time or a script file that reads the registry passes.
 # The first defense is the token's scope (the PI token reaches only the repositories labhq needs).
 # The text is matched with `\` read as `/`, so every pattern spells the separator `/`.
 _HIVE = r"(?:hkcu|hkey_current_user|(?:hku|hkey_users)/+[^/\s;|&]+)"
 _HIVE_ROOT = r"(?:hkcu|hkey_current_user|hku|hkey_users)"
+_WHOLE = rf"(?:{_HIVE_ROOT}|{_HIVE})/*(?=$|[\s;|&)}}\],])"
 USER_ENV_REGISTRY = re.compile(
     rf"(?<!\w){_HIVE}\s*(?::\s*/*|/+)\s*environment(?!\w)"           # the key by name
     rf"|(?<!\w){_HIVE}\s*(?::\s*/*|/+)[^/\s;|&]*[*?\[]"              # a wildcard first key
-    rf"|(?<![\w.])(?:{_HIVE_ROOT}|{_HIVE})\s*:?\s*/*(?=$|[\s;|&)}}])"  # a whole hive, or HKU/<SID>
+    rf"|(?<![\w.])(?:{_HIVE_ROOT}|{_HIVE})\s*:\s*/*(?=$|[\s;|&)}}\],])"  # a whole hive as a drive (HKCU:)
+    rf"|registry(?:32|64)?(?:::|/+){_WHOLE}"                          # ... through Registry:: or /proc/registry
+    rf"|\breg(?:\.exe|edit(?:\.exe)?)?\b[^;|&\n]*?(?<![\w.]){_WHOLE}"  # ... named to reg.exe or regedit
     r"|\bwin32_environment\b|\bwmic\b[^;|&\n]*\benvironment\b"        # WMI's copy
     r"|environmentvariabletarget\]?\s*(?:::|\.)?\s*user\b",            # the User target, anywhere
     re.I,
 )
 _REGISTRY_API = re.compile(r"\b_?winreg\b|microsoft\.win32\.registry|\bregistrykey\b|\[registry\]", re.I)
 _ENVIRONMENT_WORD = re.compile(r"(?<!\w)environment(?!\w)", re.I)
-_GET_ENV_CALL = re.compile(r"getenvironmentvariable(s?)\s*\(", re.I)
-_PROCESS_TARGET = re.compile(r"^(?:\[(?:system\.)?environmentvariabletarget\]\s*(?:::|\.)?\s*)?(?:process|0)$",
-                             re.I)
+_HIVE_CD = re.compile(rf"(?<![\w-])(?:cd|chdir|sl|set-location|push-location|pushd)\s+(?:-\w+\s+)*[^\s;|&]*?"
+                      rf"(?<![\w.]){_HIVE_ROOT}\s*[:/]", re.I)
+_PARENT_SEGMENT = re.compile(r"(?<![^\s/,(=:])\.\.(?=$|[/\s;|&)\],])")
+_GET_ENV_CALL = re.compile(r"getenvironmentvariable(s?)(?:\s*\.\s*invoke)?\s*\(", re.I)
+_GET_ENV_GROUP = re.compile(r"(?:::|\.)\s*getenvironmentvariables?\b(?!\s*(?:\(|\.\s*invoke\s*\())", re.I)
+_PROCESS_TARGET = re.compile(r"^(?:\[?(?:system\.)?environmentvariabletarget\]?\s*(?:::|\.)?\s*)?"
+                             r"(?:process|0|\$null)$", re.I)
+_STRING_PREFIX = re.compile(r"(?<!\w)(?:rb|br|fr|rf|[rubf])(?=[\"'])", re.I)
+_DOT_SEGMENT = re.compile(r"(?<=[:/])\.(?=/|$|[\s;|&)\],])")
+_UP_SEGMENT = re.compile(r"(?<=[:/])(?!\.\.?(?:/|$))[^/\s;|&:]+/+\.\.(?=/|$|[\s;|&)\],])")
+
+
+def _registry_text(command: str) -> str:
+    """`command` spelled for the patterns above: escapes and quotes gone, `/` for `\\`, `.`/`..` collapsed."""
+    text = re.sub(r"[\"'`^]", "", _STRING_PREFIX.sub("", command)).replace("$(", "").replace("\\", "/")
+    text = _DOT_SEGMENT.sub("", text)
+    while True:
+        collapsed = _UP_SEGMENT.sub("", text, count=1)
+        if collapsed == text:
+            return text
+        text = collapsed
 
 
 def _call_args(text: str, start: int) -> list[str]:
@@ -503,13 +531,19 @@ def _call_args(text: str, start: int) -> list[str]:
 
 def user_env_registry_read(command: str) -> str | None:
     """The spelling in `command` that reads the user-environment registry (the patterns above), or None."""
-    text = re.sub(r"[\"'`^]", "", command).replace("\\", "/")
+    text = _registry_text(command)
     match = USER_ENV_REGISTRY.search(text)
     if match:
         return match.group(0)
     api = _REGISTRY_API.search(text)
     if api and _ENVIRONMENT_WORD.search(text):
         return api.group(0)
+    cd = _HIVE_CD.search(text)
+    if cd and (_ENVIRONMENT_WORD.search(text) or _PARENT_SEGMENT.search(text)):
+        return cd.group(0)
+    group = _GET_ENV_GROUP.search(text)
+    if group:
+        return group.group(0)
     for call in _GET_ENV_CALL.finditer(text):
         args = _call_args(text, call.end())
         target = args[0] if call.group(1) else (args[1] if len(args) > 1 else "")
