@@ -70,6 +70,21 @@ def test_gate_input_claude_already_resolved_is_unchanged():
     assert decision.action == "allow" and decision.updated_input is None
 
 
+def test_file_tool_write_does_not_expand_environment_variables(monkeypatch):
+    monkeypatch.setenv("HOMEPATH", r"\Users\u")
+    root = r"C:\Users\u\.labhq\runs\x\ws"
+    decision = evaluate_tool(
+        "Write",
+        {"file_path": r"C:\%HOMEPATH%\.labhq\runs\x\ws\a.md", "content": "x"},
+        Settings().policy,
+        allowed_roots=[root],
+        workdir=root,
+        windows=True,
+    )
+    assert decision.action == "ask"
+    assert "%HOMEPATH%" in decision.reason
+
+
 @pytest.mark.parametrize("spelling,shown", [
     ("\\tmp\\claude\\C--Users-u-Desktop-lab\\other\\a.md", "C:\\tmp\\claude\\C--Users-u-Desktop-lab\\other\\a.md"),
     ("/tmp/elsewhere/a.md", "C:\\tmp\\elsewhere\\a.md"),
@@ -225,3 +240,21 @@ async def test_approval_gate_respells_git_bash_tmp_write_on_windows(tmp_path):
     assert json.loads(inside.content[0].text) == {
         "behavior": "allow", "updatedInput": {"file_path": str(workdir / "outputs" / "a.md"), "content": "x"}}
     assert json.loads(outside.content[0].text)["behavior"] == "deny"  # asked, and the broker is unreachable
+
+
+async def test_approval_gate_allows_shell_write_to_link_spelled_workdir(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    _link_dir(link, real)
+    env = {**os.environ, "PYTHONPATH": str(REPO), "LABHQ_BROKER_URL": "http://127.0.0.1:9",
+           "LABHQ_BROKER_TOKEN": "x", "LABHQ_WORKDIR": str(link)}
+    env.pop("LABHQ_CONFIG", None)
+    params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.approval_mcp"], env=env)
+    async with stdio_client(params) as streams:
+        async with ClientSession(streams[0], streams[1]) as session:
+            await session.initialize()
+            result = await session.call_tool("approval_prompt", {"tool_name": "Bash", "input": {
+                "command": f'echo x > "{link / "a.txt"}"'}})
+    assert json.loads(result.content[0].text) == {
+        "behavior": "allow", "updatedInput": {"command": f'echo x > "{link / "a.txt"}"'}}
