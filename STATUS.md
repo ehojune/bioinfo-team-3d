@@ -12,6 +12,14 @@
 - 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
 - 근거: `labhq/orchestrator/cso.py`, `labhq/research/contract.py`, `labhq/research/semantics_shadow.py`, `tests/test_research_protocol.py`, `tests/test_semantics_input_fit.py`.
 
+## 2026-10-02 · AGENTS.md 간결 운영 규칙
+
+- 결론: 에이전트 규칙을 PI 결정(2026-10-02)에 맞췄다. 로컬은 관련 test만, 전체 suite는 CI, P2는 PR 본문 "남은 지적" 한 줄.
+- 바뀐 것: `AGENTS.md` 두 줄.
+- 실행한 것: 공개정보 검사, 기록 검사. 코드 변경 없음.
+- 미해결: 없음.
+- 근거: `AGENTS.md`.
+
 ## 2026-10-02 · Windows bench 취소 test 불안정 수정
 
 - 결론: Windows가 `taskkill` 생성 중 `MemoryError`를 내도 이미 수집한 PID로 process tree를 정리한다.

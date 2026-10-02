@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 21:00 | [`06a224e`](https://github.com/ehojune/bioinfo-team-3d/pull/321/commits/06a224e) | 오류 출력 주석과 pack 동시 검증을 바로잡고 input-fit 집계를 어휘 판본별로 분리 |
+| 20:51 | [`b5016b4`](https://github.com/ehojune/bioinfo-team-3d/pull/320/commits/b5016b4) | HANDOFF.md 시작 절차도 전체 pytest 대신 관련 test, 전체는 CI |
+| 20:48 | [`ebc68f9`](https://github.com/ehojune/bioinfo-team-3d/pull/320/commits/ebc68f9) | AGENTS.md: 로컬은 관련 test, 전체 suite는 CI. P2는 PR 본문 남은 지적 한 줄 |
 | 20:47 | [`4afd105`](https://github.com/ehojune/bioinfo-team-3d/pull/319/commits/4afd105) | Windows taskkill의 MemoryError를 직접 PID 종료로 복구하고 bench 취소 회귀 test를 보강했다. |
 | 20:45 | [`05040a6`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/05040a6) | 한도 해제가 요청 목록 사본을 순회해, 해제 중 새 요청이 들어와도 끊기지 않음 |
 | 20:44 | [`f002a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/317/commits/f002a0c) | accession version 재인용과 URI 혼합 후보를 판정하고 pack_dirs를 시작 시 검증 |
