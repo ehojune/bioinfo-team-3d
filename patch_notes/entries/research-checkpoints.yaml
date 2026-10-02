@@ -21,3 +21,6 @@ rows:
   at: 2026-10-02 20:50
   text: 패키지 설정 템플릿(labhq/config/labhq.example.yaml)에도 research.evidence_checkpoint를
     넣어 저장소 사본과 맞췄다.
+- sha: 5af8dd8
+  at: 2026-10-02 21:12
+  text: 'main 병합: cso.py import에서 한도 대기(quota)와 연구 CP2 계약을 함께 둠'
