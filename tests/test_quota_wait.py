@@ -452,3 +452,22 @@ def test_restart_drops_a_followup_quota_wait_on_a_finished_request(tmp_path):
     assert "quota_waits" not in restored.requests["r"]
     assert restored.quota_hold("codex") is None
     restored.store.close()
+
+
+@pytest.mark.asyncio
+async def test_release_survives_a_request_added_while_it_publishes(tmp_path):
+    # #302 review: publish() yields; a new POST /api/requests must not break the release loop.
+    hub = _hub(tmp_path)
+    for rid in ("a", "b"):
+        hub.requests[rid] = {"id": rid, "status": "waiting_quota", "quota_waits": {
+            "S": {"engine": "codex", "resume_at": 9999999999, "deadline_at": 9999999999, "reason": "limit"}}}
+    original_publish = hub.publish
+
+    async def publish(event, *args, **kwargs):
+        if event["type"] == "request.step_quota_resumed":
+            hub.requests[f"new-{len(hub.requests)}"] = {"id": "new", "status": "running"}
+        await original_publish(event, *args, **kwargs)
+
+    hub.publish = publish
+    released = await hub.release_quota("codex", manual=True)
+    assert set(released) == {("a", "S"), ("b", "S")}

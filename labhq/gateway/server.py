@@ -260,7 +260,8 @@ class Hub:
     async def release_quota(self, engine: str, *, manual: bool) -> list[tuple[str, str]]:
         """Release an account hold and every step sharing that engine."""
         released = []
-        for rid, req in self.requests.items():
+        # publish() yields, and a new request may arrive meanwhile: walk a snapshot (#302 review).
+        for rid, req in list(self.requests.items()):
             for step_id, entry in list((req.get("quota_waits") or {}).items()):
                 if entry.get("engine") != engine:
                     continue
