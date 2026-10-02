@@ -98,7 +98,8 @@ BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id"
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
                              "key", "error_kind", "reason", "counts", "provenance.types",
-                             "provenance.declarations", "objects.artifact_types", "input_fit"})
+                             "provenance.declarations", "objects.artifact_types", "input_fit",
+                             "input_fit_sha256"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
                               "unsafe_token", "non_string_key", "non_json_value", "schema", "type_version",
                               "type_fields", "type_bucket", "type_declarations", "type_objects"})
@@ -1485,7 +1486,9 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     line["objects"] = compute_objects(snap, check)
     reader = Reader(snap, check, hash_over)
     line["provenance"], hashes = compute_provenance(snap, reader, observed, check)
+    # the relation table's version rides with its counts, so a table change never reinterprets older lines
     line["input_fit"] = semantics_input_fit.evaluate(req.get("plan"), vocab=output_vocab.current())
+    line["input_fit_sha256"] = semantics_input_fit.table_sha256(output_vocab.current())
     workspaces: dict[str, int] = {}
     for state in reader.workspace_state.values():
         workspaces[state] = workspaces.get(state, 0) + 1
@@ -1980,6 +1983,9 @@ class ShadowService:
         try:
             vocabulary = output_vocab.current() or _NO_VOCAB
             allowed = {"vocab_sha256": vocabulary.sha256} if vocabulary.sha256 else {}
+            table = semantics_input_fit.table_sha256(output_vocab.current())
+            if table:
+                allowed["input_fit_sha256"] = table
             boundary = boundary_findings(line, sensitive_values(snap), allowed_fields=allowed)
             problems = boundary_problems(line, sensitive_values(snap), allowed_fields=allowed)
             type_failures = type_problems(line, vocabulary.edam_ids)
@@ -2119,7 +2125,10 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and isinstance(line.get("input_fit", {}), Mapping)
             and set(line.get("input_fit", {})) <= set(semantics_input_fit.VERDICTS)
             and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
-                    for v in line.get("input_fit", {}).values()))
+                    for v in line.get("input_fit", {}).values())
+            and (line.get("input_fit_sha256") is None
+                 or isinstance(line.get("input_fit_sha256"), str)
+                 and SHA_HEX.fullmatch(line["input_fit_sha256"]) is not None))
 
 
 def configured(settings: Any) -> str:
@@ -2210,8 +2219,14 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         proposals.append("기록 공백: unknown 비율 중앙값 ≥ 0.9, 병목은 기록(#58·#115)")
     if len(marks) >= 5 and wrong / len(marks) >= 0.2:
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
-    input_fit = {key: sum(int((r.get("input_fit") or {}).get(key) or 0) for r in requests)
-                 for key in semantics_input_fit.VERDICTS}
+    input_fit: dict[str, dict[str, int]] = {}  # per relation-table version: two tables never add up
+    for r in requests:
+        if not isinstance(r.get("input_fit"), Mapping):
+            continue
+        into = input_fit.setdefault(str(r.get("input_fit_sha256") or "-")[:12],
+                                    {key: 0 for key in semantics_input_fit.VERDICTS})
+        for key in semantics_input_fit.VERDICTS:
+            into[key] += int(r["input_fit"].get(key) or 0)
     return {
         "state": {"on": setting == "shadow" and disabled is None, "setting": setting,
                   "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch"),
@@ -2229,7 +2244,7 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "research_with_candidates": research_with_candidates,
         "versions": dict(sorted(versions.items())),
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
-        "input_fit": input_fit,
+        "input_fit": dict(sorted(input_fit.items())),
         "marks": {"reviewed": len(marks), "wrong": wrong},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
                       "boundary": _clean_boundary_details(l.get("boundary"))}
@@ -2276,7 +2291,9 @@ def render_report(rep: Mapping[str, Any]) -> str:
         "산출 종류 선언: 계획 산출 {outputs} · data 선언 {data_declared} · format 선언 {format_declared}".format(
             **rep["declarations"]) + " · 버림 " + (", ".join(f"{k} {n}" for k, n in rep["declarations"]["issues"].items())
                                                  or "0"),
-        "input fit: " + " · ".join(f"{key} {rep['input_fit'][key]}" for key in semantics_input_fit.VERDICTS),
+        "input fit(관계표 판본별): " + (", ".join(
+            f"{version} " + " · ".join(f"{key} {cells[key]}" for key in semantics_input_fit.VERDICTS)
+            for version, cells in rep["input_fit"].items()) or "-"),
         *[f"{name}: " + (", ".join(f"{bucket} " + "/".join(f"{b} {n}" for b, n in sorted(cells.items()))
                                    for bucket, cells in rep["types"][name].items()) or "-")
           for name in rep["types"]],

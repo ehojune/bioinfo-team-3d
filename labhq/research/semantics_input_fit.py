@@ -2,9 +2,13 @@
 
 The relation table uses local vocabulary keys. EDAM identifiers are optional metadata and never drive a
 verdict. This module returns counts only; callers must not publish step ids, values, paths or declarations.
+A declaration made under another vocabulary version reads as unknown, and ``table_sha256`` is the table's meaning
+digest, written beside the counts so a table change never silently reinterprets older lines.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from collections.abc import Mapping
@@ -18,7 +22,7 @@ log = logging.getLogger("labhq.semantics.input_fit")
 RELATION_FILE = Path(__file__).with_name("semantics_input_fit.yaml")
 VERDICTS = ("fit", "mismatch", "unknown")
 EDAM_RELATION = re.compile(r"^relation_[0-9]{4}$")
-_CACHE: list[dict[str, Any] | None] = []
+_CACHE: dict[str, dict[str, Any] | None] = {}  # keyed by the vocabulary version it was checked against
 
 
 def _unknown(plan: Any) -> dict[str, int]:
@@ -49,17 +53,30 @@ def _load(vocab: Vocab) -> dict[str, Any]:
             raise ValueError("input_fit_rule")
         checked[str(operation)] = {"fit": frozenset(yes), "mismatch": frozenset(no),
                                    "edam_relation": relation}
-    return {"pack_operations": dict(packs), "agent_operations": dict(agents), "operations": checked}
+    meaning = {"version": 1, "pack_operations": dict(packs), "agent_operations": dict(agents),
+               "operations": {op: {"fit": sorted(rule["fit"]), "mismatch": sorted(rule["mismatch"]),
+                                   "edam_relation": rule["edam_relation"]} for op, rule in checked.items()}}
+    digest = hashlib.sha256(json.dumps(meaning, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                            .encode("utf-8")).hexdigest()
+    return {"pack_operations": dict(packs), "agent_operations": dict(agents), "operations": checked,
+            "sha256": digest}
 
 
 def relation_table(vocab: Vocab) -> dict[str, Any] | None:
-    if not _CACHE:
+    if vocab.sha256 not in _CACHE:
         try:
-            _CACHE.append(_load(vocab))
+            _CACHE[vocab.sha256] = _load(vocab)
         except (OSError, UnicodeDecodeError, UniqueKeyError, ValueError) as exc:
             log.warning("input fit relation table unavailable (%s); verdicts stay unknown", type(exc).__name__)
-            _CACHE.append(None)
-    return _CACHE[0]
+            _CACHE[vocab.sha256] = None
+    return _CACHE[vocab.sha256]
+
+
+def table_sha256(vocab: Vocab | None = None) -> str | None:
+    """The relation table's meaning digest under this vocabulary; None when there is no usable table."""
+    vocab = vocab or current()
+    table = relation_table(vocab) if vocab is not None else None
+    return table["sha256"] if table else None
 
 
 def reset_cache() -> None:
@@ -74,6 +91,10 @@ def _norm(value: Any) -> str | None:
 
 
 def _operation(step: Mapping[str, Any], plan: Mapping[str, Any], table: Mapping[str, Any]) -> str | None:
+    """The step's own agent mapping first; the plan's pack is only the fallback for unmapped agents."""
+    agent = step.get("agent_id")
+    if isinstance(agent, str) and agent in table["agent_operations"]:
+        return table["agent_operations"][agent]
     protocol = plan.get("protocol") if isinstance(plan.get("protocol"), Mapping) else {}
     packs = protocol.get("packs") or []
     found = {table["pack_operations"].get(f"{pack.get('id')}@{pack.get('version')}")
@@ -81,9 +102,7 @@ def _operation(step: Mapping[str, Any], plan: Mapping[str, Any], table: Mapping[
     found.discard(None)
     if len(found) == 1:
         return next(iter(found))
-    if found:
-        return None
-    return table["agent_operations"].get(step.get("agent_id"))
+    return None
 
 
 def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
@@ -104,8 +123,8 @@ def evaluate(plan: Any, *, vocab: Vocab | None = None) -> dict[str, int]:
         if not isinstance(sid, str):
             continue
         for entry in source.get("output_types") or []:
-            if not isinstance(entry, Mapping):
-                continue
+            if not isinstance(entry, Mapping) or entry.get("vocab") != vocab.sha256:
+                continue  # another vocabulary version: never reinterpreted under this one
             name, data_type = _norm(entry.get("name")), entry.get("data_type")
             if name and vocab.is_key("data", data_type):
                 declared[(sid, name)] = data_type
