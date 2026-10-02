@@ -1643,23 +1643,30 @@ class Orchestrator:
                   **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   "results": ledgers}
-        cp2: str | None = None
-        decision: dict[str, Any] = {}
-        asks = 0
-        while cp2 is None and asks < CP2_MAX_ASKS:
-            asks += 1
-            decision = await self.hub.request_approval(
-                kind="research_evidence", request_id=rid, detail=detail,
-                summary=summary if asks == 1 else
-                "The previous CP2 answer had no readable approve/revise/deny choice and was not approved. " + summary)
-            cp2 = read_evidence_decision(decision)
-        decided = cp2 or "unreadable"
-        note = str(decision.get("note") or "").strip()
-        contract.setdefault("checkpoints", {})["cp2"] = {
-            "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
-            "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
-            "plan_sha256": contract["plan_sha256"], "asks": asks,
-            "refused_evidence": refused, "unsupported_claims": unsupported}
+        recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
+        if recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]:
+            # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
+            decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
+            refused = recorded.get("refused_evidence") or []
+            unsupported = recorded.get("unsupported_claims") or []
+        else:
+            cp2: str | None = None
+            decision: dict[str, Any] = {}
+            asks = 0
+            while cp2 is None and asks < CP2_MAX_ASKS:
+                asks += 1
+                decision = await self.hub.request_approval(
+                    kind="research_evidence", request_id=rid, detail=detail,
+                    summary=summary if asks == 1 else
+                    "The previous CP2 answer had no readable approve/revise/deny choice and was not approved. " + summary)
+                cp2 = read_evidence_decision(decision)
+            decided = cp2 or "unreadable"
+            note = str(decision.get("note") or "").strip()
+            contract.setdefault("checkpoints", {})["cp2"] = {
+                "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
+                "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
+                "plan_sha256": contract["plan_sha256"], "asks": asks,
+                "refused_evidence": refused, "unsupported_claims": unsupported}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         report = self.format_results(steps, results, n) + f"\n\nCP2 evidence review: {decided}."
@@ -1775,10 +1782,15 @@ class Orchestrator:
                 for a in roster)
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
-                previous = (req.get("research_contract") or {}).get("approval")
+                stored = req.get("research_contract") or {}
+                previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
-                execution_enabled = research_execution
+                # Fixed with the request: a resume keeps its own execution flag, checkpoint receipts and failure
+                # record. The current config applies only to a request that has no contract yet (#90 CP2).
+                execution_enabled = (bool(stored["execution_enabled"]) if "execution_enabled" in stored
+                                     else research_execution)
                 req["research_contract"] = {
+                    **stored,
                     "schema_version": 1,
                     "work_kind": "research",
                     "execution_enabled": execution_enabled,

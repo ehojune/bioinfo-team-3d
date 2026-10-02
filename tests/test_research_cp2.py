@@ -147,6 +147,53 @@ async def test_research_request_resumed_with_the_pilot_off_dispatches_nothing():
     assert hub.requests["r"]["status"] == "failed"
 
 
+# ---------- P1: a resume keeps the contract the request was frozen with ----------
+
+def _interrupt(hub):
+    """A gateway restart: the request is resumed from its saved results (SavedResults in the real hub)."""
+    hub.requests["r"].update(status="interrupted")
+    hub.result_map = lambda rid: {sid: TaskResult.model_validate(value)
+                                  for sid, value in (hub.requests[rid].get("results") or {}).items()}
+
+
+@pytest.mark.asyncio
+async def test_resume_after_the_cp2_receipt_keeps_the_pi_decision():
+    decisions = [CP1, {"approved": False, "choice": "revise", "note": "add a sensitivity check"}]
+    hub = _research_hub(_settings(), decisions)
+    await Orchestrator(hub).run_request("r")
+    receipt = dict(hub.requests["r"]["research_contract"]["checkpoints"]["cp2"])
+
+    _interrupt(hub)  # restarted after the receipt was saved, before the terminal commit
+    calls, approvals = len(hub.calls), len(hub.approvals)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls[calls:] == [] and hub.approvals[approvals:] == []
+    assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"] == receipt
+    assert hub.requests["r"]["outcome"] == "evidence_revision_requested"
+    assert "PI note: add a sensitivity check" in hub.requests["r"]["report"]
+
+
+@pytest.mark.asyncio
+async def test_resume_keeps_execution_on_after_the_evidence_checkpoint_is_switched_off():
+    settings = _settings()
+    approve = {"approved": True, "choice": "approve", "note": ""}
+    decisions = [CP1, approve]
+    hub = _research_hub(settings, decisions)
+    await Orchestrator(hub).run_request("r")
+    hub.requests["r"]["research_contract"].pop("checkpoints")  # interrupted after the step, before CP2's answer
+    _interrupt(hub)
+    settings.research.evidence_checkpoint = False  # a config change must not reach a request already frozen
+    decisions.append(dict(approve))
+    calls, approvals = len(hub.calls), len(hub.approvals)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls[calls:] == []  # the collected result is reused, not re-run or dropped
+    assert [item["kind"] for item in hub.approvals[approvals:]] == ["research_evidence"]
+    assert hub.requests["r"]["research_contract"]["execution_enabled"] is True
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
+    assert set(hub.requests["r"]["results"]) == {"s1"}
+
+
 # ---------- P1: a research step may stop for a PI decision before its ledger is checked ----------
 
 @pytest.mark.asyncio
