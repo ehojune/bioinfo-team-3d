@@ -21,6 +21,9 @@ runner:
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
   claude_code: {bin: claude}
+  # Claude 직원 전용 설정 폴더(README §8). PI ~/.claude는 개인 경로라 막히고, Claude는 긴 출력을 설정 폴더에서 다시 읽음.
+  # labhq init이 ~/.claude를 보면 아래처럼 넣음(Windows는 ${USERPROFILE}). 로그인: 그 폴더로 claude 실행 뒤 /login
+  # claude_code: {bin: claude, env: {CLAUDE_CONFIG_DIR: "${HOME}/.labhq/claude-staff"}}
   codex: {bin: codex, extra_args: []}
   gemini: {bin: gemini}
   antigravity: {bin: agy}
@@ -70,7 +73,8 @@ policy:
   #   - ~/.config/google-chrome
   #   - ~/.config/microsoft-edge
   #   - ~/.mozilla
-  #   # 기본 목록에는 이 설정 파일과 gateway.state_dir도 들어감. 목록을 직접 쓰면 필요한 만큼 다시 적음
+  #   # 기본 목록에는 이 설정 파일, gateway.state_dir, engines.claude_code.env.CLAUDE_CONFIG_DIR도 들어감.
+  #   # 목록을 직접 쓰면 필요한 만큼 다시 적음
   approvals:
     hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인
     timeout_s: 3600

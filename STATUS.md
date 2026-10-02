@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · #298 ⑤ — Claude 직원 전용 설정 폴더와 긴 출력 다시 읽기
+
+- 결론: PI 결정 "나". Claude 직원은 Codex 직원처럼 전용 설정 폴더(`engines.claude_code.env.CLAUDE_CONFIG_DIR`, init 기본 `~/.labhq/claude-staff`)를 쓴다. PI `~/.claude`는 통째로 막힌 채 두고, 직원 폴더도 기본 개인 경로에 들어가되 그 task 몫의 `projects/<작업 폴더 slug>/`만 읽기로 열린다. 그래서 Claude가 저장한 긴 도구 출력을 직원이 다시 읽는다.
+- 바뀐 것: 게이트는 열린 폴더를 담은 개인 경로를 표기(`..` 정리)와 실제 경로가 모두 그 안일 때만 Read·Grep·Glob에 허용한다. Claude deny 규칙은 그 경로의 Edit·Write를 통째로 막고, Read는 설정 폴더 최상위 항목만 하나씩 막는다(`projects`는 뺀다. `.credentials.json`·`.claude.json`·`history.jsonl`은 아직 없어도 넣는다). `projects/` 아래 다른 task 폴더는 규칙 없이 게이트가 거부하므로 task가 쌓여도 `--settings` 명령줄이 늘지 않는다. runner는 열린 폴더를 `LABHQ_PRIVATE_OPEN_READS`로 게이트에 넘기고 Claude read root에 더한다(Edit rule 없음). 직원 지침의 "`~/.claude` 아래 긴 출력은 안 열릴 수 있음" 줄은 열린 폴더 안내로 바뀐다. doctor `claude staff config` 행: 미설정 warn, PI `~/.claude`이거나 그 안 fail, 로그인 없음 warn(+로그인 명령). init은 PI `~/.claude`가 있으면 폴더와 env를 넣고 로그인 명령만 보여 준다. `CLAUDE_CONFIG_DIR`가 없으면 전과 같다.
+- 실행한 것: slug 규칙을 실제 Claude 2.1.282(Windows 11)로 확인했다. 빈 `CLAUDE_CONFIG_DIR`로 `claude -p` 를 돌리면 로그인 없이도 `projects/<slug>/`가 생긴다. 영숫자 밖 문자는 `-`, 200자를 넘으면 앞 200자 + `-` + base36 |djb2|(fixture `claude_project_slug.json`). `claude auth status`는 빈 폴더에서 rc 1. 새 test 29건(slug, 열린 폴더 Read 허용, 로그인 파일·다른 slug·history·쓰기·`..`·대소문자·admin share·link 우회 거부, deny 규칙, read root, isolation, runner, 승인 서버, doctor 8건)과 init 3건. 반영 전에는 새 파일이 import에서, init 2건이 단언에서 실패했다. 형제 폴더 300개를 두면 폴더별 deny 규칙이 명령줄을 수정 전 157,554 UTF-16 units(한도 32,000)로 키워 task가 시작되지 못했다. 회귀 test 1건으로 막았다. 관련 test 5개 파일 416 passed/1 skipped, `scripts/check_public.sh` 통과.
+- 미해결: 실제 Claude 직원 실행으로 긴 출력 다시 읽기는 확인하지 않았다(PI 로그인 필요). `CLAUDE_CONFIG_DIR`는 `engines.claude_code.env`만 본다(runner 자체 env의 값은 열지 않음). Codex 직원 `CODEX_HOME`(`~/.labhq/codex-staff`)은 Claude 직원에게 개인 경로가 아니다(기존 동작).
+- 근거: `labhq/private_paths.py`, `labhq/policy.py`, `labhq/doctor.py`, `labhq/init_wizard.py`, `tests/test_claude_staff_home.py`, `tests/fixtures/real/claude_code/claude_project_slug.json`.
+
 ## 2026-10-03 · PR 준비 — 관찰된 산출물 manifest(#58 ②)
 
 - 결론: 직원 보고와 별개로 run 전후 `outputs/` 차이와 sha256을 기록하고, CP2가 묶인 artifact hash를 receipt에 남기게 했다.

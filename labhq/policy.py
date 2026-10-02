@@ -437,7 +437,8 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
-def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None) -> dict:
+def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None,
+                        open_reads: Iterable[str] = ()) -> dict:
     """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus
     Bash/PowerShell `ask` rules naming each path.
 
@@ -446,10 +447,16 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     passes them. The structural check is that no shell command and no outside read is pre-approved while these
     paths are active (`claude_allowed_tools` with `read_roots`), so such calls reach the gate. Probed on Claude
     2.1.282: `ask: ["Bash(*/.sec/*)"]` stopped a pre-approved `python -c` read.
+
+    A path holding one of `open_reads` (the task's project folder in the staff Claude config folder, #298 ⑤)
+    keeps Edit/Write on the whole path, but Read only on its top-level entries off the way to that folder
+    (`closed_entries`): a deny rule outranks every allow rule, so a Read deny on the whole path would close it.
+    Other tasks' project folders beside it get no rule; the gate refuses reads of them.
     """
-    from .private_paths import shell_needles
+    from .private_paths import closed_entries, holds_open_read, shell_needles
 
     paths = [p for p in paths if p]
+    open_reads = [p for p in open_reads if p]
     ruled = []
     for p in paths:
         try:
@@ -457,7 +464,16 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
         except ValueError:
             continue
         ruled.append(p)
-    merged = claude_deny_links(settings, ruled)
+    holders = [p for p in ruled if holds_open_read(p, open_reads)]
+    merged = claude_deny_links(settings, [p for p in ruled if p not in holders])
+    if holders:
+        rules = [f"{tool}(/{claude_rule_path(p)}{tail})" for p in holders
+                 for tool in ("Edit", "Write") for tail in ("", "/**")]
+        rules += [f"Read(/{claude_rule_path(entry)}{tail})" for p in holders
+                  for entry in closed_entries(p, open_reads) for tail in ("", "/**")]
+        permissions = dict(merged.get("permissions") or {})
+        permissions["deny"] = list(dict.fromkeys([*(permissions.get("deny") or []), *rules]))
+        merged = {**merged, "permissions": permissions}
     needles = shell_needles(paths, home)
     if not needles:
         return merged
@@ -603,13 +619,14 @@ def evaluate_tool(
     private_paths: Iterable[str] = (),
     private_enabled: bool = False,
     home: str | None = None,
+    private_open_reads: Iterable[str] = (),
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
     decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, judged, private_paths, workdir, home, environ)
+    private = (_private_decision(tool_name, judged, private_paths, workdir, home, environ, list(private_open_reads))
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
@@ -623,7 +640,8 @@ _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
 
 
 def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths: list[str], workdir: str | None,
-                      home: str | None, environ: Mapping[str, str] | None) -> Decision | None:
+                      home: str | None, environ: Mapping[str, str] | None,
+                      open_reads: list[str] | None = None) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
     While private paths are active Claude pre-approves no shell command and no read outside the task's folders
@@ -632,10 +650,25 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     file tool's free text (content, a Grep pattern) is not a path being opened and is not checked; a Glob
     pattern's folder part is. Called while private paths are on, even with no active path: then only the
     registry check has anything to match.
+
+    `open_reads` (#298 ⑤): a read tool may open a path inside one of these folders although a private path holds
+    it, when every spelling of it (as written, `..` resolved, and its real path) is inside one. Shell and write
+    tools are judged as before.
     """
-    from .private_paths import mentioned_private_path, path_field_text, registry_access
+    from .private_paths import holds_open_read, mentioned_private_path, open_read_allowed, path_field_text, \
+        registry_access
 
     if tool_name in READ_LIKE | WRITE_LIKE:
+        open_reads = (open_reads or []) if tool_name in READ_LIKE else []
+        holders = [p for p in private_paths if holds_open_read(p, open_reads)]
+        closed = [p for p in private_paths if p not in holders]
+
+        def private(spelled: str) -> bool:
+            if mentioned_private_path(spelled, closed, home, environ):
+                return True
+            return bool(holders and mentioned_private_path(spelled, holders, home, environ)
+                        and not open_read_allowed(spelled, open_reads))
+
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
         values = [(tool_input.get(key), workdir) for key in _PRIVATE_PATH_KEYS]
         if tool_name == "Glob" and isinstance(tool_input.get("pattern"), str):
@@ -653,7 +686,7 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                     spellings.add(os.path.realpath(spelled))
                 except (OSError, ValueError):
                     pass
-            if any(mentioned_private_path(s, private_paths, home, environ) for s in spellings):
+            if any(private(s) for s in spellings):
                 return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
                                         "outside every staff task. Do not open it; ask the CSO if the task needs it.")
         return None

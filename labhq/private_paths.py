@@ -41,6 +41,11 @@ OUTSIDE_HOME_LABEL = "홈 밖 개인 경로"
 ENV_VAR = "LABHQ_PRIVATE_PATHS"  # the runner hands the approval gate this task's list (os.pathsep-joined)
 # ... and whether private paths are on at all ("1"/"0"): on with an empty list when no entry is active (PR #327).
 ENABLED_ENV_VAR = "LABHQ_PRIVATE_PATHS_ENABLED"
+# ... and the folders inside them this task may read (`staff_claude_project_dirs`), os.pathsep-joined.
+OPEN_READS_ENV_VAR = "LABHQ_PRIVATE_OPEN_READS"
+# What a Claude config folder keeps beside projects/ that matters most (login, account state, prompt history):
+# ruled by name even before it exists, since the Claude deny rules for an open folder are listed per entry.
+CLAUDE_CONFIG_SECRETS = (".credentials.json", ".claude.json", "history.jsonl")
 
 # Variables a shell can spell a home path with; each is replaced by its value before matching.
 _PATH_VARS = ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME")
@@ -59,6 +64,7 @@ class PrivatePaths:
     labels: tuple[str, ...] = ()   # one `~` or role label per active entry; never an absolute path
     skipped: tuple[str, ...] = ()  # labels of entries that contain or equal a work folder
     enabled: bool = True           # False when policy.private_paths is an explicit empty list
+    open_reads: tuple[str, ...] = ()  # folders this task may read even inside a path above (never write)
 
 
 def _expand(raw: str, home: str) -> str:
@@ -109,11 +115,119 @@ def _label(path: str, home: str) -> str:
 
 
 def _labhq_entries(settings: Settings, home: str) -> list[tuple[str, str]]:
-    """labhq's own files staff must not read: the loaded config (tokens) and the gateway state (approvals)."""
+    """labhq's own files staff must not read: the loaded config (tokens), the gateway state (approvals) and the
+    Claude staff config folder (its login; a Claude task reads back only its own project folder there)."""
     entries = [(settings.config_path, CONFIG_LABEL)] if settings.config_path else []
     state = _expand(settings.gateway.state_dir, home)
     entries.append((state if os.path.isabs(state) else str(settings.path(state)), STATE_LABEL))
+    staff = staff_claude_config_dir(settings, home)
+    if staff:
+        entries.append((staff, _label(staff, home)))
     return entries
+
+
+def inside_any(path: str, roots: Iterable[str]) -> bool:
+    """Whether `path` is one of `roots` or below one, lexically, case-folded where the volume is."""
+    for root in roots:
+        fold = _case_insensitive(root)
+        if _under(_fold(path, fold), _fold(root, fold)):
+            return True
+    return False
+
+
+def claude_project_slug(cwd: str) -> str:
+    """The folder name Claude keeps a working folder's sessions and saved tool output under (<config>/projects/).
+
+    Every UTF-16 unit but ASCII letters and digits becomes `-`; past 200 characters it is the first 200, `-` and
+    base36 |djb2| of the path. Probed on Claude 2.1.282 / Windows 11 with an empty CLAUDE_CONFIG_DIR
+    (tests/fixtures/real/claude_code/claude_project_slug.json): the folder is written before the login check."""
+    raw = cwd.encode("utf-16-le", "surrogatepass")
+    units = [int.from_bytes(raw[i:i + 2], "little") for i in range(0, len(raw), 2)]
+    slug = "".join(chr(u) if chr(u).isascii() and chr(u).isalnum() else "-" for u in units)
+    if len(slug) <= 200:
+        return slug
+    digest = 0
+    for unit in units:
+        digest = ((digest << 5) - digest + unit) & 0xFFFFFFFF
+    digest = abs(digest - (1 << 32) if digest >= 1 << 31 else digest)
+    digits = ""
+    while True:
+        digest, rest = divmod(digest, 36)
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"[rest] + digits
+        if not digest:
+            break
+    return f"{slug[:200]}-{digits}"
+
+
+def configured_claude_config_dir(settings: Settings, home: str | None = None) -> str | None:
+    """engines.claude_code.env.CLAUDE_CONFIG_DIR with `${VAR}` and `~` expanded; None when unset."""
+    from .adapters.base import expand_env
+
+    raw = (expand_env(settings.engines.claude_code.env).get("CLAUDE_CONFIG_DIR") or "").strip()
+    return _expand(raw, home or host_home()) if raw else None
+
+
+def in_pi_claude(path: str, home: str | None = None) -> bool:
+    """Whether `path` is the PI's ~/.claude or inside it, as written or through a link."""
+    pi = _forms(os.path.join(home or host_home(), ".claude"))
+    return any(inside_any(form, pi) for form in _forms(path))
+
+
+def staff_claude_config_dir(settings: Settings, home: str | None = None) -> str | None:
+    """engines.claude_code.env.CLAUDE_CONFIG_DIR as an absolute path: the staff's own Claude login (#298 ⑤).
+
+    None when unset or relative, and when it is the PI's ~/.claude or inside it (doctor fails that): nothing in
+    the PI's folder is ever opened."""
+    path = configured_claude_config_dir(settings, home)
+    if not path or not os.path.isabs(path) or in_pi_claude(path, home):
+        return None
+    return path
+
+
+def staff_claude_project_dirs(settings: Settings, workdir: str | os.PathLike) -> list[str]:
+    """<staff CLAUDE_CONFIG_DIR>/projects/<slug of the task folder>: where Claude saves this task's long tool
+    output. Each spelling of the config folder and of the task folder (as written and real), so Claude's own
+    choice of spelling still lands inside. Empty without a staff config folder."""
+    config = staff_claude_config_dir(settings)
+    if not config:
+        return []
+    written = os.path.abspath(str(workdir))
+    cwds, configs = {written}, {config}
+    try:
+        cwds.add(os.path.realpath(written))
+        configs.add(os.path.realpath(config))
+    except (OSError, ValueError):
+        pass
+    return list(dict.fromkeys(os.path.join(c, "projects", claude_project_slug(w))
+                              for c in sorted(configs) for w in sorted(cwds)))
+
+
+def closed_entries(root: str, open_reads: Iterable[str]) -> list[str]:
+    """What to deny inside `root` so the `open_reads` below it stay readable: every top-level entry not on the way
+    to an open folder, plus CLAUDE_CONFIG_SECRETS before they exist.
+
+    Only the top level, a fixed set of names in a Claude config folder. Deeper entries get no rule: projects/
+    gains a folder per Claude task, and naming each one grew the --settings argument until no Claude task could
+    start. Those entries, like any made after the task starts, are not pre-approved (the task's read roots), so
+    reads of them reach the gate, which refuses them."""
+    fold = _case_insensitive(root)
+    key = str.casefold if fold else (lambda name: name)
+    top = re.sub(r"/{2,}", "/", root.replace("\\", "/")).rstrip("/")
+    ways: set[str] = set()
+    for folder in open_reads:
+        spelled = re.sub(r"/{2,}", "/", folder.replace("\\", "/")).rstrip("/")
+        if _under(_fold(spelled, fold), _fold(top, fold)) and len(spelled) > len(top):
+            first = next((part for part in spelled[len(top):].split("/") if part), None)
+            if first:
+                ways.add(key(first))
+    if not ways:
+        return [root]
+    try:
+        present = os.listdir(root)
+    except OSError:
+        present = []
+    return [os.path.join(root, name) for name in dict.fromkeys([*present, *CLAUDE_CONFIG_SECRETS])
+            if key(name) not in ways]
 
 
 def configured_private_paths(settings: Settings, home: str | None = None) -> list[tuple[str, str]]:
@@ -177,9 +291,11 @@ def short_spellings(path: str) -> list[str]:
 
 
 def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike | None] = (),
-                          home: str | None = None) -> PrivatePaths:
+                          home: str | None = None, open_reads: Iterable[str] = ()) -> PrivatePaths:
     """The entries that exist and contain no folder in `keep` (task workdir, workspace root, reference and
-    project folders, plugin folders, the staff CODEX_HOME). An entry that contains one is skipped, not split."""
+    project folders, plugin folders, the staff CODEX_HOME). An entry that contains one is skipped, not split.
+    `open_reads` (a Claude task's own project folder in the staff config folder) is carried through: an entry
+    holding one stays active, and only that folder opens, for reading."""
     if settings.policy.private_paths == []:
         return PrivatePaths(enabled=False)
     home = home or host_home()
@@ -208,7 +324,18 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
             paths.extend(short_spellings(spelled))
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
-    return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)))
+    return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)),
+                        open_reads=tuple(dict.fromkeys(str(p) for p in open_reads if p)))
+
+
+def open_read_allowed(path: str, open_reads: Iterable[str]) -> bool:
+    """Whether a file tool's absolute, `..`-free `path` is inside a folder this task may read."""
+    return inside_any(path, [p for p in open_reads if p])
+
+
+def holds_open_read(private: str, open_reads: Iterable[str]) -> bool:
+    """Whether the private path `private` contains a folder this task may read."""
+    return any(inside_any(folder, [private]) for folder in open_reads if folder)
 
 
 def gate_private_paths(environ: Mapping[str, str], resolve: Callable[[], PrivatePaths]) -> PrivatePaths:
@@ -220,7 +347,8 @@ def gate_private_paths(environ: Mapping[str, str], resolve: Callable[[], Private
         return resolve()
     paths = tuple(p for p in environ[ENV_VAR].split(os.pathsep) if p)
     switch = environ.get(ENABLED_ENV_VAR, "").strip()
-    return PrivatePaths(paths=paths, enabled=bool(paths) or switch not in ("", "0"))
+    open_reads = tuple(p for p in environ.get(OPEN_READS_ENV_VAR, "").split(os.pathsep) if p)
+    return PrivatePaths(paths=paths, enabled=bool(paths) or switch not in ("", "0"), open_reads=open_reads)
 
 
 def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | os.PathLike | None = None,

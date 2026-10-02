@@ -24,7 +24,7 @@ def isolated_home(tmp_path, monkeypatch):
     home.mkdir()
     for key in ("HOME", "USERPROFILE", "LOCALAPPDATA"):
         monkeypatch.setenv(key, str(home))
-    for key in ("LABHQ_CONFIG", "BIOINFO_AGENT_DIR", "CODEX_HOME"):
+    for key in ("LABHQ_CONFIG", "BIOINFO_AGENT_DIR", "CODEX_HOME", "CLAUDE_CONFIG_DIR"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("LABHQ_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
@@ -133,6 +133,29 @@ def test_no_personal_agents_no_staff_home(isolated_home):
     wizard.run(yes=True)
     assert not (isolated_home / ".labhq" / "codex-staff").exists()
     assert "CODEX_HOME" not in _data()["engines"]["codex"].get("env", {})
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_claude_staff_get_their_own_config_folder_and_a_manual_login(isolated_home, monkeypatch, capsys, windows):
+    """#298 ⑤: private paths close the PI's ~/.claude, where Claude would save long output it reads back."""
+    monkeypatch.setattr(wizard, "_is_windows", lambda: windows)
+    (isolated_home / ".claude").mkdir()
+    wizard.run(yes=True)
+    staff = isolated_home / ".labhq" / "claude-staff"
+    assert staff.is_dir() and not list(staff.iterdir())
+    env = _data()["engines"]["claude_code"]["env"]
+    assert env["CLAUDE_CONFIG_DIR"] == ("${USERPROFILE}" if windows else "${HOME}") + "/.labhq/claude-staff"
+    output = capsys.readouterr().out
+    assert ("$env:CLAUDE_CONFIG_DIR = Join-Path $HOME '.labhq/claude-staff'; claude" if windows
+            else 'CLAUDE_CONFIG_DIR="$HOME/.labhq/claude-staff" claude') in output
+    assert "/login" in output and str(isolated_home) not in output
+
+
+def test_no_personal_claude_folder_no_claude_staff_home(isolated_home, capsys):
+    wizard.run(yes=True)
+    assert not (isolated_home / ".labhq" / "claude-staff").exists()
+    assert "CLAUDE_CONFIG_DIR" not in (_data()["engines"]["claude_code"].get("env") or {})
+    assert "CLAUDE_CONFIG_DIR" not in capsys.readouterr().out
 
 
 def test_interactive_plugin_and_scheduler_are_recorded(tmp_path, monkeypatch, capsys):

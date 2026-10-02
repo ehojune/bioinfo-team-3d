@@ -171,6 +171,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         if force:
             raise InitError("인스턴스 설정은 덮어쓰지 않습니다. --force 없이 기존 설정을 사용하세요.")
     staff_home: Path | None = None
+    claude_home: Path | None = None
     if target.exists() and not force:
         print("기존 설정과 token을 보존합니다. 교체하려면 --force를 사용하세요.")
         settings = Settings.load(str(target))
@@ -233,6 +234,15 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             home_var = "USERPROFILE" if _is_windows() else "HOME"
             codex.setdefault("env", {})["CODEX_HOME"] = "${" + home_var + "}/.labhq/codex-staff"
             print("개인 Codex 지침 발견: 직원 전용 ~/.labhq/codex-staff 사용")
+        # Private paths close the PI's ~/.claude to staff, and Claude reads its saved long output back from its
+        # config folder; Claude staff get their own (#298 ⑤).
+        if (data.get("policy") or {}).get("private_paths") != [] and any((home / ".claude").is_dir()
+                                                                        for home in homes):
+            claude_home = Path.home() / ".labhq" / "claude-staff"
+            home_var = "USERPROFILE" if _is_windows() else "HOME"
+            engines.setdefault("claude_code", {}).setdefault("env", {})["CLAUDE_CONFIG_DIR"] = \
+                "${" + home_var + "}/" + doctor.CLAUDE_STAFF_DIR
+            print("개인 Claude 설정(~/.claude) 발견: 직원 전용 ~/.labhq/claude-staff 사용")
         plugin = _ask("bioinfo-agent checkout 경로 (기본값: BIOINFO_AGENT_DIR, 없으면 생략)",
                       os.environ.get("BIOINFO_AGENT_DIR", ""), yes)
         if plugin:
@@ -254,6 +264,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
                 yaml.safe_dump(data, out, allow_unicode=True, sort_keys=False)
             if staff_home:
                 staff_home.mkdir(parents=True, exist_ok=True)
+            if claude_home:
+                claude_home.mkdir(parents=True, exist_ok=True)
             print("설정 저장 완료 (token과 로컬 경로 출력 생략)")
             if trial:  # after the save, so the draft survives an interrupted or failed trial
                 _hpc_trial(settings, yes)
@@ -263,6 +275,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
                 env = {**os.environ, **settings.engines.codex.env}
                 command = codex_command(settings, env)
                 print("로그인 뒤 elevated sandbox 준비: " + setup_hint(staff_home, command, env))
+        if claude_home:
+            print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
     print(doctor.render(result))
     summary = result["summary"]
