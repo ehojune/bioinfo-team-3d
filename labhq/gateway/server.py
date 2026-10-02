@@ -23,6 +23,7 @@ from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, holds_session
@@ -263,7 +264,8 @@ class Hub:
                 "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),
                                   "total": len(steps) if steps else (1 if req.get("mode") == "direct" else 0),
                                   "steps": states}, "cost_usd": req.get("cost_usd", 0),
-                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {}),
+                "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
+                "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
@@ -483,6 +485,40 @@ class Hub:
                     not self._same_runner_generation(entry, runner_id, incarnation)):
                 self._abandon_previous_generation(tid, entry)
 
+    def _record_task_cost(self, rid: str | None, tid: str, result: TaskResult, *,
+                          outcome_unknown: bool = False) -> None:
+        """Count a task's cost on its request once (#270).
+
+        An unreported amount is estimated from a dated price table or kept as unaccounted, never added as $0.
+        A task whose outcome the gateway gave up on is unaccounted even though no result reported a cost.
+        """
+        if rid not in self.requests or not tid:
+            return
+        req = self.requests[rid]
+        costs = req.setdefault("cost_by_task", {})
+        if tid in costs:
+            return
+        agent = self.agents.get(result.agent_id)
+        item = outcome_unknown_item(result, agent) if outcome_unknown else task_cost_item(result, agent)
+        amount = float(item["usd"]) if item["status"] != "unknown" else 0.0
+        costs[tid] = amount
+        req.setdefault("cost_items", {})[tid] = item
+        req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
+        req["cost_known"] = req.get("cost_known", True) and item["status"] != "unknown"
+        summary = request_cost_summary(req)
+        if summary is None:
+            req.pop("cost_summary", None)
+        else:
+            req["cost_summary"] = summary
+        req["usage_known"] = req.get("usage_known", True) and result.usage_known and not outcome_unknown
+        req.setdefault("usage_by_task", {})[tid] = result.usage
+        totals: dict[str, int] = {}
+        for usage in req["usage_by_task"].values():
+            for key, count in usage.items():
+                totals[key] = totals.get(key, 0) + count
+        req["usage"] = totals
+        self.save_request(rid)
+
     def _abandon_previous_generation(self, tid: str, entry: dict) -> TaskResult:
         agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
         result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
@@ -490,6 +526,7 @@ class Hub:
                                   "manual recovery required")
         self.store.put("task", tid, {**entry, "completed": True, "abandoned": True,
                                      "result": result.model_dump(mode="json")})
+        self._record_task_cost(entry.get("request_id"), tid, result, outcome_unknown=True)
         future = self.futures.get(tid)
         if future and not future.done():
             future.set_result(result)
@@ -647,23 +684,7 @@ class Hub:
                                {"task_id": tid, "attempt": task.get("attempt", 1),
                                 "revision": task.get("revision", 0),
                                 "result": result.model_dump(mode="json")})
-            if rid in self.requests and tid:
-                req = self.requests[rid]
-                costs = req.setdefault("cost_by_task", {})
-                if tid not in costs:
-                    amount = float((msg.get("data") or {}).get("cost_usd") or 0)
-                    costs[tid] = amount
-                    req["cost_usd"] = float(req.get("cost_usd") or 0) + amount
-                    known = result.cost_known if result.cost_known is not None else result.cost_usd is not None
-                    req["cost_known"] = req.get("cost_known", True) and known
-                    req["usage_known"] = req.get("usage_known", True) and result.usage_known
-                    req.setdefault("usage_by_task", {})[tid] = result.usage
-                    totals: dict[str, int] = {}
-                    for usage in req["usage_by_task"].values():
-                        for key, count in usage.items():
-                            totals[key] = totals.get(key, 0) + count
-                    req["usage"] = totals
-                    self.save_request(rid)
+            self._record_task_cost(rid, tid, result)
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
@@ -729,7 +750,8 @@ class Hub:
                 return await self._await_prior_task(tid, entry, task.agent_id, task.request_id, sid)
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+            # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=f"no runner hosts agent {task.agent_id!r}")
         fut = asyncio.get_running_loop().create_future()
         self.futures[task.id] = fut
@@ -765,8 +787,10 @@ class Hub:
                         break
                     self.futures.pop(task.id, None)
                     self.task_runner.pop(task.id, None)
-                    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
-                                      error="task delivery uncertain; manual recovery required")
+                    result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                        error="task delivery uncertain; manual recovery required")
+                    self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
+                    return result
                 if fut.done():
                     break
                 target = self.agent_runner[task.agent_id]
@@ -809,8 +833,11 @@ class Hub:
                 elif deadline is None:
                     deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
                 if deadline is not None and asyncio.get_running_loop().time() >= deadline:
-                    return TaskResult(task_id=tid, agent_id=agent_id, ok=False,
-                                      error="recovery runner unavailable; manual restart required")
+                    result = TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                                        error="recovery runner unavailable; manual restart required")
+                    # Dispatched before the restart and never answered: the runner may have spent anything (#270).
+                    self._record_task_cost(request_id, tid, result, outcome_unknown=True)
+                    return result
                 try:
                     await asyncio.wait_for(asyncio.shield(future), 0.1)
                 except asyncio.TimeoutError:
@@ -1110,7 +1137,8 @@ class Hub:
             "approvals": [e["approval"] for e in self.approvals.values()],
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
-                                                                  "usage", "usage_known", "agent_id", "references")},
+                                                                  "cost_summary", "usage", "usage_known", "agent_id",
+                                                                  "references")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")

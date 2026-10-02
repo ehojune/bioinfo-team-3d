@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..costs import cost_detail, format_cost, task_cost_item
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
@@ -776,6 +777,8 @@ class Orchestrator:
         self.cost: dict[str, float] = {}
         # Task IDs whose cost is already in self.cost; durable totals can run ahead of run_step.
         self.cost_tasks: dict[str, set[str]] = {}
+        # Counted tasks whose cost is unaccounted: each is held at per_task_usd when the cap is judged (#270).
+        self.cost_unknown: dict[str, set[str]] = {}
         self.attempts: dict[str, dict[str, int]] = {}
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
@@ -1018,7 +1021,8 @@ class Orchestrator:
                 self.hub.semantics_shadow.after_followup(rid, fid, "ended", "refused_read_only")  # semantics-hook: actions
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": refusal,
-                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
+                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
+                "cost_summary": req.get("cost_summary")})
             return
         if direct:
             session_id, workdir = self._last_agent_session(rid, agent)
@@ -1045,6 +1049,7 @@ class Orchestrator:
                           "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
                           **({"workdir": workdir} if workdir else {})})
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
+        self._seed_cost(rid, req)
         try:
             result = await self.run_step(task)
         except BudgetExceeded as error:
@@ -1062,7 +1067,8 @@ class Orchestrator:
             self.hub.semantics_shadow.after_followup(rid, fid, "ended", "done" if answered else "failed")  # semantics-hook: actions
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
-            "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True)})
+            "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
+            "cost_summary": req.get("cost_summary")})
 
     def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
         """Add an adopted task's recorded cost once (#93).
@@ -1070,14 +1076,38 @@ class Orchestrator:
         The durable request total can already hold parallel tasks whose run_step has not
         added them yet, so copying that total would count those tasks twice.
         """
-        if not rid or rid not in self.hub.requests:
+        if rid in self.hub.requests:
+            self._count_cost(rid, task_id)
+
+    def _count_cost(self, rid: str | None, task_id: str, result: TaskResult | None = None) -> None:
+        """Count a task once: the gateway's classification when it has one, else this result's (#270)."""
+        if not rid:
             return
         counted = self.cost_tasks.setdefault(rid, set())
         if task_id in counted:
             return
         counted.add(task_id)
-        amount = float((self.hub.requests[rid].get("cost_by_task") or {}).get(task_id) or 0)
+        req = self.hub.requests.get(rid) or {}
+        item = (req.get("cost_items") or {}).get(task_id)
+        if item is None and result is not None:
+            item = task_cost_item(result, (getattr(self.hub, "agents", None) or {}).get(result.agent_id))
+        if item is None:  # recorded before costs were classified
+            amount = float((req.get("cost_by_task") or {}).get(task_id) or 0)
+        elif item.get("status") == "unknown":
+            self.cost_unknown.setdefault(rid, set()).add(task_id)
+            self.cost.setdefault(rid, 0.0)
+            return
+        else:
+            amount = float(item.get("usd") or 0)
         self.cost[rid] = self.cost.get(rid, 0.0) + amount
+
+    def _seed_cost(self, rid: str, req: dict) -> None:
+        """Restore unaccounted tasks from the durable record; a restart must not forget them."""
+        unknown = self.cost_unknown.setdefault(rid, set())
+        items = req.get("cost_items") or {}
+        unknown.update(tid for tid, item in items.items() if item.get("status") == "unknown")
+        if req.get("cost_known") is False and not unknown:
+            unknown.add("recorded-before-classification")
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
@@ -1120,8 +1150,7 @@ class Orchestrator:
                     kind = failure_kind(exc)
                     offline = isinstance(exc, RunnerUnavailable)
                 else:
-                    self.cost[rid] = self.cost.get(rid, 0.0) + (res.cost_usd or 0.0)
-                    self.cost_tasks.setdefault(rid, set()).add(res.task_id)
+                    self._count_cost(rid, res.task_id, res)
                     kind = failure_kind(res)
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
@@ -1227,29 +1256,52 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(self.budget_denials[rid])
                 return
-            limit = self.hub.requests.get(rid, {}).get("budget_usd") or self.hub.s.policy.budget.per_request_usd
-            spent = self.cost.get(rid, 0.0)
-            if not limit or spent <= limit:
+            req = self.hub.requests.get(rid, {})
+            limit = req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd
+            if not limit:
                 return
+            spent, unknown, bound = self._budget_bound(rid, limit)
+            if bound <= limit:
+                return
+            over = spent > limit
+            pending = f" + 미집계 {unknown}건" if unknown else ""
+            reserve = self._unknown_reserve(limit)
+            summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?" if over else
+                       f"예산 판정 불가: 집계 ${spent:.2f}{pending}(건당 ${reserve:.2f}로 보면 ${bound:.2f}) / "
+                       f"상한 ${limit:.2f} — 계속 진행할까요?")
             try:
-                dec = await self.hub.request_approval(kind="budget", request_id=rid,
-                                                      summary=f"예산 초과: ${spent:.2f} / ${limit:.2f} — 계속 진행할까요?",
-                                                      detail={"spent_usd": spent, "limit_usd": limit,
-                                                              "requested_budget_usd": max(limit * 2, spent)})
+                detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": max(limit * 2, bound),
+                          **({"unknown_count": unknown, "unknown_reserve_usd": reserve} if unknown else {})}
+                dec = await self.hub.request_approval(kind="budget", request_id=rid, summary=summary, detail=detail)
             except Exception as exc:
                 dec = {"approved": False, "note": str(exc)}
-            spent = self.cost.get(rid, 0.0)  # include concurrently completed attempts in this decision
+            # include concurrently completed attempts in this decision
+            spent, unknown, bound = self._budget_bound(rid, limit)
             approved = bool(dec.get("approved"))
-            outcome = {"spent_usd": round(spent, 4), "limit_usd": limit, "approved": approved}
+            outcome = {"spent_usd": round(spent, 4), "limit_usd": limit, "approved": approved,
+                       **({"unknown_count": unknown} if unknown else {})}
             self.budget_outcomes.setdefault(rid, []).append(outcome)
             await self._emit(rid, "request.budget_exceeded", outcome)
             if approved:
-                self.hub.requests[rid]["budget_usd"] = max(limit * 2, spent)
+                self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound)
             else:
-                reason = f"budget exceeded (${spent:.2f} > ${limit:.2f}); approval denied"
+                pending = f" + {unknown} unaccounted task(s)" if unknown else ""
+                reason = (f"budget exceeded (${spent:.2f}{pending} > ${limit:.2f}); approval denied" if over else
+                          f"budget unaccounted (${spent:.2f}{pending} may pass ${limit:.2f}); approval denied")
                 self.budget_denials[rid] = reason
                 if block:
                     raise BudgetExceeded(reason)
+
+    def _unknown_reserve(self, limit: float) -> float:
+        """What an unaccounted task is assumed to have spent for the cap (#270): the per-task budget, else the cap."""
+        per_task = self.hub.s.policy.budget.per_task_usd
+        return float(per_task) if per_task and per_task > 0 else float(limit)
+
+    def _budget_bound(self, rid: str, limit: float) -> tuple[float, int, float]:
+        """Counted dollars, unaccounted tasks, and the total the cap is judged on: never $0 for an unknown task."""
+        spent = self.cost.get(rid, 0.0)
+        unknown = len(self.cost_unknown.get(rid) or ())
+        return spent, unknown, spent + unknown * self._unknown_reserve(limit)
 
     # ---------- DAG ----------
     async def run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
@@ -1486,6 +1538,7 @@ class Orchestrator:
             "\n\nPI clarification (questions and answer):\n" + qa_text(c) for c in req.get("clarifications") or [])
         self.cost[rid] = float(req.get("cost_usd") or 0)
         self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
+        self._seed_cost(rid, req)
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
@@ -2144,7 +2197,7 @@ class Orchestrator:
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
             failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000),
                       "cost_usd": float(req.get("cost_usd") or 0),
-                      "cost_known": req.get("cost_known", True)}
+                      "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
             if hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
             else:
@@ -2176,18 +2229,26 @@ class Orchestrator:
                 f"- {question}" for question in req["pending_questions"]))
         if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
             metadata.append("Re-plan history:\n" + "\n".join(replan_history_lines(req["replan_history"])))
-        if req.get("cost_known") is False:
+        cost_summary = req.get("cost_summary")
+        if cost_summary and (cost_summary.get("unknown_count") or cost_summary.get("estimated_usd")
+                             or cost_summary.get("warnings")):
+            metadata.append(f"비용: {format_cost(cost_summary)} {cost_detail(cost_summary)}")
+        elif req.get("cost_known") is False:
             known = float(req.get("cost_usd") or 0)
             metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
         for outcome in self.budget_outcomes.get(rid, []):
             decision = "approved" if outcome["approved"] else "denied"
-            metadata.append(f"Budget: ${outcome['spent_usd']:.2f} > "
+            unknown = int(outcome.get("unknown_count") or 0)
+            pending = f" + 미집계 {unknown}건" if unknown else ""
+            relation = ">" if outcome["spent_usd"] > outcome["limit_usd"] else "/"
+            metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")
         report = _append_report_metadata(report, metadata)
         req.update(status="done" if ok else "failed", report=report, results=results, review=review,
                    cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
         data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
-                "cost_known": req.get("cost_known", True), "usage": req.get("usage", {}),
+                "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
+                "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}
         if error:  # one readable line for the office feed and `labhq send`, beside the full report
             req["error"] = data["error"] = error

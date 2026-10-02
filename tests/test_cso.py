@@ -643,6 +643,127 @@ async def test_retry_cost_is_in_request_budget():
 
 
 @pytest.mark.asyncio
+async def test_unknown_cost_is_held_at_the_per_task_budget_and_blocks_the_next_task_when_denied():
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=None, cost_known=False,
+                      usage={"input_tokens": 10, "output_tokens": 2}, usage_known=True)
+
+    hub = FakeHub(dispatch)
+    hub.agents["worker"].update(engine="codex", model=None)  # Codex default model: no price row
+    hub.requests["r"]["budget_usd"] = 10
+    hub.s.policy.budget.per_task_usd = 4
+    orch = Orchestrator(hub)
+    for prompt in ("first", "second"):  # $0 counted, 2 x $4 held: within $10
+        assert (await orch.run_step(Task(agent_id="worker", request_id="r", prompt=prompt))).ok
+    assert hub.approvals == [] and orch.cost["r"] == 0  # counted apart, never added as $0
+    third = await orch.run_step(Task(agent_id="worker", request_id="r", prompt="third"))
+
+    assert third.ok and len(hub.approvals) == 1  # 3 x $4 = $12 may pass the $10 cap
+    approval = hub.approvals[0]
+    assert "예산 판정 불가" in approval["summary"] and "미집계 3건" in approval["summary"]
+    assert approval["detail"] == {"spent_usd": 0, "limit_usd": 10, "requested_budget_usd": 20,
+                                  "unknown_count": 3, "unknown_reserve_usd": 4.0}
+    with pytest.raises(BudgetExceeded, match="unaccounted"):
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt="fourth"))
+    assert len(hub.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_approved_unknown_reservation_raises_the_cap_like_an_overrun():
+    async def dispatch(task):
+        return result(task, text="done", usage={"input_tokens": 10}, usage_known=False)
+
+    hub = FakeHub(dispatch)
+    hub.agents["worker"].update(engine="codex", model="gpt-6.1-sol")
+    hub.approve_budget = True
+    orch = Orchestrator(hub)
+    for index in range(5):  # $5 held per task (the default per_task_usd) against $10, then $20
+        await orch.run_step(Task(agent_id="worker", request_id="r", prompt=f"step {index}"))
+
+    assert len(hub.calls) == 5 and hub.requests["r"]["budget_usd"] == 40
+    assert [(o["unknown_count"], o["limit_usd"]) for o in orch.budget_outcomes["r"]] == [(3, 10), (5, 20)]
+
+
+@pytest.mark.asyncio
+async def test_per_task_budget_off_holds_an_unknown_task_at_the_whole_cap():
+    async def dispatch(task):
+        return result(task, text="done", cost_usd=0.5)
+
+    hub = FakeHub(dispatch)
+    hub.s.policy.budget.per_task_usd = 0
+    hub.requests["r"].update(cost_items={"old": {"task_id": "old", "engine": "gemini", "status": "unknown",
+                                                 "usd": None, "reason": "price_missing"}})
+    orch = Orchestrator(hub)
+    orch._seed_cost("r", hub.requests["r"])
+    await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+
+    assert len(hub.approvals) == 1 and hub.approvals[0]["detail"]["unknown_reserve_usd"] == 10
+
+
+@pytest.mark.asyncio
+async def test_estimated_codex_cost_counts_toward_the_request_budget():
+    async def dispatch(task):
+        return result(task, text="done", usage={"input_tokens": 1_000_000, "cached_input_tokens": 0,
+                                                "cache_write_input_tokens": 0, "output_tokens": 1_000_000})
+
+    hub = FakeHub(dispatch)
+    hub.agents["worker"].update(engine="codex", model="gpt-6.1-sol")
+    orch = Orchestrator(hub)
+    await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+
+    assert orch.cost["r"] == pytest.approx(12.0)  # $2 input + $10 output, over the $10 cap
+    assert hub.approvals[0]["detail"] == {"spent_usd": pytest.approx(12.0), "limit_usd": 10,
+                                          "requested_budget_usd": pytest.approx(20.0)}
+
+
+@pytest.mark.asyncio
+async def test_resumed_request_remembers_unknown_costs_from_the_gateway_record():
+    hub = FakeHub(lambda task: None)
+    hub.requests["r"].update(budget_usd=5, cost_usd=0.5, cost_known=False, cost_by_task={"t0": 0.0, "t1": 0.5},
+                             cost_items={"t0": {"task_id": "t0", "engine": "codex", "status": "unknown",
+                                                "usd": None, "reason": "price_missing"},
+                                         "t1": {"task_id": "t1", "engine": "claude_code", "status": "actual",
+                                                "usd": 0.5}})
+    orch = Orchestrator(hub)
+    orch.cost["r"] = 0.5
+    orch._seed_cost("r", hub.requests["r"])
+    with pytest.raises(BudgetExceeded, match="unaccounted"):  # $0.50 + one task held at $5 > $5
+        await orch._check_budget("r")
+    hub.requests["r"]["budget_usd"] = 11  # raised before the restart
+    orch.budget_denials.clear()
+    await orch._check_budget("r")
+    assert len(hub.approvals) == 1
+
+
+@pytest.mark.asyncio
+async def test_report_keeps_confirmed_estimated_and_unaccounted_costs_apart():
+    from labhq.costs import aggregate_costs, classify_cost
+
+    hub = FakeHub(lambda task: None)
+    items = {
+        "t1": classify_cost(engine="claude_code", model="opus", usage={}, usage_known=True,
+                            cost_usd=1.0, cost_known=True, task_id="t1"),
+        "t2": classify_cost(engine="codex", model="gpt-6.1-sol", usage={
+            "input_tokens": 250_000, "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+            "output_tokens": 0}, usage_known=True, cost_usd=None, cost_known=False, task_id="t2"),
+        "t3": classify_cost(engine="codex", model=None, usage={}, usage_known=True,
+                            cost_usd=None, cost_known=False, task_id="t3"),
+    }
+    hub.requests["r"].update(plan={"steps": [{"id": "A"}]}, cost_known=False, cost_usd=1.5,
+                             cost_items=items, cost_summary=aggregate_costs(items))
+    orch = Orchestrator(hub)
+    orch.cost["r"] = 1.5
+    orch.budget_outcomes["r"] = [{"spent_usd": 1.5, "limit_usd": 10, "approved": False, "unknown_count": 1}]
+    orch._finish("r", "Narrative", {"A": {"status": "done"}}, ok=True)
+    report = hub.requests["r"]["report"]
+
+    assert ("비용: 확인 $1.00 + 추정 $0.50 + 미집계 1건 "
+            "(claude_code 확인 $1.00 · codex 추정 $0.50 + 미집계 1건); 추정은") in report
+    assert "청구액이 아닙니다" in report and "$0.00" not in report
+    assert "Budget: $1.50 + 미집계 1건 / $10.00; denied." in report
+
+
+@pytest.mark.asyncio
 async def test_budget_denial_preserves_failed_attempt_instead_of_skipping_it():
     async def dispatch(task):
         return result(task, ok=False, error="rate limit", cost_usd=0.6)

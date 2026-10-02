@@ -73,17 +73,54 @@ async def test_usage_sum_and_unknown_cost_are_idempotent(tmp_path):
     hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
                          "cost_known": True, "usage": {}}
     hub.save_request("r")
-    for tid, cost, usage in (("t1", 0.3, {"input_tokens": 2}),
-                             ("t2", None, {"input_tokens": 3, "output_tokens": 4})):
-        result = TaskResult(task_id=tid, agent_id="a", ok=True, cost_usd=cost,
-                            cost_known=cost is not None, usage=usage)
+    hub.agents = {
+        "actual": {"engine": "claude_code", "model": "claude-opus-5-5"},
+        "unknown": {"engine": "gemini", "model": "unpriced-model"},
+        "estimated": {"engine": "codex", "model": "gpt-6.1-sol"},
+    }
+    rows = (("t1", "actual", 0.3, {"input_tokens": 2}),
+            ("t2", "unknown", None, {"input_tokens": 3, "output_tokens": 4}),
+            ("t3", "estimated", None, {"input_tokens": 1_000_000, "cached_input_tokens": 0,
+                                       "cache_write_input_tokens": 0, "output_tokens": 100_000}))
+    for tid, agent, cost, usage in rows:
+        result = TaskResult(task_id=tid, agent_id=agent, ok=True, cost_usd=cost,
+                            cost_known=cost is not None, usage=usage,
+                            provenance={"engine": hub.agents[agent]["engine"],
+                                        "model": hub.agents[agent]["model"], "runs": {}})
         message = {"type": "task.result", "task_id": tid, "request_id": "r", "data": result.model_dump()}
         await hub.on_runner_message("runner", message)
         await hub.on_runner_message("runner", message)
     req = hub.requests["r"]
-    assert req["cost_usd"] == 0.3 and req["cost_known"] is False
-    assert req["usage"] == {"input_tokens": 5, "output_tokens": 4}
-    assert hub.request_summary(req)["cost_known"] is False
+    assert req["cost_usd"] == pytest.approx(3.3) and req["cost_known"] is False
+    assert req["usage"] == {"input_tokens": 1_000_005, "output_tokens": 100_004, "cached_input_tokens": 0,
+                            "cache_write_input_tokens": 0}
+    assert req["cost_summary"]["actual_usd"] == 0.3
+    assert req["cost_summary"]["estimated_usd"] == pytest.approx(3.0)
+    assert req["cost_summary"]["unknown_count"] == 1
+    assert hub.request_summary(req)["cost_summary"] == req["cost_summary"]
+    assert req["cost_items"]["t3"]["price"]["model"] == "gpt-6.1-sol"
+
+
+@pytest.mark.asyncio
+async def test_abandoned_task_is_unaccounted_and_an_unrouted_task_is_a_real_zero(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
+                         "cost_known": True, "usage": {}}
+    hub.agents = {"worker": {"engine": "claude_code", "model": "opus"}}
+    hub.store.put("task", "t1", {"request_id": "r", "step_id": "s1", "accepted": True, "completed": False,
+                                  "payload": {"agent_id": "worker"}})
+
+    abandoned = hub._abandon_previous_generation("t1", hub.store.get("task", "t1"))
+    unrouted = await hub.dispatch(Task(agent_id="nobody", request_id="r", prompt="p"))
+    req = hub.requests["r"]
+
+    # The runner may have spent anything before the gateway gave up on it: never $0 (#270).
+    assert abandoned.ok is False and req["cost_items"]["t1"]["reason"] == "outcome_unknown"
+    assert req["cost_known"] is False and req["usage_known"] is False
+    assert req["cost_summary"]["unknown_count"] == 1 and req["cost_summary"]["unknown_tasks"] == ["t1"]
+    assert (unrouted.cost_usd, unrouted.cost_known) == (0.0, True)  # nothing was sent
 
 
 @pytest.mark.asyncio

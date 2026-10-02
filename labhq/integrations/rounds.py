@@ -192,6 +192,7 @@ def build_record(hub: "Hub", rid: str) -> dict:
                    "report": req.get("report"), "pending_decisions": pending,
                    "anomalies": anomalies, "usage": req.get("usage") or {},
                    "cost_usd": req.get("cost_usd"), "cost_known": req.get("cost_known"),
+                   "cost_summary": req.get("cost_summary"),
                    "created_at": req.get("created_at"), "finished_at": req.get("finished_at")},
     }
 
