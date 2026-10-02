@@ -1,0 +1,5 @@
+pr: 319
+rows:
+- sha: 4afd105
+  at: 2026-10-02 20:47
+  text: Windows taskkill의 MemoryError를 직접 PID 종료로 복구하고 bench 취소 회귀 test를 보강했다.
