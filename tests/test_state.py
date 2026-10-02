@@ -850,7 +850,7 @@ async def test_review_revision_budget_survives_restart(tmp_path):
 
     restored = Hub(s)
     restored.register_runner("local", CaptureSocket(), [{"id": a} for a in ("a", "cso", "sci_reviewer")])
-    reviews, revisions = [], []
+    reviews, revisions, syntheses = [], [], []
 
     async def after_restart(task):
         if task.meta["kind"] == "review":
@@ -859,14 +859,58 @@ async def test_review_revision_budget_survives_restart(tmp_path):
         if task.meta["kind"] == "step":
             revisions.append(task.meta["revision"])
             return TaskResult(task_id=task.id, agent_id="a", ok=True, text="revision two")
+        if task.meta["kind"] == "synthesis":
+            syntheses.append(task.prompt)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="CSO report")
         raise AssertionError(task.meta["kind"])
 
     restored.orchestrator.run_step = after_restart
     await restored.orchestrator.run_request("r", resume=True)
-    assert reviews == [1, 2] and revisions == [2]
+    assert reviews == [1, 2] and revisions == [2] and len(syntheses) == 1
     assert restored.requests["r"]["status"] == "failed"
+    assert restored.requests["r"]["outcome"] == "review_unresolved"
+    assert restored.requests["r"]["report"].startswith("CSO report")
     assert restored.requests["r"]["review_progress"]["last_completed_review"] == 2
     assert restored.requests["r"]["review_progress"]["last_completed_revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_resume_of_an_unresolved_review_writes_the_cso_report(tmp_path):
+    """Restarted after the review loop ended with "revise" (phase unresolved): no new review, one CSO report with
+    the open issues listed (2nd mock trial F5)."""
+    from labhq.orchestrator.cso import UNRESOLVED_REVIEW_NOTE
+
+    s = settings(tmp_path)
+    review = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+              "issues": [{"step_id": "s", "problem": "weak", "request": "revise"}]}
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running",
+                           "plan": {"steps": [{"id": "s", "agent_id": "a", "instruction": "analyze",
+                                               "depends_on": []}]},
+                           "results": {"s": TaskResult(task_id="t", agent_id="a", ok=True,
+                                                       text="done").model_dump(mode="json")},
+                           "review_progress": {"phase": "unresolved", "next_revision": 2, "review": review,
+                                               "last_completed_review": 1, "last_completed_revision": 1}}
+    first.save_request("r")
+    first.store.close()
+
+    hub = Hub(s)
+    assert hub.resume_agents("r") == {"cso"}  # the CSO still writes the report
+    hub.register_runner("local", CaptureSocket(), [{"id": a} for a in ("a", "cso", "sci_reviewer")])
+    prompts = []
+
+    async def resumed(task):
+        assert task.meta["kind"] == "synthesis", task.meta["kind"]
+        prompts.append(task.prompt)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="CSO report")
+
+    hub.orchestrator.run_step = resumed
+    await hub.orchestrator.run_request("r", resume=True)
+    req = hub.requests["r"]
+    assert len(prompts) == 1 and prompts[0].endswith(UNRESOLVED_REVIEW_NOTE)
+    assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
+    assert req["report"].startswith("CSO report")
+    assert hub.store.get("request", "r")["outcome"] == "review_unresolved"
 
 
 def test_resume_synthesis_does_not_wait_for_finished_reviewer(tmp_path):

@@ -261,6 +261,13 @@ Team results:
 
 Reviewer: {review}"""
 
+# Appended to SYNTH_PROMPT only when the generic review loop ended with the verdict still "revise" (2nd mock
+# trial F5); the request still fails, but the PI gets the CSO's conclusion instead of a step dump.
+UNRESOLVED_REVIEW_NOTE = (
+    "\n\nThe reviewer still asked for revisions after the last revision labhq could run. List each of the "
+    "reviewer's remaining issues, one by one, in a section titled \"해결되지 않은 리뷰 지적\", and do not state any "
+    "conclusion those issues bear on as if it were settled.")
+
 # The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
 RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
 PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
@@ -2934,22 +2941,34 @@ class Orchestrator:
                 progress.update(phase="review", last_completed_revision=rev + 1)
                 self.hub.save_request(rid)
 
-            if review.get("verdict") == "revise":
-                self._finish(rid, self.report_results(steps, results, n) + "\n\nReview: revisions unresolved.",
-                             serialized_results(), ok=False, review=review)
-                return
-
+            # Still "revise" when revising stopped (F5): the CSO writes the report with the open issues in their own
+            # section and the request stays failed. A failed or budget-denied synthesis ends with the step results.
+            unresolved = review.get("verdict") == "revise"
+            if unresolved:
+                req["outcome"] = "review_unresolved"
+                self.hub.save_request(rid)
             resumable = self.hub.supports_resume(self.cfg.cso_agent)
             # After a restart a consult the gateway lost can still run in this session and workdir (#112).
             session_id, workdir = await self._free_session(
                 self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
                 req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
-            final = await self.run_step(Task(
+            synthesis = Task(
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
-                                           review=short(review, 3000)) + replan_history_note(req),
+                                           review=short(review, 3000)) + replan_history_note(req) +
+                       (UNRESOLVED_REVIEW_NOTE if unresolved else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
-                      **({"workdir": workdir} if workdir else {})}))
+                      **({"workdir": workdir} if workdir else {})})
+            if unresolved:
+                try:
+                    final = await self.run_step(synthesis)
+                except BudgetExceeded as error:
+                    final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
+                self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
+                             f"\n\nReview: revisions unresolved.\n\nSynthesis failed: {final.error}",
+                             serialized_results(), ok=False, review=review)
+                return
+            final = await self.run_step(synthesis)
             self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)

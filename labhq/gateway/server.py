@@ -538,8 +538,7 @@ class Hub:
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
         phase = (req.get("review_progress") or {}).get("phase")
-        if phase != "unresolved":
-            needed.add(self.s.orchestrator.cso_agent)
+        needed.add(self.s.orchestrator.cso_agent)  # an unresolved review still gets the CSO's report (F5)
         if self.s.orchestrator.reviewer_agent and phase not in {"synthesis", "unresolved"}:
             needed.add(self.s.orchestrator.reviewer_agent)
         if not steps and self.s.orchestrator.chief_of_staff_agent:

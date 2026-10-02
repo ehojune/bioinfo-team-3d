@@ -2035,3 +2035,92 @@ def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
     assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
     assert "Upstream step(s) s9 were revised" in extended["s10"]
     assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
+
+
+
+UNRESOLVED_REVIEW = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+                     "issues": [{"step_id": "A", "problem": "no sensitivity check", "request": "add one"}]}
+STEP_A = {"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}
+
+
+def unresolved_hub(on_synthesis, *, accept=False):
+    """A FakeHub whose reviewer asks for revision every round (or accepts with `accept`); one step A."""
+    async def dispatch(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return result(task, structured={"steps": [STEP_A]})
+        if kind == "step":
+            return result(task, text=f"A revision {task.meta.get('revision', 0)}")
+        if kind == "review":
+            return result(task, structured={**UNRESOLVED_REVIEW, "verdict": "accept", "issues": []} if accept
+                          else UNRESOLVED_REVIEW)
+        assert kind == "synthesis", kind
+        return on_synthesis(task)
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.max_revisions = 1
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_unresolved_review_still_gets_a_cso_report():
+    """2nd mock trial F5: revise after the revision cap ended with a 17k-char step dump and no conclusion."""
+    hub = unresolved_hub(lambda task: result(task, text="CSO report body"))
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert [task.meta["revision"] for task in kinds(hub, "review")] == [0, 1]
+    assert len(kinds(hub, "synthesis")) == 1
+    assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
+    assert req["report"].startswith("CSO report body")
+    assert "Review: revisions unresolved." not in req["report"]
+    assert req["review"]["verdict"] == "revise"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_is_unchanged():
+    from labhq.orchestrator.cso import SYNTH_PROMPT, UNRESOLVED_REVIEW_NOTE, replan_history_note
+    from labhq.util import short
+
+    hub = unresolved_hub(lambda task: result(task, text="report"))
+    await Orchestrator(hub).run_request("r")
+    prompt = kinds(hub, "synthesis")[0].prompt
+    assert prompt.endswith(UNRESOLVED_REVIEW_NOTE)
+    assert "해결되지 않은 리뷰 지적" in UNRESOLVED_REVIEW_NOTE and "settled" in UNRESOLVED_REVIEW_NOTE
+    assert "no sensitivity check" in prompt  # the reviewer's open issue is in the prompt it lists from
+
+    accepted = unresolved_hub(lambda task: result(task, text="report"), accept=True)
+    orch = Orchestrator(accepted)
+    await orch.run_request("r")
+    req = accepted.requests["r"]
+    assert req["status"] == "done" and "outcome" not in req
+    results = {k: TaskResult.model_validate(v) for k, v in req["results"].items()}
+    expected = SYNTH_PROMPT.format(
+        request="question", results=orch.format_results(req["plan"]["steps"], results, orch.cfg.context_chars_per_step),
+        review=short(req["review"], 3000)) + replan_history_note(req)
+    assert kinds(accepted, "synthesis")[0].prompt == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["engine", "budget"])
+async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails(failure):
+    hub = unresolved_hub(lambda task: result(task, ok=False, error="engine crashed"))
+    resume = failure == "budget"
+    if resume:  # restarted after the loop with the budget spent: the PI denies the synthesis budget card
+        hub.requests["r"].update(
+            plan={"steps": [{**STEP_A, "outputs": []}]}, cost_usd=50.0,
+            results={"A": result(Task(agent_id="worker", prompt="a"), text="A revision 1").model_dump(mode="json")},
+            review_progress={"phase": "unresolved", "next_revision": 2, "review": UNRESOLVED_REVIEW,
+                             "last_completed_review": 1, "last_completed_revision": 1})
+        hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=resume)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
+    assert "Review: revisions unresolved." in req["report"]
+    assert "### A · worker (ok)" in req["report"] and "A revision 1" in req["report"]
+    if resume:
+        assert not kinds(hub, "synthesis") and len(hub.approvals) == 1
+        assert "Synthesis failed: budget exceeded" in req["report"]
+    else:
+        assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["report"]
