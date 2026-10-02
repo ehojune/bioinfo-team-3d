@@ -7,3 +7,7 @@ rows:
   at: 2026-10-02 19:26
   text: runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리
     ok
+- sha: de4e225
+  at: 2026-10-02 19:32
+  text: runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner
+    계정을 확인
