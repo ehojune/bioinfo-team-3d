@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #149 결정 17 · #151 입력 종류–방법 적합성 그림자 판정
+
+- 결론: 로컬 operation 관계표로 단계 입력을 `fit`·`mismatch`·`unknown` 중 하나로 세며, 세 개의 합계만 그림자 기록과 report에 남긴다.
+- 바뀐 것: `semantics_input_fit.yaml`과 그림자 판정 모듈을 추가했다. EDAM 표가 없어도 로컬 key 판정은 유지된다.
+- 실행한 것: 관련 의미론 테스트 135건과 입력 판정 테스트를 통과시켰다. 전체 pytest는 CI에 맡긴다.
+- 미해결: 없음.
+- 근거: `labhq/research/semantics_input_fit.yaml`, `labhq/research/semantics_input_fit.py`, `tests/test_semantics_input_fit.py`.
+
 ## 2026-10-02 · #297 — 팔란티어식 액션 A2(#149 결정 16)
 
 - 결론: `request.followup` 하나를 PI CLI에서 y/N 뒤 기존 `POST /api/requests/{rid}/followup`으로 보낸다. 기본 off(`semantics.actions: confirm`일 때만). 다른 액션은 그림자 기록만, `hpc.*`는 늘 거부.
