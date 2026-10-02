@@ -1,0 +1,7 @@
+pr: null
+rows:
+- sha: 97a0edc
+  at: 2026-10-03 04:53
+  text: Codex 앱이 업데이트돼 직원 elevated sandbox 준비가 무효가 되면 doctor가 warn과 PowerShell 준비 명령을 보여 준다.
+    runner는 성공한 elevated 실행의 판본을 CODEX_HOME에 적고, 준비 오류로 멈추면 runner마다 한 번 결정함에 알린다.
+    bin auto는 codex.exe가 있는 폴더 중 판본이 가장 높은 곳을 고른다
