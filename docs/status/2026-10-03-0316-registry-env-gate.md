@@ -1,4 +1,4 @@
-## 2026-10-03 · 사용자 환경변수 레지스트리 읽기를 PI 승인으로 (#325)
+## 2026-10-03 · PR #327 — 사용자 환경변수 레지스트리 읽기를 PI 승인으로 (#325)
 
 - 결론: 개인 경로(`policy.private_paths`)가 켜진 task에서 Claude 직원의 Bash·PowerShell 명령이 사용자 환경변수 레지스트리(`HKCU\Environment`)를 읽으면 승인 게이트가 PI에게 묻는다. PI `GITHUB_TOKEN`은 직원 프로세스 환경에서는 지워지지만(#301) 같은 계정의 레지스트리에는 남아 있어서다. 판정을 조이기만 하고 느슨하게 만들지 않는다.
 - 바뀐 것: `labhq/private_paths.py`에 `USER_ENV_REGISTRY` 정규식과 `user_env_registry_read`. `labhq/policy.py` `_private_decision`의 셸 판정 끝에 연결. README §8 개인 경로 절에 한 줄.
