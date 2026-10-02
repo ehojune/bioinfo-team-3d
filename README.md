@@ -105,6 +105,7 @@ labhq send --plan-only "같은 roster로 분석 계획만 작성"               
 labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교"     # 이 요청의 CSO 모델만 변경
 labhq watch                  # 실시간 이벤트
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
+labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
 labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14
 labhq talent                 # 인재풀
 labhq contract extend c_scanpy --days 14    # extend | release | activate | rehire
@@ -434,6 +435,8 @@ flowchart LR
 
 러너는 실행 전후의 `outputs/`를 비교해 새 파일과 바뀐 파일의 크기·sha256을 `manifest.json`의 `runs.<task_id>.observed_outputs`에 남깁니다. `TaskResult.output_sha256`은 수집된 산출의 해시를, `unreported_outputs`는 직원이 보고하지 않은 관찰 산출을 기록합니다(`runner.output_hash_max_bytes` 기본 512 MiB).
 
+`labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없으면 2입니다. `--bundle out.zip`은 `README.md`·`claims.json`·`artifacts.json`만 담고 산출 파일은 넣지 않습니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다(#58).
+
 | 이벤트 | 의미 | UI 매핑 아이디어 |
 |---|---|---|
 | `agent.status` (queued · working · waiting · hibernating · done · error) | 직원 상태 | 타이핑 / 손들기 / 잠자기 zZ / 박수 / 땀 |
@@ -573,7 +576,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 | 버전 | 정의 | 지금 | 남은 것 |
 |---|---|---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 | mock 데모·실제 실행·bench 경로가 있다. 같은 계정 실행의 개인 경로 차단은 PR 리뷰 중 | 개인 경로 차단 병합, 개발 총괄의 모의 시운전, 거기서 나온 수정 |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다(코드·test). 실제 CLI로는 CP1까지만 확인했다. CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 실제 CLI로 연구 요청을 보고서까지 완주, 증거 계층(#58), pack 추가, 로컬 분석 환경과 패키지 설치 정책 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다(코드·test). `labhq verify`가 산출 해시와 앵커를 다시 검사하고 감사 번들을 만든다. 실제 CLI로는 CP1까지만 확인했다. CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 실제 CLI로 연구 요청을 보고서까지 완주, 증거 계층 나머지(#58 ① 일반 단계 결과 계약·tool_use_id), pack 추가, 로컬 분석 환경과 패키지 설치 정책 |
 | v0.75 | PI가 통제 데이터와 HPC로 연구한다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | Linux 클러스터 러너, 통제 데이터 시험, HPC 접근 방식 PI 결정([HANDOFF](HANDOFF.md) 결정 대기 1), 실제 제출 |
 | v1 | 다른 일반 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 | `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다. 계정 분리는 손으로 한다 | 설치·온보딩, 계정 분리 자동화, 문서 |
 | v1.25 | 연구를 넘어 논문을 쓴다 | 없음 | 원고, 인용, 그림 |
