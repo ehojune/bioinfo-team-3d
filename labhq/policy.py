@@ -630,7 +630,7 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     """
     if not private_paths:
         return None
-    from .private_paths import mentioned_private_path, path_field_text
+    from .private_paths import mentioned_private_path, path_field_text, user_env_registry_read
 
     if tool_name in READ_LIKE | WRITE_LIKE:
         # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
@@ -666,6 +666,12 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         if _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
+        # The PI's GITHUB_TOKEN is stripped from staff env but stays readable in the user registry (#325).
+        spelled = user_env_registry_read(cmd)
+        if spelled:
+            return Decision("ask", f"{tool_name} reads the user-environment registry (HKCU\\Environment, where the "
+                                   f"PI's tokens such as GITHUB_TOKEN live; 사용자 환경변수 레지스트리 읽기는 PI 승인 "
+                                   f"필요) via `{spelled[:80]}`: `{cmd[:200]}`")
     return None
 
 

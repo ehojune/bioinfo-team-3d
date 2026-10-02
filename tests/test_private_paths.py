@@ -723,3 +723,92 @@ def test_the_live_probe_cd_spellings_reach_the_gate_on_real_folders(tmp_path):
         assert decision.action == "ask" and "private_paths" in decision.reason, command
     for command in ("cd sub && python script.py", f'cd "{ws}" && cat notes.md', "cd .. && ls"):
         assert gate(command).action == "allow", command
+
+
+# ---------------- user-environment registry (#325) ----------------
+# The PI's GITHUB_TOKEN is a user environment variable: labhq strips it from staff process env, but the same
+# account can read it back from the registry. Pure text tests; no registry is read.
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", r"reg query HKCU\Environment"),
+    ("Bash", r"reg query HKCU\Environment /v GITHUB_TOKEN"),
+    ("Bash", r'reg.exe QUERY "HKEY_CURRENT_USER\Environment" /v GITHUB_TOKEN'),
+    ("Bash", "reg query hkcu/environment"),
+    ("Bash", r"reg export HKCU\Environment out.reg"),
+    ("Bash", r"reg save HKCU\Environment env.hiv"),
+    ("Bash", "reg query HKCU /s /f GITHUB_TOKEN"),
+    ("Bash", r"reg query HKU\S-1-5-21-1-2-3-1001\Environment"),
+    ("Bash", r"cmd /c reg query HK^CU\Environment"),
+    ("Bash", 'reg query "HK"CU\Environment'),
+    ("Bash", "cat /proc/registry/HKEY_CURRENT_USER/Environment/GITHUB_TOKEN"),
+    ("Bash", "wmic environment get name,variablevalue"),
+    ("Bash", "python -c \"import winreg; k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 'Environment')\""),
+    ("Bash", "py -c \"import _winreg as w; print(w.OpenKey(w.HKEY_CURRENT_USER, 'Environment'))\""),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Environment"),
+    ("PowerShell", r"get-itemproperty -Path 'hkcu:\environment' -Name GITHUB_TOKEN"),
+    ("PowerShell", "Get-ItemProperty HKCU:/Environment"),
+    ("PowerShell", "gp HKCU:Environment"),
+    ("PowerShell", r"Get-Item HKCU:\Environment"),
+    ("PowerShell", r"gi Registry::HKEY_CURRENT_USER\Environment"),
+    ("PowerShell", r"Get-ChildItem Registry::HKEY_CURRENT_USER\Environment"),
+    ("PowerShell", r"gci HKCU:\ -Recurse"),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Env*"),
+    ("PowerShell", r"Set-Location HKCU:; Get-ItemProperty Environment"),
+    ("PowerShell", r"Get-ItemPropertyValue HKCU:\Environment GITHUB_TOKEN"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('GITHUB_TOKEN', 'User')"),
+    ("PowerShell", '[System.Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "user")'),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('GITHUB_TOKEN', [EnvironmentVariableTarget]::User)"),
+    ("PowerShell", "[environment]::getenvironmentvariables([System.EnvironmentVariableTarget]::User)"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariables('User')"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('GITHUB_TOKEN', 1)"),
+    ("PowerShell", "$t = [EnvironmentVariableTarget]::User; [Environment]::GetEnvironmentVariable('X', $t)"),
+    ("PowerShell", "[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment').GetValue('GITHUB_TOKEN')"),
+    ("PowerShell", r"[Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Environment', 'GITHUB_TOKEN', $null)"),
+    ("PowerShell", "Get-CimInstance Win32_Environment"),
+    ("PowerShell", "gwmi win32_environment | ? UserName -like '*pi*'"),
+])
+def test_a_user_environment_registry_read_goes_to_the_pi(tool, command):
+    decision = _gate(tool, {"command": command})
+    assert decision.action == "ask" and "HKCU\Environment" in decision.reason, command
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("PowerShell", "$env:GITHUB_TOKEN"),
+    ("PowerShell", "Get-ChildItem Env:"),
+    ("PowerShell", "gci env:GITHUB_TOKEN"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('PATH')"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('PATH', 'Process')"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariable('PATH', [EnvironmentVariableTarget]::Process)"),
+    ("PowerShell", "[Environment]::GetEnvironmentVariables()"),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"),
+    ("PowerShell", "Write-Output 'environment ready'"),
+    ("Bash", "echo %GITHUB_TOKEN%"),
+    ("Bash", "cmd /c set"),
+    ("Bash", "set"),
+    ("Bash", "printenv"),
+    ("Bash", "env | grep PATH"),
+    ("Bash", "python -c \"import os; print(os.environ.get('PATH'))\""),
+    ("Bash", r"reg query HKCU\Software\Python"),
+    ("Bash", "conda env list"),
+    ("Bash", "python setup_environment.py --out outputs/env.txt"),
+    ("Bash", "cat docs/environment.md"),
+])
+def test_ordinary_env_reads_and_unrelated_commands_stay_allowed(tool, command):
+    assert _gate(tool, {"command": command}).action == "allow", command
+
+
+@pytest.mark.parametrize("command", [
+    r"reg query HKCU\Environment",
+    "[Environment]::GetEnvironmentVariable('GITHUB_TOKEN', 'User')",
+    "Get-CimInstance Win32_Environment",
+])
+def test_the_registry_rule_is_off_without_private_paths(command):
+    assert _gate("PowerShell", {"command": command}, private=[]).action == "allow"
+
+
+def test_the_registry_rule_only_tightens():
+    policy = PolicySettings(data_zones=[DataZone(path="/data/cohort")])
+    zone = _gate("Bash", {"command": r"cat /data/cohort/a.tsv; reg query HKCU\Environment"}, policy=policy)
+    assert zone.action == "ask" and "restricted" in zone.reason
+    for tool in ("Read", "Grep"):
+        assert _gate(tool, {"pattern": r"HKCU\Environment", "path": "/work/t1"}).action == "allow"

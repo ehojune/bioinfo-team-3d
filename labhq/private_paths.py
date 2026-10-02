@@ -443,3 +443,76 @@ def path_field_text(value: str, workdir: str | None) -> str:
         joined = workdir.replace("\\", "/").rstrip("/") + "/" + value.replace("\\", "/")
         return ntpath.normpath(joined) if re.match(r"^[A-Za-z]:/", joined) else posixpath.normpath(joined)
     return value
+
+
+# ---------------- user-environment registry (#325) ----------------
+# The PI's GITHUB_TOKEN is a user environment variable, kept in the registry at HKCU\Environment (also
+# HKEY_USERS\<SID>\Environment). labhq strips it from staff process env (#301), but a shell under the same account
+# can read the registry directly. While private paths are active the gate sends such a read to the PI.
+#
+# One alternation, matched case-insensitively on the command with `"`, `'`, PowerShell backtick and cmd `^`
+# escapes removed (`"HK"CU`, ``H`KCU``, `HK^CU`), either slash:
+#   - the key by name: `HKCU\Environment`, `HKCU:Environment`, `HKEY_CURRENT_USER/Environment`,
+#     `Registry::HKEY_CURRENT_USER\Environment`, `/proc/registry/HKEY_CURRENT_USER/Environment` (Git Bash),
+#     `HKU\<SID>\Environment`, a wildcard first key (`HKCU:\Env*`), or the bare hive (`reg query HKCU /s`,
+#     `gci HKCU:\ -Recurse`, `Set-Location HKCU:`), since a whole-hive read includes Environment;
+#   - WMI's copy: `Win32_Environment` (Get-CimInstance, gwmi), `wmic environment`;
+#   - a registry API in code next to the word Environment: Python `winreg`/`_winreg`,
+#     .NET `Microsoft.Win32.Registry`/`RegistryKey`/`[Registry]`;
+#   - `[EnvironmentVariableTarget]::User` anywhere.
+# `[Environment]::GetEnvironmentVariable(s)` with a target other than Process is judged by `user_env_registry_read`.
+# Reads of the stripped process env (`$env:X`, `%X%`, `set`, `printenv`, `os.environ`, `Env:`) do not match.
+# Lexical like the private-path check: a name built at run time or a script file that reads the registry passes.
+# The first defense is the token's scope (the PI token reaches only the repositories labhq needs).
+# The text is matched with `\` read as `/`, so every pattern spells the separator `/`.
+_HIVE = r"(?:hkcu|hkey_current_user|(?:hku|hkey_users)/+[^/\s;|&]+)"
+_HIVE_ROOT = r"(?:hkcu|hkey_current_user|hku|hkey_users)"
+USER_ENV_REGISTRY = re.compile(
+    rf"(?<!\w){_HIVE}\s*(?::\s*/*|/+)\s*environment(?!\w)"           # the key by name
+    rf"|(?<!\w){_HIVE}\s*(?::\s*/*|/+)[^/\s;|&]*[*?\[]"              # a wildcard first key
+    rf"|(?<![\w.])(?:{_HIVE_ROOT}|{_HIVE})\s*:?\s*/*(?=$|[\s;|&)}}])"  # a whole hive, or HKU/<SID>
+    r"|\bwin32_environment\b|\bwmic\b[^;|&\n]*\benvironment\b"        # WMI's copy
+    r"|environmentvariabletarget\]?\s*(?:::|\.)?\s*user\b",            # the User target, anywhere
+    re.I,
+)
+_REGISTRY_API = re.compile(r"\b_?winreg\b|microsoft\.win32\.registry|\bregistrykey\b|\[registry\]", re.I)
+_ENVIRONMENT_WORD = re.compile(r"(?<!\w)environment(?!\w)", re.I)
+_GET_ENV_CALL = re.compile(r"getenvironmentvariable(s?)\s*\(", re.I)
+_PROCESS_TARGET = re.compile(r"^(?:\[(?:system\.)?environmentvariabletarget\]\s*(?:::|\.)?\s*)?(?:process|0)$",
+                             re.I)
+
+
+def _call_args(text: str, start: int) -> list[str]:
+    """Top-level comma-separated arguments of the call whose `(` ends at `start`; unclosed text runs to the end."""
+    depth, args, current = 0, [], []
+    for ch in text[start:]:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    args.append("".join(current))
+    return [a.strip() for a in args]
+
+
+def user_env_registry_read(command: str) -> str | None:
+    """The spelling in `command` that reads the user-environment registry (the patterns above), or None."""
+    text = re.sub(r"[\"'`^]", "", command).replace("\\", "/")
+    match = USER_ENV_REGISTRY.search(text)
+    if match:
+        return match.group(0)
+    api = _REGISTRY_API.search(text)
+    if api and _ENVIRONMENT_WORD.search(text):
+        return api.group(0)
+    for call in _GET_ENV_CALL.finditer(text):
+        args = _call_args(text, call.end())
+        target = args[0] if call.group(1) else (args[1] if len(args) > 1 else "")
+        if target and not _PROCESS_TARGET.match(target):
+            return call.group(0) + target
+    return None
