@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · PR #296 — CSO advisory A/B(#149 결정 15)
+
+- 결론: 연구 요청을 요청 ID hash로 advisory·shadow arm에 고정 배정한다. advisory arm은 #267 selector 후보가 있을 때만 경로·내용·요청 본문 없이 artifact ID·data type·생성 요청 ID를 CSO 계획 참고로 준다.
+- 바뀐 것: `semantics: ab`, arm·후보 ref 사용·비용 그림자 기록, arm별 요청·후보·참조율·실패율·비용과 10건/3주 판단 창 report, 제거 시험과 회귀.
+- 리뷰 반영: arm은 연구 요청에만 붙인다. 참조는 계획 때 요청에 고정한 후보 ID와 비교하고, 그 ID를 쓴 계획도 정보 경계를 통과한다. 후보가 있으면 두 arm 모두 한 번 더 계획하고(shadow arm은 같은 prompt), live 상태 복사는 event loop에서 한다.
+- 실행한 것: 관련 pytest 699 passed, 4 skipped(리뷰 반영 뒤). `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 지시대로 CI에 맡겼다.
+- 미해결: 없음. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/orchestrator/cso.py`, `tests/test_semantics_ab.py`.
+
 ## 2026-10-02 · #295 — 목차 갱신 workflow 직렬화(#292 후속)
 
 - 결론: 병합이 겹쳐도 목차 갱신이 최신 기록을 빠뜨리지 않는다. 한 번에 하나만 돌고, 최신 main에서 만들며, push가 실패하면 다시 만든다.
