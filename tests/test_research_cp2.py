@@ -147,6 +147,49 @@ async def test_research_request_resumed_with_the_pilot_off_dispatches_nothing():
     assert hub.requests["r"]["status"] == "failed"
 
 
+# ---------- P1: a research step may stop for a PI decision before its ledger is checked ----------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schema_shaped", [True, False])
+async def test_research_step_question_reaches_the_pi_and_the_step_reruns(schema_shaped):
+    settings = _settings()
+    holder, seen = {}, []
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        seen.append(task)
+        plan_hash = hub.requests["r"]["research_contract"]["plan_sha256"]
+        question = "Which donor group: (a) cases or (b) controls?"
+        if len(seen) == 1:  # stops for a PI decision: no outputs, no ledger yet
+            asked = ({"schema_version": 2, "plan_sha256": plan_hash, "step_id": "s1", "claims": [], "evidence": [],
+                      "links": [], "artifact_refs": [], "not_established": [], "failures": [], "method_changes": [],
+                      "blocking_decision": question} if schema_shaped else {"blocking_decision": question})
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=asked)
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = {**_cp2_result(hub, task), "blocking_decision": ""}
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path])
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    decisions = [CP1, {"approved": True, "note": "a"}, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert "blocking_decision" in seen[0].output_schema["properties"]
+    assert "blocking_decision" not in seen[0].output_schema["required"]
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "clarify", "research_evidence"]
+    assert "Which donor group" in hub.approvals[1]["summary"] and len(seen) == 2
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
+    ledger = hub.approvals[2]["detail"]["results"]["s1"]
+    assert ledger["claims"][0]["id"] == "c1" and "blocking_decision" not in ledger
+
+
 # ---------- P1: CP2 reads a structured choice, never the note ----------
 
 @pytest.mark.asyncio

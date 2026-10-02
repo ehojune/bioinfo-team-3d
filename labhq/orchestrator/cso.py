@@ -22,7 +22,7 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_RESULT_SCHEMA, bind_result_artifacts,
+from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  validate_research_plan, validate_research_result, with_pack_refs)
@@ -717,6 +717,14 @@ def valid_review(value: Any) -> bool:
         return False
 
     return matches(value, REVIEW_SCHEMA)
+
+
+def blocking_question(result: TaskResult) -> str | None:
+    """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None."""
+    structured = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
+    question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)
+                                            else None)
+    return question.strip() if isinstance(question, str) and question.strip() else None
 
 
 def failure_kind(outcome: TaskResult | BaseException) -> str | None:
@@ -1425,7 +1433,9 @@ class Orchestrator:
                            f"claim_ids={json.dumps(step.get('claim_ids') or [])}, and fill evidence_slots="
                            f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
-                           "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2.")
+                           "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
+                           "If you cannot proceed without a PI decision, return the same schema with every list "
+                           "empty and the question with its choices in blocking_decision; you re-run with the answer.")
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -1452,7 +1462,7 @@ class Orchestrator:
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
-                        output_schema=RESEARCH_RESULT_SCHEMA if research_plan else None,
+                        output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
                         resume_session_id=session_id if can_resume else None,
                         meta={**reference_meta(self.hub.requests.get(rid)),
                               "kind": "step", "step_id": step["id"], "request": request,
@@ -1508,15 +1518,20 @@ class Orchestrator:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
-                    if outcome.ok and by_id[sid].get("outputs"):
+                    # A step that stops for a PI decision did not do the blocked work: its question goes to the
+                    # PI below and the step re-runs, so outputs and the research ledger are checked on that run.
+                    asked = blocking_question(outcome) if outcome.ok else None
+                    if outcome.ok and not asked and by_id[sid].get("outputs"):
                         missing = [name for name in by_id[sid]["outputs"]
                                    if output_relpath(name) not in outcome.outputs]
                         if missing:
                             outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
-                    if outcome.ok and research_plan:
+                    if outcome.ok and not asked and research_plan:
                         structured = (outcome.structured if isinstance(outcome.structured, dict)
                                       else extract_json(outcome.text))
+                        if isinstance(structured, dict):  # the step schema's empty question field is not ledger
+                            structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
                         try:
                             validated_result = validate_research_result(structured, plan=research_plan)
                             if validated_result.step_id != sid:
@@ -1536,10 +1551,8 @@ class Orchestrator:
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
                                                                 "reason": results[sid].error})
                     res = results[sid]
-                    structured = res.structured if isinstance(res.structured, dict) else extract_json(res.text)
-                    question = res.blocking_decision or (structured.get("blocking_decision")
-                                                         if isinstance(structured, dict) else None)
-                    if res.ok and isinstance(question, str) and question.strip():
+                    question = blocking_question(res)
+                    if res.ok and question:
                         if sid in decisions:
                             if req_state is not None:
                                 req_state["pending_questions"] = [question.strip()]
