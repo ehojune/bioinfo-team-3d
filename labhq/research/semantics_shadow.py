@@ -1522,7 +1522,9 @@ def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
     lines, _ = read_lines(paths)
     if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
         return
-    rep["actions"] = _actions().report(lines, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+    readable = [line for line in lines if line.get("type") != "request" or readable_request(line)]  # as B1 (#259)
+    rep["actions"] = _actions().report(readable, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+    rep["actions"]["observed"]["broken"] += len(lines) - len(readable)
 
 
 def _actions_render(rep: Mapping[str, Any]) -> list[str]:
@@ -2022,7 +2024,8 @@ def readable_request(line: Mapping[str, Any]) -> bool:
     if not all(m is None or isinstance(m, Mapping) for m in models):
         return False
     prov, objs, hashes = (m or {} for m in models)
-    return (all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
+    return (isinstance(line.get("rows"), (Mapping, type(None)))  # the action section reads it (#259)
+            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
             and all(_number(m.get("ms")) for m in (prov, objs))
             and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
             and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))

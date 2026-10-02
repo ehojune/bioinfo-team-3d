@@ -483,6 +483,24 @@ def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path
     assert shadow.render_report(rep) == shadow.render_report(json.loads(json.dumps(rep)))
 
 
+async def test_a_request_line_with_malformed_rows_is_broken_in_both_sections(tmp_path, capsys):
+    """#259: one damaged request line is counted as broken instead of ending the whole report."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    _finish(hub)
+    assert hub.semantics_shadow.drain(10)
+    paths = shadow.ShadowPaths(shadow.shadow_root(hub.s))
+    (good,) = [line for line in _lines(tmp_path) if line["type"] == "request"]
+    shadow.append_line(paths, {**good, "request_id": "req_broken", "rows": ["oops"]})
+    capsys.readouterr()
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=True), hub.s) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["requests"] == 1 and rep["broken_lines"] == 1
+    assert rep["actions"]["observed"]["requests"] == 1 and rep["actions"]["observed"]["broken"] == 1
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=False), hub.s) == 0
+
+
 async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_path):
     from scripts import semantics_shadow_remove as removal
     lab = await run_lab(tmp_path / "lab", ON, ["CD276 세포유형 분석 [artifact]"])
