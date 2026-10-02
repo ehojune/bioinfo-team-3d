@@ -809,7 +809,6 @@ def test_a_user_environment_registry_read_goes_to_the_pi(tool, command):
     ("PowerShell", "[Environment]::GetEnvironmentVariable('PATH', 'Process')"),
     ("PowerShell", "[Environment]::GetEnvironmentVariable('PATH', [EnvironmentVariableTarget]::Process)"),
     ("PowerShell", "[Environment]::GetEnvironmentVariables()"),
-    ("PowerShell", r"Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"),
     ("PowerShell", "Write-Output 'environment ready'"),
     ("Bash", "echo %GITHUB_TOKEN%"),
     ("Bash", "cmd /c set"),
@@ -817,22 +816,71 @@ def test_a_user_environment_registry_read_goes_to_the_pi(tool, command):
     ("Bash", "printenv"),
     ("Bash", "env | grep PATH"),
     ("Bash", "python -c \"import os; print(os.environ.get('PATH'))\""),
-    ("Bash", r"reg query HKCU\Software\Python"),
     ("Bash", "conda env list"),
     ("Bash", "python setup_environment.py --out outputs/env.txt"),
     ("Bash", "cat docs/environment.md"),
-    # PR #327 sweep false alarms: a bare HKCU word outside reg.exe, and Process targets spelled other ways.
-    ("Bash", "echo HKCU"),
+    # PR #327 sweep false alarms: a path segment named hkcu, and Process targets spelled other ways.
     ("Bash", "ls outputs/hkcu"),
     ("PowerShell", "[Environment]::GetEnvironmentVariable('TEMP', $null)"),
     ("Bash", "dotnet script -e 'Console.WriteLine(Environment.GetEnvironmentVariable(\"PATH\", "
              "EnvironmentVariableTarget.Process));'"),
     ("PowerShell", "[Environment]::GetEnvironmentVariable.Invoke('PATH')"),
     ("Bash", "cd docs/../tests && python -c \"print(r'raw', b'bytes')\""),
-    ("PowerShell", r"cd HKCU:\Software\Python; gp ."),
 ])
 def test_ordinary_env_reads_and_unrelated_commands_stay_allowed(tool, command):
     assert _gate(tool, {"command": command}).action == "allow", command
+
+
+# PR #327 third review round: any registry access asks, not just the Environment key, and line continuations
+# are joined before matching. Four cases that the allow list above used to hold read other keys and now ask:
+# `Get-ItemProperty HKCU:\...\Run`, `reg query HKCU\Software\Python`, `echo HKCU`, `cd HKCU:\Software\Python; gp .`.
+@pytest.mark.parametrize("tool,command", [
+    ("PowerShell", r"New-PSDrive -Name U -PSProvider Registry -Root HKEY_CURRENT_USER; Get-ItemProperty U:\Environment"),
+    ("PowerShell", r"New-PSDrive -Name Q -PSProvider Registry -Root HKCU:\ | Out-Null; gp Q:\Environment"),
+    ("PowerShell", r"ndr Z Registry HKEY_USERS; gci Z:\ "),
+    ("PowerShell", "Get-ItemProperty HK`\nCU:\\Environment -Name GITHUB_TOKEN"),
+    ("PowerShell", "Get-ItemProperty HK`\r\nCU:\\Environment -Name GITHUB_TOKEN"),
+    ("Bash", "cmd /c powershell gp HK^\r\nCU:\\Environment"),
+    ("Bash", "python -c \"import win\\\nreg; print(1)\""),
+    ("Bash", r'reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment"'),
+    ("PowerShell", r"Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion"),
+    ("PowerShell", r"Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"),
+    ("Bash", r"reg query HKCU\Software\Python"),
+    ("Bash", "echo HKCU"),
+    ("PowerShell", r"cd HKCU:\Software\Python; gp ."),
+    ("Bash", r"C:\Windows\System32\reg.exe export HKU\.DEFAULT out.reg"),
+    ("Bash", r"reg compare HKCU\Software HKLM\Software"),
+    ("PowerShell", r"Get-ChildItem -Path Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE"),
+    ("PowerShell", "[Microsoft.Win32.RegistryKey]::OpenBaseKey('CurrentUser', 'Default')"),
+    ("PowerShell", "Invoke-CimMethod -ClassName StdRegProv -MethodName GetStringValue"),
+    ("Bash", "python -c \"import winreg; print(winreg.HKEY_LOCAL_MACHINE)\""),
+    ("Bash", "ls /proc/registry"),
+])
+def test_any_registry_access_goes_to_the_pi(tool, command):
+    decision = _gate(tool, {"command": command})
+    assert decision.action == "ask" and "registry" in decision.reason, command
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "git status && git log --oneline -5"),
+    ("Bash", "grep -rn alignment outputs/"),
+    ("Bash", "python script.py --region chr1"),
+    ("PowerShell", r"Get-Content outputs\regions.tsv"),
+    ("Bash", "ls outputs/registry_notes"),
+    ("Bash", "python -c \"import re; print(re.compile('x'))\""),
+    ("Bash", "printf 'a\\\nb' && echo done"),
+])
+def test_ordinary_commands_stay_allowed_beside_the_broad_registry_rule(tool, command):
+    assert _gate(tool, {"command": command}).action == "allow", command
+
+
+@pytest.mark.parametrize("command", [
+    r"New-PSDrive -Name U -PSProvider Registry -Root HKEY_CURRENT_USER; Get-ItemProperty U:\Environment",
+    "Get-ItemProperty HK`\nCU:\\Environment",
+    r"Get-ItemProperty HKLM:\SOFTWARE",
+])
+def test_explicit_empty_private_paths_keeps_registry_access_allowed(command):
+    assert _gate("PowerShell", {"command": command}, private=[]).action == "allow"
 
 
 @pytest.mark.parametrize("command", [
