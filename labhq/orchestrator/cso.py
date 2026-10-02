@@ -1564,8 +1564,14 @@ class Orchestrator:
                 partial = await dispatch_turn(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else
                         "status note missing" if partial.ok else partial.error)
+                # A file the wrap-up rewrote no longer has the first run's hash: it is dropped rather than kept
+                # stale, so `labhq verify` reports it unrecorded instead of a mismatch (#58, PR #339 review).
+                rewritten = set(partial.unreported_outputs) | set(partial.output_sha256)
                 res = res.model_copy(update={"partial_results": bool(partial.outputs),
                                              "outputs": list(dict.fromkeys([*res.outputs, *partial.outputs])),
+                                             "output_sha256": {**{path: digest for path, digest in
+                                                                  res.output_sha256.items() if path not in rewritten},
+                                                               **partial.output_sha256},
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass

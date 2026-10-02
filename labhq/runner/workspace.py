@@ -59,6 +59,19 @@ def _case_sensitive(path: Path) -> bool:
 log = logging.getLogger("labhq.runner")
 
 
+def restricted_zones(settings: Any) -> list[Path]:
+    """Restricted zones as real paths: a zone written through a symlink or junction
+    (`/data/cohort` -> `/mnt/store/cohort`) must still block the real directory it points at."""
+    zones: list[Path] = []
+    for zone in settings.policy.data_zones:
+        if zone.level == "restricted":
+            try:
+                zones.append(Path(os.path.expandvars(os.path.expanduser(zone.path))).resolve())
+            except (OSError, RuntimeError, ValueError):
+                continue
+    return zones
+
+
 class TaskWorkspace:
     def __init__(self, root: Path, task: Task, agent: AgentSpec, override: Path | None = None):
         self.dir = Path(override) if override else Path(root) / time.strftime("%Y-%m-%d") / f"{task.id}_{agent.id}"
@@ -69,6 +82,17 @@ class TaskWorkspace:
         self.task, self.agent = task, agent
         self.prompt_pointer: str | None = None
         self._append_refused = False
+
+    @classmethod
+    def existing(cls, workdir: Path, task_id: str) -> "TaskWorkspace":
+        """An earlier run's folder opened only to list and hash its outputs (`labhq verify`, #58 ⑥).
+
+        Nothing is created or written: the scan methods read through held handles as they do after a run."""
+        ws = cls.__new__(cls)
+        ws.dir = Path(workdir)
+        ws.task, ws.agent = Task.model_construct(id=task_id), None  # only the RESULT_<task_id>.md name is read
+        ws.prompt_pointer, ws._append_refused = None, True
+        return ws
 
     def write_task_md(self) -> str:
         t, a = self.task, self.agent

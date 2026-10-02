@@ -16,6 +16,15 @@ except ImportError:  # mcp < 2
     from mcp.server.fastmcp.exceptions import ToolError  # type: ignore
 
 
+# A failed built-in tool call proves nothing either way; the agent must not cite it as evidence or as absence (#58 ④).
+NOT_EVIDENCE = "이 실패는 증거도 부재 증명도 아닙니다"
+
+
+def tool_failure(message: str) -> ToolError:
+    """The error a built-in labhq tool raises: the MCP result is isError and its text ends with NOT_EVIDENCE."""
+    return ToolError(f"{message}\n{NOT_EVIDENCE}")
+
+
 def make_server(name: str, instructions: str) -> Any:
     return _Server(name=name, instructions=instructions)
 

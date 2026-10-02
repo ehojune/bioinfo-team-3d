@@ -126,6 +126,40 @@ def _api(s: Settings, method: str, path: str, **kw):
     return r.json()
 
 
+def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) -> int:
+    """`labhq verify`: 0 when the outputs and report check hold, 1 with problems, 2 when it cannot check (#58 ⑥)."""
+    import httpx
+    from urllib.parse import quote
+
+    from .evidence.audit import render_verify, verify_request, write_bundle
+
+    def cannot(reason: str) -> int:
+        print(json.dumps({"request_id": request_id, "reasons": [reason], "exit_code": 2}, ensure_ascii=False)
+              if as_json else f"확인 못함: {reason} (exit 2)")
+        return 2
+
+    try:
+        req = _api(s, "GET", f"/api/requests/{quote(request_id, safe='')}")
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        return cannot("gateway에 그 요청이 없습니다" if code == 404 else f"gateway가 HTTP {code}를 돌려줬습니다")
+    except (httpx.HTTPError, ValueError) as exc:
+        return cannot(f"gateway에서 요청을 읽지 못했습니다: {exc}")
+    if not isinstance(req, dict):
+        return cannot("gateway가 요청 기록 대신 다른 값을 돌려줬습니다")
+    report = verify_request(req, s)
+    if bundle and report["exit_code"] == 2:
+        report["reasons"].append("끝까지 검사하지 못해 감사 번들을 만들지 않았습니다")
+    elif bundle:
+        try:
+            report["bundle"] = str(write_bundle(report, req, Path(bundle)))
+        except (OSError, ValueError) as exc:  # ValueError: a path with no file name (`--bundle .`)
+            report["reasons"].append(f"감사 번들을 쓰지 못했습니다: {exc}")
+            report["exit_code"] = 2
+    print(json.dumps(report, ensure_ascii=False, indent=2) if as_json else render_verify(report))
+    return report["exit_code"]
+
+
 async def _watch(s: Settings, request_id: str | None = None) -> None:
     import websockets
 
@@ -492,6 +526,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--choice", choices=["approve", "revise", "deny"],
                     help="CP2 evidence review (research_evidence) decision; the note never decides it")
     ap.add_argument("--note", default="")
+    vp = sub.add_parser("verify", help="re-hash a request's outputs on this PC and recheck its report anchors (#58)")
+    vp.add_argument("request_id")
+    vp.add_argument("--json", action="store_true", help="print the result as JSON")
+    vp.add_argument("--bundle", metavar="OUT.zip", help="also write README.md, claims.json and artifacts.json "
+                    "into a zip (the output files themselves are not included)")
     rp = sub.add_parser("recruit", help="hire a contract agent from a paper/repo via Paper2Agent")
     rp.add_argument("--paper")
     rp.add_argument("--repo")
@@ -699,6 +738,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.choice:
             body["choice"] = args.choice
         print(_api(s, "POST", f"/api/approvals/{args.id}", json=body))
+    elif args.cmd == "verify":
+        raise SystemExit(_verify(s, args.request_id, as_json=args.json, bundle=args.bundle))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
                                                     "ttl_days": args.ttl, "name": args.name}))
