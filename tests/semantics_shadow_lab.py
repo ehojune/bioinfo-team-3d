@@ -28,7 +28,7 @@ def lab_settings(tmp: Path, semantics: Any) -> Settings:
     s.gateway.state_dir = s.runner.state_dir = str(tmp / "state")
     port = free_port()
     s.gateway.port, s.gateway.url = port, f"ws://127.0.0.1:{port}"
-    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
     s.runner.workspace_root = str(tmp / "runs")
     s.runner.talent_dir = str(tmp / "talent")
     s.runner.agents_dir = str(tmp / "agents")
@@ -60,9 +60,11 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
     async def tap(ev, **kwargs):
         await publish(ev, **kwargs)
         if ev.get("type") == "approval.requested":
+            aid = ev["data"]["id"]
+
             async def approve():
-                await asyncio.sleep(0.05)
-                await hub.resolve_approval(ev["data"]["id"], True, "ok")
+                await _until(lambda: aid in hub.approvals, 10)
+                await hub.resolve_approval(aid, True, "ok")
             asyncio.get_running_loop().create_task(approve())
 
     hub.publish = tap
@@ -84,9 +86,10 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
     finally:
         runner.stop()
         server.should_exit = True
-        await asyncio.sleep(0.2)
-        for task in tasks:
+        _, pending = await asyncio.wait(tasks, timeout=10)
+        for task in pending:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     return {"hub": hub, "rids": rids, "settings": s, "lines": shadow_lines(tmp)}
 
 
