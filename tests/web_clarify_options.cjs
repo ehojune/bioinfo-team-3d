@@ -81,3 +81,13 @@ test('both offices send the composed answer through the existing approval path',
   assert.match(html,/\.clarify-q/);
   assert.match(live,/a\.kind === 'clarify' && approved && !note/);
 });
+
+test('option text that already starts with its letter is not labelled twice (#331)',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const [row]=decide.syncDecisionCards(container,[{id:'q4',kind:'clarify',summary:'s',detail:{questions:[
+    {question:'Install?',options:['a) approve','B) hold','(c) refuse','A. thaliana'],allow_free_text:false}]}}]);
+  const buttons=nodes(row._decisionParts.questions).filter(n=>n.tagName==='BUTTON');
+  assert.deepEqual(buttons.map(b=>b.textContent),['a) approve','b) hold','c) refuse','d) A. thaliana']);
+  buttons[0].onclick();
+  assert.equal(decide.decisionNote(row,true),'Q1. a) approve');
+});

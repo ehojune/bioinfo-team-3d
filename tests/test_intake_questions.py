@@ -201,3 +201,16 @@ def test_approval_summary_is_bounded_for_many_long_questions():
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(test_structured_questions_become_buttons_and_the_answer_reaches_the_replan())
+
+
+def test_option_text_that_already_carries_a_letter_is_not_labelled_twice():
+    # #331: "a) 승인" showed as "a) a) 승인" on the decision card and in the CLI summary.
+    from labhq.intake import ClarifyingQuestion, normalize_questions, questions_summary
+
+    raw = {"question": "설치할까요?", "options": ["a) 승인", "B) 보류", "(c) 거절", "A. thaliana"],
+           "allow_free_text": False}
+    [question] = normalize_questions([raw])
+    assert question["options"] == ["승인", "보류", "거절", "A. thaliana"]
+    summary = questions_summary([question])
+    assert "a) 승인 / b) 보류 / c) 거절 / d) A. thaliana" in summary and "a) a)" not in summary
+    assert ClarifyingQuestion.model_validate(raw).options == question["options"]
