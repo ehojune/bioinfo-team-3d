@@ -5,15 +5,16 @@ confirm}``, at a terminal, after an explicit y/N. It sends the existing ``POST /
 gateway still decides every rule it decides today and no new authority exists. Every other action stays
 shadow-only, and ``hpc.*`` is refused before anything else is looked at.
 
-Where it can run: in the PI's CLI process only. The gateway, the runner, the adapters, the MCP tools and the
-orchestrator never import this module (tests check), a process with a staff task's environment is refused, and the
-runner hands staff a config copy whose gateway tokens are blank (``settings.write_staff_config``), so a staff
+Where it can run: in the PI's CLI process only. Only the shadow's ``run_cli`` imports this module, inside itself,
+and only the CLI's ``labhq semantics`` calls that; the gateway, the runner, the adapters, the MCP tools and the
+orchestrator never import it (tests check). A process with a staff task's environment is refused, and the runner
+hands staff a fresh config copy whose gateway tokens are blank (``settings.write_staff_config``), so a staff
 process has no client token to send.
 
-No automatic resend. The execution id is written (fsync) before the POST, under a per-request lock created with
-O_EXCL. A lost or unclear answer leaves the record ``unknown`` and the lock in place: nothing retries, and a new run
-for that request is refused until the PI closes the record with ``labhq semantics action check <id>``. A crash
-after the intent reads back the same way. ``accepted`` (the server took it, with its follow-up id) and the
+No automatic resend. The execution id is written before the POST, under a per-request lock created with O_EXCL,
+both fsynced with their folder entries (``Ledger``). A lost or unclear answer leaves the record ``unknown`` and the
+lock in place: nothing retries, and a new run for that request is refused until the PI closes the record with
+``labhq semantics action check <id>``. A crash after the intent reads back the same way. ``accepted`` (the server took it, with its follow-up id) and the
 follow-up's ``completion`` (read later by ``check``) are separate fields.
 
 Availability is three-valued, as in A1: a precondition the live records cannot show is unknown, an earlier
@@ -35,12 +36,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..util import atomic_write_text
-from . import semantics_actions as acts
-from .semantics_shadow import ShadowPaths, _is_link, actions_setting, inside_git_tree, read_disabled, shadow_root
+from ..util import atomic_write_text, fsync_dir
 
 V = 1
-CLI_EXECUTABLE = acts.CLI_EXECUTABLE
 STAFF_ENV = ("LABHQ_TASK_ID", "LABHQ_BROKER_TOKEN", "LABHQ_BROKER_URL", "LABHQ_AGENT_ID", "LABHQ_WORKDIR",
              "LABHQ_EXTRA_ROOTS")  # what the runner sets for a staff task (runner/daemon.py)
 DEFAULT_TOKENS = frozenset({"", "change-me-client"})
@@ -62,6 +60,17 @@ NOTE = {
 Http = Callable[[str, str, Any], "tuple[int | None, Any]"]
 
 
+def _shadow() -> Any:
+    """The #150 shadow, imported when used: the action layer reaches the model only through it, on a marked hook
+    line (tests/test_semantics_pilot.py)."""
+    from . import semantics_shadow  # semantics-hook: actions
+    return semantics_shadow
+
+
+def _acts() -> Any:
+    return _shadow()._actions()  # semantics_actions (A1), the way the shadow itself reaches it
+
+
 # ---------------------------------------------------------------- gate (no file, no network)
 
 def _loopback(url: Any) -> bool:
@@ -76,9 +85,10 @@ def gate(action: Any, settings: Any, env: Mapping[str, str], tty: bool) -> str |
     """Why this process may not run ``action`` now, or None. HPC first, so it is refused whatever else holds."""
     if not isinstance(action, str) or action.startswith("hpc."):
         return "refused_p3"
-    if action not in CLI_EXECUTABLE:
+    if action not in _acts().CLI_EXECUTABLE:
         return "refused_action"
-    if actions_setting(settings) != "confirm":
+    shadow = _shadow()
+    if shadow.actions_setting(settings) != "confirm":
         return "refused_config"
     if any(name in env for name in STAFF_ENV) or not tty or getattr(settings, "config_base", None):
         return "refused_env"
@@ -86,7 +96,7 @@ def gate(action: Any, settings: Any, env: Mapping[str, str], tty: bool) -> str |
     if gateway.client_token in DEFAULT_TOKENS or not _loopback(gateway.url):
         return "refused_config"
     try:
-        if read_disabled(ShadowPaths(shadow_root(settings))) is not None:
+        if shadow.read_disabled(shadow.ShadowPaths(shadow.shadow_root(settings))) is not None:
             return "refused_config"  # the shadow latched off: the action layer goes off with it
     except (OSError, ValueError):
         return "refused_config"
@@ -99,22 +109,38 @@ class LedgerError(Exception):
     pass
 
 
+def _make_dir(path: Path) -> None:
+    """Create a folder and its missing parents, each new entry fsynced into its parent folder."""
+    missing = []
+    while not path.exists():
+        missing.append(path)
+        path = path.parent
+    for folder in reversed(missing):
+        folder.mkdir(exist_ok=True)
+        fsync_dir(folder.parent)
+
+
 class Ledger:
-    """One JSON record per execution and one O_EXCL lock per request while an execution is open or unknown."""
+    """One JSON record per execution and one O_EXCL lock per request while an execution is open or unknown.
+
+    Every change is durable before the next step: a lock or record is fsynced, and so is the folder entry that
+    names it (created, renamed or removed), so a power loss right after the POST cannot drop both and let the same
+    follow-up go twice. On Windows the folder step rests on NTFS's metadata journal (``util.fsync_dir``)."""
 
     def __init__(self, settings: Any):
-        self.root = shadow_root(settings) / "actions"
+        self.root = _shadow().shadow_root(settings) / "actions"
         self.runs, self.open = self.root / "runs", self.root / "open"
 
     def _ready(self) -> None:
-        if inside_git_tree(self.root):
+        shadow = _shadow()
+        if shadow.inside_git_tree(self.root):
             raise LedgerError("inside a git work tree")
         for place in (self.root.parent, self.root, self.runs, self.open):
             try:
-                if _is_link(os.lstat(place)):
+                if shadow._is_link(os.lstat(place)):
                     raise LedgerError("link")
             except FileNotFoundError:
-                place.mkdir(parents=True, exist_ok=True)
+                _make_dir(place)
 
     def _lock(self, action: str, rid: str) -> Path:
         return self.open / f"{action}__{rid}"
@@ -129,21 +155,29 @@ class Ledger:
 
     def acquire(self, action: str, rid: str, exec_id: str) -> None:
         self._ready()
-        fd = os.open(self._lock(action, rid), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        path = self._lock(action, rid)
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, exec_id.encode("ascii"))
             os.fsync(fd)
         finally:
             os.close(fd)
+        try:
+            fsync_dir(self.open)
+        except OSError:
+            path.unlink()  # nothing was sent: a lock that may not survive a restart is no lock
+            raise
 
     def release(self, action: str, rid: str, exec_id: str) -> None:
         path = self._lock(action, rid)
         if self.holder(action, rid) == exec_id:
             path.unlink()
+            fsync_dir(self.open)
 
     def write(self, record: Mapping[str, Any]) -> None:
         self._ready()
         atomic_write_text(self.runs / f"{record['exec_id']}.json", json.dumps(record, sort_keys=True))
+        fsync_dir(self.runs)  # the rename's entry, not only the file's bytes
 
     def read(self, exec_id: str) -> dict | None:
         try:
@@ -212,7 +246,7 @@ def conditions(req: Any, agents: Any, cso_agent: str, previous: str | None) -> t
         responder["on_roster"] = entry is not None
         engine = entry.get("engine") if entry is not None else None
         responder["read_only"] = enforces_read_only(engine) if isinstance(engine, str) else None
-    conds = acts.followup_conditions(req.get("status"), running, responder)
+    conds = _acts().followup_conditions(req.get("status"), running, responder)
     conds["previous_settled"] = True if previous is None else None
     return conds, agent if isinstance(agent, str) else None
 
@@ -261,7 +295,7 @@ def run(settings: Any, action: str, rid: str, text: str | None, *, env: Mapping[
         previous = "unreadable"
     conds, responder = conditions(_get(http, f"/api/requests/{rid}"), _get(http, "/api/agents"),
                                   settings.orchestrator.cso_agent, previous)
-    verdict = acts._all(conds.values())
+    verdict = _acts()._all(conds.values())
     shown = " · ".join(f"{name} {_tri(value)}" for name, value in conds.items())
     if verdict is not True:
         _try_write(ledger, _record(exec_id, rid, "refused_model", conds, text, time.time()))
@@ -323,7 +357,10 @@ def run(settings: Any, action: str, rid: str, text: str | None, *, env: Mapping[
                   ms=round((time.time() - started) * 1000, 1))
     written = _try_write(ledger, record)
     if outcome != "unknown" and written:
-        ledger.release(action, rid, exec_id)
+        try:
+            ledger.release(action, rid, exec_id)
+        except OSError:
+            pass  # the lock outlives a settled record: `check` removes it, nothing is resent
     if not written:  # the intent stays on disk, so this run reads back as unknown and holds the request
         out(f"결과 기록을 쓰지 못해 {exec_id}는 미결(unknown)로 남습니다.")
     if outcome == "accepted":
@@ -371,6 +408,8 @@ def check(settings: Any, exec_id: str | None, *, env: Mapping[str, str], tty: bo
         out(f"{exec_id}: 기록이 없습니다.")
         return 1
     outcome = (rec or {}).get("outcome")
+    if outcome in ("accepted", "refused") and lock is not None:  # settled, but a crash kept its lock
+        ledger.release(rec["action"], rec["request_id"], exec_id)
     if outcome == "accepted":
         req = _get(http or _http(settings), f"/api/requests/{rec['request_id']}")
         followups = req.get("followups") if isinstance(req, Mapping) else None
@@ -397,6 +436,7 @@ def check(settings: Any, exec_id: str | None, *, env: Mapping[str, str], tty: bo
                 out(f"refused_ledger: {NOTE['refused_ledger']}.")
                 return 1
         (ledger.open / lock).unlink()
+        fsync_dir(ledger.open)
         out(f"{exec_id}: closed_by_pi")
         return 0
     out(f"{exec_id}: {rec.get('decision')} · {outcome or '-'}")

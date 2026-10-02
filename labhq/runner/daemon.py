@@ -814,6 +814,9 @@ class Runner:
                 self.ended_roots = [entry for entry in self.ended_roots if entry[0] >= horizon]
                 self.broker.revoke_task_token(broker_token)
                 self.broker.finish_task(task.id)
+                if staff_config:  # this task's own copy; the next task gets a fresh one
+                    with contextlib.suppress(OSError):
+                        os.unlink(staff_config)
 
         # Every job this run submitted, finished or not: _poll_jobs sends jobs.finished for them only after the run
         # ends, and a job the watcher saw finish while the agent still talked would otherwise never wake it (#281).

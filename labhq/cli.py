@@ -659,9 +659,6 @@ def main(argv: list[str] | None = None) -> None:
         for d in install_skill(s.recruit.skill_source, Path("~/.labhq/cache").expanduser()):
             print(f"installed → {d}")
     elif args.cmd == "semantics":  # semantics-hook
-        if args.semantics_cmd == "action":  # semantics-hook: actions
-            from .research.semantics_actions_run import run_cli as action_cli  # semantics-hook: actions
-            raise SystemExit(action_cli(args, s))  # semantics-hook: actions
         from .research.semantics_shadow import run_cli as semantics_cli  # semantics-hook
         raise SystemExit(semantics_cli(args, s))  # semantics-hook
     elif args.cmd == "demo":

@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
+import shutil
+import stat
 from pathlib import Path
 
 import pytest
@@ -113,6 +116,8 @@ def _runner_with_config(tmp_path, monkeypatch):
     class Adapter:
         async def run(self, ctx):
             seen["ctx"] = ctx
+            copy = Path(ctx.env["LABHQ_CONFIG"])  # read while the task runs: the copy is deleted when it ends
+            seen["copy_text"], seen["staff"] = copy.read_text(encoding="utf-8"), Settings.load(str(copy))
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
@@ -131,9 +136,10 @@ async def test_staff_get_a_config_copy_without_the_gateway_tokens(tmp_path, monk
     surfaces = [*ctx.env.values(), *(json.dumps(m.model_dump()) for m in ctx.mcp_servers)]
     assert ctx.mcp_servers and all(TOKEN not in v and "zz-pi-runner" not in v for v in surfaces)
     copy = Path(ctx.env["LABHQ_CONFIG"])
-    assert copy.resolve() != Path(settings.config_path) and TOKEN not in copy.read_text(encoding="utf-8")
-    staff = Settings.load(str(copy))  # what the MCP tools load
+    assert copy.resolve() != Path(settings.config_path) and TOKEN not in seen["copy_text"]
+    staff = seen["staff"]  # what the MCP tools load
     assert staff.gateway.client_token == "" and staff.gateway.runner_token == ""
+    assert not copy.exists()  # each task's own copy, gone when it ends
     assert staff.policy == settings.policy and staff.path("runs") == settings.path("runs")
     with TestClient(__import__("labhq.gateway.server", fromlist=["create_app"]).create_app(settings)) as client:
         assert client.get("/api/agents", headers={"Authorization": "Bearer "}).status_code == 401
@@ -149,6 +155,71 @@ async def test_a_task_is_refused_rather_than_handed_the_original_config(tmp_path
     result = await runner.run_task(Task(id="task-a2b", request_id="req_x", agent_id="worker", prompt="p",
                                         meta={"kind": "direct"}))
     assert not result.ok and "OSError" in result.error and "ctx" not in seen
+
+
+def _pi_settings(tmp_path):
+    config = tmp_path / "config" / "labhq.yaml"
+    config.parent.mkdir()
+    config.write_text(yaml.safe_dump({"gateway": {"client_token": TOKEN, "state_dir": str(tmp_path / "gw")}}),
+                      encoding="utf-8")
+    return Settings.load(str(config))
+
+
+def _link_or_skip(link: Path, target: Path) -> str:
+    """Point ``link`` at ``target``: a symlink, else (Windows without the symlink right) a junction to a folder."""
+    try:
+        os.symlink(target, link, target_is_directory=target.is_dir())
+        return "symlink"
+    except OSError:
+        pass
+    if os.name == "nt" and target.is_dir():
+        import _winapi
+        try:
+            _winapi.CreateJunction(str(target), str(link))
+            return "junction"
+        except OSError:
+            pass
+    pytest.skip("this OS can create neither a symlink nor a junction here")
+
+
+def test_a_staff_copy_swapped_for_a_link_never_reaches_the_next_task(tmp_path):
+    """Before: the copy's name came from its content and an existing file was trusted, so a staff process that
+    replaced its copy with a link to the PI's config handed the tokens to the next task."""
+    from labhq.settings import write_staff_config
+
+    settings = _pi_settings(tmp_path)
+    folder = tmp_path / "rstate" / "staff"
+    first = Path(write_staff_config(settings, folder))
+    first.unlink()
+    try:
+        os.symlink(settings.config_path, first)
+    except OSError:  # Windows without the symlink right: the same swap one level up, a junction on the folder
+        decoy = tmp_path / "decoy"
+        decoy.mkdir()
+        shutil.copyfile(settings.config_path, decoy / first.name)
+        folder.rmdir()
+        _link_or_skip(folder, decoy)
+        with pytest.raises(OSError, match="link"):
+            write_staff_config(settings, folder)
+        return
+    handed = Path(write_staff_config(settings, folder))
+    info = os.lstat(handed)
+    assert handed != first and stat.S_ISREG(info.st_mode)
+    assert TOKEN not in handed.read_text(encoding="utf-8")
+
+
+def test_a_linked_staff_folder_is_refused(tmp_path):
+    from labhq.settings import write_staff_config
+
+    settings = _pi_settings(tmp_path)
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    folder = tmp_path / "rstate" / "staff"
+    folder.parent.mkdir()
+    _link_or_skip(folder, decoy)
+    with pytest.raises(OSError, match="link"):
+        write_staff_config(settings, folder)
+    assert list(decoy.iterdir()) == []
 
 
 @pytest.mark.parametrize("marker", a2.STAFF_ENV)
@@ -176,21 +247,40 @@ def test_the_staff_config_copy_cannot_run_the_action_even_with_a_scrubbed_enviro
 STAFF_SIDE = ("labhq/runner", "labhq/tools", "labhq/adapters")
 
 
+def _enclosing(tree):
+    """Each node's innermost enclosing function name ('' at module level)."""
+    where = {}
+    for func in ast.walk(tree):
+        if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            where.update({id(n): func.name for n in ast.walk(func)})
+    return where
+
+
 def test_only_the_pi_cli_reaches_the_action_runner():
     """No staff-side module, MCP tool, gateway or orchestrator imports the runner of A2, and staff-side code names no
-    REST path and no client token. The CLI imports it inside its own command only."""
-    importers = []
+    REST path and no client token. Only the shadow's ``run_cli`` imports it, inside that function (the pilot rule
+    lets the CLI reach the action layer through the shadow only), and only the CLI imports that ``run_cli``."""
+    importers, entry = [], []
     for path in sorted((ROOT / "labhq").rglob("*.py")):
         rel = path.relative_to(ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        names = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
-        names |= {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
-        if any("semantics_actions_run" in name for name in names):
-            importers.append(rel)
+        where = _enclosing(tree)
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                names = [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom):
+                names = [("." * n.level) + (n.module or "")] + [a.name for a in n.names]
+                if names[0].endswith("semantics_shadow") and "run_cli" in names[1:]:
+                    entry.append((rel, where.get(id(n), "")))
+            else:
+                continue
+            if any("semantics_actions_run" in name for name in names):
+                importers.append((rel, where.get(id(n), "")))
         if rel.startswith(STAFF_SIDE):
             text = path.read_text(encoding="utf-8")
             assert "/api/" not in text and "client_token" not in text and "semantics_actions" not in text, rel
-    assert importers == ["labhq/cli.py"]
+    assert importers == [("labhq/research/semantics_shadow.py", "run_cli")]
+    assert entry == [("labhq/cli.py", "main")]
     tools = [n.name for p in (ROOT / "labhq" / "tools").glob("*_mcp.py")
              for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))) if isinstance(n, ast.AsyncFunctionDef)]
     assert tools and not [t for t in tools if "followup" in t or "action" in t]
@@ -276,6 +366,79 @@ def test_the_execution_id_is_on_disk_before_the_post(tmp_path):
     code, _, _ = _run(_settings(tmp_path), http)
     assert code == 0 and len(seen) == 1 and seen[0][0][0] == "intent"
     assert seen[0][0][1] == _records(tmp_path)[0]["exec_id"]
+
+
+def test_the_lock_and_the_intent_reach_their_folders_durably_before_the_post(tmp_path, monkeypatch):
+    """Before: the lock and the intent were fsynced as files but their folder entries were not, so a power loss
+    right after the POST could drop both and the same follow-up went again. The POSIX path with fsync mocked; a
+    folder's fd is faked so the test runs where a folder cannot be opened (Windows)."""
+    from labhq import util
+
+    events, folders = [], {}
+    real_open, real_fsync, real_close = os.open, os.fsync, os.close
+
+    def fake_open(path, flags, *args, **kwargs):
+        if os.path.isdir(path):
+            fd = 1_000_000 + len(folders)
+            folders[fd] = Path(path).name
+            return fd
+        return real_open(path, flags, *args, **kwargs)
+
+    def fake_fsync(fd):
+        if fd in folders:
+            events.append(("folder", folders[fd]))
+        else:
+            events.append(("file",))
+            real_fsync(fd)
+
+    monkeypatch.setattr(util, "DIR_FSYNC", True)
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(os, "fsync", fake_fsync)
+    monkeypatch.setattr(os, "close", lambda fd: None if fd in folders else real_close(fd))
+    http = Fake()
+    http.on_post = lambda: events.append(("post",))
+    code, _, _ = _run(_settings(tmp_path), http)
+    assert code == 0
+    before = events[:events.index(("post",))]
+    assert {("folder", "state"), ("folder", "semantics"), ("folder", "actions")} <= set(before)  # new folders
+    lock, intent = before.index(("folder", "open")), before.index(("folder", "runs"))
+    assert before[lock - 1] == ("file",) and before[intent - 1] == ("file",) and lock < intent
+
+
+def test_folder_fsync_never_fails_where_a_folder_cannot_be_opened(tmp_path, monkeypatch):
+    """Windows: os.open cannot open a folder, so there the entries rest on NTFS's journal and nothing fails."""
+    from labhq import util
+
+    assert util.DIR_FSYNC is (os.name != "nt")
+    util.fsync_dir(tmp_path)  # this platform's own path
+    monkeypatch.setattr(util, "DIR_FSYNC", False)
+    monkeypatch.setattr(os, "open", lambda *a, **k: (_ for _ in ()).throw(PermissionError("a folder")))
+    util.fsync_dir(tmp_path)
+
+
+def test_a_lock_that_cannot_be_made_durable_is_removed_and_nothing_is_sent(tmp_path, monkeypatch):
+    def fsync_dir(path):
+        if Path(path).name == "open":
+            raise OSError("EIO")
+    monkeypatch.setattr(a2, "fsync_dir", fsync_dir)
+    http = Fake()
+    code, said, _ = _run(_settings(tmp_path), http)
+    assert code == 1 and said[0].startswith("refused_ledger") and http.posts == []
+    assert list((_ledger_root(tmp_path) / "open").iterdir()) == []
+
+
+def test_a_settled_run_whose_lock_outlived_it_is_freed_by_check(tmp_path, monkeypatch):
+    """A crash between the accepted record and the lock's removal: the request stays held until check, not forever."""
+    s = _settings(tmp_path)
+    http = Fake()
+    with monkeypatch.context() as m:
+        m.setattr(a2.Ledger, "release", lambda *a: (_ for _ in ()).throw(OSError("power")))
+        code, said, _ = _run(s, http)
+    assert code == 0 and said[0].startswith("accepted")
+    (rec,) = _records(tmp_path)
+    assert _run(s, http)[0] == 1 and len(http.posts) == 1
+    assert a2.check(s, rec["exec_id"], env={}, tty=True, ask=lambda p: "n", out=[].append, http=http) == 0
+    assert _run(s, http)[0] == 0 and len(http.posts) == 2
 
 
 @pytest.mark.parametrize("post", [TimeoutError("read timed out"), ConnectionResetError(), (500, None),
@@ -431,4 +594,4 @@ def test_hpc_is_always_refused_and_nothing_else_runs(tmp_path, action):
     expected = "refused_p3" if action.startswith("hpc.") else "refused_action"
     assert code == 1 and said[0].startswith(expected) and http.calls == [] and asked == []
     assert a2.gate(action, _settings(tmp_path, None), {}, False) == expected  # HPC first, whatever else holds
-    assert a2.CLI_EXECUTABLE == frozenset({"request.followup"}) and acts.EXECUTABLE == frozenset()
+    assert acts.CLI_EXECUTABLE == frozenset({"request.followup"}) and acts.EXECUTABLE == frozenset()

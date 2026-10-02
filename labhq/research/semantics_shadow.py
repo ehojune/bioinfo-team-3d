@@ -2342,6 +2342,9 @@ def mark(paths: ShadowPaths, rid: str, ref: str, verdict: str) -> str:
 
 
 def run_cli(args: argparse.Namespace, settings: Any) -> int:
+    if args.semantics_cmd == "action":  # semantics-hook: actions (A2, #149 결정 16: the PI's CLI only)
+        from .semantics_actions_run import run_cli as action_cli  # semantics-hook: actions
+        return action_cli(args, settings)  # semantics-hook: actions
     paths = ShadowPaths(shadow_root(settings))
     if args.semantics_cmd != "report" and inside_git_tree(paths.root):
         print(f"semantics {args.semantics_cmd}: gateway.state_dir is inside a git work tree; nothing written")
