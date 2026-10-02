@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:13 | [`64a5b4f`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/64a5b4f) | 관찰 산출물 test가 Linux CI에서도 해시 중 파일 변화를 재현하도록 고침 |
+| 06:03 | [`8395867`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/8395867) | 관찰 산출물: 크기·mtime을 유지한 교체도 변경으로 보고, 해시 읽기를 상한까지로 묶음(봇 P1 두 건) |
+| 05:55 | [`3740135`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/3740135) | 관찰된 산출물 manifest와 sha256, CP2 artifact hash를 기록했다. |
 | 05:34 | [`364f5e8`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/364f5e8) | 마지막 메시지 대체는 exit guard가 프로세스를 끝낸 경우에만(평소 종료는 기존 동작) |
 | 05:24 | [`d9d36f3`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/d9d36f3) | main 병합: 실행 guard의 종료 코드와 #329의 명령 실행 기록을 함께 둠 |
 | 05:22 | [`730eab4`](https://github.com/ehojune/bioinfo-team-3d/pull/332/commits/730eab4) | Codex를 유예 뒤 끝냈을 때 결과는 turn의 마지막 agent 메시지(중간 메시지를 이어 붙이지 않음) |
