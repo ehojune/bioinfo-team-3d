@@ -10,6 +10,22 @@
 - 미해결: 없음.
 - 근거: `labhq/cli.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/settings.py`, `tests/test_plan_only_cso_model.py`, `README.md`.
 
+## 2026-10-02 · CI — README만 바뀌면 README 검사만, 느린 test 15개 출력
+
+- 결론: PI 지적. 루트 README를 읽는 test는 `tests/test_integrations.py` 하나라서, STATUS·패치노트 말고 README만 바뀐 push는 전체 pytest를 건너뛰고 그 파일만 Ubuntu에서 돌린다. pytest job은 가장 느린 test 15개를 출력한다.
+- 바뀐 것: `scripts/ci_skip.py`(README는 `readme=true`로 따로 표시), `.github/workflows/test.yml`(`readme` job, `--durations=15`), `tests/test_ci_skip.py`.
+- 실행한 것: `tests/test_ci_skip.py` 6건.
+- 미해결: 없음.
+- 근거: `scripts/ci_skip.py`.
+
+## 2026-10-02 · #281 #280 — 조기 종료 HPC job wake 보존과 event-loop worker 검증
+
+- 결론: agent가 실행 중일 때 job watcher가 먼저 종료를 관찰하면 `pending_jobs`에서 빠져 CSO가 wake를 기다리지 않았다. 대기 상한은 바꾸지 않았다.
+- 바뀐 것: 해당 run이 제출한 job은 종료 여부와 관계없이 결과에 남겨 나중 `jobs.finished`가 session을 깨우게 했다. event-loop test는 `join` 및 blocking `put` 호출을 기록해 예외가 삼켜져도 실패한다.
+- 실행한 것: 수정 전 유휴 120회 0실패, 기존 부하 재현 120회 10실패(모두 조기 terminal·`pending_jobs` 누락). 수정 후 e2e wake·조기 종료 회귀·event-loop test를 각 50회 순차 실행해 0실패.
+- 미해결: 없음.
+- 근거: `labhq/runner/daemon.py`, `tests/test_hpc_followups.py`, `tests/test_semantics_shadow_worker.py`.
+
 ## 2026-10-02 · #258 #259 #260 #266 #268 #269 — 그림자·액션 후속 P2 묶음
 
 - 결론: 액션 층 그림자의 epoch 전환·report·breaker 결함 3건과 B1 그림자의 직원 ID 경계·재사용 입력 계보 3건을 고쳤다. 실행 허용 목록은 빈 집합, `hpc.*` 거부, CSO에 주는 것 없음, 기록에 값 없음은 그대로다. 정보 경계는 막는 값만 늘었다.
