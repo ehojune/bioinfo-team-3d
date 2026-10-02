@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:32 | [`64d1801`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/64d1801) | 설정 폴더 Read deny를 최상위 항목으로 한정해 task가 쌓여도 명령줄이 늘지 않게 한다 |
+| 06:15 | [`2bd2574`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/2bd2574) | init이 Claude 직원 전용 ~/.labhq/claude-staff와 CLAUDE_CONFIG_DIR를 넣고 로그인 명령만 안내한다 |
+| 06:14 | [`4efe1d1`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/4efe1d1) | Claude 직원 설정 폴더를 개인 경로로 막고 그 task 몫 projects 폴더만 읽기로 연다 |
+| 06:14 | [`3102dc5`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/3102dc5) | doctor에 Claude 직원 설정 폴더 점검 행(claude staff config)을 더한다 |
 | 06:13 | [`64a5b4f`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/64a5b4f) | 관찰 산출물 test가 Linux CI에서도 해시 중 파일 변화를 재현하도록 고침 |
 | 06:03 | [`8395867`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/8395867) | 관찰 산출물: 크기·mtime을 유지한 교체도 변경으로 보고, 해시 읽기를 상한까지로 묶음(봇 P1 두 건) |
 | 05:55 | [`3740135`](https://github.com/ehojune/bioinfo-team-3d/pull/334/commits/3740135) | 관찰된 산출물 manifest와 sha256, CP2 artifact hash를 기록했다. |
