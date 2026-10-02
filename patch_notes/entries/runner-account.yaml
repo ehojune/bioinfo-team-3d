@@ -11,3 +11,6 @@ rows:
   at: 2026-10-02 19:32
   text: runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner
     계정을 확인
+- sha: b3b4b00
+  at: 2026-10-02 19:38
+  text: runner 계정 절차서의 깨진 runner.yaml 경로 6곳 복구
