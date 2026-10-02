@@ -269,6 +269,10 @@ class RecruitSettings(BaseModel):
     skill_source: str = "https://github.com/jmiao24/Paper2Agent"
 
 
+# A model name labhq passes to an engine CLI as one argument: no leading '-', so it can never read as a flag.
+MODEL_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
+
+
 class OrchestratorSettings(BaseModel):
     wait_for_clarification: bool = True
     cso_agent: str = "cso"
@@ -297,7 +301,7 @@ class OrchestratorSettings(BaseModel):
         models = [model.strip() for model in value]
         if any("fable" in model.casefold() for model in models):
             raise ValueError("Fable models are not allowed for the CSO")
-        if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model) for model in models):
+        if any(not re.fullmatch(MODEL_NAME_PATTERN, model) for model in models):
             raise ValueError("CSO model names must use only letters, digits, '.', '_', ':', '/', or '-'")
         if len(models) != len(set(models)):
             raise ValueError("CSO model names must be unique")

@@ -5,7 +5,8 @@ from pydantic import ValidationError
 
 from labhq.cli import main
 from labhq.gateway.server import Hub, RequestIn
-from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.adapters import read_only_profile
+from labhq.models import AgentSpec, AskRequest, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -111,8 +112,8 @@ async def test_plan_only_override_changes_only_cso_and_stops_after_same_plan():
     assert [task.meta["kind"] for task in default.calls] == ["plan"]
     assert [task.meta["kind"] for task in overridden.calls] == ["plan"]
     assert default.requests["r"]["plan"] == overridden.requests["r"]["plan"]
-    assert "agent_overrides" not in default.calls[0].meta
-    assert overridden.calls[0].meta["agent_overrides"] == {"engine": "codex", "model": "gpt-6-astra"}
+    assert "agent_overrides" not in default.calls[0].meta and "agent_identity" not in default.calls[0].meta
+    assert overridden.calls[0].meta["agent_identity"] == {"engine": "codex", "model": "gpt-6-astra"}
     assert overridden.requests["r"]["status"] == "done"
 
 
@@ -122,7 +123,137 @@ async def test_gpt_cso_uses_a_different_science_reviewer_model():
     await Orchestrator(hub).run_request("r")
 
     calls = {task.meta["kind"]: task for task in hub.calls}
-    assert calls["plan"].meta["agent_overrides"] == {"engine": "codex", "model": "gpt-6-astra"}
-    assert calls["review"].meta["agent_overrides"] == {"engine": "claude_code", "model": "opus"}
-    assert calls["synthesis"].meta["agent_overrides"] == {"engine": "codex", "model": "gpt-6-astra"}
-    assert calls["review"].meta["agent_overrides"]["model"] != calls["plan"].meta["agent_overrides"]["model"]
+    assert calls["plan"].meta["agent_identity"] == {"engine": "codex", "model": "gpt-6-astra"}
+    assert calls["review"].meta["agent_identity"] == {"engine": "claude_code", "model": "opus"}
+    assert calls["synthesis"].meta["agent_identity"] == {"engine": "codex", "model": "gpt-6-astra"}
+    assert calls["review"].meta["agent_identity"]["model"] != calls["plan"].meta["agent_identity"]["model"]
+    assert "agent_identity" not in calls["step"].meta, "a worker step keeps its own registry model"
+
+
+# #272 review 4163267332: a Codex CSO's saved session must never be resumed by the registry's Claude CSO.
+CODEX_CSO = {"engine": "codex", "model": "gpt-6-astra"}
+
+
+class FinishedHub:
+    """A finished --cso-model request whose Codex plan session is saved, as run_request leaves it."""
+
+    def __init__(self, cso_model="gpt-6-astra"):
+        self.s = Settings()
+        self.requests = {"r": {"id": "r", "text": "same request", "mode": "orchestrate", "status": "done",
+                               "report": "done", "cso_model": cso_model, "cso_session_id": "codex-1",
+                               "cso_workdir": "/w/cso", "results": {}, "followups": []}}
+        self.agents = {"cso": {"id": "cso", "engine": "claude_code", "model": "opus"},
+                       "worker": {"id": "worker", "engine": "mock"}}
+        self.calls, self.events = [], []
+
+    async def dispatch(self, task):
+        self.calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer",
+                          session_id="codex-2", workdir="/w/cso")
+
+    async def publish(self, event):
+        self.events.append(event)
+
+    def supports_resume(self, _agent_id):
+        return True
+
+    def save_request(self, _rid):
+        pass
+
+    def ask(self):
+        self.requests["r"]["followups"].append({"id": "fu_1", "text": "Why?", "agent_id": "cso",
+                                                "status": "running"})
+
+
+def fake_runner(agent):
+    registry = type("Registry", (), {"get": lambda _self, _id: agent})()
+    return type("FakeRunner", (), {"registry": registry, "s": Settings()})()
+
+
+@pytest.mark.asyncio
+async def test_followup_resumes_the_codex_cso_session_as_the_selected_model():
+    hub = FinishedHub()
+    hub.ask()
+
+    await Orchestrator(hub).run_followup("r", "fu_1")
+
+    task = hub.calls[0]
+    assert task.meta["kind"] == "followup" and task.resume_session_id == "codex-1"
+    assert task.meta["agent_identity"] == CODEX_CSO, "the Codex session is resumed by Codex, not the registry CSO"
+    assert task.meta["agent_overrides"]["sandbox"] == "read-only", "the follow-up stays read-only"
+    assert hub.requests["r"]["followups"][0]["status"] == "done"
+
+
+async def test_consult_routed_to_the_cso_keeps_the_selected_model(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    try:
+        hub.agents = {"worker": {"engine": "mock"}, "cso": {"engine": "claude_code", "model": "opus"}}
+        hub.requests["r"] = {"id": "r", "text": "same request", "mode": "orchestrate", "status": "running",
+                             "cso_model": "gpt-6-astra", "cso_session_id": "codex-1", "cso_workdir": "/w/cso"}
+        calls = []
+
+        async def dispatch(task):
+            calls.append(task)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="use cases",
+                              session_id="codex-2", workdir="/w/cso")
+
+        hub.dispatch = dispatch
+        ask = AskRequest(task_id="blocked", agent_id="worker", request_id="r", to="cso",
+                         question="Cases or controls?", why_blocked="cohort missing")
+        await hub.orchestrator.answer_ask(ask, "origin")
+
+        assert [task.meta["kind"] for task in calls] == ["consult"]
+        assert calls[0].meta["agent_identity"] == CODEX_CSO and calls[0].resume_session_id == "codex-1"
+        assert hub.store.get("ask", ask.id)["answer"]["status"] == "answered"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("kind", ["followup", "consult"])
+def test_runner_keeps_the_request_identity_on_read_only_tasks(kind):
+    registry_cso = AgentSpec(id="cso", name="CSO", role="plan", engine=Engine.claude_code, model="opus")
+    sender = {"sandbox": "read-only", "engine": "claude_code", "model": "opus", "tools": ["Bash(*)"]}
+    task = Task(agent_id="cso", prompt="q", meta={"kind": kind, "agent_overrides": sender,
+                                                   "agent_identity": CODEX_CSO})
+
+    selected = read_only_profile(Runner._resolve_agent(fake_runner(registry_cso), task))
+
+    assert selected.engine is Engine.codex and selected.model == "gpt-6-astra"
+    assert selected.tools == [] and selected.sandbox == "read-only", "agent_overrides still give nothing"
+    assert registry_cso.engine is Engine.claude_code and registry_cso.model == "opus"
+
+
+@pytest.mark.parametrize("identity", [{"engine": "codex"}, {**CODEX_CSO, "sandbox": "workspace-write"},
+                                      {"engine": "codex", "model": "--dangerously-bypass"},
+                                      {"engine": "nope", "model": "gpt-6-astra"}])
+def test_runner_refuses_an_identity_it_cannot_apply(identity):
+    registry_cso = AgentSpec(id="cso", name="CSO", role="plan", engine=Engine.claude_code, model="opus")
+    task = Task(agent_id="cso", prompt="q", meta={"kind": "followup", "agent_identity": identity})
+
+    with pytest.raises(ValueError):
+        Runner._resolve_agent(fake_runner(registry_cso), task)
+
+
+@pytest.mark.asyncio
+async def test_a_cso_model_that_is_no_longer_allowed_fails_loudly_instead_of_switching():
+    hub = FinishedHub()
+    hub.s.orchestrator.cso_models = ["opus"]
+    hub.ask()
+
+    await Orchestrator(hub).run_followup("r", "fu_1")
+
+    assert hub.calls == [], "nothing runs as the registry's CSO"
+    entry = hub.requests["r"]["followups"][0]
+    assert entry["status"] == "failed" and "gpt-6-astra" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_default_request_followup_has_no_identity():
+    hub = FinishedHub(cso_model=None)
+    hub.ask()
+
+    await Orchestrator(hub).run_followup("r", "fu_1")
+
+    assert "agent_identity" not in hub.calls[0].meta

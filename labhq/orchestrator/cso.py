@@ -790,29 +790,55 @@ class Orchestrator:
         plan = getattr(self.hub.s, "plan", None)
         return output_vocab.current() if getattr(plan, "declare_output_types", False) else None
 
-    def _request_agent_meta(self, req: dict, agent_id: str | None) -> dict[str, Any]:
-        """Return request-local CSO/reviewer overrides without changing the registry or later requests."""
+    def _request_identity(self, rid: str | None, agent_id: str | None) -> dict[str, str] | None:
+        """The engine and model a request-local ``cso_model`` gives `agent_id` in request `rid` (#272), or None.
+
+        Every CSO task of the request takes it: plan, replan, consult, follow-up, synthesis and a resumed run, so
+        the saved ``cso_session_id`` is always resumed by the engine that made it. A GPT CSO's science reviewer
+        gets a different model. Raises when the choice can no longer be honored, never falls back to the registry.
+        """
+        req = (getattr(self.hub, "requests", None) or {}).get(rid or "") or {}
         model = req.get("cso_model")
-        if not model or not agent_id:
-            return {}
+        if not model or not agent_id or agent_id not in {self.cfg.cso_agent, self.cfg.reviewer_agent}:
+            return None
+        if model not in self.cfg.cso_models:  # the config changed after the request was accepted
+            raise ValueError(f"cso_model {model!r} is no longer in orchestrator.cso_models; "
+                             "the request cannot keep its CSO")
+
+        def engine_for(name: str) -> str:
+            return "codex" if name.casefold().startswith("gpt-") else "claude_code"
+
         if agent_id == self.cfg.cso_agent:
-            engine = "codex" if model.casefold().startswith("gpt-") else "claude_code"
-            return {"agent_overrides": {"engine": engine, "model": model}}
-        if agent_id != self.cfg.reviewer_agent or not model.casefold().startswith("gpt-"):
-            return {}
+            return {"engine": engine_for(model), "model": model}
+        if not model.casefold().startswith("gpt-"):
+            return None
 
         # A GPT CSO must not review its own work with the same model. Prefer the configured CSO's
         # ordinary Claude model; if a custom roster lacks one, use another allowed model.
-        ordinary = self.hub.agents.get(self.cfg.cso_agent, {})
+        ordinary = (getattr(self.hub, "agents", None) or {}).get(self.cfg.cso_agent, {})
         reviewer_model = ordinary.get("model")
         reviewer_engine = ordinary.get("engine")
         if not reviewer_model or reviewer_model == model:
             reviewer_model = next((candidate for candidate in self.cfg.cso_models if candidate != model), None)
-            reviewer_engine = ("codex" if reviewer_model and reviewer_model.casefold().startswith("gpt-")
-                               else "claude_code")
+            reviewer_engine = None
         if not reviewer_model or reviewer_model == model:
             raise ValueError("a GPT CSO requires a different configured science reviewer model")
-        return {"agent_overrides": {"engine": reviewer_engine, "model": reviewer_model}}
+        return {"engine": reviewer_engine or engine_for(reviewer_model), "model": reviewer_model}
+
+    def _with_request_identity(self, task: Task) -> Task:
+        """`task` carrying its request's CSO identity; a task that already names another identity is refused."""
+        identity = self._request_identity(task.request_id, task.agent_id)
+        if identity is None:
+            return task
+        sent = task.meta.get("agent_identity")
+        if sent is not None and sent != identity:
+            raise ValueError(f"task names agent identity {sent!r}, but its request uses {identity!r}")
+        return task.model_copy(update={"meta": {**task.meta, "agent_identity": identity}})
+
+    def _engine(self, rid: str | None, agent_id: str) -> str | None:
+        """The engine `agent_id` runs on for request `rid`: the request's CSO identity, else the roster's."""
+        identity = self._request_identity(rid, agent_id)
+        return identity["engine"] if identity else (self.hub.agents.get(agent_id) or {}).get("engine")
 
     def _type_meta(self, step: dict) -> dict[str, Any]:
         """Dispatch meta for a step's declarations. Off: nothing (stored declarations stay in the plan, unused).
@@ -975,7 +1001,10 @@ class Orchestrator:
                 reason=f"대상 직원 {routed!r}이 roster에 없습니다",
                 **{"from": "labhq", "routed_to": routed}))
             return
-        refusal = read_only_refusal(routed, self.hub.agents[routed].get("engine"))
+        try:
+            refusal = read_only_refusal(routed, self._engine(ask.request_id, routed))
+        except ValueError as error:  # its request's CSO model cannot be honored: never answer as another model
+            refusal = str(error)
         if refusal:  # a consult runs as the runner's read-only profile; an engine that ignores it could write
             await self.hub.resolve_ask(ask, runner_id, ask_result(
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
@@ -1034,7 +1063,10 @@ class Orchestrator:
         req = self.hub.requests[rid]
         entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
         agent, direct = entry["agent_id"], req.get("mode") == "direct"
-        refusal = read_only_refusal(agent, (self.hub.agents.get(agent) or {}).get("engine"))
+        try:
+            refusal = read_only_refusal(agent, self._engine(rid, agent))
+        except ValueError as error:  # its request's CSO model cannot be honored: never resume as another model
+            refusal = str(error)
         if refusal:  # the same workspace and session, with an engine that would not keep it read-only
             entry.update(status="failed", answer="", error=refusal, answered_at=time.time())
             self.hub.save_request(rid)
@@ -1105,6 +1137,7 @@ class Orchestrator:
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
+        task = self._with_request_identity(task)
         rid = task.request_id or ""
         initial_attempt = first_attempt
 
@@ -1649,9 +1682,7 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
                         meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
-                              "title": "업무 분해·배정 계획 수립",
-                              **self._request_agent_meta(req, self.cfg.cso_agent),
-                              **({"workdir": workdir} if workdir else {})}))
+                              "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {})}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -1911,9 +1942,7 @@ class Orchestrator:
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
-                              "title": f"남은 DAG 재계획 #{attempt}",
-                              **self._request_agent_meta(req, self.cfg.cso_agent),
-                              **({"workdir": workdir} if workdir else {})}))
+                              "title": f"남은 DAG 재계획 #{attempt}", **({"workdir": workdir} if workdir else {})}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -2069,8 +2098,7 @@ class Orchestrator:
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
                         'Do not omit verdict or add prose.',
                         meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
-                              "request": text, "title": f"과학 리뷰 #{rev}",
-                              **self._request_agent_meta(req, reviewer)}))
+                              "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
                         self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
                                      review={"status": "budget_denied"})
@@ -2155,7 +2183,6 @@ class Orchestrator:
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)) + replan_history_note(req),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
-                      **self._request_agent_meta(req, self.cfg.cso_agent),
                       **({"workdir": workdir} if workdir else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
