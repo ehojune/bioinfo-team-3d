@@ -6,3 +6,7 @@ rows:
 - sha: e84dbfc
   at: 2026-10-02 19:29
   text: 요청의 active·terminal 상태 판정을 모아 한도 대기 중 ask·benchmark·상태 화면이 계속 진행
+- sha: 0c02787
+  at: 2026-10-02 19:50
+  text: 한도 reset 시각을 runner 시간대의 instant로 받아 재개하고, 재시작 복구는 한도 단계만 기다리며, 웹은 마지막 한도
+    단계 재개 때 요청을 진행 중으로 되돌림
