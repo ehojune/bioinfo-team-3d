@@ -33,7 +33,8 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
                       claude_settings, rule_tool)
-from ..private_paths import ENV_VAR as PRIVATE_PATHS_ENV, plugin_keep_dirs, resolve_private_paths, staff_codex_homes
+from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, plugin_keep_dirs, \
+    resolve_private_paths, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
 from ..registry import Registry
@@ -930,7 +931,7 @@ class Runner:
                     await emit("agent.log", {"level": "warn", "text": (
                         f"개인 경로 차단에서 제외: {label} (작업에 쓰는 폴더를 포함합니다). labhq doctor의 private paths를 보세요")})
             # With private paths active no shell rule is pre-approved; without the gate Claude refuses every command.
-            if (private.paths and agent.engine == Engine.claude_code and "approval" not in agent.builtin_mcp
+            if (private.enabled and agent.engine == Engine.claude_code and "approval" not in agent.builtin_mcp
                     and any(rule_tool(t) in SHELL_TOOLS for t in agent.tools)
                     and agent.id not in self.private_shell_warned):
                 self.private_shell_warned.add(agent.id)
@@ -943,6 +944,7 @@ class Runner:
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
                 PRIVATE_PATHS_ENV: os.pathsep.join(private.paths),
+                PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
@@ -960,6 +962,7 @@ class Runner:
                     private.paths),
                 private_labels=list(private.labels),
                 private_paths=list(private.paths),
+                private_enabled=private.enabled,
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

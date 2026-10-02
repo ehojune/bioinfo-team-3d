@@ -488,7 +488,7 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
 
 # ---------------- review of PR #324, round 3: shell and outside reads always reach the gate ----------------
 
-def _allowed(tmp_path, tools, private, read_dirs=()):
+def _allowed(tmp_path, tools, private, read_dirs=(), enabled=False):
     from labhq.adapters import get_adapter
 
     agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.claude_code, tools=list(tools),
@@ -496,7 +496,8 @@ def _allowed(tmp_path, tools, private, read_dirs=()):
     (tmp_path / "ws" / ".labhq").mkdir(parents=True, exist_ok=True)
     ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
                      settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x",
-                     read_dirs=[str(d) for d in read_dirs], claude_settings={}, private_paths=list(private))
+                     read_dirs=[str(d) for d in read_dirs], claude_settings={}, private_paths=list(private),
+                     **({"private_enabled": True} if enabled else {}))
     cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
     i = cmd.index("--allowedTools")
     end = cmd.index("--disallowedTools") if "--disallowedTools" in cmd else len(cmd)
@@ -849,3 +850,88 @@ def test_the_registry_rule_only_tightens():
     assert zone.action == "ask" and "restricted" in zone.reason
     for tool in ("Read", "Grep"):
         assert _gate(tool, {"pattern": r"HKCU\Environment", "path": "/work/t1"}).action == "allow"
+
+
+# ---------------- review of PR #327: the registry check with no active path ----------------
+# No configured entry exists, or every one holds a work folder: private paths stay on with zero active paths.
+# Only an explicit `policy.private_paths: []` turns off the registry check and the shell narrowing.
+
+REG_READ = r"reg query HKCU\Environment /v GITHUB_TOKEN"
+
+
+def _gate_switch(tool, command, enabled):
+    return evaluate_tool(tool, {"command": command}, PolicySettings(), allowed_roots=["/work/t1"], workdir="/work/t1",
+                         windows=False, environ=WIN_ENV, private_paths=[], private_enabled=enabled, home=WIN_HOME)
+
+
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+def test_enabled_with_no_active_path_still_asks_for_a_registry_read(tool):
+    decision = _gate_switch(tool, REG_READ, True)
+    assert decision.action == "ask" and "HKCU" in decision.reason
+    for command in ("ls outputs", "python script.py --out outputs/x.tsv"):  # no path to match: unchanged
+        assert _gate_switch(tool, command, True).action == "allow"
+    assert _gate_switch(tool, REG_READ, False).action == "allow"  # explicit `[]`
+
+
+def test_enabled_with_no_active_path_pre_approves_no_shell_and_explicit_off_keeps_the_old_tools(tmp_path):
+    from labhq.policy import rule_tool
+
+    on = _allowed(tmp_path, ["Read", "Bash", "Bash(python *)", "PowerShell(Get-Content *)", "WebSearch"], [],
+                  enabled=True)
+    assert not [t for t in on if rule_tool(t) in {"Bash", "PowerShell"}]
+    assert "Read" not in on and "WebSearch" in on
+    assert _allowed(tmp_path, ["Read", "Bash(python *)"], []) == ["Read", "Bash(python *)"]
+
+
+@pytest.mark.asyncio
+async def test_runner_keeps_private_paths_on_when_no_entry_is_active(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    for private, enabled in ((["~/missing", str(tmp_path)], True), ([], False)):  # absent + holds the workspace
+        runner, seen = _capture_runner(_runner_settings(tmp_path / str(enabled), private), monkeypatch)
+        assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+        ctx = seen["ctx"]
+        assert ctx.private_paths == [] and ctx.private_enabled is enabled
+        assert ctx.env[ENV_VAR] == "" and ctx.env[private_paths.ENABLED_ENV_VAR] == ("1" if enabled else "0")
+
+
+def test_the_gate_reads_the_switch_apart_from_the_list():
+    gate, switch = private_paths.gate_private_paths, private_paths.ENABLED_ENV_VAR
+
+    def unused():
+        raise AssertionError("resolved although the runner set the list")
+
+    on = gate({ENV_VAR: "", switch: "1"}, unused)
+    assert on.enabled and on.paths == ()
+    assert not gate({ENV_VAR: "", switch: "0"}, unused).enabled
+    assert gate({ENV_VAR: "/h/.ssh", switch: "0"}, unused).enabled  # a list is never turned off
+    # A runner without the switch: a non-empty list means on, an empty one off.
+    assert gate({ENV_VAR: "/h/.ssh"}, unused).paths == ("/h/.ssh",)
+    assert gate({ENV_VAR: "/h/.ssh"}, unused).enabled and not gate({ENV_VAR: ""}, unused).enabled
+    resolved = private_paths.PrivatePaths(enabled=True)
+    assert gate({}, lambda: resolved) is resolved
+
+
+@pytest.mark.asyncio
+async def test_the_approval_server_asks_for_a_registry_read_with_no_active_path(tmp_path):
+    import sys
+
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    workdir = tmp_path / "ws"
+    workdir.mkdir()
+    seen = {}
+    for flag in ("1", "0"):
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+               "LABHQ_BROKER_URL": "http://127.0.0.1:9", "LABHQ_BROKER_TOKEN": "x", "LABHQ_WORKDIR": str(workdir),
+               ENV_VAR: "", private_paths.ENABLED_ENV_VAR: flag}
+        env.pop("LABHQ_CONFIG", None)
+        params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.approval_mcp"], env=env)
+        async with stdio_client(params) as streams:
+            async with ClientSession(streams[0], streams[1]) as session:
+                await session.initialize()
+                result = await session.call_tool("approval_prompt", {"tool_name": "Bash",
+                                                                     "input": {"command": REG_READ}})
+        seen[flag] = json.loads(result.content[0].text)["behavior"]
+    assert seen == {"1": "deny", "0": "allow"}  # asked, and the broker is unreachable; explicit `[]` allows

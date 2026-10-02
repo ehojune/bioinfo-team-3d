@@ -23,7 +23,7 @@ import posixpath
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from .settings import Settings
 
@@ -39,6 +39,8 @@ CONFIG_LABEL = "labhq 설정 파일"
 STATE_LABEL = "labhq gateway 상태 폴더"
 OUTSIDE_HOME_LABEL = "홈 밖 개인 경로"
 ENV_VAR = "LABHQ_PRIVATE_PATHS"  # the runner hands the approval gate this task's list (os.pathsep-joined)
+# ... and whether private paths are on at all ("1"/"0"): on with an empty list when no entry is active (PR #327).
+ENABLED_ENV_VAR = "LABHQ_PRIVATE_PATHS_ENABLED"
 
 # Variables a shell can spell a home path with; each is replaced by its value before matching.
 _PATH_VARS = ("USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME")
@@ -207,6 +209,18 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     paths = [p for i, p in enumerate(paths)
              if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)))
+
+
+def gate_private_paths(environ: Mapping[str, str], resolve: Callable[[], PrivatePaths]) -> PrivatePaths:
+    """What the approval gate checks: the runner's list and switch from `environ`, else `resolve()`.
+
+    On with an empty list still runs the registry check (PR #327). Without the switch (an older runner) a
+    non-empty list means on; a non-empty list is never turned off."""
+    if ENV_VAR not in environ:
+        return resolve()
+    paths = tuple(p for p in environ[ENV_VAR].split(os.pathsep) if p)
+    switch = environ.get(ENABLED_ENV_VAR, "").strip()
+    return PrivatePaths(paths=paths, enabled=bool(paths) or switch not in ("", "0"))
 
 
 def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | os.PathLike | None = None,
