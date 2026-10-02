@@ -1,0 +1,5 @@
+pr: 0
+rows:
+- sha: 638016a
+  at: 2026-10-02 20:43
+  text: 이전 epoch의 breaker 저장 실패를 격리하고 derived_from 깊이를 최대 64 artifact hop으로 맞췄다.
