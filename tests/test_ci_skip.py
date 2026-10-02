@@ -44,6 +44,13 @@ def test_a_patch_note_commit_after_a_passed_code_commit_skips(repo):
     assert not cs.can_skip(code, 'main', passed=lambda sha: True)  # the code commit itself always runs
 
 
+def test_per_pr_status_file_after_a_passed_code_commit_skips(repo):
+    run(repo, "checkout", "-q", "-b", "pr")
+    code = commit(repo, {"app.py": "a = 2\n"}, "code")
+    head = commit(repo, {"docs/status/2026-10-02-1000-pr.md": "## done\n"}, "status")
+    assert cs.can_skip(head, "main", passed=lambda sha: sha == code)
+
+
 def test_merging_main_skips_only_when_every_file_came_from_main_unchanged(repo):
     run(repo, "checkout", "-q", "-b", "pr")
     tested = commit(repo, {"app.py": "a = 2\n", "STATUS.md": "# s\npr\n"}, "pr")

@@ -31,7 +31,7 @@ def blob(rev: str, path: str) -> str | None:
 
 
 def notes_only(path: str) -> bool:
-    return path == "STATUS.md" or path.startswith("patch_notes/")
+    return path == "STATUS.md" or path.startswith("patch_notes/") or path.startswith("docs/status/")
 
 
 def on_base(sha: str, base: str) -> bool:

@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 spec = importlib.util.spec_from_file_location("patch_notes", Path(__file__).resolve().parents[1] / "scripts" / "patch_notes.py")
 pn = importlib.util.module_from_spec(spec)
@@ -23,53 +24,58 @@ def commit(repo, files, message):
     return run(repo, "rev-parse", "HEAD")
 
 
+def entry(*shas):
+    rows = [{"sha": sha[:7], "at": "2026-10-02 10:00", "text": f"note {sha[:7]}"} for sha in shas]
+    return yaml.safe_dump({"pr": 7, "rows": rows}, allow_unicode=True, sort_keys=False)
+
+
 @pytest.fixture
 def repo(tmp_path):
     run(tmp_path, "init", "-q", "-b", "main")
     run(tmp_path, "config", "user.email", "t@example.com")
     run(tmp_path, "config", "user.name", "t")
-    commit(tmp_path, {"README.md": "v1\n", pn.NOTES: "# 패치노트\n"}, "start")
+    commit(tmp_path, {"README.md": "v1\n", "STATUS.md": "# status\n", "patch_notes/README.md": "# notes\n",
+                      "patch_notes/entries/_legacy.yaml": "pr: null\nrows: []\n"}, "start")
     return tmp_path
 
 
 def test_every_code_commit_needs_a_note_but_note_only_commits_do_not(repo):
     run(repo, "checkout", "-q", "-b", "feature")
     fix = commit(repo, {"a.py": "x = 1\n"}, "fix a")
-    problems = pn.check("main", "HEAD", repo)
-    assert any(fix[:7] in p for p in problems)
-    commit(repo, {pn.NOTES: f"# 패치노트\n| 10:00 | [`{fix[:7]}`](u) | **fix a** |\n"}, "패치노트")
+    assert any(fix[:7] in problem for problem in pn.check("main", "HEAD", repo))
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(fix)}, "패치노트")
     assert pn.check("main", "HEAD", repo) == []
-    later = commit(repo, {"a.py": "x = 2\n"}, "fix a again")  # a commit after the note needs its own line
-    assert any(later[:7] in p for p in pn.check("main", "HEAD", repo))
+    later = commit(repo, {"a.py": "x = 2\n"}, "fix a again")
+    assert any(later[:7] in problem for problem in pn.check("main", "HEAD", repo))
 
 
 def test_readme_must_change_at_least_once_every_three_main_commits(repo):
     commit(repo, {"b.py": "1\n"}, "main change 1")
     run(repo, "checkout", "-q", "-b", "second")
     change = commit(repo, {"c.py": "1\n"}, "second change")
-    commit(repo, {pn.NOTES: f"# 패치노트\n{change[:7]}\n"}, "패치노트")
-    assert pn.check("main", "HEAD", repo) == []  # main is one commit past README: this one may skip it
+    commit(repo, {"patch_notes/entries/second.yaml": entry(change)}, "패치노트")
+    assert pn.check("main", "HEAD", repo) == []
     run(repo, "checkout", "-q", "main")
     run(repo, "merge", "-q", "--squash", "second")
     run(repo, "commit", "-q", "-m", "second (#2)")
     run(repo, "checkout", "-q", "-b", "third")
     third = commit(repo, {"d.py": "1\n"}, "third change")
-    commit(repo, {pn.NOTES: f"# 패치노트\n{change[:7]}\n{third[:7]}\n"}, "패치노트")
-    assert any("README" in p for p in pn.check("main", "HEAD", repo))
+    commit(repo, {"patch_notes/entries/third.yaml": entry(third)}, "패치노트")
+    assert any("README" in problem for problem in pn.check("main", "HEAD", repo))
     commit(repo, {"README.md": "v2\n"}, "README 갱신")
     problems = pn.check("main", "HEAD", repo)
-    assert not any("README.md를 안 고친" in p for p in problems)
-    assert any("README 갱신" in p for p in problems)  # and the README commit itself needs a note
+    assert not any("README.md를 안 고친" in problem for problem in problems)
+    assert any("README 갱신" in problem for problem in problems)
 
 
-def test_rows_lists_commits_newest_first_and_links_the_pr(repo):
+def test_rows_lists_commits_newest_first_as_yaml(repo):
     run(repo, "checkout", "-q", "-b", "feature")
     first = commit(repo, {"a.py": "1\n"}, "first")
     second = commit(repo, {"a.py": "2\n"}, "second")
-    commit(repo, {pn.NOTES: "# 패치노트\n\n(작성 중)\n"}, "패치노트")
-    out = pn.rows("main", "HEAD", 7, repo).splitlines()
-    assert [second[:7] in out[0], first[:7] in out[1], len(out)] == [True, True, 2]
-    assert f"/pull/7/commits/{first[:7]}" in out[1]
+    commit(repo, {"patch_notes/entries/feature.yaml": "pr: 7\nrows: []\n"}, "패치노트")
+    out = yaml.safe_load(pn.rows("main", "HEAD", 7, repo))
+    assert [out[0]["sha"], out[1]["sha"], len(out)] == [second[:7], first[:7], 2]
+    assert out[1]["text"] == "first"
 
 
 def test_a_readme_edit_reverted_later_is_not_a_refresh(repo):
@@ -78,16 +84,16 @@ def test_a_readme_edit_reverted_later_is_not_a_refresh(repo):
     run(repo, "checkout", "-q", "-b", "feature")
     edit = commit(repo, {"README.md": "v2\n"}, "README edit")
     revert = commit(repo, {"README.md": "v1\n"}, "README revert")
-    commit(repo, {pn.NOTES: f"# 패치노트\n{edit[:7]}\n{revert[:7]}\n"}, "패치노트")
-    assert any("README.md를 안 고친" in p for p in pn.check("main", "HEAD", repo))
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(edit, revert)}, "패치노트")
+    assert any("README.md를 안 고친" in problem for problem in pn.check("main", "HEAD", repo))
 
 
 @pytest.mark.parametrize("files,needs_note", [
     (["a.py"], True),
-    (["STATUS.md"], False),
-    ([pn.NOTES], False),
-    (["STATUS.md", pn.NOTES], False),
-    (["a.py", "STATUS.md", pn.NOTES], True),
+    (["docs/status/x.md"], False),
+    (["patch_notes/entries/x.yaml"], False),
+    (["docs/status/x.md", "patch_notes/entries/x.yaml"], False),
+    (["a.py", "docs/status/x.md", "patch_notes/entries/x.yaml"], True),
 ])
 def test_merge_resolution_requires_note_only_for_own_code_change(repo, files, needs_note):
     commit(repo, {name: "base\n" for name in files}, "base files")
@@ -96,18 +102,16 @@ def test_merge_resolution_requires_note_only_for_own_code_change(repo, files, ne
     run(repo, "checkout", "-q", "main")
     commit(repo, {name: "main\n" for name in files}, "main side")
     run(repo, "checkout", "-q", "feature")
-    result = subprocess.run(["git", "merge", "main", "--no-ff", "--no-commit"],
-                            cwd=repo, capture_output=True)
+    result = subprocess.run(["git", "merge", "main", "--no-ff", "--no-commit"], cwd=repo, capture_output=True)
     assert result.returncode == 1
     merge = commit(repo, {name: "resolved\n" for name in files}, "resolve both parents")
     assert (merge in pn.pr_commits("main", "HEAD", repo)) is needs_note
-    problems = pn.check("main", "HEAD", repo)
-    assert any(merge[:7] in p for p in problems) is needs_note
+    assert any(merge[:7] in problem for problem in pn.check("main", "HEAD", repo)) is needs_note
     assert (merge[:7] in pn.rows("main", "HEAD", 99, repo)) is needs_note
     if needs_note:
-        commit(repo, {pn.NOTES: f"# notes\n{feature[:7]}\n{merge[:7]}\n",
-                      "README.md": "refreshed\n"}, "document resolution")
-        assert not any(merge[:7] in p for p in pn.check("main", "HEAD", repo))
+        commit(repo, {"patch_notes/entries/feature.yaml": entry(feature, merge), "README.md": "refreshed\n"},
+               "document resolution")
+        assert not any(merge[:7] in problem for problem in pn.check("main", "HEAD", repo))
 
 
 def test_merge_without_own_changes_is_excluded(repo):
@@ -119,11 +123,9 @@ def test_merge_without_own_changes_is_excluded(repo):
     run(repo, "merge", "-q", "--no-ff", "main", "-m", "sync main")
     merge = run(repo, "rev-parse", "HEAD")
     assert merge not in pn.pr_commits("main", "HEAD", repo)
-    assert not any(merge[:7] in p for p in pn.check("main", "HEAD", repo))
 
 
 def test_clean_merge_of_a_file_both_sides_changed_is_excluded(repo):
-    # diff-tree --cc lists such a file although git merged it without any manual edit.
     commit(repo, {"a.py": "one\ntwo\nthree\nfour\nfive\n"}, "base")
     run(repo, "checkout", "-q", "-b", "feature")
     commit(repo, {"a.py": "ONE\ntwo\nthree\nfour\nfive\n"}, "feature edits the top")
@@ -146,3 +148,28 @@ def test_extra_edit_inside_a_clean_merge_needs_a_note(repo):
     run(repo, "merge", "-q", "--no-ff", "--no-commit", "main")
     merge = commit(repo, {"a.py": "edited during merge\n"}, "merge with an extra edit")
     assert merge in pn.pr_commits("main", "HEAD", repo)
+
+
+def test_generated_indexes_cannot_be_changed_directly(repo):
+    run(repo, "checkout", "-q", "-b", "feature")
+    generated = commit(repo, {"STATUS.md": "changed\n"}, "edit generated index")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(generated)}, "패치노트")
+    assert any("entries·docs/status에 쓰세요" in problem for problem in pn.check("main", "HEAD", repo))
+
+
+def test_bootstrap_migration_may_add_generated_indexes(tmp_path):
+    run(tmp_path, "init", "-q", "-b", "main")
+    run(tmp_path, "config", "user.email", "t@example.com")
+    run(tmp_path, "config", "user.name", "t")
+    commit(tmp_path, {"README.md": "v1\n", "STATUS.md": "old\n", "patch_notes/README.md": "old\n"}, "start")
+    run(tmp_path, "checkout", "-q", "-b", "migration")
+    migration = commit(tmp_path, {"STATUS.md": "generated\n", "patch_notes/README.md": "generated\n"}, "migrate")
+    commit(tmp_path, {"patch_notes/entries/_legacy.yaml": entry(migration)}, "legacy entry")
+    assert pn.check("main", "HEAD", tmp_path) == []
+
+
+def test_generated_only_main_commits_do_not_count_toward_readme_limit(repo):
+    last = run(repo, "log", "-1", "--format=%H", "--", "README.md")
+    commit(repo, {"STATUS.md": "generated 1\n"}, "index 1")
+    commit(repo, {"patch_notes/README.md": "generated 2\n"}, "index 2")
+    assert pn.counted_main_commits(last, "main", repo) == 0

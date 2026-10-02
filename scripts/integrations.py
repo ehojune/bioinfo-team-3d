@@ -31,6 +31,7 @@ CLI_ANCHOR = "#bioinfo-agent-연결하기"
 # simple-icons slugs checked to draw a logo on shields.io (badge SVG has <image>, 2026-10-01).
 # openai, biorxiv, medrxiv and ncbi drew nothing, so Codex and bioRxiv badges carry no logo.
 # Generation stays offline: re-check a slug by hand before adding it here.
+INTERNAL_WORKFLOWS = frozenset({"notes-index.yml"})  # regenerates STATUS.md / patch notes on main (#292)
 LOGOS = frozenset({"claude", "googlegemini", "modelcontextprotocol", "pubmed", "python"})
 
 
@@ -255,6 +256,8 @@ def repository_facts(root: Path) -> list[str]:
             triggers = {triggers} if isinstance(triggers, str) else set(triggers or ())
             if not triggers & {"push", "pull_request"}:
                 continue  # manual-only workflows (pr-gate) have no meaningful branch status
+            if path.name in INTERNAL_WORKFLOWS:
+                continue  # bookkeeping that runs after a merge, not a status of the code
             name = spec.get("name")
             if not (isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.()+-]{0,59}", name)):
                 name = identifier(path.stem)

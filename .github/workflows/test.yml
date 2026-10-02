@@ -84,4 +84,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: pip install pyyaml
       - run: python scripts/patch_notes.py check --base origin/${{ github.base_ref }} --head HEAD
+      - run: pip install pyyaml && python scripts/notes_index.py --validate  # the generator on main must not fail after merge
