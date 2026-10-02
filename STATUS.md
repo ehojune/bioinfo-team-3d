@@ -5,7 +5,7 @@
 ## 2026-10-02 · #252 — 저장소 라이선스: 코드 GPL-3.0, 문서·데이터 CC BY-SA 4.0
 
 - 결론: PI 결정으로 코드는 GPL-3.0-or-later, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0이다. EDAM에서 뽑은 표(draft #253)도 CC BY-SA 4.0으로 들어갈 수 있게 됐다.
-- 바뀐 것: `LICENSE`(GPL-3.0 전문), `LICENSE-CC-BY-SA-4.0.txt`(CC BY-SA 4.0 전문, GitHub license API 원문), README 상단 배지 2개와 §14 라이선스 표.
+- 바뀐 것: `LICENSE`(GPL-3.0 전문), `LICENSE-CC-BY-SA-4.0.txt`(CC BY-SA 4.0 전문, GitHub license API 원문), README 상단 배지 2개와 §14 라이선스 표(제3자 예외: three.js MIT, placeholder.gltf CC0).
 - 실행한 것: `scripts/check_public.sh`, `scripts/integrations.py --check`, `scripts/patch_notes.py check`.
 - 미해결: 없음.
 - 근거: `LICENSE`, `LICENSE-CC-BY-SA-4.0.txt`, `README.md` §14.
