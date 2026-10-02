@@ -15,10 +15,18 @@ def test_core_agents_load():
     assert reg.get("cso").can_orchestrate
     lit = reg.get("lit_scout")
     assert lit.model == "gpt-6-luna"
-    assert {(m.name, m.type, m.url) for m in lit.mcp} == {
+    literature = {
         ("pubmed", "http", "https://pubmed.mcp.claude.com/mcp"),
         ("biorxiv", "http", "https://hcls.mcp.claude.com/biorxiv/mcp"),
     }
+    science = literature | {  # the public hosted MCPs Claude Science uses (#274)
+        ("chembl", "http", "https://hcls.mcp.claude.com/chembl/mcp"),
+        ("opentargets", "http", "https://mcp.platform.opentargets.org/mcp"),
+        ("clinical_trials", "http", "https://hcls.mcp.claude.com/clinical_trials/mcp"),
+    }
+    assert {(m.name, m.type, m.url) for m in lit.mcp} == science
+    assert {(m.name, m.type, m.url) for m in reg.get("biologist").mcp} == science
+    assert {(m.name, m.type, m.url) for m in reg.get("sci_reviewer").mcp} == literature
     assert reg.get("engineer").model == "gpt-6.1-sol" and not reg.get("engineer").tools
     assert reg.get("sci_reviewer").model == "gpt-6-astra"
     assert reg.get("sci_reviewer").tools == ["WebSearch"]

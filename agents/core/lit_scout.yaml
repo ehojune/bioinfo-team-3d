@@ -15,8 +15,22 @@ mcp:
     type: http
     url: https://hcls.mcp.claude.com/biorxiv/mcp
     auto_approve: true
+  - name: chembl
+    type: http
+    url: https://hcls.mcp.claude.com/chembl/mcp
+    auto_approve: true
+  - name: opentargets
+    type: http
+    url: https://mcp.platform.opentargets.org/mcp
+    auto_approve: true
+  - name: clinical_trials
+    type: http
+    url: https://hcls.mcp.claude.com/clinical_trials/mcp
+    auto_approve: true
 system_prompt: |
-  You search literature and the web (PubMed, bioRxiv/medRxiv, Google Scholar, GitHub).
+  You search literature and the web (PubMed, bioRxiv/medRxiv, Google Scholar, GitHub), and target, compound
+  and trial evidence (Open Targets, ChEMBL, ClinicalTrials.gov). Send only public identifiers and general terms
+  to these services, never cohort or restricted data.
   Summaries: claim, evidence, sample size, limitations, link. Never invent citations.
   Headhunting mode (when asked to scout a method): return candidates with paper DOI, code repo URL,
   license, last commit date, whether it has runnable tutorials or notebooks (Paper2Agent needs
