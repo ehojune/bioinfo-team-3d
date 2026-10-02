@@ -14,8 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:12 | [`5af8dd8`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/5af8dd8) | main 병합: cso.py import에서 한도 대기(quota)와 연구 CP2 계약을 함께 둠 |
 | 21:00 | [`06a224e`](https://github.com/ehojune/bioinfo-team-3d/pull/321/commits/06a224e) | 오류 출력 주석과 pack 동시 검증을 바로잡고 input-fit 집계를 어휘 판본별로 분리 |
 | 20:51 | [`b5016b4`](https://github.com/ehojune/bioinfo-team-3d/pull/320/commits/b5016b4) | HANDOFF.md 시작 절차도 전체 pytest 대신 관련 test, 전체는 CI |
+| 20:50 | [`1ac7e10`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/1ac7e10) | 패키지 설정 템플릿(labhq/config/labhq.example.yaml)에도 research.evidence_checkpoint를 넣어 저장소 사본과 맞췄다. |
 | 20:48 | [`ebc68f9`](https://github.com/ehojune/bioinfo-team-3d/pull/320/commits/ebc68f9) | AGENTS.md: 로컬은 관련 test, 전체 suite는 CI. P2는 PR 본문 남은 지적 한 줄 |
 | 20:47 | [`4afd105`](https://github.com/ehojune/bioinfo-team-3d/pull/319/commits/4afd105) | Windows taskkill의 MemoryError를 직접 PID 종료로 복구하고 bench 취소 회귀 test를 보강했다. |
 | 20:45 | [`05040a6`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/05040a6) | 한도 해제가 요청 목록 사본을 순회해, 해제 중 새 요청이 들어와도 끊기지 않음 |
@@ -23,13 +25,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 20:43 | [`638016a`](https://github.com/ehojune/bioinfo-team-3d/pull/318/commits/638016a) | 이전 epoch의 breaker 저장 실패를 격리하고 derived_from 깊이를 최대 64 artifact hop으로 맞췄다. |
 | 20:38 | [`80eaf00`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/80eaf00) | 한도 대기: 끝난 요청의 이어 묻기는 요청 상태를 바꾸지 않고, 재시작 때 그 대기를 지움. 연도 없는 Feb 29 reset은 기본 대기로 |
 | 20:38 | [`f0dd21f`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/f0dd21f) | main 병합: 3D 요청 정보 줄에 한도 대기 표시와 main의 보고서 보기를 함께 둠 |
+| 20:28 | [`9fe0b84`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/9fe0b84) | main을 병합하며 승인 기록에 origin과 CP2 선택값을 함께 남기도록 충돌을 풀었다. |
+| 20:26 | [`355dc61`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/355dc61) | 연구 요청을 재개할 때 요청에 고정된 실행 여부와 CP2 receipt를 유지해, 이미 내린 PI 결정을 다시 묻거나 모은 결과를 버리지 않는다. |
 | 20:25 | [`17765e4`](https://github.com/ehojune/bioinfo-team-3d/pull/315/commits/17765e4) | direct 산출의 대소문자 판정과 wrap-up 수집을 보완하고 라운드 기록 범위를 문서화했다(#231 #233 #234) |
 | 20:25 | [`9a29c33`](https://github.com/ehojune/bioinfo-team-3d/pull/314/commits/9a29c33) | 시험 job의 연속 missing 종료와 스케줄러 명령·지시·소유권 판정을 보강 |
 | 20:25 | [`5fcf1f0`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/5fcf1f0) | main 병합 충돌 해소: 결과 직렬화·웹 snapshot·요청 메타가 pipeline PR과 한도 대기 상태를 함께 다룸 |
 | 20:17 | [`ebf41ec`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/ebf41ec) | HPC·ask wake turn과 wrap-up turn도 한도 대기로 주차·재개하고, hold 해제 뒤 dispatch 전에 예산을 다시 확인 |
+| 20:17 | [`a4dff32`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/a4dff32) | 연구 단계가 PI 결정을 기다리면 산출·원장 검사보다 먼저 질문을 PI에게 보내고, 답을 받아 다시 실행한다. |
 | 20:17 | [`53504c3`](https://github.com/ehojune/bioinfo-team-3d/pull/313/commits/53504c3) | 3D 요청 카드 클릭을 보존하고 snapshot 보고서와 이어 묻기 글자 수를 바로잡았다. |
 | 20:07 | [`45b9749`](https://github.com/ehojune/bioinfo-team-3d/pull/312/commits/45b9749) | POSIX argv 원소의 UTF-8 한도를 적용하고 Claude Read 없는 TASK pointer와 spawn OSError를 실패 결과로 처리했다. |
 | 20:07 | [`b25c046`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/b25c046) | runner가 읽은 reset 시각을 그 날짜의 DST 규칙으로 변환해 전환 경계를 넘는 재개가 한 시간 어긋나지 않음 |
+| 20:07 | [`cf86bcb`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/cf86bcb) | CP2가 모은 산출에 묶이지 않은 artifact의 evidence를 거부하고, 연구 요청은 일반 재계획 없이 자기 실패 경로로 끝나며, 결정은 approve·revise·deny 선택값으로만 읽는다. |
 | 20:05 | [`30d40db`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/30d40db) | 패키지 예시 설정을 저장소 예시와 맞춰 한도 대기 설정과 시간대 상한 설명을 함께 배포 |
 | 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
 | 20:02 | [`ec47b29`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/ec47b29) | 승인 시간 초과와 화면 결정이 겹치면 timed_out을 최종 상태로 정리함(#199) |
@@ -44,6 +50,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
 | 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
 | 19:43 | [`af48ee7`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/af48ee7) | runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤 |
+| 19:41 | [`7e552f1`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/7e552f1) | 연구 CP1 승인 뒤 claim·evidence 계약 실행과 CP2 증거 검토 게이트를 추가했다. |
 | 19:38 | [`2b02934`](https://github.com/ehojune/bioinfo-team-3d/pull/306/commits/2b02934) | plan-only 재개는 계획 저장 전에는 계획 담당만, 저장 뒤에는 아무 실행 직원도 기다리지 않는다(#293) |
 | 19:38 | [`b3b4b00`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/b3b4b00) | runner 계정 절차서의 깨진 runner.yaml 경로 6곳 복구 |
 | 19:36 | [`60c3249`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/60c3249) | pipeline PR은 확장자로 코드만 받고 json·yaml·md는 정해진 pipeline 경로에서만 받음. 성공으로 끝난 turn의 산출만 제출 |
