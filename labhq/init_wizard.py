@@ -12,6 +12,7 @@ import yaml
 
 from . import doctor, hpc_consult
 from .adapters.base import _resolve_command
+from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
 from .util import free_port
@@ -137,16 +138,7 @@ def _login_command(settings: Settings) -> str:
             resolved = _resolve_command([settings.engines.codex.bin], env, "codex")
         except (OSError, ValueError):
             resolved = ["codex"]  # doctor will report the missing/unsupported executable.
-        executable = resolved[0]
-        local = env.get("LOCALAPPDATA")
-        if local:
-            try:
-                relative = Path(executable).relative_to(Path(local) / "OpenAI" / "Codex" / "bin")
-                executable = '"$env:LOCALAPPDATA/OpenAI/Codex/bin/' + relative.as_posix() + '"'
-            except ValueError:
-                executable = "codex"
-        else:
-            executable = "codex"
+        executable = powershell_executable(resolved, env)
         return "$env:CODEX_HOME = Join-Path $HOME '.labhq/codex-staff'; & " + executable + " login"
     return 'CODEX_HOME="$HOME/.labhq/codex-staff" codex login'
 
@@ -233,7 +225,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
         engines = data.setdefault("engines", {})
         codex = engines.setdefault("codex", {})
         codex["bin"] = "auto"
-        print("engines.codex.bin: auto (Windows 앱 최신 폴더, 그 외 PATH)")
+        print("engines.codex.bin: auto (Windows 앱 폴더 중 codex.exe가 있고 판본이 가장 높은 곳, 그 외 PATH)")
         homes = {Path.home(), *(Path(h) for h in (os.environ.get("HOME"), os.environ.get("USERPROFILE")) if h)}
         if any((home / ".codex" / name).is_file() for home in homes
                for name in ("AGENTS.md", "AGENTS.override.md")):
@@ -267,6 +259,10 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
                 _hpc_trial(settings, yes)
         if staff_home:
             print("로그인은 직접 실행하세요: " + _login_command(settings))
+            if _is_windows() and settings.engines.codex.windows_sandbox == "elevated":
+                env = {**os.environ, **settings.engines.codex.env}
+                command = codex_command(settings, env)
+                print("로그인 뒤 elevated sandbox 준비: " + setup_hint(staff_home, command, env))
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
     print(doctor.render(result))
     summary = result["summary"]

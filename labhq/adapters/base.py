@@ -97,8 +97,43 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
-def _codex_app_executable(env: dict[str, str]) -> str | None:
-    """Updates replace the hash directory; select by directory mtime, not its name."""
+_VERSION_TEXT = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*))?")
+_APP_VERSIONS: dict[tuple[str, int, int], str | None] = {}
+
+
+def version_key(text: str | None) -> tuple | None:
+    """Semver order for a `--version` string (0.159.0-alpha.12 < 0.159.0); None when it names no version."""
+    match = _VERSION_TEXT.search(text or "")
+    if not match:
+        return None
+    release = tuple(int(part or 0) for part in match.group(1, 2, 3))
+    pre = match.group(4)
+    if not pre:
+        return release, (1,)
+    return release, (0, *((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")))
+
+
+def _app_version(executable: Path) -> str | None:
+    """`codex.exe --version` of one app folder, read once per binary per process."""
+    try:
+        info = executable.stat()
+    except OSError:
+        return None
+    key = (str(executable), info.st_mtime_ns, info.st_size)
+    if key not in _APP_VERSIONS:
+        try:
+            done = subprocess.run([str(executable), "--version"], capture_output=True, text=True, errors="replace",
+                                  timeout=5, stdin=subprocess.DEVNULL)
+            _APP_VERSIONS[key] = (done.stdout or done.stderr).strip()[:300] if done.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError):
+            _APP_VERSIONS[key] = None
+    return _APP_VERSIONS[key]
+
+
+def codex_app_choice(env: dict[str, str]) -> dict | None:
+    """The Codex app folder `bin: auto` runs (#328). Only a folder holding codex.exe counts: an update replaces the
+    hash folder and can leave the old one without it. Among those, the highest `--version`; when any version cannot
+    be compared, the newest folder (directory mtime, never the name)."""
     local = env.get("LOCALAPPDATA")
     if not _is_windows() or not local:
         return None
@@ -108,12 +143,24 @@ def _codex_app_executable(env: dict[str, str]) -> str | None:
             try:
                 executable = directory / "codex.exe"
                 if directory.is_dir() and executable.is_file():
-                    candidates.append((directory.stat().st_mtime_ns, str(executable)))
+                    candidates.append((directory.stat().st_mtime_ns, executable))
             except OSError:
                 continue
     except OSError:
         return None
-    return max(candidates)[1] if candidates else None
+    if not candidates:
+        return None
+    keyed = [(version_key(_app_version(exe)), mtime, exe) for mtime, exe in candidates]
+    if all(key is not None for key, _, _ in keyed):
+        chosen, by = max(keyed, key=lambda item: (item[0], item[1]))[2], "version"
+    else:
+        chosen, by = max(candidates, key=lambda item: item[0])[1], "mtime"
+    return {"path": str(chosen), "folder": chosen.parent.name, "candidates": len(candidates), "by": by}
+
+
+def _codex_app_executable(env: dict[str, str]) -> str | None:
+    choice = codex_app_choice(env)
+    return choice["path"] if choice else None
 
 
 def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[str]:
@@ -229,6 +276,10 @@ class RunContext:
     # Runner hook, called after prepare() wrote the adapter's files and just before the CLI starts. A non-empty
     # return refuses the run (the read-only file check could not take its baseline).
     before_spawn: Callable[[], str | None] | None = None
+    # Set by run(), runner-local: the launcher it started (executable plus prefix args, resolved) and whether the
+    # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
+    started_command: list[str] | None = None
+    commands_ran: bool = False
 
     @property
     def meta_dir(self) -> Path:
@@ -256,6 +307,7 @@ class RunState:
     session_usage_total: dict | None = None
     result_seen: bool = False
     model_id: str | None = None
+    commands_ran: bool = False  # a shell command ran to exit 0 (engines that report commands)
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
@@ -414,6 +466,7 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
+        ctx.started_command, ctx.commands_ran = None, False
         env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
@@ -432,17 +485,20 @@ class AgentAdapter(ABC):
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
 
-        def resolved(command: list[str]) -> list[str]:
+        def resolved(command: list[str]) -> tuple[list[str], list[str]]:
+            """The full command and its launcher: everything before the adapter's own arguments."""
+            arguments = command[1:]
             if engine_bin is not None:
-                command = [os.path.expandvars(os.path.expanduser(command[0])), *prefix, *command[1:]]
-            return _resolve_command(command, env, self.engine)
+                command = [os.path.expandvars(os.path.expanduser(command[0])), *prefix, *arguments]
+            full = _resolve_command(command, env, self.engine)
+            return full, full[:len(full) - len(arguments)]
 
         try:
-            cmd = resolved(cmd)
+            cmd, launcher = resolved(cmd)
             if _command_too_long(cmd) and ctx.prompt_pointer and ctx.prompt != ctx.prompt_pointer:
                 # Windows refuses the process and Python reports a missing executable (#222): name the task file.
                 ctx.prompt = ctx.prompt_pointer
-                cmd = resolved(self.build_command(ctx))
+                cmd, launcher = resolved(self.build_command(ctx))
         except ValueError as exc:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
         too_long = _command_too_long(cmd)
@@ -478,6 +534,7 @@ class AgentAdapter(ABC):
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
+        ctx.started_command = launcher
         if payload is not None and proc.stdin:
             proc.stdin.write(payload)
             await proc.stdin.drain()
@@ -520,6 +577,7 @@ class AgentAdapter(ABC):
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)
+        ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
             res.error = f"{res.error}: {short(stderr, 500)}"
         if proc.returncode not in (0, None) and not res.error:
