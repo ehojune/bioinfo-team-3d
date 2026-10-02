@@ -33,8 +33,9 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
                       claude_settings, rule_tool)
-from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, plugin_keep_dirs, \
-    resolve_private_paths, staff_codex_homes
+from ..private_paths import ENABLED_ENV_VAR as PRIVATE_ENABLED_ENV, ENV_VAR as PRIVATE_PATHS_ENV, \
+    OPEN_READS_ENV_VAR as PRIVATE_OPEN_READS_ENV, plugin_keep_dirs, resolve_private_paths, \
+    staff_claude_project_dirs, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
 from ..registry import Registry
@@ -926,7 +927,9 @@ class Runner:
             if task.meta.get("kind") == "recruit":  # the recruiter reads the Paper2Agent skill's own files
                 from ..recruit.paper2agent import skill_path
                 keep.append(skill_path(self.s.recruit.contract_engine))
-            private = resolve_private_paths(self.s, keep)
+            # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
+            open_reads = staff_claude_project_dirs(self.s, ws.dir) if agent.engine == Engine.claude_code else []
+            private = resolve_private_paths(self.s, keep, open_reads=open_reads)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)
@@ -947,6 +950,7 @@ class Runner:
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
                 PRIVATE_PATHS_ENV: os.pathsep.join(private.paths),
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
+                PRIVATE_OPEN_READS_ENV: os.pathsep.join(private.open_reads),
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
@@ -961,10 +965,11 @@ class Runner:
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=claude_deny_private(claude_deny_links(claude_read_only(
                     claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
-                    private.paths),
+                    private.paths, open_reads=private.open_reads),
                 private_labels=list(private.labels),
                 private_paths=list(private.paths),
                 private_enabled=private.enabled,
+                private_open_reads=list(private.open_reads),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

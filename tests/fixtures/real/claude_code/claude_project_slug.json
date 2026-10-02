@@ -1,0 +1,19 @@
+{
+  "issue": "#298 ⑤ (Claude staff config folder)",
+  "captured": "2026-10-03",
+  "host": "Windows 11",
+  "claude_code_version": "2.1.282",
+  "flags": "-p ok --model sonnet --max-turns 1, CLAUDE_CONFIG_DIR an empty scratch folder, parent CLAUDE*/ANTHROPIC* variables unset",
+  "result": "rc 1, 'Not logged in'; projects/<slug>/<session>.jsonl was still written before the login check",
+  "auth_status": "CLAUDE_CONFIG_DIR=<empty folder> claude auth status: rc 1, loggedIn false",
+  "probes": [
+    {
+      "cwd": "C:\\Users\\Public\\pt-claude-staff-slug\\work dir\\a.b_c",
+      "slug": "C--Users-Public-pt-claude-staff-slug-work-dir-a-b-c"
+    },
+    {
+      "cwd": "C:\\Users\\Public\\pt-claude-staff-slug\\w\\xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\\yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "slug": "C--Users-Public-pt-claude-staff-slug-w-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy-hzcrn7"
+    }
+  ]
+}
