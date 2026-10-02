@@ -291,17 +291,33 @@ class TaskWorkspace:
                             info = os.fstat(stream.fileno())
                             if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
                                 raise OSError(f"{path} was replaced after it was listed")
+                            # ino and (POSIX) ctime only tell a replaced or rewritten file from an untouched one
+                            # when size and mtime were kept (`cp -p`, atomic replace); the run baseline compares
+                            # them and the published record drops them.
                             record: dict[str, Any] = {"path": path, "size": info.st_size,
-                                                      "mtime_ns": info.st_mtime_ns}
+                                                      "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
+                                                      "ctime_ns": None if os.name == "nt" else info.st_ctime_ns}
                             if hash_max_bytes is not None:
                                 if info.st_size > hash_max_bytes:
                                     record.update(sha256=None,
                                                   reason=f"output_hash_max_bytes 상한 초과 ({hash_max_bytes})")
                                 else:
-                                    digest = hashlib.sha256()
-                                    while chunk := stream.read(1024 * 1024):
+                                    # A writer still appending (an HPC job after the CLI ended) never makes this
+                                    # read more than the cap, and a file that changed while hashed gets no hash.
+                                    digest, read = hashlib.sha256(), 0
+                                    while read <= hash_max_bytes and (
+                                            chunk := stream.read(min(1024 * 1024, hash_max_bytes + 1 - read))):
                                         digest.update(chunk)
-                                    record["sha256"] = digest.hexdigest()
+                                        read += len(chunk)
+                                    after = os.fstat(stream.fileno())
+                                    if read > hash_max_bytes:
+                                        record.update(sha256=None, reason=(
+                                            f"해시하는 동안 output_hash_max_bytes 상한({hash_max_bytes})을 넘음"))
+                                    elif (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns) \
+                                            or read != info.st_size:
+                                        record.update(sha256=None, reason="해시하는 동안 파일이 바뀜")
+                                    else:
+                                        record["sha256"] = digest.hexdigest()
                             found.append(record)
                     except OSError:
                         note = note or f"{path}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"

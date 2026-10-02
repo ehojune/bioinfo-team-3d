@@ -117,3 +117,51 @@ async def test_output_link_is_recorded_without_following_target(tmp_path, monkey
     row = manifest["runs"][result.task_id]["observed_outputs"][0]
     assert row["path"] == "outputs/alias.txt" and row["link"] is True and row["sha256"] is None
     assert "secret" not in json.dumps(row)
+
+
+@pytest.mark.asyncio
+async def test_output_replaced_with_same_size_and_mtime_is_observed(tmp_path, monkeypatch):
+    """`cp -p` or an atomic replace keeps size and mtime; the new inode still marks it changed (PR #334 review)."""
+    workdir = tmp_path / "fixed"
+    _write(workdir, "outputs/table.tsv", b"aaaa")
+    kept = (workdir / "outputs" / "table.tsv").stat()
+
+    def write(wd):
+        _write(wd, "outputs/.table.tmp", b"bbbb")
+        os.replace(wd / "outputs" / ".table.tmp", wd / "outputs" / "table.tsv")
+        os.utime(wd / "outputs" / "table.tsv", ns=(kept.st_atime_ns, kept.st_mtime_ns))
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["table.tsv"], workdir=workdir))
+
+    manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+    observed = manifest["runs"][result.task_id]["observed_outputs"]
+    assert [row["path"] for row in observed] == ["outputs/table.tsv"]
+    assert observed[0]["sha256"] == _sha(b"bbbb") and result.output_sha256["outputs/table.tsv"] == _sha(b"bbbb")
+    assert "ino" not in observed[0] and "ctime_ns" not in observed[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap, reason", [(5, "상한"), (1024, "바뀜")])
+async def test_output_growing_while_hashed_gets_no_hash(tmp_path, monkeypatch, cap, reason):
+    """A writer still appending after the CLI ended: the read stops at the cap, and a size that moved while the
+    file was hashed leaves no hash (PR #334 review). The listing saw 4 bytes; 10 are there by the time it reads."""
+    real_fstat, shrunk = os.fstat, set()
+
+    def fstat(fd):
+        info = real_fstat(fd)
+        if info.st_size == 10 and info.st_ino not in shrunk:
+            shrunk.add(info.st_ino)
+            return type("Stat", (), {name: getattr(info, name) for name in
+                                     ("st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns", "st_mode")} | {"st_size": 4})()
+        return info
+
+    monkeypatch.setattr("labhq.runner.workspace.os.fstat", fstat)
+    runner = _runner(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/grow.log", b"0123456789"),
+                     hash_max_bytes=cap)
+    result = await runner.run_task(_task(outputs=["grow.log"]))
+
+    assert result.output_sha256 == {}
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    row = manifest["runs"][result.task_id]["observed_outputs"][0]
+    assert row["sha256"] is None and reason in row["reason"]

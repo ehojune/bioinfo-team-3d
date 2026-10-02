@@ -154,6 +154,17 @@ def check_data_boundary(settings: Settings) -> bool:
     return bool(readable)
 
 
+
+# Record fields that only tell a rewritten output from an untouched one (#58 ②); never published.
+IDENTITY_ONLY = ("ino", "ctime_ns")
+
+
+def output_identity(row: dict[str, Any]) -> tuple:
+    """What a run baseline compares: a file kept at its size and mtime but replaced (new inode) or rewritten in
+    place (new POSIX ctime) still counts as changed by the run."""
+    return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
+
+
 class Runner:
     def __init__(self, settings: Settings):
         self.s = settings
@@ -951,7 +962,7 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
-            output_before: dict[str, tuple[bool, int | None, int | None]] | None = None
+            output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
             output_scan_notes: list[str] = []
@@ -962,8 +973,7 @@ class Runner:
                 refused = watch.take_baseline() if watch else None
                 records, note = ws.scan_output_records(
                     zones, self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth)
-                output_before = {row["path"]: (bool(row.get("link")), row.get("size"), row.get("mtime_ns"))
-                                 for row in records}
+                output_before = {row["path"]: output_identity(row) for row in records}
                 if note:
                     output_scan_notes.append(note)
                 return refused
@@ -979,10 +989,10 @@ class Runner:
                 if note:
                     output_scan_notes.append(note)
                 observed_outputs = [
-                    {**row, "task_id": task.id, "agent_id": agent.id}
+                    {**{k: v for k, v in row.items() if k not in IDENTITY_ONLY},
+                     "task_id": task.id, "agent_id": agent.id}
                     for row in output_records
-                    if output_before.get(row["path"]) != (
-                        bool(row.get("link")), row.get("size"), row.get("mtime_ns"))
+                    if output_before.get(row["path"]) != output_identity(row)
                 ]
                 incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
                 ws.update_run(task.id, observed_outputs=observed_outputs,
