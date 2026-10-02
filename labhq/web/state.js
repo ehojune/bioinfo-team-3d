@@ -283,8 +283,19 @@ function apply(ev, replay = false) {
       if (rid && d.step_id) stepDetail(rid, d.step_id).attempts = Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1);
       break;
     }
+    case 'request.step_quota_wait': {
+      const q = req(rid); q.steps[d.step_id] = 'waiting_quota';
+      Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine });
+      break;
+    }
+    case 'request.step_quota_resumed': {
+      const q = req(rid), detail = stepDetail(rid, d.step_id);
+      if (q.steps[d.step_id] === 'waiting_quota') q.steps[d.step_id] = 'pending';
+      delete detail.quota_resume_at; delete detail.quota_engine;
+      break;
+    }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(stepDetail(rid, d.step_id), { attempts: d.attempts || stepDetail(rid, d.step_id).attempts, error: d.reason || stepDetail(rid, d.step_id).error }); break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};

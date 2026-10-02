@@ -85,6 +85,12 @@ const stepDetail=fresh.S.stepDetails.get('r3:s1');
 assert.equal(stepDetail.attempts,2);assert.deepEqual(Array.from(stepDetail.outputs),['report.txt']);
 assert.deepEqual(Array.from(stepDetail.missing_outputs),['table.tsv']);
 assert.equal(stepDetail.review_issues[0].problem,'표가 없습니다');
+fresh.apply({type:'request.step_quota_wait',request_id:'r3',data:{step_id:'s2',engine:'codex',resume_at:2000}});
+assert.equal(fresh.req('r3').steps.s2,'waiting_quota');
+assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,2000);
+fresh.apply({type:'request.step_quota_resumed',request_id:'r3',data:{step_id:'s2',engine:'codex',manual:true}});
+assert.equal(fresh.req('r3').steps.s2,'pending');
+assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,undefined);
 for (const terminal of ['request.completed', 'request.failed']) {
   const costs = create();
   costs.apply({type:'agent.usage',request_id:'other',data:{cost_usd:2}});

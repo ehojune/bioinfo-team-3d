@@ -176,6 +176,7 @@ class Hub:
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
+        self.quota_events: dict[str, asyncio.Event] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
@@ -222,12 +223,100 @@ class Hub:
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
 
+    def quota_hold(self, engine: str) -> dict | None:
+        """The account-wide hold for an engine, derived from durable per-request waits."""
+        waits = [entry for req in self.requests.values() for entry in (req.get("quota_waits") or {}).values()
+                 if entry.get("engine") == engine]
+        if not waits:
+            return None
+        return {"engine": engine, "resume_at": max(float(item["resume_at"]) for item in waits),
+                "deadline_at": min(float(item["deadline_at"]) for item in waits)}
+
+    def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
+        req = self.requests[rid]
+        entry = (req.get("quota_waits") or {}).pop(step_id, None)
+        if not req.get("quota_waits"):
+            req.pop("quota_waits", None)
+            if req.get("status") == "waiting_quota":
+                req["status"] = "running"
+        self.save_request(rid)
+        return entry
+
+    async def release_quota(self, engine: str, *, manual: bool) -> list[tuple[str, str]]:
+        """Release an account hold and every step sharing that engine."""
+        released = []
+        for rid, req in self.requests.items():
+            for step_id, entry in list((req.get("quota_waits") or {}).items()):
+                if entry.get("engine") != engine:
+                    continue
+                self._remove_quota_wait(rid, step_id)
+                released.append((rid, step_id))
+                await self.publish({"type": "request.step_quota_resumed", "ts": time.time(),
+                                    "request_id": rid, "data": {"step_id": step_id, "engine": engine,
+                                                                  "manual": manual}})
+        event = self.quota_events.pop(engine, None)
+        if event:
+            event.set()
+        return released
+
+    async def wait_quota(self, rid: str, step_id: str, engine: str, *, resume_at: float,
+                         deadline_at: float, reason: str) -> bool:
+        """Park like an HPC wait. False means the bounded wait expired."""
+        req = self.requests[rid]
+        entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
+                 "reason": short(reason, 500), "waiting_since": time.time()}
+        previous = (req.get("quota_waits") or {}).get(step_id)
+        req.setdefault("quota_waits", {})[step_id] = entry
+        req["status"] = "waiting_quota"
+        self.save_request(rid)
+        if previous != entry:
+            await self.publish({"type": "request.step_quota_wait", "ts": time.time(), "request_id": rid,
+                                "data": {"step_id": step_id, "engine": engine,
+                                         "resume_at": resume_at, "deadline_at": deadline_at}})
+        while True:
+            hold = self.quota_hold(engine)
+            if hold is None:
+                return True
+            now = time.time()
+            if now >= deadline_at:
+                self._remove_quota_wait(rid, step_id)
+                return False
+            if now >= hold["resume_at"]:
+                await self.release_quota(engine, manual=False)
+                return True
+            event = self.quota_events.setdefault(engine, asyncio.Event())
+            try:
+                await asyncio.wait_for(event.wait(), min(hold["resume_at"], deadline_at) - now)
+            except asyncio.TimeoutError:
+                continue
+
+    async def force_quota_resume(self, rid: str, step_id: str) -> list[tuple[str, str]]:
+        entry = (self.requests[rid].get("quota_waits") or {}).get(step_id)
+        if not entry:
+            raise KeyError(step_id)
+        return await self.release_quota(entry["engine"], manual=True)
+
+    async def resume_quota_request(self, rid: str) -> None:
+        """After a gateway restart, keep the durable wait and resume without a PI approval."""
+        req = self.requests[rid]
+        waits = list((req.get("quota_waits") or {}).items())
+        if not waits:
+            req["status"] = "interrupted"
+            self.save_request(rid)
+            return
+        await asyncio.gather(*(self.wait_quota(rid, step_id, entry["engine"],
+                                               resume_at=float(entry["resume_at"]),
+                                               deadline_at=float(entry["deadline_at"]),
+                                               reason=entry.get("reason") or "subscription quota")
+                               for step_id, entry in waits))
+        await self.resume_when_ready(rid)
+
     def running_tasks(self) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
-            if not entry.get("accepted") or req.get("status") != "running":
+            if not entry.get("accepted") or req.get("status") not in {"running", "waiting_quota"}:
                 continue
             if not entry.get("completed"):
                 state = "running"
@@ -254,6 +343,9 @@ class Hub:
             states["direct"] = "pending"
         states.update({sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                        for sid, outcome in (req.get("results") or {}).items()})
+        for sid in (req.get("quota_waits") or {}):
+            if states.get(sid, "pending") == "pending":
+                states[sid] = "waiting_quota"
         for task in self.running_tasks():
             if task["request_id"] == rid:
                 entry = self.store.get("task", task["id"]) or {}
@@ -1147,8 +1239,7 @@ class Hub:
                                                                   "references")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
-                          "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
-                                          for sid, outcome in (r.get("results") or {}).items()},
+                          "step_status": self.request_summary(r)["step_progress"]["steps"],
                           "step_details": self.request_step_details(r.get("id", ""), r),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
                          for r in self.requests.values()],
@@ -1168,6 +1259,7 @@ class Hub:
             sid = step.get("id")
             matches = [(tid, entry) for tid, entry in tasks if entry.get("step_id") == sid]
             result = (request.get("results") or {}).get(sid) or {}
+            quota = (request.get("quota_waits") or {}).get(sid) or {}
             latest = max(matches, key=lambda pair: pair[1].get("dispatched_at", 0), default=(None, {}))
             details[sid] = {
                 "task_id": result.get("task_id") or latest[0],
@@ -1176,6 +1268,8 @@ class Hub:
                 "missing_outputs": result.get("missing_outputs") or [],
                 "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
+                "quota_resume_at": quota.get("resume_at"),
+                "quota_engine": quota.get("engine"),
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
         return details
@@ -1193,6 +1287,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         for rid, request in hub.requests.items():
             if request.get("status") in TERMINAL_REQUEST_STATES:
                 hub._restart_request_asks(rid)
+            elif request.get("status") == "waiting_quota":
+                asyncio.create_task(hub.resume_quota_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
@@ -1349,6 +1445,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         await hub.send_runner(rid, {"type": "task.cancel", "task_id": tid})
         return {"ok": True}
+
+    @app.post("/api/requests/{rid}/steps/{step_id}/resume-quota", dependencies=[Depends(auth)])
+    async def resume_quota(rid: str, step_id: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            released = await hub.force_quota_resume(rid, step_id)
+        except KeyError:
+            raise HTTPException(409, "step is not waiting for quota")
+        return {"ok": True, "released": [{"request_id": request_id, "step_id": sid}
+                                           for request_id, sid in released]}
 
     @app.post("/api/recruit", dependencies=[Depends(auth)])
     async def recruit(body: RecruitIn) -> dict:
