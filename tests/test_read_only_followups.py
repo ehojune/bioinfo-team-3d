@@ -493,6 +493,26 @@ def test_real_claude_probe_read_hidden_outputs_without_loading_memory():
 
 
 @pytest.mark.asyncio
+async def test_case_ignored_claude_exclude_adds_the_rule_spelling_inside_a_hidden_folder(
+        tmp_path, monkeypatch, spawned):
+    import labhq.adapters.claude_code as claude
+    import labhq.adapters.read_only as read_only
+
+    monkeypatch.setattr(claude, "case_sensitive_directory", lambda _path: False)
+    monkeypatch.setattr(read_only, "case_sensitive_directory", lambda _path: False)
+    seen = spawned(Engine.claude_code)
+    workdir = _workdir(tmp_path, "outputs/.hidden/claude.md")
+    runner = _runner(_settings(tmp_path), monkeypatch, _staff(Engine.claude_code))
+    result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
+                                        meta={"kind": "followup", "workdir": str(workdir)}))
+    assert result.ok, result.error
+    argv = seen[0][0]
+    excludes = json.loads(argv[argv.index("--settings") + 1])["claudeMdExcludes"]
+    wd = workdir.resolve().as_posix()
+    assert f"{wd}/outputs/.hidden/CLAUDE.md" in excludes
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("engine,entry", [
     (Engine.claude_code, "outputs/.hidden/AGENTS.team.md"),
     (Engine.codex, "outputs/.hidden/AGENTS.team.md"),

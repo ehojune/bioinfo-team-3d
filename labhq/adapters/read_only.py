@@ -9,7 +9,7 @@ import sys
 from pathlib import Path, PurePath
 
 from ..models import AgentSpec
-from .owned import is_link as _is_link
+from .owned import case_sensitive_directory, is_link as _is_link
 
 # Consults and follow-ups answer from existing work; they never write or submit. Their run is an allowlist, not
 # the staff spec minus a list of risky fields: MCP servers, plugins (and their hooks), pre-approved tools and CLI
@@ -72,8 +72,9 @@ SKILL_DIRS = (".claude/skills", ".agents/skills")
 CASE_INSENSITIVE = os.name == "nt" or sys.platform == "darwin"
 
 
-def _folded(text: str) -> str:
-    return text.casefold() if CASE_INSENSITIVE else text
+def _folded(text: str, case_sensitive: bool | None = None) -> str:
+    insensitive = CASE_INSENSITIVE if case_sensitive is None else not case_sensitive
+    return text.casefold() if insensitive else text
 
 
 def is_read_only_task(meta: dict | None) -> bool:
@@ -154,15 +155,16 @@ def labhq_workspace_paths(agent: AgentSpec, engine: str, workdir: Path | None = 
     return paths
 
 
-def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
+def workspace_instruction_action(engine: str, relative: PurePath, case_sensitive: bool | None = None) -> str | None:
     """Return `exclude` or `refuse` for one engine-read workspace path, independent of depth."""
     rules = WORKSPACE_INSTRUCTION_RULES.get(engine, {})
-    parts = [_folded(part) for part in relative.parts]
+    parts = [_folded(part, case_sensitive) for part in relative.parts]
     name = parts[-1] if parts else ""
     for action in ("refuse", "exclude"):
-        if any(part in {_folded(d) for d in rules.get(f"{action}_dirs", ())} for part in parts):
+        if any(part in {_folded(d, case_sensitive) for d in rules.get(f"{action}_dirs", ())} for part in parts):
             return action
-        if any(fnmatch.fnmatchcase(name, _folded(pattern)) for pattern in rules.get(f"{action}_files", ())):
+        if any(fnmatch.fnmatchcase(name, _folded(pattern, case_sensitive))
+               for pattern in rules.get(f"{action}_files", ())):
             return action
     return None
 
@@ -170,7 +172,8 @@ def workspace_instruction_action(engine: str, relative: PurePath) -> str | None:
 def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], action: str) -> list[str]:
     """Find matching paths at every depth without following symlinks or Windows junctions."""
     found: list[str] = []
-    owned = [_folded(mine) for mine in owned]
+    case_sensitive = case_sensitive_directory(workdir)
+    owned = [_folded(mine, case_sensitive) for mine in owned]
     pending = [Path(workdir)]
     while pending:
         path = pending.pop()
@@ -184,11 +187,11 @@ def workspace_instruction_paths(engine: str, workdir: Path, owned: list[str], ac
                 linked = _is_link(entry)
             except OSError:
                 linked = True
-            key = _folded(relative)
+            key = _folded(relative, case_sensitive)
             if any(key == mine or key.startswith(mine + "/") for mine in owned):
                 continue
             owns_below = any(mine.startswith(key + "/") for mine in owned)
-            matches = workspace_instruction_action(engine, PurePath(relative)) == action
+            matches = workspace_instruction_action(engine, PurePath(relative), case_sensitive) == action
             is_dir = False if linked else entry.is_dir()
             if matches and (not is_dir or action == "refuse") and (not owns_below or linked):
                 found.append(relative)

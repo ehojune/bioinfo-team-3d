@@ -70,6 +70,20 @@ def test_a_forge_default_hides_its_identity_in_json_round_records():
     assert "genomics" not in out and "variant-calls" not in out, out
 
 
+def test_a_nested_gitlab_default_hides_the_repository_and_clone_name_but_not_only_the_group():
+    settings = _with_default("url", "https://gitlab.example.edu/lab/sub/proj")
+    text = r"lab/sub/proj sub/proj C:\src\proj keep lab and sub"
+    out = _published(text, settings)
+    assert "lab/sub/proj" not in out and "sub/proj" not in out and "proj" not in out, out
+    assert out.endswith("keep lab and sub"), out
+
+
+def test_a_forge_navigation_url_does_not_turn_a_common_word_into_repository_identity():
+    settings = _with_default("url", "https://github.example.edu/orgs/lab")
+    out = _published("open https://github.example.edu/orgs/lab then lab work", settings)
+    assert "github.example.edu" not in out and out.endswith("then lab work"), out
+
+
 def test_a_non_forge_default_url_keeps_its_path_words_outside_the_url():
     """A wiki page is not a repository: only its URL is hidden, not every `pi/notes` in the text."""
     settings = _with_default("url", "https://wiki.example.org/pi/notes")
@@ -103,6 +117,12 @@ def test_a_spaced_account_does_not_swallow_the_prose_before_a_reference():
     assert out == "files in /home/alice and then /refs/llm-wiki/a.md", "the home is not a prefix of that path"
     out = _published("files in /home/alice and also /home/bob/refs/llm-wiki/a.md", requests=HOME_REFERENCE)
     assert out == "files in /home/alice and also <reference-path>/a.md", out
+
+
+def test_a_home_only_reference_masks_one_account_word_without_swallowing_the_sentence():
+    requests = [{"references": [{"kind": "path", "value": "~", "source": "request"}]}]
+    out = _published(r"home C:\Users\pi said hello world today", requests=requests)
+    assert out == "home <reference-path> said hello world today", out
 
 
 def test_the_home_mask_stays_linear_on_long_spaced_lines():

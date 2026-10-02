@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · 소유 경로 후속(#217 #226)
+
+- 결론: 소유 경로 경쟁 방지에 더해 공백 포함 home 계정 가림과 HPC 준비의 검증 순서를 바로잡았다.
+- 바뀐 것: 외부 parent traversal을 `jobs/logs` 생성 전에 검사하고, link 교체 오류를 `RuntimeError`로 통일했다. bare `~`는 뒤에 경로 구분자가 있을 때만 공백 포함 account component를 가린다.
+- 실행한 것: 새 가림 회귀의 수정 전 실패를 확인했다. 수정 뒤 관련 pytest 143건 통과·31건 skip, 공개 저장소 검사·compile·diff 검사를 통과했다. README는 87,936 bytes에서 88,049 bytes로 113 bytes 늘었다.
+- 미해결: POSIX 전용 두 회귀는 이 Windows PC에서 skip됐다. GitLab 탐색 URL P2는 이번 PR에서 고치지 않는다.
+- 근거: `labhq/intake.py`, `labhq/tools/hpc_mcp.py`, `tests/test_intake_references.py`, `tests/test_mcp_servers.py`, `tests/test_runner_safety.py`, `tests/test_workspace_boundary.py`.
+
 ## 2026-10-02 · 작은 후속 세 건(#241 #244 #305)
 
 - 결론: 오류 출력 주석, pack rule 동시 검증, input-fit 집계 키를 바로잡았다.

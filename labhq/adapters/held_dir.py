@@ -46,9 +46,9 @@ class HeldDir:
     """One folder held open. `dev` is its device on POSIX, for telling a mount below it apart; None on Windows,
     where a mount point is a reparse point and is never opened as a folder."""
 
-    def __init__(self, handle: int, ident: tuple[int, int], dev: int | None):
+    def __init__(self, handle: int, ident: tuple[int, int], dev: int | None, path: Path | None = None):
         self._handle: int | None = handle
-        self.ident, self.dev = ident, dev
+        self.ident, self.dev, self.path = ident, dev, path
 
     @classmethod
     def hold(cls, path: Path) -> HeldDir:
@@ -57,7 +57,7 @@ class HeldDir:
             handle = _win_open(str(path)) if os.name == "nt" else os.open(path, _FLAGS)
         except OSError as exc:
             raise _not_plain(exc) from None
-        return cls._checked(handle)
+        return cls._checked(handle, Path(path))
 
     def child(self, name: str, expect: tuple[int, int] | None = None) -> HeldDir:
         """Subfolder `name`, opened relative to this folder without following a link. NotPlainFolder when it is a
@@ -67,7 +67,7 @@ class HeldDir:
                       else os.open(name, _FLAGS, dir_fd=self._handle))
         except OSError as exc:
             raise _not_plain(exc) from None
-        held = self._checked(handle)
+        held = self._checked(handle, self.path / name if self.path is not None else None)
         if expect is not None and held.ident != expect:
             held.close()
             raise NotPlainFolder(errno.ESTALE, f"{name} was replaced after it was listed")
@@ -129,18 +129,65 @@ class HeldDir:
                 found.append(HeldEntry(entry.name, kind, (info.st_dev, info.st_ino)))
         return found
 
+    def open_file(self, name: str, flags: int, mode: int = 0o666) -> int:
+        """Open a direct child without following a link or Windows reparse point."""
+        if self._handle is None:
+            raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt":
+            if self.path is None:
+                raise OSError(errno.EBADF, "held folder has no stable path")
+            return _win_open_file(str(self.path / name), flags)
+        return os.open(name, flags | getattr(os, "O_NOFOLLOW", 0), mode, dir_fd=self._handle)
+
+    def replace(self, source: str, target: str) -> None:
+        if self._handle is None:
+            raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt":
+            if self.path is None:
+                raise OSError(errno.EBADF, "held folder has no stable path")
+            os.replace(self.path / source, self.path / target)
+        else:
+            os.replace(source, target, src_dir_fd=self._handle, dst_dir_fd=self._handle)
+
+    def fsync(self) -> None:
+        if os.name != "nt" and self._handle is not None:
+            os.fsync(self._handle)
+
+    def chmod(self, mode: int) -> None:
+        if self._handle is None or os.name == "nt":
+            raise OSError(errno.EBADF, "POSIX folder handle required")
+        os.fchmod(self._handle, mode)
+
+    def chown(self, uid: int, gid: int) -> None:
+        if self._handle is None or os.name == "nt":
+            raise OSError(errno.EBADF, "POSIX folder handle required")
+        os.fchown(self._handle, uid, gid)
+
+    def unlink(self, name: str) -> None:
+        if self._handle is None:
+            raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt":
+            if self.path is None:
+                raise OSError(errno.EBADF, "held folder has no stable path")
+            (self.path / name).unlink(missing_ok=True)
+        else:
+            try:
+                os.unlink(name, dir_fd=self._handle)
+            except FileNotFoundError:
+                pass
+
     @staticmethod
-    def _checked(handle: int) -> HeldDir:
+    def _checked(handle: int, path: Path | None = None) -> HeldDir:
         try:
             if os.name == "nt":
                 attributes, ident = _win_info(handle)
                 if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or not attributes & stat.FILE_ATTRIBUTE_DIRECTORY:
                     raise NotPlainFolder(errno.ENOTDIR, "a link or not a folder")
-                return HeldDir(handle, ident, None)
+                return HeldDir(handle, ident, None, path)
             info = os.fstat(handle)
             if not stat.S_ISDIR(info.st_mode):
                 raise NotPlainFolder(errno.ENOTDIR, "not a folder")
-            return HeldDir(handle, (info.st_dev, info.st_ino), info.st_dev)
+            return HeldDir(handle, (info.st_dev, info.st_ino), info.st_dev, path)
         except BaseException:
             _close(handle)
             raise
@@ -249,6 +296,33 @@ if os.name == "nt":
         if status < 0:
             raise ctypes.WinError(_ntdll.RtlNtStatusToDosError(status))
         return handle.value
+
+    def _win_open_file(path: str, flags: int) -> int:
+        access = 0x40000000  # GENERIC_WRITE
+        if flags & os.O_APPEND:
+            access |= 0x00000004  # FILE_APPEND_DATA
+        if flags & os.O_CREAT and flags & os.O_EXCL:
+            disposition = 1  # CREATE_NEW
+        elif flags & os.O_CREAT and flags & os.O_TRUNC:
+            disposition = 2  # CREATE_ALWAYS
+        elif flags & os.O_CREAT:
+            disposition = 4  # OPEN_ALWAYS
+        elif flags & os.O_TRUNC:
+            disposition = 5  # TRUNCATE_EXISTING
+        else:
+            disposition = 3  # OPEN_EXISTING
+        handle = _kernel32.CreateFileW(path, access, _SHARE, None, disposition,
+                                       0x00200000, None)  # FILE_FLAG_OPEN_REPARSE_POINT
+        if handle in (None, _INVALID):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            attributes, _ident = _win_info(handle)
+            if attributes & (stat.FILE_ATTRIBUTE_REPARSE_POINT | stat.FILE_ATTRIBUTE_DIRECTORY):
+                raise OSError(errno.ELOOP, "a link or folder occupies the file slot")
+            return msvcrt.open_osfhandle(handle, flags | getattr(os, "O_BINARY", 0))
+        except BaseException:
+            _kernel32.CloseHandle(handle)
+            raise
 
     def _win_info(handle: int) -> tuple[int, tuple[int, int]]:
         info = _HandleInfo()
