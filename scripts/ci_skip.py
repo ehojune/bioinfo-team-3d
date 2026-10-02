@@ -38,8 +38,13 @@ def on_base(sha: str, base: str) -> bool:
     return subprocess.run(["git", "merge-base", "--is-ancestor", sha, base], capture_output=True).returncode == 0
 
 
-def safe_step(commit: str, base: str) -> bool:
-    """The commit's own change against its first parent is notes, or files taken unchanged from the base branch."""
+# Only tests/test_integrations.py reads the root README (generated blocks, title, heading anchors, no local paths),
+# so a README change runs that one file instead of the whole suite (PI 2026-10-02).
+README_ONLY = ("README.md",)
+
+
+def safe_step(commit: str, base: str, touched: set[str] | None = None) -> bool:
+    """The commit's own change against its first parent is notes, README, or files taken unchanged from the base."""
     parents = git("rev-list", "--parents", "-n", "1", commit).split()[1:]
     if not parents or len(parents) > 2 or (len(parents) == 2 and not on_base(parents[1], base)):
         return False  # a merge of anything but the base branch (another feature branch) always reruns
@@ -47,6 +52,9 @@ def safe_step(commit: str, base: str) -> bool:
         if notes_only(path):
             continue
         if len(parents) == 2 and blob(commit, path) == blob(parents[1], path):
+            continue
+        if path in README_ONLY and touched is not None:
+            touched.add(path)
             continue
         return False
     return True
@@ -64,10 +72,11 @@ def pytest_passed(sha: str) -> bool:
     return all(job in passed for job in JOBS)
 
 
-def can_skip(head: str, base: str, passed=pytest_passed) -> bool:
+def can_skip(head: str, base: str, passed=pytest_passed, touched: set[str] | None = None) -> bool:
+    """True when the full suite can be skipped; README paths that still need their own check land in `touched`."""
     commit = head
     for _ in range(MAX_WALK):
-        if not safe_step(commit, base):
+        if not safe_step(commit, base, touched):
             return False
         commit = git("rev-parse", f"{commit}^1")
         if passed(commit):
@@ -76,9 +85,11 @@ def can_skip(head: str, base: str, passed=pytest_passed) -> bool:
 
 
 if __name__ == "__main__":
+    touched: set[str] = set()
     try:
-        skip = len(sys.argv) > 2 and can_skip(sys.argv[1], sys.argv[2])
+        skip = len(sys.argv) > 2 and can_skip(sys.argv[1], sys.argv[2], touched=touched)
     except Exception as exc:  # noqa: BLE001 - any doubt runs the tests
         print(f"ci_skip: {type(exc).__name__}: {exc}", file=sys.stderr)
         skip = False
     print(f"skip={'true' if skip else 'false'}")
+    print(f"readme={'true' if skip and touched else 'false'}")

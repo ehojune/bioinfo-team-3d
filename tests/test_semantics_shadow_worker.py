@@ -177,16 +177,18 @@ async def test_the_event_loop_never_waits_for_the_worker(tmp_path, monkeypatch):
     assert worker is not None
     jobs = hub.semantics_shadow.queue
     real_put = jobs.put
+    # #280: after_request swallows what it raises, so the fakes only record; the checks run after _finish.
+    puts, joins = [], []
 
-    def nonblocking_put(item, block=True, timeout=None):
-        assert block is False and timeout is None, "event-loop path used blocking queue.put"
+    def recording_put(item, block=True, timeout=None):
+        puts.append({"block": block, "timeout": timeout})
         return real_put(item, block=block, timeout=timeout)
 
-    def no_join(*args, **kwargs):
-        raise AssertionError(f"event-loop path joined the worker: args={args!r}, kwargs={kwargs!r}")
+    def recording_join(*args, **kwargs):
+        joins.append({"args": args, "kwargs": kwargs})
 
-    monkeypatch.setattr(jobs, "put", nonblocking_put)
-    monkeypatch.setattr(worker, "join", no_join)
+    monkeypatch.setattr(jobs, "put", recording_put)
+    monkeypatch.setattr(worker, "join", recording_join)
     safety_release = threading.Timer(10, release.set)
     safety_release.daemon = True
     safety_release.start()
@@ -195,6 +197,9 @@ async def test_the_event_loop_never_waits_for_the_worker(tmp_path, monkeypatch):
         _finish(hub, rid="req_burst2")
         assert not release.is_set(), "event-loop calls waited for the blocked worker"
         assert not finished.is_set(), "worker finished before the event-loop calls returned"
+        assert joins == [], f"event-loop path joined the worker: {joins!r}"
+        assert puts == [{"block": False, "timeout": None}] * 2, f"event-loop path used blocking queue.put: {puts!r}"
+        assert hub.semantics_shadow.counts["failures"] == 0, "event-loop path failed and swallowed it"
     finally:
         safety_release.cancel()
         release.set()
