@@ -790,6 +790,30 @@ class Orchestrator:
         plan = getattr(self.hub.s, "plan", None)
         return output_vocab.current() if getattr(plan, "declare_output_types", False) else None
 
+    def _request_agent_meta(self, req: dict, agent_id: str | None) -> dict[str, Any]:
+        """Return request-local CSO/reviewer overrides without changing the registry or later requests."""
+        model = req.get("cso_model")
+        if not model or not agent_id:
+            return {}
+        if agent_id == self.cfg.cso_agent:
+            engine = "codex" if model.casefold().startswith("gpt-") else "claude_code"
+            return {"agent_overrides": {"engine": engine, "model": model}}
+        if agent_id != self.cfg.reviewer_agent or not model.casefold().startswith("gpt-"):
+            return {}
+
+        # A GPT CSO must not review its own work with the same model. Prefer the configured CSO's
+        # ordinary Claude model; if a custom roster lacks one, use another allowed model.
+        ordinary = self.hub.agents.get(self.cfg.cso_agent, {})
+        reviewer_model = ordinary.get("model")
+        reviewer_engine = ordinary.get("engine")
+        if not reviewer_model or reviewer_model == model:
+            reviewer_model = next((candidate for candidate in self.cfg.cso_models if candidate != model), None)
+            reviewer_engine = ("codex" if reviewer_model and reviewer_model.casefold().startswith("gpt-")
+                               else "claude_code")
+        if not reviewer_model or reviewer_model == model:
+            raise ValueError("a GPT CSO requires a different configured science reviewer model")
+        return {"agent_overrides": {"engine": reviewer_engine, "model": reviewer_model}}
+
     def _type_meta(self, step: dict) -> dict[str, Any]:
         """Dispatch meta for a step's declarations. Off: nothing (stored declarations stay in the plan, unused).
         Declarations keep the vocabulary version they were made under, never today's."""
@@ -1625,7 +1649,9 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
                         meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
-                              "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {})}))
+                              "title": "업무 분해·배정 계획 수립",
+                              **self._request_agent_meta(req, self.cfg.cso_agent),
+                              **({"workdir": workdir} if workdir else {})}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -1885,7 +1911,9 @@ class Orchestrator:
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
-                              "title": f"남은 DAG 재계획 #{attempt}", **({"workdir": workdir} if workdir else {})}))
+                              "title": f"남은 DAG 재계획 #{attempt}",
+                              **self._request_agent_meta(req, self.cfg.cso_agent),
+                              **({"workdir": workdir} if workdir else {})}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -2041,7 +2069,8 @@ class Orchestrator:
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
                         'Do not omit verdict or add prose.',
                         meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
-                              "request": text, "title": f"과학 리뷰 #{rev}"}))
+                              "request": text, "title": f"과학 리뷰 #{rev}",
+                              **self._request_agent_meta(req, reviewer)}))
                     if rid in self.budget_denials:
                         self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
                                      review={"status": "budget_denied"})
@@ -2126,6 +2155,7 @@ class Orchestrator:
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000)) + replan_history_note(req),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
+                      **self._request_agent_meta(req, self.cfg.cso_agent),
                       **({"workdir": workdir} if workdir else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),

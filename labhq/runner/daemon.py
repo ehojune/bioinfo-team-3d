@@ -382,7 +382,7 @@ class Runner:
         agent = self.registry.get(task.agent_id)
         # A read-only task takes nothing from the sender: run_task rebuilds it as read_only_profile.
         if task.meta.get("agent_overrides") and not is_read_only_task(task.meta):
-            agent = agent.model_copy(update=task.meta["agent_overrides"])
+            agent = AgentSpec.model_validate({**agent.model_dump(), **task.meta["agent_overrides"]})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
         return agent

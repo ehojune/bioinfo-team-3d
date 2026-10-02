@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #272 — 계획만 실행하고 요청별 CSO 모델 선택
+
+- 결론: `labhq send --plan-only`는 같은 roster로 CSO 계획까지만 만들고 직원 실행·과학 리뷰 전에 끝난다. `--cso-model`은 허용 목록 안에서 그 요청에만 적용된다.
+- 바뀐 것: `orchestrator.cso_models`가 요청별 모델을 제한하고 Fable을 거부한다. GPT 모델은 CSO를 Codex로 실행하며 과학 리뷰어는 기본 Claude CSO 모델로 분리한다. 일반 요청과 기본 CSO 설정은 그대로다. README에 두 사용 예를 넣었다.
+- 실행한 것: 새 회귀 5건 중 핵심 4건이 수정 전 실패했고 모두 수정 뒤 통과했다. 관련 372 passed/1 skipped, 전체 pytest 2539 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/cli.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/settings.py`, `tests/test_plan_only_cso_model.py`, `README.md`.
+
 ## 2026-10-02 · CI — 중복 실행 제거와 이미 통과한 pytest 재실행 생략
 
 - 결론: PI 요청. PR 브랜치는 pull_request로 한 번만 돌고, 패치노트만 더한 push나 STATUS·패치노트 충돌만 푼 main 병합 push는 직전 커밋의 pytest가 통과했으면 pytest를 건너뛴다(skipped). 합쳐진 조합 자체는 다시 시험하지 않고, squash 병합 뒤 main CI가 다시 돈다.
