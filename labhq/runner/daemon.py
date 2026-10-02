@@ -22,7 +22,7 @@ import yaml
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
-from ..adapters.owned import OwnedPathError, owned_link_error, read_owned, write_owned
+from ..adapters.owned import OwnedPathError, is_link, owned_link_error, read_owned, write_owned
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
@@ -502,6 +502,36 @@ class Runner:
             return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
         return incomplete
 
+    def _consult_workspace_input(self, task: Task) -> tuple[Path | None, str | None]:
+        """Validate runner-local consult refs without trusting the gateway's filesystem (#86)."""
+        raw_source = task.meta.get("source_workdir")
+        refs = task.meta.get("consult_refs") or []
+        if task.meta.get("kind") != "consult" or not refs:
+            return None, None
+        if not raw_source:
+            return None, "consult refs에 원래 작업 폴더가 없습니다"
+        try:
+            workspace_root = self.ws_root.resolve(strict=True)
+            source = Path(str(raw_source))
+            resolved_source = source.resolve(strict=True)
+            if not source.is_dir() or is_link(source) or not resolved_source.is_relative_to(workspace_root):
+                raise ValueError
+            for raw_ref in refs:
+                normalized = str(raw_ref).replace("\\", "/")
+                if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
+                        or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
+                    raise ValueError
+                current = source
+                for part in Path(normalized).parts:
+                    current /= part
+                    if not os.path.lexists(current) or is_link(current):
+                        raise ValueError
+                if not current.resolve(strict=True).is_relative_to(resolved_source):
+                    raise ValueError
+        except (OSError, RuntimeError, ValueError):
+            return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 경로여야 합니다"
+        return resolved_source, None
+
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
                              fail_closed: bool = False) -> tuple[list[str], str | None]:
         """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
@@ -607,6 +637,9 @@ class Runner:
         base = self.ws_root.resolve()
         owned |= {Path(d).resolve() for d in task.meta.get("upstream_dirs", [])
                   if Path(d).resolve().is_relative_to(base)}
+        source = task.meta.get("source_workdir")
+        if source and Path(source).resolve().is_relative_to(base):
+            owned.add(Path(source).resolve())
         return ReadOnlyWatch(roots, self.s.runner.read_only_check_max_entries, owned, skip), notes
 
     async def _read_only_verdict(self, result: TaskResult, watch: ReadOnlyWatch, emit, ws: TaskWorkspace,
@@ -690,6 +723,15 @@ class Runner:
                 self.task_req[task.id] = task.request_id
             assert ws is not None
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            consult_source, consult_error = self._consult_workspace_input(task)
+            if consult_error:
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
+                await emit("agent.log", {"level": "alert", "text": consult_error})
+                await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
+                await emit("task.result", result.model_dump(mode="json"))
+                return result
+            if consult_source is not None:
+                extra_dirs.append(str(consult_source))
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
             unruled = [link for link in denied_links if not claude_rule_ready(link)]

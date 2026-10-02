@@ -13,7 +13,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from labhq.gateway.server import RequestIn, create_app
-from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine, TaskResult
+from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine, Task, TaskResult
 from labhq.orchestrator.cso import hard_stop_kind
 from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
@@ -145,6 +145,7 @@ async def test_consult_reads_the_ask_workspace_and_verified_refs(tmp_path):
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = create_app(settings).state.hub
     hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
     hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
     source = tmp_path / "runs" / "source"
     (source / "outputs").mkdir(parents=True)
@@ -162,45 +163,100 @@ async def test_consult_reads_the_ask_workspace_and_verified_refs(tmp_path):
     try:
         await hub.orchestrator.answer_ask(ask, "runner")
         consult = calls[0]
-        assert consult.meta["upstream_dirs"] == [str(source.resolve())]
+        assert consult.meta["source_workdir"] == str(source)
+        assert consult.meta["consult_refs"] == ["outputs/table.tsv"]
         assert "outputs/table.tsv" in consult.prompt
         assert consult.meta.get("workdir") != str(source.resolve()), "consult writes only to its own workspace"
     finally:
         hub.store.close()
 
 
-async def test_consult_rejects_a_ref_whose_link_leaves_the_ask_workspace(tmp_path):
+async def test_gateway_does_not_resolve_a_runner_workdir_when_refs_are_empty(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = create_app(settings).state.hub
     hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
     hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
-    source, outside = tmp_path / "runs" / "source", tmp_path / "outside"
-    source.mkdir(parents=True)
-    outside.mkdir()
-    (outside / "secret.tsv").write_text("secret\n", encoding="utf-8")
-    try:
-        os.symlink(outside / "secret.tsv", source / "linked.tsv")
-    except OSError as exc:
-        hub.store.close()
-        pytest.skip(f"symlink unavailable: {exc}")
     calls = []
 
     async def dispatch(task):
         calls.append(task)
-        raise AssertionError("invalid refs must be rejected before consult dispatch")
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="answer")
 
     hub.dispatch = dispatch
     ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
-                     question="Read it?", why_blocked="Need the artifact", refs=["linked.tsv"],
-                     source_workdir=str(source))
+                     question="General question?", why_blocked="Need advice", refs=[],
+                     source_workdir="Z:/runner-only/missing")
     try:
         await hub.orchestrator.answer_ask(ask, "runner")
         answer = hub.store.get("ask", ask.id)["answer"]
-        assert answer["status"] == "rejected" and "refs" in answer["reason"]
-        assert calls == []
+        assert answer["status"] == "answered"
+        assert len(calls) == 1
     finally:
         hub.store.close()
+
+
+async def test_consult_on_another_runner_withholds_the_source_workspace(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner-b"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="Read it?", why_blocked="Need the artifact", refs=["outputs/table.tsv"],
+                     source_workdir="C:/runner-a/runs/source")
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner-a")
+        consult = calls[0]
+        assert "source_workdir" not in consult.meta
+        assert "consult_refs" not in consult.meta
+        assert "참고 파일은 다른 runner에 있어 읽을 수 없다" in consult.prompt
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("outside", [False, True])
+async def test_runner_validates_consult_refs_in_the_source_workspace(tmp_path, monkeypatch, outside):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    source.mkdir(parents=True)
+    ref = source / "table.tsv"
+    ref.write_text("n\n3\n", encoding="utf-8")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read table.tsv", meta={
+        "kind": "consult", "source_workdir": str(source),
+        "consult_refs": ["../outside.tsv" if outside else "table.tsv"]})
+    try:
+        result = await runner.run_task(task)
+        if outside:
+            assert not result.ok and "consult refs" in (result.error or "")
+            assert calls == []
+        else:
+            assert result.ok
+            assert str(source.resolve()) in calls[0].extra_dirs
+    finally:
+        runner.store.close()
 
 
 async def test_fake_mcp_client_gets_one_terminal_answer(tmp_path):
