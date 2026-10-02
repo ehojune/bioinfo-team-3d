@@ -545,6 +545,36 @@ def replan_history_note(req: dict) -> str:
             "\n".join(replan_history_lines(req["replan_history"])))
 
 
+def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> dict[str, str]:
+    """Reviewer feedback plus every step downstream of a flagged one (PR #337 review).
+
+    A revised step changes what its dependents read, so a dependent the reviewer did not flag re-runs too, with a
+    note naming the revised upstream steps; otherwise a later revision or the report reads a bridge step (s5 → s8
+    → s9) built on the old result. Flagged steps keep their own notes and get no extra one.
+    """
+    children: dict[str, list[str]] = {s["id"]: [] for s in steps}
+    for step in steps:
+        for dep in step["depends_on"]:
+            children.setdefault(dep, []).append(step["id"])
+    revised_above: dict[str, set[str]] = {}
+    pending = list(feedback)
+    while pending:
+        sid = pending.pop()
+        for child in children.get(sid, []):
+            if child in feedback:
+                continue
+            roots = {sid} if sid in feedback else revised_above.get(sid, set())
+            if not roots <= revised_above.get(child, set()):
+                revised_above.setdefault(child, set()).update(roots)
+                pending.append(child)
+    extended = dict(feedback)
+    for sid in (s["id"] for s in steps):
+        if sid in revised_above:
+            extended[sid] = (f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the "
+                             "scientific review. Redo your step on their new results and update your outputs.\n")
+    return extended
+
+
 def _output_reference(inner: str) -> re.Pattern[str]:
     """A root, absolute, home, or bare instruction reference to one declared output (#229)."""
     body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
@@ -1636,6 +1666,17 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
+        ancestors: dict[str, set[str]] = {}
+        for sid in by_id:
+            pending = list(by_id[sid]["depends_on"])
+            found: set[str] = set()
+            while pending:
+                ancestor = pending.pop()
+                if ancestor in found:
+                    continue
+                found.add(ancestor)
+                pending.extend(by_id[ancestor]["depends_on"])
+            ancestors[sid] = found
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
@@ -1731,8 +1772,9 @@ class Orchestrator:
                 return await self.run_step(task)
 
         while todo or running:
-            # ready = no dependency still pending in this run (deps outside `only` already have results)
-            ready = [sid for sid in todo if not any(d in todo or d in running for d in by_id[sid]["depends_on"])]
+            # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
+            # on every ancestor in this run prevents a downstream revision from reading the bridge's stale result.
+            ready = [sid for sid in todo if not any(d in todo or d in running for d in ancestors[sid])]
             for sid in ready:
                 todo.discard(sid)
                 if rid in self.budget_denials:
@@ -2874,12 +2916,14 @@ class Orchestrator:
                     req["review_progress"] = progress
                     self.hub.save_request(rid)
                     break
+                feedback = with_downstream_revisions(steps, feedback)
                 progress["phase"] = "revision"
                 req["review_progress"] = progress
                 pending = req.setdefault("pending_revisions", {})
                 for sid, note in feedback.items():
                     pending[sid] = {"revision": rev + 1, "feedback": note,
-                                    "previous_result": results[sid].model_dump(mode="json")}
+                                    **({"previous_result": results[sid].model_dump(mode="json")}
+                                       if sid in results else {})}
                     req.setdefault("results", {}).pop(sid, None)
                 self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
