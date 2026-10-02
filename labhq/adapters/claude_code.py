@@ -235,6 +235,12 @@ class ClaudeCodeAdapter(AgentAdapter):
         deny = list(permissions.get("deny") or [])
         permissions["deny"] = list(dict.fromkeys([*deny, "SendMessage", "ListAgents"]))
         settings["permissions"] = permissions
+        # The deny rules stop this session from sending; this stops the PI's other sessions from messaging it
+        # (#276). --settings is Claude's flagSettings: it outranks user settings, project/local files can only make
+        # the value stricter, and only managed policy can override it. Probed on Claude 2.1.282
+        # (scripts/probe_inbound_mcp.py): without it a message sent by name was queued in the staff session; with
+        # it the message was refused and the sender got a refused receipt.
+        settings["crossSessionInbound"] = "refuse"
         if ctx.read_only:  # isolation is not optional here, and no hook of any source runs
             cmd += READ_ONLY_FLAGS
             settings.update(user_config_isolation(self.staff_env(ctx), ctx.workdir))
