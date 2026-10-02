@@ -1817,6 +1817,9 @@ class Orchestrator:
                         if outcome.pending_jobs:
                             return (f"failed with live HPC jobs {outcome.pending_jobs}; a new step could submit "
                                     "them again")
+                        if outcome.error_kind == "wake_limit":  # run_step cleared its jobs and asks; error keeps them
+                            return (f"{error}; its HPC jobs or PI questions may still be live, so a new step "
+                                    "could submit or ask them again")
                         if "cancel" in error.lower():  # failure_kind's terminal cancel: the PI's task cancel
                             return f"{error}; a cancelled step is a decision, not a failure to plan around"
                         return None

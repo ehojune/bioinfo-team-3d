@@ -1579,6 +1579,23 @@ async def test_replan_does_not_route_around_a_rejected_pi_decision():
 
 
 @pytest.mark.asyncio
+async def test_replan_does_not_route_around_live_jobs_at_the_wake_limit():
+    """run_step clears pending_jobs when it stops at the wake limit; those jobs can still be running (#271)."""
+    hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
+                     lambda task: result(task, text="submitted", pending_jobs=["j1"]),
+                     lambda task: pytest.fail("a step stopped with live jobs must not be re-planned around"))
+    hub.s.orchestrator.max_wake_cycles = 0
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["results"]["A"]["error_kind"] == "wake_limit" and req["results"]["A"]["pending_jobs"] == []
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][0]["status"] == "blocked"
+    assert "pending jobs: ['j1']" in req["replan_history"][0]["reason"]
+    assert req["replan_progress"]["attempts"] == 0
+
+
+@pytest.mark.asyncio
 async def test_replan_question_goes_through_clarify_gate_and_reports_pending_decision():
     question = "May the fallback use the controlled cohort?"
     hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
