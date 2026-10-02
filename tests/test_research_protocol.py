@@ -506,6 +506,22 @@ def test_count_scale_and_model_combinations_are_machine_rules(model, family, sca
             _validate_single_cell(plan, selected)
 
 
+def test_pack_rule_is_reported_with_an_undeclared_field():
+    plan, selected = _single_cell_plan(model="pseudobulk", count_scale="log_transformed")
+    plan["pack_values"][PACK]["fields"]["unexpected"] = "value"
+
+    with pytest.raises(ValueError) as error:
+        _validate_single_cell(plan, selected)
+
+    message = str(error.value)
+    assert "contains undeclared fields: ['unexpected']" in message
+    assert "pack rule single_cell_de.pseudobulk_raw_counts failed" in message
+
+    del plan["pack_values"][PACK]["fields"]["unexpected"]
+    with pytest.raises(ValueError, match=r"single_cell_de\.pseudobulk_raw_counts"):
+        _validate_single_cell(plan, selected)
+
+
 SCALE_MODEL_FIELDS = ("count_scale", "model", "model_family")
 
 

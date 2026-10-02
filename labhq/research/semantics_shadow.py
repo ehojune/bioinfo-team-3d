@@ -2367,11 +2367,12 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         proposals.append("기록 공백: unknown 비율 중앙값 ≥ 0.9, 병목은 기록(#58·#115)")
     if len(marks) >= 5 and wrong / len(marks) >= 0.2:
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
-    input_fit: dict[str, dict[str, int]] = {}  # per relation-table version: two tables never add up
+    input_fit: dict[str, dict[str, int]] = {}  # relation table and vocabulary together define the verdict
     for r in requests:
         if not isinstance(r.get("input_fit"), Mapping):
             continue
-        into = input_fit.setdefault(str(r.get("input_fit_sha256") or "-")[:12],
+        key = f"{str(r.get('input_fit_sha256') or '-')[:12]}/{str(r.get('vocab_sha256') or '-')[:12]}"
+        into = input_fit.setdefault(key,
                                     {key: 0 for key in semantics_input_fit.VERDICTS})
         for key in semantics_input_fit.VERDICTS:
             into[key] += int(r["input_fit"].get(key) or 0)

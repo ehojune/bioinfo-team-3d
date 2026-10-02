@@ -376,6 +376,7 @@ def _section(values: dict[str, Any], name: str) -> dict[str, Any] | None:
 
 def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values: dict[str, Any] | None) -> list[str]:
     errors: list[str] = []
+    invalid_fields: set[str] = set()
     fields = _section(supplied, "fields")
     if fields is not None:
         declared = {field.name: field for field in pack.fields}
@@ -385,6 +386,7 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
         for name, field in declared.items():
             if field.required and (name not in fields or not _present(fields.get(name))):
                 errors.append(f"pack_values[{key}].fields.{name} is required")
+                invalid_fields.add(name)
                 continue
             if name not in fields:
                 continue
@@ -394,10 +396,13 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
                           (field.value_type == "boolean" and isinstance(current, bool)))
             if not valid_type:
                 errors.append(f"pack_values[{key}].fields.{name} must be {field.value_type}")
+                invalid_fields.add(name)
             elif field.allowed_values and current not in field.allowed_values:
                 errors.append(f"pack_values[{key}].fields.{name} must be one of {field.allowed_values}")
+                invalid_fields.add(name)
             elif field.minimum is not None and current < field.minimum:
                 errors.append(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
+                invalid_fields.add(name)
     fields_ok = fields is not None and not errors
 
     validators = _section(supplied, "validators")
@@ -422,8 +427,11 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
             if rule.id in acceptance and not _present(acceptance[rule.id]):
                 errors.append(f"pack_values[{key}].acceptance.{rule.id} must describe the rule outcome")
 
-    if fields_ok and plan_values is not None:  # rules compare typed values; skip them on a broken draft
+    if fields is not None and plan_values is not None:
         for rule in pack.rules:
+            predicates = [*rule.conditions, rule.require or rule.forbid]
+            if any(predicate.field in declared and predicate.field in invalid_fields for predicate in predicates):
+                continue  # only a rule whose own input is broken must wait for the corrected draft
             if not all(_pack_predicate_matches(condition, fields, plan_values) for condition in rule.conditions):
                 continue
             if rule.require is not None:
