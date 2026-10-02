@@ -118,9 +118,10 @@ def write_owned(root: Path, relative: str, text: str) -> Path:
     try:
         with _held_parent(root, rel) as parent:
             if os.path.lexists(target):
-                linked = is_link(target)
-                if (linked and target.is_dir()) or (not linked and not target.is_file()):
-                    raise OwnedPathError(f"labhq does not write {rel.as_posix()}: a folder or non-file occupies it")
+                # Only a folder blocks the rename. A FIFO, socket or other special entry is replaced like a file:
+                # the rename never opens it, so a finished run does not hang on it (PR #230 FIFO test).
+                if target.is_dir():
+                    raise OwnedPathError(f"labhq does not write {rel.as_posix()}: a folder occupies it")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
             fd = parent.open_file(temporary, flags, 0o666)
             try:
