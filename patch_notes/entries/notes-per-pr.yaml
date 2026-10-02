@@ -1,0 +1,5 @@
+pr: 292
+rows:
+  - sha: c9eef11
+    at: "2026-10-02 15:40"
+    text: PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰
