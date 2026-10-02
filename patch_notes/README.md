@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:58 | [`e0d71e0`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/e0d71e0) | 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가 읽는 live 상태는 event loop에서 복사 |
+| 18:47 | [`bb9d71b`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/bb9d71b) | A/B arm은 연구 요청에만 붙이고, 참조율은 계획 때 요청에 고정한 후보 ID로 판정하며, 그 ID를 쓴 계획이 정보 경계에 걸려 꺼지지 않게 함 |
+| 18:27 | [`0aece30`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/0aece30) | 연구 요청을 advisory와 shadow로 반씩 고정 배정하고 안전한 재사용 후보 참고와 arm별 효과·실패·비용 보고를 추가 |
 | 16:52 | [`fb34d54`](https://github.com/ehojune/bioinfo-team-3d/pull/295/commits/fb34d54) | 목차 갱신 workflow를 직렬화: 최신 main에서 다시 만들고, push가 실패하면 재시도 |
 | 16:40 | [`7e2586c`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/7e2586c) | 기록 목차: 하위 폴더 기록은 오류로, PR 단계에서 원본 형식 검사, 목차 workflow는 README 배지에서 뺌 |
 | 15:40 | [`c9eef11`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/c9eef11) | PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰 |

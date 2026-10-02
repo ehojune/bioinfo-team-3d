@@ -40,6 +40,7 @@ OWNED = [
     "tests/test_semantics_shadow_hash.py",
     "tests/test_semantics_shadow_breaker.py",
     "tests/test_semantics_shadow_report.py",
+    "tests/test_semantics_ab.py",
     "tests/test_semantics_shadow_remove.py",
     *ACTIONS_OWNED,
     "scripts/semantics_shadow_remove.py",

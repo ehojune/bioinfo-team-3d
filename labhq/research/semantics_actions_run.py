@@ -1,6 +1,6 @@
 """Action layer A2 (#149 결정 16): the PI's own CLI runs one existing action, ``request.followup``.
 
-Only ``labhq semantics action run request.followup <rid>`` runs it, with ``semantics: {mode: shadow, actions:
+Only ``labhq semantics action run request.followup <rid>`` runs it, with ``semantics: {mode: shadow (or ab), actions:
 confirm}``, at a terminal, after an explicit y/N. It sends the existing ``POST /api/requests/{rid}/followup``, so the
 gateway still decides every rule it decides today and no new authority exists. Every other action stays
 shadow-only, and ``hpc.*`` is refused before anything else is looked at.
@@ -14,8 +14,8 @@ process has no client token to send.
 No automatic resend. The execution id is written before the POST, under a per-request lock created with O_EXCL,
 both fsynced with their folder entries (``Ledger``). A lost or unclear answer leaves the record ``unknown`` and the
 lock in place: nothing retries, and a new run for that request is refused until the PI closes the record with
-``labhq semantics action check <id>``. A crash after the intent reads back the same way. ``accepted`` (the server took it, with its follow-up id) and the
-follow-up's ``completion`` (read later by ``check``) are separate fields.
+``labhq semantics action check <id>``. A crash after the intent reads back the same way. ``accepted`` (the server
+took it, with its follow-up id) and the follow-up's ``completion`` (read later by ``check``) are separate fields.
 
 Availability is three-valued, as in A1: a precondition the live records cannot show is unknown, an earlier
 execution whose outcome is unknown makes it unknown, and only an all-true verdict is offered to the PI.
@@ -49,7 +49,7 @@ EXEC_ID = re.compile(r"[0-9a-f]{16}")
 NOTE = {
     "refused_p3": "hpc.* 액션은 P3(HPC 계정 방식) 결정 전까지 어떤 단계에서도 실행하지 않습니다",
     "refused_action": "이 액션은 그림자 기록만 합니다. CLI가 실행하는 것은 request.followup 하나입니다",
-    "refused_config": "설정이 semantics: {mode: shadow, actions: confirm}이 아니거나, semantics가 자동으로 꺼졌거나, "
+    "refused_config": "설정이 semantics: {mode: shadow 또는 ab, actions: confirm}이 아니거나, semantics가 자동으로 꺼졌거나, "
                       "client token·gateway 주소(loopback만)가 맞지 않습니다",
     "refused_env": "PI가 터미널에서 직접 실행할 때만 동작합니다(직원 작업 환경·직원용 설정 사본·비TTY 거부)",
     "refused_target": "요청 id 형식이 아닙니다(req_...)",
