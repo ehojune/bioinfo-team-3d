@@ -11,3 +11,9 @@ rows:
   at: 2026-10-02 19:36
   text: pipeline PR은 확장자로 코드만 받고 json·yaml·md는 정해진 pipeline 경로에서만 받음. 성공으로 끝난 turn의
     산출만 제출
+- sha: 57ed166
+  at: 2026-10-02 19:46
+  text: 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용
+- sha: 438b893
+  at: 2026-10-02 19:47
+  text: 'main 병합: settings.py import 충돌 해소'
