@@ -14,6 +14,7 @@ from . import doctor, hpc_consult
 from .adapters.base import _resolve_command
 from .settings import HpcSettings, Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
+from .util import free_port
 
 
 class InitError(ValueError):
@@ -150,15 +151,51 @@ def _login_command(settings: Settings) -> str:
     return 'CODEX_HOME="$HOME/.labhq/codex-staff" codex login'
 
 
+def _used_instance_ports() -> set[int]:
+    used: set[int] = set()
+    for path in (Path.home() / ".labhq").glob("*/labhq.yaml"):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            used.update(int(value) for value in (
+                data.get("gateway", {}).get("port"), data.get("runner", {}).get("broker_port")) if value)
+        except (OSError, ValueError, TypeError, yaml.YAMLError):
+            continue
+    return used
+
+
+def _unused_port(used: set[int]) -> int:
+    while True:
+        port = free_port()
+        if port not in used:
+            used.add(port)
+            return port
+
+
 def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
-        force: bool = False) -> dict:
+        force: bool = False, instance: str | None = None) -> dict:
     target = Path(config or os.environ.get("LABHQ_CONFIG") or "config/labhq.yaml").resolve()
+    if instance:
+        print("주의: 엔진 로그인과 사용량 한도는 모든 labhq 인스턴스가 공유합니다.")
+        if force:
+            raise InitError("인스턴스 설정은 덮어쓰지 않습니다. --force 없이 기존 설정을 사용하세요.")
     staff_home: Path | None = None
     if target.exists() and not force:
         print("기존 설정과 token을 보존합니다. 교체하려면 --force를 사용하세요.")
         settings = Settings.load(str(target))
     else:
         data = yaml.safe_load(_template_text())
+        if instance:
+            root = f"~/.labhq/{instance}"
+            used = _used_instance_ports()
+            gateway = data.setdefault("gateway", {})
+            runner = data.setdefault("runner", {})
+            gateway_port = _unused_port(used)
+            gateway.update({"port": gateway_port, "url": f"ws://127.0.0.1:{gateway_port}",
+                            "state_dir": f"{root}/state/gateway"})
+            runner.update({"id": instance, "broker_port": _unused_port(used),
+                           "state_dir": f"{root}/state/runner", "workspace_root": f"{root}/runs",
+                           "talent_dir": f"{root}/talent", "contract_dir": f"{root}/contract"})
+            data["instance"] = instance
         agents_dir = _find_agents_dir(target, data.setdefault("runner", {}).get("agents_dir", "../agents"))
         if agents_dir is None:
             raise InitError("활성 직원 roster를 찾지 못했습니다. agents/core가 있는 checkout에서 다시 실행하세요.")

@@ -149,7 +149,8 @@ class Runner:
         self.incarnation = saved_incarnation["id"] if saved_incarnation else uuid.uuid4().hex
         if not saved_incarnation:
             self.store.put("runner_meta", "incarnation", {"id": self.incarnation})
-        self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir))
+        self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
+                                 settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)

@@ -31,6 +31,7 @@ class RunnerSettings(BaseModel):
     workspace_root: str = "~/.labhq/runs"
     agents_dir: str = "./agents"
     talent_dir: str = "~/.labhq/talent"  # 인재풀: every contract ever hired, kept for rehire
+    contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
     job_poll_s: int = 60
@@ -369,6 +370,7 @@ class ProjectSettings(BaseModel):
 
 
 class Settings(BaseModel):
+    instance: str | None = None
     gateway: GatewaySettings = GatewaySettings()
     runner: RunnerSettings = RunnerSettings()
     engines: EnginesSettings = EnginesSettings()
@@ -387,6 +389,15 @@ class Settings(BaseModel):
     config_path: str | None = None
     # Set only in the staff copy (write_staff_config): the folder its relative paths still resolve from.
     config_base: str | None = None
+
+    @field_validator("instance")
+    @classmethod
+    def safe_instance_name(cls, value: str | None) -> str | None:
+        import re
+
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
+            raise ValueError("instance must use 1-64 letters, numbers, underscores or hyphens")
+        return value
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None
