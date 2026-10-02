@@ -1221,6 +1221,7 @@ class Orchestrator:
                                                      deadline_at=deadline,
                                                      reason="same engine account is waiting for quota"):
                         return quota_failure(current, "subscription quota wait exceeded the configured maximum")
+                    await self._check_budget(rid)  # a parallel step may have spent or been denied it meanwhile
                 self.attempts.setdefault(rid, {})[key] = self.attempts.get(rid, {}).get(key, 0) + 1
                 attempt_task = current.model_copy(update={"id": current.id if attempt == 1 else new_id("task"),
                                                   "resume_session_id": previous_session,
@@ -1285,42 +1286,46 @@ class Orchestrator:
                                                                "reason": res.error or "empty result"})
             raise AssertionError("unreachable")
 
-        current = task
-        res = await dispatch_with_retry(current, start=initial_attempt)
-        while True:
-            quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
-                                                             default_wait_s=self.cfg.quota_default_wait_s)
-            if quota is None:
-                clear_quota_window()
-                break
-            deadline = quota_deadline()
-            window = self.hub.requests[rid]["quota_windows"][engine]
-            if window.get("task_id") == res.task_id:
-                resume_at = float(window["resume_at"])
-            else:
-                resume_at = quota.resume_at
-                window.update(task_id=res.task_id, resume_at=resume_at, reset_time_parsed=quota.parsed)
-                self.hub.save_request(rid)
-            if resume_at > deadline:
-                res = quota_failure(current, f"subscription quota reset exceeds the configured maximum; "
-                                      f"reset={resume_at:.0f}, deadline={deadline:.0f}")
-                break
-            key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
-            if not await self.hub.wait_quota(rid, key, engine, resume_at=resume_at,
-                                             deadline_at=deadline, reason=res.error or "subscription quota"):
-                res = quota_failure(current, "subscription quota wait exceeded the configured maximum")
-                break
-            can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
-            current = Task(agent_id=current.agent_id, request_id=current.request_id,
-                           output_schema=current.output_schema,
-                           prompt=continuation_prompt(task, "The subscription quota has reset. Continue the same task.",
-                                                      resumable=can_resume, previous_result=res,
-                                                      context_chars=self.cfg.context_chars_per_step),
-                           meta={**current.meta, "kind": current.meta.get("kind", "step"),
-                                 "parent_task": res.task_id,
-                                 **({"workdir": res.workdir} if res.workdir else {})},
-                           resume_session_id=res.session_id if can_resume else None)
-            res = await dispatch_with_retry(current)
+        async def dispatch_turn(turn: Task, max_attempts: int | None = None, start: int = 1) -> TaskResult:
+            """Every turn of the step, wake and wrap-up included, parks on a subscription quota and resumes."""
+            current = turn
+            res = await dispatch_with_retry(current, max_attempts, start)
+            while True:
+                quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
+                                                                 default_wait_s=self.cfg.quota_default_wait_s)
+                if quota is None:
+                    clear_quota_window()
+                    return res
+                deadline = quota_deadline()
+                window = self.hub.requests[rid]["quota_windows"][engine]
+                if window.get("task_id") == res.task_id:
+                    resume_at = float(window["resume_at"])
+                else:
+                    resume_at = quota.resume_at
+                    window.update(task_id=res.task_id, resume_at=resume_at, reset_time_parsed=quota.parsed)
+                    self.hub.save_request(rid)
+                if resume_at > deadline:
+                    return quota_failure(current, f"subscription quota reset exceeds the configured maximum; "
+                                                  f"reset={resume_at:.0f}, deadline={deadline:.0f}")
+                key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+                if not await self.hub.wait_quota(rid, key, engine, resume_at=resume_at,
+                                                 deadline_at=deadline, reason=res.error or "subscription quota"):
+                    return quota_failure(current, "subscription quota wait exceeded the configured maximum")
+                can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
+                # The turn that hit the quota is the base, so a wake turn keeps its job results and ask answers.
+                current = Task(agent_id=current.agent_id, request_id=current.request_id,
+                               output_schema=current.output_schema,
+                               prompt=continuation_prompt(turn, "The subscription quota has reset. "
+                                                                "Continue the same task.",
+                                                          resumable=can_resume, previous_result=res,
+                                                          context_chars=self.cfg.context_chars_per_step),
+                               meta={**current.meta, "kind": current.meta.get("kind", "step"),
+                                     "parent_task": res.task_id,
+                                     **({"workdir": res.workdir} if res.workdir else {})},
+                               resume_session_id=res.session_id if can_resume else None)
+                res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
+
+        res = await dispatch_turn(task, start=initial_attempt)
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
         read_only = is_read_only_task(task.meta)
@@ -1334,7 +1339,7 @@ class Orchestrator:
                               "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
                               "outputs": ["PARTIAL_STATUS.md"]})
             try:
-                partial = await dispatch_with_retry(wrap, max_attempts=1)
+                partial = await dispatch_turn(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else
                         "status note missing" if partial.ok else partial.error)
                 res = res.model_copy(update={"partial_results": bool(partial.outputs),
@@ -1369,7 +1374,7 @@ class Orchestrator:
                                            previous_result=res, context_chars=self.cfg.context_chars_per_step),
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
-            res = await dispatch_with_retry(wake)
+            res = await dispatch_turn(wake)
         if res.ok and waiting(res):
             res = res.model_copy(update={
                 "ok": False, "error_kind": "wake_limit",

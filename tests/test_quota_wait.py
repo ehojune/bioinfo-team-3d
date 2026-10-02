@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from labhq import quota as quota_module
 from labhq.gateway.server import Hub, create_app
 from labhq.models import AgentSpec, AskRequest, Engine, Task, TaskResult
-from labhq.orchestrator.cso import Orchestrator, failure_kind
+from labhq.orchestrator.cso import BudgetExceeded, Orchestrator, failure_kind
 from labhq.quota import parse_quota_wait, quota_reset_instant, received_quota_wait
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -243,6 +243,69 @@ async def test_another_step_on_the_same_engine_waits_before_dispatch(tmp_path):
     assert calls == [] and hub.requests["r"]["status"] == "waiting_quota"
     await hub.force_quota_resume("limited", "A")
     assert (await asyncio.wait_for(running, 1)).ok and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_wake_turn_that_hits_the_quota_parks_and_resumes(tmp_path):
+    """#302: a step that hibernated on an HPC job and meets the quota on waking resumes after the reset."""
+    hub = _hub(tmp_path)
+    workdir = str(tmp_path / "work")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="submitted", cost_usd=0.0,
+                              pending_jobs=["j1"], session_id="s1", workdir=workdir)
+        if len(calls) == 2:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, session_id="s1", workdir=workdir, cost_usd=0.0,
+                              error="You've hit your usage limit; your quota will reset after 0.01s")
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done", session_id="s1",
+                          cost_usd=0.0, workdir=workdir)
+
+    async def wait_jobs(_task_id):
+        return {"jobs": [{"job_id": "j1", "name": "align", "state": "completed", "exit_status": 0}]}
+
+    hub.dispatch = dispatch
+    hub.wait_jobs = wait_jobs
+    result = await asyncio.wait_for(Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), 1)
+    assert result.ok and result.text == "done" and len(calls) == 3
+    assert calls[2].meta["parent_task"] == calls[1].id and calls[2].resume_session_id == "s1"
+    assert [e["type"] for e in hub.events if "quota" in e["type"]] == [
+        "request.step_quota_wait", "request.step_quota_resumed"]
+
+
+@pytest.mark.asyncio
+async def test_budget_is_checked_again_when_a_quota_hold_releases(tmp_path):
+    """#302: a budget denied while the step waited on the hold stops the dispatch it was waiting for."""
+    hub = _hub(tmp_path, max_wait=1000)
+    hub.requests["limited"] = {"id": "limited", "status": "waiting_quota", "quota_waits": {
+        "A": {"engine": "codex", "resume_at": 9999999999, "deadline_at": 9999999999, "reason": "limit"}}}
+    parked = asyncio.Event()
+    calls = []
+    original_publish = hub.publish
+
+    async def publish(event, *args, **kwargs):
+        await original_publish(event, *args, **kwargs)
+        if event["type"] == "request.step_quota_wait" and event["request_id"] == "r":
+            parked.set()
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done")
+
+    hub.publish = publish
+    hub.dispatch = dispatch
+    orchestrator = Orchestrator(hub)
+    running = asyncio.create_task(orchestrator.run_step(
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "B"})))
+    await asyncio.wait_for(parked.wait(), 1)
+    orchestrator.budget_denials["r"] = "budget exceeded; approval denied"
+    await hub.force_quota_resume("limited", "A")
+    with pytest.raises(BudgetExceeded):
+        await asyncio.wait_for(running, 1)
+    assert calls == []
 
 
 @pytest.mark.asyncio
