@@ -1,0 +1,14 @@
+pr: 299
+rows:
+- sha: 9bb746c
+  at: 2026-10-02 18:53
+  text: 로컬 operation 관계표로 단계 입력 종류의 fit·mismatch·unknown을 그림자 집계
+- sha: 9efe399
+  at: 2026-10-02 19:17
+  text: 입력 적합성 그림자 모듈·관계표·테스트를 제거 목록에 넣고 관계표를 research로 옮김
+- sha: c8334ce
+  at: 2026-10-02 19:18
+  text: 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록
+- sha: 58c8d98
+  at: 2026-10-02 19:24
+  text: 'main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지'
