@@ -520,6 +520,33 @@ async def test_accepted_recovery_can_finish_after_runner_connection_timeout(tmp_
 
 
 @pytest.mark.asyncio
+async def test_recovery_timeout_leaves_the_prior_task_cost_unaccounted(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0.05
+    first = Hub(s)
+    first.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "running"}
+    first.save_request("r")
+    original = Task(id="sent-task", agent_id="a", request_id="r", prompt="work",
+                    meta={"kind": "step", "step_id": "s"})
+    # Sent before the restart; whether the runner took it is not known.
+    first.store.put("task", original.id, {"request_id": "r", "step_id": "s", "kind": "step",
+                                           "runner_id": "local", "runner_incarnation": "inc",
+                                           "payload": original.model_dump(mode="json")})
+    first.store.close()
+
+    hub = Hub(s)
+    hub.register_runner("local", CaptureSocket(), [{"id": "a"}], "inc")
+    hub.recovery_steps.add("r")
+    result = await asyncio.wait_for(hub.dispatch(Task(agent_id="a", request_id="r", prompt="resume",
+                                                      meta={"kind": "step", "step_id": "s"})), 2)
+
+    assert result.task_id == original.id and "recovery runner unavailable" in result.error
+    req = hub.requests["r"]
+    assert req["cost_items"][original.id]["reason"] == "outcome_unknown"  # never a $0 task (#270)
+    assert req["cost_known"] is False and req["cost_summary"]["unknown_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_new_runner_generation_ends_recovered_accepted_task_without_retry(tmp_path):
     s = settings(tmp_path)
     s.gateway.resume_wait_s = 0.05

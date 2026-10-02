@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 
 from .bench_permissions import inside
+from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
@@ -372,7 +373,8 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
             "unscripted_approvals": unscripted_approvals,
             "budget_approvals": budget_approvals, "approve_budget_up_to": approve_budget_up_to,
             "workdir_write_approvals": workdir_write_approvals,
-            "cost_known": request.get("cost_known", True), "usage": request.get("usage") or {},
+            "cost_known": request.get("cost_known", True), "cost_summary": request.get("cost_summary"),
+            "usage": request.get("usage") or {},
             "duration_s": round(time.monotonic() - started, 3),
             "round_json": str(hub.rounds.directory / f"{rid}.json"),
             "round_status": record["result"]["status"],
@@ -483,9 +485,15 @@ async def _run_baseline(case: dict[str, Any], arm: str, arm_dir: Path, engines: 
         else:
             answer, usage = _parse_codex(raw, arm_dir / "answer.md")
             cost, known = None, False
+        # Codex reports tokens only: converted with the dated price table for the arm's model, else unaccounted (#270).
+        item = classify_cost(engine=engine_name, model=settings.bench.arms[arm].model, usage=usage,
+                             usage_known=not error, cost_usd=cost, cost_known=known, task_id=arm)
+        if item["status"] != "unknown":
+            cost, known = item["usd"], True
         run = {"engine": arm, "mode": "real", "status": "done" if process.returncode == 0 and not error else "failed",
                "returncode": process.returncode, "pi_interventions": 0, "cost_usd": cost,
-               "cost_known": known, "usage": usage, "duration_s": round(time.monotonic() - started, 3)}
+               "cost_known": known, "cost_summary": aggregate_costs({arm: item}),
+               "usage": usage, "duration_s": round(time.monotonic() - started, 3)}
         if error:
             run["error"] = error
     run["pi_questions_observable"] = False  # Noninteractive CLI: no question/answer channel.
@@ -625,11 +633,33 @@ async def _score(case: dict[str, Any], arm_dir: Path, run: dict[str, Any]) -> di
         "cost_budget_ratio": None if run.get("cost_usd") is None else
                              float(run["cost_usd"]) / float(case["budget_usd"]),
         "cost_known": bool(run.get("cost_known")),
+        "cost_summary": run.get("cost_summary"),
         "token_total": token_total,
         "usage": usage, "duration_s": run.get("duration_s"),
-        "within_budget": None if run.get("cost_usd") is None else
-                         float(run["cost_usd"]) <= float(case["budget_usd"]),
+        "within_budget": _within_budget(run, float(case["budget_usd"])),
     }
+
+
+def _within_budget(run: dict[str, Any], budget: float) -> bool | None:
+    """False once the counted cost is over the cap; None while any part is unaccounted (#270)."""
+    summary = run.get("cost_summary")
+    if summary:
+        counted, unknown = summary.get("subtotal_usd"), bool(summary.get("unknown_count"))
+    else:
+        counted = run.get("cost_usd")
+        unknown = counted is None or run.get("cost_known") is False
+    if counted is not None and float(counted) > budget:
+        return False
+    return None if unknown else True
+
+
+def _cost_cell(row: dict[str, Any]) -> str:
+    summary = row.get("cost_summary")
+    if summary:
+        return format_cost(summary, digits=4).replace("$", "")
+    if row["cost_usd"] is None:
+        return "미집계"
+    return f"{row['cost_usd']:.4f}" + (" + 미집계" if row.get("cost_known") is False else "")
 
 
 def _comparison_markdown(result: dict[str, Any]) -> str:
@@ -638,11 +668,12 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
              "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
     legacy_rows = False
     for row in result["rows"]:
-        cost = "미집계" if row["cost_usd"] is None else f"{row['cost_usd']:.4f}"
+        cost = _cost_cell(row)
         ratio = row.get("cost_budget_ratio")
         if ratio is None and row["cost_usd"] is not None and result.get("budget_usd"):
             ratio = float(row["cost_usd"]) / float(result["budget_usd"])
-        ratio_text = "미집계" if ratio is None else f"{ratio:.3f}"
+        # A ratio over a partly unaccounted cost is only a lower bound.
+        ratio_text = "미집계" if ratio is None else f"{'≥' if '미집계' in cost else ''}{ratio:.3f}"
         cap = "미집계" if row["within_budget"] is None else "PASS" if row["within_budget"] else "FAIL"
         pi_questions = "감지 가능" if row.get("pi_questions_observable") else "감지 불가·답변 미제공"
         structured = any(key in row for key in ("format_passed", "content_passed", "narrative_passed"))
@@ -658,6 +689,11 @@ def _comparison_markdown(result: dict[str, Any]) -> str:
                      f"{pi_questions} | "
                      f"{row.get('unscripted_approvals', 0)} | {row.get('budget_approvals', 0)} | {cost} | {ratio_text} | "
                      f"{cap} | {row['token_total']} | {row['duration_s']:.3f} |")
+    details = [f"- {row['engine']}: {format_cost(summary, digits=4)} {cost_detail(summary, digits=4)}"
+               for row in result["rows"] if (summary := row.get("cost_summary") or {}).get("by_engine")
+               and (len(summary["by_engine"]) > 1 or summary.get("estimated_usd") or summary.get("unknown_count"))]
+    if details:
+        lines += ["", "## 비용 내역", *details]
     failures = [row for row in result["rows"] if row.get("error")]
     if failures:
         lines += ["", "## 실패 원인", *[f"- {row['engine']}: {row['error']}" for row in failures]]
@@ -834,7 +870,7 @@ async def run_test_agent(output_root: Path, engines: str = "real", settings=None
         policy = {} if approve_budget_up_to is None else {"approve_budget_up_to": approve_budget_up_to}
         result = await run_case(case["id"], output_root, engines=engines, settings=settings, arms=arms, **policy)
         passed = all(row["status"] == "done" and row["artifact_exists"] and row["checks_passed"] and
-                     row["within_budget"] is not False and not row.get("unscripted_approvals")
+                     row["within_budget"] is True and not row.get("unscripted_approvals")
                      for row in result["rows"])
         cases.append({
             "case_id": case["id"], "run_id": result["run_id"], "passed": passed,

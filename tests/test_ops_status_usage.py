@@ -55,7 +55,12 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
             return {"runners": ["runner-1"]}
         if path.startswith("/api/requests?"):
             return [{"id": "r1", "text": "분석", "step_progress":
-                     {"done": 1, "total": 2, "steps": {"s1": "done", "s2": "running"}}}]
+                     {"done": 1, "total": 2, "steps": {"s1": "done", "s2": "running"}},
+                     "cost_summary": {"actual_usd": 0.3, "estimated_usd": 0.2, "unknown_count": 1,
+                                      "by_engine": {"claude_code": {"actual_usd": 0.3,
+                                                                       "estimated_usd": 0, "unknown_count": 0},
+                                                    "codex": {"actual_usd": 0, "estimated_usd": 0.2,
+                                                              "unknown_count": 1}}, "warnings": []}}]
         return [{"id": "a1", "kind": "tool_permission", "summary": "검토"}]
 
     monkeypatch.setattr("labhq.cli._api", api)
@@ -63,6 +68,8 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "runner-1" in output and "r1 1/2 분석" in output
     assert "s2: running" in output and "a1 [tool_permission] 검토" in output
+    assert "확인 $0.30 + 추정 $0.20 + 미집계 1건" in output
+    assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 미집계 1건" in output
 
 
 @pytest.mark.asyncio
@@ -73,17 +80,54 @@ async def test_usage_sum_and_unknown_cost_are_idempotent(tmp_path):
     hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
                          "cost_known": True, "usage": {}}
     hub.save_request("r")
-    for tid, cost, usage in (("t1", 0.3, {"input_tokens": 2}),
-                             ("t2", None, {"input_tokens": 3, "output_tokens": 4})):
-        result = TaskResult(task_id=tid, agent_id="a", ok=True, cost_usd=cost,
-                            cost_known=cost is not None, usage=usage)
+    hub.agents = {
+        "actual": {"engine": "claude_code", "model": "claude-opus-5-5"},
+        "unknown": {"engine": "gemini", "model": "unpriced-model"},
+        "estimated": {"engine": "codex", "model": "gpt-6.1-sol"},
+    }
+    rows = (("t1", "actual", 0.3, {"input_tokens": 2}),
+            ("t2", "unknown", None, {"input_tokens": 3, "output_tokens": 4}),
+            ("t3", "estimated", None, {"input_tokens": 1_000_000, "cached_input_tokens": 0,
+                                       "cache_write_input_tokens": 0, "output_tokens": 100_000}))
+    for tid, agent, cost, usage in rows:
+        result = TaskResult(task_id=tid, agent_id=agent, ok=True, cost_usd=cost,
+                            cost_known=cost is not None, usage=usage,
+                            provenance={"engine": hub.agents[agent]["engine"],
+                                        "model": hub.agents[agent]["model"], "runs": {}})
         message = {"type": "task.result", "task_id": tid, "request_id": "r", "data": result.model_dump()}
         await hub.on_runner_message("runner", message)
         await hub.on_runner_message("runner", message)
     req = hub.requests["r"]
-    assert req["cost_usd"] == 0.3 and req["cost_known"] is False
-    assert req["usage"] == {"input_tokens": 5, "output_tokens": 4}
-    assert hub.request_summary(req)["cost_known"] is False
+    assert req["cost_usd"] == pytest.approx(3.3) and req["cost_known"] is False
+    assert req["usage"] == {"input_tokens": 1_000_005, "output_tokens": 100_004, "cached_input_tokens": 0,
+                            "cache_write_input_tokens": 0}
+    assert req["cost_summary"]["actual_usd"] == 0.3
+    assert req["cost_summary"]["estimated_usd"] == pytest.approx(3.0)
+    assert req["cost_summary"]["unknown_count"] == 1
+    assert hub.request_summary(req)["cost_summary"] == req["cost_summary"]
+    assert req["cost_items"]["t3"]["price"]["model"] == "gpt-6.1-sol"
+
+
+@pytest.mark.asyncio
+async def test_abandoned_task_is_unaccounted_and_an_unrouted_task_is_a_real_zero(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["r"] = {"id": "r", "status": "running", "created_at": 1, "cost_usd": 0,
+                         "cost_known": True, "usage": {}}
+    hub.agents = {"worker": {"engine": "claude_code", "model": "opus"}}
+    hub.store.put("task", "t1", {"request_id": "r", "step_id": "s1", "accepted": True, "completed": False,
+                                  "payload": {"agent_id": "worker"}})
+
+    abandoned = hub._abandon_previous_generation("t1", hub.store.get("task", "t1"))
+    unrouted = await hub.dispatch(Task(agent_id="nobody", request_id="r", prompt="p"))
+    req = hub.requests["r"]
+
+    # The runner may have spent anything before the gateway gave up on it: never $0 (#270).
+    assert abandoned.ok is False and req["cost_items"]["t1"]["reason"] == "outcome_unknown"
+    assert req["cost_known"] is False and req["usage_known"] is False
+    assert req["cost_summary"]["unknown_count"] == 1 and req["cost_summary"]["unknown_tasks"] == ["t1"]
+    assert (unrouted.cost_usd, unrouted.cost_known) == (0.0, True)  # nothing was sent
 
 
 @pytest.mark.asyncio
@@ -231,6 +275,29 @@ async def test_failure_comment_keeps_stored_accounting(tmp_path):
     hub.reporter.issues["r"] = 7
     await hub.reporter.handle({"type": "request.failed", "request_id": "r", "data": {"error": "boom"}})
     assert posted and "$1.5" in posted[-1] and "비용 미집계" in posted[-1]
+
+
+def test_completion_line_and_project_report_show_unaccounted_cost_apart(tmp_path, capsys):
+    from labhq.cli import render
+    from labhq.gateway.server import Hub
+
+    summary = {"actual_usd": 1.0, "estimated_usd": 0.5, "subtotal_usd": 1.5, "unknown_count": 1,
+               "by_engine": {"claude_code": {"actual_usd": 1.0, "estimated_usd": 0, "unknown_count": 0},
+                             "codex": {"actual_usd": 0, "estimated_usd": 0.5, "unknown_count": 1}},
+               "prices": [], "warnings": []}
+    render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 1.5, "cost_known": False,
+                                                            "cost_summary": summary}})
+    line = capsys.readouterr().out
+    assert "cost=확인 $1.00 + 추정 $0.50 + 미집계 1건" in line and "codex 추정 $0.50 + 미집계 1건" in line
+    render({"type": "request.completed", "ts": 1, "data": {"ok": True, "cost_usd": 0, "cost_known": False}})
+    assert "cost=비용 미집계" in capsys.readouterr().out  # never "$0" for an unreported cost
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    report = Hub(settings).reporter._report_md("r", {"text": "t", "cost_usd": 1.5, "cost_known": False,
+                                                     "cost_summary": summary}, "body")
+    assert "- 비용: 확인 $1.00 + 추정 $0.50 + 미집계 1건 (claude_code 확인 $1.00 · codex" in report
+    assert "청구액이 아닙니다" in report
 
 
 @pytest.mark.asyncio

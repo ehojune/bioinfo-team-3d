@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .costs import cost_detail, cost_text
 from .settings import Settings
 from .util import free_port, short
 
@@ -67,9 +68,10 @@ def render(ev: dict) -> None:
     elif t == "recruit.failed":
         line = f"🦫 채용 실패: {d.get('error')}"
     elif t == "request.completed":
-        known = float(d.get("cost_usd") or 0)
-        cost = (f"${known} + " if known else "") + "비용 미집계" if d.get("cost_known") is False else f"${known}"
-        line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost})"
+        summary = d.get("cost_summary")
+        line = f"🏁 요청 완료 (ok={d.get('ok')}, cost={cost_text(d.get('cost_usd'), d.get('cost_known'), summary)})"
+        if summary and (summary.get("estimated_usd") or summary.get("unknown_count") or summary.get("warnings")):
+            line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
     elif t in ("runner.online", "runner.offline"):
@@ -585,6 +587,10 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}")
             for sid, state in progress["steps"].items():
                 print(f"    {sid}: {state}")
+            summary = req.get("cost_summary")
+            if summary or req.get("cost_known") is False or req.get("cost_usd"):
+                print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
+                      + (f" {cost_detail(summary)}" if summary else ""))
         approvals = _api(s, "GET", "/api/approvals")
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:

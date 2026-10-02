@@ -3,6 +3,41 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
+// Cost text (#270): confirmed, price-table estimate and unaccounted tasks stay apart; an unknown is never $0.
+const usd = v => `$${(Number(v) || 0).toFixed(2)}`;
+function costParts(actual, estimated, unknown) {
+  const parts = [];
+  if (actual > 0 || !(estimated > 0 || unknown)) parts.push(`확인 ${usd(actual)}`);
+  if (estimated > 0) parts.push(`추정 ${usd(estimated)}`);
+  if (unknown) parts.push(`미집계 ${unknown}건`);
+  return parts.join(' + ');
+}
+const summaryParts = s => costParts(Number(s.actual_usd) || 0, Number(s.estimated_usd) || 0, Number(s.unknown_count) || 0);
+function costLabel(q) {
+  if (q && q.costSummary) return summaryParts(q.costSummary);
+  const cost = Number(q && q.cost) || 0;
+  return q && q.costKnown === false ? `${cost ? usd(cost) + ' + ' : ''}비용 미집계` : usd(cost);
+}
+function engineCostLabel(summary) {
+  if (!summary || !summary.by_engine) return '';
+  const engines = Object.entries(summary.by_engine).map(([name, e]) => `${name} ${summaryParts(e)}`).join(' · ');
+  const stale = (summary.prices || []).filter(p => p && p.stale).map(p => `${p.engine} ${p.model} (${p.checked_on} 확인)`);
+  return [engines, Number(summary.estimated_usd) > 0 ? '추정은 API 가격표 환산이며 청구액이 아닙니다' : '',
+    stale.length ? `가격표 오래됨: ${stale.join(', ')}` : ''].filter(Boolean).join('; ');
+}
+function totalCostLabel(requests, total) {
+  let estimated = 0, unknown = 0, legacyUnknown = false;
+  for (const q of requests) {
+    if (q.costSummary) { estimated += Number(q.costSummary.estimated_usd) || 0; unknown += Number(q.costSummary.unknown_count) || 0; }
+    else if (q.costKnown === false) legacyUnknown = true;
+  }
+  return `사용 비용 ${usd(total)}${estimated > 0 ? ` (추정 ${usd(estimated)} 포함)` : ''}` +
+    (unknown ? ` + 미집계 ${unknown}건${legacyUnknown ? ' 이상' : ''}` : legacyUnknown ? ' + 비용 미집계' : '');
+}
+function applyCostSummary(q, summary) {
+  if (!summary || typeof summary !== 'object') return;
+  q.costSummary = summary; q.costKnown = !(Number(summary.unknown_count) > 0);
+}
 function createOfficeState({mode = 'live', now = () => Date.now() / 1000} = {}) {
 const S = {
   agents: new Map(), approvals: new Map(), suggestions: [], requests: new Map(), current: null,
@@ -48,6 +83,7 @@ function req(rid) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
+    Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -118,6 +154,7 @@ function apply(ev, replay = false) {
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
+        q.costSummary = null; applyCostSummary(q, r.cost_summary);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
@@ -194,6 +231,8 @@ function apply(ev, replay = false) {
       if (a) a.usage = { ...(a.usage || {}), ...(d.tokens || {}), ...('num_turns' in d ? { num_turns: d.num_turns } : {}) };
       if (c > 0) { S.cost += c; if (rid) req(rid).cost += c; }
       if (rid && d.cost_known === false) req(rid).costKnown = false;
+      // A live amount the stored summary does not hold yet: show the running total until the next summary (#270).
+      if (rid && (c > 0 || d.cost_known === false)) req(rid).costSummary = null;
       break;
     }
     case 'task.dispatched': {
@@ -287,6 +326,7 @@ function apply(ev, replay = false) {
         S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;
       }
       if (d.cost_known === false) q.costKnown = false;
+      applyCostSummary(q, d.cost_summary);
       if (d.report) q.report = d.report;
       if (d.error) q.error = d.error;
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
@@ -306,6 +346,7 @@ function apply(ev, replay = false) {
       q.followups = prev ? q.followups.map(f => (f.id === d.id ? entry : f)) : [...q.followups, entry];
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) { S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd; }
       if (d.cost_known === false) q.costKnown = false;
+      applyCostSummary(q, d.cost_summary);
       feed({ who: entry.agent_id || 'cso', to: 'pi', text: d.ok ? `답변: ${short(d.answer, 130)}` : `이어 묻기에 답하지 못했어요: ${short(d.error, 100)}`,
         cls: d.ok ? '' : 'alert' }, ts, rid);
       break;
@@ -340,5 +381,5 @@ function toolLabel(name) {
 
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
-root.LabHQState = { createOfficeState };
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel };
 })(globalThis);

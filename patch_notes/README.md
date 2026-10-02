@@ -12,6 +12,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:53 | [`88f6c3c`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/88f6c3c) | README·STATUS: 미집계 비용 분리·추정 환산·예산 판정 규칙을 적음 |
+| 15:47 | [`1e64ba1`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/1e64ba1) | 이어 묻기 완료 이벤트에는 비용 요약이 있을 때만 비용을 실음 |
+| 15:44 | [`ea777e8`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/ea777e8) | bench 비용 칸과 상한 판정에서 미집계를 따로 표시하고 test-agent를 통과로 세지 않음 |
+| 15:44 | [`a0ce450`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/a0ce450) | 웹·CLI·GitHub 보고에 확인·추정·미집계와 엔진별 소계를 표시(#270) |
+| 15:44 | [`53d8afd`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/53d8afd) | 요청 비용 집계와 예산 상한에서 미집계를 0으로 더하지 않고 따로 셈 |
+| 15:44 | [`923489f`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/923489f) | task 비용을 확인·추정·미집계로 나누는 costs 모듈과 판본 있는 Codex 가격표를 추가 |
 | 15:29 | [`040750c`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040750c) | 요청별 CSO 엔진이 바뀌어도 새 엔진에서 읽기 전용(Codex sandbox read-only, Claude Read·Glob·Grep)으로 돌고, plan_only 요청은 재시작 뒤 resume돼도 step을 돌리지 않음 |
 | 15:19 | [`040d420`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040d420) | --cso-model 요청의 이어 묻기·CSO 상담도 고른 엔진·모델로 실행하고, 지킬 수 없으면 레지스트리 CSO로 바꾸지 않고 실패 |
 | 15:10 | [`986da50`](https://github.com/ehojune/bioinfo-team-3d/pull/291/commits/986da50) | CI: README만 바뀌면 README 검사만 돌리고, 가장 느린 test 15개를 출력 |
