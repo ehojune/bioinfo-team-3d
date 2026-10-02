@@ -1770,25 +1770,30 @@ class Orchestrator:
                         try:
                             draft, _ = _normalize_plan_outputs(plan)
                             draft = prepare_research_declarations(draft, self._output_vocab(), {})
-                            offer = await asyncio.to_thread(service.advisory_offer, rid, draft)
+                            snap = service.advisory_snapshot(rid, draft)  # live state, copied on the loop
+                            offer = await asyncio.to_thread(service.advisory_offer, rid, snap)
                         except (ValueError, TypeError, PlanOutputsError):
                             offer = None
                         if offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
                             req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
                             self.hub.save_request(rid)
-                        candidates = offer["candidates"] if offer is not None else []
-                        if candidates:
-                            lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
-                                     "If you use one, copy its artifact_id exactly into the relevant step's input_refs:"]
-                            lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
-                                      f"created_request_id={c['request_id']}" for c in candidates[:5]]
-                            reuse_advisory = "\n".join(lines)
+                        if offer is not None and offer["offered"]:
+                            # Both arms re-plan once, so they pay for the same CSO calls. Only the advisory arm's
+                            # prompt gains the list; the shadow arm sends its first prompt again.
+                            candidates = offer["candidates"]
+                            if candidates:
+                                lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
+                                         "If you use one, copy its artifact_id exactly into the relevant step's "
+                                         "input_refs:"]
+                                lines += [f"- artifact_id={c['artifact_id']} data_type={c['data_type']} "
+                                          f"created_request_id={c['request_id']}" for c in candidates[:5]]
+                                reuse_advisory = "\n".join(lines)
                             plan_res = await make_plan(text)
                             if not plan_res.ok:
-                                self._finish(rid, f"Advisory plan failed: {plan_res.error}", {}, ok=False)
+                                self._finish(rid, f"A/B re-plan failed: {plan_res.error}", {}, ok=False)
                                 return
                             if rid in self.budget_denials:
-                                self._finish(rid, "advisory 계획 뒤 예산 승인 거부",
+                                self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
                                              {"plan": plan_res.model_dump(mode="json")}, ok=False)
                                 return
                             plan = (plan_res.structured if isinstance(plan_res.structured, dict)

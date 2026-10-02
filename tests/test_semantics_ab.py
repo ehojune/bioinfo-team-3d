@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -36,7 +37,7 @@ def test_b1_selector_returns_only_the_three_allowed_prompt_fields(tmp_path, monk
     service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"), paths)
     monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
 
-    offer = service.advisory_offer("req_b", requests["req_b"]["plan"])
+    offer = service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"]))
 
     candidates = offer["candidates"]
     assert len(candidates) == 1 and set(candidates[0]) == {"artifact_id", "data_type", "request_id"}
@@ -46,29 +47,36 @@ def test_b1_selector_returns_only_the_three_allowed_prompt_fields(tmp_path, monk
     assert "outputs/" not in encoded and "request text" not in encoded and str(tmp_path) not in encoded
     # the shadow arm gets the same selector run: the ids it would have been offered, and nothing for the prompt
     monkeypatch.setattr(shadow, "ab_arm", lambda rid: "shadow")
-    assert service.advisory_offer("req_b", requests["req_b"]["plan"]) == {
+    assert service.advisory_offer("req_b", service.advisory_snapshot("req_b", requests["req_b"]["plan"])) == {
         "arm": "shadow", "offered": offer["offered"], "candidates": []}
     service.cfg = shadow.ShadowConfig(mode="shadow")
-    assert service.advisory_offer("req_b", requests["req_b"]["plan"]) is None
+    assert service.advisory_snapshot("req_b", requests["req_b"]["plan"]) is None
+    assert service.advisory_offer("req_b", None) is None
 
 
 @pytest.mark.asyncio
 async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
     captures = []
-    ab_shadow_arm = SimpleNamespace(advisory_offer=lambda rid, plan: (  # a would-be offer, never shown
-        {"arm": "shadow", "offered": ["sem:0123abcd"], "candidates": []} if shadow.ab_arm(rid) == "shadow"
-        else pytest.fail("request moved out of shadow arm")))
-    for service, frozen in ((None, None), (SimpleNamespace(advisory_offer=lambda rid, plan: None), None),
-                            (ab_shadow_arm, {"arm": "shadow", "offered": ["sem:0123abcd"]})):
-        hub, _ = research_hub([plan_with([])], declare_on=False)
+
+    def ab_shadow_arm(offered):
+        return SimpleNamespace(advisory_snapshot=lambda rid, plan: {}, advisory_offer=lambda rid, snap: (
+            {"arm": "shadow", "offered": offered, "candidates": []} if shadow.ab_arm(rid) == "shadow"
+            else pytest.fail("request moved out of shadow arm")))
+
+    shadow_mode = SimpleNamespace(advisory_snapshot=lambda rid, plan: None, advisory_offer=lambda rid, snap: None)
+    for service, frozen, calls in ((None, None, 1), (shadow_mode, None, 1),
+                                   (ab_shadow_arm([]), {"arm": "shadow", "offered": []}, 1),
+                                   (ab_shadow_arm(["sem:0123abcd"]), {"arm": "shadow", "offered": ["sem:0123abcd"]}, 2)):
+        hub, _ = research_hub([plan_with([])] * calls, declare_on=False)
         hub.requests["r0"] = hub.requests.pop("r")
         if service is not None:
             hub.semantics_shadow = service
         await Orchestrator(hub).run_request("r0")
         captures.append(_payload(hub.calls[0]))
-        assert [task.meta["kind"] for task in hub.calls] == ["plan"]
+        assert [task.meta["kind"] for task in hub.calls] == ["plan"] * calls
+        assert all(task.prompt == captures[0]["prompt"] for task in hub.calls)  # a re-plan sends the same bytes
         assert hub.requests["r0"].get("semantics_ab") == frozen  # off and shadow mode add nothing to the request
-    assert captures[0] == captures[1] == captures[2]
+    assert captures[0] == captures[1] == captures[2] == captures[3]
 
 
 @pytest.mark.asyncio
@@ -90,7 +98,7 @@ async def test_advisory_prompt_has_no_path_or_request_body_and_does_not_change_c
         return {"arm": "advisory", "offered": ["sem:0123abcd"],
                 "candidates": [{"artifact_id": "sem:0123abcd", "data_type": "de_table", "request_id": "req_prior"}]}
 
-    hub.semantics_shadow = SimpleNamespace(advisory_offer=offer)
+    hub.semantics_shadow = SimpleNamespace(advisory_snapshot=lambda rid, plan: plan, advisory_offer=offer)
     await Orchestrator(hub).run_request("r")
 
     plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
@@ -201,3 +209,59 @@ def test_only_the_ids_frozen_for_this_request_leave_the_sensitive_set(tmp_path, 
     assert shadow.boundary_problems(line, shadow.sensitive_values(snap)) == []
     snap, line = _end_line(hub, requests, observed, offered=[], input_refs=[live])  # not offered: still a plan value
     assert shadow.boundary_problems(line, shadow.sensitive_values(snap))
+
+
+def _stub(offer):
+    """A service stand-in that records which thread took the snapshot and which ran the selector."""
+    seen = {}
+
+    def snapshot(rid, plan):
+        seen["snapshot"] = threading.get_ident()
+        return {"rid": rid}
+
+    def run(rid, snap):
+        seen["offer"] = threading.get_ident()
+        return offer
+
+    return SimpleNamespace(advisory_snapshot=snapshot, advisory_offer=run, seen=seen)
+
+
+@pytest.mark.asyncio
+async def test_both_arms_pay_for_the_same_plan_calls_when_something_is_offered():
+    listed = [{"artifact_id": "sem:0123abcd", "data_type": "de_table", "request_id": "req_prior"}]
+    plans = {}
+    for arm in ("advisory", "shadow"):
+        hub, _ = research_hub([plan_with([]), plan_with([])], declare_on=False)
+        hub.semantics_shadow = _stub({"arm": arm, "offered": ["sem:0123abcd"],
+                                      "candidates": listed if arm == "advisory" else []})
+        await Orchestrator(hub).run_request("r")
+        plans[arm] = [task.prompt for task in hub.calls if task.meta["kind"] == "plan"]
+        assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert len(plans["advisory"]) == len(plans["shadow"]) == 2
+    assert plans["shadow"][0] == plans["shadow"][1] == plans["advisory"][0]  # the shadow arm's re-plan: same bytes
+    assert "Optional reusable artifacts" in plans["advisory"][1]
+
+
+@pytest.mark.asyncio
+async def test_live_state_is_copied_on_the_event_loop_and_only_the_selector_runs_in_a_thread():
+    hub, _ = research_hub([plan_with([])], declare_on=False)
+    hub.semantics_shadow = service = _stub({"arm": "shadow", "offered": [], "candidates": []})
+    await Orchestrator(hub).run_request("r")
+    assert service.seen["snapshot"] == threading.get_ident() != service.seen["offer"]
+
+
+def test_the_selector_reads_the_snapshot_not_the_live_hub(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    observed = {}
+    line_for(hub, "req_a", observed)
+    paths = shadow.ShadowPaths(tmp_path / "semantics")
+    paths.root.mkdir(parents=True)
+    paths.observed.write_text(json.dumps(observed), encoding="utf-8")
+    service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"), paths)
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+
+    snap = service.advisory_snapshot("req_b", requests["req_b"]["plan"])
+    service.hub = SimpleNamespace()  # whatever runs in the worker thread must not touch live state
+    offer = service.advisory_offer("req_b", snap)
+
+    assert len(offer["candidates"]) == 1 and offer["offered"] == [offer["candidates"][0]["artifact_id"]]

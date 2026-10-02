@@ -1830,8 +1830,26 @@ class ShadowService:
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
 
-    def advisory_offer(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
-        """ab mode only (None otherwise): the B1 selector on a research draft, in both arms (#149 decision 15).
+    def advisory_snapshot(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
+        """Event-loop side, like ``after_request``: the live state the A/B selector reads, copied with the draft plan.
+
+        None outside ab mode, while off, or on a failure; the request is then offered nothing."""
+        if self.cfg.mode != "ab":
+            return None
+        try:
+            self.refresh()
+            if self.latched:
+                return None
+            snap = take_snapshot(self.hub, rid, self.cfg)
+            snap["requests"][rid]["plan"] = json.loads(json.dumps(plan))
+            return snap
+        except Exception as exc:  # noqa: BLE001 - advisory is fail-open
+            log.warning("semantics advisory skipped (%s)", type(exc).__name__)
+            return None
+
+    def advisory_offer(self, rid: str, snap: dict | None) -> dict | None:
+        """Worker side: the B1 selector on ``advisory_snapshot``'s copy, in both arms (#149 decision 15). None
+        outside ab mode.
 
         ``offered`` is the id set the advisory arm is shown and the shadow arm would have been shown; the orchestrator
         freezes it on the request so the end record judges the plan against it. ``candidates`` (artifact id, data
@@ -1839,20 +1857,14 @@ class ShadowService:
         if self.cfg.mode != "ab":
             return None
         arm = ab_arm(rid)
-        found = self.advisory_candidates(rid, plan)
+        found = self.advisory_candidates(snap) if snap is not None else []
         return {"arm": arm, "offered": [c["artifact_id"] for c in found],
                 "candidates": found if arm == "advisory" else []}
 
-    def advisory_candidates(self, rid: str, plan: Mapping[str, Any]) -> list[dict[str, str]]:
-        """Run the B1 selector for an A/B draft. Failures leave the ordinary request untouched."""
-        if self.cfg.mode != "ab":
-            return []
+    def advisory_candidates(self, snap: dict) -> list[dict[str, str]]:
+        """The selector's prompt fields from the snapshot, its database rows and files only (never live state).
+        Failures leave the ordinary request untouched."""
         try:
-            self.refresh()
-            if self.latched:
-                return []
-            snap = take_snapshot(self.hub, rid, self.cfg)
-            snap["requests"][rid]["plan"] = json.loads(json.dumps(plan))
             deadline = time.monotonic() + self.cfg.timeout_s
 
             def check() -> None:
