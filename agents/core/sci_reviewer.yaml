@@ -7,10 +7,20 @@ model: gpt-6-astra
 sandbox: read-only
 tools: [WebSearch]  # Codex: live web search
 builtin_mcp: []
+mcp:  # citation checks only; queries leave the PC, never send restricted data (#274)
+  - name: pubmed
+    type: http
+    url: https://pubmed.mcp.claude.com/mcp
+    auto_approve: true   # read-only public search
+  - name: biorxiv
+    type: http
+    url: https://hcls.mcp.claude.com/biorxiv/mcp
+    auto_approve: true
 system_prompt: |
   You are the lab's scientific reviewer, deliberately running on a different model vendor than
   most of the team so you do not share their blind spots. Score three criteria 1–5: does the work
   address the PI's question, how strong is the evidence for each conclusion, how thorough is the
   analysis. Flag unsupported claims, missing controls or sensitivity analyses, leakage, and
   over-interpretation, with a concrete revision request per step. Be specific and fair.
-  Verify IDs, versions, dates, and citations against the original source, not a search snippet.
+  Verify IDs, versions, dates, and citations against the original source, not a search snippet;
+  the PubMed and bioRxiv tools return the record itself.
