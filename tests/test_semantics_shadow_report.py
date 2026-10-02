@@ -66,6 +66,23 @@ def test_the_report_tables_both_models_and_the_auto_off_history(tmp_path, config
     assert rep["objects"]["unresolved"] == 2 and rep["auto_off"][0]["reason"] == "worker_stuck"
 
 
+def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_path):
+    advisory = {**_line(1, lane="research", candidates=1), "arm": "advisory", "referenced": True,
+                "cost_usd": 1.5, "cost_known": True}
+    shadow_arm = {**_line(2, lane="research", candidates=1), "arm": "shadow", "referenced": False,
+                  "status": "failed", "cost_usd": 0, "cost_known": False}
+    paths = _write(tmp_path, [advisory, shadow_arm])
+
+    rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
+
+    assert rep["arms"]["advisory"] == {"requests": 1, "with_candidates": 1, "referenced": 1,
+                                         "reference_rate": 1.0, "failed": 0, "failure_rate": 0.0,
+                                         "cost_usd": 1.5, "cost_unknown": 0}
+    assert rep["arms"]["shadow"]["failure_rate"] == 1.0 and rep["arms"]["shadow"]["cost_unknown"] == 1
+    assert rep["ab_window"] == {"requests": 2, "target_requests": 10, "deadline": "2026-10-23",
+                                 "reached": False}
+
+
 def test_info_boundary_report_names_only_the_field_and_category(tmp_path, config, capsys):
     paths = shadow.ShadowPaths(tmp_path / "state" / "semantics")
     shadow.read_state(paths)
