@@ -85,7 +85,7 @@ runner:
   state_dir: C:\LabHQ\runner\state
 ```
 
-`talent` 폴더도 `work`·`state`처럼 runner에 수정 권한을 줍니다(`New-Item C:\LabHQ\runner\talent`, `icacls ... (M)`). 아래 명령의 `labhq`는 runner 계정에서 `C:\LabHQ\app\.venv\Scripts\labhq.exe`입니다.
+`talent` 폴더도 `work`·`state`처럼 runner에 수정 권한을 줍니다(`New-Item C:\LabHQ\runner\talent`, `icacls ... (M)`). venv는 활성화하지 않으므로 runner 계정의 명령은 모두 `C:\LabHQ\app\.venv\Scripts\labhq.exe` 절대경로로 씁니다(아래 예시도 그렇게 적었습니다). gateway는 PI 계정의 기존 `labhq`를 그대로 씁니다.
 
 ## 3. runner 계정에서 CLI 로그인 한 번
 
@@ -121,7 +121,7 @@ Remove-Item C:\LabHQ\runner\work\setup-probe.txt -ErrorAction SilentlyContinue
 runner 계정 창에서 먼저 확인합니다.
 
 ```powershell
-labhq --config C:\LabHQ\config\runner.yaml doctor
+C:\LabHQ\app\.venv\Scripts\labhq.exe --config C:\LabHQ\config\runner.yaml doctor
 ```
 
 `runner account isolation`은 `ok`, `runner config holds client token` 경고는 없어야 하고(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
@@ -135,14 +135,14 @@ labhq --config C:\LabHQ\config\gateway.yaml gateway
 간단히 시작하려면 PI 계정에서 runner만 `runas`로 엽니다.
 
 ```powershell
-runas /user:.\labhq-runner "powershell.exe -NoProfile -Command labhq --config C:\LabHQ\config\runner.yaml runner"
+runas /user:.\labhq-runner "powershell.exe -NoProfile -Command C:\LabHQ\app\.venv\Scripts\labhq.exe --config C:\LabHQ\config\runner.yaml runner"
 ```
 
 항상 켜 둘 때는 **작업 스케줄러 → 작업 만들기**를 씁니다.
 
 1. **일반**: 사용자를 `labhq-runner`로 바꾸고 **가장 높은 수준의 권한으로 실행**은 끕니다.
 2. **트리거**: 시작할 시점을 정합니다.
-3. **동작**: 프로그램은 `labhq.exe`, 인수는 `--config C:\LabHQ\config\runner.yaml runner`로 둡니다. PATH가 다르면 `labhq.exe`의 절대경로를 씁니다.
+3. **동작**: 프로그램은 `C:\LabHQ\app\.venv\Scripts\labhq.exe`(절대경로, runner 계정의 PATH에는 없다), 인수는 `--config C:\LabHQ\config\runner.yaml runner`로 둡니다.
 4. 저장할 때 runner 암호를 입력한 뒤 수동 실행하고 `labhq status`에서 연결을 확인합니다.
 
 ## 되돌리기
