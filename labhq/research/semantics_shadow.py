@@ -34,7 +34,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -338,15 +338,21 @@ def _lane(req: Mapping[str, Any]) -> str:
     return "research" if (req.get("intake") or {}).get("work_kind") == "research" else "general"
 
 
+def _light_step(step: Mapping[str, Any]) -> dict:
+    light = {k: step.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction", "output_types")
+             if k in step or k != "output_types"}
+    if isinstance(step.get("input_refs"), list):  # explicit inputs (#268): in memory and boundary-sensitive only
+        light["input_refs"] = [ref for ref in step["input_refs"] if isinstance(ref, str)]
+    return light
+
+
 def _light_request(req: Mapping[str, Any]) -> dict:
     plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
     research = bool(req.get("research_contract"))
     if research:
         plan_copy: Any = plan  # validated as a ResearchPlan by the provenance model
     else:
-        plan_copy = {"steps": [{k: s.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction",
-                                                      "output_types") if k in s or k != "output_types"}
-                               for s in plan.get("steps") or [] if isinstance(s, dict)]}
+        plan_copy = {"steps": [_light_step(s) for s in plan.get("steps") or [] if isinstance(s, dict)]}
     results = {sid: {k: r.get(k) for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id", "workdir")}
                for sid, r in (req.get("results") or {}).items() if isinstance(r, dict)}
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), dict) else {}
@@ -545,6 +551,29 @@ def _value_class(value: str) -> str:
     return "identifier"
 
 
+def _staff_ids(snap: Mapping[str, Any]) -> set[str]:
+    """Every agent id the snapshot knows: the roster and the ids its plans, results and task rows name (#266)."""
+    found: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            found.add(value.strip())
+
+    agents = snap.get("agents")
+    for agent_id in agents if isinstance(agents, Mapping) else ():
+        add(agent_id)
+    for req in (snap.get("requests") or {}).values():
+        plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+        for step in plan.get("steps") or []:
+            add(step.get("agent_id") if isinstance(step, Mapping) else None)
+        for result in (req.get("results") or {}).values():
+            add(result.get("agent_id") if isinstance(result, Mapping) else None)
+    for task in (snap.get("tasks") or {}).values():
+        for part in (task.get("payload"), task.get("result")):
+            add(part.get("agent_id") if isinstance(part, Mapping) else None)
+    return found
+
+
 def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
     """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
     found: dict[str, str] = {}
@@ -553,6 +582,8 @@ def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
         if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
             found.setdefault(value.strip(), category or _value_class(value))
 
+    for agent_id in sorted(_staff_ids(snap)):  # any length, and first, so a staff id keeps its class (#266)
+        found[agent_id] = "employee_id"
     for req in (snap.get("requests") or {}).values():
         add(req.get("text"), "free_text")
         add(req.get("project_id"), "identifier")
@@ -566,6 +597,8 @@ def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
         else:
             for step in plan.get("steps") or []:
                 add(step.get("instruction"), "free_text")
+                for ref in step.get("input_refs") or []:  # #268
+                    add(ref)
         for result in (req.get("results") or {}).values():
             add(result.get("workdir"), "path")
             add(result.get("workdir_id"), "identifier")
@@ -605,6 +638,9 @@ def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[s
                else ((value, _value_class(value)) for value in sensitive if isinstance(value, str)))
     secrets = [(value, category if category in BOUNDARY_CLASSES else _value_class(value))
                for value, category in secrets if value]
+    # A short staff id (#266) matches a whole value only: inside longer tokens it would match code's own words.
+    short_staff = {value for value, category in secrets if category == "employee_id" and len(value) < SENSITIVE_MIN}
+    secrets = [(value, category) for value, category in secrets if value not in short_staff]
     allowed_fields = allowed_fields or {}
     findings: set[tuple[str, str, str]] = set()
 
@@ -635,6 +671,8 @@ def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[s
                 category = value_category
                 add("not_a_token", path, "unsafe_token" if category == "identifier" else category)
             allowed = len(path) == 1 and allowed_fields.get(path[0]) == value
+            if value in short_staff and value not in VOCABULARY and not allowed:
+                add("sensitive_value", path, value_category if not token else "employee_id")
             if len(value) >= SENSITIVE_MIN and value not in VOCABULARY and not allowed:
                 for secret, category in secrets:
                     if secret in value:
@@ -1055,9 +1093,11 @@ def _request_input_hashes(req: Mapping[str, Any]) -> set[str]:
 
 
 def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
-                          current: str, hashes: dict) -> dict[str, set[str]]:
-    """Persist each request's input digest at its own shadow observation; never re-hash history."""
+                          current: str, hashes: dict) -> tuple[dict[str, set[str]], dict[tuple[str, str], set[str]]]:
+    """Persist each request's input digest at its own shadow observation; never re-hash history. Also where each
+    (request, digest) was read, as normalized paths, for ``_located_artifact_inputs``."""
     found: dict[str, set[str]] = {}
+    places: dict[tuple[str, str], set[str]] = {}
     for task_id, task in records.tasks.items():
         request = task.get("request_id")
         result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
@@ -1087,12 +1127,38 @@ def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Rea
                         seen = None
                 if isinstance(seen, Mapping) and isinstance(seen.get("sha256"), str):
                     found.setdefault(request, set()).add("file:" + seen["sha256"])
-    return found
+                    places.setdefault((request, "file:" + seen["sha256"]), set()).add(link)
+    return found, places
 
 
-def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
-    """Existing #249 plan edges become input hashes only when the referenced artifact was already hashed."""
+def _located_artifact_inputs(p: Any, places: Mapping[tuple[str, str], set[str]],
+                             locations: Mapping[tuple[str, str], str],
+                             created: Mapping[str, float]) -> dict[tuple[str, str], set[str]]:
+    """(request, hash) -> producers, for an accepted reference file that is an earlier request's hashed output
+    itself: the runner opened that output's own path and saw its recorded digest. That is an explicit edge too,
+    unlike bytes that merely equal some output (#269)."""
+    where: dict[str, set[tuple[str, str]]] = {}
+    for row in p.artifacts.values():
+        producer, workdir = row.get("request"), locations.get((row.get("workspace"), row.get("path")))
+        if isinstance(producer, str) and isinstance(workdir, str) and row.get("sha256") != sem.UNKNOWN:
+            where.setdefault(_norm(os.path.join(workdir, row["path"])), set()).add((producer, "file:" + row["sha256"]))
+    ancestry: dict[tuple[str, str], set[str]] = {}
+    for (request, identity), links in places.items():
+        for link in links:
+            for producer, made in where.get(link, ()):
+                made_at, used_at = created.get(producer), created.get(request)
+                if (made == identity and producer != request and isinstance(made_at, (int, float))
+                        and isinstance(used_at, (int, float)) and made_at < used_at):
+                    ancestry.setdefault((request, identity), set()).add(producer)
+    return ancestry
+
+
+def _declared_artifact_inputs(p: Any) -> tuple[dict[str, set[str]], dict[tuple[str, str], set[str]]]:
+    """Input hashes from existing #249 plan edges to already hashed artifacts, and for each (request, hash) the
+    other requests that produced the artifact the edge names. With ``_located_artifact_inputs`` this is the only
+    ancestry (#269): a raw input whose bytes equal some other output keeps its own identity."""
     found: dict[str, set[str]] = {}
+    ancestry: dict[tuple[str, str], set[str]] = {}
     for row in p.runs.values():
         request = row.get("request")
         if not isinstance(request, str):
@@ -1100,11 +1166,15 @@ def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
         for artifact in row.get("_used") or []:
             art = p.artifacts.get(artifact)
             if art is not None and art.get("sha256") != sem.UNKNOWN:
-                found.setdefault(request, set()).add("file:" + art["sha256"])
-    return found
+                identity = "file:" + art["sha256"]
+                found.setdefault(request, set()).add(identity)
+                producer = art.get("request")
+                if isinstance(producer, str) and producer != request:
+                    ancestry.setdefault((request, identity), set()).add(producer)
+    return found, ancestry
 
 
-def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mapping[str, set[str]],
+def _root_inputs(request: str, direct: Mapping[str, set[str]], ancestry: Mapping[tuple[str, str], set[str]],
                  cache: dict[str, set[str] | None], stack: frozenset[str] = frozenset()) -> set[str] | None:
     """Replace an explicitly linked earlier artifact with that artifact's root request inputs."""
     if request in cache:
@@ -1114,15 +1184,11 @@ def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mappin
         return None
     roots: set[str] = set()
     for identity in direct[request]:
-        producers = artifacts.get(identity)
+        producers = sorted(ancestry.get((request, identity)) or ())
         if not producers:
             roots.add(identity)
             continue
-        earlier = sorted(rid for rid in producers if rid != request)
-        if not earlier:
-            roots.add(identity)
-            continue
-        resolved = [_root_inputs(rid, direct, artifacts, cache, stack | {request}) for rid in earlier]
+        resolved = [_root_inputs(rid, direct, ancestry, cache, stack | {request}) for rid in producers]
         known = [value for value in resolved if value]
         if not known or any(value != known[0] for value in known[1:]):
             cache[request] = None
@@ -1130,6 +1196,23 @@ def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mappin
         roots.update(known[0])
     cache[request] = roots or None
     return cache[request]
+
+
+def _records(snap: Mapping[str, Any], reader: Reader,
+             observed: Mapping[str, Mapping[str, str]] | None = None) -> tuple[Any, int]:
+    """The model's records of the snapshot. A general request has no research plan, so its explicit input_refs
+    (#268) go in as a plan of step ids and refs only; the model reads nothing else from a general plan."""
+    records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests(),
+                                             observed=observed)
+    general: dict[str, dict] = {}
+    for rid, req in records.requests.items():
+        if rid in records.plans or req.get("research_contract") or not isinstance(req.get("plan"), Mapping):
+            continue
+        steps = [{"id": step.get("id"), "input_refs": step["input_refs"]} for step in req["plan"].get("steps") or []
+                 if isinstance(step, Mapping) and step.get("input_refs")]
+        if steps:
+            general[rid] = {"steps": steps}
+    return (replace(records, plans={**records.plans, **general}) if general else records), invalid
 
 
 def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
@@ -1144,7 +1227,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             result = task.get("result")
             if task.get("request_id") == rid and isinstance(result, dict):
                 reader.workspace(result.get("workdir"))
-        records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests())
+        records, invalid = _records(snap, reader)
         check()
         first = sem.project(model, records)
         check()
@@ -1198,22 +1281,21 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             if hash_state[art] in ("observed", "verified"):
                 seen_now.setdefault(row["workspace"], {})[row["path"]] = seen["sha256"]
         check()
-        records, _ = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests(),
-                                           observed=seen_now)
+        records, _ = _records(snap, reader, seen_now)
         p = sem.project(model, records)
         check()
         direct_inputs = {request: _request_input_hashes(req)
                          for request, req in snap["requests"].items()}
-        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes),
-                         _declared_artifact_inputs(p)):
+        accepted, places = _accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes)
+        declared, ancestry = _declared_artifact_inputs(p)
+        created = {r: (req.get("created_at") or 0) for r, req in snap["requests"].items()}
+        for key, producers in _located_artifact_inputs(p, places, locations, created).items():
+            ancestry.setdefault(key, set()).update(producers)
+        for evidence in (accepted, declared):
             for request, identities in evidence.items():
                 direct_inputs.setdefault(request, set()).update(identities)
-        artifact_inputs: dict[str, set[str]] = {}
-        for row in p.artifacts.values():
-            if row["sha256"] != sem.UNKNOWN and isinstance(row.get("request"), str):
-                artifact_inputs.setdefault("file:" + row["sha256"], set()).add(row["request"])
         input_cache: dict[str, set[str] | None] = {}
-        current_inputs = _root_inputs(rid, direct_inputs, artifact_inputs, input_cache)
+        current_inputs = _root_inputs(rid, direct_inputs, ancestry, input_cache)
         vocab = output_vocab.current()
         targets = _target_types(snap["requests"].get(rid) or {}, vocab)
         check()
@@ -1223,7 +1305,6 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
         excluded = {reason: 0 for reason in REASONS}
         candidates: list[tuple[float, str]] = []
         population = 0
-        created = {r: (req.get("created_at") or 0) for r, req in snap["requests"].items()}
         for art, row in advisory.result["candidates"].items():
             if row["request"] == rid:
                 continue
@@ -1239,7 +1320,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                 reasons.append("target_type_unknown")
             elif row["data_type"] != sem.UNKNOWN and row["data_type"] not in targets:
                 reasons.append("target_type_mismatch")
-            candidate_inputs = _root_inputs(row["request"], direct_inputs, artifact_inputs, input_cache)
+            candidate_inputs = _root_inputs(row["request"], direct_inputs, ancestry, input_cache)
             if current_inputs is None or candidate_inputs is None:
                 reasons.append("input_unknown")
             elif current_inputs != candidate_inputs:
@@ -1522,7 +1603,9 @@ def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
     lines, _ = read_lines(paths)
     if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
         return
-    rep["actions"] = _actions().report(lines, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+    readable = [line for line in lines if line.get("type") != "request" or readable_request(line)]  # as B1 (#259)
+    rep["actions"] = _actions().report(readable, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+    rep["actions"]["observed"]["broken"] += len(lines) - len(readable)
 
 
 def _actions_render(rep: Mapping[str, Any]) -> list[str]:
@@ -1631,6 +1714,7 @@ class ShadowService:
             self.epoch, self.latched, self.gen = epoch, None, self.gen + 1
             self.recent.clear()
             self.consecutive = self.busy = self.busy_skipped = 0
+            self.drop_backlog()  # semantics-hook: actions (#258)
             if stuck:  # the old thread may never return; give the new epoch its own worker
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
             self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
@@ -1705,7 +1789,8 @@ class ShadowService:
             inputs = _actions().followup_inputs(self.hub.requests[rid], fid, phase, outcome, self.hub.agents,
                                                 cso_agent=self.hub.s.orchestrator.cso_agent,
                                                 read_only=enforces_read_only, now=time.time())
-            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs}, default=str))
+            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs,
+                                          "agents": {aid: {} for aid in self.hub.agents}}, default=str))  # #266
             with self.lock:
                 queued = False
                 if not self.action_backlog:  # an earlier observation still waiting goes first
@@ -1725,6 +1810,16 @@ class ShadowService:
         except Exception as exc:  # noqa: BLE001 - the follow-up itself must never see this
             log.warning("semantics actions skipped a follow-up observation (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
+
+    def drop_backlog(self) -> None:
+        """Under self.lock, when a new epoch starts (#258): the closed epoch's waiting follow-up observations, their
+        drop count and their share of pending go, so neither drain() nor the next follow-up waits on work that would
+        only be discarded."""
+        dropped = len(self.action_backlog)
+        self.action_backlog.clear()
+        self.action_skipped = 0
+        self.counts["discarded"] += dropped
+        self.pending = max(0, self.pending - dropped)
 
     def yield_followup(self) -> None:
         """Event loop side, under self.lock, just before a request job is queued: a follow-up observation still
@@ -1761,7 +1856,8 @@ class ShadowService:
                 self.outcome(failed=True)
             finally:
                 with self.lock:
-                    self.pending = max(0, self.pending - 1)
+                    if jobs is self.queue:  # a replaced queue's count was cleared with it (#258)
+                        self.pending = max(0, self.pending - 1)
     # semantics-actions: end
 
     def ensure_thread(self) -> None:
@@ -1799,7 +1895,8 @@ class ShadowService:
                 self.outcome(failed=True)
             finally:
                 with self.lock:
-                    self.pending = max(0, self.pending - 1)
+                    if jobs is self.queue:  # a new epoch's replaced queue took this job's count with it (#258)
+                        self.pending = max(0, self.pending - 1)
                 self.work_backlog(jobs)  # semantics-hook: actions
 
     def work(self, gen: int, snap: dict) -> None:
@@ -1915,16 +2012,19 @@ class ShadowService:
         except OSError as exc:
             log.warning("semantics shadow record not written (%s)", type(exc).__name__)
             failed = True
-        self.outcome(failed=failed)
+        self.outcome(failed=failed, followup=line.get("type") == "followup")
 
-    def outcome(self, *, failed: bool, on_loop: bool = False) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False) -> None:
         """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
-        daemon thread instead of there (#173)."""
+        daemon thread instead of there (#173). ``followup``: a follow-up observation that succeeded neither resets
+        nor dilutes the request window; one that failed still counts (#260)."""
         with self.lock:
-            self.recent.append(failed)
-            self.consecutive = self.consecutive + 1 if failed else 0
             if failed:
                 self.counts["failures"] += 1
+            elif followup:
+                return
+            self.recent.append(failed)
+            self.consecutive = self.consecutive + 1 if failed else 0
             self.window_seq += 1
             window = (self.window_seq, self.epoch, list(self.recent), self.consecutive)
         self.check_window()
@@ -2006,7 +2106,8 @@ def readable_request(line: Mapping[str, Any]) -> bool:
     if not all(m is None or isinstance(m, Mapping) for m in models):
         return False
     prov, objs, hashes = (m or {} for m in models)
-    return (all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
+    return (isinstance(line.get("rows"), (Mapping, type(None)))  # the action section reads it (#259)
+            and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
             and all(_number(m.get("ms")) for m in (prov, objs))
             and all(_number(prov.get(k)) for k in ("candidates", "unknown_ratio"))
             and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))

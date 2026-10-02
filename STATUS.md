@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #258 #259 #260 #266 #268 #269 — 그림자·액션 후속 P2 묶음
+
+- 결론: 액션 층 그림자의 epoch 전환·report·breaker 결함 3건과 B1 그림자의 직원 ID 경계·재사용 입력 계보 3건을 고쳤다. 실행 허용 목록은 빈 집합, `hpc.*` 거부, CSO에 주는 것 없음, 기록에 값 없음은 그대로다. 정보 경계는 막는 값만 늘었다.
+- 바뀐 것: 새 epoch가 닫힌 epoch의 이어 묻기 backlog·drop 수·pending 몫을 버리고, queue를 바꾼 뒤 돌아온 이전 worker는 새 pending을 줄이지 않는다(#258). `rows`가 dict가 아닌 request 줄은 B1·액션 두 절에서 깨진 줄로 센다(#259). 성공한 이어 묻기 관측은 breaker 창에 넣지 않는다(#260). roster·계획·결과·task의 agent ID를 길이와 무관하게 `employee_id`로 막고, 6자 미만은 값 전체가 같을 때만 건다. 이어 묻기 snapshot도 roster를 가진다(#266). 일반 요청의 가벼운 계획 사본이 문자열 `input_refs`를 메모리에만 남겨 명시적 artifact edge로 쓴다(#268). 앞선 산출의 root 입력으로의 축약은 계획 edge나 그 산출 경로 자체를 가리킨 허용 reference(digest 일치, 더 먼저 만든 산출)에만 하고, bytes만 같은 입력은 축약하지 않는다(#269).
+- 실행한 것: 새 회귀 12건 중 11건이 main 코드에서 실패하고 이 branch에서 통과했다(나머지 1건은 앞선 산출 경로 reference를 계보로 지키는 보존 test). 2차 실행 DB 사본 15건 재계산의 최종 후보는 main과 같은 3개(TP 3·FP 0)이고, 실제 roster 11명으로 본 경계 위반은 0줄이다. 경로 reference 계보를 빼면 후보가 1개로 줄어(TP 2건 손실) 그 edge를 남겼다. 전체 pytest 2547 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: 없음. Codex 사용량 한도로 Claude가 이어받았다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_actions_shadow.py`, `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_provenance.py`.
+
 ## 2026-10-02 · #151 #253 — EDAM 부분집합 표 병합
 
 - 결론: 저장소 라이선스가 정해져(#252: 문서·데이터 CC BY-SA 4.0, 코드 GPL-3.0) draft로 묶어 둔 EDAM 표를 넣는다. 38개 key 중 32개가 EDAM 용어 31개에 이어지고, 판정은 여전히 key로 한다.
