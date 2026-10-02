@@ -57,6 +57,12 @@ TRIAL_BASH = (
     ("Bash", 'git commit -m "fix; cp a /elsewhere/b"'),
     ("PowerShell", "Write-Output 'a | Set-Content C:/elsewhere/x'"),
     ("Bash", "cat <<'EOF' > notes.md\ncp a /elsewhere/b\nEOF"),
+    # The same edits written the way staff usually write them.
+    ("PowerShell", "$p = 'outputs\\README.md'; $t = Get-Content -Raw $p; " + TRIAL_POWERSHELL
+     + "; Set-Content -NoNewline -Path $p -Value $t"),
+    ("PowerShell", "(Get-Content -Raw README.md).Replace('<s1 venv>\\Scripts\\python.exe', 'python') | Out-File x.md"),
+    ("Bash", "cd outputs && " + TRIAL_BASH),
+    ("Bash", 'git commit -m "move a -> /elsewhere/b"'),
 ])
 def test_text_that_only_looks_like_a_redirect_is_not_a_write(tool, command):
     assert _decide(tool, command).action == "allow"
@@ -123,6 +129,53 @@ def test_real_redirects_are_still_found(tool, command, target):
     ("PowerShell", "powershell -Command 'Get-Date > C:/elsewhere/out'"),
     ("PowerShell", "Invoke-Expression 'Get-Date > C:/elsewhere/out'"),
     ("PowerShell", '& "C:\\Program Files\\Git\\bin\\bash.exe" -c \'echo x > /elsewhere/out\''),
+    # A here-document delimiter bash reads differently: $'..' and $".." drop the '$'.
+    ("Bash", "cat <<$'EOF'\nbody\nEOF\necho x > /elsewhere/out\n$EOF"),
+    ("Bash", 'cat <<$"EOF"\nbody\nEOF\necho x > /elsewhere/out\n$EOF'),
+    # '<<' inside $[..], ${..}, a subscript or an extglob pattern is not a here-document.
+    ("Bash", "echo $[1<<2]\necho x > /elsewhere/out\n2]"),
+    ("Bash", "x=abcdef; echo ${x:1<<2}\necho x > /elsewhere/out\n2}"),
+    ("Bash", "a[1<<2]=x\necho x > /elsewhere/out\n2]=x"),
+    ("Bash", "ls @(x<<y)\necho x > /elsewhere/out\ny"),
+    # Quotes inside arithmetic do not quote: bash runs the $(..) in each of these.
+    ("Bash", "echo $(( '$(echo x > /elsewhere/out)' ))"),
+    ("Bash", "echo $[ '$(echo x > /elsewhere/out)' ]"),
+    ("Bash", "x=abc; echo ${x:'$(echo x > /elsewhere/out)'}"),
+    ("Bash", "[[ 'a[$(echo x > /elsewhere/out)]' -eq 0 ]]"),
+    ("Bash", "a=(1); [ -v 'a[$(echo x > /elsewhere/out)]' ]"),
+    ("Bash", "test -v 'a[$(echo x > /elsewhere/out)]'"),
+    # Git Bash ends a here-document at 'EOF\r', Linux bash does not.
+    ("Bash", "cat <<'EOF'\nEOF\r\nit's\nEOF\necho x > /elsewhere/out\necho \\' 'y'"),
+    # Commands that run quoted text as code, beyond any list of shell names.
+    ("Bash", "source <(echo 'echo x > /elsewhere/out')"),
+    ("Bash", ". /dev/stdin <<< 'echo x > /elsewhere/out'"),
+    ("Bash", "echo 'echo x > /elsewhere/out' | at now"),
+    ("Bash", "echo '* * * * * echo x > /elsewhere/out' | crontab -"),
+    ("Bash", "git -c alias.w='!echo x > /elsewhere/out' w"),
+    ("Bash", "sed '1e echo x > /elsewhere/out' in.txt"),
+    ("Bash", "GIT_EDITOR='sh -c \"echo x > /elsewhere/out\"' git commit --amend"),
+    ("Bash", "printf -v GIT_EDITOR '%s' 'sh -c \"echo x > /elsewhere/out\"'; git commit --amend"),
+    ("Bash", "./tool.sh 'echo x > /elsewhere/out'"),
+    ("PowerShell", "$ExecutionContext.InvokeCommand.InvokeScript('Get-Date > C:/elsewhere/out')"),
+    ("PowerShell", "$ExecutionContext.InvokeCommand.NewScriptBlock('Get-Date > C:/elsewhere/out').Invoke()"),
+    ("PowerShell", "$ExecutionContext.InvokeCommand | % InvokeScript 'Get-Date > C:/elsewhere/out'"),
+    ("PowerShell", "`iex 'Get-Date > C:/elsewhere/out'"),
+    ("PowerShell", 'schtasks /create /tn t /tr "cmd /c dir > C:\\elsewhere\\out" /sc once /st 00:00'),
+    ("PowerShell", "$env:GIT_EDITOR = 'cmd /c dir > C:\\elsewhere\\out'; git commit --amend"),
+    ("PowerShell", "Set-Content 'env:GIT_EDITOR' 'cmd /c dir > C:\\elsewhere\\out'; git commit --amend"),
+    ("PowerShell", "$function:Write-Output = 'Get-Date > C:/elsewhere/out'; Write-Output x"),
+    ("PowerShell", "Set-Content function:foo 'Get-Date > C:/elsewhere/out'; foo"),
+    ("PowerShell", "$ExecutionContext.InvokeCommand. InvokeScript('Get-Date > C:/elsewhere/out')"),
+    # Inline interpreter code that hands a string to a shell.
+    ("Bash", "python -c \"import os; os.system('echo x > /elsewhere/out')\""),
+    ("Bash", "Rscript -e 'system(\"echo x > /elsewhere/out\")'"),
+    ("Bash", "node -e \"require('child_process').execSync('echo x > /elsewhere/out')\""),
+    ("Bash", "python - <<'EOF'\nimport os\nos.system('echo x > /elsewhere/out')\nEOF"),
+    ("Bash", "python run.py 'echo x > /elsewhere/out'"),
+    ("PowerShell", "python -c \"import os; os.system('echo x > C:/elsewhere/out')\""),
+    ("PowerShell", ".venv\\Scripts\\python.exe -c \"import os; os.system('echo x > C:/elsewhere/out')\""),
+    # A PowerShell here-string starts only at a token start; 'x@' is one generic token.
+    ("PowerShell", "Write-Output x@'\nfoo'\nGet-Date > C:/elsewhere/out\n'@ #'"),
 ])
 def test_redirects_the_blanking_must_not_hide(tool, command):
     assert _decide(tool, command).action == "ask"
