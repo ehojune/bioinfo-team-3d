@@ -1,5 +1,8 @@
 pr: 292
 rows:
-  - sha: c9eef11
-    at: "2026-10-02 15:40"
-    text: PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰
+- sha: c9eef11
+  at: 2026-10-02 15:40
+  text: PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰
+- sha: 7e2586c
+  at: 2026-10-02 16:40
+  text: '기록 목차: 하위 폴더 기록은 오류로, PR 단계에서 원본 형식 검사, 목차 workflow는 README 배지에서 뺌'
