@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · PR #303 — 한 PC 여러 labhq 인스턴스(#37 결정 ②-1 A)
+
+- 결론: `labhq init --instance <이름>`으로 한 PC의 연구소를 포트·경로·token까지 나누고, 모든 명령에서 같은 이름을 고를 수 있다. 기본 동작은 그대로다.
+- 바뀐 것: 이름별 config·state·runs·talent·runner id·빈 gateway/broker 포트·무작위 token, `--instance`/`--config` 충돌 거부, 웹 제목·홈 화면 이름, 로그인·사용량 공유 경고.
+- 실행한 것: 관련 pytest 58 passed, Node CJS 13개, `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: 없음. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/init_wizard.py`, `labhq/cli.py`, `labhq/gateway/server.py`, `tests/test_instances.py`.
+
 ## 2026-10-02 · #149 결정 17 · #151 입력 종류–방법 적합성 그림자 판정
 
 - 결론: 로컬 operation 관계표로 단계 입력을 `fit`·`mismatch`·`unknown` 중 하나로 세며, 세 개의 합계만 그림자 기록과 report에 남긴다.
