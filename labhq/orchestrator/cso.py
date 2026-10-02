@@ -370,6 +370,15 @@ def replan_history_lines(history: list[dict]) -> list[str]:
     return lines
 
 
+def replan_history_note(req: dict) -> str:
+    """Re-plan history for the reviewer and the final report's author. Empty, so their prompts stay as before,
+    unless orchestrator.max_replans recorded an attempt (#271)."""
+    if not req.get("replan_history"):
+        return ""
+    return ("\n\nPlan changes during this request (labhq re-plan history):\n" +
+            "\n".join(replan_history_lines(req["replan_history"])))
+
+
 def _output_reference(inner: str) -> re.Pattern[str]:
     """A root, absolute, home, or bare instruction reference to one declared output (#229)."""
     body = r"[/\\]".join(re.escape(part) for part in inner.split("/"))
@@ -1853,7 +1862,8 @@ class Orchestrator:
                                                                                        sort_keys=True)
                     drop_rule = (f"To redo a reviewer-flagged step ({', '.join(flagged) or 'none'}), list it in drop "
                                  "and return its replacement. Dropping a step also retires the completed steps that "
-                                 "depend on it; return replacements for them too.")
+                                 "depend on it; return replacements for them too. If you return steps, a flagged "
+                                 "step you do not drop keeps its result and is not revised in this round.")
                     empty_rule = ("If revising the flagged steps in place is enough, return no steps and an empty "
                                   "drop; labhq then sends the review to those steps.")
 
@@ -2022,9 +2032,7 @@ class Orchestrator:
                 if not reviewer or reviewer not in known:
                     break
                 prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
-                if req.get("replan_history"):  # retired steps are no longer in the results above (#271)
-                    prompt += ("\n\nPlan changes during this request (labhq re-plan history):\n" +
-                               "\n".join(replan_history_lines(req["replan_history"])))
+                prompt += replan_history_note(req)  # retired steps are no longer in the results above (#271)
                 review = {}
                 for parse_attempt in (1, 2):
                     r = await self.run_step(Task(
@@ -2116,7 +2124,7 @@ class Orchestrator:
             final = await self.run_step(Task(
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
-                                           review=short(review, 3000)),
+                                           review=short(review, 3000)) + replan_history_note(req),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})}))
             self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +

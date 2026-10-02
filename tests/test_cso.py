@@ -1740,6 +1740,43 @@ async def test_resume_does_not_finish_an_in_flight_replan_over_a_reduced_cap():
 
 
 @pytest.mark.asyncio
+async def test_synthesis_sees_which_failed_step_a_replan_replaced():
+    """The CSO's final report must not present the fallback as the method that was planned (#271)."""
+    hub = replan_hub([{"id": "primary", "agent_id": "worker", "instruction": "primary analysis", "depends_on": []}],
+                     lambda task: (result(task, ok=False, error="primary analysis failed")
+                                   if task.meta["step_id"] == "primary" else result(task, text="fallback done")),
+                     lambda task: replan_plan([{"id": "fallback", "agent_id": "worker", "instruction": "fallback",
+                                                "depends_on": []}]))
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    prompt = kinds(hub, "synthesis")[0].prompt
+    assert "re-plan history" in prompt and "retired: primary (primary analysis failed)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_review_replan_prompt_says_undropped_flagged_steps_are_not_revised():
+    """An applied review re-plan skips in-place revision, so the CSO must know a flagged step it keeps stays
+    as it is this round (#271)."""
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+    prompts = []
+
+    def on_replan(task):
+        prompts.append(task.prompt)
+        return replan_plan([], notes="revise in place")
+
+    def on_review(task):
+        return REVISE if task.meta["revision"] == 0 else {**REVISE, "verdict": "accept", "issues": []}
+
+    hub = replan_hub(original, lambda task: result(task, text="analysis done"), on_replan, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
+    assert ("If you return steps, a flagged step you do not drop keeps its result and is not revised in this "
+            "round") in prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     async def dispatch(task):
         return result(task, text="unused")
