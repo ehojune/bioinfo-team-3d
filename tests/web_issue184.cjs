@@ -20,6 +20,8 @@ class Element {
   constructor(tag = 'div') { this.tagName = tag.toUpperCase(); this.children = []; this.textContent = ''; this.dataset = {}; this.value = ''; this.listeners = {}; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = []; this.append(...children); }
+  insertBefore(child, ref) { this.removeChild(child); this.children.splice(this.children.indexOf(ref), 0, child); return child; }
+  removeChild(child) { this.children = this.children.filter(x => x !== child); return child; }
   addEventListener(type, callback) { this.listeners[type] = callback; }
   querySelector() { return null; }
 }

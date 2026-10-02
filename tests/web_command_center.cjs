@@ -16,6 +16,8 @@ class Element {
   append(...children){for(const child of children){child.parentNode=this;this.children.push(child);}}
   prepend(child){child.parentNode=this;this.children.unshift(child);}
   replaceChildren(...children){this.children=[];this.append(...children);}
+  insertBefore(child,ref){this.removeChild(child);child.parentNode=this;this.children.splice(this.children.indexOf(ref),0,child);return child;}
+  removeChild(child){this.children=this.children.filter(x=>x!==child);return child;}
   remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(x=>x!==this);}
   addEventListener(type,callback){(this.listeners[type]??=[]).push(callback);}
   setAttribute(name,value){if(name.startsWith('data-'))this.dataset[name.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=String(value);else this[name]=String(value);}

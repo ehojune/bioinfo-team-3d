@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · #84 — 직원·CSO 프롬프트 규칙 묶음
+
+- 결론: 직원 공통 규칙, 단계 프롬프트, 계획 프롬프트, 분석가·QC·과학 리뷰어 지침에 VB·MD 코드 흐름 리뷰에서 가져온 규칙을 넣었다. 코드 흐름은 그대로이고 문구만 바뀐다. 모의 시운전 2차(#298 댓글 5962361067)에서 리뷰어가 잡은 같은 환자 표본을 독립으로 센 점, 일부 유전자만 고른 필터가 분석가·리뷰어 규칙의 근거다.
+- 바뀐 것: `ROLE_FOOTER`에 실패한 조회는 음성 결과가 아니라 실패로, 0건 검색은 출처·질의·범위·필터와 함께, 방법을 낮췄으면 이유와 함께 보고하라는 두 줄을 더했다. `STEP_PROMPT`에 조용한 방법 하향 금지(디버깅을 이어 가고, 포기하면 시도한 것과 이유)와 blocking_decision 형식(700자 이하, 첫 문장이 질문, 선택지는 "- " 줄마다 하나)을 더했다. 일반 lane `PLAN_PROMPT`의 질문 줄에는 700자 이하·질문 먼저를 더했다. analyst는 donor 구조 반영·seed 고정과 기록·연관으로 서술, qc_reviewer는 같은 결함을 WARN·FAIL로 잡고 자기 무작위 단계의 seed도 고정, sci_reviewer는 과잉 일반화·cherry-picking·추측과 지적마다 근거 문장 인용을 점검한다. 연구 lane 계획 프롬프트는 그대로다(RESEARCH_PROMPT_SHA 유지). #336·#338·#339에 이미 있는 문장과 VB의 "반복 횟수"·"항상 절대경로"는 넣지 않았다.
+- 검증: `tests/test_role_footer.py`, `tests/test_step_prompt_rules.py`(신규), `tests/test_agent_prompts.py`(신규), `tests/test_output_types.py`를 함께 돌려 52 passed. PLAN_PROMPT 해시는 의도한 변경이라 갱신했다. `scripts/check_public.sh` 통과. 전체 pytest는 CI에 맡겼다. #40 bench 한 회는 돌리지 않았다.
+- 미해결: ① blocking_decision이 JSON 문자열 안의 줄바꿈 요구와 충돌해, 모델이 실제 줄바꿈을 쓰면 일반 lane의 `extract_json`이 실패해 PI 질문이 사라진다. 선언 출력이 있는 단계는 "missing outputs"로 실패하고, 없는 단계는 질문이 결과로 하류에 넘어간다. 연구 lane은 structured output이 줄바꿈을 인코딩해 해당 없다. ② 폰 카드 규칙(700자 이하, 질문 먼저)은 `PLAN_PROMPT`에만 넣었고 `REPLAN_PROMPT`의 clarifying_questions는 빠졌다. ③ 이슈 표의 "첫 문장 굵게"는 결정 카드가 textContent로 그려 `**`가 그대로 보여서, "선택지 bullet"은 계획 질문의 선택지가 a/b/c/d 버튼이라서 뺐다.
+- 근거: `labhq/adapters/base.py`, `labhq/orchestrator/cso.py`, `agents/core/analyst.yaml`, `agents/core/qc_reviewer.yaml`, `agents/core/sci_reviewer.yaml`, `tests/test_step_prompt_rules.py`, `tests/test_agent_prompts.py`, `tests/test_role_footer.py`, `tests/test_output_types.py`.
+
+## 2026-10-03 · #57 — 결정함: 새 승인이 와도 쓰던 답·메모가 지워지지 않음
+
+- 결론: 결정함에서 답이나 메모를 쓰는 중에 새 승인이 오거나 화면이 다시 그려져도 커서가 사라지지 않는다.
+- 바뀐 것: `syncDecisionCards`가 렌더마다 모든 카드를 `replaceChildren`으로 다시 끼워, 입력 중인 textarea가 DOM에서 잠깐 빠져 포커스가 body로 돌아갔다. 이제 끝난 카드만 빼고 새 카드만 끼우며, 제자리 카드는 건드리지 않는다. 2.5D와 3D가 같은 함수를 써서 둘 다 고쳐진다. 입력값 보존은 PR #74에서 이미 됐고 이번에는 포커스다.
+- 검증: `tests/web_decision_focus.cjs`(신규, 포커스 fixup을 흉내 낸 DOM으로 2.5D·3D 검사)와 `web_live`·`web_command_center`·`web_clarify_options`·`web_issue184`·`test_web_3d.py`가 통과(Node 5개 파일 모두 실패 0, pytest 30 passed·1 skipped). 기존 Node test의 가짜 DOM에는 `insertBefore`·`removeChild`를 더했다. headless Edge에서 포커스가 사라지는 것을 먼저 확인했다. `scripts/check_public.sh` 통과.
+- 미해결: 2.5D test는 공유 `syncDecisionCards`만 직접 부르고 `index.html`의 `renderApprovals`는 돌리지 않는다. 나중에 그 함수가 `#approvals`나 상위 요소를 다시 만들면 이 test는 못 잡는다. 지금은 `index.html`의 2.5D 경로가 `syncDecisionCards`만 부른다.
+- 근거: `labhq/web/ui/decide.js`, `tests/web_decision_focus.cjs`, `tests/web_live.cjs`, `tests/web_command_center.cjs`, `tests/web_clarify_options.cjs`, `tests/web_issue184.cjs`, `tests/test_web_3d.py`.
+
 ## 2026-10-03 · #58 — labhq verify와 요청별 감사 번들, 내장 MCP 실패 의미(④⑥)
 
 - 결론: `labhq verify <요청>`이 runner PC에서 산출 파일이 기록 때와 같은지 다시 확인하고, 연구 요청은 보고서 앵커도 다시 검사한다. `--bundle`은 감사 번들 zip을 만든다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가고 "이 실패는 증거도 부재 증명도 아닙니다"가 붙는다.

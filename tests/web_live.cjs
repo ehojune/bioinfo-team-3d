@@ -8,6 +8,8 @@ class Element {
   constructor(tag='div') { this.tag=tag; this.tagName=tag.toUpperCase(); this.children=[]; this.textContent=''; this.listeners={}; this.dataset={}; this.value=''; }
   append(...children) { for(const child of children)this.children.push(child); }
   replaceChildren(...children) { this.children=[];this.append(...children); }
+  insertBefore(child,ref) { this.removeChild(child);this.children.splice(this.children.indexOf(ref),0,child);return child; }
+  removeChild(child) { this.children=this.children.filter(x=>x!==child);return child; }
   addEventListener(type, callback) { this.listeners[type]=callback; }
   querySelector(selector){
     const all=[];const visit=node=>{for(const child of node.children){all.push(child);visit(child);}};visit(this);
