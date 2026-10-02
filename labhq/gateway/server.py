@@ -1388,7 +1388,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/", response_class=HTMLResponse)
     async def office() -> HTMLResponse:
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
+        boot_data = {"mode": "live"}
+        if settings.instance:
+            boot_data["instance"] = settings.instance
+        boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
+        if settings.instance:
+            html = html.replace("<title>labhq 사무실</title>", f"<title>labhq {settings.instance} 사무실</title>")
         return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
 
     # Like /, static shells are public; data and decisions require the client token.
@@ -1400,7 +1405,13 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/3d/", response_class=HTMLResponse)
     async def office3d() -> HTMLResponse:
         html = (WEB / "lab3d" / "index.html").read_text(encoding="utf-8")
-        boot = '<script>window.LABHQ_BOOT={"mode":"live"}</script>'
+        boot_data = {"mode": "live"}
+        if settings.instance:
+            boot_data["instance"] = settings.instance
+        boot = f'<script>window.LABHQ_BOOT={json.dumps(boot_data, separators=(",", ":"))}</script>'
+        if settings.instance:
+            html = html.replace("<title>labhq · 종이숲 연구소</title>",
+                                f"<title>labhq {settings.instance} · 종이숲 연구소</title>")
         return HTMLResponse(html.replace("<!--LABHQ_BOOT-->", boot), headers={"Cache-Control": "no-cache"})
 
     def static_file(root: Path, path: str) -> FileResponse:
@@ -1437,8 +1448,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/manifest.webmanifest")
     async def manifest() -> Response:
-        return Response((WEB / "manifest.webmanifest").read_text(encoding="utf-8"),
-                        media_type="application/manifest+json")
+        data = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
+        if settings.instance:
+            data.update({"name": f"labhq {settings.instance} 사무실", "short_name": f"labhq {settings.instance}"})
+        return Response(json.dumps(data, ensure_ascii=False), media_type="application/manifest+json")
 
     @app.get("/icon.svg")
     async def icon() -> Response:

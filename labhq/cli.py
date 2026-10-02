@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import re
 import secrets
 import signal
 import shutil
@@ -26,6 +27,36 @@ REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
         "analyst": "🦝", "engineer": "🐙", "qc_reviewer": "🦔", "sci_reviewer": "🐢", "recruiter": "🦫", "bioinfo-agent": "🦦"}
 STATE_KO = {"working": "작업 중", "waiting": "승인 대기", "hibernating": "HPC 대기(수면)", "done": "완료", "error": "오류"}
+
+
+def _instance_config(name: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise ValueError("--instance must use 1-64 letters, numbers, underscores or hyphens")
+    return str(Path.home() / ".labhq" / name / "labhq.yaml")
+
+
+def _normalize_instance_arg(argv: list[str]) -> list[str]:
+    """Accept --instance before or after any subcommand, including nested ones."""
+    rest: list[str] = []
+    instances: list[str] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--instance":
+            if index + 1 >= len(argv):
+                raise ValueError("--instance requires a name")
+            instances.append(argv[index + 1])
+            index += 2
+            continue
+        if arg.startswith("--instance="):
+            instances.append(arg.split("=", 1)[1])
+            index += 1
+            continue
+        rest.append(arg)
+        index += 1
+    if len(instances) > 1:
+        raise ValueError("--instance may be given only once")
+    return (["--instance", instances[0]] if instances else []) + rest
 
 
 def render(ev: dict) -> None:
@@ -421,6 +452,7 @@ def main(argv: list[str] | None = None) -> None:
             stream.reconfigure(errors="replace")
     p = argparse.ArgumentParser(prog="labhq", description="Bio lab HQ — multi-agent research lab")
     p.add_argument("-c", "--config", default=None, help="config YAML (default: $LABHQ_CONFIG)")
+    p.add_argument("--instance", help="use ~/.labhq/NAME/labhq.yaml")
     sub = p.add_subparsers(dest="cmd", required=True)
     init = sub.add_parser("init", help="configure this installation and run doctor")
     init.add_argument("--yes", action="store_true", help="accept suggested defaults")
@@ -516,7 +548,18 @@ def main(argv: list[str] | None = None) -> None:
     sem_mark.add_argument("request_id")  # semantics-hook
     sem_mark.add_argument("ref")  # semantics-hook
     sem_mark.add_argument("verdict", choices=["ok", "wrong_identity", "wrong_other", "irrelevant"])  # semantics-hook
-    args = p.parse_args(argv)
+    try:
+        normalized = _normalize_instance_arg(list(sys.argv[1:] if argv is None else argv))
+    except ValueError as exc:
+        p.error(str(exc))
+    args = p.parse_args(normalized)
+    if args.instance and args.config:
+        p.error("--instance cannot be used with --config")
+    if args.instance:
+        try:
+            args.config = _instance_config(args.instance)
+        except ValueError as exc:
+            p.error(str(exc))
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -525,7 +568,7 @@ def main(argv: list[str] | None = None) -> None:
         from yaml import YAMLError
 
         try:
-            result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force)
+            result = run(args.config, yes=args.yes, dry_run=args.dry_run, force=args.force, instance=args.instance)
         except InitError as exc:
             p.exit(1, f"init: {exc}\n")
         except (OSError, ValueError, YAMLError):

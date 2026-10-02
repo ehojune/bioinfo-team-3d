@@ -368,6 +368,7 @@ class ProjectSettings(BaseModel):
 
 
 class Settings(BaseModel):
+    instance: str | None = None
     gateway: GatewaySettings = GatewaySettings()
     runner: RunnerSettings = RunnerSettings()
     engines: EnginesSettings = EnginesSettings()
@@ -384,6 +385,15 @@ class Settings(BaseModel):
     projects: list[ProjectSettings] = []
     semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)
     config_path: str | None = None
+
+    @field_validator("instance")
+    @classmethod
+    def safe_instance_name(cls, value: str | None) -> str | None:
+        import re
+
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value):
+            raise ValueError("instance must use 1-64 letters, numbers, underscores or hyphens")
+        return value
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None
