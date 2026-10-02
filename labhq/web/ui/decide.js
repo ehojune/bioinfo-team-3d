@@ -262,10 +262,22 @@ export function syncDecisionCards(container, approvals, suggestions = [], option
     const empty = add(doc().createElement('div'), 'p', options.emptyText || '지금은 결정할 일이 없어요.', 'empty-note');
     container.replaceChildren(empty);
   } else {
-    list.replaceChildren(...rows);
-    container.replaceChildren(list);
+    placeRows(list, rows);
+    if (container.children.length !== 1 || container.children[0] !== list) container.replaceChildren(list);
   }
   return rows;
+}
+
+// Re-inserting a row detaches it, and a detached textarea loses focus mid-answer (#57). Only finished rows
+// leave and only new or reordered rows move; a row already in place is never touched.
+function placeRows(list, rows) {
+  const keep = new Set(rows);
+  for (const row of Array.from(list.children)) if (!keep.has(row)) list.removeChild(row);
+  rows.forEach((row, index) => {
+    const current = list.children[index];
+    if (current === row) return;
+    if (current) list.insertBefore(row, current); else list.append(row);
+  });
 }
 
 export function syncDecisionHistory(container, history, options = {}) {
