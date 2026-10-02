@@ -10,6 +10,14 @@
 - 미해결: 입력 종류–방법 적합성 그림자 판정(#149 결정 17)은 다음 PR.
 - 근거: `labhq/vocab/NOTICE.md`.
 
+## 2026-10-02 · CI — 중복 실행 제거와 이미 통과한 pytest 재실행 생략
+
+- 결론: PI 요청. PR 브랜치는 pull_request로 한 번만 돌고, 패치노트만 더한 push나 STATUS·패치노트 충돌만 푼 main 병합 push는 직전 커밋의 pytest가 통과했으면 pytest를 건너뛴다(skipped). 합쳐진 조합 자체는 다시 시험하지 않고, squash 병합 뒤 main CI가 다시 돈다.
+- 바뀐 것: `.github/workflows/test.yml`(push는 main만, `changes` job, `checks: read`), `scripts/ci_skip.py`, `tests/test_ci_skip.py`.
+- 실행한 것: `tests/test_ci_skip.py` 5건(다른 기능 branch를 합친 병합은 언제나 다시 돈다 — 봇 P1). 병합은 두 번째 parent가 base branch에 있을 때만 인정한다. 실제 #285 기록에 적용하면 코드 커밋이 통과한 뒤의 패치노트 커밋 1건만 건너뛰고 나머지는 그대로 돈다.
+- 미해결: 없음.
+- 근거: `scripts/ci_skip.py`.
+
 ## 2026-10-02 · #271 #282 — 단계 실패·revise 뒤 opt-in CSO 재계획과 저장 계획 max_steps 축소 처리
 
 - 결론: 저장 계획이 현재 `max_steps`보다 길면 자르지 않고 실패한다(연구 lane은 승인 hash·상태 유지). `orchestrator.max_replans`(기본 0, 전과 같음)를 켜면 단계 실패나 revise 뒤 CSO가 남은 DAG만 다시 계획한다.

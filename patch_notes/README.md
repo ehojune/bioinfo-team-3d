@@ -13,6 +13,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 14:35 | [`327eb23`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/327eb23) | EDAM 표 NOTICE를 저장소 라이선스 결정(#252)에 맞추고 병합 가능 상태로 둠 |
+| 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
+| 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
 | 13:53 | [`c7d40b8`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/c7d40b8) | 문헌·웹 검색 담당(lit_scout)에도 공개 과학 MCP 다섯 개, 과학 리뷰어에는 인용 확인용 PubMed·bioRxiv |
 | 13:47 | [`9fbe44c`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/9fbe44c) | STATUS의 #276 실측을 마지막 probe 수치로 갱신 |
 | 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
