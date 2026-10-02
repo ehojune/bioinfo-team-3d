@@ -396,13 +396,15 @@ def test_an_explicit_artifact_input_is_reduced_to_the_same_root_input(tmp_path):
     assert prov["excluded"]["input_unknown"] == prov["excluded"]["input_mismatch"] == 0
 
 
-def test_equal_digest_without_an_explicit_artifact_edge_is_not_ancestry(tmp_path):
-    """#269: raw input bytes that match an earlier output do not inherit that output's producer roots."""
+@pytest.mark.parametrize("made_at", [1.0, 3.0], ids=["earlier_output", "later_output"])
+def test_equal_digest_without_an_explicit_artifact_edge_is_not_ancestry(tmp_path, made_at):
+    """#269: raw input bytes that match another request's output, made before or after, do not inherit that
+    output's producer roots."""
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     (inputs / "raw.tsv").write_bytes(b"x\n")  # the same bytes as req_old's made.tsv
     requests = {
-        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=1.0),
+        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=made_at),
         "req_now": _target_request("req_now", "raw.tsv", "wanted.tsv", created_at=2.0),
     }
     requests["req_now"]["references"] = [{"kind": "path", "value": str(inputs)}]
