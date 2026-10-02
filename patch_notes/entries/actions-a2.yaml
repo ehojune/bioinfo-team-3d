@@ -8,3 +8,7 @@ rows:
   at: 2026-10-02 19:05
   text: '리뷰 P1 고침: 실행 잠금·intent 기록의 폴더까지 fsync(Windows는 NTFS 저널), 직원용 설정 사본은 task마다
     새 이름으로 쓰고 링크 폴더 거부·끝나면 삭제. A2 실행기는 그림자를 거쳐서만 불림(pilot 규칙)'
+- sha: d22ef09
+  at: 2026-10-02 19:20
+  text: 'main(#296 CSO A/B) 병합: ab 모드도 액션 층 설정으로 읽고, A2는 mode shadow 또는 ab에 actions:
+    confirm일 때만'
