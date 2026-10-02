@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-03
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 02:20 | [`eee1549`](https://github.com/ehojune/bioinfo-team-3d/pull/326/commits/eee1549) | 사실 확인 반영. CP2는 `evidence_checkpoint`를 켤 때만이고 실제 CLI로는 CP1까지 확인했다고 고치고, HANDOFF 큐에 |
+| 01:59 | [`f0f3e8c`](https://github.com/ehojune/bioinfo-team-3d/pull/326/commits/f0f3e8c) | README에 핵심 개념 표와 PI 버전 정의(v0.25~v1.25) 로드맵을 넣고, HANDOFF 작업 큐를 버전 순으로 정리하며 |
+
 ## 2026-10-02
 
 | 시간 | 커밋 | 주요 변경사항 |
