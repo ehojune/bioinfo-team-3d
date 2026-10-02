@@ -545,6 +545,29 @@ def _value_class(value: str) -> str:
     return "identifier"
 
 
+def _staff_ids(snap: Mapping[str, Any]) -> set[str]:
+    """Every agent id the snapshot knows: the roster and the ids its plans, results and task rows name (#266)."""
+    found: set[str] = set()
+
+    def add(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            found.add(value.strip())
+
+    agents = snap.get("agents")
+    for agent_id in agents if isinstance(agents, Mapping) else ():
+        add(agent_id)
+    for req in (snap.get("requests") or {}).values():
+        plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+        for step in plan.get("steps") or []:
+            add(step.get("agent_id") if isinstance(step, Mapping) else None)
+        for result in (req.get("results") or {}).values():
+            add(result.get("agent_id") if isinstance(result, Mapping) else None)
+    for task in (snap.get("tasks") or {}).values():
+        for part in (task.get("payload"), task.get("result")):
+            add(part.get("agent_id") if isinstance(part, Mapping) else None)
+    return found
+
+
 def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
     """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
     found: dict[str, str] = {}
@@ -553,6 +576,8 @@ def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
         if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
             found.setdefault(value.strip(), category or _value_class(value))
 
+    for agent_id in sorted(_staff_ids(snap)):  # any length, and first, so a staff id keeps its class (#266)
+        found[agent_id] = "employee_id"
     for req in (snap.get("requests") or {}).values():
         add(req.get("text"), "free_text")
         add(req.get("project_id"), "identifier")
@@ -605,6 +630,9 @@ def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[s
                else ((value, _value_class(value)) for value in sensitive if isinstance(value, str)))
     secrets = [(value, category if category in BOUNDARY_CLASSES else _value_class(value))
                for value, category in secrets if value]
+    # A short staff id (#266) matches a whole value only: inside longer tokens it would match code's own words.
+    short_staff = {value for value, category in secrets if category == "employee_id" and len(value) < SENSITIVE_MIN}
+    secrets = [(value, category) for value, category in secrets if value not in short_staff]
     allowed_fields = allowed_fields or {}
     findings: set[tuple[str, str, str]] = set()
 
@@ -635,6 +663,8 @@ def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[s
                 category = value_category
                 add("not_a_token", path, "unsafe_token" if category == "identifier" else category)
             allowed = len(path) == 1 and allowed_fields.get(path[0]) == value
+            if value in short_staff and value not in VOCABULARY and not allowed:
+                add("sensitive_value", path, value_category if not token else "employee_id")
             if len(value) >= SENSITIVE_MIN and value not in VOCABULARY and not allowed:
                 for secret, category in secrets:
                     if secret in value:
@@ -1708,7 +1738,8 @@ class ShadowService:
             inputs = _actions().followup_inputs(self.hub.requests[rid], fid, phase, outcome, self.hub.agents,
                                                 cso_agent=self.hub.s.orchestrator.cso_agent,
                                                 read_only=enforces_read_only, now=time.time())
-            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs}, default=str))
+            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs,
+                                          "agents": {aid: {} for aid in self.hub.agents}}, default=str))  # #266
             with self.lock:
                 queued = False
                 if not self.action_backlog:  # an earlier observation still waiting goes first

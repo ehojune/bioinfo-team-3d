@@ -469,6 +469,20 @@ async def test_a_line_carrying_a_followup_text_is_refused(tmp_path, monkeypatch)
     assert marker not in (tmp_path / "state" / "semantics" / "shadow.jsonl").read_text(encoding="utf-8")
 
 
+async def test_a_followup_line_carrying_a_short_staff_id_is_refused(tmp_path, monkeypatch):
+    """#266: the follow-up snapshot knows the roster, so a short staff id in its line turns the shadow off."""
+    from labhq.research import semantics_actions as acts
+    real = acts.followup_line
+    monkeypatch.setattr(acts, "followup_line", lambda *a, **k: {**real(*a, **k), "request_id": "xy"})
+    hub = _hub(tmp_path)
+    hub.agents = {"cso": {"id": "cso", "engine": "claude_code"}, "xy": {"id": "xy", "engine": "claude_code"}}
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done", "followups": [{"id": "fu_1", "status": "done"}]}
+    hub.semantics_shadow.after_followup("req_f1", "fu_1", "ended", "done")
+    assert hub.semantics_shadow.drain(10)
+    assert hub.semantics_shadow.latched == "info_boundary"
+    assert not [line for line in _lines(tmp_path) if line["type"] == "followup"]
+
+
 # ---------------------------------------------------------------- report and removal
 
 def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path, capsys):
