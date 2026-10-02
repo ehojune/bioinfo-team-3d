@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
+| 20:02 | [`ec47b29`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/ec47b29) | 승인 시간 초과와 화면 결정이 겹치면 timed_out을 최종 상태로 정리함(#199) |
+| 20:00 | [`d5e1ece`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/d5e1ece) | 러너 승인 시간 초과를 gateway에 반영하고 stale 알림을 요청한 socket에만 보냄(#199 #203) |
 | 20:00 | [`16d12b4`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/16d12b4) | session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을 놓지 않음 |
 | 19:58 | [`7a14808`](https://github.com/ehojune/bioinfo-team-3d/pull/310/commits/7a14808) | 파일 도구 경로의 환경 변수는 펼치지 않고, 셸 쓰기에는 작업 폴더의 원래 표기도 허용한다(#236 #237) |
 | 19:55 | [`3aef457`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/3aef457) | runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치 |
