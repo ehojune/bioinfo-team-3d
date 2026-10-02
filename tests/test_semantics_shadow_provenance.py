@@ -394,3 +394,82 @@ def test_an_explicit_artifact_input_is_reduced_to_the_same_root_input(tmp_path):
     prov = line_for(hub, "req_now", observed)["provenance"]
     assert prov["candidates"] == 2 and len(prov["candidate_refs"]) == 2
     assert prov["excluded"]["input_unknown"] == prov["excluded"]["input_mismatch"] == 0
+
+
+@pytest.mark.parametrize("made_at", [1.0, 3.0], ids=["earlier_output", "later_output"])
+def test_equal_digest_without_an_explicit_artifact_edge_is_not_ancestry(tmp_path, made_at):
+    """#269: raw input bytes that match another request's output, made before or after, do not inherit that
+    output's producer roots."""
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "raw.tsv").write_bytes(b"x\n")  # the same bytes as req_old's made.tsv
+    requests = {
+        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=made_at),
+        "req_now": _target_request("req_now", "raw.tsv", "wanted.tsv", created_at=2.0),
+    }
+    requests["req_now"]["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "made.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    _accepted_reference(tasks["task_now"], inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["history_artifacts"] == 1 and prov["candidates"] == 0
+    assert prov["excluded"]["input_mismatch"] == 1 and prov["excluded"]["input_unknown"] == 0
+
+
+@pytest.mark.parametrize(("made_at", "candidates"), [(1.0, 1), (3.0, 0)], ids=["earlier", "later"])
+def test_an_accepted_reference_to_the_earlier_output_itself_is_ancestry(tmp_path, made_at, candidates):
+    """#269: the runner opened the earlier request's output at its own path, as in the 2nd-run replay: that file is
+    the output, so it reduces to the producer's root input like an explicit plan edge. A producer that is not
+    earlier is no ancestry."""
+    requests = {
+        "req_old": _target_request("req_old", "source.tsv", "made.tsv", created_at=made_at),
+        "req_now": _target_request("req_now", "made.tsv", "wanted.tsv", created_at=2.0),
+    }
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "made.tsv", "table")}
+    old_outputs = Path(tasks["task_old"]["result"]["workdir"]) / "outputs"
+    requests["req_now"]["references"] = [{"kind": "path", "value": str(old_outputs)}]
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    _accepted_reference(tasks["task_now"], old_outputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["history_artifacts"] == 1 and prov["candidates"] == candidates
+    assert prov["excluded"]["input_mismatch"] == 1 - candidates and prov["excluded"]["input_unknown"] == 0
+
+
+def test_a_general_snapshot_keeps_input_refs_for_explicit_artifact_ancestry(tmp_path):
+    """#268: the light general plan keeps the declared edge, so it reduces to the producer's root input; the ref
+    stays in memory, is a sensitive value and never reaches the line."""
+    requests = {
+        "req_raw": _target_request("req_raw", "same.tsv", "raw.tsv", created_at=1.0),
+        "req_mid": _target_request("req_mid", "same.tsv", "mid.tsv", created_at=2.0),
+        "req_now": _target_request("req_now", "unused.tsv", "wanted.tsv", created_at=3.0),
+    }
+    tasks = {
+        "task_raw": _history_task(tmp_path, "req_raw", "task_raw", "raw.tsv", "table"),
+        "task_mid": _history_task(tmp_path, "req_mid", "task_mid", "mid.tsv", "table"),
+    }
+    ref = f"art:req_mid/{tasks['task_mid']['result']['workdir_id']}/outputs/mid.tsv"
+    requests["req_now"]["references"] = []  # no shared public link: only the edge can match the inputs
+    requests["req_now"]["plan"]["steps"][0]["input_refs"] = [ref, 7]
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_raw", observed)
+    line_for(hub, "req_mid", observed)
+    snap = shadow.take_snapshot(hub, "req_now", shadow.ShadowConfig())
+    assert snap["requests"]["req_now"]["plan"]["steps"][0]["input_refs"] == [ref]
+    assert shadow.sensitive_values(snap)[ref] == "path"
+    line = shadow.compute_line(snap, observed, lambda: None, epoch=1)
+    prov = line["provenance"]
+    assert prov["candidates"] == 2 and prov["excluded"]["input_unknown"] == prov["excluded"]["input_mismatch"] == 0
+    assert ref not in json.dumps(line) and "mid.tsv" not in json.dumps(line)
+    allowed = {"vocab_sha256": output_vocab.current().sha256}
+    assert shadow.boundary_problems(line, shadow.sensitive_values(snap), allowed_fields=allowed) == []
