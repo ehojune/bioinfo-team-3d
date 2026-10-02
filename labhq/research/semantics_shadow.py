@@ -43,6 +43,7 @@ from .. import vocab as output_vocab
 from ..policy import _inside, _norm
 from ..util import atomic_write_text
 from ..vocab import declare as output_types
+from . import semantics_input_fit
 from . import semantics as sem
 from .semantics_objects import build_view, opaque, summarize, type_artifacts
 
@@ -97,7 +98,7 @@ BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id"
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
                              "key", "error_kind", "reason", "counts", "provenance.types",
-                             "provenance.declarations", "objects.artifact_types"})
+                             "provenance.declarations", "objects.artifact_types", "input_fit"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
                               "unsafe_token", "non_string_key", "non_json_value", "schema", "type_version",
                               "type_fields", "type_bucket", "type_declarations", "type_objects"})
@@ -1484,6 +1485,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     line["objects"] = compute_objects(snap, check)
     reader = Reader(snap, check, hash_over)
     line["provenance"], hashes = compute_provenance(snap, reader, observed, check)
+    line["input_fit"] = semantics_input_fit.evaluate(req.get("plan"), vocab=output_vocab.current())
     workspaces: dict[str, int] = {}
     for state in reader.workspace_state.values():
         workspaces[state] = workspaces.get(state, 0) + 1
@@ -2113,7 +2115,11 @@ def readable_request(line: Mapping[str, Any]) -> bool:
             and _counts(prov.get("excluded")) and _counts(prov.get("lineage"), ("gaps",))
             and _counts(objs.get("objects"))
             and all(_number(objs.get(k)) for k in ("link_total", "unresolved", "pending_jobs"))
-            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES))
+            and _counts(hashes, HASH_COUNTS) and _counts(hashes.get("workspaces"), WORKSPACE_STATES)
+            and isinstance(line.get("input_fit", {}), Mapping)
+            and set(line.get("input_fit", {})) <= set(semantics_input_fit.VERDICTS)
+            and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
+                    for v in line.get("input_fit", {}).values()))
 
 
 def configured(settings: Any) -> str:
@@ -2204,6 +2210,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         proposals.append("기록 공백: unknown 비율 중앙값 ≥ 0.9, 병목은 기록(#58·#115)")
     if len(marks) >= 5 and wrong / len(marks) >= 0.2:
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
+    input_fit = {key: sum(int((r.get("input_fit") or {}).get(key) or 0) for r in requests)
+                 for key in semantics_input_fit.VERDICTS}
     return {
         "state": {"on": setting == "shadow" and disabled is None, "setting": setting,
                   "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch"),
@@ -2221,6 +2229,7 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "research_with_candidates": research_with_candidates,
         "versions": dict(sorted(versions.items())),
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
+        "input_fit": input_fit,
         "marks": {"reviewed": len(marks), "wrong": wrong},
         "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
                       "boundary": _clean_boundary_details(l.get("boundary"))}
@@ -2267,6 +2276,7 @@ def render_report(rep: Mapping[str, Any]) -> str:
         "산출 종류 선언: 계획 산출 {outputs} · data 선언 {data_declared} · format 선언 {format_declared}".format(
             **rep["declarations"]) + " · 버림 " + (", ".join(f"{k} {n}" for k, n in rep["declarations"]["issues"].items())
                                                  or "0"),
+        "input fit: " + " · ".join(f"{key} {rep['input_fit'][key]}" for key in semantics_input_fit.VERDICTS),
         *[f"{name}: " + (", ".join(f"{bucket} " + "/".join(f"{b} {n}" for b, n in sorted(cells.items()))
                                    for bucket, cells in rep["types"][name].items()) or "-")
           for name in rep["types"]],
