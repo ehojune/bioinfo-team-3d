@@ -14,19 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
-| 15:53 | [`88f6c3c`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/88f6c3c) | README·STATUS: 미집계 비용 분리·추정 환산·예산 판정 규칙을 적음 |
-| 15:47 | [`1e64ba1`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/1e64ba1) | 이어 묻기 완료 이벤트에는 비용 요약이 있을 때만 비용을 실음 |
-| 15:44 | [`ea777e8`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/ea777e8) | bench 비용 칸과 상한 판정에서 미집계를 따로 표시하고 test-agent를 통과로 세지 않음 |
-| 15:44 | [`a0ce450`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/a0ce450) | 웹·CLI·GitHub 보고에 확인·추정·미집계와 엔진별 소계를 표시(#270) |
-| 15:44 | [`53d8afd`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/53d8afd) | 요청 비용 집계와 예산 상한에서 미집계를 0으로 더하지 않고 따로 셈 |
-| 15:44 | [`923489f`](https://github.com/ehojune/bioinfo-team-3d/pull/294/commits/923489f) | task 비용을 확인·추정·미집계로 나누는 costs 모듈과 판본 있는 Codex 가격표를 추가 |
-| 15:29 | [`040750c`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040750c) | 요청별 CSO 엔진이 바뀌어도 새 엔진에서 읽기 전용(Codex sandbox read-only, Claude Read·Glob·Grep)으로 돌고, plan_only 요청은 재시작 뒤 resume돼도 step을 돌리지 않음 |
-| 15:19 | [`040d420`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040d420) | --cso-model 요청의 이어 묻기·CSO 상담도 고른 엔진·모델로 실행하고, 지킬 수 없으면 레지스트리 CSO로 바꾸지 않고 실패 |
-| 15:10 | [`986da50`](https://github.com/ehojune/bioinfo-team-3d/pull/291/commits/986da50) | CI: README만 바뀌면 README 검사만 돌리고, 가장 느린 test 15개를 출력 |
-| 15:01 | [`07c700f`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/07c700f) | 요청별 CSO 계획 모드와 모델 선택 |
+| 16:40 | [`7e2586c`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/7e2586c) | 기록 목차: 하위 폴더 기록은 오류로, PR 단계에서 원본 형식 검사, 목차 workflow는 README 배지에서 뺌 |
+| 15:40 | [`c9eef11`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/c9eef11) | PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰 |
 | 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
-| 14:46 | [`c84bada`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/c84bada) | main의 CI 개선을 병합하며 STATUS·패치노트 기록을 보존하고 README의 HPC 기상 설명을 갱신했습니다. |
-| 14:43 | [`9776d1c`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/9776d1c) | #281·#280의 원인과 수정 전후 반복 검증을 STATUS에 기록했습니다. |
 | 14:43 | [`58ec1e5`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/58ec1e5) | README: EDAM 표가 main에 들어간 것을 반영(위치·CC BY-SA 4.0·NOTICE) |
 | 14:36 | [`f86150f`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/f86150f) | 일반 요청 snapshot에 input_refs를 남겨 명시적 artifact edge로 씀 |
 | 14:36 | [`eb6f293`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/eb6f293) | 같은 digest의 후대 산출도 ancestry가 아님을 회귀로 고정 |
@@ -56,9 +46,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 10:58 | [`1f83e36`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/1f83e36) | 새 epoch에서 이전 이어 묻기 backlog와 pending 몫을 정리 |
 | 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
 | 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
-| 10:48 | [`1bc647f`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/1bc647f) | agent 실행 중 끝난 HPC job도 pending_jobs에 남겨 jobs.finished wake가 유실되지 않게 했습니다. |
 | 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
-| 08:52 | [`61ccd25`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/61ccd25) | event-loop test가 worker join·blocking put 호출을 예외 밖에서 검증하게 바꿨습니다. |
 | 08:46 | [`64e5b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/64e5b9e) | 저장 계획이 현재 max_steps보다 길면 resume에서 자르지 않고 제한 위반으로 실패시킴 (#282) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |

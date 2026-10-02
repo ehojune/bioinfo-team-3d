@@ -4,37 +4,13 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
-## 2026-10-02 · #270 — 미집계 비용을 0으로 더하지 않고 엔진별로 환산·표시
+## 2026-10-02 · #292 — PR별 패치노트·STATUS와 자동 생성 목차
 
-- 결론: 보고되지 않은 비용은 이제 $0이 아니라 `미집계 N건`으로 따로 센다. Codex처럼 token만 보고하는 task는 판본 있는 OpenAI API 가격표로 `추정`하고, 웹·CLI·GitHub·bench가 `확인 $a + 추정 $b + 미집계 N건`과 엔진별 소계를 보여 준다. 예산 상한은 미집계 task마다 `per_task_usd`를 쓴 것으로 보고 판정한다.
-- 바뀐 것: `labhq/costs.py`(가격표: Standard·짧은 문맥, 2026-10-02 확인, 모델 ID 정확 일치·과금 token 항목이 다 있을 때만 환산, 90일 지나면 경고). gateway가 task마다 분류를 남기고, 버려진·전달 불확실·재시작 뒤 응답 없는 task는 미집계, 보내지 않은 task만 실제 $0이다. CSO 예산 판정과 재시작 복구, 보고서 metadata, bench 상한(미집계가 남으면 판정 불가, test-agent 불통과).
-- 실행한 것: 새·바꾼 회귀 24건과 `tests/web_state.cjs`가 main 코드에서 실패하고 이 branch에서 통과한다. 전체 pytest 2596 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check` 통과. 가격표 단가와 계산식은 OpenAI pricing·prompt-caching 문서로 확인했다.
-- 미해결: Gemini·Antigravity는 근거 있는 가격표가 없어 미집계로 남는다. staff `CODEX_HOME`에서 문맥 창을 272K보다 키우면 추정은 하한이다. Codex 사용량 한도로 Claude가 이어받았다.
-- 근거: `labhq/costs.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/bench.py`, `tests/test_cost_accounting.py`.
-
-## 2026-10-02 · #272 — 계획만 실행하고 요청별 CSO 모델 선택
-
-- 결론: `labhq send --plan-only`는 같은 roster로 CSO 계획까지만 만들고 직원 실행·과학 리뷰 전에 끝난다. `--cso-model`은 허용 목록 안에서 그 요청에만 적용된다.
-- 바뀐 것: `orchestrator.cso_models`가 요청별 모델을 제한하고 Fable을 거부한다. GPT 모델은 CSO를 Codex로 실행하며 과학 리뷰어는 기본 Claude CSO 모델로 분리한다. 일반 요청과 기본 CSO 설정은 그대로다. README에 두 사용 예를 넣었다.
-- 실행한 것: 새 회귀 5건 중 핵심 4건이 수정 전 실패했고 모두 수정 뒤 통과했다. 관련 372 passed/1 skipped, 전체 pytest 2539 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
-- 미해결: 없음.
-- 근거: `labhq/cli.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/settings.py`, `tests/test_plan_only_cso_model.py`, `README.md`.
-
-## 2026-10-02 · CI — README만 바뀌면 README 검사만, 느린 test 15개 출력
-
-- 결론: PI 지적. 루트 README를 읽는 test는 `tests/test_integrations.py` 하나라서, STATUS·패치노트 말고 README만 바뀐 push는 전체 pytest를 건너뛰고 그 파일만 Ubuntu에서 돌린다. pytest job은 가장 느린 test 15개를 출력한다.
-- 바뀐 것: `scripts/ci_skip.py`(README는 `readme=true`로 따로 표시), `.github/workflows/test.yml`(`readme` job, `--durations=15`), `tests/test_ci_skip.py`.
-- 실행한 것: `tests/test_ci_skip.py` 6건.
-- 미해결: 없음.
-- 근거: `scripts/ci_skip.py`.
-
-## 2026-10-02 · #281 #280 — 조기 종료 HPC job wake 보존과 event-loop worker 검증
-
-- 결론: agent가 실행 중일 때 job watcher가 먼저 종료를 관찰하면 `pending_jobs`에서 빠져 CSO가 wake를 기다리지 않았다. 대기 상한은 바꾸지 않았다.
-- 바뀐 것: 해당 run이 제출한 job은 종료 여부와 관계없이 결과에 남겨 나중 `jobs.finished`가 session을 깨우게 했다. event-loop test는 `join` 및 blocking `put` 호출을 기록해 예외가 삼켜져도 실패한다.
-- 실행한 것: 수정 전 유휴 120회 0실패, 기존 부하 재현 120회 10실패(모두 조기 terminal·`pending_jobs` 누락). 수정 후 e2e wake·조기 종료 회귀·event-loop test를 각 50회 순차 실행해 0실패.
-- 미해결: 없음.
-- 근거: `labhq/runner/daemon.py`, `tests/test_hpc_followups.py`, `tests/test_semantics_shadow_worker.py`.
+- 결론: PR마다 자기 기록 파일만 고쳐 `STATUS.md`와 `patch_notes/README.md` 충돌을 없앴다. 공유 파일의 화면과 순서는 유지한다.
+- 바뀐 것: 패치노트는 `patch_notes/entries/<branch>.yaml`, 진행 보고는 `docs/status/<시각>-<branch>.md`에 쓴다. main workflow가 두 공유 목차를 갱신한다. 기존 패치노트 447행과 STATUS 본문은 legacy 원본으로 옮겼다.
+- 실행한 것: 관련 pytest 25건, `scripts/notes_index.py --check`, `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 지시대로 생략했다.
+- 미해결: 열린 다른 PR이 먼저 병합된 뒤 이 PR을 마지막에 병합한다.
+- 근거: `scripts/notes_index.py`, `scripts/patch_notes.py`, `.github/workflows/notes-index.yml`, `tests/test_notes_index.py`.
 
 ## 2026-10-02 · #258 #259 #260 #266 #268 #269 — 그림자·액션 후속 P2 묶음
 
