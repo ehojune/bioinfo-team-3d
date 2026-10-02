@@ -105,6 +105,28 @@ def normalize_id(scheme: str, value: str) -> str:
     return normalize_uri(value) if scheme == "uri" else value.strip().casefold()
 
 
+SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
+
+
+def accession_parts(scheme: str, value: str) -> tuple[str, int | None]:
+    """The base accession and the version or isoform it spells, if any."""
+    folded = normalize_id(scheme, value)
+    suffix = {"ensembl": r"\.", "refseq": r"\.", "clinvar": r"\.", "uniprot": "-"}.get(scheme)
+    if suffix is None:
+        return folded, None
+    match = re.fullmatch(rf"(.+?)(?:{suffix}(\d+))?", folded)
+    base, number = (match[1], match[2]) if match else (folded, None)
+    if scheme == "clinvar":
+        variation = re.fullmatch(r"vcv0*(\d+)", base)
+        base = variation[1] if variation else base
+    return base, int(number) if number is not None else None
+
+
+def accession_base(scheme: str, value: str) -> str:
+    """The accession with a version, isoform, or VCV padding removed."""
+    return accession_parts(scheme, value)[0]
+
+
 def registry_id(uri: str) -> tuple[str, str] | None:
     """The (scheme, value) a major registry URL names, or None for any other URL, search page or listing.
 
@@ -191,11 +213,15 @@ class SourceRef(StrictModel):
         keys: list[str] = []
         if self.id_scheme and _present(self.id_value):
             keys.append(f"{self.id_scheme}:{normalize_id(self.id_scheme, self.id_value or '')}")
+            if self.id_scheme in SEVERAL_SPELLINGS:
+                keys.append(f"accession_base:{self.id_scheme}:{accession_base(self.id_scheme, self.id_value or '')}")
         if _present(self.uri):
             uri = normalize_uri(self.uri or "")
             named = registry_id(uri)
             if named:
                 keys.append(f"{named[0]}:{normalize_id(*named)}")
+                if named[0] in SEVERAL_SPELLINGS:
+                    keys.append(f"accession_base:{named[0]}:{accession_base(*named)}")
             keys.append(f"uri:{uri}")
         if _present(self.artifact_id):
             path = (artifact_paths or {}).get(self.artifact_id or "")
