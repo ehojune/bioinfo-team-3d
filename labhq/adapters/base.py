@@ -223,9 +223,10 @@ ROLE_FOOTER = """
 """
 
 
-def private_paths_section(labels: list[str] | tuple[str, ...]) -> str:
+def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
     """The staff rule for PI personal paths (policy.private_paths). Only `~` and role labels: role files and
-    prompts can reach round records and public reports, so no absolute home path goes in."""
+    prompts can reach round records and public reports, so no absolute home path goes in. `saved_output_open`:
+    a Claude task whose own project folder in the staff config folder is open for reading (#298 ⑤)."""
     if not labels:
         return ""
     lines = ["", "## PI 개인 파일 (모든 직원)",
@@ -233,14 +234,17 @@ def private_paths_section(labels: list[str] | tuple[str, ...]) -> str:
              "셸·스크립트로 돌아가 열지도 않습니다.",
              '- 작업에 꼭 필요해 보이면 손대기 전에 labhq_ask(to="cso")로 묻습니다.',
              "- 대상: " + ", ".join(f"`{label}`" for label in labels)]
-    if "~/.claude" in labels:
+    if saved_output_open:
+        lines.append("- Claude가 긴 도구 출력을 따로 저장한 파일(직원 설정 폴더 `projects/` 아래 이 작업 몫)은 Read로 다시 읽을 수 "
+                     "있습니다. 그 폴더의 다른 파일은 열지 않습니다.")
+    elif "~/.claude" in labels:
         lines.append("- 긴 명령 출력은 작업 폴더 안 파일로 남겨 읽습니다. Claude가 `~/.claude` 아래에 따로 저장한 긴 출력은 다시 열리지 않을 수 있습니다.")
     return "\n".join(lines) + "\n"
 
 
 def role_footer(ctx: "RunContext") -> str:
     """ROLE_FOOTER plus this task's personal-path section."""
-    return ROLE_FOOTER + private_paths_section(ctx.private_labels)
+    return ROLE_FOOTER + private_paths_section(ctx.private_labels, bool(ctx.private_open_reads))
 
 
 @dataclass
@@ -267,6 +271,8 @@ class RunContext:
     # Private paths on (not an explicit `policy.private_paths: []`), even with no active path: the same narrowing
     # holds so the gate's registry check sees every shell command (PR #327).
     private_enabled: bool = False
+    # Folders inside an active path that this Claude task may read (its project folder in the staff config folder).
+    private_open_reads: list[str] = field(default_factory=list)
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts

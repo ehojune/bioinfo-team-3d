@@ -60,7 +60,8 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
     d = evaluate_tool(tool_name, input or {}, S.policy,
                       allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR,
-                      private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled)
+                      private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled,
+                      private_open_reads=PRIVATE.open_reads)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":
