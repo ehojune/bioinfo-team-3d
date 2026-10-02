@@ -3,4 +3,8 @@ rows:
 - sha: 6fb9a75
   at: 2026-10-03 05:10
   text: 직원 CLI가 마지막 turn 이벤트 뒤 runner.exit_grace_s(기본 45초) 안에 끝나지 않으면 프로세스 트리를 끝내고
-    받은 결과로 단계를 마침(#330). Codex MCP env 중 Codex가 이미 가진 값(broker token)은 env_vars로 이름만 넘김
+    받은 결과로 단계를 마침(#330). Codex MCP env 중 Codex가 이미 가진 값(broker token)은 env_vars로 이름만
+    넘김
+- sha: 730eab4
+  at: 2026-10-03 05:22
+  text: Codex를 유예 뒤 끝냈을 때 결과는 turn의 마지막 agent 메시지(중간 메시지를 이어 붙이지 않음)
