@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #295 — 목차 갱신 workflow 직렬화(#292 후속)
+
+- 결론: 병합이 겹쳐도 목차 갱신이 최신 기록을 빠뜨리지 않는다. 한 번에 하나만 돌고, 최신 main에서 만들며, push가 실패하면 다시 만든다.
+- 바뀐 것: `.github/workflows/notes-index.yml`(concurrency, `ref: main`, 재시도 3번).
+- 실행한 것: workflow YAML 확인. 실제 동작은 병합 뒤 main에서 확인한다.
+- 미해결: 없음.
+- 근거: `.github/workflows/notes-index.yml`.
+
 ## 2026-10-02 · #292 — PR별 패치노트·STATUS와 자동 생성 목차
 
 - 결론: PR마다 자기 기록 파일만 고쳐 `STATUS.md`와 `patch_notes/README.md` 충돌을 없앴다. 공유 파일의 화면과 순서는 유지한다.

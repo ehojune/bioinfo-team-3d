@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:52 | [`fb34d54`](https://github.com/ehojune/bioinfo-team-3d/pull/295/commits/fb34d54) | 목차 갱신 workflow를 직렬화: 최신 main에서 다시 만들고, push가 실패하면 재시도 |
 | 16:40 | [`7e2586c`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/7e2586c) | 기록 목차: 하위 폴더 기록은 오류로, PR 단계에서 원본 형식 검사, 목차 workflow는 README 배지에서 뺌 |
 | 15:40 | [`c9eef11`](https://github.com/ehojune/bioinfo-team-3d/pull/292/commits/c9eef11) | PR별 패치노트·STATUS 원본과 main 자동 생성 목차로 공유 파일 충돌을 없앰 |
 | 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
