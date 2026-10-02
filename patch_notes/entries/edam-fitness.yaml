@@ -1,0 +1,5 @@
+pr: 299
+rows:
+- sha: 9bb746c
+  at: 2026-10-02 18:53
+  text: 로컬 operation 관계표로 단계 입력 종류의 fit·mismatch·unknown을 그림자 집계
