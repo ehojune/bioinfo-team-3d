@@ -28,7 +28,7 @@ Claude Code와 Codex를 **연구소 직원**처럼 운영하는 플랫폼입니�
 CSO가 계획하고, 정규직이 실행하고, 그때그때 필요한 논문은 **Paper2Agent로 파견직**이 되어 팀에 합류합니다.
 모든 작업은 폰 승인 · 예산 캡 · 실험노트(출처 기록) 아래에서 돌아갑니다.
 
-바뀐 내용은 [패치노트](patch_notes/README.md)에서 확인하세요.
+바뀐 내용은 [패치노트](patch_notes/README.md)에서 확인하세요. 용어는 [§0-2 핵심 개념](#0-2-핵심-개념)에 모았습니다.
 
 | 2.5D 사무실 (`/`) | 3D 사무실 (`/3d`) |
 |---|---|
@@ -158,12 +158,12 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 |---|---|---|
 | gateway | 요청·승인·이벤트를 SQLite에 저장하고 웹·폰·CLI를 잇는 서버(`labhq gateway`) | [§7](#7-아키텍처와-이벤트) |
 | runner | 직원 CLI를 실제로 띄우는 데몬. 게이트웨이로 나가는 연결만 쓴다(`labhq runner`) | [§7](#7-아키텍처와-이벤트) |
-| 직원과 엔진 | 직원은 역할·모델·도구를 적은 YAML(`agents/core/`), 엔진은 그 직원을 돌리는 CLI(Claude Code·Codex·agy 등) | [§2](#2-조직도) |
+| 직원과 엔진 | 직원은 역할·모델·도구를 적은 YAML(`agents/core/`), 엔진은 그 직원을 돌리는 CLI(Claude Code·Codex, 그 밖에 Gemini와 범용 `cli` 어댑터) | [§2](#2-조직도) |
 | CSO·계획·단계 | CSO가 요청을 단계로 나눈 계획(JSON DAG)을 세우고, 단계마다 직원 한 명이 맡는다 | [§7](#7-아키텍처와-이벤트) |
 | orchestrate·direct 요청 | orchestrate는 CSO 계획부터 시작한다. direct(`--agent`)는 직원 한 명에게 바로 간다. `--plan-only`는 계획만 받는다 | [§0-1](#0-1-실제-실행) |
 | 연구 lane | `research.enabled`일 때 CSO가 연구로 분류한 요청. 고정된 계획과 PI checkpoint를 따른다 | [§8](#8-설정-포인트) · [연구 규약](docs/research_protocol.md) |
-| checkpoint CP1~CP4 | 연구 요청이 PI 결정을 기다리는 관문. CP1 계획·CP2 증거는 연결됐고 CP3 선택·CP4 수용은 아직이다 | [연구 규약 §5](docs/research_protocol.md) |
-| claim·evidence | 연구 단계 결과를 주장과 근거로 나눠 적는 계약(`result v2`). 근거는 실제로 모은 산출을 가리켜야 한다 | [연구 규약 §3](docs/research_protocol.md) |
+| checkpoint CP1~CP4 | 연구 요청이 PI 결정을 기다리는 관문. CP1 계획·CP2 증거(`evidence_checkpoint`를 켤 때)는 연결됐고 CP3 선택·CP4 수용은 아직이다 | [연구 규약 §5](docs/research_protocol.md#5-pi-checkpoint와-완료) |
+| claim·evidence | 연구 단계 결과를 주장과 근거로 나눠 적는 계약(`result v2`). 근거는 실제로 모은 산출을 가리켜야 한다 | [연구 규약 §3](docs/research_protocol.md#3-직원-결과-계약) |
 | domain pack | 분야별 판정 규칙 묶음(`id@version`). 지금은 `single_cell_de@2` 하나 | [§8](#8-설정-포인트) |
 | 승인·결정함 | HPC 제출·위험 명령·예산 초과·채용은 PI가 정한다. 웹 결정함에 대기 건과 이력이 모인다 | [§5](#5-요청하진-않았지만-필요한-것들) · [§6](#6-웹-사무실과-폰) |
 | labhq_ask·상담(consult) | 막힌 직원이 묻는 MCP 도구. CSO나 동료가 읽기 전용 상담으로 한 번 답하고, 위험한 것만 PI에게 간다 | [연결된 도구](#연결된-도구) · [§8](#8-설정-포인트) |
@@ -550,8 +550,8 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 | 버전 | 정의 | 지금 | 남은 것 |
 |---|---|---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 | mock 데모·실제 실행·bench 경로가 있다. 같은 계정 실행의 개인 경로 차단은 PR 리뷰 중 | 개인 경로 차단 병합, 개발 총괄의 모의 시운전, 거기서 나온 수정 |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane이 CP2까지 간다. CP2 뒤 리뷰·합성과 CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 연구 요청을 CP2 너머 보고서까지 완주, 증거 계층(#58), pack 추가, 로컬 분석 환경과 패키지 설치 정책 |
-| v0.75 | PI가 통제 데이터와 HPC로 연구한다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. Slurm은 가짜 fixture로만 확인했다. 실제 분석 잡은 P3 결정 전까지 내지 않는다 | Linux 클러스터 러너, 통제 데이터 시험, HPC 접근 방식 결정(P3), 실제 제출 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane은 `evidence_checkpoint`를 켜면 CP2까지 간다(코드·test). 실제 CLI로는 CP1까지만 확인했다. CP2 뒤 리뷰·합성과 CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 연구 요청을 CP2 너머 보고서까지 완주, 증거 계층(#58), pack 추가, 로컬 분석 환경과 패키지 설치 정책 |
+| v0.75 | PI가 통제 데이터와 HPC로 연구한다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | Linux 클러스터 러너, 통제 데이터 시험, HPC 접근 방식 PI 결정([HANDOFF](HANDOFF.md) 결정 대기 1), 실제 제출 |
 | v1 | 다른 일반 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 | `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다. 계정 분리는 손으로 한다 | 설치·온보딩, 계정 분리 자동화, 문서 |
 | v1.25 | 연구를 넘어 논문을 쓴다 | 없음 | 원고, 인용, 그림 |
 
