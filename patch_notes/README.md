@@ -12,6 +12,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:35 | [`c3a96a4`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/c3a96a4) | STATUS에 #271·#282 재계획·resume 결과를 기록함 |
+| 13:31 | [`bc36dca`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/bc36dca) | 연구 lane 저장 계획도 max_steps가 줄면 승인 계획을 그대로 둔 채 실패함을 test로 고정함 |
+| 13:31 | [`0b37a22`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0b37a22) | 최종 보고 작성 prompt에도 재계획 이력을 넘기고 revise 재계획 규칙을 명시함 |
+| 13:30 | [`7bee353`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7bee353) | 재시작 뒤 진행 중이던 재계획 시도에도 줄어든 max_replans를 적용함 |
+| 13:30 | [`d0a20d1`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d0a20d1) | 재계획이 완료 단계의 의존성을 바꾸지 않고 유지해 새 id 언급 때문에 시도가 통째로 실패하지 않음 |
+| 11:13 | [`0391e34`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0391e34) | wake 한도에서 멈춘 단계는 재계획 대상에서 제외함 |
+| 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
+| 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
+| 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
+| 08:46 | [`64e5b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/64e5b9e) | 저장 계획이 현재 max_steps보다 길면 resume에서 자르지 않고 제한 위반으로 실패시킴 (#282) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |
 | 08:01 | [`1ad77e8`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/1ad77e8) | 외부 절대·home·drive 입력을 산출 치환과 workspace artifact dependency 추론에서 제외 |
