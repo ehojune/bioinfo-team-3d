@@ -5,3 +5,7 @@ rows:
   text: 개인 경로가 켜진 task에서 Claude 셸이 사용자 환경변수 레지스트리(HKCU\Environment, PI GITHUB_TOKEN)를 읽으면
     PI 승인으로. reg query·Get-ItemProperty HKCU:·GetEnvironmentVariable(..., User)·winreg·Win32_Environment 표기를
     USER_ENV_REGISTRY 한 곳에
+- sha: eb50aa5
+  at: 2026-10-03 03:31
+  text: 레지스트리 게이트 우회 표기 보강. `..`·`.` 경로 조각, 하위 키로 cd 뒤 상대 경로, Python r''/u'' 접두사,
+    GetEnvironmentVariable.Invoke, `$(` 부분식도 묻는다. echo HKCU·$null·EnvironmentVariableTarget.Process 오탐은 허용으로
