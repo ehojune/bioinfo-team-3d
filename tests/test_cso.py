@@ -1952,3 +1952,28 @@ def test_cso_plan_prompt_states_the_outputs_rule():
 
     assert "outputs/<name>" in PLAN_PROMPT and "outputs/answer.md" in PLAN_PROMPT
     assert "workspace root" in PLAN_PROMPT and "absolute" in PLAN_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_failed_twelve_step_report_names_each_failure_without_dumping_instructions():
+    # #331: a 12-step failure produced a 147,770-char report (full instructions and long outputs per step).
+    steps = [{"id": f"S{i}", "agent_id": "worker", "instruction": f"S{i} instruction " + "x" * 4000,
+              "depends_on": [f"S{i - 1}"] if i > 6 else []} for i in range(1, 13)]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": steps})
+        sid = task.meta["step_id"]
+        return result(task, ok=False, text="log line\n" * 2000, error=f"{sid} broke: " + "trace " * 2000)
+
+    hub = FakeHub(dispatch)
+    await Orchestrator(hub).run_request("r")
+    report = hub.requests["r"]["report"]
+    assert hub.requests["r"]["status"] == "failed"
+    assert len(report) < 20000, len(report)
+    assert "x" * 300 not in report, "the full instruction stays in the round record"
+    for i in range(1, 7):
+        assert f"S{i} broke" in report
+    for i in range(7, 13):
+        assert f"### S{i}" in report and "S6 broke" in report
+    assert report.count("Next:") == 12

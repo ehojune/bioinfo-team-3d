@@ -1718,7 +1718,7 @@ class Orchestrator:
                                    **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
             req["outcome"] = "research_failed"
             self.hub.save_request(rid)
-            self._finish(rid, self.format_results(steps, results, n) +
+            self._finish(rid, self.report_results(steps, results, n) +
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
@@ -1820,6 +1820,73 @@ class Orchestrator:
                 detail += "\nCause chain: " + " <- ".join(causes(s["id"]))
             out.append(f"### {s['id']} · {s['agent_id']} ({status})\nInstruction: {s['instruction']}\n"
                        f"{clip(r.text if r else '', n)}{detail}")
+        return "\n\n".join(out)
+
+    @staticmethod
+    def report_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
+        """The PI's report of a failed request: one cause and next action per failed step (#331).
+
+        format_results feeds reviewers and synthesis; the report leaves full instructions, outputs and errors
+        to the round records and work folders, so a 12-step failure stays readable.
+        """
+        by_id = {s["id"]: s for s in steps}
+        result_chars, max_paths = min(n, 1200), 10
+
+        def skipped(r: TaskResult | None) -> bool:
+            return bool(r) and (r.error or "").startswith("skipped:")
+
+        def roots(sid: str, seen: set[str]) -> list[str]:
+            """The failed ancestors a skipped step waits on, not every link of the chain."""
+            found = []
+            for dep in by_id.get(sid, {}).get("depends_on", []):
+                r = results.get(dep)
+                if dep in seen or (r and r.ok):
+                    continue
+                seen.add(dep)
+                found.extend(roots(dep, seen) if not r or skipped(r) else
+                             [f"{dep} [{r.error_kind or failure_kind(r) or 'terminal'}]: {short(r.error, 160)}"])
+            return found
+
+        def next_action(sid: str, r: TaskResult | None) -> str:
+            if not r:
+                return "not run; re-send the request once the steps above are fixed."
+            if skipped(r):
+                return "fix the failed upstream step(s) above, then re-send the request."
+            if r.missing_outputs:
+                return f"produce the missing outputs in {r.workdir_id or 'the work folder'}, then re-run this step."
+            if (r.error_kind or failure_kind(r)) == "transient":
+                return "a transient error: re-send the request."
+            return f"read the round record and {r.workdir_id or 'work folder'} log for {sid}, fix the cause, re-send."
+
+        out = []
+        for s in steps:
+            r = results.get(s["id"])
+            ok = bool(r and r.ok)
+            status = ("ok" if ok else "INCOMPLETE" if r and r.missing_outputs else
+                      "SKIPPED" if skipped(r) else "FAILED")
+            lines = [f"### {s['id']} · {s['agent_id']} ({status})", f"Task: {short(s['instruction'], 160)}"]
+            if ok:
+                lines.append(clip(r.text, result_chars))
+            else:
+                lines.append(f"Cause: {short(r.error if r else 'not run', 300)}")
+                upstream = roots(s["id"], {s["id"]})
+                if upstream:
+                    lines.append("Root cause: " + "; ".join(upstream[:3]) +
+                                 (f" (+{len(upstream) - 3} more)" if len(upstream) > 3 else ""))
+                lines.append(f"Next: {next_action(s['id'], r)}")
+            if r and r.outputs:
+                paths = [f"- {r.workdir_id or 'unknown-workdir'}/{p}" for p in r.outputs[:max_paths]]
+                if len(r.outputs) > max_paths:
+                    paths.append(f"- … {len(r.outputs) - max_paths} more")
+                lines.append("Outputs:\n" + "\n".join(paths))
+            if r and r.missing_outputs:
+                lines.append(f"Missing: {short(', '.join(r.missing_outputs), 300)}")
+            if r and r.revision_failed:
+                lines.append(f"Revision failed; retained last successful result: {short(r.revision_failed, 200)}")
+            if r and r.partial_results:
+                lines.append("Failed with partial results.")
+            out.append("\n".join(lines))
+        out.append("Full instructions, outputs and errors per step: the request's round records and work folders.")
         return "\n\n".join(out)
 
     # ---------- request entry point ----------
@@ -2433,7 +2500,7 @@ class Orchestrator:
                 return
             await recover_failures()
             if rid in self.budget_denials or any(not r.ok for r in results.values()):
-                self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
+                self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False)
                 return
 
             progress = req.get("review_progress") or {}
@@ -2464,7 +2531,7 @@ class Orchestrator:
                         meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
-                        self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                        self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                      review={"status": "budget_denied"})
                         return
                     parsed = r.structured if valid_review(r.structured) else None
@@ -2476,7 +2543,7 @@ class Orchestrator:
                 if not review:
                     review = {"status": "review_unparsed", "reason": r.error or "missing or invalid verdict"}
                     await self._emit(rid, "request.review", {"revision": rev, **review})
-                    self._finish(rid, self.format_results(steps, results, n) +
+                    self._finish(rid, self.report_results(steps, results, n) +
                                  f"\n\nReview: review_unparsed ({review['reason']})",
                                  serialized_results(), ok=False, review=review)
                     return
@@ -2498,7 +2565,7 @@ class Orchestrator:
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
                     await recover_failures()
                     if rid in self.budget_denials or any(not r.ok for r in results.values()):
-                        self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                        self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                      review=review)
                         return
                     progress.update(phase="review", last_completed_revision=rev + 1)
@@ -2526,14 +2593,14 @@ class Orchestrator:
                 self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
                 if rid in self.budget_denials or any(not r.ok for r in results.values()):
-                    self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False,
+                    self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                  review=review)
                     return
                 progress.update(phase="review", last_completed_revision=rev + 1)
                 self.hub.save_request(rid)
 
             if review.get("verdict") == "revise":
-                self._finish(rid, self.format_results(steps, results, n) + "\n\nReview: revisions unresolved.",
+                self._finish(rid, self.report_results(steps, results, n) + "\n\nReview: revisions unresolved.",
                              serialized_results(), ok=False, review=review)
                 return
 
@@ -2548,14 +2615,14 @@ class Orchestrator:
                                            review=short(review, 3000)) + replan_history_note(req),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})}))
-            self._finish(rid, final.text if final.ok else self.format_results(steps, results, n) +
+            self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             if req.get("plan", {}).get("steps"):
                 saved = {k: TaskResult.model_validate(v) for k, v in (req.get("results") or {}).items()}
-                req["report"] = self.format_results(req["plan"]["steps"], saved,
+                req["report"] = self.report_results(req["plan"]["steps"], saved,
                                                     self.cfg.context_chars_per_step)
             else:
                 req["report"] = req["error"]
@@ -2585,11 +2652,11 @@ class Orchestrator:
                 if entry.get("missing_outputs"):
                     line += f"; missing: {', '.join(entry['missing_outputs'])}"
                 if entry.get("revision_failed"):
-                    line += f"; revision failed: {entry['revision_failed']}"
+                    line += f"; revision failed: {short(entry['revision_failed'], 200)}"
                 if entry.get("partial_results"):
                     line += "; failed with partial results"
                 if entry.get("error"):
-                    line += f"; cause: {entry.get('error_kind') or 'terminal'}: {entry['error']}"
+                    line += f"; cause: {entry.get('error_kind') or 'terminal'}: {short(entry['error'], 200)}"
                 audit.append(line)
             metadata.append("Step status and output paths:\n" + "\n".join(audit))
         if req.get("pending_questions"):
