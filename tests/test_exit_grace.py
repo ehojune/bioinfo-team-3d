@@ -88,6 +88,21 @@ async def test_process_left_after_final_event_is_ended_and_result_kept(tmp_path,
     assert len(logs) == 1 and "1s" in logs[0]
 
 
+async def test_a_killed_codex_keeps_its_last_message_not_every_message(tmp_path, monkeypatch):
+    # #330 review: Codex writes -o only after its (hanging) shutdown, so the guard's result must be the turn's last
+    # agent message, the way Codex itself picks its final answer, not the preamble joined to it.
+    monkeypatch.setitem(EVENTS, Engine.codex, [
+        {"type": "thread.started", "thread_id": "thr-330"},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "PubMed부터 찾겠습니다."}},
+        {"type": "item.completed", "item": {"type": "agent_message", "text": "최종 답"}},
+        {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}},
+    ])
+    res, events, _ = await _run(tmp_path, Engine.codex, sleep_s=60, grace_s=1)
+    assert res.ok, res.error
+    assert res.text == "최종 답"
+    assert len(_kill_logs(events)) == 1
+
+
 @pytest.mark.parametrize("engine", [Engine.codex, Engine.claude_code])
 async def test_process_that_exits_within_grace_is_left_alone(tmp_path, engine):
     res, events, _ = await _run(tmp_path, engine, sleep_s=0.3, grace_s=30)

@@ -162,6 +162,7 @@ class CodexAdapter(AgentAdapter):
             it = item.get("type") or item.get("item_type")
             if it in ("agent_message", "assistant_message") and typ == "item.completed":
                 st.text_parts.append(item.get("text", ""))
+                st.last_message = item.get("text", "")
                 await ctx.emit("agent.log", {"text": short(item.get("text"), 2000)})
             elif it == "reasoning" and typ == "item.completed":
                 await ctx.emit("agent.log", {"level": "thinking", "text": short(item.get("text"), 400)})
@@ -216,4 +217,9 @@ class CodexAdapter(AgentAdapter):
         last = read_owned(ctx.workdir, ".labhq/last_message.txt")
         if last and last.strip():
             st.final_text = last
+        elif st.result_seen and st.last_message and st.last_message.strip():
+            # Codex writes -o only after its shutdown returns; when that shutdown hangs and the exit guard ends the
+            # process, the file never appears. Its final answer is the turn's last agent message, not every message
+            # joined (#330 review).
+            st.final_text = st.last_message
         return super().finalize(st, ctx, returncode)

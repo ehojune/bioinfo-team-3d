@@ -245,6 +245,7 @@ class RunContext:
 @dataclass
 class RunState:
     text_parts: list[str] = field(default_factory=list)
+    last_message: str | None = None  # the turn's last agent message: Codex's own final answer (#330)
     final_text: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
