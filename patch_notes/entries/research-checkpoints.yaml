@@ -17,3 +17,7 @@ rows:
 - sha: 9fe0b84
   at: 2026-10-02 20:28
   text: main을 병합하며 승인 기록에 origin과 CP2 선택값을 함께 남기도록 충돌을 풀었다.
+- sha: 1ac7e10
+  at: 2026-10-02 20:50
+  text: 패키지 설정 템플릿(labhq/config/labhq.example.yaml)에도 research.evidence_checkpoint를
+    넣어 저장소 사본과 맞췄다.
