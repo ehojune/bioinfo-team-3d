@@ -2143,3 +2143,23 @@ async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails
         assert "Synthesis failed: budget exceeded" in req["report"]
     else:
         assert len(kinds(hub, "synthesis")) == 1 and "Synthesis failed: engine crashed" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuations):
+    """A wrap-up that rewrites a saved output must not leave the first run's hash as the record: `labhq verify`
+    would call the final file a mismatch (#58, PR #339 review). A file it did not touch keeps its hash."""
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"],
+                          output_sha256={"outputs/PARTIAL_STATUS.md": "c" * 64},
+                          unreported_outputs=["outputs/table.tsv"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", outputs=["outputs/table.tsv", "outputs/keep.tsv"],
+                      output_sha256={"outputs/table.tsv": "a" * 64, "outputs/keep.tsv": "b" * 64})
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A"}))
+    assert res.output_sha256 == {"outputs/keep.tsv": "b" * 64, "outputs/PARTIAL_STATUS.md": "c" * 64}

@@ -14,6 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:54 | [`7788c97`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/7788c97) | verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘) |
+| 07:41 | [`d59cba0`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/d59cba0) | ask broker 연결 실패 test를 ToolError 계약에 맞추고 400 경로의 공유 producer 단언을 따로 두었다. |
+| 07:41 | [`53abc40`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/53abc40) | labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자 규칙으로 막음). |
+| 07:24 | [`51c0946`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/51c0946) | 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다" 줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다. |
+| 07:24 | [`59d671c`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/59d671c) | labhq verify: 요청의 산출을 이 PC에서 다시 해시해 기록과 비교하고 보고서 앵커를 다시 검사하며, --bundle로 감사 번들 zip을 만든다. |
+| 07:24 | [`9cae5b5`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/9cae5b5) | README·HANDOFF에 labhq verify 사용법과 #58 남은 항목을 적었다. |
 | 07:09 | [`ccc518a`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/ccc518a) | 리뷰 수정 재실행이 지적된 단계의 하류를 모두 다시 돌림(봇 P1) |
 | 07:01 | [`6c6c471`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/6c6c471) | 리뷰 수정 재실행이 비지적 중간 단계를 건너뛰어도 이번 실행의 전이적 조상이 끝날 때까지 기다리게 했다. |
 | 07:01 | [`d098bdb`](https://github.com/ehojune/bioinfo-team-3d/pull/337/commits/d098bdb) | 쓰기 가능한 Codex 직원의 pip·matplotlib·XDG cache 기본 경로를 작업 폴더 안으로 옮기고 PI 설정은 유지했다. |

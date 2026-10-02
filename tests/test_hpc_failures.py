@@ -14,7 +14,9 @@ from labhq.adapters import get_adapter
 from labhq.adapters.base import RunContext, RunState
 from labhq.models import AgentSpec, Engine, Task
 from labhq.settings import HpcSettings, Settings
+from labhq.tools._mcpcompat import NOT_EVIDENCE
 from labhq.tools.scheduler import Scheduler
+from labhq.util import free_port
 
 ROOT = Path(__file__).resolve().parents[1]
 SUBMIT = {"script": "echo fixture", "job_name": "fixture"}
@@ -61,6 +63,7 @@ async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, arg
     assert payload.get("isError") is True
     text = "\n".join(block.text for block in response.content if block.type == "text")
     assert detail in text
+    assert text.rstrip().endswith(NOT_EVIDENCE)  # a failed call is neither evidence nor proof of absence (#58 ④)
     if tool == "hpc_cancel" and "invalid job id" not in detail and scenario != "cancel_unowned":
         command = "scancel" if scenario.startswith("slurm") else "qdel"
         assert f"fixture {command} permission denied" in text
@@ -89,6 +92,24 @@ async def test_hpc_failures_reach_agent_tool_error(tmp_path, scenario, tool, arg
         assert [kind for kind, _ in events] == ["agent.tool_error"]
         assert detail in events[0][1]["text"]
         assert state.error is None  # the model can recover from an ordinary tool error
+
+
+async def test_ask_broker_failure_is_tool_error_not_evidence(tmp_path):
+    """The question reached no one: an isError result ending with the not-evidence line, not an answer (#58 ④)."""
+    config = tmp_path / "fixture.yaml"
+    config.write_text("{}\n", encoding="utf-8")
+    params = StdioServerParameters(
+        command=sys.executable, args=["-m", "labhq.tools.ask_mcp"],
+        env={**os.environ, "PYTHONPATH": str(ROOT), "LABHQ_CONFIG": str(config),
+             "LABHQ_BROKER_URL": f"http://127.0.0.1:{free_port()}", "LABHQ_BROKER_TOKEN": "t",
+             "LABHQ_TASK_ID": "task_a", "LABHQ_AGENT_ID": "analyst"})
+    async with stdio_client(params) as streams:
+        async with ClientSession(*streams) as session:
+            await session.initialize()
+            response = await session.call_tool("ask", {"to": "cso", "question": "q?", "why_blocked": "b"})
+    assert response.model_dump(by_alias=True).get("isError") is True
+    text = "\n".join(block.text for block in response.content if block.type == "text")
+    assert "질의 broker에 연결하지 못했습니다" in text and text.rstrip().endswith(NOT_EVIDENCE)
 
 
 async def test_pi_denial_is_normal_result_with_no_resubmit_instruction(tmp_path):

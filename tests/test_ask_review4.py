@@ -380,9 +380,10 @@ def test_approval_denial_and_timeout_override_answer(outcome):
     assert result["reason"] == outcome["note"]
 
 
-async def test_mcp_transport_failure_uses_shared_producer(monkeypatch, outcome_calls):
-    import json
+async def test_mcp_transport_failure_is_tool_error_not_an_answer(monkeypatch, outcome_calls):
+    """The question reached no one: an isError tool failure with the not-evidence line, never a rejected answer (#58 ④)."""
     from labhq.tools import ask_mcp
+    from labhq.tools._mcpcompat import NOT_EVIDENCE, ToolError
 
     class BrokenClient:
         def __init__(self, **kwargs):
@@ -395,6 +396,26 @@ async def test_mcp_transport_failure_uses_shared_producer(monkeypatch, outcome_c
             pass
 
     monkeypatch.setattr(ask_mcp.httpx, "AsyncClient", BrokenClient)
+    with pytest.raises(ToolError) as failure:
+        await ask_mcp.ask("cso", "Cases?", "blocked")
+    assert "broker offline" in str(failure.value) and str(failure.value).rstrip().endswith(NOT_EVIDENCE)
+    assert "ask" not in outcome_calls["producer"]
+
+
+async def test_mcp_malformed_question_uses_shared_producer(monkeypatch, outcome_calls):
+    """A broker 400 is still a terminal rejected answer, built by the shared producer (#331)."""
+    import json
+
+    import httpx
+    from labhq.tools import ask_mcp
+
+    real_client = httpx.AsyncClient
+
+    def client(**kwargs):
+        detail = {"detail": "question: say what you tried"}
+        return real_client(transport=httpx.MockTransport(lambda request: httpx.Response(400, json=detail)), **kwargs)
+
+    monkeypatch.setattr(ask_mcp.httpx, "AsyncClient", client)
     result = json.loads(await ask_mcp.ask("cso", "Cases?", "blocked"))
-    assert result["status"] == "rejected" and "broker offline" in result["reason"]
+    assert result["status"] == "rejected" and result["reason"] == "question: say what you tried"
     assert "ask" in outcome_calls["producer"]

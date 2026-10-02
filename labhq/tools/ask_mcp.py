@@ -11,7 +11,7 @@ import httpx
 from ..models import ASK_MAX_WAIT_S
 from ..ask_results import ask_result
 from ..settings import Settings
-from ._mcpcompat import make_server
+from ._mcpcompat import make_server, tool_failure
 
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -46,9 +46,8 @@ async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None 
                                   ensure_ascii=False)
             response.raise_for_status()
             return json.dumps(response.json(), ensure_ascii=False)
-    except Exception as exc:
-        return json.dumps(ask_result(reason=f"질의 broker에 연결하지 못했습니다: {exc}"),
-                          ensure_ascii=False)
+    except Exception as exc:  # the question did not reach anyone: an isError tool failure, not an answer (#58 ④)
+        raise tool_failure(f"질의 broker에 연결하지 못했습니다: {exc}") from exc
 
 
 if __name__ == "__main__":
