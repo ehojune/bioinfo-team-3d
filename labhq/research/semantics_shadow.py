@@ -34,7 +34,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -338,15 +338,21 @@ def _lane(req: Mapping[str, Any]) -> str:
     return "research" if (req.get("intake") or {}).get("work_kind") == "research" else "general"
 
 
+def _light_step(step: Mapping[str, Any]) -> dict:
+    light = {k: step.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction", "output_types")
+             if k in step or k != "output_types"}
+    if isinstance(step.get("input_refs"), list):  # explicit inputs (#268): in memory and boundary-sensitive only
+        light["input_refs"] = [ref for ref in step["input_refs"] if isinstance(ref, str)]
+    return light
+
+
 def _light_request(req: Mapping[str, Any]) -> dict:
     plan = req.get("plan") if isinstance(req.get("plan"), dict) else {}
     research = bool(req.get("research_contract"))
     if research:
         plan_copy: Any = plan  # validated as a ResearchPlan by the provenance model
     else:
-        plan_copy = {"steps": [{k: s.get(k) for k in ("id", "agent_id", "depends_on", "outputs", "instruction",
-                                                      "output_types") if k in s or k != "output_types"}
-                               for s in plan.get("steps") or [] if isinstance(s, dict)]}
+        plan_copy = {"steps": [_light_step(s) for s in plan.get("steps") or [] if isinstance(s, dict)]}
     results = {sid: {k: r.get(k) for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id", "workdir")}
                for sid, r in (req.get("results") or {}).items() if isinstance(r, dict)}
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), dict) else {}
@@ -591,6 +597,8 @@ def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
         else:
             for step in plan.get("steps") or []:
                 add(step.get("instruction"), "free_text")
+                for ref in step.get("input_refs") or []:  # #268
+                    add(ref)
         for result in (req.get("results") or {}).values():
             add(result.get("workdir"), "path")
             add(result.get("workdir_id"), "identifier")
@@ -1190,6 +1198,23 @@ def _root_inputs(request: str, direct: Mapping[str, set[str]], ancestry: Mapping
     return cache[request]
 
 
+def _records(snap: Mapping[str, Any], reader: Reader,
+             observed: Mapping[str, Mapping[str, str]] | None = None) -> tuple[Any, int]:
+    """The model's records of the snapshot. A general request has no research plan, so its explicit input_refs
+    (#268) go in as a plan of step ids and refs only; the model reads nothing else from a general plan."""
+    records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests(),
+                                             observed=observed)
+    general: dict[str, dict] = {}
+    for rid, req in records.requests.items():
+        if rid in records.plans or req.get("research_contract") or not isinstance(req.get("plan"), Mapping):
+            continue
+        steps = [{"id": step.get("id"), "input_refs": step["input_refs"]} for step in req["plan"].get("steps") or []
+                 if isinstance(step, Mapping) and step.get("input_refs")]
+        if steps:
+            general[rid] = {"steps": steps}
+    return (replace(records, plans={**records.plans, **general}) if general else records), invalid
+
+
 def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
                        check: Callable[[], None]) -> tuple[dict, dict]:
     """(provenance summary, hash summary). ``observed`` (opaque artifact key -> first observation) is updated."""
@@ -1202,7 +1227,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             result = task.get("result")
             if task.get("request_id") == rid and isinstance(result, dict):
                 reader.workspace(result.get("workdir"))
-        records, invalid = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests())
+        records, invalid = _records(snap, reader)
         check()
         first = sem.project(model, records)
         check()
@@ -1256,8 +1281,7 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
             if hash_state[art] in ("observed", "verified"):
                 seen_now.setdefault(row["workspace"], {})[row["path"]] = seen["sha256"]
         check()
-        records, _ = sem.records_from_rows(snap["requests"], snap["tasks"], manifests=reader.trusted_manifests(),
-                                           observed=seen_now)
+        records, _ = _records(snap, reader, seen_now)
         p = sem.project(model, records)
         check()
         direct_inputs = {request: _request_input_hashes(req)
