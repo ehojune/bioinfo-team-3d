@@ -25,14 +25,16 @@ T0 = 1_790_000_000.0
 
 # ---------------------------------------------------------------- settings
 
-@pytest.mark.parametrize("value, on", [("shadow", True), (None, False), (False, False), ("off", False)])
-def test_actions_setting_is_off_unless_shadow(value, on):
+@pytest.mark.parametrize("value, on", [("shadow", True), ("confirm", True), (None, False), (False, False),
+                                       ("off", False)])
+def test_actions_setting_is_off_unless_shadow_or_confirm(value, on):
+    """confirm (A2, #149 결정 16) records like shadow; only the PI's CLI does more with it."""
     raw = {"mode": "shadow"} if value is None else {"mode": "shadow", "actions": value}
     cfg = shadow.resolve(raw)
     assert cfg is not None and cfg.actions is on
 
 
-@pytest.mark.parametrize("value", ["confirm", "run", "on", True, ["request.followup"], {"allow": "all"}])
+@pytest.mark.parametrize("value", ["Confirm", "run", "on", True, ["request.followup"], {"allow": "all"}])
 def test_any_other_actions_value_keeps_actions_off_and_the_shadow_on(value, caplog):
     shadow._warned.clear()
     with caplog.at_level(logging.WARNING, logger="labhq.semantics"):
