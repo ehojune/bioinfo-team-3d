@@ -19,7 +19,7 @@ from ..policy import WRITE_LIKE, evaluate_tool
 from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
 from ..util import short
-from ._mcpcompat import make_server
+from ._mcpcompat import NOT_EVIDENCE, make_server
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 BROKER = os.environ.get("LABHQ_BROKER_URL", f"http://127.0.0.1:{S.runner.broker_port}")
@@ -82,8 +82,8 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
             })
             r.raise_for_status()
             res = r.json()
-    except Exception as e:  # fail closed
-        return _deny(f"approval broker unreachable ({e}); ask the CSO to reschedule")
+    except Exception as e:  # fail closed; a deny is the permission-prompt contract's only answer (shown as an error)
+        return _deny(f"approval broker unreachable ({e}); ask the CSO to reschedule\n{NOT_EVIDENCE}")
     if res.get("approved"):
         return _allow(tool_input)
     return _deny(res.get("note") or f"Denied by the PI: {d.reason}")
