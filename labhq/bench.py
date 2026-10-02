@@ -187,6 +187,7 @@ def _real_commands(case: dict[str, Any], output_root: Path, run_dir: Path | None
             edit_rule = f"Edit(/{scope}/**)"
             isolation = user_config_isolation(claude_env, arm_dir)
             isolation["permissions"] = {"additionalDirectories": []}
+            isolation["crossSessionInbound"] = "refuse"  # same as staff: no message from the PI's sessions (#276)
             guard = shlex.join([Path(sys.executable).as_posix(),
                                 Path(__file__).with_name("bench_permissions.py").as_posix(),
                                 arm_dir.as_posix()])

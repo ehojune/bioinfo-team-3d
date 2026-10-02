@@ -34,6 +34,7 @@ def test_claude_dry_run_emits_confined_edits_commands_and_isolation(tmp_path, mo
     assert "--disable-slash-commands" in command
     assert settings["autoMemoryEnabled"] is False and settings["claudeMdExcludes"]
     assert settings["permissions"]["additionalDirectories"] == []
+    assert settings["crossSessionInbound"] == "refuse"  # the PI's other sessions cannot message a bench arm (#276)
     assert command[command.index("--disallowedTools") + 1:] == ["Agent", "Task", "SendMessage", "TeamCreate"]
     allows = command[command.index("--allowedTools") + 1:command.index("--disallowedTools")]
     assert len(allows) == 3 and allows[0].startswith("Edit(//") and allows[0].endswith("/sonnet-max/**)")
