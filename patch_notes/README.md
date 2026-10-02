@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:50 | [`54f215d`](https://github.com/ehojune/bioinfo-team-3d/pull/327/commits/54f215d) | 리뷰 반영. Environment 키 표기 대신 레지스트리 접근 전체(hive 이름·Registry provider·PSDrive·reg·winreg· Microsoft.Win32·StdRegProv)를 PI 승인으로. 대조 전에 backtick·^·\ 줄 이어쓰기를 붙인다 |
+| 03:39 | [`017c1a5`](https://github.com/ehojune/bioinfo-team-3d/pull/327/commits/017c1a5) | 리뷰 반영. 막을 경로가 하나도 남지 않아도 개인 경로가 켜진 것으로 보고 레지스트리 검사·셸 미리 허용 해제를 유지. 켜짐 여부를 runner→승인 게이트로 따로 넘기고 policy.private_paths:[]만 끈다 |
+| 03:31 | [`eb50aa5`](https://github.com/ehojune/bioinfo-team-3d/pull/327/commits/eb50aa5) | 레지스트리 게이트 우회 표기 보강. `..`·`.` 경로 조각, 하위 키로 cd 뒤 상대 경로, Python r''/u'' 접두사, GetEnvironmentVariable.Invoke, `$(` 부분식도 묻는다. echo HKCU·$null·EnvironmentVariableTarget.Process 오탐은 허용으로 |
+| 03:21 | [`9092d1b`](https://github.com/ehojune/bioinfo-team-3d/pull/327/commits/9092d1b) | 개인 경로가 켜진 task에서 Claude 셸이 사용자 환경변수 레지스트리(HKCU\Environment, PI GITHUB_TOKEN)를 읽으면 PI 승인으로. reg query·Get-ItemProperty HKCU:·GetEnvironmentVariable(..., User)·winreg·Win32_Environment 표기를 USER_ENV_REGISTRY 한 곳에 |
 | 03:10 | [`618a5ec`](https://github.com/ehojune/bioinfo-team-3d/pull/324/commits/618a5ec) | 리뷰 4차: cd·pushd·Set-Location 대상 기준 상대경로도 게이트가 판정, 실행 중에 만든 경로(조립·직접 쓴 스크립트)는 막지 못한다고 README에 명시 |
 | 03:06 | [`27d4fb5`](https://github.com/ehojune/bioinfo-team-3d/pull/324/commits/27d4fb5) | 경로 스캐너가 따옴표 안의 따옴표 문자열(python -c 안의 open(r'...') 같은 것)을 통째로 경로 후보로 봄. 드라이브 경로가 콜론에서 쪼개지던 문제, restricted 구역 검사에도 적용 |
 | 02:49 | [`570d69c`](https://github.com/ehojune/bioinfo-team-3d/pull/324/commits/570d69c) | main 병합: README 핵심 개념·버전 로드맵(#326)과 개인 경로 절을 함께 둠 |
