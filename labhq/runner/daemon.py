@@ -61,6 +61,20 @@ def checked_identity(identity: object) -> dict[str, str]:
     return {"engine": identity["engine"], "model": model}
 
 
+def switched_engine_limits(agent: AgentSpec, engine: Engine) -> dict[str, str]:
+    """What an `agent_identity` engine switch runs with (#272): read-only on the new engine.
+
+    The roles it serves, the CSO and the science reviewer, never write. Each engine's own limit means nothing to the
+    other (Claude's --tools list to Codex, Codex's sandbox to Claude), so carrying the spec over unchanged would hand
+    a Claude CSO's Codex run shell writes, or a Codex reviewer's Claude run Bash and Edit.
+    """
+    if engine is Engine.codex:
+        return {"sandbox": "read-only"}
+    if engine is Engine.claude_code:
+        return {"builtin_tools": ",".join(["Read", "Glob", "Grep", *(["WebSearch"] if "WebSearch" in agent.tools else [])])}
+    raise ValueError(f"agent_identity cannot switch {agent.id} to engine {engine.value}")
+
+
 def check_job_group(settings: Settings) -> None:
     if not settings.hpc.submit_prefix:
         return
@@ -399,7 +413,10 @@ class Runner:
         # too (read_only_profile keeps engine and model). One the runner cannot apply fails the task: running
         # the registry's model instead would resume another engine's session or switch models mid-request.
         if "agent_identity" in task.meta:
-            agent = AgentSpec.model_validate({**agent.model_dump(), **checked_identity(task.meta["agent_identity"])})
+            identity = checked_identity(task.meta["agent_identity"])
+            engine = Engine(identity["engine"])
+            limits = switched_engine_limits(agent, engine) if engine is not agent.engine else {}
+            agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
         return agent

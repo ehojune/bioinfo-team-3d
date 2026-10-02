@@ -257,3 +257,37 @@ async def test_default_request_followup_has_no_identity():
     await Orchestrator(hub).run_followup("r", "fu_1")
 
     assert "agent_identity" not in hub.calls[0].meta
+
+
+# #272 review 4163352497: switching engines must not hand the CSO or reviewer write access on the new engine.
+def test_an_engine_switch_runs_read_only_on_the_new_engine():
+    claude_cso = AgentSpec(id="cso", name="CSO", role="plan", engine=Engine.claude_code, model="opus",
+                           builtin_tools="Read,Glob,Grep")
+    plan = Task(agent_id="cso", prompt="plan", meta={"kind": "plan", "agent_identity": CODEX_CSO})
+    codex_cso = Runner._resolve_agent(fake_runner(claude_cso), plan)
+    assert codex_cso.engine is Engine.codex and codex_cso.sandbox == "read-only", "no Codex shell writes"
+
+    codex_reviewer = AgentSpec(id="sci_reviewer", name="Reviewer", role="review", engine=Engine.codex,
+                               model="gpt-6-astra", sandbox="read-only", tools=["WebSearch"])
+    review = Task(agent_id="sci_reviewer", prompt="review",
+                  meta={"kind": "review", "agent_identity": {"engine": "claude_code", "model": "opus"}})
+    claude_reviewer = Runner._resolve_agent(fake_runner(codex_reviewer), review)
+    assert claude_reviewer.engine is Engine.claude_code
+    assert claude_reviewer.builtin_tools == "Read,Glob,Grep,WebSearch", "no Claude Bash, Edit or Write"
+
+    same_engine = Task(agent_id="cso", prompt="plan",
+                       meta={"kind": "plan", "agent_identity": {"engine": "claude_code", "model": "sonnet"}})
+    kept = Runner._resolve_agent(fake_runner(claude_cso), same_engine)
+    assert kept.model == "sonnet" and kept.builtin_tools == "Read,Glob,Grep" and kept.sandbox == claude_cso.sandbox
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_plan_only_request_still_runs_no_step():
+    hub = ModelHub(cso_model="gpt-6-astra")
+    hub.requests["r"].update(status="running", plan={"steps": [
+        {"id": "s1", "agent_id": "worker", "instruction": "work", "outputs": [], "depends_on": []}]})
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == [], "a gateway restart after the plan was saved must not dispatch steps"
+    assert hub.requests["r"]["status"] == "done" and hub.requests["r"]["outcome"] == "plan_only"

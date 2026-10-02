@@ -1623,6 +1623,10 @@ class Orchestrator:
                     req["plan"] = validated.model_dump(mode="json")
                     await finish_research_plan(req["plan"])
                     return
+                if req["mode"] == "plan_only":  # restarted after the plan was saved: still no step runs
+                    req["outcome"] = "plan_only"
+                    self._finish(rid, "Plan completed.", {}, ok=True)
+                    return
                 type_stats: dict = {}
                 vocab = self._output_vocab()
                 steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
