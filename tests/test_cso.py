@@ -161,6 +161,33 @@ async def test_blocking_continuation_restores_previous_result_after_restart(cont
 
 
 @pytest.mark.asyncio
+async def test_worker_revision_checks_that_its_session_is_free_before_dispatch(continuations, tmp_path):
+    workdir = str(tmp_path / "worker")
+
+    async def dispatch(task):
+        return result(task, text="revised")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    checked = []
+
+    async def wait_session_free(agent_id, session_id, held_workdir, **kwargs):
+        checked.append((agent_id, session_id, held_workdir, kwargs))
+        return None, None
+
+    hub.wait_session_free = wait_session_free
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "Revise analysis", "depends_on": []}]
+    outcomes = {"A": TaskResult(task_id="prior", agent_id="worker", ok=True, text="old",
+                                  session_id="worker-session", workdir=workdir)}
+    await Orchestrator(hub).run_dag("r", "Original request", steps, outcomes, only={"A"},
+                                    feedback={"A": "Check the evidence"})
+
+    assert checked == [("worker", "worker-session", workdir, {"request_id": "r", "step_id": "A"})]
+    assert hub.calls[0].resume_session_id is None
+    assert "workdir" not in hub.calls[0].meta
+
+
+@pytest.mark.asyncio
 async def test_run_request_exception_terminal_keeps_saved_cost():
     async def dispatch(task):
         raise AssertionError("dispatch should not be reached")
