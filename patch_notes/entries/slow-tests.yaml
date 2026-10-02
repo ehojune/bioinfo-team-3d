@@ -1,0 +1,6 @@
+pr: 308
+rows:
+- sha: f24bcf3
+  at: 2026-10-02 19:48
+  text: 90초 MCP 실측을 opt-in으로 분리하고 같은 timeout 경로를 축소 시계로 검증했으며 제거·mock test의 반복 대기를
+    줄였다.
