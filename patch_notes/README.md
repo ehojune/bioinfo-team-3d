@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
 | 13:35 | [`783a393`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/783a393) | 라이선스 표에 제3자 예외를 적음: three.js는 MIT, placeholder.gltf는 CC0 |
 | 13:31 | [`79fa709`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/79fa709) | 저장소 라이선스를 정함: 코드는 GPL-3.0, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0 (README 배지·§14) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
