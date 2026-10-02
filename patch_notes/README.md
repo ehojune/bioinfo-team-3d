@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:43 | [`58ec1e5`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/58ec1e5) | README: EDAM 표가 main에 들어간 것을 반영(위치·CC BY-SA 4.0·NOTICE) |
 | 14:35 | [`327eb23`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/327eb23) | EDAM 표 NOTICE를 저장소 라이선스 결정(#252)에 맞추고 병합 가능 상태로 둠 |
 | 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
 | 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
