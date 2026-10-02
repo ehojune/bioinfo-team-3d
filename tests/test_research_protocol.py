@@ -691,9 +691,10 @@ def _cp2_result(hub, task):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("cp2", "outcome", "status"), [
-    ({"approved": True, "note": "Q1. a) Approve evidence"}, "evidence_approved", "done"),
-    ({"approved": True, "note": "Q1. b) Request revision\nMemo: add a sensitivity check"},
+    ({"approved": True, "choice": "approve", "note": ""}, "evidence_approved", "done"),
+    ({"approved": False, "choice": "revise", "note": "add a sensitivity check"},
      "evidence_revision_requested", "failed"),
+    ({"approved": False, "choice": "deny", "note": "stop this line of work"}, "evidence_rejected", "failed"),
     ({"approved": False, "note": "stop this line of work"}, "evidence_rejected", "failed"),
 ])
 async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
@@ -724,8 +725,9 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step"]
     assert hub.calls[1].output_schema["title"] == "ResearchResult"
     assert hub.requests["r"]["research_contract"]["plan_sha256"] in hub.calls[1].prompt
-    assert [item["kind"] for item in hub.approvals] == ["research_plan", "clarify"]
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence"]
     assert hub.approvals[1]["detail"]["gate"] == "research_evidence"
+    assert hub.approvals[1]["detail"]["choices"] == ["approve", "revise", "deny"]
     assert hub.requests["r"]["outcome"] == outcome
     assert hub.requests["r"]["status"] == status
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]["decision"] == outcome.removeprefix("evidence_")

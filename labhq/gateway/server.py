@@ -107,9 +107,14 @@ class CodexReviewIn(BaseModel):
     note: str = ""
 
 
+DECISION_CHOICES = ("approve", "revise", "deny")
+
+
 class DecisionIn(BaseModel):
     approved: bool
     note: str = ""
+    # CP2 evidence review reads only this; the note never decides (#90). Other approvals ignore it.
+    choice: Literal["approve", "revise", "deny"] | None = None
 
 
 class RecruitIn(BaseModel):
@@ -1050,21 +1055,23 @@ class Hub:
             return {"approved": False, "note": "timed out", "state": "timed_out", "approval_id": req.id,
                     "decided_at": time.time()}
 
-    async def resolve_approval(self, approval_id: str, approved: bool, note: str = "") -> None:
+    async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
+                               choice: str | None = None) -> None:
         entry = self.approvals.pop(approval_id, None)
         if entry is None:
             raise KeyError(approval_id)
+        chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
                        {"approval": entry["approval"], "approved": approved,
-                        "note": note, "decided_at": time.time()})
+                        "note": note, **chosen, "decided_at": time.time()})
         if entry["origin"]:
             self.store.put("decision", approval_id, {"origin": entry["origin"],
                                                       "approved": approved, "note": note})
             if entry["origin"] in self.runners:
                 await self.flush_decisions(entry["origin"])
         elif entry.get("future") and not entry["future"].done():
-            entry["future"].set_result({"approved": approved, "note": note})
+            entry["future"].set_result({"approved": approved, "note": note, **chosen})
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
             if approved:
@@ -1075,7 +1082,7 @@ class Hub:
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
-                            "data": {"id": approval_id, "approved": approved, "note": note}})
+                            "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
@@ -1257,7 +1264,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     continue
                 if msg.get("type") == "approval.resolve":  # phone taps 승인/거절
                     try:
-                        await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""))
+                        await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""),
+                                                   msg.get("choice"))  # an unknown choice is dropped there
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
                         await hub.publish({"type": "approval.stale", "ts": time.time(),
                                            "data": {"id": msg.get("id")}})
@@ -1337,7 +1345,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.post("/api/approvals/{aid}", dependencies=[Depends(auth)])
     async def decide(aid: str, body: DecisionIn) -> dict:
         try:
-            await hub.resolve_approval(aid, body.approved, body.note)
+            await hub.resolve_approval(aid, body.approved, body.note, body.choice)
         except KeyError:
             raise HTTPException(404, "no such pending approval")
         return {"ok": True}

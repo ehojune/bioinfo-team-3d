@@ -119,10 +119,20 @@ export function decisionNote(row, approved = true) {
   return lines.join('\n');
 }
 
+// CP2 evidence review (#90): the decision is a structured choice; the note is only a memo.
+const EVIDENCE_LABELS = { refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
+  results: '단계별 claim·evidence 원장' };
+export function decisionChoice(approval, act) {
+  if (approval?.kind !== 'research_evidence') return null;
+  return { approve: 'approve', revise: 'revise', deny: 'deny' }[act] || null;
+}
+
 function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
-    kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] : [];
-  const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions'] : [];
+    kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
+    kind === 'research_evidence' ? ['refused_evidence', 'unsupported_claims', 'plan_sha256', 'results'] : [];
+  const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions'] :
+    kind === 'research_evidence' ? ['choices'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
     [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
       .map(key => [key, detailValue(detail[key])]) : detail == null ? [] : [['detail', detailValue(detail)]];
@@ -136,6 +146,7 @@ function renderDetail(container, kind, detail) {
   const list = add(container, 'dl', '', 'approval-detail');
   for (const [key, value] of entries) {
     if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    else if (kind === 'research_evidence' && EVIDENCE_LABELS[key]) detailEntry(list, EVIDENCE_LABELS[key], value, {raw: true});
     else detailEntry(list, key, value, {raw: true});
   }
 }
@@ -164,9 +175,11 @@ function createCard(item, options) {
   const actions = add(body, 'div', '', 'acts');
   const approve = add(actions, 'button', '', 'btn go');
   approve.type = 'button';
+  const revise = add(actions, 'button', '', 'btn');  // CP2 evidence review only
+  revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, summary, detail, questions, timing, note, approve, deny };
+  row._decisionParts = { title, who, summary, detail, questions, timing, note, approve, revise, deny };
   return row;
 }
 
@@ -214,15 +227,19 @@ function updateCard(row, item, options) {
   p.timing.textContent = item.type === 'approval' ? timingText(value, options) : '';
   p.note.placeholder = value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
-  p.approve.textContent = item.type === 'suggestion' ? '채용하기' : value.kind === 'clarify' ? '답하고 진행' : '승인';
-  p.deny.textContent = item.type === 'suggestion' ? '나중에' : '거절';
+  const evidence = item.type === 'approval' && value.kind === 'research_evidence';
+  p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' ? '답하고 진행' : '승인';
+  p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : '거절';
+  p.revise.textContent = '수정 요청'; p.revise.hidden = !evidence;
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
+  p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
-  p.approve.disabled = disabled; p.deny.disabled = disabled;
+  p.approve.disabled = disabled; p.revise.disabled = disabled; p.deny.disabled = disabled;
   if (options.onDecision) {
-    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type);
-    p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type);
+    p.approve.onclick = () => options.onDecision(value, true, decisionNote(row, true), item.type, decisionChoice(value, 'approve'));
+    p.revise.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'revise'));
+    p.deny.onclick = () => options.onDecision(value, false, decisionNote(row, false), item.type, decisionChoice(value, 'deny'));
   }
 }
 
@@ -270,7 +287,8 @@ export function syncDecisionHistory(container, history, options = {}) {
     for (const item of values) {
       const approval = item.approval || {};
       const row = add(list, 'li', '', 'decision-history-item');
-      const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' : '거절';
+      const outcome = item.state === 'timed_out' ? '시간 초과' : item.state === 'expired' ? '만료' : item.approved ? '승인' :
+        item.choice === 'revise' ? '수정 요청' : '거절';
       add(row, 'strong', `${outcome} · ${(options.kindLabels || {})[approval.kind] || approval.kind || '결정'}`);
       add(row, 'span', approval.summary || approval.id || '');
       if (item.note) add(row, 'small', item.note);

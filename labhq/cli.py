@@ -453,9 +453,11 @@ def main(argv: list[str] | None = None) -> None:
     cr.add_argument("pr", type=int)
     cr.add_argument("--note", default="")
     sub.add_parser("approvals")
-    ap = sub.add_parser("approve")
+    ap = sub.add_parser("approve", help="decide a pending approval (CP2 evidence review needs --choice)")
     ap.add_argument("id")
     ap.add_argument("--deny", action="store_true")
+    ap.add_argument("--choice", choices=["approve", "revise", "deny"],
+                    help="CP2 evidence review (research_evidence) decision; the note never decides it")
     ap.add_argument("--note", default="")
     rp = sub.add_parser("recruit", help="hire a contract agent from a paper/repo via Paper2Agent")
     rp.add_argument("--paper")
@@ -638,7 +640,18 @@ def main(argv: list[str] | None = None) -> None:
         for a in _api(s, "GET", "/api/approvals"):
             print(f"{a['id']}  [{a['kind']}] {a['summary']}")
     elif args.cmd == "approve":
-        print(_api(s, "POST", f"/api/approvals/{args.id}", json={"approved": not args.deny, "note": args.note}))
+        if args.deny and args.choice not in (None, "deny"):
+            p.error(f"--deny contradicts --choice {args.choice}")
+        pending = next((a for a in _api(s, "GET", "/api/approvals") if a.get("id") == args.id), None)
+        evidence = bool(pending and pending.get("kind") == "research_evidence")
+        if evidence and args.choice is None and not args.deny:
+            p.error("CP2 evidence review needs --choice approve, --choice revise or --choice deny")
+        if args.choice and pending and not evidence:
+            p.error(f"--choice is only for CP2 evidence review; {args.id} is {pending.get('kind')}")
+        body = {"approved": args.choice == "approve" if args.choice else not args.deny, "note": args.note}
+        if args.choice:
+            body["choice"] = args.choice
+        print(_api(s, "POST", f"/api/approvals/{args.id}", json=body))
     elif args.cmd == "recruit":
         print(_api(s, "POST", "/api/recruit", json={"paper": args.paper, "repo": args.repo, "focus": args.focus,
                                                     "ttl_days": args.ttl, "name": args.name}))

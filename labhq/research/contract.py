@@ -11,7 +11,8 @@ from pydantic import (BaseModel, ConfigDict, Field, ValidationError, field_valid
 
 from ..intake import ClarifyingQuestion
 from ..vocab.declare import MAX_ENTRIES, MAX_KEY, MAX_NAME
-from ..evidence.claims import Claim, Evidence, EvidenceLink, ledger_errors
+from ..evidence.claims import (STATUS_NEEDS, Claim, Evidence, EvidenceLink, ledger_errors,
+                               normalize_artifact_path)
 
 
 class StrictModel(BaseModel):
@@ -558,6 +559,73 @@ def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]
                "of the row that tried it, even when the attempt failed or found nothing"
                for slot in step.evidence_slots if slot.required and slot.id not in filled]
     return errors
+
+
+def bind_result_artifacts(result: dict[str, Any], *, outputs: list[str],
+                          upstream: list[tuple[str | None, str | None, list[str]]]) -> dict[str, list[dict[str, str]]]:
+    """Evidence CP2 refuses because its artifact is not a file labhq collected, and claims left without support.
+
+    A normalized ``artifact_refs[].path`` binds when it is one of the step's collected ``outputs``, or an output
+    collected by a finished upstream step (``(workdir_id, workdir, outputs)``) written as ``<workdir_id>/<path>`` or
+    under that step's workdir, as the step prompt lists them. Rows citing an unbound artifact are refused, and so
+    are rows derived from a refused row. A claim whose status rests only on refused rows is listed as unsupported.
+    """
+    known = {normalize_artifact_path(path) for path in outputs}
+    for workdir_id, workdir, paths in upstream:
+        root = normalize_artifact_path(workdir or "")  # forward slashes, so the join below needs no backslash
+        for path in map(normalize_artifact_path, paths):
+            if workdir_id:
+                known.add(normalize_artifact_path(f"{workdir_id}/{path}"))
+            if root:
+                known.add(normalize_artifact_path(f"{root}/{path}"))
+    known.discard("")
+    unbound = {str(ref.get("artifact_id")): str(ref.get("path") or "")
+               for ref in result.get("artifact_refs") or []
+               if normalize_artifact_path(str(ref.get("path") or "")) not in known}
+    rows = [row for row in result.get("evidence") or [] if isinstance(row, dict)]
+    refused: dict[str, str] = {}
+    for row in rows:
+        artifact = (row.get("source") or {}).get("artifact_id")
+        if artifact in unbound:
+            refused[row["id"]] = (f"cites artifact {artifact} at {unbound[artifact]!r}, which is neither a collected "
+                                  "output of this step nor a verified upstream artifact")
+    pending = True
+    while pending:
+        pending = False
+        for row in rows:
+            parents = sorted(ref for ref in row.get("derived_from") or [] if ref in refused)
+            if row["id"] not in refused and parents:
+                refused[row["id"]] = f"derived from refused evidence {', '.join(parents)}"
+                pending = True
+    unsupported: list[dict[str, str]] = []
+    for claim in result.get("claims") or []:
+        needed = STATUS_NEEDS.get(claim.get("status"))
+        cited = sorted({link.get("evidence_id") for link in result.get("links") or []
+                        if link.get("claim_id") == claim.get("id") and link.get("relation") == needed})
+        if needed and cited and all(evidence_id in refused for evidence_id in cited):
+            unsupported.append({"claim_id": claim["id"],
+                                "reason": f"{claim['status']} rests only on refused evidence {', '.join(cited)}"})
+    return {"refused_evidence": [{"evidence_id": evidence_id, "reason": reason}
+                                 for evidence_id, reason in refused.items()],
+            "unsupported_claims": unsupported}
+
+
+EVIDENCE_CHOICES = ("approve", "revise", "deny")
+
+
+def read_evidence_decision(decision: dict[str, Any]) -> str | None:
+    """The CP2 outcome from the structured choice alone: approved, revision_requested, rejected, or None.
+
+    The note is a memo and never decides. A deny, timeout or expiry without a choice stops the request. An
+    approval without a choice, an unknown choice, or one that contradicts ``approved`` cannot be read: it is not
+    approved, and the PI is asked again."""
+    choice, approved = decision.get("choice"), decision.get("approved") is True
+    if choice is None:
+        return None if approved else "rejected"
+    if not isinstance(choice, str):
+        return None
+    return {("approve", True): "approved", ("revise", False): "revision_requested",
+            ("deny", False): "rejected"}.get((choice, approved))
 
 
 def canonical_plan_json(plan: ResearchPlan | dict[str, Any]) -> str:

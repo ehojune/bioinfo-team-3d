@@ -14,7 +14,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
@@ -22,7 +22,8 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..research.contract import (RESEARCH_RESULT_SCHEMA, canonical_plan_json, classify_intake, freeze_plan,
+from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_RESULT_SCHEMA, bind_result_artifacts,
+                                 canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  validate_research_plan, validate_research_result, with_pack_refs)
 from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog
@@ -158,6 +159,19 @@ Contract rules:
 - PR 1 pilot stops after CP1 approval. Research steps will not run in this PR.
 
 PI's request: {request}"""
+# Off keeps the prompt of main byte for byte. On swaps its CP1-only line for the contract the steps run under
+# (#90 CP2).
+RESEARCH_CP1_ONLY_RULE = "PR 1 pilot stops after CP1 approval. Research steps will not run in this PR."
+RESEARCH_CP2_RULE = (
+    "After CP1 approval labhq runs these steps exactly as frozen; nothing re-plans them. Each step returns a "
+    "result v2 ledger bound to this plan's sha256, its step id, its claim_ids and its evidence_slots, with claims "
+    "and evidence kept apart. An artifact_refs path must be one of that step's declared outputs or an upstream "
+    "step's collected artifact; evidence citing any other path is refused. The request then stops at CP2, where "
+    "the PI approves, requests revision of, or denies the evidence. Review and synthesis do not run yet. A failed "
+    "step or a requested revision ends the request, and a changed plan needs a new CP1 approval.")
+RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, RESEARCH_CP2_RULE)
+# CP2 cards an answer without a readable choice gets before the request ends as not approved.
+CP2_MAX_ASKS = 3
 
 STEP_PROMPT = """Overall request (context only): {request}
 
@@ -1409,7 +1423,9 @@ class Orchestrator:
                 prompt += ("\n\nReturn the structured research result contract required by the output schema. "
                            f"Copy plan_sha256={contract.get('plan_sha256')}, step_id={step['id']}, "
                            f"claim_ids={json.dumps(step.get('claim_ids') or [])}, and fill evidence_slots="
-                           f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate.")
+                           f"{json.dumps(step.get('evidence_slots') or [])}. Keep claims and evidence separate. "
+                           "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
+                           "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2.")
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -1573,6 +1589,81 @@ class Orchestrator:
                             self.hub.save_request(rid)
                         todo.add(sid)
 
+    async def _research_after_steps(self, rid: str, steps: list[dict], results: dict[str, TaskResult], n: int,
+                                    serialized: Callable[[], dict[str, dict]]) -> None:
+        """The research lane after its steps ran: a failure ends the request, success stops at CP2 (#90).
+
+        The generic re-plan, review and synthesis would change or judge the frozen PLAN without a new CP1 approval,
+        so the research lane never reaches them. Evidence whose artifact labhq did not collect is refused and shown
+        on the card. CP2 reads only the structured approve/revise/deny choice; an unreadable answer is not approved
+        and is asked again.
+        """
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        failed = [s["id"] for s in steps if s["id"] not in results or not results[s["id"]].ok]
+        if rid in self.budget_denials or failed:
+            contract["failure"] = {"steps": failed, "plan_sha256": contract["plan_sha256"],
+                                   **({"budget": self.budget_denials[rid]} if rid in self.budget_denials else {})}
+            req["outcome"] = "research_failed"
+            self.hub.save_request(rid)
+            self._finish(rid, self.format_results(steps, results, n) +
+                         "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
+                         "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
+            return
+        ledgers = {s["id"]: results[s["id"]].structured for s in steps}
+        refused: list[dict[str, str]] = []
+        unsupported: list[dict[str, str]] = []
+        for step in steps:
+            result = results[step["id"]]
+            upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs))
+                        for d in step["depends_on"] if d in results and results[d].ok]
+            bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
+                                          outputs=list(result.outputs), upstream=upstream)
+            refused += [{"step_id": step["id"], **row} for row in bound["refused_evidence"]]
+            unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]
+        claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
+        rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
+        summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
+                   (f", {len(refused)} refused" if refused else "") + ". Choose approve, revise or deny.")
+        detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
+                  "choices": list(EVIDENCE_CHOICES),
+                  **({"refused_evidence": refused} if refused else {}),
+                  **({"unsupported_claims": unsupported} if unsupported else {}),
+                  "results": ledgers}
+        cp2: str | None = None
+        decision: dict[str, Any] = {}
+        asks = 0
+        while cp2 is None and asks < CP2_MAX_ASKS:
+            asks += 1
+            decision = await self.hub.request_approval(
+                kind="research_evidence", request_id=rid, detail=detail,
+                summary=summary if asks == 1 else
+                "The previous CP2 answer had no readable approve/revise/deny choice and was not approved. " + summary)
+            cp2 = read_evidence_decision(decision)
+        decided = cp2 or "unreadable"
+        note = str(decision.get("note") or "").strip()
+        contract.setdefault("checkpoints", {})["cp2"] = {
+            "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
+            "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
+            "plan_sha256": contract["plan_sha256"], "asks": asks,
+            "refused_evidence": refused, "unsupported_claims": unsupported}
+        req["outcome"] = f"evidence_{decided}"
+        self.hub.save_request(rid)
+        report = self.format_results(steps, results, n) + f"\n\nCP2 evidence review: {decided}."
+        if refused:
+            report += "\nRefused evidence (not approved at CP2):\n" + "\n".join(
+                f"- {row['step_id']}/{row['evidence_id']}: {row['reason']}" for row in refused)
+        if unsupported:
+            report += "\nUnsupported claims:\n" + "\n".join(
+                f"- {row['step_id']}/{row['claim_id']}: {row['reason']}" for row in unsupported)
+        if decided == "revision_requested":
+            report += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
+        elif decided == "unreadable":
+            report += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
+        if note:
+            report += f"\nPI note: {note}"
+        self._finish(rid, report, serialized(), ok=decided == "approved")
+
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
         out = []
@@ -1627,7 +1718,17 @@ class Orchestrator:
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
                                       scope_status=req.get("scope_status", "in_scope"))
                       if research_pilot else None)
-            research_lane = bool(intake and intake.work_kind == "research")
+            # A request that already carries a research contract stays research whatever the config now says,
+            # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
+            research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
+            research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint
+                                      and req["mode"] != "plan_only")
+            if req.get("research_contract") and not research_pilot:
+                req["outcome"] = "research_disabled"
+                self._finish(rid, "This request carries a frozen research contract, but research.enabled is now "
+                             "off. No step was dispatched and nothing was re-planned; turn the research pilot "
+                             "back on to resume it.", {}, ok=False)
+                return
             if intake:
                 req["intake"] = intake.model_dump(mode="json")
                 self.hub.save_request(rid)
@@ -1663,8 +1764,7 @@ class Orchestrator:
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
                 previous = (req.get("research_contract") or {}).get("approval")
                 approval = refresh_plan_approval(plan, previous)
-                execution_enabled = bool(self.hub.s.research.evidence_checkpoint
-                                         and req["mode"] != "plan_only")
+                execution_enabled = research_execution
                 req["research_contract"] = {
                     "schema_version": 1,
                     "work_kind": "research",
@@ -1761,7 +1861,8 @@ class Orchestrator:
                         req.get("cso_workdir") if continuation else None, rid=rid, step="plan")
                     if research_lane:
                         vocab = self._output_vocab()
-                        prompt = RESEARCH_PLAN_PROMPT.format(
+                        template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
+                        prompt = template.format(
                             request=plan_request, roster=format_roster(roster),
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
@@ -2203,42 +2304,12 @@ class Orchestrator:
                                       ("done" if v.ok else "incomplete" if v.missing_outputs else "failed"),
                             "attempts": self.attempts.get(rid, {}).get(k, 0)} for k, v in results.items()}
 
+            if research_lane:  # its own end: never the generic re-plan, review or synthesis below (#90 CP2)
+                await self._research_after_steps(rid, steps, results, n, serialized_results)
+                return
             await recover_failures()
             if rid in self.budget_denials or any(not r.ok for r in results.values()):
                 self._finish(rid, self.format_results(steps, results, n), serialized_results(), ok=False)
-                return
-
-            if research_lane:
-                ledgers = {sid: result.structured for sid, result in results.items()}
-                claim_count = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
-                evidence_count = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
-                decision = await self.hub.request_approval(
-                    kind="clarify", request_id=rid,
-                    summary=(f"CP2 evidence review: {len(ledgers)} step(s), {claim_count} claim(s), "
-                             f"{evidence_count} evidence row(s). Approve or request revision; Reject stops the request."),
-                    detail={"gate": "research_evidence", "plan_sha256": req["research_contract"]["plan_sha256"],
-                            "questions": [{"question": "How should this evidence checkpoint proceed?",
-                                           "options": ["Approve evidence", "Request revision"],
-                                           "allow_free_text": False}],
-                            "results": ledgers})
-                note = str(decision.get("note") or "").strip()
-                if not decision.get("approved"):
-                    cp2 = "rejected"
-                elif re.search(r"(?:^|\n)Q1\.\s*b\)", note, re.IGNORECASE):
-                    cp2 = "revision_requested"
-                else:
-                    cp2 = "approved"
-                receipt = {"gate": "research_evidence", "decision": cp2, "note": note,
-                           "approval_id": decision.get("approval_id"),
-                           "decided_at": decision.get("decided_at"),
-                           "plan_sha256": req["research_contract"]["plan_sha256"]}
-                req["research_contract"].setdefault("checkpoints", {})["cp2"] = receipt
-                req["outcome"] = f"evidence_{cp2}"
-                self.hub.save_request(rid)
-                report = self.format_results(steps, results, n) + f"\n\nCP2 evidence review: {cp2}."
-                if note:
-                    report += f"\nPI note: {note}"
-                self._finish(rid, report, serialized_results(), ok=cp2 == "approved")
                 return
 
             progress = req.get("review_progress") or {}
