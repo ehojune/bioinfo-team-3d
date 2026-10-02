@@ -3,3 +3,7 @@ rows:
 - sha: 99d3674
   at: 2026-10-02 19:19
   text: runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가
+- sha: b14bfa1
+  at: 2026-10-02 19:26
+  text: runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리
+    ok
