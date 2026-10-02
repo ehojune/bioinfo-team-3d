@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:12 | [`5bfbc79`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/5bfbc79) | 확인 질문 보기 글이 이미 a)로 시작하면 그 표시를 떼어 결정함·CLI의 a) a) 중복을 없앴다. |
+| 05:12 | [`15b6eb9`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/15b6eb9) | README에 실패 보고서가 단계마다 원인과 다음 할 일만 싣는다고 한 줄 적었다. |
+| 05:10 | [`a3586ee`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/a3586ee) | labhq_ask의 wait를 short·hibernate enum으로 묶고, broker가 잘못된 본문에 500 대신 400과 고칠 방법을 돌려준다. |
+| 05:08 | [`ea591a0`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/ea591a0) | 실패한 요청의 보고서를 단계마다 원인 한 줄·뿌리 원인·다음 할 일로 줄였다. 12단계 실패가 수십만 자에서 2만 자 아래로 준다. |
+| 05:08 | [`88a1686`](https://github.com/ehojune/bioinfo-team-3d/pull/333/commits/88a1686) | 로그 token 가림 필터가 uvicorn 접근 로그 args를 비우지 않게 해 줄마다 나던 서식 오류(expected 5, got 0)를 없앴다. |
 | 05:05 | [`6730e43`](https://github.com/ehojune/bioinfo-team-3d/pull/329/commits/6730e43) | sandbox 판본은 실행이 실제로 띄운 Codex에서, 셸 명령이 돈 실행만 적는다. 명령 출력에 섞인 "sandbox setup required"는 준비 오류로 보지 않는다. 앱 폴더 밖 bin이면 준비 명령에 자리표시를 보이고, 앞선 probe 결과를 먼저 지운다 |
 | 04:53 | [`97a0edc`](https://github.com/ehojune/bioinfo-team-3d/pull/329/commits/97a0edc) | Codex 앱이 업데이트돼 직원 elevated sandbox 준비가 무효가 되면 doctor가 warn과 PowerShell 준비 명령을 보여 준다. runner는 성공한 elevated 실행의 판본을 CODEX_HOME에 적고, 준비 오류로 멈추면 runner마다 한 번 결정함에 알린다. bin auto는 codex.exe가 있는 폴더 중 판본이 가장 높은 곳을 고른다 |
 | 03:50 | [`54f215d`](https://github.com/ehojune/bioinfo-team-3d/pull/327/commits/54f215d) | 리뷰 반영. Environment 키 표기 대신 레지스트리 접근 전체(hive 이름·Registry provider·PSDrive·reg·winreg· Microsoft.Win32·StdRegProv)를 PI 승인으로. 대조 전에 backtick·^·\ 줄 이어쓰기를 붙인다 |
