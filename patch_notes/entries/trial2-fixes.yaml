@@ -9,3 +9,6 @@ rows:
 - sha: f3e9f00
   at: 2026-10-03 07:01
   text: Claude 등 다른 직원에게 Codex 직원 CODEX_HOME을 개인 경로로 막고 Codex 자신에게는 계속 열어 뒀다.
+- sha: ccc518a
+  at: 2026-10-03 07:09
+  text: 리뷰 수정 재실행이 지적된 단계의 하류를 모두 다시 돌림(봇 P1)
