@@ -176,6 +176,12 @@ def test_real_redirects_are_still_found(tool, command, target):
     ("PowerShell", ".venv\\Scripts\\python.exe -c \"import os; os.system('echo x > C:/elsewhere/out')\""),
     # A PowerShell here-string starts only at a token start; 'x@' is one generic token.
     ("PowerShell", "Write-Output x@'\nfoo'\nGet-Date > C:/elsewhere/out\n'@ #'"),
+    # The call operator, dot-sourcing and a [scriptblock] cast run a string, even inside parentheses (PR #340).
+    ("PowerShell", "& ([scriptblock]'Get-Date > C:/elsewhere/out')"),
+    ("PowerShell", "& ([ScriptBlock]::Create('Get-Date > C:/elsewhere/out'))"),
+    ("PowerShell", ". ([scriptblock]'Get-Date > C:/elsewhere/out')"),
+    ("PowerShell", "$b = [System.Management.Automation.ScriptBlock]'Get-Date > C:/elsewhere/out'; & $b"),
+    ("PowerShell", "Write-Output ok; (& ([scriptblock]\"Get-Date > C:/elsewhere/out\"))"),
 ])
 def test_redirects_the_blanking_must_not_hide(tool, command):
     assert _decide(tool, command).action == "ask"

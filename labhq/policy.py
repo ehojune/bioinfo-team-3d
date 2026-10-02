@@ -86,6 +86,9 @@ _PS_SEPARATOR = re.compile(r"\|\||&&|[|;\n(){}]")
 # After a value only an assignment or foreach's 'in' starts a pipeline; in a command, 'a=b' is text.
 _PS_PIPELINE_AFTER_VALUE = re.compile(r"(?<![=!<>])=(?!=)|(?<!\S)in(?!\S)", re.I)
 _PS_ENV_ASSIGNMENT = re.compile(r"\$\{?env:[^\s=;|]*\s*[-+*/%?]?=(?!=)", re.I)
+# The call operator '&', dot-sourcing '. ' and a [scriptblock] cast: each can run quoted text as code.
+_PS_INVOKES_TEXT = re.compile(
+    r"(?<!&)&(?!&)|(?:^|(?<=[\s;|({]))\.\s|\[\s*(?:system\.management\.automation\.)?scriptblock\s*\]", re.I)
 _PS_PROVIDER = re.compile(r"(?<![\w:])(?:\$\{?)?(?:alias|function):|(?<![\w$:{])(?:env|variable):", re.I)
 _PS_MEMBER_CALL = re.compile(r"(?:\.|::)\s*([^\s.:(){}\[\],;|=+\-*/%!<>]*)(?:\[[^\]]*\])?\(")  # also .M[T](
 
@@ -336,6 +339,10 @@ def _quoted_text_is_data(command: str, skeleton: str, powershell: bool) -> bool:
     if powershell:
         if _PS_PROVIDER.search(command) or _PS_ENV_ASSIGNMENT.search(skeleton):
             return False  # 'Set-Content env:X', '$env:X = ..', 'alias:ls' change what later commands run
+        if _PS_INVOKES_TEXT.search(skeleton):
+            # '& (..)', '. (..)' and a [scriptblock] cast run a string as code wherever they stand, inside
+            # parentheses too, where segment splitting would lose them (PR #340 review).
+            return False
         for call in _PS_MEMBER_CALL.finditer(skeleton):
             if blanked(*call.span(1)) or call.group(1).casefold() not in _PS_DATA_METHODS:
                 return False
