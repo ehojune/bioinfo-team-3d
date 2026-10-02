@@ -29,3 +29,9 @@ def test_qc_reviewer_flags_the_same_statistical_faults():
     assert "without multiple-testing correction or effect sizes" in text
     assert "fix and record the seed of any random step you run yourself" in text
 
+
+def test_sci_reviewer_checks_overreach_in_any_review_and_quotes_its_evidence():
+    text = _prompt("sci_reviewer")
+    assert "In every review, whatever its format" in text
+    assert "overgeneralization" in text and "cherry-picking" in text and "speculation written as fact" in text
+    assert "quote the exact sentence" in text and "evidence_quote" in text
