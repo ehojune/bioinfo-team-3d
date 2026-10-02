@@ -659,3 +659,55 @@ async def test_runner_hands_claude_the_active_paths_and_warns_when_shell_has_no_
     off, seen_off = _capture_runner(_runner_settings(tmp_path / "off", []), monkeypatch)
     assert (await off.run_task(Task(id="t3", agent_id="worker", request_id="r", prompt="q"))).ok
     assert seen_off["ctx"].private_paths == []
+
+
+# ---------------- cd before a relative path (PR #324 live probe) ----------------
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "cd C:\\Users\\pi && cat .ssh\\id_rsa"),
+    ("Bash", "cd ~ && cat .SSH/id_rsa"),
+    ("Bash", "cd $HOME; ls .ssh"),
+    ("Bash", "cd /c/Users/pi && cat .ssh/config"),
+    ("Bash", 'cmd /c "cd /d %USERPROFILE% && type .ssh\\id_rsa"'),
+    ("Bash", "pushd C:/Users && cat pi/.ssh/id_rsa"),
+    ("Bash", "cd ~/AppData && cd Local/Google/Chrome && ls 'User Data'"),
+    ("PowerShell", "Set-Location -Path $env:USERPROFILE; Get-Content .ssh/id_rsa"),
+    ("PowerShell", "sl ${env:LOCALAPPDATA}; dir 'Google\\Chrome\\User Data'"),
+])
+def test_a_relative_path_after_cd_into_home_goes_to_the_pi(tool, command):
+    decision = _gate(tool, {"command": command})
+    assert decision.action == "ask" and "private_paths" in decision.reason, command
+
+
+@pytest.mark.parametrize("command", [
+    "cd outputs && python run.py", "cd ~ && ls", "cd; ls", "cd ~ && ls .ssh-notes", "cd - && ls",
+    'cd "$(git rev-parse --show-toplevel)" && ls', "git commit -m 'cd docs and fix .ssh notes'",
+])
+def test_cd_without_a_private_path_keeps_the_decision(command):
+    assert _gate("Bash", {"command": command}).action == "allow", command
+
+
+def test_too_many_folder_changes_go_to_the_pi():
+    assert _gate("Bash", {"command": " && ".join(["cd a"] * 40) + " && ls"}).action == "ask"
+
+
+def test_the_live_probe_cd_spellings_reach_the_gate_on_real_folders(tmp_path):
+    fake_home = tmp_path / "fh"
+    (fake_home / ".sec").mkdir(parents=True)
+    (fake_home / ".sec" / "key.txt").write_text("CANARY", encoding="utf-8")
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    _link_dir(ws / "alias", fake_home / ".sec")
+    found = resolve_private_paths(Settings.model_validate({"policy": {"private_paths": [str(fake_home / ".sec")]}}),
+                                  [ws], home=str(tmp_path / "elsewhere"))
+
+    def gate(command):
+        return evaluate_tool("Bash", {"command": command}, PolicySettings(), allowed_roots=[str(ws)],
+                             workdir=str(ws), environ={}, private_paths=found.paths, home=str(tmp_path / "elsewhere"))
+
+    for command in (f'cd "{fake_home}" && cat .sec/key.txt', "cd ../fh && cat .sec/key.txt",
+                    "cd .. && cd fh/.sec && cat key.txt", "cd alias && cat key.txt"):
+        decision = gate(command)
+        assert decision.action == "ask" and "private_paths" in decision.reason, command
+    for command in ("cd sub && python script.py", f'cd "{ws}" && cat notes.md', "cd .. && ls"):
+        assert gate(command).action == "allow", command

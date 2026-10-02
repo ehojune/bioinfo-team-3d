@@ -6,6 +6,10 @@ gate, which judges the canonical, real path (a shell command naming one goes to 
 them as `~` labels. Codex, Gemini, Antigravity and cli staff get only the instructions: nothing intercepts their
 file or shell reads (the Codex sandbox limits writes and network, not reads).
 
+The gate is lexical, so a path built at run time passes it: `python -c` joining `'..', '.ssh'`, or a script the
+staff member wrote into its own workdir (PR #324 live probe, Claude 2.1.282). Staff with shell and workdir writes
+can therefore read any private path in two steps; only a separate account (docs/runner-account.md) stops that.
+
 Paths compare case-insensitively only where the file system does: a Windows spelling, a Windows host, or a POSIX
 volume the #315 helper judges case-insensitive (PR #324 review). On a case-sensitive POSIX volume `Secret` and
 `secret` are different folders.
@@ -347,7 +351,8 @@ def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = N
     """The first private path `text` names in any common spelling, case-insensitively where the volume is
     (`_case_insensitive`); None otherwise.
 
-    Lexical, like the zone guard: `cd ~ && cat .ssh/x`, globs and paths built at run time are not seen."""
+    Lexical, like the zone guard: globs and paths built at run time are not seen. The gate adds `cd` targets
+    (`shell_cd_bases`) for `cd ~ && cat .ssh/x`."""
     paths = [p for p in paths if p]
     if not paths or not text:
         return None
@@ -361,6 +366,68 @@ def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = N
         if any(_found(canonical[fold], target) for target in _targets(path, home, fold)):
             return path
     return None
+
+
+# `cd`, `pushd`, `chdir` and PowerShell `Set-Location`/`sl`/`Push-Location` as a word anywhere (`cmd /c cd /d x`):
+# a false match only adds a folder to read relative paths from.
+_CD = re.compile(r"(?:^|(?<=[\s;&|({\"']))(?:builtin\s+)?(?:cd|chdir|pushd|set-location|sl|push-location)(?=[\s;&|)]|$)"
+                 r"([^;&|\n)]*)", re.I)
+MAX_CD_BASES = 32
+
+
+def _expand_dir(target: str, home: str, environ: Mapping[str, str]) -> str | None:
+    """A `cd` target with `~` and variables replaced, Git Bash and WSL drives as `C:/`; None if a part is unknown."""
+    if target == "~" or target.startswith(("~/", "~\\")):
+        target = home + target[1:]
+    target = local_drive_text(target, environ)  # before the `$` check: `\\localhost\C$\x` is `C:\x`
+    lookup = {k.casefold(): v for k, v in environ.items()}
+    lookup.update({"home": home, "userprofile": home})
+    unknown = False
+
+    def value(match: re.Match) -> str:
+        nonlocal unknown
+        name = next(g for g in match.groups() if g)
+        if name.casefold() not in lookup:
+            unknown = True
+            return ""
+        return lookup[name.casefold()]
+
+    target = re.sub(r"%(\w+)%|\$\{(?:env:)?(\w+)\}|\$(?:env:)?(\w+)", value, target, flags=re.I)
+    if unknown or any(mark in target for mark in ("$", "`", "%")):
+        return None
+    if re.match(r"^[A-Za-z]:[/\\]", home):
+        drive = re.match(r"^(?:/mnt|/cygdrive)?/([A-Za-z])(?:/(.*))?$", target.replace("\\", "/"))
+        if drive:
+            target = f"{drive.group(1).upper()}:/{drive.group(2) or ''}"
+    return target
+
+
+def shell_cd_bases(command: str, workdir: str | None, home: str | None = None,
+                   environ: Mapping[str, str] | None = None) -> list[str] | None:
+    """The folders a shell command changes into, each relative to the one before (PR #324 probe: `cd ~ && cat
+    .ssh/x` named no private path). A target with an unknown variable or a substitution ends the chain, since the
+    folder is only known at run time. None past MAX_CD_BASES: the caller asks rather than resolving them all."""
+    home = home or host_home()
+    environ = os.environ if environ is None else environ
+    base, out = workdir, []
+    for match in _CD.finditer(command):
+        args = [a.strip("\"'") for a in re.findall(r'"[^"]*"|\'[^\']*\'|\S+', match.group(1))]
+        args = [a for a in args if not (a.startswith("-") and len(a) > 1) and a.casefold() != "/d"]
+        target = args[0] if args else "~"
+        if target == "-":
+            continue
+        spelled = _expand_dir(target, home, environ)
+        if spelled is None:
+            base = None
+            continue
+        absolute = re.match(r"^[A-Za-z]:[/\\]", spelled) or spelled.startswith(("/", "\\"))
+        if not absolute and not base:
+            continue
+        base = path_field_text(spelled, None if absolute else base)
+        out.append(base)
+        if len(out) > MAX_CD_BASES:
+            return None
+    return out
 
 
 def path_field_text(value: str, workdir: str | None) -> str:

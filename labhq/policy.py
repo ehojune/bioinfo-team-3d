@@ -658,7 +658,38 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
                                    f"its paths were not all resolved: `{cmd[:200]}`")
+        if _cd_reaches_private(cmd, private_paths, workdir, home, environ):
+            return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
+                                   f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
     return None
+
+
+def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None, home: str | None,
+                        environ: Mapping[str, str] | None) -> bool:
+    """`cd <home> && cat .ssh/x` (PR #324 live probe): relative paths read from each `cd` target, lexically and
+    through links. A folder computed at run time (`cd "$(…)"`, an unknown variable) is not followed."""
+    from .private_paths import mentioned_private_path, path_field_text, shell_cd_bases
+
+    bases = shell_cd_bases(cmd, workdir, home, environ)
+    if bases is None:
+        return True
+    if not bases:
+        return False
+    # The scanner keeps a quoted string whole (`cmd /c "cd /d x && type .ssh\\k"`), so plain words count too.
+    words = [*_scan_path_text(cmd).candidates, *re.split(r"[\s'\"`|;&<>(),=]+", cmd)]
+    tokens = [t for t in dict.fromkeys(words)
+              if t and not _absolute(t) and not _drive_relative(t) and not t.startswith(("~", "$", "%"))]
+    if len(tokens) > MAX_RESOLVED_CANDIDATES:
+        return True
+    for base in bases:
+        spelled = [base, *(path_field_text(t, base) for t in tokens)]
+        if mentioned_private_path("\n".join(spelled), private_paths, home, environ):
+            return True
+        if os.path.isabs(base) and touches_resolved({"command": cmd}, private_paths, workdir=base):
+            return True
+        if os.path.isabs(base) and touches_resolved({"path": base}, private_paths):
+            return True
+    return False
 
 
 def _glob_base(pattern: str) -> str:
