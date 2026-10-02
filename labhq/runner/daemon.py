@@ -941,7 +941,7 @@ class Runner:
                 keep.append(skill_path(self.s.recruit.contract_engine))
             # A Claude task reads back the long tool output Claude saved in the staff config folder (#298 ⑤).
             open_reads = staff_claude_project_dirs(self.s, ws.dir) if agent.engine == Engine.claude_code else []
-            private = resolve_private_paths(self.s, keep, open_reads=open_reads)
+            private = resolve_private_paths(self.s, keep, open_reads=open_reads, cwd=ws.dir)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)
