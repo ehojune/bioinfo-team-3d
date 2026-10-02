@@ -39,16 +39,16 @@ def test_atomic_write_replaces_a_same_directory_temp_file(tmp_path, monkeypatch)
 
 
 def test_manifest_updates_use_atomic_write(tmp_path, monkeypatch):
-    import labhq.adapters.owned as workspace_module  # every workspace file write goes through owned (#165)
+    import labhq.runner.workspace as workspace_module
 
     writes = []
-    original = workspace_module.atomic_write_text
+    original = workspace_module.write_owned
 
-    def record(path, text):
-        writes.append(Path(path))
-        original(path, text)
+    def record(root, relative, text):
+        writes.append(Path(root) / relative)
+        return original(root, relative, text)
 
-    monkeypatch.setattr(workspace_module, "atomic_write_text", record)
+    monkeypatch.setattr(workspace_module, "write_owned", record)
     agent = AgentSpec(id="a", name="A", role="test", builtin_mcp=[])
     task = Task(agent_id="a", prompt="x")
     workspace = TaskWorkspace(tmp_path / "runs", task, agent)

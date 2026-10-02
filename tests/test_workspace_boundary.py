@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from labhq.adapters.owned import OwnedPathError, append_owned, owned_link_error, write_owned
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, ContractInfo, Engine, Task
 from labhq.runner.daemon import Runner
@@ -93,6 +94,60 @@ def _link_file(link: Path, target: Path) -> None:
         os.symlink(target, link)
     except (OSError, NotImplementedError) as error:  # Windows without Developer Mode or admin rights
         pytest.skip(f"this OS account cannot create file symlinks ({error}); directory junction cases still run")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX dir_fd race regression")
+@pytest.mark.parametrize("operation", ["write", "append"])
+def test_owned_writes_keep_the_checked_parent_open_during_the_file_open(tmp_path, monkeypatch, operation):
+    import labhq.adapters.owned as owned
+
+    workdir = tmp_path / "workdir"
+    outputs = workdir / "outputs"
+    outside = tmp_path / "outside"
+    outputs.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "result.txt").write_text("outside\n", encoding="utf-8")
+    real_parent = owned._parent
+
+    def checked_then_swapped(root, relative):
+        parent = real_parent(root, relative)
+        outputs.rename(workdir / "checked")
+        os.symlink(outside, outputs, target_is_directory=True)
+        return parent
+
+    monkeypatch.setattr(owned, "_parent", checked_then_swapped)
+    with pytest.raises(OwnedPathError):
+        (write_owned if operation == "write" else append_owned)(workdir, "outputs/result.txt", "agent\n")
+    assert (outside / "result.txt").read_text(encoding="utf-8") == "outside\n"
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_owned_write_reports_a_folder_in_the_file_slot(tmp_path, linked):
+    workdir = tmp_path / "workdir"
+    target = workdir / "outputs" / "RESULT.md"
+    target.parent.mkdir(parents=True)
+    if linked:
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _link_dir(target, outside)
+    else:
+        target.mkdir()
+    with pytest.raises(OwnedPathError, match="RESULT.md"):
+        write_owned(workdir, "outputs/RESULT.md", "agent\n")
+
+
+@pytest.mark.parametrize("case_sensitive, expected", [(True, None), (False, "링크")])
+def test_owned_file_names_follow_the_workspace_volume_case_rule(tmp_path, monkeypatch, case_sensitive, expected):
+    import labhq.adapters.owned as owned
+
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    _link_dir(workdir / "agents.md", target)
+    monkeypatch.setattr(owned, "case_sensitive_directory", lambda _path: case_sensitive)
+    error = owned_link_error(workdir)
+    assert (expected is None and error is None) or (expected in error)
 
 
 async def _emit(*_args):
@@ -317,6 +372,7 @@ async def test_a_differently_cased_instruction_file_is_refused_where_case_is_ign
     import labhq.adapters.read_only as read_only
 
     monkeypatch.setattr(read_only, "CASE_INSENSITIVE", True, raising=False)  # what Windows and macOS file systems do
+    monkeypatch.setattr(read_only, "case_sensitive_directory", lambda _path: False)
     seen = spawned(engine)
     workdir = _case_workdir(tmp_path, entry)
     runner = _runner(_settings(tmp_path), monkeypatch, _staff(engine))
@@ -331,6 +387,7 @@ async def test_a_differently_cased_memory_file_is_excluded_where_case_is_ignored
     import labhq.adapters.read_only as read_only
 
     monkeypatch.setattr(read_only, "CASE_INSENSITIVE", True, raising=False)
+    monkeypatch.setattr(read_only, "case_sensitive_directory", lambda _path: False)
     seen = spawned(Engine.claude_code)
     workdir = _case_workdir(tmp_path, "outputs/claude.md")
     runner = _runner(_settings(tmp_path), monkeypatch, _staff(Engine.claude_code))

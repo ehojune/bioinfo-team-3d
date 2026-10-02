@@ -13,12 +13,13 @@ import hashlib
 import json
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
 from ..util import short
 from .base import (ROLE_FOOTER, AgentAdapter, RunContext, RunState, child_config_dirs, expand_env,
                    record_model_id, wrap_cwd)
+from .owned import case_sensitive_directory
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
@@ -50,6 +51,10 @@ def workspace_memory_excludes(workdir: Path) -> list[str]:
     for relative in workspace_instruction_paths("claude_code", Path(workdir), [], "exclude"):
         path = Path(workdir) / relative
         literal.append(f"{wd}/{relative}" + ("/**" if path.is_dir() else ""))
+        if not path.is_dir() and not case_sensitive_directory(path.parent):
+            for canonical in rules["exclude_files"]:
+                if path.name.casefold() == canonical.casefold() and path.name != canonical:
+                    literal.append(f"{wd}/{PurePath(relative).with_name(canonical).as_posix()}")
     return list(dict.fromkeys([*broad, *literal]))
 
 

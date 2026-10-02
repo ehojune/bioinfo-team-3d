@@ -11,10 +11,13 @@ import json
 import os
 import stat
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import httpx
 
+from ..adapters.held_dir import HeldDir
+from ..adapters.owned import chmod_owned, plain_directory, write_owned
 from ..settings import Settings
 from ._mcpcompat import ToolError, make_server
 from .scheduler import (
@@ -82,6 +85,12 @@ def _share_workspace_parents(workdir: Path, workspace_root: Path, gid: int,
 def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                        job_group: str | None = None, workspace_root: Path | None = None,
                        job_user: str | None = None) -> None:
+    try:
+        script_relative = script_path.relative_to(workdir)
+        logs_relative = logs.relative_to(workdir)
+    except ValueError as exc:
+        raise RuntimeError("job script and logs must stay inside the task workdir") from exc
+    gid = None
     if job_group:
         if os.name == "nt":
             raise RuntimeError("hpc.job_group requires a POSIX runner")
@@ -92,7 +101,19 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             raise RuntimeError(f"task workdir must not be a symlink: {workdir}")
         if workspace_root is None or not job_user:
             raise RuntimeError("runner.workspace_root and hpc.user are required to check job path traversal")
+        # Validate traversal outside the managed root before creating jobs/logs.
         _share_workspace_parents(workdir, workspace_root, gid, job_user)
+    jobs_dir = plain_directory(workdir, script_relative.parent)
+    logs_dir = plain_directory(workdir, logs_relative)
+    if jobs_dir is None or logs_dir is None:
+        raise RuntimeError("shared job path is a link or not a directory")
+    if os.name != "nt" and not job_group:
+        with ExitStack() as stack:
+            held_workdir = stack.enter_context(HeldDir.hold(workdir))
+            held_jobs = stack.enter_context(held_workdir.child(script_relative.parts[0]))
+            held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
+            held_logs.chmod(0o700)
+    if job_group:
         output_dir = workdir / "hpc_out"
         for shared in (script_path.parent, logs, output_dir):
             if shared.is_symlink():
@@ -123,20 +144,30 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                 if path == script_path.parent:
                     mode |= stat.S_IXGRP  # keep earlier jobs traversable during cleanup
                 os.chmod(path, mode)
-        output_dir.mkdir(mode=0o700, exist_ok=True)
-    logs.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if plain_directory(workdir, output_dir.relative_to(workdir)) is None:
+            raise RuntimeError("shared output path is a link or not a directory")
     if job_group:
-        for directory in (workdir, script_path.parent, logs, output_dir):
-            os.chown(directory, -1, gid)
-        # Allow traversal without making task inputs group-listable or writable.
-        os.chmod(workdir, 0o710)
-        os.chmod(script_path.parent, 0o2750)
-        os.chmod(logs, 0o2770)
-        os.chmod(output_dir, 0o2770)
-    script_path.write_text(body, encoding="utf-8")
-    if job_group:
-        os.chown(script_path, -1, gid)
-    script_path.chmod(0o750)
+        # Hold every shared folder before changing it. A concurrent replacement is rejected; chmod/chown use the
+        # handles, so a later rename cannot redirect them to an agent-controlled link target.
+        try:
+            with ExitStack() as stack:
+                held_workdir = stack.enter_context(HeldDir.hold(workdir))
+                held_jobs = stack.enter_context(held_workdir.child(script_relative.parts[0]))
+                held_logs = stack.enter_context(held_jobs.child(logs_relative.parts[-1]))
+                held_output = stack.enter_context(held_workdir.child(output_dir.name))
+                for directory in (held_workdir, held_jobs, held_logs, held_output):
+                    directory.chown(-1, gid)
+                held_workdir.chmod(0o710)
+                held_jobs.chmod(0o2750)
+                held_logs.chmod(0o2770)
+                held_output.chmod(0o2770)
+        except OSError as exc:
+            raise RuntimeError("shared job path is a link or was replaced") from exc
+    write_owned(workdir, script_relative.as_posix(), body)
+    if os.name != "nt":
+        chmod_owned(workdir, script_relative.as_posix(), 0o750, gid if job_group else None)
+    else:
+        script_path.chmod(0o750)
 
 
 @server.tool()
