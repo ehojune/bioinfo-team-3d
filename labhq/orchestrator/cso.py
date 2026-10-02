@@ -176,7 +176,8 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
-- Put QC after data generation. {question_rule}
+- Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
+  validation), the question itself first.
 - For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
   acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.

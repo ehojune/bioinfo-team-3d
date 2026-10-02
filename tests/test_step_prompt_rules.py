@@ -90,3 +90,18 @@ def test_replan_questions_follow_the_same_phone_card_rule_as_the_plan():
     assert ("ask in clarifying_questions and do not plan the blocked work. " + cso.PI_CARD_QUESTION_RULE) in text
     assert cso.PI_CARD_QUESTION_RULE in cso.PLAN_PROMPT
     assert "at most 700 characters, the question itself first" in cso.PI_CARD_QUESTION_RULE
+
+
+def test_research_plan_questions_carry_the_length_their_validation_enforces():
+    """A research plan question over ClarifyingQuestion's limit fails plan validation, so the prompt states it."""
+    from labhq.intake import ClarifyingQuestion
+
+    limit = next(m.max_length for m in ClarifyingQuestion.model_fields["question"].metadata
+                 if hasattr(m, "max_length"))
+    rule = (f"Each question is at most {limit} characters (a longer one fails plan validation), "
+            "the question itself first.")
+    args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
+                question_rule=QUESTION_RULE, output_types_rule="", intake="INTAKE", packs="PACKS")
+    for template in (cso.RESEARCH_PLAN_PROMPT, cso.RESEARCH_CP2_PLAN_PROMPT):
+        assert rule in " ".join(template.format(**args).split())
+    assert ClarifyingQuestion(question="q" * limit, options=["a", "b"], allow_free_text=False)
