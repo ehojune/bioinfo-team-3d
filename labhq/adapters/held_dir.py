@@ -82,8 +82,8 @@ class HeldDir:
         with other:
             return other.ident == self.ident
 
-    def open_file(self, name: str) -> int:
-        """Open a regular child file relative to this held folder, without following a link."""
+    def open_read_file(self, name: str) -> int:
+        """Open a regular child file for reading relative to this held folder, without following a link."""
         if os.name == "nt":
             handle = _win_open_child_file(self._handle, name)
             try:

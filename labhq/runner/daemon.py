@@ -551,7 +551,7 @@ class Runner:
             held = stack.enter_context(HeldDir.hold(root))
             for part in (*source_parts, *ref_parts[:-1]):
                 held = stack.enter_context(held.child(part))
-            return held.open_file(ref_parts[-1])
+            return held.open_read_file(ref_parts[-1])
 
     @staticmethod
     def _copy_consult_ref(fd: int, target: Path, limit: int) -> int | None:
