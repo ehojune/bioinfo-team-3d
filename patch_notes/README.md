@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:57 | [`eefcd80`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/eefcd80) | 연구 리뷰 판정을 P1 지적에 맞추고, 앵커 표기 변형 검사·코드 안 앵커 제외(봇 지적) |
+| 06:49 | [`32adfe9`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/32adfe9) | 합성 뒤 예산 카드가 거부돼도 끝난 보고서는 남기고 앵커 검사 결과대로 끝낸다. 예산 거부는 보고서 메타데이터 줄로만 적는다. |
+| 06:36 | [`8d3b86c`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/8d3b86c) | 연구 보고서의 [[claim:step/claim]] 앵커를 원장과 대조하는 검사를 순수 함수로 더했다. 없는 claim, 거부된 근거뿐인 claim, hash 없는 artifact, 앵커 0개를 잡는다. |
+| 06:36 | [`ccb3e63`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/ccb3e63) | 연구 lane이 CP2 승인 뒤 리뷰 한 번과 CSO 보고서까지 간다. 앵커 검사를 통과하면 research_reported, 아니면 Claim check를 붙여 report_incomplete로 끝나고, 리뷰가 revise면 plan을 다시 돌리지 않고 멈춘다. |
+| 06:36 | [`e61f822`](https://github.com/ehojune/bioinfo-team-3d/pull/336/commits/e61f822) | README·연구 규약·예시 설정에 CP2 뒤 리뷰·보고서 흐름을 적었다. |
 | 06:32 | [`64d1801`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/64d1801) | 설정 폴더 Read deny를 최상위 항목으로 한정해 task가 쌓여도 명령줄이 늘지 않게 한다 |
 | 06:15 | [`2bd2574`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/2bd2574) | init이 Claude 직원 전용 ~/.labhq/claude-staff와 CLAUDE_CONFIG_DIR를 넣고 로그인 명령만 안내한다 |
 | 06:14 | [`4efe1d1`](https://github.com/ehojune/bioinfo-team-3d/pull/335/commits/4efe1d1) | Claude 직원 설정 폴더를 개인 경로로 막고 그 task 몫 projects 폴더만 읽기로 연다 |

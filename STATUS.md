@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · PR 준비 — 연구 lane CP2 뒤 리뷰·보고서 완주와 claim 앵커 검사(#90, #58 ③⑤)
+
+- 결론: CP2에서 승인하면 리뷰 한 번 → CSO 보고서 → claim 앵커 검사까지 간다. 결과는 `research_reported`, `report_incomplete`, `research_review_revise`, `research_review_unparsed` 중 하나로 끝난다.
+- 바뀐 것: 연구 전용 리뷰 스키마 `RESEARCH_LANE_REVIEW_SCHEMA`와 리뷰·합성 프롬프트를 더했다. 앵커 검사는 `labhq/evidence/report_check.py`, 결과는 `research_contract.report_check`, 리뷰는 `research_contract.review`(재시작 뒤 재사용)에 남는다. 실패한 조회는 보고서 메타데이터에 따로 붙는다. generic 리뷰·합성과 `evidence_checkpoint` off의 프롬프트는 그대로다.
+- 실행한 것: 새 test 15건 중 수정 전에 돌린 14건이 모두 실패했고, 수정 뒤 15건 모두 통과했다. 관련 pytest 416 passed, 공개 저장소 검사 통과.
+- 미해결: `reviewer_agent`가 없으면 리뷰·보고서 없이 `evidence_approved`로 끝난다. 웹 피드는 연구 리뷰 이벤트를 따로 받지 않는다(웹 변경은 범위 밖).
+- 근거: `labhq/orchestrator/cso.py`, `labhq/evidence/report_check.py`, `labhq/research/packs.py`, `tests/test_research_report.py`, `tests/test_report_check.py`.
+
 ## 2026-10-03 · #298 ⑤ — Claude 직원 전용 설정 폴더와 긴 출력 다시 읽기
 
 - 결론: PI 결정 "나". Claude 직원은 Codex 직원처럼 전용 설정 폴더(`engines.claude_code.env.CLAUDE_CONFIG_DIR`, init 기본 `~/.labhq/claude-staff`)를 쓴다. PI `~/.claude`는 통째로 막힌 채 두고, 직원 폴더도 기본 개인 경로에 들어가되 그 task 몫의 `projects/<작업 폴더 slug>/`만 읽기로 열린다. 그래서 Claude가 저장한 긴 도구 출력을 직원이 다시 읽는다.
