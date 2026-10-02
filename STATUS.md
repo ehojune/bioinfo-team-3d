@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · CI — README만 바뀌면 README 검사만, 느린 test 15개 출력
+
+- 결론: PI 지적. 루트 README를 읽는 test는 `tests/test_integrations.py` 하나라서, STATUS·패치노트 말고 README만 바뀐 push는 전체 pytest를 건너뛰고 그 파일만 Ubuntu에서 돌린다. pytest job은 가장 느린 test 15개를 출력한다.
+- 바뀐 것: `scripts/ci_skip.py`(README는 `readme=true`로 따로 표시), `.github/workflows/test.yml`(`readme` job, `--durations=15`), `tests/test_ci_skip.py`.
+- 실행한 것: `tests/test_ci_skip.py` 6건.
+- 미해결: 없음.
+- 근거: `scripts/ci_skip.py`.
+
 ## 2026-10-02 · #281 #280 — 조기 종료 HPC job wake 보존과 event-loop worker 검증
 
 - 결론: agent가 실행 중일 때 job watcher가 먼저 종료를 관찰하면 `pending_jobs`에서 빠져 CSO가 wake를 기다리지 않았다. 대기 상한은 바꾸지 않았다.

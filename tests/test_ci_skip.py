@@ -85,3 +85,14 @@ def test_merging_another_feature_branch_reruns(repo):
 def test_no_token_means_no_skip(monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
     assert cs.pytest_passed("deadbeef") is False
+
+
+def test_a_readme_only_change_skips_the_suite_but_flags_the_readme_check(repo):
+    commit(repo, {"README.md": "# labhq\n"}, "readme")
+    run(repo, "checkout", "-q", "-b", "pr")
+    code = commit(repo, {"app.py": "a = 2\n"}, "code")
+    head = commit(repo, {"README.md": "# labhq\nmore prose\n"}, "docs")
+    touched = set()
+    assert cs.can_skip(head, "main", passed=lambda sha: sha == code, touched=touched)
+    assert touched == {"README.md"}  # the workflow then runs tests/test_integrations.py only
+    assert not cs.can_skip(head, "main", passed=lambda sha: sha == code)  # without the flag set, README still reruns
