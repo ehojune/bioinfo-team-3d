@@ -1,0 +1,6 @@
+pr: 312
+rows:
+- sha: 45b9749
+  at: 2026-10-02 20:07
+  text: POSIX argv 원소의 UTF-8 한도를 적용하고 Claude Read 없는 TASK pointer와 spawn OSError를
+    실패 결과로 처리했다.
