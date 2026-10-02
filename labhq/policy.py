@@ -213,7 +213,12 @@ def _scan_path_text(s: str) -> _PathTextScan:
             if end < 0:
                 i += 1
                 continue
-            candidates.extend(_token_candidates(s[i + 1:end]))
+            inner = s[i + 1:end]
+            candidates.extend(_token_candidates(inner))
+            if "'" in inner or '"' in inner:
+                # A quote inside a quoted string (`python -c "open(r'C:\x')"`) opens a path of its own; scanning only
+                # the outer string split `C:\x` at the colon and resolved `\x` against the current drive (#324 CI).
+                candidates.extend(_scan_path_text(inner).candidates)
             i = end + 1
             continue
         if char in _TOKEN_BREAKS:

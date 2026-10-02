@@ -14,7 +14,7 @@ from labhq.adapters.base import ROLE_FOOTER, RunContext
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
-from labhq.policy import claude_deny_private, evaluate_tool
+from labhq.policy import _scan_path_text, claude_deny_private, evaluate_tool
 from labhq.private_paths import (CONFIG_LABEL, DEFAULT_HOME_ENTRIES, ENV_VAR, OUTSIDE_HOME_LABEL, STATE_LABEL,
                                  configured_private_paths, mentioned_private_path, resolve_private_paths)
 from labhq.runner.daemon import Runner
@@ -549,6 +549,18 @@ def test_case_varied_windows_spellings_miss_the_literal_ask_rules_but_the_gate_a
     assert not any(_claude_matches(rule, tool, command) for rule in ask)  # why shell must reach the gate
     decision = _gate(tool, {"command": command})
     assert decision.action == "ask" and "private_paths" in decision.reason
+
+
+@pytest.mark.parametrize("command, path", [
+    (r'''python -c "open(r'C:\Users\pi\ws\alias\id_ed25519')"''', r"C:\Users\pi\ws\alias\id_ed25519"),
+    (r'''python -c "open(r'/tmp/ws/alias/id_ed25519')"''', "/tmp/ws/alias/id_ed25519"),
+    (r'''python -c "print(open(b'/home/pi/.ssh/key').read())"''', "/home/pi/.ssh/key"),
+    (r'''python -c "open('D:/data/x.tsv')"''', "D:/data/x.tsv"),
+])
+def test_a_quoted_string_inside_a_quoted_command_is_one_path_candidate(command, path):
+    # #324 CI: the outer quotes hid the inner ones, so `C:\...` split at the colon into `r'C` and a drive-less
+    # `\Users\...` that resolved against the current drive; on D: runners the alias check then saw nothing.
+    assert path in _scan_path_text(command).candidates
 
 
 def test_the_gate_catches_a_link_alias_into_a_private_path(tmp_path):
