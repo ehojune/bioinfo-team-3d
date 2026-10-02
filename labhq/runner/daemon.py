@@ -23,6 +23,7 @@ import yaml
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
+from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
@@ -507,21 +508,24 @@ class Runner:
             return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
         return incomplete
 
-    def _consult_workspace_input(self, task: Task) -> tuple[list[tuple[str, Path]], str | None]:
-        """Resolve only declared runner-local consult files, without opening their source workspace (#86)."""
+    def _consult_workspace_input(
+        self, task: Task,
+    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]]] | None, str | None]:
+        """Validate declared runner-local refs; staging reopens every component through held folders (#86)."""
         raw_source = task.meta.get("source_workdir")
         refs = task.meta.get("consult_refs") or []
         if task.meta.get("kind") != "consult" or not refs:
-            return [], None
+            return None, None
         if not raw_source:
-            return [], "consult refs에 원래 작업 폴더가 없습니다"
+            return None, "consult refs에 원래 작업 폴더가 없습니다"
         try:
             workspace_root = self.ws_root.resolve(strict=True)
             source = Path(str(raw_source))
             resolved_source = source.resolve(strict=True)
             if not source.is_dir() or is_link(source) or not resolved_source.is_relative_to(workspace_root):
                 raise ValueError
-            resolved: list[tuple[str, Path]] = []
+            source_parts = resolved_source.relative_to(workspace_root).parts
+            resolved: list[tuple[str, tuple[str, ...]]] = []
             for raw_ref in refs:
                 normalized = str(raw_ref).replace("\\", "/")
                 if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
@@ -535,22 +539,30 @@ class Runner:
                 if (not current.resolve(strict=True).is_relative_to(resolved_source)
                         or not current.is_file()):
                     raise ValueError
-                resolved.append((normalized, current))
+                resolved.append((normalized, tuple(Path(normalized).parts)))
         except (OSError, RuntimeError, ValueError):
-            return [], "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
-        return resolved, None
+            return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
+        return (workspace_root, source_parts, resolved), None
 
     @staticmethod
-    def _copy_consult_ref(source: Path, target: Path, limit: int) -> int | None:
-        """Copy one regular file without following a final symlink; None means it grew past the limit."""
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-        fd = os.open(source, flags)
+    def _open_consult_ref(root: Path, source_parts: tuple[str, ...], ref_parts: tuple[str, ...]) -> int:
+        """Open a ref relative to handles held from the workspace root through every parent folder."""
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(root))
+            for part in (*source_parts, *ref_parts[:-1]):
+                held = stack.enter_context(held.child(part))
+            return held.open_file(ref_parts[-1])
+
+    @staticmethod
+    def _copy_consult_ref(fd: int, target: Path, limit: int) -> int | None:
+        """Copy one already-held regular file; None means it grew past the limit."""
         copied = 0
         complete = False
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise OSError("consult ref is not a regular file")
-            with os.fdopen(fd, "rb", closefd=False) as opened, target.open("xb") as staged:
+            with os.fdopen(fd, "rb") as opened, target.open("xb") as staged:
+                fd = -1
                 while chunk := opened.read(CONSULT_REF_COPY_CHUNK):
                     copied += len(chunk)
                     if copied > limit:
@@ -558,16 +570,23 @@ class Runner:
                     staged.write(chunk)
             complete = True
         finally:
-            os.close(fd)
+            if fd >= 0:
+                os.close(fd)
             if not complete and os.path.lexists(target):
                 remove_entry(target)
         return copied
 
     def _stage_consult_refs(self, task: Task, ws: TaskWorkspace) -> tuple[Task, str | None]:
         """Copy declared refs into this consult's workspace under neutral filenames."""
-        sources, error = self._consult_workspace_input(task)
-        if error or not sources:
+        inputs, error = self._consult_workspace_input(task)
+        if task.meta.get("kind") == "consult":
+            task = task.model_copy(update={"meta": {
+                key: value for key, value in task.meta.items()
+                if key not in {"source_workdir", "consult_refs"}
+            }})
+        if error or inputs is None:
             return task, error
+        workspace_root, source_parts, sources = inputs
         safe_id = "consult-" + re.sub(r"[^A-Za-z0-9_.-]", "_", task.id)[:80]
         relative_root = Path("refs") / safe_id
         staged_root = plain_directory(ws.dir, relative_root)
@@ -582,26 +601,34 @@ class Runner:
         total = 0
         copied: dict[str, str] = {}
         skipped: list[tuple[str, str]] = []
-        for number, (raw_ref, source) in enumerate(sources, 1):
+        for number, (raw_ref, ref_parts) in enumerate(sources, 1):
+            fd = -1
             try:
-                size = source.stat().st_size
+                fd = self._open_consult_ref(workspace_root, source_parts, ref_parts)
+                size = os.fstat(fd).st_size
             except OSError:
-                return task, f"consult ref를 읽을 수 없습니다: {raw_ref}"
+                if fd >= 0:
+                    os.close(fd)
+                skipped.append((raw_ref, "검증 뒤 경로가 바뀌었거나 안전하게 열 수 없음"))
+                continue
             if size > CONSULT_REF_MAX_FILE_BYTES:
+                os.close(fd)
                 skipped.append((raw_ref, f"개별 파일 크기 상한 {CONSULT_REF_MAX_FILE_BYTES} bytes 초과"))
                 continue
             if total + size > CONSULT_REFS_MAX_TOTAL_BYTES:
+                os.close(fd)
                 skipped.append((raw_ref, f"전체 크기 상한 {CONSULT_REFS_MAX_TOTAL_BYTES} bytes 초과"))
                 continue
-            suffix = source.suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", source.suffix) else ".bin"
+            suffix = Path(raw_ref).suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", Path(raw_ref).suffix) else ".bin"
             relative = relative_root / f"ref-{number:02d}{suffix.lower()}"
             try:
                 actual = self._copy_consult_ref(
-                    source, ws.dir / relative,
+                    fd, ws.dir / relative,
                     min(CONSULT_REF_MAX_FILE_BYTES, CONSULT_REFS_MAX_TOTAL_BYTES - total),
                 )
             except OSError:
-                return task, f"consult ref를 안전하게 복사할 수 없습니다: {raw_ref}"
+                skipped.append((raw_ref, "안전하게 복사할 수 없음"))
+                continue
             if actual is None:
                 skipped.append((raw_ref, "복사 중 크기 상한 초과"))
                 continue
@@ -810,13 +837,13 @@ class Runner:
             assert ws is not None
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
+            ws.task = task
             if consult_error:
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
                 await emit("agent.log", {"level": "alert", "text": consult_error})
                 await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
                 await emit("task.result", result.model_dump(mode="json"))
                 return result
-            ws.task = task
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
             unruled = [link for link in denied_links if not claude_rule_ready(link)]

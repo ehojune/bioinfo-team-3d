@@ -13,7 +13,7 @@ import json
 import re
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
@@ -957,8 +957,10 @@ class Orchestrator:
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
+        normalized_refs = [str(PurePosixPath(ref.replace("\\", "/"))) for ref in ask.refs]
         signature = hashlib.sha256(
-            f"{ask.task_id}\0{ask.to}\0{ask.question.strip().casefold()}".encode("utf-8")
+            (f"{ask.task_id}\0{ask.to}\0{ask.question.strip().casefold()}\0"
+             + json.dumps(normalized_refs, ensure_ascii=False, separators=(",", ":"))).encode("utf-8")
         ).hexdigest()
         entries = self.hub.store.all("ask")
         current = entries.get(ask.id) or {}
@@ -1056,7 +1058,7 @@ class Orchestrator:
         # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
         # consult will run on that same runner; the runner validates the path and refs before launch.
         same_runner = self.hub.agent_runner.get(routed) == runner_id
-        refs = [ref.replace("\\", "/") for ref in ask.refs] if same_runner else []
+        refs = normalized_refs if same_runner else []
         source_workdir = ask.source_workdir if refs and ask.source_workdir else None
         reference_note = ("참고 파일은 다른 runner에 있어 읽을 수 없다"
                           if ask.refs and not same_runner else "")

@@ -24,6 +24,15 @@ from labhq.util import free_port
 REPO = Path(__file__).resolve().parents[1]
 
 
+def _junction(link: Path, target: Path) -> None:
+    if os.name == "nt":  # a junction needs no symlink privilege
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
 async def _until(predicate, timeout=20.0):
     started = time.time()
     while not predicate():
@@ -171,6 +180,35 @@ async def test_consult_reads_the_ask_workspace_and_verified_refs(tmp_path):
         hub.store.close()
 
 
+async def test_consult_cache_signature_includes_normalized_refs(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True,
+                          text=task.meta["consult_refs"][0])
+
+    hub.dispatch = dispatch
+    common = dict(task_id="source", agent_id="worker", request_id="r", to="cso",
+                  question="What does it say?", why_blocked="Need the artifact",
+                  source_workdir=str(tmp_path / "runs" / "source"))
+    try:
+        await hub.orchestrator.answer_ask(AskRequest(**common, refs=["outputs\\a.tsv"]), "runner")
+        second = AskRequest(**common, refs=["outputs/b.tsv"])
+        await hub.orchestrator.answer_ask(second, "runner")
+        assert len(calls) == 2
+        answer = hub.store.get("ask", second.id)["answer"]
+        assert answer["answer"] == "outputs/b.tsv" and not answer.get("cached")
+    finally:
+        hub.store.close()
+
+
 async def test_gateway_does_not_resolve_a_runner_workdir_when_refs_are_empty(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
@@ -260,6 +298,59 @@ async def test_runner_stages_only_declared_consult_refs(tmp_path, monkeypatch):
         assert [path.name for path in files] == ["ref-01.tsv"]
         assert files[0].read_text(encoding="utf-8") == "n\n3\n"
         assert "refs/" in ctx.task.prompt and "ref-01.tsv" in ctx.task.prompt
+        source_text = str(source.resolve())
+        manifest = (ctx.workdir / "manifest.json").read_text(encoding="utf-8")
+        assert source_text not in ctx.task.prompt and source_text not in manifest
+        assert "source_workdir" not in ctx.task.meta and "consult_refs" not in ctx.task.meta
+    finally:
+        runner.store.close()
+
+
+async def test_runner_skips_ref_when_parent_becomes_a_link_after_validation(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    parent = source / "outputs"
+    parent.mkdir(parents=True)
+    (parent / "table.tsv").write_text("safe", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "table.tsv").write_text("secret", encoding="utf-8")
+    original = runner._consult_workspace_input
+
+    def swap_after_validation(task):
+        result = original(task)
+        moved = source / "original-outputs"
+        parent.rename(moved)
+        try:
+            _junction(parent, outside)
+        except OSError as error:
+            moved.rename(parent)
+            pytest.skip(f"this OS account cannot create the directory link ({error})")
+        return result
+
+    monkeypatch.setattr(runner, "_consult_workspace_input", swap_after_validation)
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the ref", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": ["outputs/table.tsv"]})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok and len(calls) == 1
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        assert list(staged.iterdir()) == []
+        assert "참고 파일 제외" in calls[0].task.prompt
+        assert "secret" not in calls[0].task.prompt
     finally:
         runner.store.close()
 
