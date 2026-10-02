@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -146,12 +147,13 @@ async def test_output_replaced_with_same_size_and_mtime_is_observed(tmp_path, mo
 async def test_output_growing_while_hashed_gets_no_hash(tmp_path, monkeypatch, cap, reason):
     """A writer still appending after the CLI ended: the read stops at the cap, and a size that moved while the
     file was hashed leaves no hash (PR #334 review). The listing saw 4 bytes; 10 are there by the time it reads."""
-    real_fstat, shrunk = os.fstat, set()
+    real_fstat = os.fstat
 
     def fstat(fd):
+        # Every look before hashing starts sees 4 bytes (POSIX also checks the fd when it opens the file); the
+        # check after hashing, made where `digest` exists, sees the 10 bytes the writer left.
         info = real_fstat(fd)
-        if info.st_size == 10 and info.st_ino not in shrunk:
-            shrunk.add(info.st_ino)
+        if info.st_size == 10 and "digest" not in sys._getframe(1).f_locals:
             return type("Stat", (), {name: getattr(info, name) for name in
                                      ("st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns", "st_mode")} | {"st_size": 4})()
         return info
