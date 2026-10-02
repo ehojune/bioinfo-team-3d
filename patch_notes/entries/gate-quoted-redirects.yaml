@@ -11,3 +11,6 @@ rows:
 - sha: e8d7c17
   at: 2026-10-03 08:39
   text: '게이트: PowerShell 호출 연산자·dot-source·[scriptblock]이 있으면 따옴표를 가리지 않음(봇 P1)'
+- sha: 162b23a
+  at: 2026-10-03 08:48
+  text: 'README: 셸 쓰기 검사가 따옴표·heredoc 안의 > 를 다루는 방식'
