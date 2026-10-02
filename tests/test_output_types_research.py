@@ -165,6 +165,22 @@ async def test_turning_off_after_approval_keeps_the_approved_declarations_and_re
     assert req["plan"]["steps"][0]["output_types"][0]["data_type"] == "de_table"
 
 
+@pytest.mark.asyncio
+async def test_resume_under_a_reduced_max_steps_fails_and_keeps_the_approved_plan():
+    """#282 on the research lane: a stored, PI-approved plan is never cut to a lower max_steps or sent to CP1 again."""
+    hub, _ = research_hub([plan_with([])], declare_on=False)
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    approved, steps = req["research_contract"]["plan_sha256"], copy.deepcopy(req["plan"]["steps"])
+    hub.s.orchestrator.max_steps = len(steps) - 1
+    req["status"] = "interrupted"
+    await Orchestrator(hub).run_request("r", resume=True)
+    assert req["status"] == "failed" and f"maximum is {len(steps) - 1}" in req["error"]
+    assert len(hub.approvals) == 1 and req["plan"]["steps"] == steps
+    assert req["research_contract"]["plan_sha256"] == approved
+    assert req["research_contract"]["approval"]["status"] == "approved"
+
+
 def test_pack_values_never_fill_a_declaration():
     entries, _ = declare.normalize_entries(["result1.tsv"], None, V)
     plan = cso.prepare_research_declarations(valid_plan(pack_values=valid_pack_values()), V, {})
