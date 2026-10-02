@@ -12,3 +12,9 @@ rows:
 - sha: 8ffc390
   at: 2026-10-02 22:02
   text: consult staging 경로를 숨기고 ref를 handle로 복사하며 ask cache를 ref별로 분리
+- sha: 6115d9d
+  at: 2026-10-02 22:05
+  text: 'main 병합: held_dir에 consult용 상대 파일 열기와 main의 소유 파일 쓰기를 함께 둠'
+- sha: 8d1830e
+  at: 2026-10-02 22:06
+  text: HeldDir 읽기용 open_read_file과 쓰기용 open_file을 나눔(병합 뒤 같은 이름 충돌)
