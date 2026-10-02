@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
-    ID_FORMATS, STATUS_NEEDS, SourceRef, normalize_artifact_path, normalize_id, registry_id)
+    ID_FORMATS, SEVERAL_SPELLINGS, STATUS_NEEDS, SourceRef, accession_base, accession_parts,
+    normalize_artifact_path, normalize_id, registry_id)
 
 if TYPE_CHECKING:
     from ..research.contract import ResearchResult
@@ -169,34 +170,6 @@ def _skipped(scheme: str, value: str, resolver: str, status: IdStatus, kind: str
                       error_kind=kind, detail=detail)
 
 
-# Schemes where one record has several valid spellings: a version suffix (ENSG...17, NM_...5), a UniProt
-# isoform (P04637-2) or ClinVar's VCV accession beside its numeric variation id.
-_SEVERAL_SPELLINGS = frozenset({"ensembl", "refseq", "uniprot", "clinvar"})
-
-
-def _accession_parts(scheme: str, value: str) -> tuple[str, int | None]:
-    """The base accession and the version or isoform it spells, None when it spells none."""
-    folded = normalize_id(scheme, value)
-    suffix = {"ensembl": r"\.", "refseq": r"\.", "clinvar": r"\.", "uniprot": "-"}.get(scheme)
-    if suffix is None:
-        return folded, None
-    match = re.fullmatch(rf"(.+?)(?:{suffix}(\d+))?", folded)
-    base, number = (match[1], match[2]) if match else (folded, None)
-    if scheme == "clinvar":
-        variation = re.fullmatch(r"vcv0*(\d+)", base)
-        base = variation[1] if variation else base
-    return base, int(number) if number is not None else None
-
-
-def accession_base(scheme: str, value: str) -> str:
-    """The record an accession names with its version, isoform or VCV padding removed (#167).
-
-    ``ENSG00000141510.17`` -> ``ensg00000141510``, ``P04637-2`` -> ``p04637``, ``VCV000012375.3`` -> ``12375``.
-    RCV and SCV accessions keep their prefix: they are other ClinVar records, not variation ids.
-    """
-    return _accession_parts(scheme, value)[0]
-
-
 AccessionMatch = Literal["same", "base_only", "different"]
 
 
@@ -210,9 +183,9 @@ def compare_accessions(scheme: str, cited: str, other: str) -> AccessionMatch:
     """
     if normalize_id(scheme, cited) == normalize_id(scheme, other):
         return "same"
-    if scheme not in _SEVERAL_SPELLINGS:
+    if scheme not in SEVERAL_SPELLINGS:
         return "different"
-    (left, left_suffix), (right, right_suffix) = _accession_parts(scheme, cited), _accession_parts(scheme, other)
+    (left, left_suffix), (right, right_suffix) = accession_parts(scheme, cited), accession_parts(scheme, other)
     if left == right:
         if left_suffix is not None and right_suffix is not None and left_suffix != right_suffix:
             return "different"
@@ -403,6 +376,9 @@ async def _resolve_uri_for_id(uri: str, named: tuple[str, str] | None, cited: tu
     kinds = [compare_accessions(scheme, value, r.id_value) for r in named_records]
     same = [r for r, kind in zip(named_records, kinds) if kind == "same"]
     if same:
+        if scheme in SEVERAL_SPELLINGS and "different" in kinds:
+            return Resolution(**base, status="conflicting", candidates=named_records,
+                              detail=f"the uri resolves to the cited {scheme} and a different accession")
         return Resolution(**base, status="found", record=same[0])
     if "different" in kinds:
         return Resolution(**base, status="conflicting", candidates=named_records,

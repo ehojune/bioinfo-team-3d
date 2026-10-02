@@ -654,6 +654,22 @@ def test_gateway_refuses_to_start_with_a_retired_pack_version(tmp_path):
     assert create_app(settings).state.hub.s is settings
 
 
+def test_gateway_validates_pack_dirs_even_when_research_is_disabled(tmp_path):
+    from labhq.gateway.server import create_app
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.research.enabled = False
+    settings.research.active_packs = []
+    settings.research.pack_dirs = [str(tmp_path / "missing-packs")]
+    with pytest.raises(ValueError, match="research pack directory does not exist"):
+        create_app(settings)
+    assert not (tmp_path / "state").exists()
+
+    settings.research.pack_dirs = []
+    assert create_app(settings).state.hub.s is settings
+
+
 def test_labhq_gateway_stops_with_the_available_pack_version(tmp_path, monkeypatch, capsys):
     from labhq import cli
 
