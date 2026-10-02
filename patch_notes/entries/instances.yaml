@@ -6,3 +6,6 @@ rows:
 - sha: 184ab7d
   at: 2026-10-02 19:24
   text: '--instance: 초기화되지 않은 이름은 기본 설정으로 넘어가지 않고 거부'
+- sha: 54b71be
+  at: 2026-10-02 19:29
+  text: 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir)
