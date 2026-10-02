@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:46 | [`c84bada`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/c84bada) | main의 CI 개선을 병합하며 STATUS·패치노트 기록을 보존하고 README의 HPC 기상 설명을 갱신했습니다. |
 | 14:43 | [`9776d1c`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/9776d1c) | #281·#280의 원인과 수정 전후 반복 검증을 STATUS에 기록했습니다. |
 | 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
 | 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
