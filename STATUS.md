@@ -6,8 +6,8 @@
 
 - 결론: Claude 2.1.282는 `crossSessionInbound`를 지원한다. labhq가 만드는 Claude 직원·bench 명령에 `refuse`를 넣었고, 실제 CLI에서 다른 세션이 이름으로 보낸 메시지가 거부됐다. 90초 뒤 답하는 labhq MCP 호출은 fake CLI로 Claude·Codex 모두, 실제 CLI로 Claude에서 timeout 없이 한 번에 끝났다.
 - 바뀐 것: Claude 직원 `--settings`(모든 profile)와 bench Claude arm에 `crossSessionInbound: "refuse"`. 러너의 labhq MCP timeout 계산을 `labhq_mcp_timeout_s()` 하나로 모았다. 지연 MCP 서버, 각 CLI의 tool timeout 규칙을 따르는 fake CLI, 실제 CLI probe(`scripts/probe_inbound_mcp.py`)를 더했다.
-- 실행한 것: 실제 Claude 2.1.282(sonnet), 임시 폴더, 지연 90초·승인 timeout 60초·labhq MCP timeout 1320초. refuse는 96.2초에 성공하고 서버 호출 1회, 수신 쪽 debug log에 거부와 refused 통지가 남았다. 설정 없음(main)은 95.8초, accept는 96.5초에 끝났고 둘 다 메시지가 직원 세션 큐에 들어갔다. 회귀: inbound 9건·bench 1건이 수정 전 실패, 90초 test는 Codex `tool_timeout_sec`를 빼면 `request timed out`으로 실패했다. 전체 pytest 2499 passed/44 skipped, Node 13개, `scripts/check_public.sh` 통과.
-- 미해결: 실제 Codex 장시간 probe는 Codex 사용량 한도로 돌리지 못했다(`python scripts/probe_inbound_mcp.py codex --output-dir <저장소 밖>`). 보낸 쪽은 `ListAgents`를 막아 PI 세션 목록을 읽지 않고, 실측 원본은 저장소 밖에만 있다.
+- 실행한 것: 실제 Claude 2.1.282(sonnet), 임시 폴더, 지연 90초·승인 timeout 60초·labhq MCP timeout 1320초, 세 설정을 동시에 한 번씩. 세 run 모두 서버 호출 1회·tool error 0으로 marker를 돌려줬다. refuse(97.2초)는 수신 쪽 debug log에 거부가 남고 보낸 쪽에 `Cross-session message refused` 통지가 왔다. 설정 없음(main, 102.0초)과 accept(96.5초)는 메시지가 직원 세션 큐에 들어갔고 거부 통지가 없었다. 회귀: inbound 9건·bench 1건·보낸 쪽 통지 파싱 1건이 수정 전 실패, 90초 test는 Codex `tool_timeout_sec`를 빼면 `request timed out`으로 실패했다. 전체 pytest 2500 passed/44 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 실제 Codex 장시간 probe는 Codex 사용량 한도로 돌리지 못해 #276을 열어 둔다(`python scripts/probe_inbound_mcp.py codex --output-dir <저장소 밖>`). 보낸 쪽은 `ListAgents`를 막아 모델이 PI 세션 목록을 읽지 않지만, 이름을 찾으려고 CLI가 로컬 세션에 접속하는 것은 막지 않는다. 실측 원본은 저장소 밖에만 있다.
 - 근거: `labhq/adapters/claude_code.py`, `labhq/bench.py`, `labhq/runner/daemon.py`, `scripts/probe_inbound_mcp.py`, `tests/test_claude_inbound.py`, `tests/test_long_mcp_call.py`, `tests/test_probe_inbound_mcp.py`.
 
 ## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
