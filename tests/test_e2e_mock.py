@@ -61,7 +61,7 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
     s.gateway.state_dir = s.runner.state_dir = str(tmp_path / "state")
     gport = free_port()
     s.gateway.port, s.gateway.url = gport, f"ws://127.0.0.1:{gport}"
-    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 1
+    s.runner.broker_port, s.runner.force_engine, s.runner.job_poll_s = free_port(), "mock", 0.05
     s.runner.workspace_root = str(tmp_path / "runs")
     s.runner.talent_dir = str(tmp_path / "talent")
     s.runner.agents_dir = str(tmp_path / "agents")

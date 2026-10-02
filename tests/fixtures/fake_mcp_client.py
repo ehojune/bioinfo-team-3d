@@ -49,6 +49,9 @@ def _codex(argv: list[str], name: str) -> tuple[str, list[str], dict[str, str], 
 
 
 async def _call(command: str, args: list[str], env: dict[str, str], timeout_s: float) -> str | None:
+    # The fast long-call test scales both the server delay and this client-side clock. The timeout values parsed
+    # above stay unchanged, so the real Claude/Codex configuration path is still under test.
+    timeout_s *= float(os.environ.get("LABHQ_TEST_TIMEOUT_SCALE", "1"))
     params = StdioServerParameters(command=command, args=args, env={**os.environ, **env})
     async with stdio_client(params) as streams:
         async with ClientSession(streams[0], streams[1]) as session:

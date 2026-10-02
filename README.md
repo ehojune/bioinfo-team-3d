@@ -52,6 +52,8 @@ labhq demo --web   # mock 팀이 계속 일하는 사무실을 브라우저로: 
 labhq demo         # 같은 흐름을 터미널 로그로
 pytest -q
 ```
+90초 MCP 실측까지 포함하려면 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`를 실행합니다.
+
 폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
 게이트웨이 없이 UI만 보려면 `python -m http.server --directory labhq/web 8000` 뒤 `http://127.0.0.1:8000/?demo=1`을 엽니다.
 
