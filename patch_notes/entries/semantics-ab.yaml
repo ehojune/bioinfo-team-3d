@@ -7,3 +7,7 @@ rows:
   at: 2026-10-02 18:47
   text: A/B arm은 연구 요청에만 붙이고, 참조율은 계획 때 요청에 고정한 후보 ID로 판정하며, 그 ID를 쓴 계획이 정보 경계에 걸려
     꺼지지 않게 함
+- sha: e0d71e0
+  at: 2026-10-02 18:58
+  text: 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가
+    읽는 live 상태는 event loop에서 복사
