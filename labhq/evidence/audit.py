@@ -74,15 +74,23 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
     return None, f"이 PC의 runner.workspace_root에 작업 폴더 {workdir_id}가 없습니다"
 
 
-def _compare(recorded: str | None, row: Mapping[str, Any] | None, note: str | None) -> dict[str, Any]:
-    """One output: the hash labhq recorded against what the walker reads now."""
+def _compare(recorded: str | None, row: Mapping[str, Any] | None, note: str | None, *,
+             files_below: int = 0, in_zone: bool = False) -> dict[str, Any]:
+    """One output: the hash labhq recorded against what the walker reads now.
+
+    A path in the result's ``outputs`` is checked for presence even without a recorded hash (over
+    ``output_hash_max_bytes``, changed while hashed, a record from before #334, a wrap-up's outputs). A declared
+    folder has no row of its own, since the walker lists files only: it is there while a file lies under it."""
     if row is None:
-        if recorded is None:
+        if recorded is None and files_below:
             return {"size": None, "sha256": None, "status": UNRECORDED,
-                    "detail": "기록된 해시가 없고 지금 outputs 목록에도 없습니다"}
+                    "detail": f"폴더 산출이라 해시가 없습니다(아래 파일 {files_below}개)"}
+        if in_zone:  # the walker leaves restricted zones out: absence is not shown
+            return {"size": None, "sha256": None, "status": UNCHECKED, "detail": "통제 구역 안이라 확인하지 않았습니다"}
         if note:  # the walk stopped or skipped a folder: absence is not shown
             return {"size": None, "sha256": None, "status": UNCHECKED, "detail": note}
-        return {"size": None, "sha256": None, "status": MISSING, "detail": "기록에 있는데 파일이 없습니다"}
+        return {"size": None, "sha256": None, "status": MISSING,
+                "detail": "기록에 있는데 파일이 없습니다" + ("" if recorded else "(기록된 해시는 없음)")}
     now = row.get("sha256") if isinstance(row.get("sha256"), str) else None
     if row.get("link"):
         status, detail = (UNREADABLE if recorded else UNRECORDED), "지금은 링크라서 따라가지 않았습니다"
@@ -134,6 +142,8 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
 def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     """Compare a request's recorded outputs with the files on this PC. ``exit_code`` 0 clean, 1 problems, 2 when a
     step's work folder is not on this PC."""
+    from ..adapters.owned import case_sensitive_directory
+    from ..intake import overlaps_zone
     from ..runner.workspace import TaskWorkspace, restricted_zones
 
     root = settings.path(settings.runner.workspace_root)
@@ -167,9 +177,15 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
-        by_path = {row["path"]: row for row in records}
-        files += [{**base, "path": path, "recorded_sha256": recorded.get(path),
-                   **_compare(recorded.get(path), by_path.get(path), note)} for path in paths]
+        # A declared name matched a differently cased file on a case-insensitive volume when it was collected.
+        key = (lambda name: name) if case_sensitive_directory(workdir / "outputs") else str.casefold
+        by_path = {key(row["path"]): row for row in records}
+        for path in paths:
+            row = by_path.get(key(path))
+            below = 0 if row else sum(1 for name in by_path if name.startswith(key(path) + "/"))
+            files.append({**base, "path": path, "recorded_sha256": recorded.get(path),
+                          **_compare(recorded.get(path), row, note, files_below=below,
+                                     in_zone=row is None and overlaps_zone(workdir / path, zones))})
     report_check = rerun_report_check(req)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]

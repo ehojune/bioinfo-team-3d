@@ -29,9 +29,12 @@ def _settings(tmp_path: Path) -> Settings:
     return settings
 
 
-async def _run(tmp_path: Path, monkeypatch, write) -> tuple[Settings, TaskResult]:
+async def _run(tmp_path: Path, monkeypatch, write, *, outputs: tuple[str, ...] = ("table.tsv",),
+               hash_max_bytes: int | None = None) -> tuple[Settings, TaskResult]:
     """One step through the real runner with a fake CLI, so the record is what the daemon writes (#334)."""
     settings = _settings(tmp_path)
+    if hash_max_bytes is not None:
+        settings.runner.output_hash_max_bytes = hash_max_bytes
     runner = Runner(settings)
     agent = AgentSpec(id="analyst", name="Analyst", role="test", engine=Engine.claude_code, builtin_mcp=[])
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
@@ -45,7 +48,7 @@ async def _run(tmp_path: Path, monkeypatch, write) -> tuple[Settings, TaskResult
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: FakeCli())
     result = await runner.run_task(Task(id="task-v", request_id="req_v", agent_id="analyst", prompt="write",
-                                        meta={"kind": "step", "step_id": "s1", "outputs": ["table.tsv"]}))
+                                        meta={"kind": "step", "step_id": "s1", "outputs": list(outputs)}))
     return settings, result
 
 
@@ -102,6 +105,55 @@ async def test_deleted_file_is_missing(tmp_path, monkeypatch, capsys):
 
     code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
     assert code == 1 and [row["status"] for row in json.loads(out)["files"]] == ["missing"]
+
+
+async def test_deleted_output_without_a_recorded_hash_is_missing(tmp_path, monkeypatch, capsys):
+    """An output labhq listed but could not hash (over output_hash_max_bytes, changed while hashed, a record from
+    before #334) is still checked for presence: gone is missing, not unrecorded."""
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY),
+                                  hash_max_bytes=8)
+    assert result.outputs == ["outputs/table.tsv"] and result.output_sha256 == {}
+
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
+    assert code == 0 and [row["status"] for row in json.loads(out)["files"]] == ["unrecorded"]
+
+    (Path(result.workdir) / "outputs" / "table.tsv").unlink()
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
+    report = json.loads(out)
+    assert code == 1 and [(row["path"], row["status"]) for row in report["files"]] == [("outputs/table.tsv", "missing")]
+
+
+async def test_declared_folder_output_is_present_while_it_holds_a_file(tmp_path, monkeypatch, capsys):
+    """The walker lists files only: a declared folder with a file under it is there; once removed it is missing."""
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/plots/volcano.png", BODY),
+                                  outputs=("plots",))
+    assert result.outputs == ["outputs/plots"]
+
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
+    assert code == 0, out
+    assert [(row["path"], row["status"]) for row in json.loads(out)["files"]] == [("outputs/plots", "unrecorded")]
+
+    shutil.rmtree(Path(result.workdir) / "outputs" / "plots")
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--json")
+    assert code == 1 and [row["status"] for row in json.loads(out)["files"]] == ["missing"]
+
+
+async def test_output_inside_a_restricted_zone_is_unchecked_not_missing(tmp_path, monkeypatch, capsys):
+    """The walker never lists a restricted zone, so an output there cannot be shown absent."""
+    from labhq.settings import DataZone
+
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY))
+    zone = Path(result.workdir) / "outputs" / "cohort"
+    _write(zone, "rows.tsv", b"row\n")
+    settings.policy.data_zones = [DataZone(path=str(zone))]
+    recorded = result.model_copy(update={"outputs": [*result.outputs, "outputs/cohort/rows.tsv"]})
+
+    code, out = _verify(monkeypatch, capsys, settings, _request(recorded), "--json")
+    rows = {row["path"]: row for row in json.loads(out)["files"]}
+    zoned = rows["outputs/cohort/rows.tsv"]
+    assert rows["outputs/table.tsv"]["status"] == "ok"
+    assert zoned["status"] == "unchecked" and "통제 구역" in zoned["detail"]
+    assert code == 1
 
 
 async def test_unreported_output_is_listed_as_a_warning(tmp_path, monkeypatch, capsys):
