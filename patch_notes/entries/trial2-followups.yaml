@@ -12,3 +12,6 @@ rows:
 - sha: 86a992e
   at: 2026-10-03 07:56
   text: 직원 작업 폴더 규칙을 영어로 맞추고 AGENTS.md test를 UTF-8로 읽음(Windows CI)
+- sha: 612af6a
+  at: 2026-10-03 08:05
+  text: 'main 병합: #339의 wrap-up 해시 test와 이 PR의 미해결 리뷰 test를 둘 다 유지'
