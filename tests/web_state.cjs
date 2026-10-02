@@ -91,6 +91,13 @@ assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,2000);
 fresh.apply({type:'request.step_quota_resumed',request_id:'r3',data:{step_id:'s2',engine:'codex',manual:true}});
 assert.equal(fresh.req('r3').steps.s2,'pending');
 assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,undefined);
+const activeSnapshot=create();
+activeSnapshot.apply({type:'snapshot',data:{requests:[
+  {id:'done-newer',status:'done',created_at:2},
+  {id:'quota-active',status:'waiting_quota',created_at:1},
+]}});
+assert.equal(activeSnapshot.S.current,'quota-active','quota wait remains the selected active request');
+assert.notEqual(activeSnapshot.req('quota-active').phase,'done','quota wait is not rendered as terminal');
 for (const terminal of ['request.completed', 'request.failed']) {
   const costs = create();
   costs.apply({type:'agent.usage',request_id:'other',data:{cost_usd:2}});

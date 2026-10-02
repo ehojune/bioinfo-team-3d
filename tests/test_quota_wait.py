@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from labhq.gateway.server import Hub, create_app
-from labhq.models import Task, TaskResult
+from labhq.models import AskRequest, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
 from labhq.quota import parse_quota_wait
 from labhq.settings import Settings
@@ -53,6 +53,25 @@ def _hub(tmp_path, *, max_wait=1.0):
                          "status": "running"}
     hub.save_request("r")
     return hub
+
+
+@pytest.mark.asyncio
+async def test_waiting_quota_request_routes_parallel_ask(tmp_path):
+    hub = _hub(tmp_path)
+    hub.requests["r"]["status"] = "waiting_quota"
+    routed = asyncio.Event()
+
+    async def answer_ask(_ask, _runner_id):
+        routed.set()
+
+    hub.orchestrator.answer_ask = answer_ask
+    ask = AskRequest(task_id="parallel", agent_id="worker", request_id="r", to="cso",
+                     question="다른 단계의 결과가 필요한가요?", why_blocked="병렬 단계가 진행 중")
+    hub.store.put("ask", ask.id, {"state": "pending", "ask": ask.model_dump(mode="json")})
+    hub._start_ask(ask, "runner")
+
+    await asyncio.wait_for(routed.wait(), 0.2)
+    assert hub.store.get("ask", ask.id)["state"] == "working"
 
 
 @pytest.mark.asyncio

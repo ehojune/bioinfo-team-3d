@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .costs import cost_detail, cost_text
+from .request_status import is_terminal_request
 from .settings import Settings
 from .util import free_port, short
 
@@ -382,7 +383,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                      "새로 받은 WGS 배치 표준 QC [hpc] [needs-approval]"]
             for i in range(10**6):
                 rid = hub.create_request(RequestIn(text=texts[i % 2]))
-                await until(lambda: hub.requests[rid]["status"] != "running",
+                await until(lambda: is_terminal_request(hub.requests[rid]["status"]),
                             max(120, approve_timeout + 60) if phone else 120)
                 if i == 0 and "c_scanpy" not in hub.agents:
                     await asyncio.sleep(3)
@@ -393,7 +394,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         print(f"\n=== 정규직 {len(hub.agents)}명 출근 · 오케스트레이션 요청 ===\n")
         rid = hub.create_request(RequestIn(
             text="공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]"))
-        await until(lambda: hub.requests[rid]["status"] != "running", 60)
+        await until(lambda: is_terminal_request(hub.requests[rid]["status"]), 60)
         print("\n--- CSO 최종 보고 ---\n" + (hub.requests[rid].get("report") or ""))
 
         print("\n=== CSO 채용 제안을 PI가 승인 → 파견직 채용 (Paper2Agent) ===\n")
@@ -403,7 +404,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         await until(lambda: "c_scanpy" in hub.agents, 30)
         rid2 = hub.create_request(RequestIn(text="scanpy 논문 방식으로 PBMC 전처리·클러스터링 계획 자문",
                                             mode="direct", agent_id="c_scanpy"))
-        await until(lambda: hub.requests[rid2]["status"] != "running", 30)
+        await until(lambda: is_terminal_request(hub.requests[rid2]["status"]), 30)
         print("\n--- 파견직 응답 ---\n" + (hub.requests[rid2].get("report") or ""))
         print(f"\n작업 폴더(실험노트): {tmp / 'runs'}\n인재풀: {tmp / 'talent'}")
     finally:

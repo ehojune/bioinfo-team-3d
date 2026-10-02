@@ -28,13 +28,13 @@ from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskR
 from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, holds_session
 from ..research.packs import check_configured_packs
+from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
 from ..util import short
 
 log = logging.getLogger(__name__)
-TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
@@ -192,7 +192,7 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if req.get("status") in {"running", "waiting_for_runner"}:
+            if is_active_request(req.get("status")) and req.get("status") != "waiting_quota":
                 req["status"] = "interrupted"
                 self.save_request(rid)
             stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
@@ -316,7 +316,7 @@ class Hub:
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
-            if not entry.get("accepted") or req.get("status") not in {"running", "waiting_quota"}:
+            if not entry.get("accepted") or not is_active_request(req.get("status")):
                 continue
             if not entry.get("completed"):
                 state = "running"
@@ -1054,23 +1054,23 @@ class Hub:
             return self.requests.get(ask.request_id, {}).get("status") if ask.request_id else "running"
 
         status = request_status()
-        if status not in {"waiting_for_runner", "running"} | TERMINAL_REQUEST_STATES:
+        if not is_active_request(status) and not is_terminal_request(status):
             return
         previous = self.ask_tasks.get(ask.id)
         if previous and not previous.done():
-            if status not in TERMINAL_REQUEST_STATES:
+            if not is_terminal_request(status):
                 return
             previous.cancel()
 
         async def route() -> None:
             # Recheck after scheduling: a resume decision or terminal checkpoint may intervene.
             status = request_status()
-            if status in TERMINAL_REQUEST_STATES:
+            if is_terminal_request(status):
                 request = self.requests.get(ask.request_id, {})
                 await self.resolve_ask(ask, runner_id, ask_result(
                     reason=f"request {status}: {request.get('error') or 'request ended'}", **{"from": "labhq"}))
                 return
-            if status not in {"waiting_for_runner", "running"}:
+            if not is_active_request(status):
                 return
             entry = self.store.get("ask", ask.id) or {}
             self.store.put("ask", ask.id, {**entry, "state": "working"})
@@ -1204,7 +1204,7 @@ class Hub:
     def start_followup(self, rid: str, text: str) -> dict:
         """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
         req = self.requests[rid]
-        if req.get("status") not in TERMINAL_REQUEST_STATES:
+        if not is_terminal_request(req.get("status")):
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
         if any(f.get("status") == "running" for f in req.get("followups") or []):
             raise ValueError("a follow-up for this request is still running")
@@ -1285,14 +1285,14 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
         for rid, request in hub.requests.items():
-            if request.get("status") in TERMINAL_REQUEST_STATES:
+            if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
             elif request.get("status") == "waiting_quota":
                 asyncio.create_task(hub.resume_quota_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
-        running = [r["id"] for r in hub.requests.values() if r.get("status") == "running"]
+        running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))
 
@@ -1384,7 +1384,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not 1 <= limit <= 200:
             raise HTTPException(422, "limit must be 1..200")
         requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
-        return [hub.request_summary(r) for r in requests if status == "all" or r.get("status") == status][:limit]
+        return [hub.request_summary(r) for r in requests
+                if status == "all" or (status == "running" and is_active_request(r.get("status")))
+                or r.get("status") == status][:limit]
 
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:
@@ -1489,7 +1491,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/health")
     async def health() -> dict:
         return {"service": "labhq gateway", "runners": list(hub.runners), "agents": len(hub.agents),
-                "active_requests": sum(r.get("status") == "running" for r in hub.requests.values()),
+                "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
                 "running_tasks": len(hub.running_tasks())}
 
     @app.get("/", response_class=HTMLResponse)

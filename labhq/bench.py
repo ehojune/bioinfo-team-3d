@@ -22,6 +22,7 @@ import yaml
 from .bench_permissions import inside
 from .costs import aggregate_costs, classify_cost, cost_detail, format_cost
 from .policy import WRITE_LIKE
+from .request_status import is_terminal_request
 from .util import atomic_write_text, free_port, merge_staff_env, parent_claude_markers
 
 REPO = Path(__file__).resolve().parents[1]
@@ -359,7 +360,7 @@ async def _run_labhq(case: dict[str, Any], arm_dir: Path, engines: str, base_set
                                            budget_usd=float(case["budget_usd"]),
                                            meta={"case_id": case["id"]}))
         timeout = float(case.get("timeout_s", settings.runner.task_timeout_s))
-        await _until(lambda: hub.requests[rid]["status"] != "running", timeout,
+        await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), timeout,
                      f"benchmark request timed out after {timeout:g}s")
         request = hub.requests[rid]
         record = hub.rounds.write(rid)

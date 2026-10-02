@@ -3,6 +3,10 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
+const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota']);
+const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
+const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
+const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
 // Cost text (#270): confirmed, price-table estimate and unaccounted tasks stay apart; an unknown is never $0.
 const usd = v => `$${(Number(v) || 0).toFixed(2)}`;
 function costParts(actual, estimated, unknown) {
@@ -111,7 +115,7 @@ function endApproval(id, effects) {
 }
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  S.current = (all.find(r => r.status === 'running') || all[0] || {}).id || null;
+  S.current = (all.find(r => isActiveRequest(r.status)) || all[0] || {}).id || null;
 }
 function syncRoster(list, replay) {
   const ids = new Set(list.map(a => a.id));
@@ -161,7 +165,7 @@ function apply(ev, replay = false) {
         Object.assign(q.steps, r.step_status || {});
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
-        if (r.status !== 'running') q.phase = 'done';
+        if (!isActiveRequest(r.status)) q.phase = 'done';
       }
       const restored = new Map();
       for (const task of d.running_tasks || []) {
@@ -392,5 +396,6 @@ function toolLabel(name) {
 
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel };
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel,
+  isActiveRequest, isTerminalRequest };
 })(globalThis);
