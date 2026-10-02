@@ -1928,16 +1928,19 @@ class ShadowService:
         except OSError as exc:
             log.warning("semantics shadow record not written (%s)", type(exc).__name__)
             failed = True
-        self.outcome(failed=failed)
+        self.outcome(failed=failed, followup=line.get("type") == "followup")
 
-    def outcome(self, *, failed: bool, on_loop: bool = False) -> None:
+    def outcome(self, *, failed: bool, on_loop: bool = False, followup: bool = False) -> None:
         """Count one job. ``on_loop``: called on the gateway event loop, so breaker.json is written by a short
-        daemon thread instead of there (#173)."""
+        daemon thread instead of there (#173). ``followup``: a follow-up observation that succeeded neither resets
+        nor dilutes the request window; one that failed still counts (#260)."""
         with self.lock:
-            self.recent.append(failed)
-            self.consecutive = self.consecutive + 1 if failed else 0
             if failed:
                 self.counts["failures"] += 1
+            elif followup:
+                return
+            self.recent.append(failed)
+            self.consecutive = self.consecutive + 1 if failed else 0
             self.window_seq += 1
             window = (self.window_seq, self.epoch, list(self.recent), self.consecutive)
         self.check_window()

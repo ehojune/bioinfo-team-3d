@@ -379,6 +379,27 @@ async def test_the_closed_epochs_worker_never_takes_the_new_epochs_pending_count
     assert [(line["phase"], line["epoch"]) for line in _lines(tmp_path)] == [("ended", 2)]
 
 
+async def test_a_followup_success_never_clears_the_b1_failure_window(tmp_path, monkeypatch):
+    """#260: a succeeded follow-up line is written but neither resets nor dilutes the request window; a failed
+    one still counts, as before."""
+    from labhq.research import semantics_actions as acts
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    service.outcome(failed=True)
+    service.outcome(failed=True)
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.drain(10)
+    assert [line["status"] for line in _lines(tmp_path)] == ["ok"]
+    assert service.consecutive == 2 and list(service.recent) == [True, True] and service.latched is None
+    monkeypatch.setattr(acts, "followup_line", lambda *a, **k: 1 / 0)
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.drain(10)
+    assert service.latched == "consecutive_failures" and list(service.recent) == [True, True, True]
+
+
 def acts_report(lines):
     from labhq.research import semantics_actions as acts
     return acts.report(lines, setting="shadow", on=True)
