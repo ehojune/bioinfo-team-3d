@@ -14,15 +14,20 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
+| 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
 | 19:38 | [`2b02934`](https://github.com/ehojune/bioinfo-team-3d/pull/306/commits/2b02934) | plan-only 재개는 계획 저장 전에는 계획 담당만, 저장 뒤에는 아무 실행 직원도 기다리지 않는다(#293) |
+| 19:36 | [`60c3249`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/60c3249) | pipeline PR은 확장자로 코드만 받고 json·yaml·md는 정해진 pipeline 경로에서만 받음. 성공으로 끝난 turn의 산출만 제출 |
 | 19:34 | [`db85ace`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/db85ace) | main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림 |
 | 19:29 | [`54b71be`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/54b71be) | 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir) |
+| 19:26 | [`803aecb`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/803aecb) | 새 pipeline 자동 PR은 기본 꺼짐(policy.bioinfo_agent.pipeline_pr로 켬). 켜도 pipeline 소스와 https 테스트 목록만 받고 절대경로는 모두 거부 |
 | 19:24 | [`58c8d98`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/58c8d98) | main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지 |
 | 19:24 | [`184ab7d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/184ab7d) | --instance: 초기화되지 않은 이름은 기본 설정으로 넘어가지 않고 거부 |
 | 19:20 | [`d22ef09`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/d22ef09) | main(#296 CSO A/B) 병합: ab 모드도 액션 층 설정으로 읽고, A2는 mode shadow 또는 ab에 actions: confirm일 때만 |
 | 19:19 | [`ef7c08d`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/ef7c08d) | 이름별 빈 포트·경로·token 설정 생성과 모든 명령의 --instance 선택, 웹·홈 화면 instance 이름 표시를 추가 |
 | 19:18 | [`c8334ce`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/c8334ce) | 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록 |
 | 19:17 | [`9efe399`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9efe399) | 입력 적합성 그림자 모듈·관계표·테스트를 제거 목록에 넣고 관계표를 research로 옮김 |
+| 19:09 | [`9fa63ca`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/9fa63ca) | bioinfo-agent 질문은 CSO가 답하고 새 파이프라인은 공개 검사 뒤 bioinfo-agent 저장소 PR로 올림 |
 | 19:05 | [`1a77466`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/1a77466) | 리뷰 P1 고침: 실행 잠금·intent 기록의 폴더까지 fsync(Windows는 NTFS 저널), 직원용 설정 사본은 task마다 새 이름으로 쓰고 링크 폴더 거부·끝나면 삭제. A2 실행기는 그림자를 거쳐서만 불림(pilot 규칙) |
 | 18:58 | [`e0d71e0`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/e0d71e0) | 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가 읽는 live 상태는 event loop에서 복사 |
 | 18:53 | [`9bb746c`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9bb746c) | 로컬 operation 관계표로 단계 입력 종류의 fit·mismatch·unknown을 그림자 집계 |
