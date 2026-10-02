@@ -15,6 +15,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 15:29 | [`040750c`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040750c) | 요청별 CSO 엔진이 바뀌어도 새 엔진에서 읽기 전용(Codex sandbox read-only, Claude Read·Glob·Grep)으로 돌고, plan_only 요청은 재시작 뒤 resume돼도 step을 돌리지 않음 |
 | 15:19 | [`040d420`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040d420) | --cso-model 요청의 이어 묻기·CSO 상담도 고른 엔진·모델로 실행하고, 지킬 수 없으면 레지스트리 CSO로 바꾸지 않고 실패 |
 | 15:01 | [`07c700f`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/07c700f) | 요청별 CSO 계획 모드와 모델 선택 |
+| 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
+| 14:43 | [`58ec1e5`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/58ec1e5) | README: EDAM 표가 main에 들어간 것을 반영(위치·CC BY-SA 4.0·NOTICE) |
+| 14:36 | [`f86150f`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/f86150f) | 일반 요청 snapshot에 input_refs를 남겨 명시적 artifact edge로 씀 |
+| 14:36 | [`eb6f293`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/eb6f293) | 같은 digest의 후대 산출도 ancestry가 아님을 회귀로 고정 |
+| 14:35 | [`327eb23`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/327eb23) | EDAM 표 NOTICE를 저장소 라이선스 결정(#252)에 맞추고 병합 가능 상태로 둠 |
 | 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
 | 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
 | 13:53 | [`c7d40b8`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/c7d40b8) | 문헌·웹 검색 담당(lit_scout)에도 공개 과학 MCP 다섯 개, 과학 리뷰어에는 인용 확인용 PubMed·bioRxiv |
@@ -33,6 +38,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:12 | [`7de511d`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/7de511d) | README·STATUS에 inbound 거부와 장시간 MCP 실측 기록 |
 | 11:12 | [`90c1c7a`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/90c1c7a) | Claude 직원과 bench arm이 crossSessionInbound refuse로 교차 세션 inbound 메시지를 거부 |
 | 11:12 | [`688231b`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/688231b) | 90초 뒤 답하는 labhq MCP 호출이 Claude·Codex fake CLI에서 timeout 없이 한 번에 끝나는 test |
+| 11:11 | [`95641ea`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/95641ea) | artifact ancestry를 명시적 edge로만 축약 |
+| 11:05 | [`8a4a115`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/8a4a115) | 짧은 직원 ID도 그림자 정보 경계의 employee_id로 막음 |
+| 11:01 | [`87413b2`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/87413b2) | 손상된 request 줄의 rows가 semantics report를 끝내지 않게 함 |
+| 11:00 | [`1fe7cb2`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/1fe7cb2) | 이어 묻기 성공이 B1 breaker 창을 지우지 않게 함 |
+| 10:58 | [`1f83e36`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/1f83e36) | 새 epoch에서 이전 이어 묻기 backlog와 pending 몫을 정리 |
 | 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
 | 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
 | 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
@@ -55,6 +65,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 05:51 | [`556b7dd`](https://github.com/ehojune/bioinfo-team-3d/pull/265/commits/556b7dd) | Windows 무인 Codex의 직원 전용 홈에 elevated sandbox setup marker가 없으면 실행 전에 멈추고, setup helper 취소 1223을 `sandbox_setup_required` 원인으로 보존했습니다 (#262). 더 약한 sandbox로 자동 전환하지 않습니다. |
 | 05:41 | [`ea41669`](https://github.com/ehojune/bioinfo-team-3d/pull/264/commits/ea41669) | 연구 계획의 검증된 어휘 판본 hash가 정보 경계를 잘못 끄던 문제를 고치고 자동 off에 칸·부류만 남겼다 |
 | 03:56 | [`e83a2a0`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/e83a2a0) | **대기 중인 이어 묻기 관측이 끝난 요청의 B1 기록 자리를 막던 문제를 고쳤습니다** (#149 결정 13, 독립 검증 P1). 액션을 켠 상태에서 이어 묻기 관측이 queue에 먼저 있으면 요청 줄이 busy로 빠지고 busy 수가 올라, 5번 연속이면 B1 전체가 꺼졌습니다. 요청 job을 넣기 직전에 대기 중인 이어 묻기 관측을 뒤로 돌리게 했고 회귀 test를 넣었습니다. |
+| 03:34 | [`5c02fa8`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/5c02fa8) | 병합된 #249 위에 EDAM 부분집합 표·고지·생성·검증 묶음만 보존하고 #252 PI 결정을 대기 (#252) |
 | 03:34 | [`ebe3608`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/ebe3608) | **README와 STATUS에 액션 층 그림자의 설정과 한계를 적었습니다** (#149 결정 13). `semantics.actions` 설정, 빈 실행 허용 목록, HPC 거부, 확인형 보류, 제거 순서를 §8에 넣었습니다. A2를 다시 열 조건과 알려진 한계는 §10에 있습니다. |
 | 03:29 | [`548498e`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/548498e) | **액션 층만 따로 지우는 `--only actions`를 제거 스크립트에 넣었습니다** (#149 결정 13). 액션 파일과 표시한 연결 줄만 지우고 B1 그림자는 남깁니다. `--check`가 임시 사본에서 컴파일, 남은 참조, 기존 state 읽기, B1 줄 기록, 관련 test를 확인합니다. |
 | 03:29 | [`370d20c`](https://github.com/ehojune/bioinfo-team-3d/pull/257/commits/370d20c) | **`labhq semantics report`에 액션 층 절을 더했습니다** (#149 결정 13). 관측 창, 실제로 취해진 수, 전제와 어긋난 사례(막힌 중에 실행됨, 읽기 전용인데 접수됨), 관측 못 한 건, 깨진 칸을 따로 보여 주고 A2 검토 자료를 붙입니다. 액션이 꺼져 있고 기록이 없으면 보고서는 전과 같습니다. |

@@ -180,6 +180,40 @@ def test_boundary_findings_keep_field_and_category_without_the_value(value, sens
     assert value not in json.dumps(findings)
 
 
+def test_every_known_staff_id_is_an_employee_id_whatever_its_length():
+    """#266: roster, plan, result and task ids are collected; a short one matches a whole value only."""
+    snap = {"requests": {"r": {"plan": {"steps": [{"id": "s1", "agent_id": "ab"}]},
+                               "results": {"s1": {"agent_id": "cd"}}}},
+            "tasks": {"t": {"payload": {"agent_id": "ef"}, "result": {"agent_id": "synthetic_staff_17"}}},
+            "agents": {"xy": {"engine": "mock"}}}
+    sensitive = shadow.sensitive_values(snap)
+    assert {k for k, v in sensitive.items() if v == "employee_id"} == {"ab", "cd", "ef", "xy", "synthetic_staff_17"}
+    for value in ("ab", "cd", "ef", "xy", "synthetic_staff_17", "run:synthetic_staff_17"):
+        assert shadow.boundary_findings({"objects": {"unexpected": value}}, sensitive) == [
+            {"field": "objects", "class": "employee_id"}]
+    assert shadow.boundary_problems({"objects": {"unexpected": "galaxy_reads", "x": "abcdef12"}}, sensitive) == []
+
+
+def test_a_short_staff_id_leak_turns_the_service_off_without_recording_the_value(tmp_path, monkeypatch):
+    """#266: the service path, with field and class only in disabled.json and the auto_off line."""
+    service = _service(tmp_path)
+    service.hub.agents["xy"] = {"id": "xy", "engine": "mock", "employment": "core"}
+    real = shadow.compute_line
+
+    def leaky(snap, *args, **kwargs):
+        line = real(snap, *args, **kwargs)
+        line["objects"]["unexpected"] = "xy"
+        return line
+
+    monkeypatch.setattr(shadow, "compute_line", leaky)
+    _run(service, ["req_001"])
+    expected = [{"field": "objects", "class": "employee_id"}]
+    assert service.latched == "info_boundary" and _disabled(tmp_path)["boundary"] == expected
+    assert _lines(tmp_path, "auto_off")[-1]["boundary"] == expected and _lines(tmp_path, "request") == []
+    for path in (tmp_path / "state" / "semantics").iterdir():
+        assert '"xy"' not in path.read_text(encoding="utf-8")
+
+
 def test_only_the_current_vocabulary_hash_is_public_in_its_version_field():
     version = shadow.output_vocab.current().sha256
     sensitive = {version: "identifier"}
