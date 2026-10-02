@@ -14,7 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:00 | [`16d12b4`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/16d12b4) | session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을 놓지 않음 |
 | 19:58 | [`7a14808`](https://github.com/ehojune/bioinfo-team-3d/pull/310/commits/7a14808) | 파일 도구 경로의 환경 변수는 펼치지 않고, 셸 쓰기에는 작업 폴더의 원래 표기도 허용한다(#236 #237) |
+| 19:54 | [`21007da`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/21007da) | consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209) |
 | 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
 | 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
 | 19:38 | [`2b02934`](https://github.com/ehojune/bioinfo-team-3d/pull/306/commits/2b02934) | plan-only 재개는 계획 저장 전에는 계획 담당만, 저장 뒤에는 아무 실행 직원도 기다리지 않는다(#293) |
