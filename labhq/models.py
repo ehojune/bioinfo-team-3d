@@ -175,6 +175,8 @@ class TaskResult(BaseModel):
     missing_outputs: list[str] = []
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
     output_types: dict[str, Any] = {}
+    output_sha256: dict[str, str] = {}
+    unreported_outputs: list[str] = []
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
     pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
@@ -205,6 +207,10 @@ class TaskResult(BaseModel):
         if isinstance(data, dict):
             if not data.get("output_types"):
                 data.pop("output_types", None)
+            if not data.get("output_sha256"):
+                data.pop("output_sha256", None)
+            if not data.get("unreported_outputs"):
+                data.pop("unreported_outputs", None)
             if data.get("pipeline_submission") is None:
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
