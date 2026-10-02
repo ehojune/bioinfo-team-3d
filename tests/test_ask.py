@@ -224,8 +224,7 @@ async def test_consult_on_another_runner_withholds_the_source_workspace(tmp_path
         hub.store.close()
 
 
-@pytest.mark.parametrize("outside", [False, True])
-async def test_runner_validates_consult_refs_in_the_source_workspace(tmp_path, monkeypatch, outside):
+async def test_runner_stages_only_declared_consult_refs(tmp_path, monkeypatch):
     settings = Settings()
     settings.runner.state_dir = str(tmp_path / "state")
     settings.runner.workspace_root = str(tmp_path / "runs")
@@ -233,9 +232,13 @@ async def test_runner_validates_consult_refs_in_the_source_workspace(tmp_path, m
     agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
     monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
     source = Path(settings.runner.workspace_root) / "source"
-    source.mkdir(parents=True)
-    ref = source / "table.tsv"
+    (source / ".claude" / "rules").mkdir(parents=True)
+    ref = source / "outputs" / "table.tsv"
+    ref.parent.mkdir()
     ref.write_text("n\n3\n", encoding="utf-8")
+    (source / "secret.tsv").write_text("not declared", encoding="utf-8")
+    (source / "CLAUDE.md").write_text("untrusted instruction", encoding="utf-8")
+    (source / ".claude" / "rules" / "policy.md").write_text("untrusted rule", encoding="utf-8")
     calls = []
 
     class Adapter:
@@ -246,15 +249,117 @@ async def test_runner_validates_consult_refs_in_the_source_workspace(tmp_path, m
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
     task = Task(agent_id="cso", prompt="Read table.tsv", meta={
         "kind": "consult", "source_workdir": str(source),
-        "consult_refs": ["../outside.tsv" if outside else "table.tsv"]})
+        "consult_refs": ["outputs/table.tsv"]})
     try:
         result = await runner.run_task(task)
-        if outside:
-            assert not result.ok and "consult refs" in (result.error or "")
-            assert calls == []
-        else:
-            assert result.ok
-            assert str(source.resolve()) in calls[0].extra_dirs
+        assert result.ok
+        ctx = calls[0]
+        assert str(source.resolve()) not in ctx.extra_dirs
+        staged = ctx.workdir / "refs" / f"consult-{task.id}"
+        files = [path for path in staged.rglob("*") if path.is_file()]
+        assert [path.name for path in files] == ["ref-01.tsv"]
+        assert files[0].read_text(encoding="utf-8") == "n\n3\n"
+        assert "refs/" in ctx.task.prompt and "ref-01.tsv" in ctx.task.prompt
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("raw_ref", ["../outside.tsv", "folder"])
+async def test_runner_rejects_non_file_consult_refs(tmp_path, monkeypatch, raw_ref):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    (source / "folder").mkdir(parents=True)
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the ref", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": [raw_ref]})
+    try:
+        result = await runner.run_task(task)
+        assert not result.ok and "consult refs" in (result.error or "")
+        assert calls == []
+    finally:
+        runner.store.close()
+
+
+async def test_runner_renames_instruction_named_consult_refs(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    (source / ".claude" / "rules").mkdir(parents=True)
+    refs = ["CLAUDE.md", "AGENTS.md", "GEMINI.md", ".claude/rules/policy.md"]
+    for raw_ref in refs:
+        path = source / raw_ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(raw_ref, encoding="utf-8")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the refs", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": refs})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        names = {path.name.casefold() for path in staged.iterdir()}
+        assert names == {f"ref-{number:02d}.md" for number in range(1, 5)}
+        assert not {"claude.md", "agents.md", "gemini.md"} & names
+        assert ".claude" not in {part.casefold() for path in staged.rglob("*") for part in path.parts}
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("cap", ["file", "total"])
+async def test_runner_skips_consult_refs_over_size_caps(tmp_path, monkeypatch, cap):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    monkeypatch.setattr("labhq.runner.daemon.CONSULT_REF_MAX_FILE_BYTES", 4)
+    monkeypatch.setattr("labhq.runner.daemon.CONSULT_REFS_MAX_TOTAL_BYTES", 6)
+    source = Path(settings.runner.workspace_root) / "source"
+    source.mkdir(parents=True)
+    (source / "first.txt").write_bytes(b"1234")
+    (source / "second.txt").write_bytes(b"56789" if cap == "file" else b"5678")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read refs", meta={
+        "kind": "consult", "source_workdir": str(source),
+        "consult_refs": ["first.txt", "second.txt"]})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        assert [path.name for path in staged.iterdir()] == ["ref-01.txt"]
+        assert "참고 파일 제외" in calls[0].task.prompt
+        assert "second.txt" in calls[0].task.prompt and "상한" in calls[0].task.prompt
     finally:
         runner.store.close()
 
