@@ -14,7 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:26 | [`4277230`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/4277230) | 분석가·QC 직원 지침에 donor 구조 반영, seed 고정, 연관으로 서술을 더했다. |
+| 08:26 | [`b9e6af3`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/b9e6af3) | 과학 리뷰어 지침에 과잉 일반화·cherry-picking·추측 점검과 근거 문장 인용을 더했다. |
 | 08:25 | [`7bda364`](https://github.com/ehojune/bioinfo-team-3d/pull/341/commits/7bda364) | 결정함 다시 그리기가 쓰던 답의 포커스를 뺏지 않게: 렌더마다 모든 카드를 다시 끼우지 않고 끝난 카드만 빼고 새 카드만 끼움(2.5D·3D 공통) |
+| 08:25 | [`0adac90`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/0adac90) | 계획 프롬프트의 PI 질문을 폰 카드에 맞게 700자 이하, 질문 먼저로 정했다. |
+| 08:24 | [`c5fbe36`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/c5fbe36) | 단계 프롬프트에 조용한 방법 하향 금지와 폰 카드용 PI 질문 형식을 더했다. |
+| 08:23 | [`04e820c`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/04e820c) | 직원 공통 규칙에 실패한 조회·0건 결과의 보고 방법과 방법 하향 공개를 더했다. |
 | 08:05 | [`612af6a`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/612af6a) | main 병합: #339의 wrap-up 해시 test와 이 PR의 미해결 리뷰 test를 둘 다 유지 |
 | 07:56 | [`86a992e`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/86a992e) | 직원 작업 폴더 규칙을 영어로 맞추고 AGENTS.md test를 UTF-8로 읽음(Windows CI) |
 | 07:54 | [`7788c97`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/7788c97) | verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘) |
