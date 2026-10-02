@@ -18,3 +18,6 @@ rows:
 - sha: 8d1830e
   at: 2026-10-02 22:06
   text: HeldDir 읽기용 open_read_file과 쓰기용 open_file을 나눔(병합 뒤 같은 이름 충돌)
+- sha: bf27728
+  at: 2026-10-02 22:20
+  text: consult ref 복사의 이진 모드를 keyword로 넘겨 text encoding 검사를 통과
