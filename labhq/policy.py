@@ -38,31 +38,400 @@ _REDIRECT = re.compile(r'''>{1,2}\s*("[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 NULL_DEVICES = frozenset({"/dev/null", "nul", "nul:", "$null", "\\\\.\\nul", "//./nul"})
 
 
-def _shell_write_targets(command: str) -> Iterator[str]:
+_REDIRECT_OP = re.compile(r">{1,2}")
+_BARE_WORD = re.compile(r"[^\s|;&<>]+")
+_PS_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also quotes with typographic marks
+_PS_DOUBLE = '"\u201c\u201d\u201e'
+_PS_SINGLE_AT = re.compile(f"[{_PS_SINGLE}]")
+_HERE_STRING_HEADER = re.compile(r"[ \t\r]*\n")
+_HERE_STRING_AFTER = " \t\r\n=(,;|{+"  # a PowerShell here-string opens only at a token start
+
+# Quoted text is read as data only when every command on the line is known to treat it so. Any other program
+# (a shell, eval, source, sed, at, an alias, a script) may run it as code, and then the raw text is scanned.
+_DATA_COMMANDS = frozenset({"cd", "pwd", "ls", "cat", "head", "tail", "wc", "echo", "printf", "grep", "egrep",
+                            "fgrep", "mkdir", "touch", "cp", "mv", "true", "false"})  # not test: -v 'a[$(cmd)]' runs
+_PS_DATA_COMMANDS = frozenset({
+    "write-output", "write", "echo", "write-host", "get-content", "gc", "cat", "type", "set-content", "add-content",
+    "out-file", "select-string", "sls", "get-childitem", "gci", "ls", "dir", "get-item", "gi", "test-path",
+    "join-path", "split-path", "resolve-path", "get-location", "pwd", "set-location", "cd", "sl", "copy-item", "copy",
+    "cp", "cpi", "move-item", "move", "mv", "mi", "get-date", "select-object", "select", "sort-object",
+    "measure-object", "format-table", "format-list", "out-string", "out-null", "convertto-json", "convertfrom-json",
+    "new-object"})
+# String and file methods. InvokeScript, Create, Start, Invoke and the like may run their argument.
+_PS_DATA_METHODS = frozenset({
+    "replace", "split", "join", "trim", "trimstart", "trimend", "substring", "contains", "startswith", "endswith",
+    "indexof", "lastindexof", "tolower", "toupper", "tolowerinvariant", "toupperinvariant", "padleft", "padright",
+    "insert", "remove", "equals", "format", "concat", "isnullorempty", "isnullorwhitespace", "tostring", "escape",
+    "unescape", "match", "matches", "ismatch", "readalltext", "readalllines", "writealltext", "writealllines",
+    "appendalltext", "exists", "combine", "getfilename", "getdirectoryname", "getextension", "getfullpath", "new"})
+_GIT_DATA_SUBCOMMANDS = frozenset({"add", "commit", "status", "diff", "log", "show", "restore", "switch", "checkout",
+                                   "branch", "tag", "stash", "rm", "mv", "rev-parse", "ls-files", "blame"})
+_BASH_KEYWORDS = frozenset({"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "esac", "time",
+                            "!", "{", "}"})
+_BASH_NOT_A_COMMAND = frozenset({"for", "select", "case", "function", "[["})  # the rest of the segment is not one
+_PS_KEYWORDS = frozenset({"if", "elseif", "else", "switch", "foreach", "for", "while", "do", "until", "try", "catch",
+                          "finally", "return", "throw", "break", "continue", "exit", "param", "begin", "process",
+                          "end", "trap"})
+# An interpreter is data-safe only for inline code (-c, -e, '-' or stdin) that calls no process API.
+_INTERPRETER = re.compile(r"python(?:\d+(?:\.\d+)*)?|pythonw|py|rscript|node", re.I)
+_INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-"})
+_PROCESS_CALL = re.compile(r"\b(?:system\w*|popen\w*|subprocess|create_subprocess\w*|spawn\w*|posix_spawn\w*|exec\w*|"
+                           r"shell\w*|startfile|createprocess\w*|pipe|eval|getoutput|getstatusoutput|check_output|"
+                           r"check_call|child_process|processx|__import__|import_module)\b", re.I)
+_BASH_WHOLE_WORD = re.compile(r"\$(?:\{[^{}()\[\]]*\}|\(\([^()]*\)\)|\[[^\[\]]*\])")  # ${..} $((..)) $[..]
+_BASH_REDIRECTION = re.compile(r"\d*(?:&>>?|[<>]&|<<<|<<-?|>>?|<>|[<>])\s*[^\s|;&<>()]*")
+_BASH_SEPARATOR = re.compile(r"[|;&\n()]|(?<!\S)[{}](?!\S)")
+_BASH_ASSIGNMENT = re.compile(r"[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=")
+_PS_SEPARATOR = re.compile(r"\|\||&&|[|;\n(){}]")
+# After a value only an assignment or foreach's 'in' starts a pipeline; in a command, 'a=b' is text.
+_PS_PIPELINE_AFTER_VALUE = re.compile(r"(?<![=!<>])=(?!=)|(?<!\S)in(?!\S)", re.I)
+_PS_ENV_ASSIGNMENT = re.compile(r"\$\{?env:[^\s=;|]*\s*[-+*/%?]?=(?!=)", re.I)
+# The call operator '&', dot-sourcing '. ' and a [scriptblock] cast: each can run quoted text as code.
+_PS_INVOKES_TEXT = re.compile(
+    r"(?<!&)&(?!&)|(?:^|(?<=[\s;|({]))\.\s|\[\s*(?:system\.management\.automation\.)?scriptblock\s*\]", re.I)
+_PS_PROVIDER = re.compile(r"(?<![\w:])(?:\$\{?)?(?:alias|function):|(?<![\w$:{])(?:env|variable):", re.I)
+_PS_MEMBER_CALL = re.compile(r"(?:\.|::)\s*([^\s.:(){}\[\],;|=+\-*/%!<>]*)(?:\[[^\]]*\])?\(")  # also .M[T](
+
+
+def _braces_closed(text: str) -> bool:
+    depth = 0
+    for k, ch in enumerate(text):
+        if ch == "{" and (depth or text[k - 1:k] == "$"):
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+    return depth == 0
+
+
+def _heredoc_word(command: str, j: int) -> tuple[str, bool, int] | None:
+    """The delimiter after `<<`/`<<-` at j: (text without quotes, quoted?, end index), or None if unreadable."""
+    while j < len(command) and command[j] in " \t":
+        j += 1
+    start, word, quoted = j, "", False
+    while j < len(command) and command[j] not in " \t\r\n|&;()<>":
+        ch = command[j]
+        if ch == "'":
+            end = command.find("'", j + 1)
+            if end < 0:
+                return None
+            word, quoted, j = word + command[j + 1:end], True, end + 1
+        elif ch == '"':
+            end = command.find('"', j + 1)
+            if end < 0 or "\\" in command[j:end]:
+                return None
+            word, quoted, j = word + command[j + 1:end], True, end + 1
+        elif ch == "\\":
+            word, quoted, j = word + command[j + 1:j + 2], True, j + 2
+        else:
+            word, j = word + ch, j + 1
+    # Bash drops the '$' of $'..' and $"..", and an extglob '@(' continues the word: read neither here.
+    if not word or "$" in command[start:j] or "`" in command[start:j] or command.startswith("(", j):
+        return None
+    return word, quoted, j
+
+
+def _blank_non_syntax(command: str, powershell: bool) -> str | None:
+    """`command` with strings, comments and here-document bodies blanked at the same length.
+
+    Strings and escaped characters become '_' (a string stays one word); comments and here-document bodies
+    become spaces. Returns None, and the caller scans the raw text as before, wherever the shell might read
+    the text differently: an unterminated quote or here-document, a substitution that can nest quotes, a '#'
+    that may not start a comment, a '<<' that may not start a here-document, or a command that may run the
+    quoted text as code (see _quoted_text_is_data).
+    """
+    single, double = (_PS_SINGLE, _PS_DOUBLE) if powershell else ("'", '"')
+    escape = "`" if powershell else "\\"
+    out, n = list(command), len(command)
+    heredocs: list[tuple[str, bool, bool]] = []
+    # bash: open brackets as (closer, inside ${..}, ((..)), $[..] or a subscript/[[..]]). '<<' inside any of them
+    # and '#' or a quote inside the second kind are not read here.
+    stack: list[tuple[str, bool]] = []
+    prev = "\n"  # the last character read as syntax; the start of the command counts as a line start
+    i = 0
+
+    def blank(start: int, end: int, ch: str) -> None:
+        out[start:end] = ch * (len(out[start:end]))
+
+    while i < n:
+        c = command[i]
+        if c == escape:
+            if command.startswith("\n", i + 1):  # a line continuation: the shell joins the two lines
+                blank(i, i + 2, " ")
+            else:
+                blank(i, i + 2, "_")
+                prev = "_"
+            i += 2
+            continue
+        if powershell:
+            if command.startswith(("<#", "--%"), i):  # block comment, or stop-parsing: not read here
+                return None
+            if command.startswith("${", i):  # a braced variable name is literal up to '}'
+                end = command.find("}", i)
+                if end < 0 or escape in command[i:end]:
+                    return None
+                i, prev = end + 1, "}"
+                continue
+            header = _HERE_STRING_HEADER.match(command, i + 2) if c == "@" and command[i + 1:i + 2] else None
+            if header and command[i + 1] in single + double:
+                if i and command[i - 1] not in _HERE_STRING_AFTER:
+                    return None  # 'x@' + quote is part of a generic token, not a here-string
+                closers = single if command[i + 1] in single else double
+                k = header.end()  # the closing quote and '@' must start a line
+                while not (k < n and command[k] in closers and command.startswith("@", k + 1)):
+                    k = command.find("\n", k) + 1
+                    if k == 0:
+                        return None
+                if closers == double and "$(" in command[header.end():k]:
+                    return None
+                blank(i, k + 2, "_")
+                i, prev = k + 2, "_"
+                continue
+        else:
+            if c == "`":
+                return None
+            if c == "\n" and heredocs:
+                if stack:
+                    return None
+                i += 1
+                for delimiter, strip_tabs, quoted in heredocs:
+                    start = i
+                    while True:
+                        end = command.find("\n", i)
+                        end = n if end < 0 else end
+                        line = command[i:end].lstrip("\t") if strip_tabs else command[i:end]
+                        if line == delimiter:
+                            break
+                        if end == n:
+                            return None
+                        i = end + 1
+                    if not quoted and ("$(" in command[start:i] or "`" in command[start:i]):
+                        return None
+                    blank(start, end, " ")
+                    i = end + 1
+                heredocs.clear()
+                prev = "\n"
+                continue
+            if command.startswith("<<", i):
+                if command.startswith("<<<", i):
+                    i, prev = i + 3, "<"
+                    continue
+                # Inside brackets '<<' may be a shift ($[1<<2], a[1<<2]=) or an extglob character; Git Bash ends
+                # a here-document at 'EOF\r' and Linux bash does not.
+                if stack or "\r" in command:
+                    return None
+                strip_tabs = command.startswith("<<-", i)
+                word = _heredoc_word(command, i + 2 + strip_tabs)
+                if word is None:
+                    return None
+                heredocs.append((word[0], strip_tabs, word[1]))
+                blank(i + 2, word[2], "_")
+                i, prev = word[2], "_"
+                continue
+            if command.startswith(("${", "(("), i):
+                stack += [("}" if c == "$" else ")", True)] * (1 if c == "$" else 2)
+                i, prev = i + 2, command[i + 1]
+                continue
+            unit = any(inner for _, inner in stack)
+            if c in "'\"" and unit:
+                return None  # $(( '$(cmd)' )) and [[ 'a[$(cmd)]' -eq 0 ]] run cmd: quotes there do not quote
+            if c in "([{":
+                test_word = c == "[" and prev in " \t\n;|&(!" and command[i + 1:i + 2] in (" ", "\t")  # '[ -f x ]'
+                stack.append((")]}"["([{".index(c)], unit or (c == "[" and not test_word)))
+            elif c in ")]}" and stack:  # with nothing open, ')' ends a case pattern
+                if stack.pop()[0] != c:
+                    return None
+        if c == "#":
+            if prev in (" \t\r\n;|" if powershell else " \t\n;|&"):  # bash: a carriage return is a word character
+                if any(unit for _, unit in stack):
+                    return None
+                end = command.find("\n", i)
+                end = n if end < 0 else end
+                blank(i, end, " ")
+                i = end
+                continue
+            if powershell or prev in "()<>":
+                return None  # PowerShell ends a token before '#' after '$x', '{', ',' ...; bash after ')' is unsure
+        if c in single:
+            if powershell:
+                j = i
+                while True:
+                    found = _PS_SINGLE_AT.search(command, j + 1)
+                    if not found:
+                        return None
+                    j = found.start()
+                    if not (j + 1 < n and command[j + 1] in single):
+                        break
+                    j += 1  # a doubled quote is a literal quote
+            else:
+                j = command.find("'", i + 1)
+                if j < 0 or (prev == "$" and "\\" in command[i:j]):  # $'...' takes backslash escapes
+                    return None
+            blank(i, j + 1, "_")
+            i, prev = j + 1, "_"
+            continue
+        if c in double:
+            j = i + 1
+            while j < n:
+                if command[j] == escape:
+                    j += 2
+                elif command[j] not in double:
+                    j += 1
+                elif powershell and j + 1 < n and command[j + 1] in double:
+                    j += 2  # a doubled quote is a literal quote
+                else:
+                    break
+            if j >= n:
+                return None
+            body = command[i + 1:j]
+            if "$(" in body or (not powershell and "`" in body) or not _braces_closed(body):
+                return None
+            blank(i, j + 1, "_")
+            i, prev = j + 1, "_"
+            continue
+        prev = c
+        i += 1
+    skeleton = "".join(out)
+    if skeleton != command and not _quoted_text_is_data(command, skeleton, powershell):
+        return None
+    return skeleton
+
+
+def _spans(text: str, separator: re.Pattern) -> Iterator[tuple[int, int]]:
+    start = 0
+    for match in separator.finditer(text):
+        yield start, match.start()
+        start = match.end()
+    yield start, len(text)
+
+
+def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
+    """'data' if `name` reads its quoted arguments as text, 'inline' for an interpreter's inline code, else None."""
+    base = re.split(r"[\\/]", name)[-1].casefold()
+    base = base[:-4] if base.endswith(".exe") else base
+    if _INTERPRETER.fullmatch(base):
+        for arg in args:
+            if arg in _INLINE_CODE_FLAGS:
+                break
+            if arg == "-m" or not arg.startswith("-"):
+                return None  # a module or script file may do anything with its arguments
+        return "inline"
+    if name.casefold() not in (base, base + ".exe"):
+        return None  # './cat' or 'C:\x\echo.exe' may be any program
+    if base == "git":
+        return "data" if args and args[0] in _GIT_DATA_SUBCOMMANDS else None  # not 'git -c alias.x=!..'
+    if base == "printf" and not powershell and any(arg.startswith("-v") for arg in args):
+        return None  # 'printf -v' assigns a variable
+    return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
+
+
+def _quoted_text_is_data(command: str, skeleton: str, powershell: bool) -> bool:
+    """Whether every command in `command` reads its strings, comments and here-documents only as text.
+
+    The commands come from `skeleton`, the command with that text blanked. Anything not known to be safe
+    makes the answer False: an unknown program, a quoted or variable command name, an environment
+    assignment, a PowerShell call operator or member call outside a short list of string methods, or inline
+    interpreter code that calls a process API.
+    """
+    def blanked(start: int, end: int) -> bool:
+        return skeleton[start:end] != command[start:end]
+
+    inline = False
+    if powershell:
+        if _PS_PROVIDER.search(command) or _PS_ENV_ASSIGNMENT.search(skeleton):
+            return False  # 'Set-Content env:X', '$env:X = ..', 'alias:ls' change what later commands run
+        if _PS_INVOKES_TEXT.search(skeleton):
+            # '& (..)', '. (..)' and a [scriptblock] cast run a string as code wherever they stand, inside
+            # parentheses too, where segment splitting would lose them (PR #340 review).
+            return False
+        for call in _PS_MEMBER_CALL.finditer(skeleton):
+            if blanked(*call.span(1)) or call.group(1).casefold() not in _PS_DATA_METHODS:
+                return False
+        text, separator = skeleton, _PS_SEPARATOR
+    else:
+        text, before = skeleton, None
+        while text != before:
+            before, text = text, _BASH_WHOLE_WORD.sub(lambda m: "$" * len(m.group()), text)
+        text, separator = _BASH_REDIRECTION.sub(lambda m: " " * len(m.group()), text), _BASH_SEPARATOR
+    pending = list(_spans(text, separator))
+    while pending:
+        start, end = pending.pop()
+        words = list(_BARE_WORD.finditer(text, start, end))
+        keywords, fold = (_PS_KEYWORDS, str.casefold) if powershell else (_BASH_KEYWORDS, str)
+        k = 0
+        while k < len(words) and fold(words[k].group()) in keywords and not blanked(*words[k].span()):
+            k += 1
+        if k == len(words):
+            continue
+        word = words[k]
+        if powershell:
+            if text[words[k - 1].end() if k else start:word.start()].strip():
+                return False  # the call operator '&', or a redirection before the command
+            first = command[word.start()]
+            if first == "`":
+                return False  # '`iex' is the command iex
+            member = first == "." and text[word.start() - 1:word.start()] in (")", "]", "}")  # (..).Replace
+            if (blanked(word.start(), word.start() + 1) or first in "$[@0123456789" or member
+                    or (first in "-+!," and not k)):
+                # A value, never a command; its member calls were checked above. '$a, [int]$b = iex x' and
+                # 'foreach ($x in iex x)' start a pipeline after it.
+                after = _PS_PIPELINE_AFTER_VALUE.search(text, word.start(), end)
+                if after:
+                    pending.append((after.end(), end))
+                continue
+        elif word.group() in _BASH_NOT_A_COMMAND:
+            continue
+        elif _BASH_ASSIGNMENT.match(word.group()):
+            return False  # 'GIT_EDITOR=..' reaches later commands even without a prefix
+        if blanked(*word.span()) or "$" in word.group():
+            return False
+        kind = _data_command(word.group(), [w.group() for w in words[k + 1:]], powershell)
+        if kind is None:
+            return False
+        inline = inline or kind == "inline"
+    return not (inline and _PROCESS_CALL.search(command))
+
+
+def _named_write_targets(words: list[str]) -> Iterator[str]:
+    if not words:
+        return
+    name = words[0].casefold()
+    if name not in {"set-content", "out-file", "add-content", "new-item",
+                    "copy-item", "move-item", "cp", "mv"}:
+        return
+    for flag in ("-literalpath", "-path", "-filepath", "-destination"):
+        for i, word in enumerate(words[:-1]):
+            if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
+                yield words[i + 1]
+    if name in {"copy-item", "move-item", "cp", "mv"}:
+        yield words[-1]
+    elif len(words) > 1 and not words[1].startswith("-"):
+        yield words[1]
+
+
+def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str]:
     """Find obvious literal write destinations; expansions and aliases are not parsed.
 
+    Only shell syntax is read: a '>' or a command name inside a string, comment or here-document is text.
+    When that split is unsure the raw text is scanned, which over-reports but never hides a write.
     Null devices (`2>/dev/null`, `> $null`, `> NUL`) discard output and are not writes.
     """
-    for match in _REDIRECT.finditer(command):
-        target = match.group(1).strip("\"'")
-        if target.casefold() not in NULL_DEVICES:
+    text = _blank_non_syntax(command, powershell)
+    # Positions come from the blanked text, values from the command. Every '>' is tried, so a quoted target
+    # never swallows a later redirect, as `> "$(cmd > /x)"` did when the raw text was matched in one pass.
+    for op in _REDIRECT_OP.finditer(command if text is None else text):
+        match = _REDIRECT.match(command, op.start())
+        target = match.group(1).strip("\"'") if match else ""
+        if target and target.casefold() not in NULL_DEVICES:
             yield target
-    for segment in re.split(r"[|;&\n]", command):
-        words = [m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
-        if not words:
-            continue
-        name = words[0].casefold()
-        if name not in {"set-content", "out-file", "add-content", "new-item",
-                        "copy-item", "move-item", "cp", "mv"}:
-            continue
-        for flag in ("-literalpath", "-path", "-filepath", "-destination"):
-            for i, word in enumerate(words[:-1]):
-                if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
-                    yield words[i + 1]
-        if name in {"copy-item", "move-item", "cp", "mv"}:
-            yield words[-1]
-        elif len(words) > 1 and not words[1].startswith("-"):
-            yield words[1]
+    if text is None:
+        segments = [[m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
+                    for segment in re.split(r"[|;&\n]", command)]
+    else:
+        segments = [[command[m.start():m.end()].strip("\"'")
+                     for m in _BARE_WORD.finditer(text, seg.start(), seg.end())]
+                    for seg in re.finditer(r"[^|;&\n]+", text)]
+    for words in segments:
+        yield from _named_write_targets(words)
 
 
 @dataclass
@@ -792,7 +1161,7 @@ def _evaluate_tool(
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
         roots = [_norm(r) for r in allowed_roots if r]
-        for target in _shell_write_targets(cmd):
+        for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
             if _drive_relative(target):
                 return Decision("ask", f"drive-relative shell write destination: {target}")
             if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
