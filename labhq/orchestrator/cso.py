@@ -1272,7 +1272,8 @@ class Orchestrator:
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
                               "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
-                              "outputs": ["PARTIAL_STATUS.md"]})
+                              "outputs": ["PARTIAL_STATUS.md"],
+                              "collect_direct_outputs": task.meta.get("kind") == "direct"})
             try:
                 partial = await dispatch_with_retry(wrap, max_attempts=1)
                 note = ("partial results saved" if partial.outputs else

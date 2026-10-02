@@ -840,7 +840,7 @@ class Runner:
                 found.append(relative)
         listed_outputs: list[str] | None = None
         output_scan_note: str | None = None
-        if task.meta.get("kind") == "direct":
+        if task.meta.get("kind") == "direct" or task.meta.get("collect_direct_outputs") is True:
             # No plan declares a direct run's outputs: its folder is listed, so the shadow sees them too (#221).
             listed_outputs, output_scan_note = await asyncio.to_thread(
                 ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,

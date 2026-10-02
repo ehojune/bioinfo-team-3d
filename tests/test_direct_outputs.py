@@ -307,6 +307,25 @@ def test_the_file_cap_is_the_shadow_hash_cap():
     assert workspace_module.OUTPUT_SCAN_MAX_FILES == shadow.HASH_MAX_FILES
 
 
+@pytest.mark.parametrize("case_sensitive, expected", [
+    (False, ["outputs/table.tsv"]),
+    (True, ["outputs/result.md", "outputs/table.tsv"]),
+])
+def test_labhq_result_names_follow_the_outputs_volume_case_rule(tmp_path, monkeypatch, case_sensitive, expected):
+    ws = _workspace(tmp_path)
+    _files(ws.dir, {"outputs/result.md": "agent", "outputs/table.tsv": "data"})
+    monkeypatch.setattr(workspace_module, "_case_sensitive", lambda _path: case_sensitive)
+    found, note = ws.scan_outputs([], max_entries=100, max_depth=4)
+    assert found == expected
+    assert note is None
+
+
+def test_readme_documents_direct_round_output_paths_and_cap():
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+    round_section = readme.split("- **라운드 기록**", 1)[1].split("\n- **", 1)[0]
+    assert "direct" in round_section and "outputs/" in round_section and "200" in round_section
+
+
 @pytest.mark.asyncio
 async def test_a_step_run_still_reports_only_its_declared_outputs(tmp_path, monkeypatch):
     runner = _runner(tmp_path, monkeypatch, lambda wd: _files(wd, {"outputs/a.tsv": "a", "outputs/b.tsv": "b"}))
