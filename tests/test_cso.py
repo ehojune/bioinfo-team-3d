@@ -851,6 +851,43 @@ async def test_cancellation_skips_dependents():
 
 
 @pytest.mark.asyncio
+async def test_targeted_revision_waits_for_a_transitive_ancestor_outside_its_direct_dependencies():
+    """s9 must wait for revised s5 even though unchanged s8 is its only direct dependency."""
+    s5_started = asyncio.Event()
+    release_s5 = asyncio.Event()
+    s5_done = asyncio.Event()
+    s9_started = asyncio.Event()
+
+    async def dispatch(task):
+        sid = task.meta["step_id"]
+        if sid == "s5":
+            s5_started.set()
+            await release_s5.wait()
+            s5_done.set()
+        elif sid == "s9":
+            assert s5_done.is_set(), "s9 started before its revised transitive ancestor s5 finished"
+            s9_started.set()
+        return result(task, text=f"{sid} revised")
+
+    steps = [
+        {"id": "s5", "agent_id": "worker", "instruction": "revise source", "depends_on": []},
+        {"id": "s8", "agent_id": "worker", "instruction": "unchanged bridge", "depends_on": ["s5"]},
+        {"id": "s9", "agent_id": "worker", "instruction": "revise report", "depends_on": ["s8"]},
+    ]
+    outcomes = {sid: TaskResult(task_id=f"old-{sid}", agent_id="worker", ok=True, text=f"old {sid}")
+                for sid in ("s5", "s8", "s9")}
+    run = asyncio.create_task(Orchestrator(FakeHub(dispatch)).run_dag(
+        "r", "question", steps, outcomes, only={"s5", "s9"},
+        feedback={"s5": "fix source", "s9": "use corrected source"}))
+    await s5_started.wait()
+    await asyncio.sleep(0)
+    assert not s9_started.is_set()
+    release_s5.set()
+    await run
+    assert s9_started.is_set()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("approved", [False, True])
 async def test_parallel_budget_decision_preserves_completed_steps_and_controls_new_starts(approved):
     d_started = asyncio.Event()

@@ -1490,6 +1490,17 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
+        ancestors: dict[str, set[str]] = {}
+        for sid in by_id:
+            pending = list(by_id[sid]["depends_on"])
+            found: set[str] = set()
+            while pending:
+                ancestor = pending.pop()
+                if ancestor in found:
+                    continue
+                found.add(ancestor)
+                pending.extend(by_id[ancestor]["depends_on"])
+            ancestors[sid] = found
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
@@ -1585,8 +1596,9 @@ class Orchestrator:
                 return await self.run_step(task)
 
         while todo or running:
-            # ready = no dependency still pending in this run (deps outside `only` already have results)
-            ready = [sid for sid in todo if not any(d in todo or d in running for d in by_id[sid]["depends_on"])]
+            # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
+            # on every ancestor in this run prevents a downstream revision from reading the bridge's stale result.
+            ready = [sid for sid in todo if not any(d in todo or d in running for d in ancestors[sid])]
             for sid in ready:
                 todo.discard(sid)
                 if rid in self.budget_denials:
