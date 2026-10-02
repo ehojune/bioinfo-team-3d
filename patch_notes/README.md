@@ -17,11 +17,21 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
 | 13:40 | [`c9c75af`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/c9c75af) | inbound probe가 보낸 쪽의 거부 통지도 summary에 남김 |
 | 13:40 | [`6a35f19`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/6a35f19) | Biology 담당에 공개 과학 MCP 다섯 개를 붙임: PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials |
+| 13:35 | [`c3a96a4`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/c3a96a4) | STATUS에 #271·#282 재계획·resume 결과를 기록함 |
 | 13:35 | [`783a393`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/783a393) | 라이선스 표에 제3자 예외를 적음: three.js는 MIT, placeholder.gltf는 CC0 |
+| 13:31 | [`bc36dca`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/bc36dca) | 연구 lane 저장 계획도 max_steps가 줄면 승인 계획을 그대로 둔 채 실패함을 test로 고정함 |
+| 13:31 | [`0b37a22`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0b37a22) | 최종 보고 작성 prompt에도 재계획 이력을 넘기고 revise 재계획 규칙을 명시함 |
 | 13:31 | [`79fa709`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/79fa709) | 저장소 라이선스를 정함: 코드는 GPL-3.0, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0 (README 배지·§14) |
+| 13:30 | [`7bee353`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7bee353) | 재시작 뒤 진행 중이던 재계획 시도에도 줄어든 max_replans를 적용함 |
+| 13:30 | [`d0a20d1`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d0a20d1) | 재계획이 완료 단계의 의존성을 바꾸지 않고 유지해 새 id 언급 때문에 시도가 통째로 실패하지 않음 |
+| 11:13 | [`0391e34`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0391e34) | wake 한도에서 멈춘 단계는 재계획 대상에서 제외함 |
 | 11:12 | [`7de511d`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/7de511d) | README·STATUS에 inbound 거부와 장시간 MCP 실측 기록 |
 | 11:12 | [`90c1c7a`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/90c1c7a) | Claude 직원과 bench arm이 crossSessionInbound refuse로 교차 세션 inbound 메시지를 거부 |
 | 11:12 | [`688231b`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/688231b) | 90초 뒤 답하는 labhq MCP 호출이 Claude·Codex fake CLI에서 timeout 없이 한 번에 끝나는 test |
+| 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
+| 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
+| 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
+| 08:46 | [`64e5b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/64e5b9e) | 저장 계획이 현재 max_steps보다 길면 resume에서 자르지 않고 제한 위반으로 실패시킴 (#282) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |
 | 08:01 | [`1ad77e8`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/1ad77e8) | 외부 절대·home·drive 입력을 산출 치환과 workspace artifact dependency 추론에서 제외 |
