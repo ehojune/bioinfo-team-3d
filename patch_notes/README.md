@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:19 | [`040d420`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040d420) | --cso-model 요청의 이어 묻기·CSO 상담도 고른 엔진·모델로 실행하고, 지킬 수 없으면 레지스트리 CSO로 바꾸지 않고 실패 |
 | 15:01 | [`07c700f`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/07c700f) | 요청별 CSO 계획 모드와 모델 선택 |
 | 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
 | 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
