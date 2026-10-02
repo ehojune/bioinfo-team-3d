@@ -12,6 +12,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:43 | [`9776d1c`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/9776d1c) | #281·#280의 원인과 수정 전후 반복 검증을 STATUS에 기록했습니다. |
 | 13:53 | [`c7d40b8`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/c7d40b8) | 문헌·웹 검색 담당(lit_scout)에도 공개 과학 MCP 다섯 개, 과학 리뷰어에는 인용 확인용 PubMed·bioRxiv |
 | 13:47 | [`9fbe44c`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/9fbe44c) | STATUS의 #276 실측을 마지막 probe 수치로 갱신 |
 | 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
@@ -30,7 +31,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:12 | [`688231b`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/688231b) | 90초 뒤 답하는 labhq MCP 호출이 Claude·Codex fake CLI에서 timeout 없이 한 번에 끝나는 test |
 | 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
 | 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
+| 10:48 | [`1bc647f`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/1bc647f) | agent 실행 중 끝난 HPC job도 pending_jobs에 남겨 jobs.finished wake가 유실되지 않게 했습니다. |
 | 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
+| 08:52 | [`61ccd25`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/61ccd25) | event-loop test가 worker join·blocking put 호출을 예외 밖에서 검증하게 바꿨습니다. |
 | 08:46 | [`64e5b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/64e5b9e) | 저장 계획이 현재 max_steps보다 길면 resume에서 자르지 않고 제한 위반으로 실패시킴 (#282) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |
