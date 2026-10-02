@@ -1,0 +1,5 @@
+pr: 303
+rows:
+- sha: ef7c08d
+  at: 2026-10-02 19:19
+  text: 이름별 빈 포트·경로·token 설정 생성과 모든 명령의 --instance 선택, 웹·홈 화면 instance 이름 표시를 추가
