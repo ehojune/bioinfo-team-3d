@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:38 | [`2b02934`](https://github.com/ehojune/bioinfo-team-3d/pull/306/commits/2b02934) | plan-only 재개는 계획 저장 전에는 계획 담당만, 저장 뒤에는 아무 실행 직원도 기다리지 않는다(#293) |
 | 19:34 | [`db85ace`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/db85ace) | main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림 |
 | 19:29 | [`54b71be`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/54b71be) | 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir) |
 | 19:24 | [`58c8d98`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/58c8d98) | main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지 |
