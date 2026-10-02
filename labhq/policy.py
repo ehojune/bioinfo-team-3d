@@ -437,9 +437,10 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     Bash/PowerShell `ask` rules naming each path.
 
     A path with no rule form (UNC) gets no deny rule; the approval gate still sees shell commands that name it.
-    Claude's deny rules do not cover Bash, and a pattern pre-approved in --allowedTools (`Bash(python *)`) never
-    reaches the gate; an ask rule outranks that allow, so such a command goes to the permission tool (the gate)
-    after all. Probed on Claude 2.1.282: `ask: ["Bash(*/.sec/*)"]` stopped a pre-approved `python -c` read.
+    These rules are the first layer only: Claude compares them literally, so a case-varied or aliased spelling
+    passes them. The structural check is that no shell command and no outside read is pre-approved while these
+    paths are active (`claude_allowed_tools` with `read_roots`), so such calls reach the gate. Probed on Claude
+    2.1.282: `ask: ["Bash(*/.sec/*)"]` stopped a pre-approved `python -c` read.
     """
     from .private_paths import shell_needles
 
@@ -471,7 +472,27 @@ def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
-def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.PathLike]) -> list[str]:
+SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
+
+
+def rule_tool(rule: str) -> str:
+    """The tool a permission rule names: `Bash(python *)` → `Bash`."""
+    return rule.split("(", 1)[0].strip()
+
+
+def _root_rules(tool: str, roots: Iterable[str | os.PathLike]) -> list[str]:
+    rules = []
+    for root in roots:
+        for resolve in (os.path.abspath, os.path.realpath):
+            try:
+                rules.append(f"{tool}(/{claude_rule_path(resolve(root))}/**)")
+            except (OSError, ValueError):
+                continue
+    return rules
+
+
+def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.PathLike],
+                         read_roots: Iterable[str | os.PathLike] | None = None) -> list[str]:
     """`--allowedTools` with bare Write/Edit narrowed to `Edit(//root/**)` rules for the write roots (#219).
 
     A bare `Write` pre-approves every path, so the gate never saw Claude write `C:/tmp/...` on Windows
@@ -479,18 +500,25 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     NotebookEdit. Claude pre-approves a write only when the path as written and its resolved path both match, so a
     root spelled through a link or junction gets a rule for each spelling (probes junction_*). A spelling with no
     rule form (UNC) is left to the gate.
+
+    `read_roots` is given while PI personal paths are active (policy.private_paths). Claude matches rule text
+    literally, so a case-varied (`C:/USERS/PI/.SSH`) or aliased spelling slips past every deny and ask rule. Then no
+    shell rule is pre-approved (`Bash(python *)`, bare `Bash`) and every Read/Grep/Glob rule becomes
+    `Read(//root/**)` for the task's own folders: those calls reach the gate, which canonicalizes the text and
+    resolves real paths. Probed on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_read_scope_alias.json):
+    bare `Read` read a junction from the workdir into another folder, `Read(//workdir/**)` sent it to the
+    permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
     """
     tools = list(tools)
+    read_rules: list[str] = []
+    if read_roots is not None:
+        if any(rule_tool(t) in READ_LIKE for t in tools):
+            read_rules = _root_rules("Read", read_roots)
+        tools = [t for t in tools if rule_tool(t) not in SHELL_TOOLS | READ_LIKE]
     kept = [t for t in tools if t not in WRITE_LIKE]
-    if len(kept) == len(tools):
-        return kept
-    for root in write_roots:
-        for resolve in (os.path.abspath, os.path.realpath):
-            try:
-                kept.append(f"Edit(/{claude_rule_path(resolve(root))}/**)")
-            except (OSError, ValueError):
-                continue
-    return list(dict.fromkeys(kept))
+    if len(kept) != len(tools):
+        kept += _root_rules("Edit", write_roots)
+    return list(dict.fromkeys([*kept, *read_rules]))
 
 
 _ROOTED_NO_DRIVE = re.compile(r"^[/\\](?![/\\])")  # `/tmp/x`, `\tmp\x`; not UNC, not `C:/x`
@@ -589,20 +617,28 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                       home: str | None, environ: Mapping[str, str] | None) -> Decision | None:
     """PI personal paths (policy.private_paths): file tools are denied, a shell command naming one asks the PI.
 
-    Claude's deny rules already stop the file tools; this is the gate's copy of that rule. A file tool's free
-    text (content, a Grep pattern) is not a path being opened and is not checked.
+    While private paths are active Claude pre-approves no shell command and no read outside the task's folders
+    (`claude_allowed_tools`), so this is where those calls are judged: the text is canonicalized (case-folded where
+    the volume is, `~`, variables, admin shares, `\\\\?\\`) and paths are resolved (links, junctions, 8.3 names). A
+    file tool's free text (content, a Grep pattern) is not a path being opened and is not checked; a Glob
+    pattern's folder part is.
     """
     if not private_paths:
         return None
     from .private_paths import mentioned_private_path, path_field_text
 
     if tool_name in READ_LIKE | WRITE_LIKE:
-        keys = (*_PRIVATE_PATH_KEYS, "pattern") if tool_name == "Glob" else _PRIVATE_PATH_KEYS
-        for key in keys:
-            value = tool_input.get(key)
+        # (value, folder a relative value starts from): path fields from the workdir, a Glob pattern from its path.
+        values = [(tool_input.get(key), workdir) for key in _PRIVATE_PATH_KEYS]
+        if tool_name == "Glob" and isinstance(tool_input.get("pattern"), str):
+            base = workdir
+            if isinstance(tool_input.get("path"), str) and tool_input["path"]:
+                base = path_field_text(tool_input["path"], workdir)
+            values += [(tool_input["pattern"], base), (_glob_base(tool_input["pattern"]), base)]
+        for value, base in values:
             if not isinstance(value, str) or not value:
                 continue
-            spelled = path_field_text(value, workdir)
+            spelled = path_field_text(value, base)
             spellings = {spelled}
             if os.path.isabs(spelled):  # a link in the workspace can lead to a personal folder
                 try:
@@ -613,11 +649,27 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                 return Decision("deny", f"{tool_name} path is a PI personal path (policy.private_paths); it is "
                                         "outside every staff task. Do not open it; ask the CSO if the task needs it.")
         return None
-    if tool_name in {"Bash", "PowerShell"}:
+    if tool_name in SHELL_TOOLS:
         cmd = str(tool_input.get("command", ""))
         if mentioned_private_path(cmd, private_paths, home, environ):
             return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`")
+        # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
+        hit = touches_resolved({"command": cmd}, private_paths, workdir=workdir)
+        if hit:
+            return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
+                                   f"its paths were not all resolved: `{cmd[:200]}`")
     return None
+
+
+def _glob_base(pattern: str) -> str:
+    """The folder a Glob pattern starts from: everything before the first component with a wildcard."""
+    out = []
+    for part in re.split(r"([/\\])", pattern):
+        if any(char in part for char in "*?[{"):
+            break
+        out.append(part)
+    base = "".join(out).rstrip("/\\")
+    return base or (pattern[:1] if pattern[:1] in "/\\" else "")
 
 
 def _evaluate_tool(

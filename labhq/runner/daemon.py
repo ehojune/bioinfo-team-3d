@@ -31,8 +31,9 @@ from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Eng
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
-from ..policy import claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path, claude_settings
-from ..private_paths import ENV_VAR as PRIVATE_PATHS_ENV, resolve_private_paths, staff_codex_homes
+from ..policy import (SHELL_TOOLS, claude_deny_links, claude_deny_private, claude_read_only, claude_rule_path,
+                      claude_settings, rule_tool)
+from ..private_paths import ENV_VAR as PRIVATE_PATHS_ENV, plugin_keep_dirs, resolve_private_paths, staff_codex_homes
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..quota import quota_reset_instant
 from ..registry import Registry
@@ -165,6 +166,7 @@ class Runner:
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
         self.private_skip_warned: set[str] = set()
+        self.private_shell_warned: set[str] = set()
         self.project_link_warned: set[tuple] = set()
         self.outbox: asyncio.Queue[str] = asyncio.Queue()
         self.tasks: dict[str, asyncio.Task] = {}
@@ -916,7 +918,7 @@ class Runner:
             keep = [ws.dir, self.ws_root, *extra_dirs, *read_dirs,
                     *(self.s.path(r) for r in self.s.runner.reference_roots),
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir),
-                    *(os.path.expandvars(os.path.expanduser(d)) for d in agent.plugin_dirs),
+                    *plugin_keep_dirs(self.s, agent.plugin_dirs, ws.dir),
                     *staff_codex_homes(self.s, ws.dir, agent.engine == Engine.codex)]
             if task.meta.get("kind") == "recruit":  # the recruiter reads the Paper2Agent skill's own files
                 from ..recruit.paper2agent import skill_path
@@ -927,6 +929,14 @@ class Runner:
                     self.private_skip_warned.add(label)
                     await emit("agent.log", {"level": "warn", "text": (
                         f"개인 경로 차단에서 제외: {label} (작업에 쓰는 폴더를 포함합니다). labhq doctor의 private paths를 보세요")})
+            # With private paths active no shell rule is pre-approved; without the gate Claude refuses every command.
+            if (private.paths and agent.engine == Engine.claude_code and "approval" not in agent.builtin_mcp
+                    and any(rule_tool(t) in SHELL_TOOLS for t in agent.tools)
+                    and agent.id not in self.private_shell_warned):
+                self.private_shell_warned.add(agent.id)
+                await emit("agent.log", {"level": "warn", "text": (
+                    f"{agent.id}: 개인 경로 차단 중에는 셸 명령을 미리 허용하지 않고 승인 게이트로 보냅니다. "
+                    "builtin_mcp에 approval이 없어 셸 명령이 모두 거부됩니다")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
@@ -949,6 +959,7 @@ class Runner:
                     claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
                     private.paths),
                 private_labels=list(private.labels),
+                private_paths=list(private.paths),
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

@@ -442,14 +442,13 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 
   | 겹 | 대상 | 하는 일 |
   |---|---|---|
-  | 파일 도구 거부 | Claude | 경로와 그 아래(`//c/Users/...`, `/**`)의 Read·Edit·Write deny 규칙. link·junction의 실제 경로와 Windows 8.3 짧은 이름(`SSH~1`)에도. 승인 게이트도 같은 경로를 거부(`\\localhost\C$\`·`\\?\` 표기 포함) |
-  | 셸 언급 승인 | Claude Bash·PowerShell | 경로가 보이는 명령은 `ask` 규칙으로 게이트에 보내고 게이트가 PI 승인을 받음. ask가 allow보다 앞서서 `--allowedTools`로 미리 허용한 `Bash(python *)`·`Bash(ls *)`도 걸림. 절대경로·`~`·`$HOME`·`%USERPROFILE%`·`$env:USERPROFILE`·`%LOCALAPPDATA%`·Git Bash `/c/...`, 따옴표로 쪼갠 표기·`/./`·`..`, 대소문자·`/`·`\` 무관 |
+  | 파일 도구 거부 | Claude | 경로와 그 아래(`//c/Users/...`, `/**`)의 Read·Edit·Write deny 규칙. link·junction의 실제 경로와 Windows 8.3 짧은 이름(`SSH~1`)에도. 미리 허용하는 Read·Grep·Glob은 작업·프로젝트·참고 폴더의 `Read(//폴더/**)`로 좁혀, 그 밖 읽기와 link로 빠지는 읽기는 게이트가 실제 경로로 거부(`\\localhost\C$\`·`\\?\` 표기 포함) |
+  | 셸 언급 승인 | Claude Bash·PowerShell | 셸 명령은 미리 허용하지 않아(`Bash(python *)`도) 모두 게이트로 감. 개인 경로가 보이거나 link로 이어지는 명령만 PI 승인을 받고 나머지는 바로 허용. 절대경로·`~`·`$HOME`·`%USERPROFILE%`·`$env:USERPROFILE`·`%LOCALAPPDATA%`·Git Bash `/c/...`, 따옴표로 쪼갠 표기·`/./`·`..`, `/`·`\` 무관. 대소문자는 Windows와 대소문자 무시 볼륨에서만 무시. `ask` 규칙도 첫 겹으로 남김 |
   | 지침 | 모든 직원 | 역할 지침 끝의 "PI 개인 파일" 절. `~` 표기와 홈 밖 경로의 마지막 폴더 이름만 쓰고 절대경로는 넣지 않음 |
 
   막지 못하는 것:
   - Codex·Gemini·Antigravity·cli 직원은 지침만 받습니다. 파일·셸 읽기를 가로채는 장치가 없습니다. Codex sandbox는 쓰기와 네트워크를 막을 뿐 읽기는 막지 않고, Antigravity의 `auto`와 Gemini의 `bypassPermissions`(yolo)는 확인 없이 실행합니다.
-  - Claude 직원도 `cd ~ && cat .ssh/x`처럼 나눠 쓴 경로, glob(`~/.ss?`), 실행 중에 만든 경로는 놓칩니다. `permission_mode`가 `auto`·`bypassPermissions`(인사팀 기본 `auto`)이거나 `builtin_mcp`에 `approval`이 없는 직원은 ask가 게이트에 닿지 않을 수 있습니다.
-  - 미리 허용된 Read·Grep·Glob은 게이트를 거치지 않아 deny 규칙만 남습니다. 그 규칙은 `\\?\`·`\\localhost\C$\` 표기를 막지 못합니다.
+  - Claude 직원도 `cd ~ && cat .ssh/x`처럼 나눠 쓴 경로, glob(`~/.ss?`), 실행 중에 만든 경로는 놓칩니다. `permission_mode`가 `auto`·`bypassPermissions`(인사팀 기본 `auto`)인 직원은 게이트를 거치지 않을 수 있습니다. `builtin_mcp`에 `approval`이 없는 직원은 셸 명령이 모두 거부되며 작업 로그에 경고가 남습니다.
   - `~/.claude`를 막으면 Claude가 그 아래 따로 저장하는 큰 도구 출력(MCP 결과 포함)을 직원이 다시 읽지 못할 것으로 봅니다(실측 전). 셸 출력은 작업 폴더 파일로 남기라고 지침에 적었지만 MCP 결과는 직원이 옮길 수 없습니다.
   - doctor는 OS 계정 분리가 없다는 `runner account isolation` 경고를 계속 냅니다. 전용 계정 분리는 [고급 선택지](docs/runner-account.md)입니다.
 - **전환 잡 작업공간**: 러너가 private umask(`077`)로 입력을 만들고, 제출 전에 기존 입력에서도 group·other 권한을 제거합니다. 제출 시 `workspace_root`와 날짜 폴더에만 group traverse를 주며, 그 밖의 상위 경로는 data-account가 통과할 수 있어야 합니다. 데이터 계정은 잡 스크립트·`hpc_out/`·로그만 사용합니다.

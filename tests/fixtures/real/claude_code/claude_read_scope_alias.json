@@ -1,0 +1,58 @@
+{
+  "issue": "PR #324 review (private paths)",
+  "captured": "2026-10-03",
+  "host": "Windows 11",
+  "claude_code_version": "2.1.282",
+  "model": "sonnet",
+  "flags": "-p --setting-sources \"\" --max-turns 3, no --permission-prompt-tool",
+  "placeholders": {
+    "<WORKDIR>": "a scratch folder holding notes.txt (\"hello world\") and alias, a junction to <PRIVATE>",
+    "<PRIVATE>": "a fake private folder outside <WORKDIR> holding secret.txt (a fake value)",
+    "<WORKDIR_POSIX>": "<WORKDIR> in Claude's rule form, /c/..."
+  },
+  "probes": [
+    {
+      "id": "bare_read_alias",
+      "allowed_tools": ["Read"],
+      "tool": "Read alias/secret.txt",
+      "tool_result": "the file's contents",
+      "pre_approved": true
+    },
+    {
+      "id": "scoped_read_alias",
+      "allowed_tools": ["Read(/<WORKDIR_POSIX>/**)"],
+      "tool": "Read alias/secret.txt",
+      "tool_result": "Claude requested permissions to read from <WORKDIR>\\alias\\secret.txt, but you haven't granted it yet.",
+      "pre_approved": false
+    },
+    {
+      "id": "scoped_read_inside",
+      "allowed_tools": ["Read(/<WORKDIR_POSIX>/**)"],
+      "tool": "Read notes.txt",
+      "tool_result": "hello world",
+      "pre_approved": true
+    },
+    {
+      "id": "scoped_read_grep",
+      "allowed_tools": ["Read(/<WORKDIR_POSIX>/**)"],
+      "tool": "Grep hello in notes.txt",
+      "tool_result": "1:hello world",
+      "pre_approved": true
+    },
+    {
+      "id": "scoped_read_glob",
+      "allowed_tools": ["Read(/<WORKDIR_POSIX>/**)"],
+      "tool": "Glob *.txt",
+      "tool_result": "notes.txt",
+      "pre_approved": true
+    },
+    {
+      "id": "no_read_rule_inside",
+      "allowed_tools": ["Bash(pwd)"],
+      "tool": "Read notes.txt",
+      "tool_result": "hello world",
+      "pre_approved": true,
+      "note": "reads in the working directory need no rule"
+    }
+  ]
+}

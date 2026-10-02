@@ -17,7 +17,7 @@ import yaml
 from .adapters.base import RunContext, _resolve_command, expand_env
 from .adapters import get_adapter
 from .models import AgentSpec, Engine, Task
-from .private_paths import resolve_private_paths, staff_codex_homes
+from .private_paths import plugin_keep_dirs, resolve_private_paths, staff_codex_homes
 from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner.versions import _probe, _version
@@ -197,7 +197,7 @@ def _private_paths_row(settings: Settings, agents: list[AgentSpec], forced: Engi
     codex = forced == Engine.codex or (forced is None and any(a.engine == Engine.codex for a in agents))
     keep = [workspace, *(settings.path(r) for r in settings.runner.reference_roots),
             *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
-            *(os.path.expandvars(os.path.expanduser(d)) for a in agents for d in a.plugin_dirs),
+            *(d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)),
             *staff_codex_homes(settings, workspace, codex)]
     private = resolve_private_paths(settings, keep)
     if not private.enabled:

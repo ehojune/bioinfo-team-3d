@@ -280,7 +280,9 @@ class ClaudeCodeAdapter(AgentAdapter):
         for d in [*ctx.extra_dirs, *ctx.read_dirs]:  # read_dirs carry Edit/Write deny rules in settings
             cmd += ["--add-dir", d]
         # Bare Write/Edit become Edit rules for the task's write roots, so an outside write reaches the gate (#219).
-        allowed = [*claude_allowed_tools(a.tools, [ctx.workdir, *ctx.extra_dirs]),
+        # With PI personal paths active, shell rules go and reads narrow to the task's folders (PR #324 review).
+        read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs] if ctx.private_paths else None
+        allowed = [*claude_allowed_tools(a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots),
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]

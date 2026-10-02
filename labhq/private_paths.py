@@ -1,9 +1,14 @@
 """PI personal paths that staff must not open while they run under the PI's own account (PI decision 2026-10-03).
 
-Three layers for Claude staff, none of them a sandbox: Claude file tools get deny rules, a Claude shell command
-that names one of these paths goes to the PI (ask rules route even pre-approved Bash patterns to the gate), and
-the instructions list them as `~` labels. Codex, Gemini, Antigravity and cli staff get only the instructions:
-nothing intercepts their file or shell reads (the Codex sandbox limits writes and network, not reads).
+Three layers for Claude staff, none of them a sandbox: Claude file tools get deny rules, and while any path is
+active no shell command and no read outside the task's own folders is pre-approved, so they reach the approval
+gate, which judges the canonical, real path (a shell command naming one goes to the PI); the instructions list
+them as `~` labels. Codex, Gemini, Antigravity and cli staff get only the instructions: nothing intercepts their
+file or shell reads (the Codex sandbox limits writes and network, not reads).
+
+Paths compare case-insensitively only where the file system does: a Windows spelling, a Windows host, or a POSIX
+volume the #315 helper judges case-insensitive (PR #324 review). On a case-sensitive POSIX volume `Secret` and
+`secret` are different folders.
 """
 
 from __future__ import annotations
@@ -57,9 +62,28 @@ def _expand(raw: str, home: str) -> str:
     return os.path.normpath(raw) if os.path.isabs(raw) else raw
 
 
-def _fold(p: str) -> str:
-    """Case-folded, forward slashes, no repeated or trailing separator: lexical only."""
-    s = re.sub(r"/{2,}", "/", p.replace("\\", "/")).casefold()
+def _host_windows() -> bool:
+    return os.name == "nt"
+
+
+def _case_insensitive(path: str) -> bool:
+    """Whether `path` names the same entry in any case: a Windows spelling or host, or a case-insensitive POSIX
+    volume (macOS default). A POSIX path that does not exist keeps its case."""
+    if _host_windows() or re.match(r"^[A-Za-z]:(?:[/\\]|$)|^[/\\]{2}", path):
+        return True
+    from .adapters.owned import case_sensitive_directory
+
+    try:
+        return os.path.lexists(path) and not case_sensitive_directory(Path(path))
+    except (OSError, ValueError):
+        return False
+
+
+def _fold(p: str, fold: bool = True) -> str:
+    """Forward slashes, no repeated or trailing separator, case-folded when `fold`: lexical only."""
+    s = re.sub(r"/{2,}", "/", p.replace("\\", "/"))
+    if fold:
+        s = s.casefold()
     return s.rstrip("/") or s
 
 
@@ -68,7 +92,8 @@ def _under(path: str, root: str) -> bool:
 
 
 def _label(path: str, home: str) -> str:
-    folded, home_folded = _fold(path), _fold(home)
+    fold = _case_insensitive(path)
+    folded, home_folded = _fold(path, fold), _fold(home, fold)
     if _under(folded, home_folded) and folded != home_folded:
         tail = re.sub(r"/{2,}", "/", path.replace("\\", "/")).rstrip("/")[len(home_folded):]
         return "~" + tail
@@ -104,9 +129,10 @@ def configured_private_paths(settings: Settings, home: str | None = None) -> lis
 
 
 def _forms(path: str) -> set[str]:
-    forms = {_fold(os.path.abspath(path))}
+    """The path as written (absolute) and its real path, with case kept; callers fold where the volume does."""
+    forms = {_fold(os.path.abspath(path), False)}
     try:
-        forms.add(_fold(os.path.realpath(path)))
+        forms.add(_fold(os.path.realpath(path), False))
     except (OSError, ValueError):
         pass
     return forms
@@ -161,8 +187,9 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
     for path, label in configured_private_paths(settings, home):
         if not os.path.lexists(path):
             continue
-        forms = _forms(path)
-        if any(_under(k, f) for k in kept for f in forms):
+        fold = _case_insensitive(path)
+        forms = {_fold(f, fold) for f in _forms(path)}
+        if any(_under(_fold(k, fold), f) for k in kept for f in forms):
             skipped.append(label)
             continue
         labels.append(label)
@@ -173,8 +200,25 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
         for spelled in (path, real):
             paths.append(spelled)
             paths.extend(short_spellings(spelled))
-    paths = [p for i, p in enumerate(paths) if _fold(p) not in {_fold(q) for q in paths[:i]}]
+    paths = [p for i, p in enumerate(paths)
+             if _fold(p, _case_insensitive(p)) not in {_fold(q, _case_insensitive(p)) for q in paths[:i]}]
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)))
+
+
+def plugin_keep_dirs(settings: Settings, plugin_dirs: Iterable[str], cwd: str | os.PathLike | None = None,
+                     task_env: Mapping[str, str] | None = None) -> list[str]:
+    """Plugin folders as the Claude adapter expands them (`_plugin_dirs`): `${VAR}` from the runner env, then
+    engines.claude_code.env, then the task env, so a variable set only for staff still finds the folder."""
+    from .adapters.base import expand_env
+
+    source = {**os.environ, **expand_env(settings.engines.claude_code.env), **(task_env or {})}
+    out = []
+    for raw in plugin_dirs:
+        directory = os.path.expanduser(expand_env({"dir": raw}, source)["dir"])
+        if cwd is not None and not os.path.isabs(directory):
+            directory = os.path.join(str(cwd), directory)
+        out.append(directory)
+    return out
 
 
 def staff_codex_homes(settings: Settings, cwd: Path, codex_task: bool) -> list[Path]:
@@ -196,13 +240,15 @@ def shell_needles(paths: Iterable[str], home: str | None = None) -> list[str]:
     """Substrings for Claude `ask` rules (`Bash(*<needle>*)`): a path below home by its tail (`.ssh`,
     `.config/gh`) so every home spelling matches, others by their absolute and Git Bash forms; both separators.
     A last component with a space (`User Data`) also stands alone, since shells quote it apart."""
-    home_folded = _fold(home or host_home())
+    home = home or host_home()
     out: list[str] = []
     for path in paths:
         if not path:
             continue
+        fold = _case_insensitive(path)
+        home_folded = _fold(home, fold)
         slashed = re.sub(r"/{2,}", "/", path.replace("\\", "/")).rstrip("/")
-        folded = _fold(path)
+        folded = _fold(path, fold)
         if _under(folded, home_folded) and folded != home_folded:
             forms = [slashed[len(home_folded):].lstrip("/")]
         else:
@@ -232,48 +278,53 @@ def local_drive_text(text: str, environ: Mapping[str, str] | None = None) -> str
     return re.sub(rf"{sep}{{2}}(?:{'|'.join(hosts)}){sep}([a-z])\$(?={sep}|$|[\s'\"])", r"\1:", t, flags=re.I)
 
 
-def _canonical_text(text: str, home: str, environ: Mapping[str, str]) -> str:
+def _canonical_text(text: str, home: str, environ: Mapping[str, str], fold: bool = True) -> str:
     """Shell text with every home spelling replaced by one marker: variables, `~`, Git Bash and WSL drives.
 
     Quotes are dropped (`"$HOME"/.ssh`, `Chrome/"User Data"`), `/./` and `seg/../` are resolved lexically, and
-    the local admin share (`\\\\localhost\\C$\\`) and `\\\\?\\` prefix are read as the drive path."""
+    the local admin share (`\\\\localhost\\C$\\`) and `\\\\?\\` prefix are read as the drive path. Without `fold`
+    (a case-sensitive POSIX path) the text and the variable names keep their case."""
     t = re.sub(r"\\(?=[ \t])", "", text)  # `User\ Data` → `User Data`
     t = local_drive_text(t, environ)
-    t = re.sub(r"/{2,}", "/", t.replace("\\", "/")).casefold()
-    home_folded = _fold(home)
-    lookup = {k.casefold(): v for k, v in environ.items()}
-    values = {"userprofile": home_folded, "home": home_folded}
+    t = re.sub(r"/{2,}", "/", t.replace("\\", "/"))
+    if fold:
+        t = t.casefold()
+    key = str.casefold if fold else (lambda name: name)
+    home_folded = _fold(home, fold)
+    lookup = {key(k): v for k, v in environ.items()}
+    values = {key("USERPROFILE"): home_folded, key("HOME"): home_folded}
     for name in _PATH_VARS:
-        value = lookup.get(name.casefold())
+        value = lookup.get(key(name))
         if value:
-            values[name.casefold()] = _fold(value)
+            values[key(name)] = _fold(value, fold)
     values_seq = sorted(values.items(), key=lambda kv: len(kv[0]), reverse=True)
     for name, value in values_seq:
         n = re.escape(name)
         t = re.sub(rf"%{n}%|\$\{{(?:env:)?{n}\}}|\$(?:env:)?{n}(?![\w])", lambda _m, v=value: v, t)
-    t = re.sub(r"%homedrive%%homepath%|\$\{?env:homedrive\}?\$\{?env:homepath\}?", lambda _m: home_folded, t)
+    t = re.sub(r"%homedrive%%homepath%|\$\{?env:homedrive\}?\$\{?env:homepath\}?", lambda _m: home_folded, t,
+               flags=re.I)
     t = t.replace('"', "").replace("'", "")
     while (resolved := re.sub(r"/\.(?=/|$|\s)", "", t)) != t:
         t = resolved
     while (resolved := re.sub(r"(?<![^/\s=:,;|&<>(])(?!\.\.?/|~/)[^/\s]+/\.\.(?:/|(?=\s|$))", "", t)) != t:
         t = resolved
     spellings = {home_folded}
-    drive = re.match(r"^([a-z]):/(.*)$", home_folded)
+    drive = re.match(r"^([a-z]):/(.*)$", home_folded, re.I)
     if drive:
-        letter, rest = drive.groups()
+        letter, rest = drive.group(1).lower(), drive.group(2)
         spellings |= {f"/{letter}/{rest}", f"/mnt/{letter}/{rest}", f"/cygdrive/{letter}/{rest}"}
     for spelling in sorted(spellings, key=len, reverse=True):
         t = re.sub(re.escape(spelling) + r"(?=/|$|[^\w.\-])", _HOME_MARK, t)
     return re.sub(r"(?:^|(?<=[\s'\"=(:,;|&<>`]))~(?=/|$|[\s'\"`;|&)])", _HOME_MARK, t)
 
 
-def _targets(path: str, home: str) -> list[str]:
-    folded, home_folded = _fold(path), _fold(home)
+def _targets(path: str, home: str, fold: bool = True) -> list[str]:
+    folded, home_folded = _fold(path, fold), _fold(home, fold)
     if _under(folded, home_folded) and folded != home_folded:
         return [_HOME_MARK + folded[len(home_folded):]]
-    drive = re.match(r"^([a-z]):/(.*)$", folded)
+    drive = re.match(r"^([a-z]):/(.*)$", folded, re.I)
     if drive:
-        letter, rest = drive.groups()
+        letter, rest = drive.group(1).lower(), drive.group(2)
         return [folded, f"/{letter}/{rest}", f"/mnt/{letter}/{rest}", f"/cygdrive/{letter}/{rest}"]
     return [folded]
 
@@ -293,16 +344,21 @@ def _found(text: str, target: str) -> bool:
 
 def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = None,
                            environ: Mapping[str, str] | None = None) -> str | None:
-    """The first private path `text` names in any common spelling, case-insensitively; None otherwise.
+    """The first private path `text` names in any common spelling, case-insensitively where the volume is
+    (`_case_insensitive`); None otherwise.
 
     Lexical, like the zone guard: `cd ~ && cat .ssh/x`, globs and paths built at run time are not seen."""
     paths = [p for p in paths if p]
     if not paths or not text:
         return None
     home = home or host_home()
-    canonical = _canonical_text(text, home, os.environ if environ is None else environ)
+    environ = os.environ if environ is None else environ
+    canonical: dict[bool, str] = {}
     for path in paths:
-        if any(_found(canonical, target) for target in _targets(path, home)):
+        fold = _case_insensitive(path)
+        if fold not in canonical:
+            canonical[fold] = _canonical_text(text, home, environ, fold)
+        if any(_found(canonical[fold], target) for target in _targets(path, home, fold)):
             return path
     return None
 

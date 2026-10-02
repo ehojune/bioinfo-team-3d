@@ -215,6 +215,8 @@ class RunContext:
     claude_settings: dict = field(default_factory=dict)
     # `~` labels of the PI personal paths closed to this task (policy.private_paths); they go in the role footer.
     private_labels: list[str] = field(default_factory=list)
+    # The active paths themselves; while any is set Claude pre-approves no shell command and no outside read.
+    private_paths: list[str] = field(default_factory=list)
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts

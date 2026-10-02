@@ -2,6 +2,7 @@
 Claude file tools are denied these paths, a shell command naming one goes to the PI, and every staff member's
 instructions list them as `~` labels."""
 
+import json
 import os
 from pathlib import Path
 
@@ -483,3 +484,178 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
     recruit = Task(id="t2", agent_id="worker", request_id="r", prompt="q", meta={"kind": "recruit"})
     assert (await runner.run_task(recruit)).ok
     assert seen["ctx"].private_labels == ["~/.ssh"]  # the skill's files sit under ~/.claude
+
+
+# ---------------- review of PR #324, round 3: shell and outside reads always reach the gate ----------------
+
+def _allowed(tmp_path, tools, private, read_dirs=()):
+    from labhq.adapters import get_adapter
+
+    agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.claude_code, tools=list(tools),
+                      builtin_mcp=["approval"])
+    (tmp_path / "ws" / ".labhq").mkdir(parents=True, exist_ok=True)
+    ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
+                     settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x",
+                     read_dirs=[str(d) for d in read_dirs], claude_settings={}, private_paths=list(private))
+    cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
+    i = cmd.index("--allowedTools")
+    end = cmd.index("--disallowedTools") if "--disallowedTools" in cmd else len(cmd)
+    return cmd[i + 1:end]
+
+
+def test_no_shell_rule_is_pre_approved_and_reads_narrow_to_task_roots_while_private_paths_are_active(tmp_path):
+    """Claude matches rule text literally, so a case-varied or aliased spelling passed the deny and ask rules
+    while `Bash(python *)` and bare `Read` skipped the gate. With private paths active neither is pre-approved."""
+    from labhq.policy import claude_allowed_tools, claude_rule_path, rule_tool
+
+    ref = tmp_path / "ref"
+    tools = ["Read", "Grep", "Glob", "Read(//**)", "Write", "Bash", "Bash(python *)", "PowerShell(Get-Content *)",
+             "WebSearch"]
+    allowed = _allowed(tmp_path, tools, ["C:\\Users\\pi\\.ssh"], read_dirs=[ref])
+    assert not [t for t in allowed if rule_tool(t) in {"Bash", "PowerShell"}]
+    assert not {"Read", "Grep", "Glob", "Read(//**)", "Write"} & set(allowed)
+    ws = str((tmp_path / "ws").resolve())
+    assert f"Read(/{claude_rule_path(ws)}/**)" in allowed and f"Read(/{claude_rule_path(str(ref))}/**)" in allowed
+    assert f"Edit(/{claude_rule_path(ws)}/**)" in allowed and "WebSearch" in allowed
+    assert not any(r.startswith("Edit(") and r.endswith("/ref/**)") for r in allowed)  # references stay read-only
+    # Private paths off: the PI's pre-approvals are kept as they were.
+    assert _allowed(tmp_path, ["Read", "Bash(python *)"], []) == ["Read", "Bash(python *)"]
+    assert claude_allowed_tools(["Bash(ls *)", "WebSearch"], [tmp_path], read_roots=[tmp_path]) == ["WebSearch"]
+    fixture = Path(__file__).parent / "fixtures" / "real" / "claude_code" / "claude_read_scope_alias.json"
+    probes = {p["id"]: p for p in json.loads(fixture.read_text(encoding="utf-8"))["probes"]}
+    assert probes["bare_read_alias"]["pre_approved"] and not probes["scoped_read_alias"]["pre_approved"]
+    assert all(probes[k]["pre_approved"] for k in ("scoped_read_inside", "scoped_read_grep", "scoped_read_glob"))
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "python script.py --out outputs/x.tsv"), ("Bash", "Rscript analysis.R"), ("Bash", "ls outputs"),
+    ("Bash", "cat /work/t1/notes.md"), ("PowerShell", "Get-Content notes.md"), ("Bash", "python -c \"print(1)\""),
+])
+def test_the_gate_allows_plain_workdir_commands_without_a_pi_prompt(tool, command):
+    assert _gate(tool, {"command": command}).action == "allow"
+    for tool_name, tool_input in (("Read", {"file_path": "notes.md"}), ("Grep", {"pattern": "x", "path": "."}),
+                                  ("Glob", {"pattern": "outputs/*.tsv"})):
+        assert _gate(tool_name, tool_input).action == "allow"
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "cat C:/USERS/PI/.SSH/id_rsa"),
+    ("Bash", "python -c \"print(open(r'c:\\users\\pi\\.Ssh\\id_rsa').read())\""),
+    ("Bash", "ls ~/.SSH"),
+    ("PowerShell", "Get-Content C:\\USERS\\PI\\.SSH\\ID_RSA"),
+])
+def test_case_varied_windows_spellings_miss_the_literal_ask_rules_but_the_gate_asks(tool, command):
+    ask = claude_deny_private({}, WIN_PRIVATE, home=WIN_HOME)["permissions"]["ask"]
+    assert not any(_claude_matches(rule, tool, command) for rule in ask)  # why shell must reach the gate
+    decision = _gate(tool, {"command": command})
+    assert decision.action == "ask" and "private_paths" in decision.reason
+
+
+def test_the_gate_catches_a_link_alias_into_a_private_path(tmp_path):
+    home = _home(tmp_path)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "notes.md").write_text("n", encoding="utf-8")
+    _link_dir(ws / "alias", home / ".ssh")
+    found = resolve_private_paths(Settings.model_validate({"policy": {"private_paths": ["~/.ssh"]}}), [ws],
+                                  home=str(home))
+
+    def gate(tool, tool_input):
+        return evaluate_tool(tool, tool_input, PolicySettings(), allowed_roots=[str(ws)], workdir=str(ws),
+                             environ={}, private_paths=found.paths, home=str(home))
+
+    for tool, tool_input in (("Read", {"file_path": "alias/id_ed25519"}),
+                             ("Read", {"file_path": str(ws / "alias" / "id_ed25519")}),
+                             ("Glob", {"pattern": "alias/*"}), ("Glob", {"pattern": "**/*", "path": "alias"}),
+                             ("Grep", {"pattern": "BEGIN", "path": "alias"})):
+        decision = gate(tool, tool_input)
+        assert decision.action == "deny" and "private_paths" in decision.reason, (tool, tool_input)
+    for command in ("cat alias/id_ed25519", f"python -c \"open(r'{ws / 'alias' / 'id_ed25519'}')\""):
+        decision = gate("Bash", {"command": command})
+        assert decision.action == "ask" and "link" in decision.reason, command
+    assert gate("Bash", {"command": "cat notes.md"}).action == "allow"
+    assert gate("Read", {"file_path": "notes.md"}).action == "allow"
+    assert gate("Glob", {"pattern": "*.md"}).action == "allow"
+    # A relative Glob path is read from the workdir once, and its pattern from that path (local review).
+    (ws / "ref" / "ref").mkdir(parents=True)
+    nested = (str(ws / "ref" / "ref"),)
+    assert evaluate_tool("Glob", {"path": "ref", "pattern": "*.txt"}, PolicySettings(), allowed_roots=[str(ws)],
+                         workdir=str(ws), environ={}, private_paths=nested, home=str(home)).action == "allow"
+    assert evaluate_tool("Glob", {"path": "ref", "pattern": "ref/*"}, PolicySettings(), allowed_roots=[str(ws)],
+                         workdir=str(ws), environ={}, private_paths=nested, home=str(home)).action == "deny"
+
+
+def test_posix_paths_keep_their_case_in_the_gate(monkeypatch):
+    monkeypatch.setattr(private_paths, "_host_windows", lambda: False)
+    private = ["/home/pi/Secret"]
+    assert mentioned_private_path("cat /home/pi/secret/x", private, "/home/pi", {}) is None
+    assert mentioned_private_path("cat ~/secret/x", private, "/home/pi", {"HOME": "/home/pi"}) is None
+    assert mentioned_private_path("cat ~/Secret/x", private, "/home/pi", {}) == private[0]
+    assert mentioned_private_path("cat $HOME/Secret/x", private, "/home/pi", {"HOME": "/home/pi"}) == private[0]
+    assert private_paths.shell_needles(private, "/home/pi") == ["Secret"]
+    # Windows spellings stay case-insensitive on any host.
+    assert mentioned_private_path("cat C:/USERS/PI/.SSH/x", WIN_PRIVATE, WIN_HOME, {}) == WIN_PRIVATE[0]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows paths are case-insensitive")
+def test_a_case_sensitive_posix_volume_keeps_a_differently_cased_work_folder_apart(tmp_path, monkeypatch):
+    from labhq.adapters.owned import case_sensitive_directory
+
+    home = tmp_path / "home"
+    (home / "Secret").mkdir(parents=True)
+    if not case_sensitive_directory(home / "Secret"):
+        pytest.skip("this volume is case-insensitive")
+    settings = Settings.model_validate({"policy": {"private_paths": ["~/Secret"]}})
+    found = resolve_private_paths(settings, [home / "secret" / "job"], home=str(home))
+    assert found.labels == ("~/Secret",) and not found.skipped
+    monkeypatch.setattr("labhq.adapters.owned.case_sensitive_directory", lambda path: False)  # e.g. macOS APFS
+    assert resolve_private_paths(settings, [home / "secret" / "job"], home=str(home)).skipped == ("~/Secret",)
+
+
+def test_plugin_dirs_expand_with_the_claude_engine_env(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    plugin = home / ".claude" / "plugins" / "bioinfo"
+    plugin.mkdir(parents=True)
+    monkeypatch.delenv("BIOINFO_AGENT_DIR", raising=False)
+    settings = Settings.model_validate({"policy": {"private_paths": ["~/.claude", "~/.ssh"]}})
+    settings.engines.claude_code.env = {"BIOINFO_AGENT_DIR": str(plugin)}  # as the init wizard writes it
+    keep = private_paths.plugin_keep_dirs(settings, ["${BIOINFO_AGENT_DIR}"])
+    assert keep == [str(plugin)]
+    elsewhere = str(tmp_path / "elsewhere")
+    assert private_paths.plugin_keep_dirs(settings, ["${BIOINFO_AGENT_DIR}"],
+                                          task_env={"BIOINFO_AGENT_DIR": elsewhere}) == [elsewhere]
+    found = resolve_private_paths(settings, keep, home=str(home))
+    assert found.labels == ("~/.ssh",) and found.skipped == ("~/.claude",)
+
+
+def test_doctor_expands_plugin_dirs_with_the_claude_engine_env(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    plugin = home / ".claude" / "plugins" / "bioinfo"
+    plugin.mkdir(parents=True)
+    monkeypatch.delenv("BIOINFO_AGENT_DIR", raising=False)
+    settings = _doctor_settings(tmp_path, ["~/.claude", "~/.ssh"])
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: claude_code\nplugin_dirs: ['${BIOINFO_AGENT_DIR}']\n",
+        encoding="utf-8")
+    settings.engines.claude_code.env = {"BIOINFO_AGENT_DIR": str(plugin)}
+    row = _doctor_row(settings, monkeypatch)
+    assert row["detail"] == "1 active; skipped, holds a work folder: ~/.claude"
+
+
+@pytest.mark.asyncio
+async def test_runner_hands_claude_the_active_paths_and_warns_when_shell_has_no_gate(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    runner, seen = _capture_runner(_runner_settings(tmp_path, ["~/.ssh"]), monkeypatch)
+    agent = runner.registry.get("worker")
+    agent.tools = ["Read", "Bash(python *)"]  # builtin_mcp=[]: no approval gate
+    for task_id in ("t1", "t2"):
+        assert (await runner.run_task(Task(id=task_id, agent_id="worker", request_id="r", prompt="q"))).ok
+    assert seen["ctx"].private_paths == [str(home / ".ssh")]
+    warned = [e["data"]["text"] for e in runner.store.pending()
+              if e["type"] == "agent.log" and "셸 명령이 모두 거부" in e["data"].get("text", "")]
+    assert len(warned) == 1, "said once, not on every task"
+    off, seen_off = _capture_runner(_runner_settings(tmp_path / "off", []), monkeypatch)
+    assert (await off.run_task(Task(id="t3", agent_id="worker", request_id="r", prompt="q"))).ok
+    assert seen_off["ctx"].private_paths == []
