@@ -10,6 +10,14 @@
 - 미해결: 없음.
 - 근거: `labhq/runner/daemon.py`, `tests/test_hpc_followups.py`, `tests/test_semantics_shadow_worker.py`.
 
+## 2026-10-02 · #151 #253 — EDAM 부분집합 표 병합
+
+- 결론: 저장소 라이선스가 정해져(#252: 문서·데이터 CC BY-SA 4.0, 코드 GPL-3.0) draft로 묶어 둔 EDAM 표를 넣는다. 38개 key 중 32개가 EDAM 용어 31개에 이어지고, 판정은 여전히 key로 한다.
+- 바뀐 것: `labhq/vocab/edam_map.yaml`·`edam_subset.yaml`·`NOTICE.md`, `scripts/edam_subset.py`, `tests/test_edam_subset.py`. NOTICE의 "PI 확인 전" 문구를 결정 내용으로 바꿨다.
+- 실행한 것: `tests/test_edam_subset.py`와 산출 종류 test, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 입력 종류–방법 적합성 그림자 판정(#149 결정 17)은 다음 PR.
+- 근거: `labhq/vocab/NOTICE.md`.
+
 ## 2026-10-02 · CI — 중복 실행 제거와 이미 통과한 pytest 재실행 생략
 
 - 결론: PI 요청. PR 브랜치는 pull_request로 한 번만 돌고, 패치노트만 더한 push나 STATUS·패치노트 충돌만 푼 main 병합 push는 직전 커밋의 pytest가 통과했으면 pytest를 건너뛴다(skipped). 합쳐진 조합 자체는 다시 시험하지 않고, squash 병합 뒤 main CI가 다시 돈다.
