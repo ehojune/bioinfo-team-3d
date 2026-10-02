@@ -11,6 +11,8 @@ class Element {
   set innerHTML(value) { throw new Error('clarify cards must never use innerHTML'); }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this._text='';this.children=[];this.append(...children); }
+  insertBefore(child,ref) { this.removeChild(child);this.children.splice(this.children.indexOf(ref),0,child);return child; }
+  removeChild(child) { this.children=this.children.filter(x=>x!==child);return child; }
 }
 global.document={createElement:tag=>new Element(tag)};
 const web=path.join(__dirname,'../labhq/web');
