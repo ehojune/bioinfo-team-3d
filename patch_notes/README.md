@@ -12,7 +12,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:53 | [`c7d40b8`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/c7d40b8) | 문헌·웹 검색 담당(lit_scout)에도 공개 과학 MCP 다섯 개, 과학 리뷰어에는 인용 확인용 PubMed·bioRxiv |
 | 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
+| 13:40 | [`6a35f19`](https://github.com/ehojune/bioinfo-team-3d/pull/285/commits/6a35f19) | Biology 담당에 공개 과학 MCP 다섯 개를 붙임: PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials |
 | 13:35 | [`c3a96a4`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/c3a96a4) | STATUS에 #271·#282 재계획·resume 결과를 기록함 |
 | 13:35 | [`783a393`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/783a393) | 라이선스 표에 제3자 예외를 적음: three.js는 MIT, placeholder.gltf는 CC0 |
 | 13:31 | [`bc36dca`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/bc36dca) | 연구 lane 저장 계획도 max_steps가 줄면 승인 계획을 그대로 둔 채 실패함을 test로 고정함 |
