@@ -45,6 +45,27 @@ def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
     assert "worker" in doctor.render(result)
 
 
+@pytest.mark.parametrize("same_account,expected", [
+    (True, "warn"),
+    (False, "ok"),
+    (None, "skip"),
+])
+def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_account, expected):
+    settings = _settings(tmp_path)
+    config = tmp_path / "labhq.yaml"
+    config.write_text("gateway: {}\n", encoding="utf-8")
+    settings.config_path = str(config)
+    monkeypatch.setattr(doctor, "_config_owner_is_current_user", lambda path: same_account)
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    result = doctor.collect(settings)
+
+    row = next(r for r in result["checks"] if r["name"] == "runner account isolation")
+    assert row["status"] == expected
+    assert "docs/runner-account.md" in row["hint"]
+    assert result["summary"]["fail"] == 0
+
+
 def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
