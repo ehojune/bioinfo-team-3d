@@ -1,0 +1,44 @@
+# Candidate EDAM label per local key of output_types.yaml (#151). People choose candidates here; nobody writes an id.
+# scripts/edam_subset.py looks each candidate up in the pinned EDAM release and keeps the id only when exactly one
+# live term of the key's branch carries it as label or exact synonym. null: no candidate (the key stays local).
+# The labels are EDAM text, CC BY-SA 4.0: see NOTICE.md. Editing this file means rerunning the script in the same PR.
+version: 1
+candidates:
+  raw_counts: Gene expression matrix
+  normalized_counts: Gene expression matrix
+  de_table: Differential gene expression profile
+  enrichment_table: Over-representation data
+  network: Pathway or network
+  sample_metadata: Sample annotation
+  data_manifest: null
+  qc_report: Quality control report
+  report: Report
+  sequence_reads: Raw sequence
+  sequence: Sequence
+  alignment: Sequence alignment
+  variants: Sequence variations
+  assembly: Sequence assembly
+  features: Sequence features
+  protein_structure: Protein structure
+  plot: Plot
+  table: null
+  fastq: FASTQ
+  fasta: FASTA
+  bam: BAM
+  vcf: VCF
+  bed: BED
+  gff3: GFF3
+  genbank: GenBank format
+  tsv: TSV
+  csv: CSV
+  json: JSON
+  markdown: Markdown
+  pdf: PDF
+  png: PNG
+  h5ad: h5ad
+  statistical_analysis: Statistical calculation
+  de_analysis: Differential gene expression profiling
+  enrichment_analysis: Enrichment analysis
+  read_mapping: Read mapping
+  variant_calling: Variant calling
+  data_retrieval: Data retrieval
