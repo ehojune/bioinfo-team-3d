@@ -770,6 +770,11 @@ def holds_session(entry: dict, agent_id: str, session_id: str | None, workdir: s
                 (workdir and held and Path(workdir).resolve() == Path(held).resolve()))
 
 
+def _cost_summary_field(req: dict) -> dict:
+    """The follow-up event carries the request's cost summary only once there is one (#270)."""
+    return {"cost_summary": req["cost_summary"]} if req.get("cost_summary") else {}
+
+
 class Orchestrator:
     def __init__(self, hub: "Hub"):
         self.hub = hub
@@ -1022,7 +1027,7 @@ class Orchestrator:
             await self._emit(rid, "request.followup_done", {
                 "id": fid, "ok": False, "answer": "", "error": refusal,
                 "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-                "cost_summary": req.get("cost_summary")})
+                **_cost_summary_field(req)})
             return
         if direct:
             session_id, workdir = self._last_agent_session(rid, agent)
@@ -1068,7 +1073,7 @@ class Orchestrator:
         await self._emit(rid, "request.followup_done", {
             "id": fid, "ok": answered, "answer": clip(entry["answer"], 20000), "error": entry["error"],
             "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-            "cost_summary": req.get("cost_summary")})
+            **_cost_summary_field(req)})
 
     def _count_adopted_cost(self, rid: str | None, task_id: str) -> None:
         """Add an adopted task's recorded cost once (#93).
