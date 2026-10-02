@@ -92,6 +92,12 @@ for (const terminal of ['request.completed', 'request.failed']) {
   costs.apply({type:terminal,request_id:'r',data:{cost_usd:1.5,cost_known:true}});
   assert.equal(costs.req('r').cost,1.5, 'terminal total replaces live subtotal');
   assert.equal(costs.S.cost,3.5, 'other requests keep their costs');
+  costs.apply({type:terminal,request_id:'r',data:{cost_usd:1.5,cost_known:false,cost_summary:{
+    actual_usd:1,estimated_usd:0.5,unknown_count:1,
+    by_engine:{claude_code:{actual_usd:1,estimated_usd:0,unknown_count:0},codex:{actual_usd:0,estimated_usd:0.5,unknown_count:1}},warnings:[],
+  }}});
+  assert.equal(costs.req('r').costSummary.unknown_count,1);
+  assert.equal(costs.req('r').costSummary.by_engine.codex.estimated_usd,0.5);
   costs.apply({type:terminal,request_id:'r',data:{cost_usd:1.5}});
   assert.equal(costs.S.cost,3.5, 'repeated terminal total is idempotent');
   costs.apply({type:terminal,request_id:'r',data:{cost_known:false}});
@@ -120,4 +126,40 @@ failedCosts.apply({type:'request.failed',request_id:'failed',data:{
 assert.equal(failedCosts.req('failed').cost,1.25, 'exception terminal uses the persisted final total');
 assert.equal(failedCosts.S.cost,1.25);
 assert.equal(failedCosts.req('failed').costKnown,false);
+// #270: an unaccounted task is counted apart and never shown as $0; estimates are labelled as such.
+{
+  const {costLabel, engineCostLabel, totalCostLabel} = context.LabHQState;
+  const mixed = {actual_usd:1, estimated_usd:0.5, subtotal_usd:1.5, unknown_count:1, by_engine:{
+    claude_code:{actual_usd:1, estimated_usd:0, unknown_count:0}, codex:{actual_usd:0, estimated_usd:0.5, unknown_count:1}},
+    prices:[{engine:'codex', model:'gpt-6.1-sol', checked_on:'2026-10-02', stale:true}], warnings:['price_stale:codex:gpt-6.1-sol']};
+  const onlyUnknown = {actual_usd:0, estimated_usd:0, subtotal_usd:0, unknown_count:2,
+    by_engine:{codex:{actual_usd:0, estimated_usd:0, unknown_count:2}}, prices:[], warnings:[]};
+  const estimated = {actual_usd:0, estimated_usd:0.2, subtotal_usd:0.2, unknown_count:0,
+    by_engine:{codex:{actual_usd:0, estimated_usd:0.2, unknown_count:0}}, prices:[], warnings:[]};
+  const view = create();
+  view.apply({type:'snapshot', data:{requests:[
+    {id:'mixed', status:'done', cost_usd:1.5, cost_known:false, cost_summary:mixed},
+    {id:'unknown', status:'done', cost_usd:0, cost_known:false, cost_summary:onlyUnknown},
+    {id:'estimated', status:'done', cost_usd:0.2, cost_known:true, cost_summary:estimated},
+    {id:'legacy', status:'done', cost_usd:0.4, cost_known:false},
+  ]}});
+  assert.equal(costLabel(view.req('mixed')), '확인 $1.00 + 추정 $0.50 + 미집계 1건');
+  assert.equal(costLabel(view.req('unknown')), '미집계 2건', 'unknown-only is not $0');
+  assert.equal(costLabel(view.req('legacy')), '$0.40 + 비용 미집계');
+  assert.equal(view.req('unknown').costKnown, false);
+  assert.equal(view.req('estimated').costKnown, true);
+  const engines = engineCostLabel(view.req('mixed').costSummary);
+  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 미집계 1건; 추정은 API 가격표 환산/);
+  assert.match(engines, /가격표 오래됨: codex gpt-6\.1-sol \(2026-10-02 확인\)/);
+  assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 미집계 3건 이상');
+  view.apply({type:'request.followup_done', request_id:'unknown', data:{id:'f', ok:true, answer:'a', cost_usd:0.1,
+    cost_known:true, cost_summary:{...estimated, estimated_usd:0.1, subtotal_usd:0.1}}});
+  assert.equal(costLabel(view.req('unknown')), '추정 $0.10', 'a follow-up summary replaces the request summary');
+  assert.ok(!Object.keys(view.req('mixed')).includes('costSummary'), 'state snapshots stay comparable');
+  // A live cost the stored summary does not hold yet replaces the stale summary with the running total.
+  view.apply({type:'agent.usage', request_id:'estimated', data:{tokens:{input_tokens:5}, cost_known:false}});
+  assert.equal(costLabel(view.req('estimated')), '$0.20 + 비용 미집계', 'running Codex task is not shown as settled');
+  view.apply({type:'agent.usage', request_id:'mixed', data:{cost_usd:0.25}});
+  assert.equal(costLabel(view.req('mixed')), '$1.75 + 비용 미집계', 'live amount is not hidden behind the old summary');
+}
 console.log(`${events.length} legacy event states, replay reset, effects, isolation and bounds: OK`);

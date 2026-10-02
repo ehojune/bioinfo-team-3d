@@ -23,6 +23,7 @@ from urllib.parse import unquote
 
 import httpx
 
+from ..costs import cost_detail, cost_text
 from ..intake import mask_published_references, public_url, url_pattern
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
@@ -364,6 +365,12 @@ class GitHubClient:
         return await self.comment(repo, pr, codex_comment("review" + (f"\n\n{note}" if note else ""), mention))
 
 
+def _cost_line(cost_usd, cost_known, summary: dict | None) -> str:
+    """Confirmed, estimated and unaccounted parts kept apart, with engine subtotals (#270)."""
+    line = cost_text(cost_usd, cost_known, summary)
+    return f"{line} {cost_detail(summary)}" if summary else line
+
+
 class ProjectReporter:
     HANDLED = {"request.created", "request.plan", "request.review", "recruit.done",
                "request.completed", "request.failed"}
@@ -528,9 +535,9 @@ class ProjectReporter:
                 head = "🏁 완료" if ok else "💥 실패"
                 link = f"\n\n보고서: {report_url}" if report_url else ""
                 # Failure events may carry no accounting; the stored request keeps what was actually spent.
-                known = float(d.get("cost_usd", req.get("cost_usd")) or 0)
-                cost = (f" · 비용 ${known}" if d.get("cost_known", req.get("cost_known", True)) else
-                        f" · 비용 {f'${known} + ' if known else ''}비용 미집계")
+                cost = " · 비용 " + _cost_line(d.get("cost_usd", req.get("cost_usd")),
+                                             d.get("cost_known", req.get("cost_known", True)),
+                                             d.get("cost_summary") or req.get("cost_summary"))
                 marker = f"<!-- labhq terminal {rid} {ev.get('seq') or typ} -->"
                 saved = self._action(ev, "comment") or {}
                 if not saved:
@@ -582,8 +589,6 @@ class ProjectReporter:
                 f"{sc.get('addresses_question')}/5 · 근거 {sc.get('evidence')}/5 · 철저성 {sc.get('thoroughness')}/5{issues}")
 
     def _report_md(self, rid: str, req: dict, report: str) -> str:
-        known = float(req.get("cost_usd") or 0)
-        cost = (f"${known}" if req.get("cost_known", True) else
-                f"{f'${known} + ' if known else ''}비용 미집계")
+        cost = _cost_line(req.get("cost_usd"), req.get("cost_known", True), req.get("cost_summary"))
         return (f"# {short(self._clean(req.get('text', '')), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
                 f"- 비용: {cost}\n\n{report}\n")
