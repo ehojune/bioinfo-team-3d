@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -127,11 +128,19 @@ def _windows_config_owner_is_current_user(path: Path) -> bool | None:
 
 
 def _current_os_account() -> str | None:
+    """The process token's account (DOMAIN\\user), from `whoami`, not the spoofable USERNAME variable (#304)."""
     try:
-        import getpass
-        return getpass.getuser()
+        out = subprocess.run(["whoami"], capture_output=True, text=True, timeout=10).stdout.strip()
+        return out or None
     except Exception:  # noqa: BLE001 - doctor never fails on an unavailable identity
         return None
+
+
+def _same_account(current: str, expected: str) -> bool:
+    current, expected = current.strip().lower(), expected.strip().lower()
+    if "\\" not in expected and "\\" in current:  # a bare name means a local account on this machine
+        expected = os.environ.get("COMPUTERNAME", "").lower() + "\\" + expected
+    return current == expected
 
 
 def _config_owner_is_current_user(path: Path) -> bool | None:
@@ -203,7 +212,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         current = _current_os_account()
         if current is None:
             owner_status, owner_detail = "skip", "current OS account unavailable"
-        elif current.lower().split("\\")[-1] == expected.lower().split("\\")[-1]:
+        elif _same_account(current, expected):
             owner_status, owner_detail = "ok", "runner runs as runner.os_account"
         else:
             owner_status, owner_detail = "warn", "runner is not running as runner.os_account"
@@ -215,6 +224,11 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                         "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
                      "Run the runner under a dedicated account; see docs/runner-account.md."))
+    if owner_status == "ok" and settings.gateway.client_token not in ("", "change-me-client"):
+        # The runner never needs the client token; staff run as this account and could approve as the PI (#304).
+        rows.append(_row("config", "runner config holds client token", "warn",
+                         "gateway.client_token is set in the runner's config",
+                         "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"

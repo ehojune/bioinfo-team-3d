@@ -277,11 +277,28 @@ def test_doctor_checks_slurm_commands(tmp_path, monkeypatch, missing, status):
     assert result["runner_capabilities"]["scheduler"] == "slurm" and result["runner_capabilities"]["hpc_tools"]
 
 
-@pytest.mark.parametrize("current,expected", [("labhq-runner", "ok"), (r"PC\labhq-runner", "ok"), ("pi", "warn"), (None, "skip")])
+@pytest.mark.parametrize("current,expected", [
+    ("labhq-runner", "ok"), (r"PC\labhq-runner", "ok"), (r"OTHERPC\labhq-runner", "warn"), ("pi", "warn"), (None, "skip"),
+])
 def test_doctor_checks_the_named_runner_account(tmp_path, monkeypatch, current, expected):
     settings = _settings(tmp_path)
     settings.runner.os_account = "labhq-runner"
+    monkeypatch.setenv("COMPUTERNAME", "PC")
     monkeypatch.setattr(doctor, "_current_os_account", lambda: current)
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
     row = next(r for r in doctor.collect(settings)["checks"] if r["name"] == "runner account isolation")
     assert row["status"] == expected
+
+
+def test_doctor_warns_when_the_runner_config_holds_the_client_token(tmp_path, monkeypatch):
+    """#304 review: staff run as the runner account; a client token there lets them approve as the PI."""
+    settings = _settings(tmp_path)
+    settings.runner.os_account = "labhq-runner"
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "labhq-runner")
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    settings.gateway.client_token = "a-real-token"
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" in names
+    settings.gateway.client_token = "change-me-client"
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" not in names

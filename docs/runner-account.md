@@ -28,7 +28,7 @@ Add-LocalGroupMember -Group 'Users' -Member 'labhq-runner'
 
 ## 2. 폴더와 권한 나누기
 
-설정 파일은 PI 홈 밖 `C:\LabHQ\config\labhq.yaml`에 두고 PI 소유로 유지합니다. runner에는 읽기만 줍니다. 작업 폴더와 runner state에는 수정 권한, 참고 자료에는 읽기 권한만 줍니다.
+설정은 **둘로 나눕니다.** gateway 설정 `C:\LabHQ\config\gateway.yaml`에는 `gateway.client_token`이 있으므로 PI만 읽습니다. runner 설정 `C:\LabHQ\configunner.yaml`은 같은 내용에서 `gateway.client_token` 줄만 지운 사본이고, runner에 읽기만 줍니다. 직원은 runner 계정으로 돌기 때문에, runner가 읽을 수 있는 파일에 client token이 있으면 직원이 그 token으로 PI 대신 승인할 수 있습니다. runner는 client token을 쓰지 않습니다. 작업 폴더와 runner state에는 수정 권한, 참고 자료에는 읽기 권한만 줍니다.
 
 관리자 PowerShell 예:
 
@@ -39,11 +39,13 @@ New-Item -ItemType Directory -Path C:\LabHQ\config,C:\LabHQ\runner\work,C:\LabHQ
 
 icacls 'C:\LabHQ' /inheritance:r
 icacls 'C:\LabHQ' /grant:r 'SYSTEM:(OI)(CI)(F)' 'BUILTIN\Administrators:(OI)(CI)(F)' "${RunnerAccount}:(RX)"
-icacls 'C:\LabHQ\config' /grant:r "${PiAccount}:(OI)(CI)(F)" "${RunnerAccount}:(OI)(CI)(RX)"
+icacls 'C:\LabHQ\config' /grant:r "${PiAccount}:(OI)(CI)(F)"
+icacls 'C:\LabHQ\configunner.yaml' /grant:r "${RunnerAccount}:(R)"   # runner는 이 파일 하나만 읽는다
 icacls 'C:\LabHQ\runner\work' /grant:r "${RunnerAccount}:(OI)(CI)(M)"
 icacls 'C:\LabHQ\runner\state' /grant:r "${RunnerAccount}:(OI)(CI)(M)"
 icacls 'C:\LabHQ\refs' /grant:r "${RunnerAccount}:(OI)(CI)(RX)"
-icacls 'C:\LabHQ\config\labhq.yaml' /setowner $PiAccount
+icacls 'C:\LabHQ\config\gateway.yaml' /setowner $PiAccount
+icacls 'C:\LabHQ\configunner.yaml' /setowner $PiAccount
 ```
 
 PI 홈에는 runner 권한을 주지 않습니다. 기존 ACL에 `Users` 읽기 권한이 있어 실제로 읽힌다면 다음처럼 runner를 명시적으로 거부합니다.
@@ -72,7 +74,7 @@ C:\LabHQ\app\.venv\Scripts\pip.exe install -e C:\LabHQ\app
 icacls 'C:\LabHQ\app' /grant:r "${RunnerAccount}:(OI)(CI)(RX)"
 ```
 
-`C:\LabHQ\config\labhq.yaml`에서 runner 쪽 경로를 모두 `C:\LabHQ` 아래로 바꾸고, runner 계정 이름을 적습니다.
+두 설정 파일 모두에서 runner 쪽 경로를 `C:\LabHQ` 아래로 바꾸고, runner 계정 이름을 적습니다.
 
 ```yaml
 runner:
@@ -104,7 +106,7 @@ $env:CODEX_HOME = $CodexStaffHome
 codex login
 ```
 
-`labhq.yaml`의 `engines.codex.env.CODEX_HOME`도 이 경로로 맞춥니다. Windows Codex 직원은 무인 실행 전에 elevated sandbox setup을 한 번 마쳐야 합니다(#262). 같은 runner 창에서 다음 명령을 실행하고 UAC 창을 승인합니다.
+두 설정 파일의 `engines.codex.env.CODEX_HOME`도 이 경로로 맞춥니다. Windows Codex 직원은 무인 실행 전에 elevated sandbox setup을 한 번 마쳐야 합니다(#262). 같은 runner 창에서 다음 명령을 실행하고 UAC 창을 승인합니다.
 
 ```powershell
 codex exec --skip-git-repo-check -C C:\LabHQ\runner\work -s workspace-write -c 'windows.sandbox="elevated"' 'setup-probe.txt에 ok를 쓰세요'
@@ -119,28 +121,28 @@ Remove-Item C:\LabHQ\runner\work\setup-probe.txt -ErrorAction SilentlyContinue
 runner 계정 창에서 먼저 확인합니다.
 
 ```powershell
-labhq --config C:\LabHQ\config\labhq.yaml doctor
+labhq --config C:\LabHQ\configunner.yaml doctor
 ```
 
-`runner account isolation`은 `ok`(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
+`runner account isolation`은 `ok`, `runner config holds client token` 경고는 없어야 하고(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
 
 PI 계정에서는 gateway를 기존 방식대로 둡니다.
 
 ```powershell
-labhq --config C:\LabHQ\config\labhq.yaml gateway
+labhq --config C:\LabHQ\config\gateway.yaml gateway
 ```
 
 간단히 시작하려면 PI 계정에서 runner만 `runas`로 엽니다.
 
 ```powershell
-runas /user:.\labhq-runner "powershell.exe -NoProfile -Command labhq --config C:\LabHQ\config\labhq.yaml runner"
+runas /user:.\labhq-runner "powershell.exe -NoProfile -Command labhq --config C:\LabHQ\configunner.yaml runner"
 ```
 
 항상 켜 둘 때는 **작업 스케줄러 → 작업 만들기**를 씁니다.
 
 1. **일반**: 사용자를 `labhq-runner`로 바꾸고 **가장 높은 수준의 권한으로 실행**은 끕니다.
 2. **트리거**: 시작할 시점을 정합니다.
-3. **동작**: 프로그램은 `labhq.exe`, 인수는 `--config C:\LabHQ\config\labhq.yaml runner`로 둡니다. PATH가 다르면 `labhq.exe`의 절대경로를 씁니다.
+3. **동작**: 프로그램은 `labhq.exe`, 인수는 `--config C:\LabHQ\configunner.yaml runner`로 둡니다. PATH가 다르면 `labhq.exe`의 절대경로를 씁니다.
 4. 저장할 때 runner 암호를 입력한 뒤 수동 실행하고 `labhq status`에서 연결을 확인합니다.
 
 ## 되돌리기
