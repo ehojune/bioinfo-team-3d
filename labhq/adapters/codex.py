@@ -35,6 +35,15 @@ ELEVATED_SETUP_ERROR = (
 CODEX_HOME_STATE = ("auth.json", "installation_id", "sessions", ".sandbox", ".sandbox-bin")
 
 
+def _needs_setup(message: str) -> bool:
+    """Codex refused to start its elevated sandbox: the setup helper was cancelled (no UAC unattended), or an app
+    update left the setup incompatible ("sandbox setup required: sandbox users missing or incompatible with marker
+    version", #328)."""
+    return (("orchestrator_helper_launch_canceled" in message
+             and "ShellExecuteExW failed to launch setup helper: 1223" in message)
+            or "sandbox setup required" in message.lower())
+
+
 def _toml(v: object) -> str:
     if isinstance(v, dict):
         return "{" + ", ".join(f"{k} = {_toml(x)}" for k, x in v.items()) + "}"
@@ -161,8 +170,7 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool", {"name": "shell", "input": short(item.get("command"), 300)})
                 elif item.get("exit_code") not in (None, 0):
                     message = str(item.get("aggregated_output") or "command failed")
-                    if ("orchestrator_helper_launch_canceled" in message
-                            and "ShellExecuteExW failed to launch setup helper: 1223" in message):
+                    if _needs_setup(message):
                         st.error = ELEVATED_SETUP_ERROR
                         st.error_kind = "sandbox_setup_required"
                     await ctx.emit("agent.tool_error", {"text": short(message, 400)})
@@ -200,7 +208,12 @@ class CodexAdapter(AgentAdapter):
                                            "cost_usd": None, "cost_known": False})
         elif typ in ("turn.failed", "error"):
             err = ev.get("error")
-            st.error = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
+            message = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
+            if _needs_setup(str(message)):
+                st.error = f"{ELEVATED_SETUP_ERROR} Codex: {short(str(message), 200)}"
+                st.error_kind = "sandbox_setup_required"
+            elif getattr(st, "error_kind", None) != "sandbox_setup_required":
+                st.error = message
 
     def finalize(self, st: RunState, ctx: RunContext, returncode: int | None):
         # Never through a link the agent put there (#165): the stream's own text stands instead.

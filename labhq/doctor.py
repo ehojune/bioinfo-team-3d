@@ -14,12 +14,13 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from .adapters.base import RunContext, _resolve_command, expand_env
+from .adapters.base import RunContext, _resolve_command, codex_app_choice, expand_env
 from .adapters import get_adapter
 from .models import AgentSpec, Engine, Task
 from .private_paths import plugin_keep_dirs, resolve_private_paths, staff_codex_homes
 from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
+from .runner import codex_sandbox
 from .runner.versions import _probe, _version
 from .settings import Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
@@ -208,6 +209,26 @@ def _private_paths_row(settings: Settings, agents: list[AgentSpec], forced: Engi
     return _row("staff", "private paths", "ok" if private.labels else "warn", detail, PRIVATE_PATHS_HINT)
 
 
+def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict, seen: set[Path],
+                          dry_run: bool) -> list[dict]:
+    """The elevated-setup check, continued (#328): setup_marker.json exists, but did it work with this Codex?"""
+    adapter = get_adapter(agent.engine, settings)
+    env = {**os.environ, **adapter.engine_env()}
+    rows = []
+    for home in codex_sandbox.elevated_homes(settings, env, settings.path(settings.runner.workspace_root)):
+        if home in seen or not codex_sandbox.has_setup_marker(home):
+            continue
+        seen.add(home)
+        if dry_run:
+            rows.append(_row("staff", "codex sandbox version", "skip", "probe skipped: dry-run", ""))
+            continue
+        status, detail = codex_sandbox.check(home, codex_now["version"])
+        command = codex_now["command"]
+        rows.append(_row("staff", "codex sandbox version", status, detail,
+                         codex_sandbox.setup_hint(home, command[0] if command else None, env)))
+    return rows
+
+
 def _network_check(url: str) -> bool:
     for method in ("HEAD", "GET"):
         try:
@@ -298,6 +319,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
 
     available: dict[str, bool] = {}
+    codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
     for name in settings.engines.__class__.model_fields:
         spec = getattr(settings.engines, name)
         env = {**os.environ, **expand_env(spec.env, os.environ)}
@@ -315,6 +337,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             continue
         code, raw = (None, "") if dry_run else _probe([*resolved, "--version"], env)
         detail = _safe_executable_path(resolved[0], env) + (" (probe skipped: dry-run)" if dry_run else " " + _version(raw))
+        if name == "codex":
+            codex_now.update(version=_version(raw) if code == 0 and _version(raw) != "unreported" else None,
+                             command=resolved)
+            choice = codex_app_choice(env) if spec.bin.strip().lower() in ("", "auto") else None
+            if choice and choice["path"] == resolved[0]:
+                detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (codex.exe 있는 폴더 {choice['candidates']}개 중 " +
+                           ("판본이 가장 높은 폴더)" if choice["by"] == "version" else "판본 비교 불가, 가장 최근 폴더)"))
         rows.append(_row("engine", name, "ok" if code == 0 else "warn", detail,
                          "Check the executable and prefix_args if version fails."))
         if name in LOGIN:
@@ -336,6 +365,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "no active agents found", "Set runner.agents_dir."))
     forced = None
     invalid_force = False
+    sandbox_homes: set[Path] = set()
     if settings.runner.force_engine:
         try:
             forced = Engine(settings.runner.force_engine)
@@ -367,6 +397,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                 if engine == "codex" and error and "CODEX_HOME" in error else
                 f"Resolve the {engine} adapter preflight or install/configure its executable.")
         rows.append(_row("staff", agent.id, status, error or f"engine={engine}", hint))
+        if engine == "codex" and not error:
+            rows += _sandbox_version_rows(settings, agent, codex_now, sandbox_homes, dry_run)
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
