@@ -35,13 +35,25 @@ ELEVATED_SETUP_ERROR = (
 CODEX_HOME_STATE = ("auth.json", "installation_id", "sessions", ".sandbox", ".sandbox-bin")
 
 
-def _needs_setup(message: str) -> bool:
-    """Codex refused to start its elevated sandbox: the setup helper was cancelled (no UAC unattended), or an app
-    update left the setup incompatible ("sandbox setup required: sandbox users missing or incompatible with marker
-    version", #328)."""
-    return (("orchestrator_helper_launch_canceled" in message
-             and "ShellExecuteExW failed to launch setup helper: 1223" in message)
-            or "sandbox setup required" in message.lower())
+SPAWN_FAILED = "Failed to create unified exec process:"  # Codex's own wording when it cannot start a command
+SETUP_REQUIRED = "sandbox setup required"
+
+
+def _command_needs_setup(output: str) -> bool:
+    """A failed command whose output is Codex's own spawn error for the elevated sandbox: the setup helper was
+    cancelled (no UAC unattended), or an app update left the setup incompatible (#328). The setup phrase counts only
+    in output that starts with Codex's spawn-error prefix, so a test or grep that prints it stays an ordinary command failure."""
+    if ("orchestrator_helper_launch_canceled" in output
+            and "ShellExecuteExW failed to launch setup helper: 1223" in output):
+        return True
+    text = output.strip()
+    return text.startswith(SPAWN_FAILED) and SETUP_REQUIRED in text[len(SPAWN_FAILED):].lower()
+
+
+def _turn_needs_setup(message: str) -> bool:
+    """Codex's turn or stream error says the elevated sandbox setup is missing or incompatible ("sandbox setup
+    required: sandbox users missing or incompatible with marker version", #328)."""
+    return _command_needs_setup(message) or SETUP_REQUIRED in message.lower()
 
 
 def _toml(v: object) -> str:
@@ -166,11 +178,14 @@ class CodexAdapter(AgentAdapter):
             elif it == "reasoning" and typ == "item.completed":
                 await ctx.emit("agent.log", {"level": "thinking", "text": short(item.get("text"), 400)})
             elif it == "command_execution":
+                exit_code = item.get("exit_code")
                 if typ == "item.started":
                     await ctx.emit("agent.tool", {"name": "shell", "input": short(item.get("command"), 300)})
-                elif item.get("exit_code") not in (None, 0):
+                elif exit_code == 0 and not isinstance(exit_code, bool):
+                    st.commands_ran = True  # the sandbox started a command (#328)
+                elif exit_code not in (None, 0):
                     message = str(item.get("aggregated_output") or "command failed")
-                    if _needs_setup(message):
+                    if _command_needs_setup(message):
                         st.error = ELEVATED_SETUP_ERROR
                         st.error_kind = "sandbox_setup_required"
                     await ctx.emit("agent.tool_error", {"text": short(message, 400)})
@@ -209,7 +224,7 @@ class CodexAdapter(AgentAdapter):
         elif typ in ("turn.failed", "error"):
             err = ev.get("error")
             message = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
-            if _needs_setup(str(message)):
+            if _turn_needs_setup(str(message)):
                 st.error = f"{ELEVATED_SETUP_ERROR} Codex: {short(str(message), 200)}"
                 st.error_kind = "sandbox_setup_required"
             elif getattr(st, "error_kind", None) != "sandbox_setup_required":

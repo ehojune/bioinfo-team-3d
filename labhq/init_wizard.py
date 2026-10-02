@@ -138,7 +138,7 @@ def _login_command(settings: Settings) -> str:
             resolved = _resolve_command([settings.engines.codex.bin], env, "codex")
         except (OSError, ValueError):
             resolved = ["codex"]  # doctor will report the missing/unsupported executable.
-        executable = powershell_executable(resolved[0], env)
+        executable = powershell_executable(resolved, env)
         return "$env:CODEX_HOME = Join-Path $HOME '.labhq/codex-staff'; & " + executable + " login"
     return 'CODEX_HOME="$HOME/.labhq/codex-staff" codex login'
 
@@ -262,7 +262,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
             if _is_windows() and settings.engines.codex.windows_sandbox == "elevated":
                 env = {**os.environ, **settings.engines.codex.env}
                 command = codex_command(settings, env)
-                print("로그인 뒤 elevated sandbox 준비: " + setup_hint(staff_home, command[0] if command else None, env))
+                print("로그인 뒤 elevated sandbox 준비: " + setup_hint(staff_home, command, env))
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
     print(doctor.render(result))
     summary = result["summary"]

@@ -276,6 +276,10 @@ class RunContext:
     # Runner hook, called after prepare() wrote the adapter's files and just before the CLI starts. A non-empty
     # return refuses the run (the read-only file check could not take its baseline).
     before_spawn: Callable[[], str | None] | None = None
+    # Set by run(), runner-local: the launcher it started (executable plus prefix args, resolved) and whether the
+    # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
+    started_command: list[str] | None = None
+    commands_ran: bool = False
 
     @property
     def meta_dir(self) -> Path:
@@ -303,6 +307,7 @@ class RunState:
     session_usage_total: dict | None = None
     result_seen: bool = False
     model_id: str | None = None
+    commands_ran: bool = False  # a shell command ran to exit 0 (engines that report commands)
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
@@ -461,6 +466,7 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
+        ctx.started_command, ctx.commands_ran = None, False
         env = self.staff_env(ctx)
         engine_bin = getattr(self.settings.engines, self.engine, None)
         prefix = [os.path.expandvars(os.path.expanduser(arg)) for arg in (engine_bin.prefix_args if engine_bin else [])]
@@ -479,17 +485,20 @@ class AgentAdapter(ABC):
         cmd = self.build_command(ctx)
         env = self.staff_env(ctx)
 
-        def resolved(command: list[str]) -> list[str]:
+        def resolved(command: list[str]) -> tuple[list[str], list[str]]:
+            """The full command and its launcher: everything before the adapter's own arguments."""
+            arguments = command[1:]
             if engine_bin is not None:
-                command = [os.path.expandvars(os.path.expanduser(command[0])), *prefix, *command[1:]]
-            return _resolve_command(command, env, self.engine)
+                command = [os.path.expandvars(os.path.expanduser(command[0])), *prefix, *arguments]
+            full = _resolve_command(command, env, self.engine)
+            return full, full[:len(full) - len(arguments)]
 
         try:
-            cmd = resolved(cmd)
+            cmd, launcher = resolved(cmd)
             if _command_too_long(cmd) and ctx.prompt_pointer and ctx.prompt != ctx.prompt_pointer:
                 # Windows refuses the process and Python reports a missing executable (#222): name the task file.
                 ctx.prompt = ctx.prompt_pointer
-                cmd = resolved(self.build_command(ctx))
+                cmd, launcher = resolved(self.build_command(ctx))
         except ValueError as exc:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
         too_long = _command_too_long(cmd)
@@ -525,6 +534,7 @@ class AgentAdapter(ABC):
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
+        ctx.started_command = launcher
         if payload is not None and proc.stdin:
             proc.stdin.write(payload)
             await proc.stdin.drain()
@@ -567,6 +577,7 @@ class AgentAdapter(ABC):
         stderr = " | ".join(x for x in list(stderr_tail)[-5:] if x)
         st.error = st.error or self.stderr_error(stderr)
         res = self.finalize(st, ctx, proc.returncode)
+        ctx.commands_ran = st.commands_ran
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
             res.error = f"{res.error}: {short(stderr, 500)}"
         if proc.returncode not in (0, None) and not res.error:

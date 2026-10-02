@@ -225,7 +225,7 @@ def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict,
         status, detail = codex_sandbox.check(home, codex_now["version"])
         command = codex_now["command"]
         rows.append(_row("staff", "codex sandbox version", status, detail,
-                         codex_sandbox.setup_hint(home, command[0] if command else None, env)))
+                         codex_sandbox.setup_hint(home, command, env)))
     return rows
 
 

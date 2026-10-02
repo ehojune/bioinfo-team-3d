@@ -2,8 +2,8 @@
 
 Codex keeps its own `.sandbox/setup_marker.json`, but an app update can leave that setup incompatible ("sandbox users
 missing or incompatible with marker version") and only an administrator prompt fixes it. labhq cannot ask Codex
-unattended, so the runner writes `.labhq-sandbox-ok.json` beside it after an elevated run succeeds, with the Codex
-version that ran. doctor compares that version with the current `codex --version`, and the first run that fails for
+unattended, so the runner writes `.labhq-sandbox-ok.json` beside it after an elevated run in which a shell command
+ran, with the version of the Codex build that run started. doctor compares that version with the current `codex --version`, and the first run that fails for
 this reason alerts the PI once per runner process with the commands to set it up again.
 """
 
@@ -76,10 +76,26 @@ def executable_label(executable: str, env: dict[str, str]) -> str:
     return "%LOCALAPPDATA%/OpenAI/Codex/bin/" + relative if relative else Path(executable).name
 
 
-def powershell_executable(executable: str | None, env: dict[str, str]) -> str:
-    """The executable as PowerShell can call it without printing the user's home path."""
-    relative = app_relative(executable, env) if executable else None
-    return '"$env:LOCALAPPDATA/OpenAI/Codex/bin/' + relative + '"' if relative else "codex"
+def _same_command(a: list[str], b: list[str]) -> bool:
+    return len(a) == len(b) and all(os.path.normcase(os.path.abspath(x)) == os.path.normcase(os.path.abspath(y))
+                                    for x, y in zip(a, b))
+
+
+def powershell_executable(command: list[str] | str | None, env: dict[str, str]) -> str:
+    """The resolved launcher (executable plus prefix args) as PowerShell can call it without printing the user's
+    home path. Bare `codex` only when PATH resolves to that same launcher; any other absolute path or prefix args
+    get a placeholder, since `codex` there may be another build."""
+    launcher = [command] if isinstance(command, str) else list(command or [])
+    relative = app_relative(launcher[0], env) if len(launcher) == 1 else None
+    if relative:
+        return '"$env:LOCALAPPDATA/OpenAI/Codex/bin/' + relative + '"'
+    if not launcher or (len(launcher) == 1 and not Path(launcher[0]).is_absolute()):
+        return "codex"
+    try:
+        on_path = _resolve_command(["codex"], env, "codex")
+    except (ValueError, OSError):
+        on_path = None
+    return "codex" if on_path and _same_command(on_path, launcher) else "'<engines.codex.bin>'"
 
 
 def _powershell_home(home: Path) -> str:
@@ -89,12 +105,13 @@ def _powershell_home(home: Path) -> str:
         return "'<engines.codex.env.CODEX_HOME>'"
 
 
-def setup_hint(home: Path, executable: str | None, env: dict[str, str]) -> str:
+def setup_hint(home: Path, command: list[str] | str | None, env: dict[str, str]) -> str:
     """PowerShell commands the PI runs once (it shows a UAC prompt): an elevated workspace-write run in a probe dir."""
     return ("PowerShell에서 직접 실행하고 UAC를 승인하세요: "
             f"$env:CODEX_HOME = {_powershell_home(home)}; "
             "$probe = Join-Path $env:TEMP 'labhq-sandbox-probe'; New-Item -ItemType Directory -Force $probe | Out-Null; "
-            f"& {powershell_executable(executable, env)} exec --skip-git-repo-check -C $probe -s workspace-write "
+            "Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $probe 'ok.txt'); "
+            f"& {powershell_executable(command, env)} exec --skip-git-repo-check -C $probe -s workspace-write "
             "-c 'windows.sandbox=\"elevated\"' 'Create ok.txt containing ok'; "
             "Test-Path (Join-Path $probe 'ok.txt')  # True면 준비 완료, 다음 Codex 직원 작업이 판본을 기록합니다")
 
@@ -148,10 +165,11 @@ class SandboxWatch:
     def __init__(self) -> None:
         self.alerted = False
 
-    def _record(self, settings: Settings, homes: list[Path], env: dict[str, str]) -> None:
+    def _record(self, homes: list[Path], cmd: list[str], env: dict[str, str]) -> None:
+        """`cmd` is the launcher the run started, never a fresh resolution: with `bin: auto` an app update during
+        the run would otherwise record the new build as working."""
         homes = [home for home in homes if has_setup_marker(home)]
-        cmd = codex_command(settings, env) if homes else None
-        version = codex_version(cmd, env) if cmd else None
+        version = codex_version(cmd, env) if homes else None
         if version:
             for home in homes:
                 try:
@@ -168,7 +186,7 @@ class SandboxWatch:
                 return
             self.alerted = True
             cmd = await asyncio.to_thread(codex_command, settings, env)
-            hint = setup_hint(homes[0], cmd[0] if cmd else None, env)
+            hint = setup_hint(homes[0], cmd, env)
             summary = ("Codex sandbox 다시 준비 필요: 직원 CODEX_HOME의 elevated sandbox 준비가 없거나 "
                        "지금 Codex와 맞지 않아 단계가 멈췄습니다")
             await emit("agent.log", {"level": "alert", "text": f"{summary}. {hint}"})
@@ -177,5 +195,7 @@ class SandboxWatch:
                                      kind="codex_sandbox_setup", summary=summary + " (확인하면 닫힙니다)",
                                      detail={"command": hint}, timeout_s=7 * 24 * 3600)
             await emit("approval.requested", notice.model_dump(mode="json"))
-        elif result.ok:
-            await asyncio.to_thread(self._record, settings, homes, env)
+        elif result.ok and ctx.commands_ran and ctx.started_command:
+            # Only a run whose sandbox started a command proves the setup; text-only, MCP-only and output_schema
+            # turns never touch it.
+            await asyncio.to_thread(self._record, homes, ctx.started_command, env)

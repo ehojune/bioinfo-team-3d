@@ -1,6 +1,7 @@
 """Staff elevated sandbox setup vs. the Codex version in use (#328). Fakes only: no real Codex, no UAC."""
 import json
 import os
+import sys
 
 import pytest
 
@@ -60,6 +61,7 @@ async def test_version_recorded_once_after_successful_elevated_run(tmp_path, mon
     monkeypatch.setattr(codex_sandbox, "_probe", probe)
     events = []
     ctx = _ctx(tmp_path, settings, events)
+    ctx.started_command, ctx.commands_ran = [settings.engines.codex.bin], True
     env = get_adapter(Engine.codex, settings).staff_env(ctx)
     watch = codex_sandbox.SandboxWatch()
     ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
@@ -262,7 +264,10 @@ async def test_runner_records_and_alerts_through_its_task_results(tmp_path, monk
 
     class Adapter:
         async def run(self, ctx):
-            return outcomes.pop(0).model_copy(update={"task_id": ctx.task.id})
+            result = outcomes.pop(0)
+            if result.ok:  # what run() reports when the sandbox started a command
+                ctx.started_command, ctx.commands_ran = [settings.engines.codex.bin], True
+            return result.model_copy(update={"task_id": ctx.task.id})
 
         def staff_env(self, ctx):
             return real.staff_env(ctx)
@@ -276,3 +281,114 @@ async def test_runner_records_and_alerts_through_its_task_results(tmp_path, monk
     assert sum(m.get("type") == "approval.requested" for m in sent) == 1
     assert sum(m.get("type") == "agent.log" and (m.get("data") or {}).get("level") == "alert" for m in sent) == 1
     assert codex_sandbox.read_ok(home)["codex_version"] == "0.159.2"
+
+
+def _exe(directory, name="codex.exe"):
+    directory.mkdir(parents=True, exist_ok=True)
+    exe = directory / name
+    exe.write_text("", encoding="utf-8")
+    exe.chmod(0o755)
+    return exe
+
+
+@pytest.mark.asyncio
+async def test_record_names_the_build_that_ran_not_a_fresh_resolution(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)
+    settings = _runner_settings(tmp_path, home)
+    old, new = _exe(tmp_path / "old"), _exe(tmp_path / "new")
+    settings.engines.codex.bin = str(new)  # what `auto` resolves to after an app update during the run
+    builds = {str(old): "codex-cli 0.158.2", str(new): "codex-cli 0.159.0"}
+    monkeypatch.setattr(codex_sandbox, "_probe", lambda argv, env: (0, builds[argv[0]]))
+    ctx = _ctx(tmp_path, settings, [])
+    ctx.started_command, ctx.commands_ran = [str(old)], True
+    env = get_adapter(Engine.codex, settings).staff_env(ctx)
+    ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
+    await codex_sandbox.SandboxWatch().after_run(settings, ctx, env, ok, ctx.emit)
+    assert codex_sandbox.read_ok(home)["codex_version"] == "0.158.2"
+
+
+@pytest.mark.asyncio
+async def test_ok_run_without_a_shell_command_records_nothing(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)
+    settings = _runner_settings(tmp_path, home)
+    monkeypatch.setattr(codex_sandbox, "_probe", lambda argv, env: (0, "codex-cli 0.159.0"))
+    ctx = _ctx(tmp_path, settings, [])
+    ctx.started_command, ctx.commands_ran = [settings.engines.codex.bin], False  # text-only / MCP-only turn
+    env = get_adapter(Engine.codex, settings).staff_env(ctx)
+    ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
+    await codex_sandbox.SandboxWatch().after_run(settings, ctx, env, ok, ctx.emit)
+    assert not (home / codex_sandbox.OK_FILE).exists()
+
+
+def _fake_codex(tmp_path, name, events):
+    stream = tmp_path / f"{name}.jsonl"
+    stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    script = tmp_path / f"{name}.py"
+    script.write_text(f"import sys\nsys.stdout.write(open({str(stream)!r}, encoding='utf-8').read())\n",
+                      encoding="utf-8")
+    return script
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command_ran", [True, False])
+async def test_adapter_run_reports_its_launcher_and_whether_a_command_ran(tmp_path, command_ran):
+    events = [{"type": "thread.started", "thread_id": "t1"}]
+    if command_ran:
+        events += [{"type": "item.started", "item": {"type": "command_execution", "command": "ls"}},
+                   {"type": "item.completed", "item": {"type": "command_execution", "command": "ls",
+                                                       "exit_code": 0, "aggregated_output": ""}}]
+    events += [{"type": "item.completed", "item": {"type": "agent_message", "text": "done"}},
+               {"type": "turn.completed", "usage": {}}]
+    script = _fake_codex(tmp_path, "codex", events)
+    settings = Settings()
+    settings.engines.codex.bin = sys.executable
+    settings.engines.codex.prefix_args = [str(script)]
+    (tmp_path / "codex-home").mkdir()
+    settings.engines.codex.env = {"CODEX_HOME": str(tmp_path / "codex-home")}
+    ctx = _ctx(tmp_path, settings, [])
+    result = await get_adapter(Engine.codex, settings).run(ctx)
+    assert result.ok
+    assert ctx.started_command == [sys.executable, str(script)]
+    assert ctx.commands_ran is command_ran
+
+
+async def _command_failure(tmp_path, output):
+    settings = Settings()
+    ctx = _ctx(tmp_path, settings, [])
+    adapter = get_adapter(Engine.codex, settings)
+    state = RunState()
+    for event in ({"type": "item.completed", "item": {"type": "command_execution", "exit_code": 1,
+                                                      "aggregated_output": output}},
+                  {"type": "item.completed", "item": {"type": "agent_message", "text": "tests fail"}},
+                  {"type": "turn.completed", "usage": {}}):
+        await adapter.handle_line(json.dumps(event), state, ctx)
+    return adapter.finalize(state, ctx, 0)
+
+
+@pytest.mark.asyncio
+async def test_command_output_with_the_setup_phrase_is_an_ordinary_failure(tmp_path):
+    result = await _command_failure(tmp_path, "FAILED tests/test_x.py - assert 'sandbox setup required' in msg")
+    assert result.ok and result.error_kind is None
+
+
+@pytest.mark.asyncio
+async def test_codex_spawn_error_with_the_setup_phrase_is_the_setup_error(tmp_path):
+    result = await _command_failure(tmp_path, "Failed to create unified exec process: sandbox setup required: "
+                                              "sandbox users missing or incompatible with marker version")
+    assert not result.ok and result.error_kind == "sandbox_setup_required"
+
+
+def test_hint_uses_a_placeholder_for_a_bin_outside_the_app_folder(tmp_path):
+    name = "codex.exe" if os.name == "nt" else "codex"
+    configured, on_path = _exe(tmp_path / "custom", name), _exe(tmp_path / "pathbin", name)
+    env = {"PATH": str(on_path.parent), "LOCALAPPDATA": str(tmp_path / "Local")}
+    for command in ([str(configured)], [sys.executable, str(tmp_path / "codex.js")]):
+        hint = codex_sandbox.setup_hint(tmp_path / "home", command, env)
+        assert "& '<engines.codex.bin>' exec" in hint and str(tmp_path) not in hint
+    assert codex_sandbox.powershell_executable([str(on_path)], env) == "codex"  # PATH finds that same build
+    assert codex_sandbox.powershell_executable(["codex"], env) == "codex"
+
+
+def test_hint_clears_an_earlier_probe_result_first(tmp_path):
+    hint = codex_sandbox.setup_hint(tmp_path / "home", None, {})
+    assert hint.index("Remove-Item") < hint.index(" exec ") < hint.index("Test-Path")
