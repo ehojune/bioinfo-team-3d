@@ -990,7 +990,9 @@ def _derived_from(p: Projection, art: str, target: str) -> str:
     todo = [(art, 0)]   # a queue: read in order, appended at the end
     unknown = False
     for node, depth in todo:
-        if depth > p.model.spec.traversal.depth_limit:
+        # ``depth`` is the number of artifact-to-artifact hops from ``art``. The target may be reached only by
+        # taking at most depth_limit hops, matching baseline A's recursive query (#212).
+        if depth >= p.model.spec.traversal.depth_limit:
             unknown = True
             continue
         row = p.artifacts.get(node)

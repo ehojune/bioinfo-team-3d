@@ -555,6 +555,29 @@ def test_a_failure_counted_on_the_event_loop_saves_its_window_off_the_loop(tmp_p
     assert json.loads(service.paths.breaker.read_text(encoding="utf-8"))["consecutive"] == 1
 
 
+def test_an_old_epoch_window_write_failure_does_not_disable_the_new_epoch(tmp_path, monkeypatch):
+    """#211: a retired daemon writer cannot trip the breaker for the epoch that replaced it."""
+    service = _service(tmp_path)
+    writing, release = threading.Event(), threading.Event()
+
+    def old_write_fails(*_args, **_kwargs):
+        writing.set()
+        assert release.wait(5)
+        raise OSError("injected old epoch failure")
+
+    monkeypatch.setattr(service, "save_window", old_write_fails)
+    worker = threading.Thread(target=service.keep_window, args=(1, 1, [True], 1))
+    worker.start()
+    assert writing.wait(5)
+    service.new_epoch(2)
+    release.set()
+    worker.join(5)
+
+    assert not worker.is_alive()
+    assert service.epoch == 2 and service.latched is None
+    assert _disabled(tmp_path) is None
+
+
 def test_a_type_bucket_outside_the_allow_list_turns_it_off_and_writes_nothing(tmp_path, monkeypatch):
     service = _service(tmp_path)
     real = shadow.compute_line

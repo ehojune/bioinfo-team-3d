@@ -174,6 +174,20 @@ def test_models_agree_on_cycle_and_depth_limit(length, cycle):
     assert outs[0] == outs[1]
 
 
+@pytest.mark.parametrize("hops, expected_match", [(64, "yes"), (65, "unknown"), (66, "unknown")])
+def test_derived_from_depth_limit_counts_artifact_hops(hops, expected_match):
+    """#212: A and B accept at most 64 artifact-to-artifact lineage hops."""
+    root = f"art:req_c/t{hops}_ws/outputs/o.tsv"
+    target = "art:req_c/t0_ws/outputs/o.tsv"
+    matches = {}
+    for name in ("B", "A"):
+        impl = pilot.IMPLS[name]()
+        p = impl.project(pilot.chain_records(hops + 1))
+        out = pilot.result_of(impl.find_reusable(p, derived_from=target))
+        matches[name] = out["candidates"][root]["match"]["derived_from"]
+    assert matches == {"B": expected_match, "A": expected_match}
+
+
 def _records(rid, steps, tasks):
     """In-memory records of one request: steps (id, input_refs, outputs) and their tasks (task id, step id)."""
     from labhq.research.semantics import Records
