@@ -1,0 +1,5 @@
+pr: 304
+rows:
+- sha: 99d3674
+  at: 2026-10-02 19:19
+  text: runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가
