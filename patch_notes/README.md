@@ -13,7 +13,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 13:47 | [`9fbe44c`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/9fbe44c) | STATUS의 #276 실측을 마지막 probe 수치로 갱신 |
+| 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
 | 13:40 | [`c9c75af`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/c9c75af) | inbound probe가 보낸 쪽의 거부 통지도 summary에 남김 |
+| 13:35 | [`783a393`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/783a393) | 라이선스 표에 제3자 예외를 적음: three.js는 MIT, placeholder.gltf는 CC0 |
+| 13:31 | [`79fa709`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/79fa709) | 저장소 라이선스를 정함: 코드는 GPL-3.0, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0 (README 배지·§14) |
 | 11:12 | [`7de511d`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/7de511d) | README·STATUS에 inbound 거부와 장시간 MCP 실측 기록 |
 | 11:12 | [`90c1c7a`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/90c1c7a) | Claude 직원과 bench arm이 crossSessionInbound refuse로 교차 세션 inbound 메시지를 거부 |
 | 11:12 | [`688231b`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/688231b) | 90초 뒤 답하는 labhq MCP 호출이 Claude·Codex fake CLI에서 timeout 없이 한 번에 끝나는 test |
