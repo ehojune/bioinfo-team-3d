@@ -19,9 +19,10 @@ from tests.test_cso import PENGUINS_PLAN, penguins_hub
 
 V = vocab.load()
 CANARY = "CANARY-7f3a-secret"
-# main before #221 (1b73b5d): the plan schema and the rendered plan prompt with fixed arguments
+# main before #221 (1b73b5d): the plan schema and the rendered plan prompt with fixed arguments. The prompt hash
+# moved once on purpose since: #84 added the phone-card length rule to the plan questions (off still adds nothing).
 PLAN_SCHEMA_SHA = "62d0943358bdf2035f4919f92f19bba765a83a10e3d5abe6750d615bee5ccabf"
-PLAN_PROMPT_SHA = "ec449eb62081a116203b82d19a61abd3b2cfc42697e565af325caf9656f23432"
+PLAN_PROMPT_SHA = "c13a283a62a4a0a2735658ebfad37fb66e664b9719ced7925c88915f4326ffcb"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE)
 

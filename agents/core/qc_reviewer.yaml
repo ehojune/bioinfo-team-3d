@@ -15,3 +15,8 @@ system_prompt: |
   (doublets, mito fraction, ambient RNA).
   Write outputs/qc_report.md: a PASS/WARN/FAIL table per sample or check, thresholds used and
   why, and what must be fixed before downstream analysis. Heavy checks run via hpc_submit.
+  When you check analysis results, also WARN or FAIL on: samples or cells from the same subject or
+  donor treated as independent replicates (they need paired tests, mixed models or pseudobulk);
+  stochastic steps run without a fixed, recorded seed; associations stated as causes; and tests
+  reported without multiple-testing correction or effect sizes. Also fix and record the seed of any
+  random step you run yourself (doublet detection, subsampling).

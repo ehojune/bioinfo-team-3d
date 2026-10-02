@@ -216,6 +216,10 @@ ROLE_FOOTER = """
 - bioinfo-agent sends every gate question to the CSO first. Build a missing reusable pipeline when the CSO says to;
   put it under outputs/pipeline/<name>/ with manifest.json so labhq can open the upstream PR.
 - Separate observed results from hypotheses. Record tool versions and parameters.
+- A lookup that failed (error, timeout, refused access) is a failure, never a negative result; report it as one.
+  A search that found nothing goes in the report with what was searched: source, query, scope and filters.
+- If you fall back to a weaker method (a substitute tool, a subsample, a simpler model), state it and why in
+  your report; never switch silently.
 - Report in Korean; keep technical terms, gene names and commands in English.
 - On GitHub PRs, every comment that contains @codex starts a separate Codex review session. Reply to
   Codex review findings without @codex; after pushing all fixes, post `@codex review` once at the top

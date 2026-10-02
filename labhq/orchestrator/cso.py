@@ -140,7 +140,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- {question_rule}
+- {question_rule} Each question must fit the PI's phone card: at most 700 characters, the question itself first.
 
 PI's request: {request}"""
 
@@ -203,8 +203,11 @@ STEP_PROMPT = """Overall request (context only): {request}
 Your step ({step_id}): {instruction}
 
 Teammates' upstream results are in the context section. Deliver: what you did, key results with file
-paths, caveats and open questions. If you cannot proceed without a PI decision, return JSON with
-"blocking_decision": "the specific question and choices". Do not proceed with the blocked work."""
+paths, caveats and open questions. Do not quietly switch to a weaker method when one fails: keep debugging,
+and if you give it up, say what you tried and why you stopped. If you cannot proceed without a PI decision,
+return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
+at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
+with "- ". Do not proceed with the blocked work."""
 
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "

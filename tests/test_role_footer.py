@@ -43,3 +43,15 @@ def test_staff_instruction_files_carry_the_write_rules(tmp_path, engine, adapter
     adapter(Settings()).prepare(ctx)
     text = read(ctx.workdir)
     assert TEMP_RULE in text and PATH_RULE in text
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_every_staff_footer_covers_failed_and_empty_lookups_and_weaker_methods(tmp_path, read_only):
+    """#84: a failed lookup is reported as a failure, an empty search with what was searched, and a fallback to a
+    weaker method is stated in the report. Read-only staff (the reviewer) get these rules too."""
+    footer = " ".join(role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only)).split())
+    assert "A lookup that failed (error, timeout, refused access) is a failure, never a negative result" in footer
+    assert "A search that found nothing goes in the report with what was searched: source, query, scope and " \
+           "filters" in footer
+    assert "If you fall back to a weaker method" in footer and "never switch silently" in footer
+    assert "부재 증명" not in ROLE_FOOTER  # the built-in tool failure line (#339) stays on the tool error only
