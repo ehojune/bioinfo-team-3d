@@ -394,6 +394,13 @@ class Hub:
         req = self.requests[rid]
         if req.get("mode") == "direct":
             return set() if self.completed_direct_result(rid) else {req["agent_id"]}
+        if req.get("mode") == "plan_only":
+            if "plan" in req:
+                return set()
+            needed = {self.s.orchestrator.cso_agent}
+            if self.s.orchestrator.chief_of_staff_agent:
+                needed.add(self.s.orchestrator.chief_of_staff_agent)
+            return needed
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
