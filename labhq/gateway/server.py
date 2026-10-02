@@ -38,6 +38,8 @@ log = logging.getLogger(__name__)
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
+# Terminal reports can be as large as 20,000 characters and repeat once per finished request.
+SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
 SNAPSHOT_RESULT_CHARS = 500
 
@@ -59,6 +61,11 @@ def snapshot_event(event: dict) -> dict:
         return event
     if event.get("type") == "request.followup_done":
         return {**event, "data": snapshot_followup(data)}
+    report = data.get("report")
+    if event.get("type") in {"request.completed", "request.failed"} \
+            and isinstance(report, str) and len(report) > SNAPSHOT_REPORT_CHARS:
+        return {**event, "data": {**data, "report": report[:SNAPSHOT_REPORT_CHARS],
+                                  "report_truncated": True, "report_chars": len(report)}}
     text = data.get("text")
     if event.get("type") == "task.result" and isinstance(text, str) and len(text) > SNAPSHOT_RESULT_CHARS:
         return {**event, "data": {**data, "text": text[:SNAPSHOT_RESULT_CHARS], "text_truncated": True,

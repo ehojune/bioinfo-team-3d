@@ -358,6 +358,8 @@ function apply(ev, replay = false) {
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
       if (d.report) q.report = d.report;
+      delete q.report_truncated; delete q.report_chars;
+      if (d.report_truncated) Object.assign(q, { report_truncated: true, report_chars: d.report_chars });
       if (d.error) q.error = d.error;
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
       break;
@@ -410,6 +412,16 @@ function fillFollowups(rid, request) {
   });
   return filled;
 }
+function fillRequestDetail(rid, request) {
+  const q = S.requests.get(rid);
+  let filled = fillFollowups(rid, request);
+  if (q?.report_truncated && typeof request?.report === 'string') {
+    q.report = request.report;
+    delete q.report_truncated; delete q.report_chars;
+    filled++;
+  }
+  return filled;
+}
 function toolLabel(name) {
   const n = String(name || '').split('__').pop();
   return ({ hpc_submit: 'HPC 제출', hpc_status: 'HPC 확인', WebSearch: '웹 검색', WebFetch: '문헌 읽기', google_web_search: '웹 검색',
@@ -417,7 +429,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest };

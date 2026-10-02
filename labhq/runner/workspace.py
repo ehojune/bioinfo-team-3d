@@ -50,6 +50,22 @@ def _is_mount(path: Path) -> bool:
     return os.name != "nt" and os.path.ismount(path)
 
 
+def _case_sensitive(path: Path) -> bool:
+    """Whether differently cased names identify different entries in this folder's file system."""
+    name = path.name
+    alternate_name = next((name[:i] + char.swapcase() + name[i + 1:]
+                           for i, char in enumerate(name) if char in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+                          name)
+    if alternate_name == name:
+        return os.path.normcase("A") != os.path.normcase("a")
+    try:
+        return not os.path.samefile(path, path.with_name(alternate_name))
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return os.path.normcase("A") != os.path.normcase("a")
+
+
 log = logging.getLogger("labhq.runner")
 
 
@@ -200,6 +216,8 @@ class TaskWorkspace:
             runs = None
         runs = runs if isinstance(runs, dict) else {}
         own = {"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
+        own_names = own if _case_sensitive(root) else {name.casefold() for name in own}
+        own_name = (lambda name: name) if own_names is own else str.casefold
         found: list[str] = []
         note: str | None = None  # a folder left out; the listing goes on without it
         seen = 0
@@ -234,7 +252,7 @@ class TaskWorkspace:
                         note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
                         continue
                     folders.append(entry)
-                elif entry.kind == "file" and not (depth == 0 and entry.name in own):
+                elif entry.kind == "file" and not (depth == 0 and own_name(entry.name) in own_names):
                     if len(found) >= max_files:
                         return f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
                     found.append(PurePath("outputs", relative, entry.name).as_posix())

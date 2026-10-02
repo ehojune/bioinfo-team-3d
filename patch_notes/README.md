@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:17 | [`53504c3`](https://github.com/ehojune/bioinfo-team-3d/pull/313/commits/53504c3) | 3D 요청 카드 클릭을 보존하고 snapshot 보고서와 이어 묻기 글자 수를 바로잡았다. |
 | 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
 | 20:02 | [`ec47b29`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/ec47b29) | 승인 시간 초과와 화면 결정이 겹치면 timed_out을 최종 상태로 정리함(#199) |
 | 20:00 | [`d5e1ece`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/d5e1ece) | 러너 승인 시간 초과를 gateway에 반영하고 stale 알림을 요청한 socket에만 보냄(#199 #203) |

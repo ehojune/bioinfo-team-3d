@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · PR #313 — 3D 화면 후속 세 건
+
+- 결론: 전문 보기 클릭 유실, terminal report snapshot 팽창, 이어 묻기 글자 수 단위 불일치를 고쳤다.
+- 바뀐 것: 3D 요청 카드를 key로 재사용하고, 보고서 전문은 상세 API에서 받으며, 표시 길이는 Unicode 코드포인트로 센다.
+- 실행한 것: 수정 전 Node·gateway 회귀 실패를 확인했다. 수정 뒤 관련 pytest 62건, Node 회귀, 공개 저장소 검사를 통과시켰다.
+- 미해결: 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/web/lab3d/src/live.js`, `labhq/gateway/server.py`, `labhq/web/state.js`, `labhq/web/index.html`, `tests/web_issue126.cjs`, `tests/test_followup.py`.
+
 ## 2026-10-02 · #199 #203 — 승인 시간 초과 정리와 stale 알림 범위
 
 - 결론: 러너에서 만료된 승인은 gateway와 화면에서도 즉시 끝나며, stale 알림은 누른 화면에만 보인다.

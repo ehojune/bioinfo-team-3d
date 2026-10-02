@@ -75,6 +75,7 @@ def setup_runner(tmp_path, monkeypatch, engine, groups=None, flow=None):
                                         "agent_id": agent.id})
             if ctx.task.meta.get("kind") == "wrap_up":
                 (ctx.workdir / "outputs" / "PARTIAL_STATUS.md").write_text("fixture", encoding="utf-8")
+                (ctx.workdir / "outputs" / "continued.tsv").write_text("more", encoding="utf-8")
             return adapter.finalize(state, ctx, 0)
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Replay())
@@ -165,6 +166,25 @@ async def test_request_wake_retry_and_wrap_sum_three_fixture_calls(tmp_path, mon
         assert calls[-1].meta["kind"] == "wrap_up"
     else:
         assert result.ok
+
+
+@pytest.mark.asyncio
+async def test_direct_wrap_up_collects_every_file_left_in_outputs(tmp_path, monkeypatch):
+    runner, agent, _baselines, calls = setup_runner(tmp_path, monkeypatch, "claude_code", flow="wrap")
+    hub = create_app(runner.s).state.hub
+    hub.agents[agent.id] = agent.model_dump(mode="json")
+    hub.requests["r"] = {"id": "r", "text": "fixture", "mode": "direct", "agent_id": agent.id,
+                         "status": "running", "cost_usd": 0, "cost_known": True, "usage": {}, "budget_usd": 1}
+    hub.save_request("r")
+
+    async def dispatch(task):
+        return await runner.run_task(task)
+
+    monkeypatch.setattr(hub, "dispatch", dispatch)
+    result = await Orchestrator(hub).run_step(Task(agent_id=agent.id, request_id="r", prompt="fixture",
+                                                   meta={"kind": "direct"}))
+    assert calls[-1].meta["collect_direct_outputs"] is True
+    assert result.outputs == ["outputs/PARTIAL_STATUS.md", "outputs/continued.tsv"]
 
 
 @pytest.mark.asyncio
