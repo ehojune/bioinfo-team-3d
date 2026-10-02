@@ -9,3 +9,7 @@ rows:
   at: 2026-10-03 03:31
   text: 레지스트리 게이트 우회 표기 보강. `..`·`.` 경로 조각, 하위 키로 cd 뒤 상대 경로, Python r''/u'' 접두사,
     GetEnvironmentVariable.Invoke, `$(` 부분식도 묻는다. echo HKCU·$null·EnvironmentVariableTarget.Process 오탐은 허용으로
+- sha: 017c1a5
+  at: 2026-10-03 03:39
+  text: 리뷰 반영. 막을 경로가 하나도 남지 않아도 개인 경로가 켜진 것으로 보고 레지스트리 검사·셸 미리 허용 해제를
+    유지. 켜짐 여부를 runner→승인 게이트로 따로 넘기고 policy.private_paths:[]만 끈다
