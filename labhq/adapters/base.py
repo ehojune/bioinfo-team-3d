@@ -140,12 +140,23 @@ def command_line_limit() -> int | None:
     return 32_000 if os.name == "nt" else None
 
 
-def _command_too_long(cmd: list[str]) -> int | None:
+def argument_byte_limit() -> int | None:
+    """UTF-8 bytes allowed in one argv element; Linux MAX_ARG_STRLEN is 128 KiB."""
+    return 131_072 if os.name != "nt" else None
+
+
+def _command_too_long(cmd: list[str]) -> tuple[int, int, str] | None:
     limit = command_line_limit()
-    if limit is None:
-        return None
-    length = len(subprocess.list2cmdline(cmd).encode("utf-16-le")) // 2  # CreateProcessW counts UTF-16 units
-    return length if length > limit else None
+    if limit is not None:
+        length = len(subprocess.list2cmdline(cmd).encode("utf-16-le")) // 2  # CreateProcessW counts UTF-16 units
+        if length > limit:
+            return length, limit, "Windows command-line UTF-16 units"
+    limit = argument_byte_limit()
+    if limit is not None:
+        length = max((len(arg.encode("utf-8")) for arg in cmd), default=0)
+        if length > limit:
+            return length, limit, "POSIX argument UTF-8 bytes"
+    return None
 
 
 ROLE_FOOTER = """
@@ -351,6 +362,10 @@ class AgentAdapter(ABC):
         """Reason to refuse the run before anything is written or spawned."""
         return None
 
+    def prompt_pointer_error(self, ctx: RunContext) -> str | None:
+        """Reason this engine cannot follow the final task-file pointer prompt."""
+        return None
+
     @abstractmethod
     def build_command(self, ctx: RunContext) -> list[str]: ...
 
@@ -405,9 +420,13 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))
         too_long = _command_too_long(cmd)
         if too_long:
+            length, limit, unit = too_long
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
-                              error=f"command line is {too_long:,} UTF-16 units, over the Windows limit of "
-                                    f"{command_line_limit():,}; shorten the prompt, output schema or settings")
+                              error=f"command line has {length:,} {unit}, over the limit of {limit:,}; "
+                                    "shorten the prompt, output schema or settings")
+        refused = self.prompt_pointer_error(ctx)
+        if refused:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
         ctx.write_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
@@ -428,6 +447,10 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
+        except OSError as exc:
+            detail = exc.strerror or str(exc)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              error=f"could not start executable {cmd[0]!r}: {detail}")
         if payload is not None and proc.stdin:
             proc.stdin.write(payload)
             await proc.stdin.drain()
