@@ -76,7 +76,9 @@ def _load_entry(path: Path) -> list[dict[str, object]]:
 def patch_rows(root: Path) -> list[dict[str, object]]:
     directory = root / "patch_notes" / "entries"
     rows: list[dict[str, object]] = []
-    for path in sorted(directory.glob("*.yaml")):
+    for path in sorted(directory.rglob("*.yaml")):
+        if path.parent != directory:  # a branch with "/" would otherwise drop its rows silently
+            raise ValueError(f"{path}: entries 파일은 entries/ 바로 아래에 둡니다(branch의 /는 --로)")
         if path.name != "_legacy.yaml" and not ENTRY_NAME.fullmatch(path.name):
             raise ValueError(f"{path}: entries 파일 이름이 잘못됐습니다")
         rows.extend(_load_entry(path))
@@ -102,7 +104,9 @@ def render_status(root: Path) -> str:
     directory = root / "docs" / "status"
     current = []
     legacy = None
-    for path in sorted(directory.glob("*.md"), reverse=True):
+    for path in sorted(directory.rglob("*.md"), reverse=True):
+        if path.parent != directory:
+            raise ValueError(f"{path}: status 파일은 docs/status/ 바로 아래에 둡니다(branch의 /는 --로)")
         if path.name == "_legacy.md":
             legacy = path.read_text(encoding="utf-8").strip()
         elif STATUS_NAME.fullmatch(path.name):
@@ -151,11 +155,17 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--write", action="store_true")
     mode.add_argument("--check", action="store_true")
+    mode.add_argument("--validate", action="store_true", help="load every entry and status file (PR check, no comparison)")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     try:
         if args.write:
             write(root)
+            return 0
+        if args.validate:  # what the main-side generator will need, checked before the merge
+            render_patch_notes(root)
+            render_status(root)
+            print("✓ 기록 원본을 목차로 만들 수 있습니다")
             return 0
         return 0 if check(root) else 1
     except (OSError, ValueError, yaml.YAMLError) as exc:

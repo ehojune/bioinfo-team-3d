@@ -66,3 +66,23 @@ def test_legacy_migration_recreates_the_old_indexes_byte_for_byte(tmp_path):
     status = ni.render_status(tmp_path).replace(notice, "", 1).encode()
     assert hashlib.sha256(patch).hexdigest() == "f354d5cad91494648ae1650a376d6b068601946db8ec26edc0a3137296521faa"
     assert hashlib.sha256(status).hexdigest() == "e61e0bc0f0385d76f967589ef4d48acd9736533e8502c85d317bed20f48efff1"
+
+
+def test_an_entry_in_a_subfolder_fails_instead_of_dropping_its_rows(tmp_path):
+    write_entry(tmp_path, "feature/foo.yaml", 7, [{"sha": "abc1234", "at": "2026-10-02 10:00", "text": "x"}])
+    try:
+        ni.patch_rows(tmp_path)
+    except ValueError as exc:
+        assert "바로 아래" in str(exc)
+    else:
+        raise AssertionError("a nested entries file must not be skipped silently")
+
+
+def test_validate_rejects_a_row_the_generator_would_refuse(tmp_path):
+    write_entry(tmp_path, "topic.yaml", 7, [{"sha": "abc1234", "text": "missing at"}])
+    try:
+        ni.render_patch_notes(tmp_path)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a row without `at` must fail before the merge, not on main")
