@@ -36,19 +36,30 @@ def test_b1_selector_returns_only_the_three_allowed_prompt_fields(tmp_path, monk
     service = shadow.ShadowService(hub, shadow.ShadowConfig(mode="ab"), paths)
     monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
 
-    candidates = service.advisory_candidates("req_b", requests["req_b"]["plan"])
+    offer = service.advisory_offer("req_b", requests["req_b"]["plan"])
 
+    candidates = offer["candidates"]
     assert len(candidates) == 1 and set(candidates[0]) == {"artifact_id", "data_type", "request_id"}
     assert candidates[0]["artifact_id"].startswith("sem:")
-    encoded = json.dumps(candidates)
+    assert offer["arm"] == "advisory" and offer["offered"] == [candidates[0]["artifact_id"]]
+    encoded = json.dumps(offer)
     assert "outputs/" not in encoded and "request text" not in encoded and str(tmp_path) not in encoded
+    # the shadow arm gets the same selector run: the ids it would have been offered, and nothing for the prompt
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "shadow")
+    assert service.advisory_offer("req_b", requests["req_b"]["plan"]) == {
+        "arm": "shadow", "offered": offer["offered"], "candidates": []}
+    service.cfg = shadow.ShadowConfig(mode="shadow")
+    assert service.advisory_offer("req_b", requests["req_b"]["plan"]) is None
 
 
 @pytest.mark.asyncio
 async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
     captures = []
-    for service in (None, SimpleNamespace(advisory_candidates=lambda rid, plan: (
-            [] if shadow.ab_arm(rid) == "shadow" else pytest.fail("request moved out of shadow arm")))):
+    ab_shadow_arm = SimpleNamespace(advisory_offer=lambda rid, plan: (  # a would-be offer, never shown
+        {"arm": "shadow", "offered": ["sem:0123abcd"], "candidates": []} if shadow.ab_arm(rid) == "shadow"
+        else pytest.fail("request moved out of shadow arm")))
+    for service, frozen in ((None, None), (SimpleNamespace(advisory_offer=lambda rid, plan: None), None),
+                            (ab_shadow_arm, {"arm": "shadow", "offered": ["sem:0123abcd"]})):
         hub, _ = research_hub([plan_with([])], declare_on=False)
         hub.requests["r0"] = hub.requests.pop("r")
         if service is not None:
@@ -56,7 +67,8 @@ async def test_off_shadow_and_ab_shadow_arm_dispatch_the_same_plan_bytes():
         await Orchestrator(hub).run_request("r0")
         captures.append(_payload(hub.calls[0]))
         assert [task.meta["kind"] for task in hub.calls] == ["plan"]
-    assert captures[0] == captures[1]
+        assert hub.requests["r0"].get("semantics_ab") == frozen  # off and shadow mode add nothing to the request
+    assert captures[0] == captures[1] == captures[2]
 
 
 @pytest.mark.asyncio
@@ -73,11 +85,12 @@ async def test_advisory_prompt_has_no_path_or_request_body_and_does_not_change_c
 
     hub, _ = research_hub([first, second], declare_on=True)
 
-    def candidates(rid, plan):
+    def offer(rid, plan):
         refs.append(plan)
-        return [{"artifact_id": "sem:0123abcd", "data_type": "de_table", "request_id": "req_prior"}]
+        return {"arm": "advisory", "offered": ["sem:0123abcd"],
+                "candidates": [{"artifact_id": "sem:0123abcd", "data_type": "de_table", "request_id": "req_prior"}]}
 
-    hub.semantics_shadow = SimpleNamespace(advisory_candidates=candidates)
+    hub.semantics_shadow = SimpleNamespace(advisory_offer=offer)
     await Orchestrator(hub).run_request("r")
 
     plans = [task for task in hub.calls if task.meta["kind"] == "plan"]
@@ -86,6 +99,7 @@ async def test_advisory_prompt_has_no_path_or_request_body_and_does_not_change_c
     assert "outputs/" not in plans[1].prompt.split("Optional reusable artifacts", 1)[1]
     assert hub.requests["r"]["outcome"] == "plan_approved" and len(hub.approvals) == 1
     assert hub.requests["r"]["plan"]["steps"][0]["input_refs"] == ["sem:0123abcd"]
+    assert hub.requests["r"]["semantics_ab"] == {"arm": "advisory", "offered": ["sem:0123abcd"]}
 
 
 def test_ab_line_records_arm_reference_and_cost(tmp_path, monkeypatch):
@@ -93,12 +107,97 @@ def test_ab_line_records_arm_reference_and_cost(tmp_path, monkeypatch):
     observed = {}
     line_for(hub, "req_a", observed)
     candidate = line_for(hub, "req_b", observed)["provenance"]["candidate_refs"][0]
-    requests["req_b"].update(cost_usd=1.25, cost_known=True)
+    requests["req_b"].update(cost_usd=1.25, cost_known=True, intake={"work_kind": "research"},
+                             semantics_ab={"arm": "advisory", "offered": [candidate]})
     requests["req_b"]["plan"]["steps"][0]["input_refs"] = [candidate]
     monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
 
     snap = shadow.take_snapshot(hub, "req_b", shadow.ShadowConfig(mode="ab"))
     line = shadow.compute_line(snap, observed, lambda: None, epoch=1)
 
-    assert (line["arm"], line["referenced"], line["cost_usd"], line["cost_known"]) == (
-        "advisory", True, 1.25, True)
+    assert (line["arm"], line["offered"], line["referenced"], line["cost_usd"], line["cost_known"]) == (
+        "advisory", 1, True, 1.25, True)
+
+
+AB_FIELDS = {"arm", "offered", "referenced", "cost_usd", "cost_known"}
+
+
+def _end_line(hub, requests, observed, *, offered=None, input_refs=None):
+    """req_b's end record as a research request whose plan-time offer was ``offered``."""
+    req = requests["req_b"]
+    req["intake"] = {"work_kind": "research"}
+    if offered is not None:
+        req["semantics_ab"] = {"arm": "advisory", "offered": offered}
+    if input_refs is not None:
+        req["plan"]["steps"][0]["input_refs"] = input_refs
+    snap = shadow.take_snapshot(hub, "req_b", shadow.ShadowConfig(mode="ab"))
+    return snap, shadow.compute_line(snap, observed, lambda: None, epoch=1)
+
+
+def test_ab_records_an_arm_only_where_the_research_advisory_hook_applies(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    observed = {}
+    line_for(hub, "req_a", observed)
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+    for mode in ("orchestrate", "direct"):  # a general CSO plan or a direct request is never offered anything
+        requests["req_b"]["mode"] = mode
+        snap = shadow.take_snapshot(hub, "req_b", shadow.ShadowConfig(mode="ab"))
+        assert not AB_FIELDS & set(shadow.compute_line(snap, observed, lambda: None, epoch=1))
+        assert not AB_FIELDS & set(shadow.failed_line(snap, "timeout", TimeoutError(), epoch=1, ms=1.0))
+    requests["req_b"]["mode"] = "orchestrate"
+    snap, line = _end_line(hub, requests, observed)
+    assert AB_FIELDS <= set(line) and line["arm"] == "advisory"
+    assert AB_FIELDS <= set(shadow.failed_line(snap, "timeout", TimeoutError(), epoch=1, ms=1.0))
+
+
+def test_reference_is_judged_against_the_ids_frozen_at_plan_time(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    observed = {}
+    line_for(hub, "req_a", observed)
+    live = line_for(hub, "req_b", observed)["provenance"]["candidate_refs"][0]
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+
+    # offered at plan time, gone from the candidates recomputed at the end: still a reference
+    _, line = _end_line(hub, requests, observed, offered=["sem:0123abcd"], input_refs=["sem:0123abcd"])
+    assert "sem:0123abcd" not in line["provenance"]["candidate_refs"]
+    assert (line["offered"], line["referenced"]) == (1, True)
+    # a candidate only at the end (the plan-time selector found none): never counted as a reference
+    _, line = _end_line(hub, requests, observed, offered=[], input_refs=[live])
+    assert live in line["provenance"]["candidate_refs"]
+    assert (line["offered"], line["referenced"]) == (0, False)
+    assert "sem:0123abcd" not in json.dumps(line)  # the frozen ids stay on the request; the line keeps a count
+
+
+def test_a_plan_that_uses_an_offered_id_is_recorded_without_tripping_the_info_boundary(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    hub.s.semantics = "ab"
+    service = shadow.ShadowService.start(hub)
+    assert service is not None and service.cfg.mode == "ab"
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+    for rid in ("req_a", "req_b"):
+        service.after_request(rid)
+        assert service.drain(10)
+    lines = shadow.read_lines(service.paths)[0]
+    live = lines[-1]["provenance"]["candidate_refs"][0]
+    requests["req_b"].update(intake={"work_kind": "research"}, semantics_ab={"arm": "advisory", "offered": [live]})
+    requests["req_b"]["plan"]["steps"][0]["input_refs"] = [live]
+
+    service.after_request("req_b")
+    assert service.drain(10)
+
+    assert service.latched is None
+    last = shadow.read_lines(service.paths)[0][-1]
+    assert (last["request_id"], last["arm"], last["offered"], last["referenced"]) == ("req_b", "advisory", 1, True)
+
+
+def test_only_the_ids_frozen_for_this_request_leave_the_sensitive_set(tmp_path, monkeypatch):
+    hub, requests = _typed_pair(tmp_path)
+    observed = {}
+    line_for(hub, "req_a", observed)
+    live = line_for(hub, "req_b", observed)["provenance"]["candidate_refs"][0]
+    monkeypatch.setattr(shadow, "ab_arm", lambda rid: "advisory")
+
+    snap, line = _end_line(hub, requests, observed, offered=[live], input_refs=[live])
+    assert shadow.boundary_problems(line, shadow.sensitive_values(snap)) == []
+    snap, line = _end_line(hub, requests, observed, offered=[], input_refs=[live])  # not offered: still a plan value
+    assert shadow.boundary_problems(line, shadow.sensitive_values(snap))

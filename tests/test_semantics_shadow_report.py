@@ -67,9 +67,9 @@ def test_the_report_tables_both_models_and_the_auto_off_history(tmp_path, config
 
 
 def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_path):
-    advisory = {**_line(1, lane="research", candidates=1), "arm": "advisory", "referenced": True,
+    advisory = {**_line(1, lane="research", candidates=1), "arm": "advisory", "offered": 1, "referenced": True,
                 "cost_usd": 1.5, "cost_known": True}
-    shadow_arm = {**_line(2, lane="research", candidates=1), "arm": "shadow", "referenced": False,
+    shadow_arm = {**_line(2, lane="research", candidates=1), "arm": "shadow", "offered": 1, "referenced": False,
                   "status": "failed", "cost_usd": 0, "cost_known": False}
     paths = _write(tmp_path, [advisory, shadow_arm])
 
@@ -81,6 +81,34 @@ def test_ab_report_compares_requests_candidates_reference_failure_and_cost(tmp_p
     assert rep["arms"]["shadow"]["failure_rate"] == 1.0 and rep["arms"]["shadow"]["cost_unknown"] == 1
     assert rep["ab_window"] == {"requests": 2, "target_requests": 10, "deadline": "2026-10-23",
                                  "reached": False}
+
+
+def test_ab_report_counts_research_requests_only_so_others_cannot_close_the_window(tmp_path):
+    research = {**_line(1, lane="research"), "arm": "advisory", "offered": 1, "referenced": True,
+                "cost_usd": 1.0, "cost_known": True}
+    others = [{**_line(i, lane=lane), "arm": "shadow", "offered": 0, "referenced": False, "status": "failed",
+               "cost_usd": 2.0, "cost_known": True}
+              for i, lane in enumerate(["general"] * 5 + ["direct"] * 5, start=2)]
+    paths = _write(tmp_path, [research, *others])
+
+    rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
+
+    assert rep["arms"]["advisory"]["requests"] == 1 and rep["arms"]["shadow"]["requests"] == 0
+    assert rep["arms"]["shadow"]["cost_usd"] == 0 and rep["arms"]["shadow"]["failure_rate"] is None
+    assert rep["ab_window"]["requests"] == 1 and rep["ab_window"]["reached"] is False
+
+
+def test_ab_report_takes_candidates_from_the_plan_time_offer_not_the_end(tmp_path):
+    def row(i, end, offered, referenced):
+        return {**_line(i, lane="research", candidates=end), "arm": "advisory", "offered": offered,
+                "referenced": referenced, "cost_usd": 0, "cost_known": True}
+
+    # offered at plan time but gone at the end (used, then not), and a candidate that appeared only at the end
+    paths = _write(tmp_path, [row(1, 0, 2, True), row(2, 0, 1, False), row(3, 3, 0, False)])
+
+    rep = shadow.build_report(paths, date(2026, 10, 10), "ab")
+
+    assert rep["arms"]["advisory"]["with_candidates"] == 2 and rep["arms"]["advisory"]["reference_rate"] == 0.5
 
 
 def test_info_boundary_report_names_only_the_field_and_category(tmp_path, config, capsys):

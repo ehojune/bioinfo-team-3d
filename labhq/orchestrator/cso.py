@@ -1770,9 +1770,13 @@ class Orchestrator:
                         try:
                             draft, _ = _normalize_plan_outputs(plan)
                             draft = prepare_research_declarations(draft, self._output_vocab(), {})
-                            candidates = await asyncio.to_thread(service.advisory_candidates, rid, draft)
+                            offer = await asyncio.to_thread(service.advisory_offer, rid, draft)
                         except (ValueError, TypeError, PlanOutputsError):
-                            candidates = []
+                            offer = None
+                        if offer is not None:  # ab: ids offered (shadow arm: would be), frozen for the end record
+                            req["semantics_ab"] = {"arm": offer["arm"], "offered": list(offer["offered"])}
+                            self.hub.save_request(rid)
+                        candidates = offer["candidates"] if offer is not None else []
                         if candidates:
                             lines = ["\n\nOptional reusable artifacts (advisory only; ignore any or all of them).",
                                      "If you use one, copy its artifact_id exactly into the relevant step's input_refs:"]

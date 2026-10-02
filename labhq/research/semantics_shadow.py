@@ -93,12 +93,13 @@ TYPE_BUCKETS = ("local", "unknown", "withheld")  # besides the EDAM ids of the l
 TYPE_BASIS = ("declared", "inferred", "unknown")
 DECLARATION_COUNTS = ("outputs", "data_declared", "format_declared")
 SHA_HEX = re.compile(r"[0-9a-f]{64}")
+AB_REF = re.compile(r"sem:[0-9a-f]{8}")  # the opaque artifact id a candidate ref and an A/B offer carry
 DOI_VALUE = re.compile(r"(?:doi:)?10\.\d{4,9}/\S+", re.IGNORECASE)
 FILENAME_VALUE = re.compile(r"[^\\/\s]+\.[A-Za-z0-9]{1,12}")
 BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id", "project", "lane",
                              "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
                              "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
-                             "key", "error_kind", "reason", "counts", "arm", "referenced", "cost_usd",
+                             "key", "error_kind", "reason", "counts", "arm", "offered", "referenced", "cost_usd",
                              "cost_known", "provenance.types",
                              "provenance.declarations", "objects.artifact_types"})
 BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
@@ -360,14 +361,26 @@ def _light_request(req: Mapping[str, Any]) -> dict:
     results = {sid: {k: r.get(k) for k in ("task_id", "agent_id", "ok", "status", "outputs", "workdir_id", "workdir")}
                for sid, r in (req.get("results") or {}).items() if isinstance(r, dict)}
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), dict) else {}
-    return {"id": req.get("id"), "project_id": req.get("project_id"), "mode": req.get("mode"),
-            "status": req.get("status"), "created_at": req.get("created_at"), "lane": _lane(req),
-            "cost_usd": req.get("cost_usd"), "cost_known": req.get("cost_known", True),
-            "research_contract": {"plan_sha256": contract.get("plan_sha256")} if research else None,
-            "plan": plan_copy, "results": results, "text": req.get("text"),
-            "output_types_stats": req.get("output_types_stats") if isinstance(req.get("output_types_stats"), dict) else None,
-            "references": [{"kind": r.get("kind"), "value": r.get("value")} for r in req.get("references") or []
-                           if isinstance(r, dict)]}
+    light = {"id": req.get("id"), "project_id": req.get("project_id"), "mode": req.get("mode"),
+             "status": req.get("status"), "created_at": req.get("created_at"), "lane": _lane(req),
+             "cost_usd": req.get("cost_usd"), "cost_known": req.get("cost_known", True),
+             "research_contract": {"plan_sha256": contract.get("plan_sha256")} if research else None,
+             "plan": plan_copy, "results": results, "text": req.get("text"),
+             "output_types_stats": req.get("output_types_stats") if isinstance(req.get("output_types_stats"), dict) else None,
+             "references": [{"kind": r.get("kind"), "value": r.get("value")} for r in req.get("references") or []
+                            if isinstance(r, dict)]}
+    offered = _ab_offered(req)
+    if offered is not None:
+        light["ab_offered"] = offered
+    return light
+
+
+def _ab_offered(req: Mapping[str, Any]) -> list[str] | None:
+    """The candidate ids frozen on a research request when its plan advisory was built (#149 decision 15)."""
+    frozen = req.get("semantics_ab")
+    if not isinstance(frozen, Mapping) or not isinstance(frozen.get("offered"), list):
+        return None
+    return [ref for ref in frozen["offered"] if isinstance(ref, str) and AB_REF.fullmatch(ref)][:MAX_CANDIDATE_REFS]
 
 
 def _light_task(task: Mapping[str, Any], research: set) -> dict:
@@ -596,15 +609,17 @@ def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
         for reference in req.get("references") or []:
             add(reference.get("value"))
         plan = req.get("plan") or {}
+        offered = set(req.get("ab_offered") or ())  # opaque ids the shadow offered this request: code's own values
         if req.get("research_contract"):
             for value in _strings(plan):
-                if len(value) >= 12:
+                if len(value) >= 12 and value not in offered:
                     add(value)
         else:
             for step in plan.get("steps") or []:
                 add(step.get("instruction"), "free_text")
                 for ref in step.get("input_refs") or []:  # #268
-                    add(ref)
+                    if ref not in offered:
+                        add(ref)
         for result in (req.get("results") or {}).values():
             add(result.get("workdir"), "path")
             add(result.get("workdir_id"), "identifier")
@@ -1469,7 +1484,7 @@ def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epo
             "project": opaque("project", project)[:12] if project else None, "lane": req.get("lane"),
             "mode": req.get("mode"), "status": req.get("status"), "provenance": dict(model), "objects": dict(model),
             "busy_skipped": int(snap.get("busy_skipped") or 0), "snapshot_ms": snap.get("snapshot_ms"), "ms": ms}
-    _add_ab_fields(line, snap, req, [])
+    _add_ab_fields(line, snap, req)
     return line
 
 
@@ -1488,11 +1503,15 @@ def _plan_refs(plan: Any) -> set[str]:
     return refs
 
 
-def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any], candidate_refs: Iterable[str]) -> None:
-    if snap.get("semantics_mode") != "ab":
+def _add_ab_fields(line: dict, snap: Mapping[str, Any], req: Mapping[str, Any]) -> None:
+    """A/B fields for a research request only: the advisory hook sits in the research plan alone, so a general or
+    direct request carries no arm. The plan is judged against the ids frozen on the request at plan time (the
+    shadow arm: the ids it would have been offered), never against candidates recomputed at the end."""
+    if snap.get("semantics_mode") != "ab" or req.get("lane") != "research":
         return
-    refs = set(candidate_refs)
-    line.update(arm=ab_arm(str(snap["rid"])), referenced=bool(refs & _plan_refs(req.get("plan"))),
+    offered = set(req.get("ab_offered") or ())
+    line.update(arm=ab_arm(str(snap["rid"])), offered=len(offered),
+                referenced=bool(offered & _plan_refs(req.get("plan"))),
                 cost_usd=float(req.get("cost_usd") or 0), cost_known=req.get("cost_known", True) is not False)
 
 
@@ -1527,7 +1546,7 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     line["hash"] = {**hashes, "workspaces": dict(sorted(workspaces.items()))}
     if "actions" in snap:  # semantics-hook: actions
         line["actions"] = compute_actions(snap, check)  # semantics-hook: actions
-    _add_ab_fields(line, snap, req, line["provenance"].get("candidate_refs") or [])
+    _add_ab_fields(line, snap, req)
     line["ms"] = _ms(started)
     return line
 
@@ -1811,9 +1830,22 @@ class ShadowService:
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
 
+    def advisory_offer(self, rid: str, plan: Mapping[str, Any]) -> dict | None:
+        """ab mode only (None otherwise): the B1 selector on a research draft, in both arms (#149 decision 15).
+
+        ``offered`` is the id set the advisory arm is shown and the shadow arm would have been shown; the orchestrator
+        freezes it on the request so the end record judges the plan against it. ``candidates`` (artifact id, data
+        type, creating request id) goes into the prompt, in the advisory arm only. A failure offers nothing."""
+        if self.cfg.mode != "ab":
+            return None
+        arm = ab_arm(rid)
+        found = self.advisory_candidates(rid, plan)
+        return {"arm": arm, "offered": [c["artifact_id"] for c in found],
+                "candidates": found if arm == "advisory" else []}
+
     def advisory_candidates(self, rid: str, plan: Mapping[str, Any]) -> list[dict[str, str]]:
-        """Run the B1 selector for an A/B advisory draft. Failures leave the ordinary request untouched."""
-        if self.cfg.mode != "ab" or ab_arm(rid) != "advisory":
+        """Run the B1 selector for an A/B draft. Failures leave the ordinary request untouched."""
+        if self.cfg.mode != "ab":
             return []
         try:
             self.refresh()
@@ -1841,7 +1873,7 @@ class ShadowService:
                 return []
             safe = []
             for item in details:
-                if (isinstance(item, Mapping) and re.fullmatch(r"sem:[0-9a-f]{8}", str(item.get("artifact_id")))
+                if (isinstance(item, Mapping) and AB_REF.fullmatch(str(item.get("artifact_id")))
                         and str(item.get("data_type")) and SAFE_TOKEN.fullmatch(str(item.get("data_type")))
                         and str(item.get("request_id")) and SAFE_TOKEN.fullmatch(str(item.get("request_id")))):
                     safe.append({k: str(item[k]) for k in ("artifact_id", "data_type", "request_id")})
@@ -2188,7 +2220,7 @@ def readable_request(line: Mapping[str, Any]) -> bool:
     prov, objs, hashes = (m or {} for m in models)
     return (isinstance(line.get("rows"), (Mapping, type(None)))  # the action section reads it (#259)
             and all(_number(line.get(k)) for k in ("ms", "snapshot_ms", "busy_skipped"))
-            and _number(line.get("cost_usd"))
+            and _number(line.get("cost_usd")) and _number(line.get("offered"))
             and line.get("arm") in (None, "advisory", "shadow")
             and isinstance(line.get("referenced"), (bool, type(None)))
             and isinstance(line.get("cost_known"), (bool, type(None)))
@@ -2277,11 +2309,12 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
     wrong = sum(1 for m in marks if str(m.get("verdict", "")).startswith("wrong"))
     total_ms = [float(r.get("ms") or 0) for r in requests]
     unknown_median = model_stats("provenance")["unknown_ratio_median"]
-    ab_requests = [r for r in requests if r.get("arm") in ("advisory", "shadow")]
+    # research requests only, as the line writes them; "with candidates" is the plan-time offer, not the end set
+    ab_requests = [r for r in requests if r.get("lane") == "research" and r.get("arm") in ("advisory", "shadow")]
 
     def arm_stats(arm: str) -> dict:
         rows = [r for r in ab_requests if r.get("arm") == arm]
-        with_candidates = sum(1 for r in rows if int(((r.get("provenance") or {}).get("candidates") or 0)) > 0)
+        with_candidates = sum(1 for r in rows if (r.get("offered") or 0) > 0)
         referenced = sum(1 for r in rows if r.get("referenced") is True)
         failed = sum(1 for r in rows if r.get("status") not in ("done", "completed"))
         known = [r for r in rows if r.get("cost_known") is not False]
