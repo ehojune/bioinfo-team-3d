@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · 인용·pack 후속(#196 #197 #218)
+
+- 결론: accession version 재인용, URI 혼합 후보, `pack_dirs` 시작 검증을 보강했다.
+- 바뀐 것: 여러 표기의 base key를 원장에 넣고, 여러 표기 체계의 URI가 정확한 ID와 다른 accession을 함께 반환하면 충돌로 판정한다.
+- 실행한 것: 수정 전 회귀 3건 실패를 확인했고, 관련 pytest 131건과 공개 저장소 검사를 통과했다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/evidence/claims.py`, `labhq/evidence/verify.py`, `labhq/research/packs.py`, `tests/test_evidence_verify.py`, `tests/test_research_protocol.py`.
+
 ## 2026-10-02 · 그림자 후속(#211 #212)
 
 - 결론: 이전 epoch의 breaker 저장 실패가 새 epoch를 끄지 않으며, `derived_from`은 A·B 모두 최대 64 artifact hop까지만 `yes`다.

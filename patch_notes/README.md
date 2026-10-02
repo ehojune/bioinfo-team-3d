@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:44 | [`f002a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/317/commits/f002a0c) | accession version 재인용과 URI 혼합 후보를 판정하고 pack_dirs를 시작 시 검증 |
 | 20:43 | [`638016a`](https://github.com/ehojune/bioinfo-team-3d/pull/318/commits/638016a) | 이전 epoch의 breaker 저장 실패를 격리하고 derived_from 깊이를 최대 64 artifact hop으로 맞췄다. |
 | 20:25 | [`17765e4`](https://github.com/ehojune/bioinfo-team-3d/pull/315/commits/17765e4) | direct 산출의 대소문자 판정과 wrap-up 수집을 보완하고 라운드 기록 범위를 문서화했다(#231 #233 #234) |
 | 20:25 | [`9a29c33`](https://github.com/ehojune/bioinfo-team-3d/pull/314/commits/9a29c33) | 시험 job의 연속 missing 종료와 스케줄러 명령·지시·소유권 판정을 보강 |
