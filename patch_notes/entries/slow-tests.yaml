@@ -4,3 +4,7 @@ rows:
   at: 2026-10-02 19:48
   text: 90초 MCP 실측을 opt-in으로 분리하고 같은 timeout 경로를 축소 시계로 검증했으며 제거·mock test의 반복 대기를
     줄였다.
+- sha: 122b259
+  at: 2026-10-02 19:57
+  text: 90초 MCP 실측을 별도 CI job(pytest-slow)으로 돌리고, 제거 test 둘이 각자 pristine state 사본에서
+    시작하게 했다.
