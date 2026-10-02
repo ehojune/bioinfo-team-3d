@@ -12,9 +12,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:45 | [`6a1ce67`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/6a1ce67) | 라이선스 배지 두 개를 README 생성 스크립트가 만들게 함(손으로 넣은 배지·일반 배지 중복 제거) |
 | 13:35 | [`c3a96a4`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/c3a96a4) | STATUS에 #271·#282 재계획·resume 결과를 기록함 |
+| 13:35 | [`783a393`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/783a393) | 라이선스 표에 제3자 예외를 적음: three.js는 MIT, placeholder.gltf는 CC0 |
 | 13:31 | [`bc36dca`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/bc36dca) | 연구 lane 저장 계획도 max_steps가 줄면 승인 계획을 그대로 둔 채 실패함을 test로 고정함 |
 | 13:31 | [`0b37a22`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0b37a22) | 최종 보고 작성 prompt에도 재계획 이력을 넘기고 revise 재계획 규칙을 명시함 |
+| 13:31 | [`79fa709`](https://github.com/ehojune/bioinfo-team-3d/pull/283/commits/79fa709) | 저장소 라이선스를 정함: 코드는 GPL-3.0, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0 (README 배지·§14) |
 | 13:30 | [`7bee353`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7bee353) | 재시작 뒤 진행 중이던 재계획 시도에도 줄어든 max_replans를 적용함 |
 | 13:30 | [`d0a20d1`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d0a20d1) | 재계획이 완료 단계의 의존성을 바꾸지 않고 유지해 새 id 언급 때문에 시도가 통째로 실패하지 않음 |
 | 11:13 | [`0391e34`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/0391e34) | wake 한도에서 멈춘 단계는 재계획 대상에서 제외함 |
