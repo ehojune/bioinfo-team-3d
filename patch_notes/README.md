@@ -12,7 +12,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:29 | [`040750c`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040750c) | 요청별 CSO 엔진이 바뀌어도 새 엔진에서 읽기 전용(Codex sandbox read-only, Claude Read·Glob·Grep)으로 돌고, plan_only 요청은 재시작 뒤 resume돼도 step을 돌리지 않음 |
+| 15:19 | [`040d420`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/040d420) | --cso-model 요청의 이어 묻기·CSO 상담도 고른 엔진·모델로 실행하고, 지킬 수 없으면 레지스트리 CSO로 바꾸지 않고 실패 |
 | 15:10 | [`986da50`](https://github.com/ehojune/bioinfo-team-3d/pull/291/commits/986da50) | CI: README만 바뀌면 README 검사만 돌리고, 가장 느린 test 15개를 출력 |
+| 15:01 | [`07c700f`](https://github.com/ehojune/bioinfo-team-3d/pull/289/commits/07c700f) | 요청별 CSO 계획 모드와 모델 선택 |
 | 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
 | 14:46 | [`c84bada`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/c84bada) | main의 CI 개선을 병합하며 STATUS·패치노트 기록을 보존하고 README의 HPC 기상 설명을 갱신했습니다. |
 | 14:43 | [`9776d1c`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/9776d1c) | #281·#280의 원인과 수정 전후 반복 검증을 STATUS에 기록했습니다. |

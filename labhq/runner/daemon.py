@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -28,7 +29,7 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
 from ..registry import Registry
-from ..settings import Settings
+from ..settings import MODEL_NAME_PATTERN, Settings
 from ..store import StateStore
 from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
@@ -47,6 +48,31 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
     tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+
+
+def checked_identity(identity: object) -> dict[str, str]:
+    """The engine and model a task's `agent_identity` names (#272); anything else in it refuses the task."""
+    if not isinstance(identity, dict) or set(identity) != {"engine", "model"}:
+        keys = sorted(identity) if isinstance(identity, dict) else type(identity).__name__
+        raise ValueError(f"agent_identity must name exactly engine and model, got {keys}")
+    model = identity["model"]
+    if not isinstance(model, str) or not re.fullmatch(MODEL_NAME_PATTERN, model):
+        raise ValueError(f"agent_identity model {model!r} is not a valid model name")
+    return {"engine": identity["engine"], "model": model}
+
+
+def switched_engine_limits(agent: AgentSpec, engine: Engine) -> dict[str, str]:
+    """What an `agent_identity` engine switch runs with (#272): read-only on the new engine.
+
+    The roles it serves, the CSO and the science reviewer, never write. Each engine's own limit means nothing to the
+    other (Claude's --tools list to Codex, Codex's sandbox to Claude), so carrying the spec over unchanged would hand
+    a Claude CSO's Codex run shell writes, or a Codex reviewer's Claude run Bash and Edit.
+    """
+    if engine is Engine.codex:
+        return {"sandbox": "read-only"}
+    if engine is Engine.claude_code:
+        return {"builtin_tools": ",".join(["Read", "Glob", "Grep", *(["WebSearch"] if "WebSearch" in agent.tools else [])])}
+    raise ValueError(f"agent_identity cannot switch {agent.id} to engine {engine.value}")
 
 
 def check_job_group(settings: Settings) -> None:
@@ -382,7 +408,15 @@ class Runner:
         agent = self.registry.get(task.agent_id)
         # A read-only task takes nothing from the sender: run_task rebuilds it as read_only_profile.
         if task.meta.get("agent_overrides") and not is_read_only_task(task.meta):
-            agent = agent.model_copy(update=task.meta["agent_overrides"])
+            agent = AgentSpec.model_validate({**agent.model_dump(), **task.meta["agent_overrides"]})
+        # A request-local CSO model (#272) names who answers, not what they may do, so read-only runs keep it
+        # too (read_only_profile keeps engine and model). One the runner cannot apply fails the task: running
+        # the registry's model instead would resume another engine's session or switch models mid-request.
+        if "agent_identity" in task.meta:
+            identity = checked_identity(task.meta["agent_identity"])
+            engine = Engine(identity["engine"])
+            limits = switched_engine_limits(agent, engine) if engine is not agent.engine else {}
+            agent = AgentSpec.model_validate({**agent.model_dump(), **identity, **limits})
         if self.s.runner.force_engine:
             agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
         return agent

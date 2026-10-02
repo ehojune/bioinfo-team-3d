@@ -269,11 +269,18 @@ class RecruitSettings(BaseModel):
     skill_source: str = "https://github.com/jmiao24/Paper2Agent"
 
 
+# A model name labhq passes to an engine CLI as one argument: no leading '-', so it can never read as a flag.
+MODEL_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"
+
+
 class OrchestratorSettings(BaseModel):
     wait_for_clarification: bool = True
     cso_agent: str = "cso"
     chief_of_staff_agent: str | None = "chief_of_staff"
     reviewer_agent: str | None = "sci_reviewer"
+    # Per-request CSO overrides may select only one of these models. Fable is excluded because its
+    # professional-biology policy makes it unsuitable for this role (#272).
+    cso_models: list[str] = ["opus", "gpt-6-astra"]
     max_revisions: int = 1
     # Opt-in (#271): after a step failure or a review `revise`, the CSO may re-plan the unfinished part of
     # the DAG, at most this many times per request. 0 keeps the old behavior (fail, or revise in place).
@@ -285,6 +292,20 @@ class OrchestratorSettings(BaseModel):
     step_max_attempts: int = Field(default=2, ge=1)
     step_retry_backoff_s: float = Field(default=0.2, ge=0)
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
+
+    @field_validator("cso_models")
+    @classmethod
+    def safe_cso_models(cls, value: list[str]) -> list[str]:
+        import re
+
+        models = [model.strip() for model in value]
+        if any("fable" in model.casefold() for model in models):
+            raise ValueError("Fable models are not allowed for the CSO")
+        if any(not re.fullmatch(MODEL_NAME_PATTERN, model) for model in models):
+            raise ValueError("CSO model names must use only letters, digits, '.', '_', ':', '/', or '-'")
+        if len(models) != len(set(models)):
+            raise ValueError("CSO model names must be unique")
+        return models
 
 
 class PlanSettings(BaseModel):

@@ -441,6 +441,8 @@ def main(argv: list[str] | None = None) -> None:
                     help="reference pointer, repeatable: github owner/repo or URL, DOI, PMID, http(s) URL, "
                          "or a runner path inside runner.reference_roots (prefix kind: to force one)")
     sp.add_argument("--no-default-refs", action="store_true", help="leave out pi_profile.references")
+    sp.add_argument("--plan-only", action="store_true", help="stop after the CSO plan; do not run or review steps")
+    sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
     sp.add_argument("--no-wait", action="store_true")
     sub.add_parser("watch")
     sub.add_parser("projects", help="list projects and their GitHub repos")
@@ -600,7 +602,10 @@ def main(argv: list[str] | None = None) -> None:
             if reference is None:
                 p.error(f"--ref {raw!r}: kind unclear; prefix one of github: doi: pmid: url: path:")
             references.append(reference)
-        body = {"text": args.text, "mode": "direct" if args.agent else "orchestrate", "agent_id": args.agent,
+        if args.agent and (args.plan_only or args.cso_model):
+            p.error("--agent cannot be used with --plan-only or --cso-model")
+        body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",
+                "agent_id": args.agent, "cso_model": args.cso_model,
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs}
         if args.no_wait:
