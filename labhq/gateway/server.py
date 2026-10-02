@@ -754,6 +754,31 @@ class Hub:
             a = msg["data"]
             self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
             self.save_approval(a["id"])
+        elif typ == "approval.timed_out":
+            aid = str((msg.get("data") or {}).get("id") or "")
+            entry = self.approvals.get(aid)
+            prior = self.store.get("approval_decision", aid)
+            queued = self.store.get("decision", aid)
+            approval = (entry or {}).get("approval")
+            same_origin = ((entry or {}).get("origin") == runner_id or
+                           (queued or {}).get("origin") == runner_id or
+                           (prior or {}).get("origin") == runner_id)
+            if approval is None and prior:
+                approval = prior.get("approval")
+            if approval is None or not same_origin:
+                if runner_seq is not None:
+                    await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
+                return
+            self.approvals.pop(aid, None)
+            self.store.delete("approval", aid)
+            self.store.delete("decision", aid)
+            self.store.put("approval_decision", aid,
+                           {"approval": approval, "origin": runner_id, "approved": False,
+                            "note": "approval timed out", "state": "timed_out",
+                            "decided_at": time.time()})
+            msg = {**msg, "type": "approval.resolved",
+                   "data": {"id": aid, "approved": False, "note": "approval timed out",
+                            "state": "timed_out"}}
         elif typ == "ask.requested":
             ask = AskRequest.model_validate(msg["data"])
             existing = self.store.get("ask", ask.id)
@@ -1162,7 +1187,7 @@ class Hub:
             raise KeyError(approval_id)
         self.store.delete("approval", approval_id)
         self.store.put("approval_decision", approval_id,
-                       {"approval": entry["approval"], "approved": approved,
+                       {"approval": entry["approval"], "origin": entry["origin"], "approved": approved,
                         "note": note, "decided_at": time.time()})
         if entry["origin"]:
             self.store.put("decision", approval_id, {"origin": entry["origin"],
@@ -1380,8 +1405,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""))
                     except KeyError:  # already decided elsewhere (another device, timeout) — keep the socket
-                        await hub.publish({"type": "approval.stale", "ts": time.time(),
-                                           "data": {"id": msg.get("id")}})
+                        await ws.send_text(json.dumps({"type": "approval.stale", "ts": time.time(),
+                                                       "data": {"id": msg.get("id")}},
+                                                      ensure_ascii=False, default=str))
         except WebSocketDisconnect:
             pass
         finally:
