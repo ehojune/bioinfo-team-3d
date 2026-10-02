@@ -30,10 +30,24 @@ def redact_tokens(value: str) -> str:
     return _TOKEN.sub(r"\1[REDACTED]", _QUERY_PARAM.sub(redact, value))
 
 
+def _redact_args(record: logging.LogRecord, redacted: str) -> tuple | None:
+    """Redacted args that render the same line, or None when a token spans the template and an argument."""
+    if not isinstance(record.msg, str) or not isinstance(record.args, tuple) or not record.args:
+        return None
+    args = tuple(redact_tokens(arg) if isinstance(arg, str) else arg for arg in record.args)
+    try:
+        return args if redact_tokens(record.msg) % args == redacted else None
+    except (TypeError, ValueError):
+        return None
+
+
 class TokenRedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        record.msg = redact_tokens(record.getMessage())
-        record.args = ()
+        redacted = redact_tokens(record.getMessage())
+        # uvicorn's AccessFormatter unpacks five args (#331); keep them when per-argument masking renders the same
+        # redacted line, otherwise flatten as before.
+        args = None if record.exc_info else _redact_args(record, redacted)
+        record.msg, record.args = (redact_tokens(record.msg), args) if args is not None else (redacted, ())
         if record.exc_info:
             record.msg += "\n" + redact_tokens("".join(traceback.format_exception(*record.exc_info)))
             record.exc_info = None
