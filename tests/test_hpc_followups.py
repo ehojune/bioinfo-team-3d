@@ -339,6 +339,49 @@ async def test_a_submit_still_running_when_the_cli_exits_lands_in_pending_jobs(t
         runner.store.close()
 
 
+async def test_a_job_that_finishes_before_the_cli_exits_still_wakes_the_agent(tmp_path, monkeypatch):
+    """#281: a watcher tick can see the job finish while the agent still talks. The runner sends jobs.finished
+    for it after the run ends, so the result must list it or the CSO never waits and the wake-up is lost."""
+    import asyncio
+
+    from labhq.models import AgentSpec, Engine, Task, TaskResult
+    from labhq.tools.scheduler import JobInfo
+
+    runner = _runner(tmp_path)
+    runner.s.policy.approvals.hpc_core_hours_threshold = 100
+    runner.scheduler._run = _Recorder("4100\n")
+    monkeypatch.setattr(runner.scheduler, "status", lambda jid: JobInfo(job_id=jid, state="completed", exit_status=0))
+    agent = AgentSpec(id="analyst", name="Analyst", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    class JobEndsWhileTalking:
+        async def run(self, ctx):
+            script = ctx.workdir / "jobs" / "align_1.sh"
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("#!/bin/bash" + chr(10) + "true" + chr(10), encoding="utf-8")
+            submitted = await _post(runner, ctx.env["LABHQ_BROKER_TOKEN"], "/jobs/submit",
+                                    {"script": str(script), "name": "align"})
+            assert submitted.json()["job_id"] == "4100"
+            await runner._poll_jobs()  # the watcher's tick lands before the CLI exits
+            assert runner.jobs["4100"]["terminal"]
+            assert not [e for e in runner.store.pending() if e["type"] == "jobs.finished"]  # not while it talks
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="submitted", session_id="s1")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: JobEndsWhileTalking())
+    try:
+        run = asyncio.create_task(runner.run_task(Task(id="t1", agent_id=agent.id, prompt="align")))
+        runner.tasks["t1"] = run  # as _on_message registers it
+        result = await run
+        assert result.pending_jobs == ["4100"], result.pending_jobs
+        assert runner.jobs["4100"]["session_id"] == "s1"  # the wake-up resumes this session
+        await runner._poll_jobs()
+        woke = [e for e in runner.store.pending() if e["type"] == "jobs.finished"]
+        assert len(woke) == 1 and woke[0]["data"]["session_id"] == "s1"
+        assert woke[0]["data"]["jobs"] == [{"job_id": "4100", "name": "align", "state": "completed", "exit_status": 0}]
+    finally:
+        runner.store.close()
+
+
 def test_a_linked_jobs_folder_is_refused(tmp_path):
     from labhq.runner.hpc_jobs import _script
 
