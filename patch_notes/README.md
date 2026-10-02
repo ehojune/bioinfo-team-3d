@@ -14,7 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:20 | [`bf27728`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/bf27728) | consult ref 복사의 이진 모드를 keyword로 넘겨 text encoding 검사를 통과 |
+| 22:06 | [`8d1830e`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/8d1830e) | HeldDir 읽기용 open_read_file과 쓰기용 open_file을 나눔(병합 뒤 같은 이름 충돌) |
+| 22:05 | [`6115d9d`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/6115d9d) | main 병합: held_dir에 consult용 상대 파일 열기와 main의 소유 파일 쓰기를 함께 둠 |
+| 22:02 | [`8ffc390`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/8ffc390) | consult staging 경로를 숨기고 ref를 handle로 복사하며 ask cache를 ref별로 분리 |
+| 21:49 | [`e8b22c8`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/e8b22c8) | consult source를 열지 않고 검증한 ref 파일만 refs/에 중립 이름으로 복사하며 파일·전체 크기 상한을 적용 |
+| 21:38 | [`0fef219`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/0fef219) | gateway는 runner 경로를 전달만 하고 같은 runner가 consult refs를 작업 폴더 안에서 검증하도록 고침 |
 | 21:33 | [`d356082`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/d356082) | 소유 파일 쓰기는 폴더만 거부하고 FIFO 같은 특수 항목은 rename으로 교체해, 끝난 실행이 멈추지 않음 |
+| 21:29 | [`17af209`](https://github.com/ehojune/bioinfo-team-3d/pull/323/commits/17af209) | ask의 원래 작업 폴더와 검증된 refs를 consult read-only 입력으로 연결하고 Claude 숨김 메모리 실측을 남김 |
 | 21:20 | [`431b330`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/431b330) | HPC 공유 경로가 외부 parent를 검증한 뒤 생성된다는 설정 설명을 덧붙였다(#217) |
 | 21:18 | [`58b9ec1`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/58b9ec1) | 공백 포함 home 계정 경로를 온전히 가리고 HPC 제출 준비의 검증 순서와 링크 교체 오류를 바로잡았다(#217 #226) |
 | 21:12 | [`5af8dd8`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/5af8dd8) | main 병합: cso.py import에서 한도 대기(quota)와 연구 CP2 계약을 함께 둠 |
