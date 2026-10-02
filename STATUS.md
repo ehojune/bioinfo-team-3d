@@ -12,6 +12,14 @@
 - 미해결: #58 ① 일반 단계 결과 계약, tool_use_id, 일반 보고서의 도구 실패 경고. max_turns wrap-up이 첫 실행의 output_sha256을 두고 outputs만 합쳐 고쳐 쓴 산출이 mismatch로 나올 수 있다(기록 쪽, #334). 비어 있는 선언 폴더는 missing으로 나온다.
 - 근거: `labhq/evidence/audit.py`, `labhq/cli.py`, `labhq/runner/workspace.py`, `labhq/tools/_mcpcompat.py`, `labhq/tools/hpc_mcp.py`, `labhq/tools/ask_mcp.py`, `labhq/tools/approval_mcp.py`, `tests/test_labhq_verify.py`, `tests/test_hpc_failures.py`, `tests/test_ask_review4.py`.
 
+## 2026-10-03 · trial2-followups — 모의 시운전 F5와 직원 지침의 승인 카드 줄이기
+
+- 결론: 리뷰가 상한 뒤에도 수정을 요구한 요청이 단계별 결과 나열 대신 CSO 최종 보고서를 남기고, 쓰기 직원이 임시 파일·변수 경로로 승인 카드를 띄우는 일을 줄인다.
+- 바뀐 것: 미해결 리뷰도 합성을 돌리고 보고서에 "해결되지 않은 리뷰 지적" 절을 둔다. 요청은 failed와 `outcome=review_unresolved`를 유지하고, 재시작도 같은 경로를 탄다. 합성 실패나 예산 거부는 기존처럼 단계별 결과로 끝난다. 쓰기 직원 지침(`role_footer`)에 `.tmp/` 임시 폴더와 상대 경로 규칙 두 줄이 붙고 read-only task에는 붙지 않는다.
+- 검증: 관련 test 4개 파일 452 passed, 1 skipped. 공개 저장소 검사 통과.
+- 미해결: 합성 프롬프트가 리뷰를 3000자로 잘라 넘겨 그 너머의 지적은 CSO에게 보이지 않는다. 합성이 성공하면 보고서·이벤트에 "왜 failed인지"가 기계적으로 남지 않는다. `req["review"]`에는 전체가 있다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/gateway/server.py`, `labhq/adapters/base.py`, `tests/test_cso.py`, `tests/test_state.py`, `tests/test_private_paths.py`, `tests/test_role_footer.py`.
+
 ## 2026-10-03 · trial2-fixes — 2차 모의 시운전 결함 3건
 
 - 결론: 수정 재실행 순서, Codex 직원 cache 권한, 직원 간 Codex 로그인 파일 노출을 고쳤다.

@@ -14,9 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:05 | [`612af6a`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/612af6a) | main 병합: #339의 wrap-up 해시 test와 이 PR의 미해결 리뷰 test를 둘 다 유지 |
+| 07:56 | [`86a992e`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/86a992e) | 직원 작업 폴더 규칙을 영어로 맞추고 AGENTS.md test를 UTF-8로 읽음(Windows CI) |
 | 07:54 | [`7788c97`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/7788c97) | verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘) |
 | 07:41 | [`d59cba0`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/d59cba0) | ask broker 연결 실패 test를 ToolError 계약에 맞추고 400 경로의 공유 producer 단언을 따로 두었다. |
 | 07:41 | [`53abc40`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/53abc40) | labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자 규칙으로 막음). |
+| 07:39 | [`53ba01c`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/53ba01c) | 리뷰 미해결 보고서에 리뷰어 지적 전체를 labhq가 원문대로 붙임 |
+| 07:27 | [`668884f`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/668884f) | 쓰기 직원 공통 지침에 임시 파일은 작업 폴더 .tmp/, 경로는 상대 경로로 쓰라는 두 줄을 넣어 승인 카드를 줄였다. |
+| 07:25 | [`cfe88ae`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/cfe88ae) | 리뷰가 수정 상한 뒤에도 수정을 요구한 요청에 CSO가 미해결 지적을 한계로 적은 최종 보고서를 쓰게 했다(요청은 failed 유지). |
 | 07:24 | [`51c0946`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/51c0946) | 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다" 줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다. |
 | 07:24 | [`59d671c`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/59d671c) | labhq verify: 요청의 산출을 이 PC에서 다시 해시해 기록과 비교하고 보고서 앵커를 다시 검사하며, --bundle로 감사 번들 zip을 만든다. |
 | 07:24 | [`9cae5b5`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/9cae5b5) | README·HANDOFF에 labhq verify 사용법과 #58 남은 항목을 적었다. |
