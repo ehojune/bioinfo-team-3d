@@ -187,7 +187,7 @@ def private_paths_section(labels: list[str] | tuple[str, ...]) -> str:
              '- 작업에 꼭 필요해 보이면 손대기 전에 labhq_ask(to="cso")로 묻습니다.',
              "- 대상: " + ", ".join(f"`{label}`" for label in labels)]
     if "~/.claude" in labels:
-        lines.append("- 긴 명령 출력은 작업 폴더 안 파일로 남겨 읽습니다. `~/.claude` 아래 저장본은 열리지 않습니다.")
+        lines.append("- 긴 명령 출력은 작업 폴더 안 파일로 남겨 읽습니다. Claude가 `~/.claude` 아래에 따로 저장한 긴 출력은 다시 열리지 않을 수 있습니다.")
     return "\n".join(lines) + "\n"
 
 

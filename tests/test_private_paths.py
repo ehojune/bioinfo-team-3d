@@ -20,10 +20,17 @@ from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, PolicySettings, Settings
 
 REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every other test
+REAL_SHORT_NAME = private_paths._short_name
 
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]
 WIN_ENV = {"LOCALAPPDATA": "C:\\Users\\pi\\AppData\\Local", "APPDATA": "C:\\Users\\pi\\AppData\\Roaming"}
+
+
+@pytest.fixture(autouse=True)
+def _no_short_names(monkeypatch):
+    """pytest's temp folders have 8.3 names on Windows; tests that want short spellings set them explicitly."""
+    monkeypatch.setattr(private_paths, "_short_name", lambda path: None)
 
 
 def _home(tmp_path) -> Path:
@@ -90,7 +97,7 @@ def test_override_list_expands_tilde_and_labels_outside_home_without_its_path(tm
     settings = Settings.model_validate({"policy": {"private_paths": ["~/secrets", str(outside), "~/missing"]}})
     found = resolve_private_paths(settings, [tmp_path / "runs"], home=str(home))
     assert found.paths == (str(home / "secrets"), str(outside))
-    assert found.labels == ("~/secrets", OUTSIDE_HOME_LABEL)
+    assert found.labels == ("~/secrets", f"{OUTSIDE_HOME_LABEL} …/vault-notes")  # the folder, not its path
     off = Settings.model_validate({"policy": {"private_paths": []}})
     assert resolve_private_paths(off, [], home=str(home)) == private_paths.PrivatePaths(enabled=False)
 
@@ -335,8 +342,8 @@ def _doctor_row(settings, monkeypatch):
 
 @pytest.mark.parametrize("private,status,detail", [
     (["~/.ssh", "~/.netrc"], "ok", "2 active"),
-    (["~/.ssh", "TMP"], "ok", "1 active; skipped, holds a work folder: " + OUTSIDE_HOME_LABEL),
-    (["TMP"], "warn", "0 active; skipped, holds a work folder: " + OUTSIDE_HOME_LABEL),
+    (["~/.ssh", "TMP"], "ok", "1 active; skipped, holds a work folder: OUTSIDE"),
+    (["TMP"], "warn", "0 active; skipped, holds a work folder: OUTSIDE"),
     ([], "warn", "off (policy.private_paths: [])"),
     (["~/.kube"], "warn", "0 active"),
 ])
@@ -345,5 +352,134 @@ def test_doctor_reports_active_and_skipped_private_paths(tmp_path, monkeypatch, 
     monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
     settings = _doctor_settings(tmp_path, [str(tmp_path) if p == "TMP" else p for p in private])
     row = _doctor_row(settings, monkeypatch)
-    assert (row["status"], row["detail"]) == (status, detail)
+    assert (row["status"], row["detail"]) == (status, detail.replace("OUTSIDE", f"{OUTSIDE_HOME_LABEL} …/{tmp_path.name}"))
     assert "README" in row["hint"] and str(home) not in row["detail"]
+
+
+# ---------------- review of PR #324 ----------------
+
+def _claude_matches(rule: str, tool: str, command: str) -> bool:
+    """Claude's wildcard rule match as probed on 2.1.282: `*` is any text, the rest is literal."""
+    import re
+
+    if not rule.startswith(tool + "(") or not rule.endswith(")"):
+        return False
+    body = rule[len(tool) + 1:-1]
+    return re.fullmatch(".*".join(re.escape(part) for part in body.split("*")), command, re.S) is not None
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "python -c \"print(open(r'C:/Users/pi/.ssh/id_rsa').read())\""),
+    ("Bash", "python -c \"print(open(r'C:\\Users\\pi\\.ssh\\id_rsa').read())\""),
+    ("Bash", "ls ~/.ssh"),
+    ("Bash", "ls /c/Users/pi/.ssh"),
+    ("Bash", "python -c \"import shutil; shutil.copy(r'C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Cookies', 'x')\""),
+    ("Bash", "cat \"$LOCALAPPDATA\"/Google/Chrome/\"User Data\"/Default/Cookies"),
+    ("PowerShell", "Get-Content $env:USERPROFILE\\.ssh\\id_rsa"),
+    ("Bash", "python -c \"print(open('D:/vault/notes.txt').read())\""),
+    ("Bash", "cat /d/vault/notes.txt"),
+    ("Bash", "cat /mnt/d/vault/notes.txt"),
+])
+def test_ask_rules_catch_a_pre_approved_shell_command_naming_a_private_path(tool, command):
+    """A Bash pattern in --allowedTools (`Bash(python *)` on the analyst) skips the gate; an ask rule outranks it."""
+    ask = claude_deny_private({}, [*WIN_PRIVATE, "D:\\vault"], home=WIN_HOME)["permissions"]["ask"]
+    assert any(_claude_matches(rule, tool, command) for rule in ask), command
+    assert "Bash(*.ssh*)" in ask and "PowerShell(*.ssh*)" in ask and "Bash(*User Data*)" in ask
+
+
+def test_ask_rules_leave_other_commands_and_merge_into_existing_ask_rules():
+    base = {"permissions": {"ask": ["Bash(git push *)"], "deny": ["Read(//data/x/**)"]}}
+    merged = claude_deny_private(base, WIN_PRIVATE, home=WIN_HOME)["permissions"]
+    assert merged["ask"][0] == "Bash(git push *)" and merged["deny"][0] == "Read(//data/x/**)"
+    for command in ("python run.py --out outputs/x.tsv", "ls ~", "Rscript analysis.R"):
+        assert not any(_claude_matches(rule, "Bash", command) for rule in merged["ask"]), command
+    # A personal path outside home with a UNC spelling has no deny rule but still gets ask rules.
+    unc = claude_deny_private({}, ["\\\\server\\share\\keys"], home=WIN_HOME)["permissions"]
+    assert "deny" not in unc and "Bash(*/server/share/keys*)" in unc["ask"]
+
+
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", 'cat "$HOME"/.ssh/id_rsa'),
+    ("Bash", "cat \"$LOCALAPPDATA\"/Google/Chrome/\"User Data\"/Default/Cookies"),
+    ("Bash", "cat $LOCALAPPDATA/Google/Chrome/'User Data'/Default/Cookies"),
+    ("Bash", "cat C:/Users/pi/./.ssh/id_rsa"),
+    ("Bash", "cat ~/projects/../.ssh/id_rsa"),
+    ("Bash", "cat C:/Users/pi/AppData/../.ssh/id_rsa"),
+    ("Bash", "cat //localhost/C$/Users/pi/.ssh/id_rsa"),
+    ("Bash", "type \\\\127.0.0.1\\c$\\Users\\pi\\.ssh\\id_rsa"),
+    ("Bash", "cat '\\\\?\\C:\\Users\\pi\\.ssh\\id_rsa'"),
+    ("PowerShell", "Get-Content $env:HOMEDRIVE$env:HOMEPATH\\.ssh\\id_rsa"),
+    ("PowerShell", "Get-Content \\\\?\\UNC\\localhost\\C$\\Users\\pi\\.ssh\\id_rsa"),
+])
+def test_quoted_dotted_and_admin_share_spellings_go_to_the_pi(tool, command):
+    decision = _gate(tool, {"command": command})
+    assert decision.action == "ask" and "private_paths" in decision.reason
+
+
+@pytest.mark.parametrize("command", [
+    "echo \"it's done\" > notes.md", "cat ./a/../b.txt", "ls ~/projects/..", "cat //localhost/C$/data/x.tsv",
+])
+def test_the_new_spellings_do_not_catch_unrelated_commands(command):
+    assert _gate("Bash", {"command": command}).action == "allow"
+
+
+@pytest.mark.parametrize("path", [
+    "\\\\localhost\\C$\\Users\\pi\\.ssh\\id_rsa", "\\\\127.0.0.1\\c$\\Users\\pi\\.ssh\\id_rsa",
+    "\\\\?\\C:\\Users\\pi\\.ssh\\id_rsa", "//localhost/c$/Users/pi/.ssh/id_rsa",
+])
+def test_file_tools_on_an_admin_share_or_prefixed_spelling_are_denied(path):
+    decision = _gate("Read", {"file_path": path})
+    assert decision.action == "deny" and "private_paths" in decision.reason
+
+
+def test_short_names_are_ruled_and_matched_like_the_long_path(tmp_path, monkeypatch):
+    home = _home(tmp_path)
+    ssh = str(home / ".ssh")
+    monkeypatch.setattr(private_paths, "_short_name",
+                        lambda path: str(home / "SSH~1") if os.path.normcase(path) == os.path.normcase(ssh) else None)
+    found = resolve_private_paths(Settings.model_validate({"policy": {"private_paths": ["~/.ssh"]}}), [],
+                                  home=str(home))
+    assert found.labels == ("~/.ssh",) and found.paths == (ssh, str(home / "SSH~1"))
+    deny = claude_deny_private({}, found.paths, home=str(home))["permissions"]["deny"]
+    assert f"Read(/{private_paths_rule(home / 'SSH~1')}/**)" in deny
+    decision = evaluate_tool("Bash", {"command": "cat ~/SSH~1/id_ed25519"}, PolicySettings(),
+                             allowed_roots=["/work/t1"], workdir="/work/t1", windows=False, environ={},
+                             private_paths=found.paths, home=str(home))
+    assert decision.action == "ask"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="8.3 names are a Windows feature")
+def test_short_spellings_use_the_real_windows_short_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(private_paths, "_short_name", REAL_SHORT_NAME)
+    folder = tmp_path / "Long Folder Name"
+    folder.mkdir()
+    short = REAL_SHORT_NAME(str(folder))
+    if not short:
+        pytest.skip("8.3 names are off on this volume")
+    spellings = private_paths.short_spellings(str(folder))
+    assert short in spellings and os.path.join(str(tmp_path), os.path.basename(short)) in spellings
+    assert all(Path(s).resolve() == folder.resolve() for s in spellings)
+
+
+def test_outside_home_labels_name_only_the_last_folder():
+    assert private_paths._label("D:\\pi-private", WIN_HOME) == f"{OUTSIDE_HOME_LABEL} …/pi-private"
+    assert private_paths._label("D:\\", WIN_HOME) == OUTSIDE_HOME_LABEL
+
+
+@pytest.mark.asyncio
+async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill_open_to_recruit(tmp_path,
+                                                                                               monkeypatch):
+    home = _home(tmp_path)
+    skill = home / ".claude" / "skills" / "paper2agent"
+    skill.mkdir(parents=True)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    monkeypatch.setattr("labhq.recruit.paper2agent.skill_path", lambda engine: skill)
+    settings = _runner_settings(tmp_path, ["~/.claude", "~/.ssh"])
+    runner, seen = _capture_runner(settings, monkeypatch)
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+    ctx = seen["ctx"]
+    assert ctx.private_labels == ["~/.claude", "~/.ssh"]
+    assert "Bash(*.ssh*)" in ctx.claude_settings["permissions"]["ask"]
+    recruit = Task(id="t2", agent_id="worker", request_id="r", prompt="q", meta={"kind": "recruit"})
+    assert (await runner.run_task(recruit)).ok
+    assert seen["ctx"].private_labels == ["~/.ssh"]  # the skill's files sit under ~/.claude

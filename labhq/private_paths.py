@@ -1,8 +1,9 @@
 """PI personal paths that staff must not open while they run under the PI's own account (PI decision 2026-10-03).
 
-Three layers, none of them a sandbox: Claude file tools get deny rules, a Claude shell command that names one of
-these paths goes to the PI, and every staff member's instructions list them as `~` labels. Codex reads through its
-own sandbox and is held only by the instructions.
+Three layers for Claude staff, none of them a sandbox: Claude file tools get deny rules, a Claude shell command
+that names one of these paths goes to the PI (ask rules route even pre-approved Bash patterns to the gate), and
+the instructions list them as `~` labels. Codex, Gemini, Antigravity and cli staff get only the instructions:
+nothing intercepts their file or shell reads (the Codex sandbox limits writes and network, not reads).
 """
 
 from __future__ import annotations
@@ -71,7 +72,9 @@ def _label(path: str, home: str) -> str:
     if _under(folded, home_folded) and folded != home_folded:
         tail = re.sub(r"/{2,}", "/", path.replace("\\", "/")).rstrip("/")[len(home_folded):]
         return "~" + tail
-    return OUTSIDE_HOME_LABEL
+    # Only the last component, so staff know which folder to avoid without the PI's layout going in a report.
+    name = re.sub(r"/{2,}", "/", path.replace("\\", "/")).rstrip("/").rsplit("/", 1)[-1]
+    return f"{OUTSIDE_HOME_LABEL} …/{name}" if name and not name.endswith(":") else OUTSIDE_HOME_LABEL
 
 
 def _labhq_entries(settings: Settings, home: str) -> list[tuple[str, str]]:
@@ -109,6 +112,38 @@ def _forms(path: str) -> set[str]:
     return forms
 
 
+def _short_name(path: str) -> str | None:
+    """Windows 8.3 spelling of an existing path (`C:\\Users\\pi\\SSH~1`), or None off Windows or without one."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    try:
+        size = ctypes.windll.kernel32.GetShortPathNameW(path, None, 0)
+        if not size:
+            return None
+        buf = ctypes.create_unicode_buffer(size)
+        if not ctypes.windll.kernel32.GetShortPathNameW(path, buf, size):
+            return None
+    except (OSError, AttributeError, ValueError):
+        return None
+    return buf.value if _fold(buf.value) != _fold(path) else None
+
+
+def short_spellings(path: str) -> list[str]:
+    """8.3 spellings Claude's deny rules compare literally: the whole path short, and the long parent with a
+    short last component (`~/SSH~1`). Mixed spellings deeper in the path are not listed."""
+    short = _short_name(path)
+    if not short:
+        return []
+    out = [short]
+    parent, name = os.path.split(path)
+    short_last = os.path.basename(short)
+    if short_last.casefold() != name.casefold():
+        out.append(os.path.join(parent, short_last))
+    return list(dict.fromkeys(out))
+
+
 def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike | None] = (),
                           home: str | None = None) -> PrivatePaths:
     """The entries that exist and contain no folder in `keep` (task workdir, workspace root, reference and
@@ -131,13 +166,14 @@ def resolve_private_paths(settings: Settings, keep: Iterable[str | os.PathLike |
             skipped.append(label)
             continue
         labels.append(label)
-        paths.append(path)
         try:
             real = os.path.realpath(path)
         except (OSError, ValueError):
             real = path
-        if _fold(real) != _fold(path):
-            paths.append(real)
+        for spelled in (path, real):
+            paths.append(spelled)
+            paths.extend(short_spellings(spelled))
+    paths = [p for i, p in enumerate(paths) if _fold(p) not in {_fold(q) for q in paths[:i]}]
     return PrivatePaths(tuple(dict.fromkeys(paths)), tuple(dict.fromkeys(labels)), tuple(dict.fromkeys(skipped)))
 
 
@@ -156,9 +192,53 @@ def staff_codex_homes(settings: Settings, cwd: Path, codex_task: bool) -> list[P
     return [p if p.is_absolute() else cwd / p]
 
 
+def shell_needles(paths: Iterable[str], home: str | None = None) -> list[str]:
+    """Substrings for Claude `ask` rules (`Bash(*<needle>*)`): a path below home by its tail (`.ssh`,
+    `.config/gh`) so every home spelling matches, others by their absolute and Git Bash forms; both separators.
+    A last component with a space (`User Data`) also stands alone, since shells quote it apart."""
+    home_folded = _fold(home or host_home())
+    out: list[str] = []
+    for path in paths:
+        if not path:
+            continue
+        slashed = re.sub(r"/{2,}", "/", path.replace("\\", "/")).rstrip("/")
+        folded = _fold(path)
+        if _under(folded, home_folded) and folded != home_folded:
+            forms = [slashed[len(home_folded):].lstrip("/")]
+        else:
+            forms = [slashed]
+            drive = re.match(r"^([A-Za-z]):/(.+)$", slashed)
+            if drive:
+                forms.append(f"/{drive.group(1).lower()}/{drive.group(2)}")  # also inside /mnt/c/…
+        for form in forms:
+            out += [form, form.replace("/", "\\")]
+        name = slashed.rsplit("/", 1)[-1]
+        if " " in name:
+            out.append(name)
+    return [n for n in dict.fromkeys(out) if n and "(" not in n and ")" not in n]
+
+
+def local_drive_text(text: str, environ: Mapping[str, str] | None = None) -> str:
+    """`\\\\?\\C:\\x`, `\\\\?\\UNC\\localhost\\C$\\x` and `\\\\localhost\\C$\\x` (also 127.0.0.1, ::1 and this
+    computer's name) spelled as `C:\\x`: the same file under another name."""
+    environ = os.environ if environ is None else environ
+    hosts = ["localhost", r"127\.0\.0\.1", r"\[?::1\]?", r"0:0:0:0:0:0:0:1"]
+    computer = {k.casefold(): v for k, v in environ.items()}.get("computername")
+    if computer:
+        hosts.append(re.escape(computer))
+    sep = r"[\\/]"
+    t = re.sub(rf"{sep}{{2}}[?.]{sep}unc{sep}", r"\\\\", text, flags=re.I)
+    t = re.sub(rf"{sep}{{2}}[?.]{sep}(?=[a-z]:)", "", t, flags=re.I)
+    return re.sub(rf"{sep}{{2}}(?:{'|'.join(hosts)}){sep}([a-z])\$(?={sep}|$|[\s'\"])", r"\1:", t, flags=re.I)
+
+
 def _canonical_text(text: str, home: str, environ: Mapping[str, str]) -> str:
-    """Shell text with every home spelling replaced by one marker: variables, `~`, Git Bash and WSL drives."""
+    """Shell text with every home spelling replaced by one marker: variables, `~`, Git Bash and WSL drives.
+
+    Quotes are dropped (`"$HOME"/.ssh`, `Chrome/"User Data"`), `/./` and `seg/../` are resolved lexically, and
+    the local admin share (`\\\\localhost\\C$\\`) and `\\\\?\\` prefix are read as the drive path."""
     t = re.sub(r"\\(?=[ \t])", "", text)  # `User\ Data` → `User Data`
+    t = local_drive_text(t, environ)
     t = re.sub(r"/{2,}", "/", t.replace("\\", "/")).casefold()
     home_folded = _fold(home)
     lookup = {k.casefold(): v for k, v in environ.items()}
@@ -171,7 +251,12 @@ def _canonical_text(text: str, home: str, environ: Mapping[str, str]) -> str:
     for name, value in values_seq:
         n = re.escape(name)
         t = re.sub(rf"%{n}%|\$\{{(?:env:)?{n}\}}|\$(?:env:)?{n}(?![\w])", lambda _m, v=value: v, t)
-    t = t.replace("%homedrive%%homepath%", home_folded)
+    t = re.sub(r"%homedrive%%homepath%|\$\{?env:homedrive\}?\$\{?env:homepath\}?", lambda _m: home_folded, t)
+    t = t.replace('"', "").replace("'", "")
+    while (resolved := re.sub(r"/\.(?=/|$|\s)", "", t)) != t:
+        t = resolved
+    while (resolved := re.sub(r"(?<![^/\s=:,;|&<>(])(?!\.\.?/|~/)[^/\s]+/\.\.(?:/|(?=\s|$))", "", t)) != t:
+        t = resolved
     spellings = {home_folded}
     drive = re.match(r"^([a-z]):/(.*)$", home_folded)
     if drive:
@@ -224,6 +309,7 @@ def mentioned_private_path(text: str, paths: Iterable[str], home: str | None = N
 
 def path_field_text(value: str, workdir: str | None) -> str:
     """A file tool's path argument as an absolute, `..`-free spelling for `mentioned_private_path`."""
+    value = local_drive_text(value)
     if value.startswith(("~", "$", "%")):
         return value
     if re.match(r"^[A-Za-z]:[/\\]", value) or value.startswith(("\\\\", "//")):

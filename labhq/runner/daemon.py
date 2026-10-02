@@ -918,12 +918,15 @@ class Runner:
                     *(self.s.path(p.local_dir) for p in self.s.projects if p.local_dir),
                     *(os.path.expandvars(os.path.expanduser(d)) for d in agent.plugin_dirs),
                     *staff_codex_homes(self.s, ws.dir, agent.engine == Engine.codex)]
+            if task.meta.get("kind") == "recruit":  # the recruiter reads the Paper2Agent skill's own files
+                from ..recruit.paper2agent import skill_path
+                keep.append(skill_path(self.s.recruit.contract_engine))
             private = resolve_private_paths(self.s, keep)
             for label in private.skipped:
                 if label not in self.private_skip_warned:
                     self.private_skip_warned.add(label)
                     await emit("agent.log", {"level": "warn", "text": (
-                        f"개인 경로 차단에서 제외: {label} (작업 폴더를 포함합니다). labhq doctor의 private paths를 보세요")})
+                        f"개인 경로 차단에서 제외: {label} (작업에 쓰는 폴더를 포함합니다). labhq doctor의 private paths를 보세요")})
             broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,

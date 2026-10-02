@@ -432,11 +432,18 @@ def claude_deny_links(settings: dict, links: Iterable[str]) -> dict:
     return {**settings, "permissions": permissions}
 
 
-def claude_deny_private(settings: dict, paths: Iterable[str]) -> dict:
-    """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`.
+def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None = None) -> dict:
+    """Read/Edit/Write deny rules for PI personal paths (policy.private_paths), merged into `settings`, plus
+    Bash/PowerShell `ask` rules naming each path.
 
-    A path with no rule form (UNC) is left out; the approval gate still sees shell commands that name it.
+    A path with no rule form (UNC) gets no deny rule; the approval gate still sees shell commands that name it.
+    Claude's deny rules do not cover Bash, and a pattern pre-approved in --allowedTools (`Bash(python *)`) never
+    reaches the gate; an ask rule outranks that allow, so such a command goes to the permission tool (the gate)
+    after all. Probed on Claude 2.1.282: `ask: ["Bash(*/.sec/*)"]` stopped a pre-approved `python -c` read.
     """
+    from .private_paths import shell_needles
+
+    paths = [p for p in paths if p]
     ruled = []
     for p in paths:
         try:
@@ -444,7 +451,14 @@ def claude_deny_private(settings: dict, paths: Iterable[str]) -> dict:
         except ValueError:
             continue
         ruled.append(p)
-    return claude_deny_links(settings, ruled)
+    merged = claude_deny_links(settings, ruled)
+    needles = shell_needles(paths, home)
+    if not needles:
+        return merged
+    permissions = dict(merged.get("permissions") or {})
+    ask = [f"{tool}(*{needle}*)" for needle in needles for tool in ("Bash", "PowerShell")]
+    permissions["ask"] = list(dict.fromkeys([*(permissions.get("ask") or []), *ask]))
+    return {**merged, "permissions": permissions}
 
 
 def claude_read_only(settings: dict, directories: Iterable[str]) -> dict:

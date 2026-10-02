@@ -244,7 +244,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                         "not verified: set runner.os_account to the dedicated account" if same_owner is False else
                         "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
-                     "Run the runner under a dedicated account; see docs/runner-account.md."))
+                     "Default guard is policy.private_paths (README §8). Optional, advanced: a dedicated runner "
+                     "account, docs/runner-account.md."))
     if settings.gateway.client_token == "change-me-client":
         # The published default is a working client token for anyone while a gateway accepts it, and a runner
         # config that drops the key falls back to it (#304 review).
