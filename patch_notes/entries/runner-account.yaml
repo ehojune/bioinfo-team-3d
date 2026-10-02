@@ -17,3 +17,6 @@ rows:
 - sha: af48ee7
   at: 2026-10-02 19:43
   text: 'runner 계정 절차서: runner 명령을 venv 절대경로로, 단계 보고를 최종 doctor 동작에 맞춤'
+- sha: 3aef457
+  at: 2026-10-02 19:55
+  text: 'runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치'
