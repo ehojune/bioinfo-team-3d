@@ -13,7 +13,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 15:10 | [`986da50`](https://github.com/ehojune/bioinfo-team-3d/pull/291/commits/986da50) | CI: README만 바뀌면 README 검사만 돌리고, 가장 느린 test 15개를 출력 |
+| 14:56 | [`658c7ad`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/658c7ad) | README·STATUS: 그림자 후속 묶음의 계보·경계·breaker 동작을 적음 |
+| 14:46 | [`c84bada`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/c84bada) | main의 CI 개선을 병합하며 STATUS·패치노트 기록을 보존하고 README의 HPC 기상 설명을 갱신했습니다. |
+| 14:43 | [`9776d1c`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/9776d1c) | #281·#280의 원인과 수정 전후 반복 검증을 STATUS에 기록했습니다. |
 | 14:43 | [`58ec1e5`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/58ec1e5) | README: EDAM 표가 main에 들어간 것을 반영(위치·CC BY-SA 4.0·NOTICE) |
+| 14:36 | [`f86150f`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/f86150f) | 일반 요청 snapshot에 input_refs를 남겨 명시적 artifact edge로 씀 |
+| 14:36 | [`eb6f293`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/eb6f293) | 같은 digest의 후대 산출도 ancestry가 아님을 회귀로 고정 |
 | 14:35 | [`327eb23`](https://github.com/ehojune/bioinfo-team-3d/pull/253/commits/327eb23) | EDAM 표 NOTICE를 저장소 라이선스 결정(#252)에 맞추고 병합 가능 상태로 둠 |
 | 14:29 | [`a8d4736`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/a8d4736) | CI 생략 판정이 base branch에서 온 병합만 인정(다른 기능 branch 병합은 언제나 다시 돎) |
 | 14:19 | [`f3140e8`](https://github.com/ehojune/bioinfo-team-3d/pull/287/commits/f3140e8) | CI: PR은 한 번만 돌고, 패치노트·충돌 해소만 한 push는 이미 통과한 pytest를 다시 돌리지 않음 |
@@ -33,9 +38,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:12 | [`7de511d`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/7de511d) | README·STATUS에 inbound 거부와 장시간 MCP 실측 기록 |
 | 11:12 | [`90c1c7a`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/90c1c7a) | Claude 직원과 bench arm이 crossSessionInbound refuse로 교차 세션 inbound 메시지를 거부 |
 | 11:12 | [`688231b`](https://github.com/ehojune/bioinfo-team-3d/pull/286/commits/688231b) | 90초 뒤 답하는 labhq MCP 호출이 Claude·Codex fake CLI에서 timeout 없이 한 번에 끝나는 test |
+| 11:11 | [`95641ea`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/95641ea) | artifact ancestry를 명시적 edge로만 축약 |
+| 11:05 | [`8a4a115`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/8a4a115) | 짧은 직원 ID도 그림자 정보 경계의 employee_id로 막음 |
+| 11:01 | [`87413b2`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/87413b2) | 손상된 request 줄의 rows가 semantics report를 끝내지 않게 함 |
+| 11:00 | [`1fe7cb2`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/1fe7cb2) | 이어 묻기 성공이 B1 breaker 창을 지우지 않게 함 |
+| 10:58 | [`1f83e36`](https://github.com/ehojune/bioinfo-team-3d/pull/290/commits/1f83e36) | 새 epoch에서 이전 이어 묻기 backlog와 pending 몫을 정리 |
 | 10:55 | [`713cf45`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/713cf45) | 재계획이 PI가 취소한 단계를 우회하지 않고 은퇴 단계의 실패 원인을 남김 |
 | 10:55 | [`7631478`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/7631478) | 패키지 설정 예시에도 max_replans를 추가함 |
+| 10:48 | [`1bc647f`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/1bc647f) | agent 실행 중 끝난 HPC job도 pending_jobs에 남겨 jobs.finished wake가 유실되지 않게 했습니다. |
 | 10:48 | [`d12e8f5`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/d12e8f5) | orchestrator.max_replans를 켜면 단계 실패·review revise 뒤 CSO가 남은 DAG만 재계획함 (#271) |
+| 08:52 | [`61ccd25`](https://github.com/ehojune/bioinfo-team-3d/pull/288/commits/61ccd25) | event-loop test가 worker join·blocking put 호출을 예외 밖에서 검증하게 바꿨습니다. |
 | 08:46 | [`64e5b9e`](https://github.com/ehojune/bioinfo-team-3d/pull/284/commits/64e5b9e) | 저장 계획이 현재 max_steps보다 길면 resume에서 자르지 않고 제한 위반으로 실패시킴 (#282) |
 | 08:22 | [`2e4632d`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/2e4632d) | bench 상태·비용 문구가 구조화 결과 블록 앞에 온다는 계약을 README에 명시 |
 | 08:16 | [`5d72172`](https://github.com/ehojune/bioinfo-team-3d/pull/278/commits/5d72172) | canonical 산출 참조는 dependency로 잇고 경로 안의 action 단어는 동사 판정에서 제외 |

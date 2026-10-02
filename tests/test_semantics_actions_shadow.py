@@ -331,6 +331,75 @@ async def test_the_backlog_never_overtakes_a_queued_request_job(tmp_path):
     assert not service.action_backlog and len(_lines(tmp_path)) == 2
 
 
+async def test_a_new_epoch_discards_the_old_followup_backlog_and_starts_the_new_one(tmp_path, monkeypatch):
+    """#258: work owned by the closed epoch must not keep pending nonzero or stop a new worker."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    monkeypatch.setattr(service, "ensure_thread", lambda: None)
+    service.queue.put_nowait((service.gen, service.queue, {"job": "placeholder"}))
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    service.action_skipped = 2
+    service.current = (service.gen, time.monotonic())  # the job holding the queue looks stuck
+    assert (len(service.action_backlog), service.pending) == (1, 1)
+
+    service.new_epoch(2)
+    assert (len(service.action_backlog), service.action_skipped, service.pending) == (0, 0, 0)
+    assert service.counts["discarded"] == 1
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    shadow.ShadowService.ensure_thread(service)
+    assert service.drain(10)
+    assert [(line["phase"], line["epoch"], line["busy_skipped"]) for line in _lines(tmp_path)] == [("ended", 2, 0)]
+
+
+async def test_the_closed_epochs_worker_never_takes_the_new_epochs_pending_count(tmp_path, monkeypatch):
+    """#258: the old thread returns after a new epoch replaced its queue; drain still waits for the new work."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    old = service.queue
+    old.put_nowait((service.gen, old, {"job": "placeholder"}))
+    service.pending = 1
+    service.current = (service.gen, time.monotonic())
+    service.new_epoch(2)
+    assert service.queue is not old and service.pending == 0
+    monkeypatch.setattr(service, "ensure_thread", lambda: None)  # the new epoch's worker has not started yet
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.pending == 1
+    service.run(old)  # the old thread: its closed-epoch job is dropped and it ends
+    assert service.pending == 1 and not service.drain(0.1)
+    shadow.ShadowService.ensure_thread(service)
+    assert service.drain(10)
+    assert [(line["phase"], line["epoch"]) for line in _lines(tmp_path)] == [("ended", 2)]
+
+
+async def test_a_followup_success_never_clears_the_b1_failure_window(tmp_path, monkeypatch):
+    """#260: a succeeded follow-up line is written but neither resets nor dilutes the request window; a failed
+    one still counts, as before."""
+    from labhq.research import semantics_actions as acts
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    service.outcome(failed=True)
+    service.outcome(failed=True)
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.drain(10)
+    assert [line["status"] for line in _lines(tmp_path)] == ["ok"]
+    assert service.consecutive == 2 and list(service.recent) == [True, True] and service.latched is None
+    monkeypatch.setattr(acts, "followup_line", lambda *a, **k: 1 / 0)
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.drain(10)
+    assert service.latched == "consecutive_failures" and list(service.recent) == [True, True, True]
+
+
 def acts_report(lines):
     from labhq.research import semantics_actions as acts
     return acts.report(lines, setting="shadow", on=True)
@@ -400,6 +469,20 @@ async def test_a_line_carrying_a_followup_text_is_refused(tmp_path, monkeypatch)
     assert marker not in (tmp_path / "state" / "semantics" / "shadow.jsonl").read_text(encoding="utf-8")
 
 
+async def test_a_followup_line_carrying_a_short_staff_id_is_refused(tmp_path, monkeypatch):
+    """#266: the follow-up snapshot knows the roster, so a short staff id in its line turns the shadow off."""
+    from labhq.research import semantics_actions as acts
+    real = acts.followup_line
+    monkeypatch.setattr(acts, "followup_line", lambda *a, **k: {**real(*a, **k), "request_id": "xy"})
+    hub = _hub(tmp_path)
+    hub.agents = {"cso": {"id": "cso", "engine": "claude_code"}, "xy": {"id": "xy", "engine": "claude_code"}}
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done", "followups": [{"id": "fu_1", "status": "done"}]}
+    hub.semantics_shadow.after_followup("req_f1", "fu_1", "ended", "done")
+    assert hub.semantics_shadow.drain(10)
+    assert hub.semantics_shadow.latched == "info_boundary"
+    assert not [line for line in _lines(tmp_path) if line["type"] == "followup"]
+
+
 # ---------------------------------------------------------------- report and removal
 
 def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path, capsys):
@@ -414,6 +497,24 @@ def test_the_report_is_unchanged_with_actions_off_and_no_action_records(tmp_path
     assert shadow.render_report(rep) == shadow.render_report(json.loads(json.dumps(rep)))
 
 
+async def test_a_request_line_with_malformed_rows_is_broken_in_both_sections(tmp_path, capsys):
+    """#259: one damaged request line is counted as broken instead of ending the whole report."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    _finish(hub)
+    assert hub.semantics_shadow.drain(10)
+    paths = shadow.ShadowPaths(shadow.shadow_root(hub.s))
+    (good,) = [line for line in _lines(tmp_path) if line["type"] == "request"]
+    shadow.append_line(paths, {**good, "request_id": "req_broken", "rows": ["oops"]})
+    capsys.readouterr()
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=True), hub.s) == 0
+    rep = json.loads(capsys.readouterr().out)
+    assert rep["requests"] == 1 and rep["broken_lines"] == 1
+    assert rep["actions"]["observed"]["requests"] == 1 and rep["actions"]["observed"]["broken"] == 1
+    assert shadow.run_cli(SimpleNamespace(semantics_cmd="report", today=None, json=False), hub.s) == 0
+
+
 async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_path):
     from scripts import semantics_shadow_remove as removal
     lab = await run_lab(tmp_path / "lab", ON, ["CD276 세포유형 분석 [artifact]"])
@@ -424,7 +525,7 @@ async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_p
     hub.save_request("req_inflight1")
     summary = removal.check(tmp_path / "lab" / "state", only="actions")
     assert summary["files"] == removal.ACTIONS_OWNED
-    assert summary["hook_lines"] == 8 + 23 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 23
+    assert summary["hook_lines"] == 8 + 24 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 24
     assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
                                 "actions_field": False}
     assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]
