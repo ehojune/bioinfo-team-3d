@@ -9,3 +9,6 @@ rows:
 - sha: 54b71be
   at: 2026-10-02 19:29
   text: 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir)
+- sha: db85ace
+  at: 2026-10-02 19:34
+  text: 'main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림'
