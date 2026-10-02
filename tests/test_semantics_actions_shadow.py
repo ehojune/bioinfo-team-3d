@@ -72,9 +72,9 @@ asyncio.run(main())
 
 
 @pytest.mark.parametrize("value", [{"mode": "shadow"}, {"mode": "shadow", "actions": "off"},
-                                   {"mode": "shadow", "actions": False}, {"mode": "shadow", "actions": "confirm"},
+                                   {"mode": "shadow", "actions": False}, {"mode": "shadow", "actions": "Confirm"},
                                    {"mode": "shadow", "actions": "bogus"}],
-                         ids=["missing", "off", "false", "held", "typo"])
+                         ids=["missing", "off", "false", "near-confirm", "typo"])
 def test_actions_off_never_loads_the_module_and_writes_the_b1_line_only(tmp_path, value):
     done = subprocess.run([sys.executable, "-c", OFF_PROCESS, (tmp_path / "state").as_posix(), json.dumps(value)],
                           capture_output=True, text=True, cwd=ROOT, timeout=120,
@@ -118,7 +118,7 @@ async def test_actions_on_adds_one_field_and_changes_no_b1_field(tmp_path, monke
     assert shadow.boundary_problems(on, shadow.sensitive_strings(on_snap)) == []
 
 
-@pytest.mark.parametrize("value", [ON, {"mode": "shadow", "actions": "confirm"}], ids=["shadow", "held"])
+@pytest.mark.parametrize("value", [ON, {"mode": "shadow", "actions": "confirm"}], ids=["shadow", "confirm"])
 async def test_the_lab_records_the_same_with_actions_on(tmp_path, value):
     """Prompts, plans, approvals, results, rounds and the web view are the same as with semantics off; the CSO's
     recruit suggestion and the approvals stay where they were, and no recruit or contract message is sent."""
@@ -138,13 +138,11 @@ async def test_the_lab_records_the_same_with_actions_on(tmp_path, value):
     assert not {"recruit.start", "contract.update", "task.cancel"} & set(sent)
     lines = [line for line in on["lines"] if line["type"] == "request"]
     assert len(lines) == 1 and not [line for line in on["lines"] if line["type"] == "auto_off"]
-    if value == ON:
-        section = lines[0]["actions"]
-        assert section["status"] == "ok" and section["exec"]["hpc.submit"] == "refused_p3"
-        assert section["past"]["recruit.start"]["windows"] == 1
-        assert section["past"]["approval.decide"]["windows"] >= 1
-    else:
-        assert "actions" not in lines[0]
+    section = lines[0]["actions"]  # confirm records like shadow: the gateway runs nothing for A2 (#149 결정 16)
+    assert section["status"] == "ok" and section["exec"]["hpc.submit"] == "refused_p3"
+    assert section["exec"]["request.followup"] == "shadow_only"
+    assert section["past"]["recruit.start"]["windows"] == 1
+    assert section["past"]["approval.decide"]["windows"] >= 1
 
 
 # ---------------------------------------------------------------- follow-up observations through the REST path
@@ -525,7 +523,7 @@ async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_p
     hub.save_request("req_inflight1")
     summary = removal.check(tmp_path / "lab" / "state", only="actions")
     assert summary["files"] == removal.ACTIONS_OWNED
-    assert summary["hook_lines"] == 8 + 24 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 24
+    assert summary["hook_lines"] == 8 + 11 + 24 and summary["blocks"] == 2  # server 4, cso 4, cli 11 (A2), shadow 24
     assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
                                 "actions_field": False}
     assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]
