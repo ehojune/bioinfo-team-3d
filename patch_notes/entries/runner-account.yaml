@@ -20,3 +20,6 @@ rows:
 - sha: 3aef457
   at: 2026-10-02 19:55
   text: 'runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치'
+- sha: 972090b
+  at: 2026-10-02 20:03
+  text: 'doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로'
