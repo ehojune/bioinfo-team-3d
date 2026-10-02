@@ -130,8 +130,15 @@ class CodexAdapter(AgentAdapter):
             if s.type == "stdio":
                 command, args = wrap_cwd(s)
                 flags += ["-c", f"{key}.command={_toml(command)}", "-c", f"{key}.args={_toml(args)}"]
-                if s.env:
-                    flags += ["-c", f"{key}.env={_toml(expand_env(s.env))}"]
+                # A value Codex already holds in its own env (the broker token among them) goes by name, so no
+                # secret sits on the command line other processes of the account can read (#330).
+                env, child = expand_env(s.env), self.staff_env(ctx)
+                held = [k for k, v in env.items() if child.get(k) == v]
+                inline = {k: v for k, v in env.items() if k not in held}
+                if inline:
+                    flags += ["-c", f"{key}.env={_toml(inline)}"]
+                if held:
+                    flags += ["-c", f"{key}.env_vars={_toml(held)}"]
             else:
                 flags += ["-c", f"{key}.url={_toml(s.url)}"]
         if not ctx.read_only:  # PI extra_args could widen the sandbox; a read-only run takes none
@@ -145,6 +152,8 @@ class CodexAdapter(AgentAdapter):
         ev = json.loads(line)
         record_model_id(st, ctx, ev.get("model_id") or ev.get("model"))
         typ = ev.get("type")
+        if typ == "turn.failed":
+            st.result_seen = True  # the turn is over either way: the exit guard applies (#330)
         if typ == "thread.started":
             st.session_id = ev.get("thread_id")
             await ctx.emit("agent.status", {"state": "working", "engine": "codex"})

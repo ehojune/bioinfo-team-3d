@@ -542,6 +542,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
   - 한계: Windows에는 ctime이 없어 크기를 그대로 두고 mtime을 되돌린 수정은 못 봅니다. 같은 러너에서 다른 작업이 쓰던 폴더의 변경은 비교에서 빼고 이유를 남기며, 다른 러너나 프로세스가 쓴 것은 실패로 잡힙니다. labhq가 쓰는 `.labhq/`·`manifest.json`·`events.jsonl`과 감시 폴더 밖(홈 등)은 보지 않습니다. Claude 관리 정책(managed settings)의 hook은 끌 수 없습니다.
 - Windows는 명령줄을 32,767자까지만 받습니다. 직원 CLI 명령이 32,000자를 넘으면 adapter가 prompt 대신 작업 폴더의 TASK 파일을 가리키는 짧은 prompt를 넘기고, 그래도 넘으면 실행 전에 길이를 적고 거부합니다. 전에는 이 실패가 `executable not found`로 보였습니다(연구 계획 재계획, #222).
 - labhq MCP 호출은 승인·질의의 가장 긴 대기에 120초를 더한 만큼 기다립니다. Claude에는 서버별 `timeout`과 `MCP_TOOL_TIMEOUT`, Codex에는 `tool_timeout_sec`(기본 60초)로 넘깁니다. 90초 뒤 답하는 fake MCP 호출이 두 엔진에서 한 번에 끝나는지 test로 보고, 실제 Claude 2.1.282에서도 90초 호출이 끝났습니다(`scripts/probe_inbound_mcp.py`). 실제 Codex 장시간 probe는 아직 돌리지 않았습니다(#276).
+- 직원 CLI가 마지막 turn 이벤트를 낸 뒤 `runner.exit_grace_s`(기본 45초) 안에 끝나지 않으면 runner가 프로세스 트리를 끝내고 받은 결과로 단계를 마치며, 작업 로그에 한 줄 남깁니다(#330). Codex의 MCP 서버 env 중 Codex가 이미 가진 값(broker token 등)은 명령줄 대신 `env_vars`로 이름만 넘깁니다.
 - Claude 직원은 `SendMessage`·`ListAgents`를 쓰지 못하고, `crossSessionInbound: refuse`라 PI의 다른 Claude 세션이 보낸 메시지도 받지 않습니다. bench의 Claude arm도 같습니다. 실측(2.1.282): 이 값이 없으면 이름으로 보낸 메시지가 직원 세션 큐에 들어갔고, 있으면 거부되고 보낸 쪽에 거부 통지가 갔습니다. 이 값을 바꿀 수 있는 것은 Claude 관리 정책(managed settings)뿐입니다.
 - Slurm(#120)은 가짜 `sbatch`/`squeue`/`sacct`/`scancel` fixture로만 확인했고 실제 클러스터에서는 돌려 보지 않았습니다.
   - 끝난 잡은 `sacct`로 읽습니다. accounting(slurmdbd)이 없으면 `squeue`의 마지막 상태를 쓰고, `squeue`에서도 사라진 잡은 세 번 확인한 뒤 `unknown_finished`로 깨웁니다(종료 코드는 모름).
