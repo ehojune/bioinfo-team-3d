@@ -14,12 +14,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:45 | [`05040a6`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/05040a6) | 한도 해제가 요청 목록 사본을 순회해, 해제 중 새 요청이 들어와도 끊기지 않음 |
 | 20:44 | [`f002a0c`](https://github.com/ehojune/bioinfo-team-3d/pull/317/commits/f002a0c) | accession version 재인용과 URI 혼합 후보를 판정하고 pack_dirs를 시작 시 검증 |
 | 20:43 | [`638016a`](https://github.com/ehojune/bioinfo-team-3d/pull/318/commits/638016a) | 이전 epoch의 breaker 저장 실패를 격리하고 derived_from 깊이를 최대 64 artifact hop으로 맞췄다. |
+| 20:38 | [`80eaf00`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/80eaf00) | 한도 대기: 끝난 요청의 이어 묻기는 요청 상태를 바꾸지 않고, 재시작 때 그 대기를 지움. 연도 없는 Feb 29 reset은 기본 대기로 |
+| 20:38 | [`f0dd21f`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/f0dd21f) | main 병합: 3D 요청 정보 줄에 한도 대기 표시와 main의 보고서 보기를 함께 둠 |
 | 20:25 | [`17765e4`](https://github.com/ehojune/bioinfo-team-3d/pull/315/commits/17765e4) | direct 산출의 대소문자 판정과 wrap-up 수집을 보완하고 라운드 기록 범위를 문서화했다(#231 #233 #234) |
 | 20:25 | [`9a29c33`](https://github.com/ehojune/bioinfo-team-3d/pull/314/commits/9a29c33) | 시험 job의 연속 missing 종료와 스케줄러 명령·지시·소유권 판정을 보강 |
+| 20:25 | [`5fcf1f0`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/5fcf1f0) | main 병합 충돌 해소: 결과 직렬화·웹 snapshot·요청 메타가 pipeline PR과 한도 대기 상태를 함께 다룸 |
+| 20:17 | [`ebf41ec`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/ebf41ec) | HPC·ask wake turn과 wrap-up turn도 한도 대기로 주차·재개하고, hold 해제 뒤 dispatch 전에 예산을 다시 확인 |
 | 20:17 | [`53504c3`](https://github.com/ehojune/bioinfo-team-3d/pull/313/commits/53504c3) | 3D 요청 카드 클릭을 보존하고 snapshot 보고서와 이어 묻기 글자 수를 바로잡았다. |
 | 20:07 | [`45b9749`](https://github.com/ehojune/bioinfo-team-3d/pull/312/commits/45b9749) | POSIX argv 원소의 UTF-8 한도를 적용하고 Claude Read 없는 TASK pointer와 spawn OSError를 실패 결과로 처리했다. |
+| 20:07 | [`b25c046`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/b25c046) | runner가 읽은 reset 시각을 그 날짜의 DST 규칙으로 변환해 전환 경계를 넘는 재개가 한 시간 어긋나지 않음 |
+| 20:05 | [`30d40db`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/30d40db) | 패키지 예시 설정을 저장소 예시와 맞춰 한도 대기 설정과 시간대 상한 설명을 함께 배포 |
 | 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
 | 20:02 | [`ec47b29`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/ec47b29) | 승인 시간 초과와 화면 결정이 겹치면 timed_out을 최종 상태로 정리함(#199) |
 | 20:00 | [`d5e1ece`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/d5e1ece) | 러너 승인 시간 초과를 gateway에 반영하고 stale 알림을 요청한 socket에만 보냄(#199 #203) |
@@ -28,6 +35,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 19:57 | [`122b259`](https://github.com/ehojune/bioinfo-team-3d/pull/308/commits/122b259) | 90초 MCP 실측을 별도 CI job(pytest-slow)으로 돌리고, 제거 test 둘이 각자 pristine state 사본에서 시작하게 했다. |
 | 19:55 | [`3aef457`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/3aef457) | runner 절차서를 실행 순서대로 다시 씀: 설정 파일 생성 뒤 파일 ACL, runner 프로필에 직원 CLI 설치 |
 | 19:54 | [`21007da`](https://github.com/ehojune/bioinfo-team-3d/pull/309/commits/21007da) | consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209) |
+| 19:50 | [`0c02787`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/0c02787) | 한도 reset 시각을 runner 시간대의 instant로 받아 재개하고, 재시작 복구는 한도 단계만 기다리며, 웹은 마지막 한도 단계 재개 때 요청을 진행 중으로 되돌림 |
 | 19:48 | [`f24bcf3`](https://github.com/ehojune/bioinfo-team-3d/pull/308/commits/f24bcf3) | 90초 MCP 실측을 opt-in으로 분리하고 같은 timeout 경로를 축소 시계로 검증했으며 제거·mock test의 반복 대기를 줄였다. |
 | 19:47 | [`438b893`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/438b893) | main 병합: settings.py import 충돌 해소 |
 | 19:46 | [`57ed166`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/57ed166) | 직원 환경에서 GitHub 토큰 전부 제거, 파이프라인 경로는 표준 시스템 경로만 허용 |
@@ -38,6 +46,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 19:34 | [`db85ace`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/db85ace) | main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림 |
 | 19:32 | [`de4e225`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/de4e225) | runner 설정에서 client token을 빼고(gateway·runner 설정 분리), doctor는 whoami로 runner 계정을 확인 |
 | 19:29 | [`54b71be`](https://github.com/ehojune/bioinfo-team-3d/pull/303/commits/54b71be) | 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir) |
+| 19:29 | [`e84dbfc`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/e84dbfc) | 요청의 active·terminal 상태 판정을 모아 한도 대기 중 ask·benchmark·상태 화면이 계속 진행 |
 | 19:26 | [`803aecb`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/803aecb) | 새 pipeline 자동 PR은 기본 꺼짐(policy.bioinfo_agent.pipeline_pr로 켬). 켜도 pipeline 소스와 https 테스트 목록만 받고 절대경로는 모두 거부 |
 | 19:26 | [`b14bfa1`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/b14bfa1) | runner 전용 계정 절차서에 labhq 설치·직원 명단·경로를 더하고, doctor는 지정한 runner 계정으로 돌 때만 격리 ok |
 | 19:24 | [`58c8d98`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/58c8d98) | main(#296 A/B) 병합 충돌 해소: 정보 경계 칸과 README 그림자 절을 양쪽 다 유지 |
@@ -47,6 +56,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 19:19 | [`99d3674`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/99d3674) | runner를 별도 Windows 표준 계정으로 격리하는 ACL·로그인·실행 절차와 설정 소유자 기반 doctor 경고를 추가 |
 | 19:18 | [`c8334ce`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/c8334ce) | 다른 어휘 판본 선언은 unknown, agent operation 우선, 관계표 판본을 그림자 줄에 기록 |
 | 19:17 | [`9efe399`](https://github.com/ehojune/bioinfo-team-3d/pull/299/commits/9efe399) | 입력 적합성 그림자 모듈·관계표·테스트를 제거 목록에 넣고 관계표를 research로 옮김 |
+| 19:17 | [`07ad782`](https://github.com/ehojune/bioinfo-team-3d/pull/302/commits/07ad782) | Claude Code·Codex·agy 구독 한도 단계를 계정 단위로 주차하고 reset 시각이나 수동 해제 뒤 재개 |
 | 19:09 | [`9fa63ca`](https://github.com/ehojune/bioinfo-team-3d/pull/301/commits/9fa63ca) | bioinfo-agent 질문은 CSO가 답하고 새 파이프라인은 공개 검사 뒤 bioinfo-agent 저장소 PR로 올림 |
 | 19:05 | [`1a77466`](https://github.com/ehojune/bioinfo-team-3d/pull/297/commits/1a77466) | 리뷰 P1 고침: 실행 잠금·intent 기록의 폴더까지 fsync(Windows는 NTFS 저널), 직원용 설정 사본은 task마다 새 이름으로 쓰고 링크 폴더 거부·끝나면 삭제. A2 실행기는 그림자를 거쳐서만 불림(pilot 규칙) |
 | 18:58 | [`e0d71e0`](https://github.com/ehojune/bioinfo-team-3d/pull/296/commits/e0d71e0) | 후보가 있으면 shadow arm도 같은 prompt로 한 번 더 계획해 두 arm의 CSO 호출 수를 맞추고, A/B selector가 읽는 live 상태는 event loop에서 복사 |
