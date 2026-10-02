@@ -3,6 +3,10 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
+const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota']);
+const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
+const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
+const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
 // Cost text (#270): confirmed, price-table estimate and unaccounted tasks stay apart; an unknown is never $0.
 const usd = v => `$${(Number(v) || 0).toFixed(2)}`;
 function costParts(actual, estimated, unknown) {
@@ -110,9 +114,15 @@ function endApproval(id, effects) {
   S.approvals.delete(id);
   effects.push({ type: 'toast.clear', approval_id: id });
 }
+// The gateway sends no request status event for quota: the request waits exactly while one of its steps does.
+function syncQuotaStatus(q) {
+  const parked = Object.values(q.steps).includes('waiting_quota');
+  if (parked && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
+  else if (!parked && q.status === 'waiting_quota') q.status = 'running';
+}
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  S.current = (all.find(r => r.status === 'running') || all[0] || {}).id || null;
+  S.current = (all.find(r => isActiveRequest(r.status)) || all[0] || {}).id || null;
 }
 function syncRoster(list, replay) {
   const ids = new Set(list.map(a => a.id));
@@ -168,7 +178,7 @@ function apply(ev, replay = false) {
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
         if (r.pipeline_pr) setPipelinePr(q, r.pipeline_pr);  // the stored status outlives the replayed events
-        if (r.status !== 'running') q.phase = 'done';
+        if (!isActiveRequest(r.status)) q.phase = 'done';
       }
       const restored = new Map();
       for (const task of d.running_tasks || []) {
@@ -290,9 +300,22 @@ function apply(ev, replay = false) {
       if (rid && d.step_id) stepDetail(rid, d.step_id).attempts = Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1);
       break;
     }
+    case 'request.step_quota_wait': {
+      const q = req(rid); q.steps[d.step_id] = 'waiting_quota';
+      Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine });
+      syncQuotaStatus(q);
+      break;
+    }
+    case 'request.step_quota_resumed': {
+      const q = req(rid), detail = stepDetail(rid, d.step_id);
+      if (q.steps[d.step_id] === 'waiting_quota') q.steps[d.step_id] = 'pending';
+      delete detail.quota_resume_at; delete detail.quota_engine;
+      syncQuotaStatus(q);
+      break;
+    }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(stepDetail(rid, d.step_id), { attempts: d.attempts || stepDetail(rid, d.step_id).attempts, error: d.reason || stepDetail(rid, d.step_id).error }); break; }
-    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; syncQuotaStatus(q); break; }
+    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncQuotaStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
       q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';
@@ -408,5 +431,6 @@ function toolLabel(name) {
 
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel };
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel,
+  isActiveRequest, isTerminalRequest };
 })(globalThis);

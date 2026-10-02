@@ -30,6 +30,7 @@ from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone
                       scan_reference_dir, withhold_reference_paths, zone_links)
 from ..policy import claude_deny_links, claude_read_only, claude_rule_path, claude_settings
 from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
+from ..quota import quota_reset_instant
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
@@ -882,6 +883,8 @@ class Runner:
                       usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
+        if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
+            result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))

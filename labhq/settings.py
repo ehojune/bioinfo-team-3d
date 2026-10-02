@@ -323,6 +323,8 @@ class OrchestratorSettings(BaseModel):
     step_max_attempts: int = Field(default=2, ge=1)
     step_retry_backoff_s: float = Field(default=0.2, ge=0)
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
+    quota_default_wait_s: float = Field(default=3600, ge=1)
+    quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
 
     @field_validator("cso_models")
     @classmethod

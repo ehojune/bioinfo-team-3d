@@ -28,13 +28,13 @@ from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskR
 from ..adapters import get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, holds_session
 from ..research.packs import check_configured_packs
+from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
 from ..security import token_matches
 from ..store import StateStore
 from ..util import short
 
 log = logging.getLogger(__name__)
-TERMINAL_REQUEST_STATES = {"done", "failed", "cancelled", "rejected"}
 # #126: a snapshot goes to every client on each connect, so a long follow-up answer travels as its head only.
 # The full answer stays on the request (GET /api/requests/{id}); the web loads it when the PI opens it.
 SNAPSHOT_ANSWER_CHARS = 2000
@@ -185,6 +185,7 @@ class Hub:
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
+        self.quota_events: dict[str, asyncio.Event] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
@@ -201,13 +202,18 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if req.get("status") in {"running", "waiting_for_runner"}:
+            if is_active_request(req.get("status")) and req.get("status") != "waiting_quota":
                 req["status"] = "interrupted"
                 self.save_request(rid)
             stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
             if stale:
+                self.save_request(rid)
+            if not is_active_request(req.get("status")) and req.get("quota_waits"):
+                # Only a follow-up parks on a finished request, and it was interrupted above; its wait must not
+                # hold the engine or send the finished request back through run_request (#302 review).
+                req.pop("quota_waits")
                 self.save_request(rid)
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
@@ -231,6 +237,95 @@ class Hub:
     def save_request(self, rid: str) -> None:
         self.requests[rid]["updated_at"] = time.time()
         self.store.put("request", rid, self.requests[rid])
+
+    def quota_hold(self, engine: str) -> dict | None:
+        """The account-wide hold for an engine, derived from durable per-request waits."""
+        waits = [entry for req in self.requests.values() for entry in (req.get("quota_waits") or {}).values()
+                 if entry.get("engine") == engine]
+        if not waits:
+            return None
+        return {"engine": engine, "resume_at": max(float(item["resume_at"]) for item in waits),
+                "deadline_at": min(float(item["deadline_at"]) for item in waits)}
+
+    def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
+        req = self.requests[rid]
+        entry = (req.get("quota_waits") or {}).pop(step_id, None)
+        if not req.get("quota_waits"):
+            req.pop("quota_waits", None)
+            if req.get("status") == "waiting_quota":
+                req["status"] = "running"
+        self.save_request(rid)
+        return entry
+
+    async def release_quota(self, engine: str, *, manual: bool) -> list[tuple[str, str]]:
+        """Release an account hold and every step sharing that engine."""
+        released = []
+        # publish() yields, and a new request may arrive meanwhile: walk a snapshot (#302 review).
+        for rid, req in list(self.requests.items()):
+            for step_id, entry in list((req.get("quota_waits") or {}).items()):
+                if entry.get("engine") != engine:
+                    continue
+                self._remove_quota_wait(rid, step_id)
+                released.append((rid, step_id))
+                await self.publish({"type": "request.step_quota_resumed", "ts": time.time(),
+                                    "request_id": rid, "data": {"step_id": step_id, "engine": engine,
+                                                                  "manual": manual}})
+        event = self.quota_events.pop(engine, None)
+        if event:
+            event.set()
+        return released
+
+    async def wait_quota(self, rid: str, step_id: str, engine: str, *, resume_at: float,
+                         deadline_at: float, reason: str) -> bool:
+        """Park like an HPC wait. False means the bounded wait expired."""
+        req = self.requests[rid]
+        entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
+                 "reason": short(reason, 500), "waiting_since": time.time()}
+        previous = (req.get("quota_waits") or {}).get(step_id)
+        req.setdefault("quota_waits", {})[step_id] = entry
+        if is_active_request(req.get("status")):
+            # A follow-up on a finished request parks without reopening it: done/failed stays (#302 review).
+            req["status"] = "waiting_quota"
+        self.save_request(rid)
+        if previous != entry:
+            await self.publish({"type": "request.step_quota_wait", "ts": time.time(), "request_id": rid,
+                                "data": {"step_id": step_id, "engine": engine,
+                                         "resume_at": resume_at, "deadline_at": deadline_at}})
+        while True:
+            hold = self.quota_hold(engine)
+            if hold is None:
+                return True
+            now = time.time()
+            if now >= deadline_at:
+                self._remove_quota_wait(rid, step_id)
+                return False
+            if now >= hold["resume_at"]:
+                await self.release_quota(engine, manual=False)
+                return True
+            event = self.quota_events.setdefault(engine, asyncio.Event())
+            try:
+                await asyncio.wait_for(event.wait(), min(hold["resume_at"], deadline_at) - now)
+            except asyncio.TimeoutError:
+                continue
+
+    async def force_quota_resume(self, rid: str, step_id: str) -> list[tuple[str, str]]:
+        entry = (self.requests[rid].get("quota_waits") or {}).get(step_id)
+        if not entry:
+            raise KeyError(step_id)
+        return await self.release_quota(entry["engine"], manual=True)
+
+    async def resume_quota_request(self, rid: str) -> None:
+        """After a gateway restart, recover at once without a PI approval.
+
+        The durable waits stay. Each recovered step meets its own engine's hold in run_step, so steps on
+        other engines and checkpoints that already arrived do not wait for that quota.
+        """
+        req = self.requests[rid]
+        if not req.get("quota_waits"):
+            req["status"] = "interrupted"
+            self.save_request(rid)
+            return
+        await self.resume_when_ready(rid)
 
     def _session_state_changed(self) -> None:
         self.session_revision += 1
@@ -257,7 +352,7 @@ class Hub:
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
         for tid, entry in self.store.all("task").items():
             req = self.requests.get(entry.get("request_id"), {})
-            if not entry.get("accepted") or req.get("status") != "running":
+            if not entry.get("accepted") or not is_active_request(req.get("status")):
                 continue
             if not entry.get("completed"):
                 state = "running"
@@ -284,6 +379,9 @@ class Hub:
             states["direct"] = "pending"
         states.update({sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
                        for sid, outcome in (req.get("results") or {}).items()})
+        for sid in (req.get("quota_waits") or {}):
+            if states.get(sid, "pending") == "pending":
+                states[sid] = "waiting_quota"
         for task in self.running_tasks():
             if task["request_id"] == rid:
                 entry = self.store.get("task", task["id"]) or {}
@@ -1100,23 +1198,23 @@ class Hub:
             return self.requests.get(ask.request_id, {}).get("status") if ask.request_id else "running"
 
         status = request_status()
-        if status not in {"waiting_for_runner", "running"} | TERMINAL_REQUEST_STATES:
+        if not is_active_request(status) and not is_terminal_request(status):
             return
         previous = self.ask_tasks.get(ask.id)
         if previous and not previous.done():
-            if status not in TERMINAL_REQUEST_STATES:
+            if not is_terminal_request(status):
                 return
             previous.cancel()
 
         async def route() -> None:
             # Recheck after scheduling: a resume decision or terminal checkpoint may intervene.
             status = request_status()
-            if status in TERMINAL_REQUEST_STATES:
+            if is_terminal_request(status):
                 request = self.requests.get(ask.request_id, {})
                 await self.resolve_ask(ask, runner_id, ask_result(
                     reason=f"request {status}: {request.get('error') or 'request ended'}", **{"from": "labhq"}))
                 return
-            if status not in {"waiting_for_runner", "running"}:
+            if not is_active_request(status):
                 return
             entry = self.store.get("ask", ask.id) or {}
             self.store.put("ask", ask.id, {**entry, "state": "working"})
@@ -1250,7 +1348,7 @@ class Hub:
     def start_followup(self, rid: str, text: str) -> dict:
         """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
         req = self.requests[rid]
-        if req.get("status") not in TERMINAL_REQUEST_STATES:
+        if not is_terminal_request(req.get("status")):
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
         if any(f.get("status") == "running" for f in req.get("followups") or []):
             raise ValueError("a follow-up for this request is still running")
@@ -1299,8 +1397,7 @@ class Hub:
                                                                   "references")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
-                          "step_status": {sid: outcome.get("status") or ("done" if outcome.get("ok") else "failed")
-                                          for sid, outcome in (r.get("results") or {}).items()},
+                          "step_status": self.request_summary(r)["step_progress"]["steps"],
                           "step_details": self.request_step_details(r.get("id", ""), r),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
@@ -1321,6 +1418,7 @@ class Hub:
             sid = step.get("id")
             matches = [(tid, entry) for tid, entry in tasks if entry.get("step_id") == sid]
             result = (request.get("results") or {}).get(sid) or {}
+            quota = (request.get("quota_waits") or {}).get(sid) or {}
             latest = max(matches, key=lambda pair: pair[1].get("dispatched_at", 0), default=(None, {}))
             details[sid] = {
                 "task_id": result.get("task_id") or latest[0],
@@ -1329,6 +1427,8 @@ class Hub:
                 "missing_outputs": result.get("missing_outputs") or [],
                 "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
+                "quota_resume_at": quota.get("resume_at"),
+                "quota_engine": quota.get("engine"),
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
         return details
@@ -1344,12 +1444,14 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
         for rid, request in hub.requests.items():
-            if request.get("status") in TERMINAL_REQUEST_STATES:
+            if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
+            elif request.get("status") == "waiting_quota":
+                asyncio.create_task(hub.resume_quota_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
-        running = [r["id"] for r in hub.requests.values() if r.get("status") == "running"]
+        running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))
 
@@ -1442,7 +1544,9 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not 1 <= limit <= 200:
             raise HTTPException(422, "limit must be 1..200")
         requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
-        return [hub.request_summary(r) for r in requests if status == "all" or r.get("status") == status][:limit]
+        return [hub.request_summary(r) for r in requests
+                if status == "all" or (status == "running" and is_active_request(r.get("status")))
+                or r.get("status") == status][:limit]
 
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:
@@ -1504,6 +1608,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         await hub.send_runner(rid, {"type": "task.cancel", "task_id": tid})
         return {"ok": True}
 
+    @app.post("/api/requests/{rid}/steps/{step_id}/resume-quota", dependencies=[Depends(auth)])
+    async def resume_quota(rid: str, step_id: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            released = await hub.force_quota_resume(rid, step_id)
+        except KeyError:
+            raise HTTPException(409, "step is not waiting for quota")
+        return {"ok": True, "released": [{"request_id": request_id, "step_id": sid}
+                                           for request_id, sid in released]}
+
     @app.post("/api/recruit", dependencies=[Depends(auth)])
     async def recruit(body: RecruitIn) -> dict:
         if not (body.paper or body.repo):
@@ -1536,7 +1651,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.get("/api/health")
     async def health() -> dict:
         return {"service": "labhq gateway", "runners": list(hub.runners), "agents": len(hub.agents),
-                "active_requests": sum(r.get("status") == "running" for r in hub.requests.values()),
+                "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
                 "running_tasks": len(hub.running_tasks())}
 
     @app.get("/", response_class=HTMLResponse)

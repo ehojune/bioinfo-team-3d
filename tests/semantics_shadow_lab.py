@@ -14,6 +14,7 @@ import uvicorn
 
 from labhq.gateway.server import RequestIn, create_app
 from labhq.integrations.rounds import build_record
+from labhq.request_status import is_terminal_request
 from labhq.runner.daemon import Runner
 from labhq.settings import DataZone, ProjectSettings, Settings
 from labhq.util import free_port
@@ -79,7 +80,7 @@ async def run_lab(tmp: Path, semantics: Any, texts: list[str], *, project_id: st
         for text in texts:
             rid = hub.create_request(RequestIn(text=text, project_id=project_id, references=references or [],
                                                **(request or {})))
-            await _until(lambda: hub.requests[rid]["status"] not in ("running", "waiting_for_runner"), 60)
+            await _until(lambda: is_terminal_request(hub.requests[rid]["status"]), 60)
             rids.append(rid)
         if hub.semantics_shadow is not None:
             assert hub.semantics_shadow.drain(20)

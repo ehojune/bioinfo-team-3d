@@ -1,7 +1,7 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
-const COLUMN = { pending:'waiting', queued:'waiting', working:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
+const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 function list(parent, title, values, className = '') {
   if (!values?.length) return;
@@ -22,6 +22,14 @@ function cardFor(step, status, detail, options) {
   list(card, '리뷰 지적', detail.review_issues, 'review');
   if (detail.error) add(card, 'p', detail.error, 'task-error');
   if (detail.text) add(card, 'p', detail.text, 'task-result');
+  if (status === 'waiting_quota') {
+    const when = detail.quota_resume_at ? new Date(detail.quota_resume_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '시각 확인 중';
+    add(card, 'p', `한도 대기, ${when} 재개`, 'task-meta');
+    if (options.onQuotaResume) {
+      const resume = add(card, 'button', '지금 재개', 'btn'); resume.type = 'button';
+      resume.addEventListener('click', () => options.onQuotaResume(step.id));
+    }
+  }
   if (status === 'working' && detail.task_id && options.onCancel) {
     const cancel = add(card, 'button', '작업 취소', 'btn'); cancel.type = 'button';
     cancel.addEventListener('click', () => options.onCancel(detail.task_id));
