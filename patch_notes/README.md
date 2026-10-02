@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:25 | [`7bda364`](https://github.com/ehojune/bioinfo-team-3d/pull/341/commits/7bda364) | 결정함 다시 그리기가 쓰던 답의 포커스를 뺏지 않게: 렌더마다 모든 카드를 다시 끼우지 않고 끝난 카드만 빼고 새 카드만 끼움(2.5D·3D 공통) |
 | 08:05 | [`612af6a`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/612af6a) | main 병합: #339의 wrap-up 해시 test와 이 PR의 미해결 리뷰 test를 둘 다 유지 |
 | 07:56 | [`86a992e`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/86a992e) | 직원 작업 폴더 규칙을 영어로 맞추고 AGENTS.md test를 UTF-8로 읽음(Windows CI) |
 | 07:54 | [`7788c97`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/7788c97) | verify: 기록된 작업 폴더 경로를 조회 전에 글자로 검사, 번들은 배타적 임시 파일로, wrap-up 해시 정리(봇 P1 둘) |
