@@ -92,6 +92,7 @@ orchestrator:
   cso_agent: cso
   chief_of_staff_agent: chief_of_staff
   reviewer_agent: sci_reviewer
+  cso_models: [opus, gpt-6-astra]       # --cso-model 허용 목록; Fable은 허용되지 않음
   max_revisions: 1
   max_replans: 0                     # 1 이상이면 단계 실패·리뷰 revise 뒤 CSO가 남은 DAG만 다시 계획(요청당 횟수 상한)
   max_steps: 12

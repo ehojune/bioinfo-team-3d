@@ -10,6 +10,14 @@
 - 미해결: Gemini·Antigravity는 근거 있는 가격표가 없어 미집계로 남는다. staff `CODEX_HOME`에서 문맥 창을 272K보다 키우면 추정은 하한이다. Codex 사용량 한도로 Claude가 이어받았다.
 - 근거: `labhq/costs.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/bench.py`, `tests/test_cost_accounting.py`.
 
+## 2026-10-02 · #272 — 계획만 실행하고 요청별 CSO 모델 선택
+
+- 결론: `labhq send --plan-only`는 같은 roster로 CSO 계획까지만 만들고 직원 실행·과학 리뷰 전에 끝난다. `--cso-model`은 허용 목록 안에서 그 요청에만 적용된다.
+- 바뀐 것: `orchestrator.cso_models`가 요청별 모델을 제한하고 Fable을 거부한다. GPT 모델은 CSO를 Codex로 실행하며 과학 리뷰어는 기본 Claude CSO 모델로 분리한다. 일반 요청과 기본 CSO 설정은 그대로다. README에 두 사용 예를 넣었다.
+- 실행한 것: 새 회귀 5건 중 핵심 4건이 수정 전 실패했고 모두 수정 뒤 통과했다. 관련 372 passed/1 skipped, 전체 pytest 2539 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/cli.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/settings.py`, `tests/test_plan_only_cso_model.py`, `README.md`.
+
 ## 2026-10-02 · CI — README만 바뀌면 README 검사만, 느린 test 15개 출력
 
 - 결론: PI 지적. 루트 README를 읽는 test는 `tests/test_integrations.py` 하나라서, STATUS·패치노트 말고 README만 바뀐 push는 전체 pytest를 건너뛰고 그 파일만 Ubuntu에서 돌린다. pytest job은 가장 느린 test 15개를 출력한다.

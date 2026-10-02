@@ -88,6 +88,7 @@ class RequestIn(BaseModel):
     default_references: bool = True  # add pi_profile.references
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
+    cso_model: str | None = None  # request-local; checked against orchestrator.cso_models
     meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
 
 
@@ -1082,6 +1083,11 @@ class Hub:
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
+        if body.mode == "direct" and body.cso_model:
+            raise ValueError("cso_model is only valid for orchestrate or plan_only requests")
+        if body.cso_model and body.cso_model not in self.s.orchestrator.cso_models:
+            allowed = ", ".join(self.s.orchestrator.cso_models) or "(none)"
+            raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
         req = {"id": rid, "status": "running", "created_at": time.time(),
                "cost_known": True, "usage": {}, **body.model_dump()}
