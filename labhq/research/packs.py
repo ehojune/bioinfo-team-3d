@@ -254,3 +254,13 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
                                 "reviewer_questions": pack.reviewer_questions},
                                ensure_ascii=False))
     return "\n".join(rows)
+
+
+def render_pack_review(packs: dict[str, LoadedPack]) -> str:
+    """What the research reviewer holds the results to: each selected pack's reviewer questions and rules."""
+    if not packs:
+        return "(no domain packs selected)"
+    return "\n".join(json.dumps({"key": key, "reviewer_questions": loaded.pack.reviewer_questions,
+                                 "rules": [_compact(rule.model_dump(mode="json", by_alias=True))
+                                           for rule in loaded.pack.rules]}, ensure_ascii=False)
+                     for key, loaded in sorted(packs.items()))

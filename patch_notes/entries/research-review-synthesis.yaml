@@ -1,0 +1,19 @@
+pr: 336
+rows:
+- sha: 8d3b86c
+  at: 2026-10-03 06:36
+  text: 연구 보고서의 [[claim:step/claim]] 앵커를 원장과 대조하는 검사를 순수 함수로 더했다. 없는 claim, 거부된 근거뿐인
+    claim, hash 없는 artifact, 앵커 0개를 잡는다.
+- sha: ccb3e63
+  at: 2026-10-03 06:36
+  text: 연구 lane이 CP2 승인 뒤 리뷰 한 번과 CSO 보고서까지 간다. 앵커 검사를 통과하면 research_reported, 아니면
+    Claim check를 붙여 report_incomplete로 끝나고, 리뷰가 revise면 plan을 다시 돌리지 않고 멈춘다.
+- sha: e61f822
+  at: 2026-10-03 06:36
+  text: README·연구 규약·예시 설정에 CP2 뒤 리뷰·보고서 흐름을 적었다.
+- sha: 32adfe9
+  at: 2026-10-03 06:49
+  text: 합성 뒤 예산 카드가 거부돼도 끝난 보고서는 남기고 앵커 검사 결과대로 끝낸다. 예산 거부는 보고서 메타데이터 줄로만 적는다.
+- sha: eefcd80
+  at: 2026-10-03 06:57
+  text: 연구 리뷰 판정을 P1 지적에 맞추고, 앵커 표기 변형 검사·코드 안 앵커 제외(봇 지적)
