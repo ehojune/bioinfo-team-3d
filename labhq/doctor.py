@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -68,6 +69,90 @@ def _would_be_writable(path: Path) -> bool:
     return path.is_dir() and os.access(path, os.W_OK)
 
 
+def _windows_config_owner_is_current_user(path: Path) -> bool | None:
+    """Compare the file owner SID with the process token SID, without naming either account."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        owner_sid = ctypes.c_void_p()
+        descriptor = ctypes.c_void_p()
+        token = wintypes.HANDLE()
+
+        advapi32.GetNamedSecurityInfoW.argtypes = [
+            wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_void_p,
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+        ]
+        advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                             ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                 wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        advapi32.EqualSid.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+
+        result = advapi32.GetNamedSecurityInfoW(str(path), 1, 1, ctypes.byref(owner_sid),
+                                                None, None, None, ctypes.byref(descriptor))
+        if result:
+            return None
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+            return None
+        needed = wintypes.DWORD()
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))
+        if not needed.value:
+            return None
+        buffer = ctypes.create_string_buffer(needed.value)
+        if not advapi32.GetTokenInformation(token, 1, buffer, needed, ctypes.byref(needed)):
+            return None
+
+        class SidAndAttributes(ctypes.Structure):
+            _fields_ = [("sid", ctypes.c_void_p), ("attributes", wintypes.DWORD)]
+
+        current_sid = ctypes.cast(buffer, ctypes.POINTER(SidAndAttributes)).contents.sid
+        return bool(advapi32.EqualSid(owner_sid, current_sid))
+    except (AttributeError, OSError, ValueError):
+        return None
+    finally:
+        if "token" in locals() and token:
+            kernel32.CloseHandle(token)
+        if "descriptor" in locals() and descriptor:
+            kernel32.LocalFree(descriptor)
+
+
+def _current_os_account() -> str | None:
+    """The process token's account (DOMAIN\\user), from `whoami`, not the spoofable USERNAME variable (#304)."""
+    try:
+        out = subprocess.run(["whoami"], capture_output=True, text=True, timeout=10).stdout.strip()
+        return out or None
+    except Exception:  # noqa: BLE001 - doctor never fails on an unavailable identity
+        return None
+
+
+def _same_account(current: str, expected: str) -> bool:
+    current, expected = current.strip().lower(), expected.strip().lower()
+    if "\\" not in expected and "\\" in current:  # a bare name means a local account on this machine
+        expected = os.environ.get("COMPUTERNAME", "").lower() + "\\" + expected
+    return current == expected
+
+
+def _config_owner_is_current_user(path: Path) -> bool | None:
+    """Return an OS-backed owner comparison, or None when the OS cannot supply it."""
+    if os.name == "nt":
+        return _windows_config_owner_is_current_user(path)
+    try:
+        return path.stat().st_uid == os.geteuid()
+    except (AttributeError, OSError):
+        return None
+
+
 def _safe_executable_path(path: str, env: dict[str, str]) -> str:
     local = env.get("LOCALAPPDATA")
     if local:
@@ -121,6 +206,36 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     else:
         rows.append(_row("config", "file", "ok" if config else "warn",
                          _safe_path(config) if config else "defaults", "Set --config for this host."))
+    # Only a named runner account proves isolation; an owner mismatch alone is not evidence (#304 review).
+    expected = (settings.runner.os_account or "").strip()
+    if expected:
+        current = _current_os_account()
+        if current is None:
+            owner_status, owner_detail = "skip", "current OS account unavailable"
+        elif _same_account(current, expected):
+            owner_status, owner_detail = "ok", "runner runs as runner.os_account"
+        else:
+            owner_status, owner_detail = "warn", "runner is not running as runner.os_account"
+    else:
+        same_owner = _config_owner_is_current_user(Path(config)) if config else None
+        owner_status = "warn" if same_owner is True else "skip"
+        owner_detail = ("runner and config owner are the same OS account" if same_owner is True else
+                        "not verified: set runner.os_account to the dedicated account" if same_owner is False else
+                        "OS account comparison unavailable")
+    rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
+                     "Run the runner under a dedicated account; see docs/runner-account.md."))
+    if settings.gateway.client_token == "change-me-client":
+        # The published default is a working client token for anyone while a gateway accepts it, and a runner
+        # config that drops the key falls back to it (#304 review).
+        rows.append(_row("config", "default client token", "warn",
+                         "gateway.client_token is the published default",
+                         'Set a random gateway.client_token for the gateway and client_token: "" for the runner; '
+                         "see docs/runner-account.md."))
+    elif owner_status == "ok" and settings.gateway.client_token:
+        # The runner never needs the client token; staff run as this account and could approve as the PI (#304).
+        rows.append(_row("config", "runner config holds client token", "warn",
+                         "gateway.client_token is set in the runner's config",
+                         "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
@@ -271,7 +386,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                                                (["external labhq_hpc MCP"] if external_hpc else []),
                            "hpc_tools": scheduler != "none" or external_hpc}
     return {"schema_version": 1, "runner_capabilities": runner_capabilities, "checks": rows,
-            "summary": {status: sum(r["status"] == status for r in rows) for status in ("ok", "warn", "fail")}}
+            "summary": {status: sum(r["status"] == status for r in rows)
+                        for status in ("ok", "warn", "fail", "skip")}}
 
 
 def render(manifest: dict) -> str:
