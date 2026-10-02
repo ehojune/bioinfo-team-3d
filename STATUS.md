@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #297 — 팔란티어식 액션 A2(#149 결정 16)
+
+- 결론: `request.followup` 하나를 PI CLI에서 y/N 뒤 기존 `POST /api/requests/{rid}/followup`으로 보낸다. 기본 off(`semantics.actions: confirm`일 때만). 다른 액션은 그림자 기록만, `hpc.*`는 늘 거부.
+- 바뀐 것: `labhq semantics action run|check`, 러너가 직원에게 gateway token을 비운 설정 사본을 task마다 새로 줌(링크 폴더 거부, 끝나면 삭제), 보내기 전 실행 id 기록과 요청별 잠금을 폴더까지 fsync(응답 유실은 unknown, 재전송 없음), 모름이면 안 보냄, 확인 뒤 설정·자동 off 재확인.
+- 실행한 것: 새 test 55개와 관련 test 파일 28개(865 passed, 23 skipped), 고친 곳을 하나씩 되돌려 test가 실패하는지 확인, `scripts/check_public.sh`. 리뷰 P1 반영 뒤 관련 test 12파일 427 passed, 2 skipped, `semantics_shadow_remove.py --only actions --check` 통과.
+- 미해결: 러너가 PI와 같은 OS 계정이면 직원 셸이 원본 설정을 직접 읽을 수 있음(전용 계정 권장, README §10). 실제 CLI·gateway 운용 실측 없음.
+- 근거: `labhq/research/semantics_actions_run.py`, `labhq/settings.py`(`write_staff_config`), `labhq/runner/daemon.py`, `tests/test_semantics_actions_run.py`.
+
 ## 2026-10-02 · PR #296 — CSO advisory A/B(#149 결정 15)
 
 - 결론: 연구 요청을 요청 ID hash로 advisory·shadow arm에 고정 배정한다. advisory arm은 #267 selector 후보가 있을 때만 경로·내용·요청 본문 없이 artifact ID·data type·생성 요청 ID를 CSO 계획 참고로 준다.
