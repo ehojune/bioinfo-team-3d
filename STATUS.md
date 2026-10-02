@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · HPC 승인·추적 후속(#215 #224)
+
+- 결론: 시험 job이 세 번 연속 사라지면 `unknown_finished`로 끝내고, 스케줄러 우회와 오래된 job 취소를 막았다.
+- 바뀐 것: 예약 명령과 줄바꿈 `scontrol`을 승인 대상으로 넣고, Slurm 지시문을 셸 규칙대로 읽는다. 원격 PBS 제출은 항상 PI 승인을 받는다.
+- 실행한 것: 수정 전 회귀 테스트 19건 실패 확인. 수정 뒤 관련 pytest 215건 통과, 2건 skip. 공개 저장소 검사 통과.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어받는다.
+- 근거: `labhq/hpc_consult.py`, `labhq/tools/scheduler.py`, `labhq/runner/daemon.py`, `labhq/runner/hpc_jobs.py`, `labhq/settings.py`, `tests/test_hpc_consult.py`, `tests/test_hpc_followups.py`.
+
 ## 2026-10-02 · #231~#234 — direct 산출 후속
 
 - 결론: direct와 wrap-up 산출을 같은 규칙으로 모으고, 볼륨의 대소문자 구분에 맞춰 labhq 결과 사본을 뺀다.

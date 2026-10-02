@@ -15,6 +15,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 20:25 | [`17765e4`](https://github.com/ehojune/bioinfo-team-3d/pull/315/commits/17765e4) | direct 산출의 대소문자 판정과 wrap-up 수집을 보완하고 라운드 기록 범위를 문서화했다(#231 #233 #234) |
+| 20:25 | [`9a29c33`](https://github.com/ehojune/bioinfo-team-3d/pull/314/commits/9a29c33) | 시험 job의 연속 missing 종료와 스케줄러 명령·지시·소유권 판정을 보강 |
 | 20:17 | [`53504c3`](https://github.com/ehojune/bioinfo-team-3d/pull/313/commits/53504c3) | 3D 요청 카드 클릭을 보존하고 snapshot 보고서와 이어 묻기 글자 수를 바로잡았다. |
 | 20:03 | [`972090b`](https://github.com/ehojune/bioinfo-team-3d/pull/304/commits/972090b) | doctor: 공개된 기본 client token을 경고, runner 설정은 client token을 빈 값으로 |
 | 20:02 | [`ec47b29`](https://github.com/ehojune/bioinfo-team-3d/pull/311/commits/ec47b29) | 승인 시간 초과와 화면 결정이 겹치면 timed_out을 최종 상태로 정리함(#199) |
