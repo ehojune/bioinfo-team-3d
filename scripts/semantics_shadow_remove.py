@@ -30,6 +30,8 @@ ACTIONS_OWNED = [
 OWNED = [
     "labhq/research/semantics_shadow.py",
     "labhq/research/semantics_objects.py",
+    "labhq/research/semantics_input_fit.py",
+    "labhq/research/semantics_input_fit.yaml",
     "tests/semantics_shadow_lab.py",
     "tests/test_semantics_shadow_settings.py",
     "tests/test_semantics_shadow_worker.py",
@@ -39,6 +41,7 @@ OWNED = [
     "tests/test_semantics_shadow_breaker.py",
     "tests/test_semantics_shadow_report.py",
     "tests/test_semantics_shadow_remove.py",
+    "tests/test_semantics_input_fit.py",
     *ACTIONS_OWNED,
     "scripts/semantics_shadow_remove.py",
 ]
@@ -172,8 +175,8 @@ def check(state_dir: Path | None = None, only: str | None = None) -> dict:
         _ok(subprocess.run(run, cwd=copy, capture_output=True, text=True, env=env), "compile")
         words = (("semantics_actions", "semantics-hook: actions", "semantics-actions", "after_followup")
                  if only == "actions" else
-                 ("semantics_shadow", "semantics_objects", "semantics-hook", "records_from_rows", "semantics_actions",
-                  "after_followup"))
+                 ("semantics_shadow", "semantics_objects", "semantics_input_fit", "semantics-hook", "records_from_rows",
+                  "semantics_actions", "after_followup"))
         left = [str(p.relative_to(copy)) for p in (copy / "labhq").rglob("*.py")
                 if any(word in p.read_text(encoding="utf-8") for word in words)]
         if left:

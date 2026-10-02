@@ -15,7 +15,7 @@ from ..vocab import Vocab, current
 from ..yaml_unique import UniqueKeyError, load_yaml_unique
 
 log = logging.getLogger("labhq.semantics.input_fit")
-RELATION_FILE = Path(__file__).parents[1] / "vocab" / "input_fit.yaml"
+RELATION_FILE = Path(__file__).with_name("semantics_input_fit.yaml")
 VERDICTS = ("fit", "mismatch", "unknown")
 EDAM_RELATION = re.compile(r"^relation_[0-9]{4}$")
 _CACHE: list[dict[str, Any] | None] = []
