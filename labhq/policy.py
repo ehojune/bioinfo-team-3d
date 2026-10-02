@@ -38,31 +38,254 @@ _REDIRECT = re.compile(r'''>{1,2}\s*("[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 NULL_DEVICES = frozenset({"/dev/null", "nul", "nul:", "$null", "\\\\.\\nul", "//./nul"})
 
 
-def _shell_write_targets(command: str) -> Iterator[str]:
+_REDIRECT_OP = re.compile(r">{1,2}")
+_BARE_WORD = re.compile(r"[^\s|;&<>]+")
+_PS_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also quotes with typographic marks
+_PS_DOUBLE = '"\u201c\u201d\u201e'
+_PS_SINGLE_AT = re.compile(f"[{_PS_SINGLE}]")
+_HERE_STRING_HEADER = re.compile(r"[ \t\r]*\n")
+# These run quoted text as shell code or write files from it ('print > "f"'), so its '>' is a real write.
+_NESTED_NAMES = ("bash|sh|zsh|ksh|mksh|dash|ash|fish|csh|tcsh|busybox|cmd|powershell|pwsh|wsl|eval|iex|"
+                 "invoke-expression|invoke-command|icm|start-process|saps|scriptblock|su|sudo|doas|runuser|"
+                 "runas|script|watch|trap|parallel|ssh|awk|gawk|mawk|nawk|perl|shell|comspec")
+_NESTED_WORD = re.compile(r"(?<![^\s|;&(){}\[\]`/\\=:$])(?:" + _NESTED_NAMES + r")(?:\.exe)?(?![\w.-])", re.I)
+_NESTED_PATH = re.compile(r"(?:^|[/\\])(?:" + _NESTED_NAMES + r")(?:\.exe)?$", re.I)
+
+
+def _braces_closed(text: str) -> bool:
+    depth = 0
+    for k, ch in enumerate(text):
+        if ch == "{" and (depth or text[k - 1:k] == "$"):
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+    return depth == 0
+
+
+def _heredoc_word(command: str, j: int) -> tuple[str, bool, int] | None:
+    """The delimiter after `<<`/`<<-` at j: (text without quotes, quoted?, end index), or None if unreadable."""
+    while j < len(command) and command[j] in " \t":
+        j += 1
+    word, quoted = "", False
+    while j < len(command) and command[j] not in " \t\r\n|&;()<>":
+        ch = command[j]
+        if ch == "'":
+            end = command.find("'", j + 1)
+            if end < 0:
+                return None
+            word, quoted, j = word + command[j + 1:end], True, end + 1
+        elif ch == '"':
+            end = command.find('"', j + 1)
+            if end < 0 or "\\" in command[j:end]:
+                return None
+            word, quoted, j = word + command[j + 1:end], True, end + 1
+        elif ch == "\\":
+            word, quoted, j = word + command[j + 1:j + 2], True, j + 2
+        else:
+            word, j = word + ch, j + 1
+    return (word, quoted, j) if word else None
+
+
+def _blank_non_syntax(command: str, powershell: bool) -> str | None:
+    """`command` with strings, comments and here-document bodies blanked at the same length.
+
+    Strings and escaped characters become '_' (a string stays one word); comments and here-document bodies
+    become spaces. Returns None, and the caller scans the raw text as before, wherever the shell might read
+    the text differently: an unterminated quote or here-document, a substitution that can nest quotes, a '#'
+    that may not start a comment, or a nested shell that runs the quoted text as code.
+    """
+    single, double = (_PS_SINGLE, _PS_DOUBLE) if powershell else ("'", '"')
+    escape = "`" if powershell else "\\"
+    out, n = list(command), len(command)
+    strings: list[tuple[int, int]] = []
+    heredocs: list[tuple[str, bool, bool]] = []
+    braces = parens = 0  # bash: open ${...} and (( ... )); a '#' there is not a comment
+    prev = "\n"  # the last character read as syntax; the start of the command counts as a line start
+    i = 0
+
+    def blank(start: int, end: int, ch: str) -> None:
+        out[start:end] = ch * (len(out[start:end]))
+
+    while i < n:
+        c = command[i]
+        if c == escape:
+            if command.startswith("\n", i + 1):  # a line continuation: the shell joins the two lines
+                blank(i, i + 2, " ")
+            else:
+                blank(i, i + 2, "_")
+                prev = "_"
+            i += 2
+            continue
+        if powershell:
+            if command.startswith(("<#", "--%"), i):  # block comment, or stop-parsing: not read here
+                return None
+            if command.startswith("${", i):  # a braced variable name is literal up to '}'
+                end = command.find("}", i)
+                if end < 0 or escape in command[i:end]:
+                    return None
+                i, prev = end + 1, "}"
+                continue
+            header = _HERE_STRING_HEADER.match(command, i + 2) if c == "@" and command[i + 1:i + 2] else None
+            if header and command[i + 1] in single + double:
+                closers = single if command[i + 1] in single else double
+                k = header.end()  # the closing quote and '@' must start a line
+                while not (k < n and command[k] in closers and command.startswith("@", k + 1)):
+                    k = command.find("\n", k) + 1
+                    if k == 0:
+                        return None
+                if closers == double and "$(" in command[header.end():k]:
+                    return None
+                blank(i, k + 2, "_")
+                i, prev = k + 2, "_"
+                continue
+        else:
+            if c == "`":
+                return None
+            if c == "\n" and heredocs:
+                i += 1
+                for delimiter, strip_tabs, quoted in heredocs:
+                    start = i
+                    while True:
+                        end = command.find("\n", i)
+                        end = n if end < 0 else end
+                        line = command[i:end].lstrip("\t") if strip_tabs else command[i:end]
+                        if line.rstrip("\r") == delimiter:
+                            break
+                        if end == n:
+                            return None
+                        i = end + 1
+                    if not quoted and ("$(" in command[start:i] or "`" in command[start:i]):
+                        return None
+                    blank(start, end, " ")
+                    i = end + 1
+                heredocs.clear()
+                prev = "\n"
+                continue
+            if command.startswith("<<", i) and not parens:
+                if command.startswith("<<<", i):
+                    i, prev = i + 3, "<"
+                    continue
+                strip_tabs = command.startswith("<<-", i)
+                word = _heredoc_word(command, i + 2 + strip_tabs)
+                if word is None:
+                    return None
+                heredocs.append((word[0], strip_tabs, word[1]))
+                blank(i + 2, word[2], "_")
+                i, prev = word[2], "_"
+                continue
+            if command.startswith("${", i):
+                braces += 1
+                i, prev = i + 2, "{"
+                continue
+            if braces and c == "{":
+                braces += 1
+            elif braces and c == "}":
+                braces -= 1
+            elif command.startswith("((", i):
+                parens += 2
+                i, prev = i + 2, "("
+                continue
+            elif parens and c in "()":
+                parens += 1 if c == "(" else -1
+        if c == "#":
+            if prev in (" \t\r\n;|" if powershell else " \t\n;|&"):  # bash: a carriage return is a word character
+                if braces or parens:
+                    return None
+                end = command.find("\n", i)
+                end = n if end < 0 else end
+                blank(i, end, " ")
+                i = end
+                continue
+            if powershell or prev in "()<>":
+                return None  # PowerShell ends a token before '#' after '$x', '{', ',' ...; bash after ')' is unsure
+        if c in single:
+            if powershell:
+                j = i
+                while True:
+                    found = _PS_SINGLE_AT.search(command, j + 1)
+                    if not found:
+                        return None
+                    j = found.start()
+                    if not (j + 1 < n and command[j + 1] in single):
+                        break
+                    j += 1  # a doubled quote is a literal quote
+            else:
+                j = command.find("'", i + 1)
+                if j < 0 or (prev == "$" and "\\" in command[i:j]):  # $'...' takes backslash escapes
+                    return None
+            strings.append((i, j + 1))
+            blank(i, j + 1, "_")
+            i, prev = j + 1, "_"
+            continue
+        if c in double:
+            j = i + 1
+            while j < n:
+                if command[j] == escape:
+                    j += 2
+                elif command[j] not in double:
+                    j += 1
+                elif powershell and j + 1 < n and command[j + 1] in double:
+                    j += 2  # a doubled quote is a literal quote
+                else:
+                    break
+            if j >= n:
+                return None
+            body = command[i + 1:j]
+            if "$(" in body or (not powershell and "`" in body) or not _braces_closed(body):
+                return None
+            strings.append((i, j + 1))
+            blank(i, j + 1, "_")
+            i, prev = j + 1, "_"
+            continue
+        prev = c
+        i += 1
+    skeleton = "".join(out)
+    if _NESTED_WORD.search(skeleton) or any(_NESTED_PATH.search(command[a + 1:b - 1].strip()) for a, b in strings):
+        return None
+    return skeleton
+
+
+def _named_write_targets(words: list[str]) -> Iterator[str]:
+    if not words:
+        return
+    name = words[0].casefold()
+    if name not in {"set-content", "out-file", "add-content", "new-item",
+                    "copy-item", "move-item", "cp", "mv"}:
+        return
+    for flag in ("-literalpath", "-path", "-filepath", "-destination"):
+        for i, word in enumerate(words[:-1]):
+            if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
+                yield words[i + 1]
+    if name in {"copy-item", "move-item", "cp", "mv"}:
+        yield words[-1]
+    elif len(words) > 1 and not words[1].startswith("-"):
+        yield words[1]
+
+
+def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str]:
     """Find obvious literal write destinations; expansions and aliases are not parsed.
 
+    Only shell syntax is read: a '>' or a command name inside a string, comment or here-document is text.
+    When that split is unsure the raw text is scanned, which over-reports but never hides a write.
     Null devices (`2>/dev/null`, `> $null`, `> NUL`) discard output and are not writes.
     """
-    for match in _REDIRECT.finditer(command):
-        target = match.group(1).strip("\"'")
-        if target.casefold() not in NULL_DEVICES:
+    text = _blank_non_syntax(command, powershell)
+    # Positions come from the blanked text, values from the command. Every '>' is tried, so a quoted target
+    # never swallows a later redirect, as `> "$(cmd > /x)"` did when the raw text was matched in one pass.
+    for op in _REDIRECT_OP.finditer(command if text is None else text):
+        match = _REDIRECT.match(command, op.start())
+        target = match.group(1).strip("\"'") if match else ""
+        if target and target.casefold() not in NULL_DEVICES:
             yield target
-    for segment in re.split(r"[|;&\n]", command):
-        words = [m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
-        if not words:
-            continue
-        name = words[0].casefold()
-        if name not in {"set-content", "out-file", "add-content", "new-item",
-                        "copy-item", "move-item", "cp", "mv"}:
-            continue
-        for flag in ("-literalpath", "-path", "-filepath", "-destination"):
-            for i, word in enumerate(words[:-1]):
-                if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
-                    yield words[i + 1]
-        if name in {"copy-item", "move-item", "cp", "mv"}:
-            yield words[-1]
-        elif len(words) > 1 and not words[1].startswith("-"):
-            yield words[1]
+    if text is None:
+        segments = [[m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
+                    for segment in re.split(r"[|;&\n]", command)]
+    else:
+        segments = [[command[m.start():m.end()].strip("\"'")
+                     for m in _BARE_WORD.finditer(text, seg.start(), seg.end())]
+                    for seg in re.finditer(r"[^|;&\n]+", text)]
+    for words in segments:
+        yield from _named_write_targets(words)
 
 
 @dataclass
@@ -792,7 +1015,7 @@ def _evaluate_tool(
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
         roots = [_norm(r) for r in allowed_roots if r]
-        for target in _shell_write_targets(cmd):
+        for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
             if _drive_relative(target):
                 return Decision("ask", f"drive-relative shell write destination: {target}")
             if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
