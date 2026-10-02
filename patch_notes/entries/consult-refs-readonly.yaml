@@ -1,0 +1,5 @@
+pr: 0
+rows:
+- sha: 17af209
+  at: 2026-10-02 21:29
+  text: ask의 원래 작업 폴더와 검증된 refs를 consult read-only 입력으로 연결하고 Claude 숨김 메모리 실측을 남김
