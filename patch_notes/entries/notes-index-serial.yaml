@@ -1,0 +1,5 @@
+pr: 295
+rows:
+- sha: fb34d54
+  at: 2026-10-02 16:52
+  text: '목차 갱신 workflow를 직렬화: 최신 main에서 다시 만들고, push가 실패하면 재시도'

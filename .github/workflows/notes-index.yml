@@ -10,24 +10,36 @@ on:
 permissions:
   contents: write
 
+# One run at a time; a run queued behind another regenerates from the newest main, so no PR's record is lost (#292 review).
+concurrency:
+  group: notes-index
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main  # the newest main, not the commit that triggered this run
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install pyyaml
-      - run: python scripts/notes_index.py --write
-      - name: Commit generated indexes
+      - name: Regenerate and push the indexes
+        # GITHUB_TOKEN으로 push한 커밋은 다른 workflow를 다시 실행하지 않는다.
         run: |
-          if git diff --quiet -- STATUS.md patch_notes/README.md; then
-            exit 0
-          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add STATUS.md patch_notes/README.md
-          git commit -m "패치노트·STATUS 목차 갱신"
-          # GITHUB_TOKEN으로 push한 커밋은 다른 workflow를 다시 실행하지 않는다.
-          git push
+          for attempt in 1 2 3; do
+            python scripts/notes_index.py --write
+            if git diff --quiet -- STATUS.md patch_notes/README.md; then
+              exit 0
+            fi
+            git add STATUS.md patch_notes/README.md
+            git commit -q -m "패치노트·STATUS 목차 갱신"
+            git push && exit 0
+            # main moved while we worked: start again from the newest main with every record in it.
+            git fetch -q origin main && git reset -q --hard origin/main
+          done
+          exit 1
