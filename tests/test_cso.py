@@ -1721,6 +1721,25 @@ async def test_replan_keeps_completed_step_dependencies_when_its_instruction_nam
 
 
 @pytest.mark.asyncio
+async def test_resume_does_not_finish_an_in_flight_replan_over_a_reduced_cap():
+    """Lowering orchestrator.max_replans before a restart is honored, as #282 does for max_steps."""
+    hub = replan_hub([], lambda task: result(task, text="b done"),
+                     lambda task: pytest.fail("the in-flight attempt is over the new cap"))
+    hub.requests["r"].update(
+        plan={"steps": [{"id": "A", "agent_id": "worker", "instruction": "a", "outputs": [], "depends_on": []}]},
+        results={"A": result(Task(agent_id="worker", prompt="a"), ok=False, error="a failed").model_dump(mode="json")},
+        replan_progress={"attempts": 2, "max": 2, "in_flight": True})
+    hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and not kinds(hub, "replan")
+    assert req["replan_history"][-1]["status"] == "limit"
+    assert req["replan_history"][-1]["reason"] == "re-plan limit reached (2/1)"
+    assert req["replan_progress"]["in_flight"] is False
+
+
+@pytest.mark.asyncio
 async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     async def dispatch(task):
         return result(task, text="unused")

@@ -1828,12 +1828,11 @@ class Orchestrator:
                                and (reason := block_reason(results[sid]))]
                     if blocked:
                         return record("blocked", reason="; ".join(blocked))
-                if progress.get("in_flight"):
-                    attempt = int(progress.get("attempts") or 1)  # a restart re-asks the attempt it interrupted
-                else:
-                    attempt = int(progress.get("attempts") or 0) + 1
-                    if attempt > limit:
-                        return record("limit", reason=f"re-plan limit reached ({attempt - 1}/{limit})")
+                used_attempts = int(progress.get("attempts") or 0)
+                # A restart re-asks the attempt it interrupted; a cap lowered meanwhile still applies to it.
+                attempt = max(used_attempts, 1) if progress.get("in_flight") else used_attempts + 1
+                if attempt > limit:
+                    return record("limit", reason=f"re-plan limit reached ({used_attempts}/{limit})")
                 progress.update(attempts=attempt, max=limit, in_flight=True)
                 if review_progress is not None:
                     req["review_progress"] = {**review_progress, "phase": "replan"}
