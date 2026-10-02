@@ -17,6 +17,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import websockets
 import yaml
@@ -151,6 +152,17 @@ def check_data_boundary(settings: Settings) -> bool:
         log.critical("UNSAFE OVERRIDE: runner account can read restricted data (%d zone(s)); "
                      "policy.allow_runner_read_restricted is enabled", len(readable))
     return bool(readable)
+
+
+
+# Record fields that only tell a rewritten output from an untouched one (#58 ②); never published.
+IDENTITY_ONLY = ("ino", "ctime_ns")
+
+
+def output_identity(row: dict[str, Any]) -> tuple:
+    """What a run baseline compares: a file kept at its size and mtime but replaced (new inode) or rewritten in
+    place (new POSIX ctime) still counts as changed by the run."""
+    return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
 class Runner:
@@ -950,6 +962,42 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            output_before: dict[str, tuple] | None = None
+            output_records: list[dict[str, Any]] = []
+            observed_outputs: list[dict[str, Any]] = []
+            output_scan_notes: list[str] = []
+
+            def before_spawn() -> str | None:
+                """Take both baselines after adapter preparation, immediately before its CLI spawn."""
+                nonlocal output_before
+                refused = watch.take_baseline() if watch else None
+                records, note = ws.scan_output_records(
+                    zones, self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth)
+                output_before = {row["path"]: output_identity(row) for row in records}
+                if note:
+                    output_scan_notes.append(note)
+                return refused
+
+            async def collect_observed_outputs() -> None:
+                """Hash the post-run view off the event loop, before labhq writes RESULT files."""
+                nonlocal output_records, observed_outputs
+                if output_before is None:
+                    return
+                output_records, note = await asyncio.to_thread(
+                    ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
+                    self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
+                if note:
+                    output_scan_notes.append(note)
+                observed_outputs = [
+                    {**{k: v for k, v in row.items() if k not in IDENTITY_ONLY},
+                     "task_id": task.id, "agent_id": agent.id}
+                    for row in output_records
+                    if output_before.get(row["path"]) != output_identity(row)
+                ]
+                incomplete = "; ".join(dict.fromkeys(output_scan_notes)) or None
+                ws.update_run(task.id, observed_outputs=observed_outputs,
+                              **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
+
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
@@ -970,7 +1018,7 @@ class Runner:
                 resume_baseline=self._resume_baseline(task, agent, ws),
                 read_only=read_only,
                 # Again after prepare(): the adapter's own files (Codex AGENTS.md) are not the agent's writes.
-                before_spawn=watch.take_baseline if watch else None,
+                before_spawn=before_spawn,
             )
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,
@@ -987,10 +1035,12 @@ class Runner:
                     try:
                         result = await adapter.run(ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
+                        await collect_observed_outputs()
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),
                                                           watch, emit, ws, task.id)
                         raise
+                    await collect_observed_outputs()
                     if watch and watch.baseline is not None:
                         result = await self._read_only_verdict(result, watch, emit, ws, task.id)
                     staff_env = getattr(adapter, "staff_env", None)
@@ -1047,6 +1097,16 @@ class Runner:
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
+        hashed = {row["path"]: row["sha256"] for row in output_records
+                  if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
+        result.output_sha256 = hashed
+        collected = set(result.outputs)
+        result.unreported_outputs = sorted(row["path"] for row in observed_outputs if row["path"] not in collected)
+        if result.unreported_outputs:
+            await emit("agent.log", {"level": "warn", "text": (
+                "보고하지 않은 관찰 산출물: " + ", ".join(result.unreported_outputs))})
+        for note in dict.fromkeys(output_scan_notes):
+            await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).
         if (agent.id == "bioinfo-agent" and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
                 and result.ok and not waiting(result)):
