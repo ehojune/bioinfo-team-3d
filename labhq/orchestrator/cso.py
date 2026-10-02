@@ -292,6 +292,15 @@ refused and claims left unsupported at CP2, not_established, failures and method
 RESEARCH_REVIEW_RETRY = ('\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise" and issues, each '
                          'issue with every field. Do not add prose.')
 
+def with_p1_verdict(review: dict) -> dict:
+    """The research review's verdict follows its priorities: revise exactly when an issue is P1 (a fix would change
+    the conclusion). A reviewer verdict that disagrees is kept as ``reviewer_verdict`` (PR #336 review)."""
+    verdict = "revise" if any(issue.get("priority") == "P1" for issue in review.get("issues") or []) else "accept"
+    if review.get("verdict") == verdict:
+        return review
+    return {**review, "verdict": verdict, "reviewer_verdict": review.get("verdict")}
+
+
 RESEARCH_SYNTH_PROMPT = """Write the final research report for the PI from the frozen plan, the evidence the PI
 approved at CP2 and the research review below.
 
@@ -300,8 +309,8 @@ Claim anchors (labhq checks them by machine):
   exactly [[claim:<step_id>/<claim_id>]].
 - Anchor only the citable claims listed below, each with the anchor shown there. A claim that is not listed as
   citable is not established: do not state it as a conclusion.
-- Put the not-established items and failed lookups below in their own section titled "확립되지 않은 것". A failed
-  or empty lookup is neither evidence nor proof of absence.
+- Put the not-established items and failed lookups below in their own section titled "확립되지 않은 것", without
+  anchors. A failed or empty lookup is neither evidence nor proof of absence.
 - Report the reviewer's P1 and P2 issues as limitations.
 Structure: 1) answer, 2) evidence by claim (with anchors and file paths), 3) 확립되지 않은 것, 4) limitations,
 5) what would change the conclusion, and next steps.
@@ -1992,7 +2001,7 @@ class Orchestrator:
                 parsed = (reply.structured if valid_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
                           else extract_json(reply.text))
                 if reply.ok and valid_review(parsed, RESEARCH_LANE_REVIEW_SCHEMA):
-                    review = parsed
+                    review = with_p1_verdict(parsed)
                     break
             if not review:
                 reason = (reply.error if reply else None) or "missing or invalid research review"

@@ -34,3 +34,14 @@ def test_citable_claims_and_failed_lookups_come_from_the_ledger():
         ("s1", "c2", "status proposed"), ("s2", "c1", "rests only on evidence refused at CP2")]
     assert failed_lookups({"s1": ledger}) == [{"step_id": "s1", "evidence_id": "e2", "status": "not_found",
                                                "observation": "no hits", "detail": "", "query": "gene X"}]
+
+
+def test_anchor_variants_are_checked_and_code_is_not_a_conclusion():
+    """A model may write [[Claim: s1/c9]]; it is checked, not skipped. The syntax shown in code states nothing
+    (PR #336 review)."""
+    hashes = {"s1/a1": "a" * 64}
+    check = check_report("x [[claim:s1/c1]]. y [[Claim: s1/c9]]. z [[ CLAIM:s1/c1 ]]", {"s1": _ledger()},
+                         artifact_sha256=hashes)
+    assert check["anchors"] == 3 and len(check["problems"]) == 1 and "claim c9" in check["problems"][0]
+    shown = "x [[claim:s1/c1]].\n```\n[[claim:<step_id>/<claim_id>]]\n```\nand `[[claim:s9/c1]]`"
+    assert check_report(shown, {"s1": _ledger()}, artifact_sha256=hashes) == {"anchors": 1, "problems": []}

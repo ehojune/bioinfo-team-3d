@@ -14,7 +14,10 @@ from typing import Any
 
 from .claims import STATUS_NEEDS
 
-ANCHOR = re.compile(r"\[\[claim:([^\[\]\n]*)\]\]")
+# Case and spaces vary in what a model writes ([[Claim: s1/c1]]); a variant is checked, not skipped.
+ANCHOR = re.compile(r"\[\[\s*claim\s*:([^\[\]\n]*)\]\]", re.IGNORECASE)
+# A fenced block or inline code shows the anchor syntax; it states no conclusion.
+CODE = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 CITABLE_STATUSES = frozenset(STATUS_NEEDS)  # supported, partially_supported, contradicted
 # A retrieval that failed, could not reach its source, or found nothing: neither evidence nor proof of absence.
 FAILED_LOOKUP_STATUSES = frozenset({"failed", "unavailable", "not_found"})
@@ -89,7 +92,7 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     evidence or whose status cannot be cited; supporting evidence whose artifact has no recorded hash; and a
     report that anchors nothing while the ledgers hold citable claims.
     """
-    found = ANCHOR.findall(report or "")
+    found = ANCHOR.findall(CODE.sub(" ", report or ""))
     blocked = _pairs(unsupported, "claim_id")
     refused_rows = _pairs(refused, "evidence_id")
     hashes = artifact_sha256 or {}

@@ -224,3 +224,20 @@ def test_research_review_schema_is_strict():
     assert not valid_review({**ACCEPT, "issues": [{**ACCEPT["issues"][0], "priority": "P4"}]},
                             RESEARCH_LANE_REVIEW_SCHEMA)
     assert "scores" in REVIEW_SCHEMA["properties"]  # the generic review is untouched
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("review", "kinds", "outcome"), [
+    # accept with a P1 issue: the conclusion would change, so the request ends as revise
+    ({**ACCEPT, "issues": [{**REVISE["issues"][1]}]}, ["plan", "step", "review"], "research_review_revise"),
+    # revise with only a P3 issue: no fix changes the conclusion, so the report is written
+    ({**REVISE, "issues": [REVISE["issues"][0]]}, ["plan", "step", "review", "synthesis"], "research_reported"),
+])
+async def test_review_verdict_follows_p1_issues(review, kinds, outcome):
+    """The verdict is revise exactly when an issue is P1; the reviewer's own verdict is kept (PR #336 review)."""
+    hub = _hub(review=review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == kinds and req["outcome"] == outcome
+    assert req["research_contract"]["review"]["reviewer_verdict"] == review["verdict"]
