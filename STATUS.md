@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #271 #282 — 단계 실패·revise 뒤 opt-in CSO 재계획과 저장 계획 max_steps 축소 처리
+
+- 결론: 저장 계획이 현재 `max_steps`보다 길면 자르지 않고 실패한다(연구 lane은 승인 hash·상태 유지). `orchestrator.max_replans`(기본 0, 전과 같음)를 켜면 단계 실패나 revise 뒤 CSO가 남은 DAG만 다시 계획한다.
+- 바뀐 것: 완료 단계는 다시 돌리지 않고 의존성도 그대로 둔다. 새 단계는 새 id로 `validate_steps`·`max_steps`를 통과해야 반영되고, 질문은 clarify gate, 비용은 budget gate를 다시 탄다. 시도 횟수는 CSO 호출 전에 저장하고 재시작 뒤에도 현재 상한으로 판정한다. PI 거절·취소 단계와 살아 있는 HPC job이 있는 단계는 우회하지 않는다. 연구 lane은 재계획하지 않는다. 재계획 이력은 reviewer·최종 보고 prompt와 보고서 metadata에 남는다.
+- 실행한 것: 새 회귀 29건이 main 코드에서 실패하고 이 branch에서 통과했다. 전체 pytest 2513 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 후속 P2 2건(재계획 clarify 답변 뒤 재시작 시 재질문, drop하지 않은 flagged 단계 검사). Codex 사용량 한도로 Claude가 이어받았다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/settings.py`, `config/labhq.example.yaml`, `tests/test_cso.py`, `tests/test_output_types_research.py`.
+
 ## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
 
 - 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.
