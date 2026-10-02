@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #281 #280 — 조기 종료 HPC job wake 보존과 event-loop worker 검증
+
+- 결론: agent가 실행 중일 때 job watcher가 먼저 종료를 관찰하면 `pending_jobs`에서 빠져 CSO가 wake를 기다리지 않았다. 대기 상한은 바꾸지 않았다.
+- 바뀐 것: 해당 run이 제출한 job은 종료 여부와 관계없이 결과에 남겨 나중 `jobs.finished`가 session을 깨우게 했다. event-loop test는 `join` 및 blocking `put` 호출을 기록해 예외가 삼켜져도 실패한다.
+- 실행한 것: 수정 전 유휴 120회 0실패, 기존 부하 재현 120회 10실패(모두 조기 terminal·`pending_jobs` 누락). 수정 후 e2e wake·조기 종료 회귀·event-loop test를 각 50회 순차 실행해 0실패.
+- 미해결: 없음.
+- 근거: `labhq/runner/daemon.py`, `tests/test_hpc_followups.py`, `tests/test_semantics_shadow_worker.py`.
+
 ## 2026-10-02 · #271 #282 — 단계 실패·revise 뒤 opt-in CSO 재계획과 저장 계획 max_steps 축소 처리
 
 - 결론: 저장 계획이 현재 `max_steps`보다 길면 자르지 않고 실패한다(연구 lane은 승인 hash·상태 유지). `orchestrator.max_replans`(기본 0, 전과 같음)를 켜면 단계 실패나 revise 뒤 CSO가 남은 DAG만 다시 계획한다.
