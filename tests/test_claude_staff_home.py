@@ -160,14 +160,16 @@ def test_a_link_out_of_the_open_folder_is_judged_by_where_it_leads(tmp_path, mon
 def test_claude_rules_close_the_staff_folder_except_the_open_project_folder(tmp_path, monkeypatch):
     home, staff, ws, mine, other, settings = _staff(tmp_path, monkeypatch)
     (staff / "history.jsonl").unlink()  # not written yet: still ruled
+    (staff / "todos").mkdir()  # any other top-level entry is ruled as it stands
     found = _found(settings, ws)
     deny = claude_deny_private({}, found.paths, str(home), open_reads=found.open_reads)["permissions"]["deny"]
     assert f"Read({_rule(staff)})" not in deny and f"Read({_rule(staff)}/**)" not in deny
     for tool in ("Edit", "Write"):
         assert f"{tool}({_rule(staff)}/**)" in deny  # writes stay closed in the whole folder
-    for path in (staff / ".credentials.json", staff / ".claude.json", staff / "history.jsonl", other):
+    for path in (staff / ".credentials.json", staff / ".claude.json", staff / "history.jsonl", staff / "todos"):
         assert f"Read({_rule(path)})" in deny and f"Read({_rule(path)}/**)" in deny, path
-    assert not any(rule.startswith("Read(") and rule.startswith(f"Read({_rule(mine)}") for rule in deny)
+    # Nothing under projects/ is named: other tasks' folders are left to the gate (it refuses them, test above).
+    assert not any(rule.startswith(f"Read({_rule(staff / 'projects')}") for rule in deny), other
     assert f"Read({_rule(home / '.claude')}/**)" in deny  # the PI's folder stays closed as a whole
 
 
@@ -177,10 +179,31 @@ def _command(tmp_path, found, settings, tools=("Read", "Grep", "Glob", "Write", 
     ws = tmp_path / "cmd-ws"
     (ws / ".labhq").mkdir(parents=True, exist_ok=True)
     ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=ws, settings=settings,
-                     mcp_servers=[], env={}, emit=None, prompt="x", claude_settings={},
+                     mcp_servers=[], env={}, emit=None, prompt="x",
+                     claude_settings=claude_deny_private({}, found.paths, open_reads=found.open_reads),  # as the runner
                      private_paths=list(found.paths), private_enabled=found.enabled,
                      private_open_reads=list(found.open_reads))
     return ClaudeCodeAdapter(settings).build_command(ctx), ctx
+
+
+def test_earlier_tasks_project_folders_do_not_lengthen_the_command(tmp_path, monkeypatch):
+    """Every Claude task leaves a project folder in the staff config folder (its own work folder). Ruling each one
+    by name grew --settings by ~340 characters a folder until no Claude task could start (Windows 32,000 limit).
+    Those folders are not pre-approved, so the gate refuses reads of them; the rules stop at the top level."""
+    from labhq.adapters.base import _command_too_long
+
+    home, staff, ws, mine, other, settings = _staff(tmp_path, monkeypatch)
+    before, _ctx = _command(tmp_path, _found(settings, ws), settings)
+    for i in range(300):
+        (staff / "projects" / claude_project_slug(str(home / ".labhq" / "runs" / f"t{i:04d}_analyst"))).mkdir()
+    found = _found(settings, ws)
+    cmd, _ctx = _command(tmp_path, found, settings)
+    assert _command_too_long(cmd) is None
+    assert len(cmd[cmd.index("--settings") + 1]) == len(before[before.index("--settings") + 1])
+    sibling = staff / "projects" / claude_project_slug(str(home / ".labhq" / "runs" / "t0299_analyst"))
+    assert _gate(found, home, ws, "Read", {"file_path": str(sibling / "s.jsonl")}).action == "deny"
+    assert _gate(found, home, ws, "Read", {"file_path": str(mine / "s1" / "tool-results" / "out.txt")}).action \
+        == "allow"
 
 
 def test_claude_pre_approves_reads_of_the_open_folder_and_never_writes(tmp_path, monkeypatch):

@@ -203,37 +203,31 @@ def staff_claude_project_dirs(settings: Settings, workdir: str | os.PathLike) ->
 
 
 def closed_entries(root: str, open_reads: Iterable[str]) -> list[str]:
-    """What to deny inside `root` so only the `open_reads` below it stay readable: at each level from `root` down
-    to an open folder, every entry not on the way, plus CLAUDE_CONFIG_SECRETS at the top before they exist.
+    """What to deny inside `root` so the `open_reads` below it stay readable: every top-level entry not on the way
+    to an open folder, plus CLAUDE_CONFIG_SECRETS before they exist.
 
-    A snapshot: an entry made after the task starts gets no rule. Reads of it are not pre-approved (the task's
-    read roots), so they reach the gate, which refuses them."""
+    Only the top level, a fixed set of names in a Claude config folder. Deeper entries get no rule: projects/
+    gains a folder per Claude task, and naming each one grew the --settings argument until no Claude task could
+    start. Those entries, like any made after the task starts, are not pre-approved (the task's read roots), so
+    reads of them reach the gate, which refuses them."""
     fold = _case_insensitive(root)
     key = str.casefold if fold else (lambda name: name)
     top = re.sub(r"/{2,}", "/", root.replace("\\", "/")).rstrip("/")
-    ways: list[list[str]] = []
+    ways: set[str] = set()
     for folder in open_reads:
         spelled = re.sub(r"/{2,}", "/", folder.replace("\\", "/")).rstrip("/")
         if _under(_fold(spelled, fold), _fold(top, fold)) and len(spelled) > len(top):
-            ways.append([part for part in spelled[len(top):].split("/") if part])
-
-    def walk(directory: str, rests: list[list[str]], names: Iterable[str] = ()) -> list[str]:
-        if any(not rest for rest in rests):
-            return []  # this folder is open
-        nexts: dict[str, tuple[str, list[list[str]]]] = {}
-        for rest in rests:
-            nexts.setdefault(key(rest[0]), (rest[0], []))[1].append(rest[1:])
-        try:
-            present = os.listdir(directory)
-        except OSError:
-            present = []
-        out = [os.path.join(directory, name) for name in dict.fromkeys([*present, *names])
-               if key(name) not in nexts]
-        for name, deeper in nexts.values():
-            out += walk(os.path.join(directory, name), deeper)
-        return out
-
-    return list(dict.fromkeys(walk(root, ways, CLAUDE_CONFIG_SECRETS))) if ways else [root]
+            first = next((part for part in spelled[len(top):].split("/") if part), None)
+            if first:
+                ways.add(key(first))
+    if not ways:
+        return [root]
+    try:
+        present = os.listdir(root)
+    except OSError:
+        present = []
+    return [os.path.join(root, name) for name in dict.fromkeys([*present, *CLAUDE_CONFIG_SECRETS])
+            if key(name) not in ways]
 
 
 def configured_private_paths(settings: Settings, home: str | None = None) -> list[tuple[str, str]]:

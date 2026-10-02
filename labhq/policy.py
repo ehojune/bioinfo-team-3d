@@ -449,8 +449,9 @@ def claude_deny_private(settings: dict, paths: Iterable[str], home: str | None =
     2.1.282: `ask: ["Bash(*/.sec/*)"]` stopped a pre-approved `python -c` read.
 
     A path holding one of `open_reads` (the task's project folder in the staff Claude config folder, #298 ⑤)
-    keeps Edit/Write on the whole path, but Read only on the entries off the way to that folder
+    keeps Edit/Write on the whole path, but Read only on its top-level entries off the way to that folder
     (`closed_entries`): a deny rule outranks every allow rule, so a Read deny on the whole path would close it.
+    Other tasks' project folders beside it get no rule; the gate refuses reads of them.
     """
     from .private_paths import closed_entries, holds_open_read, shell_needles
 
