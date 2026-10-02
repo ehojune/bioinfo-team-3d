@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:33 | [`d356082`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/d356082) | 소유 파일 쓰기는 폴더만 거부하고 FIFO 같은 특수 항목은 rename으로 교체해, 끝난 실행이 멈추지 않음 |
+| 21:20 | [`431b330`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/431b330) | HPC 공유 경로가 외부 parent를 검증한 뒤 생성된다는 설정 설명을 덧붙였다(#217) |
+| 21:18 | [`58b9ec1`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/58b9ec1) | 공백 포함 home 계정 경로를 온전히 가리고 HPC 제출 준비의 검증 순서와 링크 교체 오류를 바로잡았다(#217 #226) |
 | 21:12 | [`5af8dd8`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/5af8dd8) | main 병합: cso.py import에서 한도 대기(quota)와 연구 CP2 계약을 함께 둠 |
+| 21:08 | [`c6e781d`](https://github.com/ehojune/bioinfo-team-3d/pull/322/commits/c6e781d) | 소유 파일의 확인-열기 경쟁과 HPC 링크 교체를 막고 대소문자·Claude 제외·forge·home 가림 판정을 바로잡았다(#217 #226) |
 | 21:00 | [`06a224e`](https://github.com/ehojune/bioinfo-team-3d/pull/321/commits/06a224e) | 오류 출력 주석과 pack 동시 검증을 바로잡고 input-fit 집계를 어휘 판본별로 분리 |
 | 20:51 | [`b5016b4`](https://github.com/ehojune/bioinfo-team-3d/pull/320/commits/b5016b4) | HANDOFF.md 시작 절차도 전체 pytest 대신 관련 test, 전체는 CI |
 | 20:50 | [`1ac7e10`](https://github.com/ehojune/bioinfo-team-3d/pull/307/commits/1ac7e10) | 패키지 설정 템플릿(labhq/config/labhq.example.yaml)에도 research.evidence_checkpoint를 넣어 저장소 사본과 맞췄다. |
