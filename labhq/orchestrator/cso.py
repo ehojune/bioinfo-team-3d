@@ -207,7 +207,7 @@ paths, caveats and open questions. Do not quietly switch to a weaker method when
 and if you give it up, say what you tried and why you stopped. If you cannot proceed without a PI decision,
 return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
-with "- ". Do not proceed with the blocked work."""
+with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work."""
 
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
@@ -910,8 +910,13 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
 
 
 def blocking_question(result: TaskResult) -> str | None:
-    """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None."""
-    structured = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
+    """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None.
+
+    STEP_PROMPT puts each choice on its own line, so a step may write a real newline inside the JSON string;
+    that still reads as the question instead of dropping it (#342 review).
+    """
+    structured = (result.structured if isinstance(result.structured, dict)
+                  else extract_json(result.text, strict=False))
     question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)
                                             else None)
     return question.strip() if isinstance(question, str) and question.strip() else None
