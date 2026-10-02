@@ -52,6 +52,7 @@ MODES = ("off", "shadow")
 MODELS = ("provenance", "objects")  # the two models a line carries side by side
 HELD_MODES = ("advisory", "ab")  # B2: CSO advisory and A/B, held by the PI (#149)
 KEYS = ("mode", "timeout_s", "history_requests")
+KEYS += ("actions",)  # semantics-hook: actions (#149 결정 13 A1, off by default)
 DEFAULT_TIMEOUT_S = 5.0
 STUCK_S = 10.0                   # a job running longer than this turns the shadow off
 IDLE_EXIT_S = 60.0               # an idle worker thread ends; the next request starts a new one
@@ -75,11 +76,13 @@ LOG_PART_BYTES = 23 * 1024 ** 2  # two parts plus observed.json (OBSERVED_MAX en
 INTRODUCED = date(2026, 10, 1)   # B1 shadow PR; the PI's removal review falls due 90 days later
 REVIEW_DAYS, MIDPOINT_DAYS = 90, 30
 VERDICTS = ("ok", "wrong_identity", "wrong_other", "irrelevant")
-REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete")
+REASONS = ("type_unknown", "hash_unknown", "zone_excluded", "version_changed", "not_generated", "incomplete",
+           "input_unknown", "input_mismatch", "target_type_unknown", "target_type_mismatch")
 SAFE_TOKEN = re.compile(r"[A-Za-z0-9_.:@#+-]{0,96}")
 VOCABULARY = frozenset({"general", "research", "direct", "orchestrate", "plan_only", "done", "failed", "rejected",
                         "cancelled", "interrupted", "running", "ok", "error", "timeout", "request", "auto_off",
                         "enable", "mark", *VERDICTS, *REASONS})
+VOCABULARY |= {"followup", "refused", "refused_read_only", "shadow_only", "refused_p3"}  # semantics-hook: actions
 SENSITIVE_MIN = 6
 RUN_FIELDS = ("agent_spec_sha256", "kind", "attempt", "retry", "revision", "session_id", "method", "resumes",
               "wake_of")
@@ -88,6 +91,16 @@ TYPE_BUCKETS = ("local", "unknown", "withheld")  # besides the EDAM ids of the l
 TYPE_BASIS = ("declared", "inferred", "unknown")
 DECLARATION_COUNTS = ("outputs", "data_declared", "format_declared")
 SHA_HEX = re.compile(r"[0-9a-f]{64}")
+DOI_VALUE = re.compile(r"(?:doi:)?10\.\d{4,9}/\S+", re.IGNORECASE)
+FILENAME_VALUE = re.compile(r"[^\\/\s]+\.[A-Za-z0-9]{1,12}")
+BOUNDARY_FIELDS = frozenset({"unknown", "v", "type", "ts", "epoch", "request_id", "project", "lane",
+                             "mode", "status", "rows", "busy_skipped", "snapshot_ms", "rows_ms",
+                             "vocab_sha256", "objects", "provenance", "hash", "actions", "ms", "phase",
+                             "key", "error_kind", "reason", "counts", "provenance.types",
+                             "provenance.declarations", "objects.artifact_types"})
+BOUNDARY_CLASSES = frozenset({"path", "filename", "url", "doi", "employee_id", "free_text", "identifier",
+                              "unsafe_token", "non_string_key", "non_json_value", "schema", "type_version",
+                              "type_fields", "type_bucket", "type_declarations", "type_objects"})
 
 
 # ---------------------------------------------------------------- settings
@@ -96,6 +109,7 @@ SHA_HEX = re.compile(r"[0-9a-f]{64}")
 class ShadowConfig:
     timeout_s: float = DEFAULT_TIMEOUT_S
     history_requests: int = 200
+    actions: bool = False  # semantics-hook: actions
 
 
 _warned: set[str] = set()
@@ -139,7 +153,9 @@ def resolve(raw: Any) -> ShadowConfig | None:
         history = options.get("history_requests", 200)
         if isinstance(history, bool) or not isinstance(history, int) or not 10 <= history <= 1000:
             return _ignored(raw, "history_requests must be an integer from 10 to 1000")
-        return ShadowConfig(timeout_s=float(timeout), history_requests=history)
+        cfg = ShadowConfig(timeout_s=float(timeout), history_requests=history)
+        cfg = _actions_config(cfg, options.get("actions"), raw)  # semantics-hook: actions
+        return cfg
     except Exception as exc:  # noqa: BLE001 - a setting must never break the gateway
         return _ignored(raw, type(exc).__name__)
 
@@ -274,10 +290,14 @@ def read_state(paths: ShadowPaths) -> dict:
     return state
 
 
-def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None) -> None:
+def write_disabled(paths: ShadowPaths, reason: str, epoch: int, counts: Mapping[str, int] | None = None, *,
+                   boundary: Iterable[Mapping[str, str]] | None = None) -> None:
     paths.root.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(paths.disabled, json.dumps({"reason": reason, "ts": time.time(), "epoch": epoch,
-                                                  "counts": dict(counts or {})}, sort_keys=True))
+    value = {"reason": reason, "ts": time.time(), "epoch": epoch, "counts": dict(counts or {})}
+    detail = _clean_boundary_details(boundary)
+    if detail:
+        value["boundary"] = detail
+    atomic_write_text(paths.disabled, json.dumps(value, sort_keys=True))
 
 
 def write_breaker(paths: ShadowPaths, epoch: int, recent: Iterable[bool], consecutive: int) -> None:
@@ -305,6 +325,8 @@ def read_disabled(paths: ShadowPaths) -> dict | None:
     value = _read_json(paths.disabled)
     if not isinstance(value, dict) or not isinstance(value.get("reason"), str):
         raise ValueError("disabled.json")
+    if "boundary" in value:
+        value["boundary"] = _clean_boundary_details(value.get("boundary"))
     return value
 
 
@@ -435,6 +457,8 @@ def take_snapshot(hub: Any, rid: str, cfg: ShadowConfig) -> dict:
         snap["state_db"] = str(hub.s.path(hub.s.gateway.state_dir) / "gateway.sqlite3")
     else:
         snap["rows"] = _rows_from_store(hub.store, rid, {r.get("id") for r in others[:cfg.history_requests - 1]})
+    if cfg.actions:  # semantics-hook: actions
+        snap["actions"] = _actions_inputs(hub, rid)  # semantics-hook: actions
     snap = json.loads(json.dumps(snap, default=str))
     snap["snapshot_ms"] = round((time.perf_counter() - started) * 1000, 2)
     return snap
@@ -487,6 +511,8 @@ def read_rows(snap: dict, check: Callable[[], None]) -> None:
     snap["jobs_done"] = {tid: {"jobs": [{"job_id": j.get("job_id"), "state": j.get("state")}
                                         for j in (body or {}).get("jobs") or [] if isinstance(j, dict)]}
                          for tid, body in sorted(jobs.items())}
+    if "actions" in snap:  # semantics-hook: actions
+        _actions_rows(snap, own, decisions)  # semantics-hook: actions
     snap["rows_ms"] = _ms(started)
 
 
@@ -504,60 +530,147 @@ def _strings(value: Any) -> Iterable[str]:
             yield from _strings(v)
 
 
-def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
-    """Values a line must never contain: texts, instructions, paths, reference values, zones, project names."""
-    found: list[Any] = []
+def _value_class(value: str) -> str:
+    text = value.strip()
+    if re.match(r"https?://", text, re.IGNORECASE):
+        return "url"
+    if DOI_VALUE.fullmatch(text):
+        return "doi"
+    if re.match(r"[A-Za-z]:[\\/]", text) or text.startswith(("/", "\\")) or "/" in text or "\\" in text:
+        return "path"
+    if FILENAME_VALUE.fullmatch(text):
+        return "filename"
+    if any(ch.isspace() for ch in text):
+        return "free_text"
+    return "identifier"
+
+
+def sensitive_values(snap: Mapping[str, Any]) -> dict[str, str]:
+    """Forbidden source values mapped to a fixed category; values are never written to the breaker record."""
+    found: dict[str, str] = {}
+
+    def add(value: Any, category: str | None = None) -> None:
+        if isinstance(value, str) and len(value.strip()) >= SENSITIVE_MIN:
+            found.setdefault(value.strip(), category or _value_class(value))
+
     for req in (snap.get("requests") or {}).values():
-        found += [req.get("text"), req.get("project_id")]
-        found += [r.get("value") for r in req.get("references") or []]
+        add(req.get("text"), "free_text")
+        add(req.get("project_id"), "identifier")
+        for reference in req.get("references") or []:
+            add(reference.get("value"))
         plan = req.get("plan") or {}
-        found += [s for s in _strings(plan) if len(s) >= 12] if req.get("research_contract") else [
-            step.get("instruction") for step in plan.get("steps") or []]
+        if req.get("research_contract"):
+            for value in _strings(plan):
+                if len(value) >= 12:
+                    add(value)
+        else:
+            for step in plan.get("steps") or []:
+                add(step.get("instruction"), "free_text")
         for result in (req.get("results") or {}).values():
-            found += [result.get("workdir"), result.get("workdir_id"), *_strings(result.get("outputs"))]
+            add(result.get("workdir"), "path")
+            add(result.get("workdir_id"), "identifier")
+            for value in _strings(result.get("outputs")):
+                add(value)
     for task in (snap.get("tasks") or {}).values():
         result = task.get("result") if isinstance(task.get("result"), dict) else {}
         outputs = list(_strings(result.get("outputs")))  # any shape: a malformed row must not end the check
-        found += [result.get("workdir"), result.get("workdir_id"), *outputs]
-        found += [o.replace("\\", "/").rsplit("/", 1)[-1] for o in outputs]
-    found += [zone[0] for zone in snap.get("zones") or []]
+        add(result.get("workdir"), "path")
+        add(result.get("workdir_id"), "identifier")
+        for output in outputs:
+            add(output)
+            add(output.replace("\\", "/").rsplit("/", 1)[-1], "filename")
+    for zone in snap.get("zones") or []:
+        add(zone[0], "path")
     project = snap.get("project") or {}
-    found += [project.get("id"), project.get("local_dir"), project.get("name"), snap.get("workspace_root")]
-    return {s.strip() for s in found if isinstance(s, str) and len(s.strip()) >= SENSITIVE_MIN}
+    add(project.get("id"), "identifier")
+    add(project.get("local_dir"), "path")
+    add(project.get("name"), "free_text")
+    add(snap.get("workspace_root"), "path")
+    for value in (snap.get("actions") or {}).get("sensitive") or []: add(value)  # semantics-hook: actions
+    return found
 
 
-def boundary_problems(line: Mapping[str, Any], sensitive: Iterable[str]) -> list[str]:
+def sensitive_strings(snap: Mapping[str, Any]) -> set[str]:
+    """Values a line must never contain: texts, instructions, paths, reference values, zones, project names."""
+    return set(sensitive_values(snap))
+
+
+def _boundary_field(path: tuple[str, ...]) -> str:
+    return path[0] if path and path[0] in BOUNDARY_FIELDS else "unknown"
+
+
+def _boundary_rows(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str],
+                   allowed_fields: Mapping[str, str] | None = None) -> list[tuple[str, str, str]]:
+    secrets = (sensitive.items() if isinstance(sensitive, Mapping)
+               else ((value, _value_class(value)) for value in sensitive if isinstance(value, str)))
+    secrets = [(value, category if category in BOUNDARY_CLASSES else _value_class(value))
+               for value, category in secrets if value]
+    allowed_fields = allowed_fields or {}
+    findings: set[tuple[str, str, str]] = set()
+
+    def add(problem: str, path: tuple[str, ...], category: str) -> None:
+        if category not in BOUNDARY_CLASSES:
+            category = "schema"
+        findings.add((problem, _boundary_field(path), category))
+
+    def walk(value: Any, path: tuple[str, ...] = ()) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if isinstance(key, str):
+                    child_path = (*path, key)
+                    if not SAFE_TOKEN.fullmatch(key):
+                        category = _value_class(key)
+                        add("not_a_token", child_path, "unsafe_token" if category == "identifier" else category)
+                else:
+                    child_path = path
+                    add("non_string_key", path, "non_string_key")
+                walk(child, child_path)
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                walk(child, path)
+        elif isinstance(value, str):
+            token = bool(SAFE_TOKEN.fullmatch(value))
+            value_category = _value_class(value)
+            if not token:
+                category = value_category
+                add("not_a_token", path, "unsafe_token" if category == "identifier" else category)
+            allowed = len(path) == 1 and allowed_fields.get(path[0]) == value
+            if len(value) >= SENSITIVE_MIN and value not in VOCABULARY and not allowed:
+                for secret, category in secrets:
+                    if secret in value:
+                        add("sensitive_value", path, value_category if not token else category)
+        elif not (value is None or isinstance(value, (bool, int, float))):
+            add("non_json_value", path, "non_json_value")
+
+    walk(line)
+    return sorted(findings)
+
+
+def boundary_findings(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str], *,
+                      allowed_fields: Mapping[str, str] | None = None) -> list[dict[str, str]]:
+    """Off-record diagnostics: only a fixed field name and category, never the rejected value."""
+    return [{"field": field, "class": category}
+            for field, category in sorted({(field, category) for _, field, category in
+                                           _boundary_rows(line, sensitive, allowed_fields)})]
+
+
+def boundary_problems(line: Mapping[str, Any], sensitive: Iterable[str] | Mapping[str, str], *,
+                      allowed_fields: Mapping[str, str] | None = None) -> list[str]:
     """Why a line may not be written: a string that is not a plain token, or a value carrying a sensitive one.
 
     Keys and the fixed words of ``VOCABULARY`` are code's own; every other string value is checked against
     the snapshot's texts, paths and names, so a request titled like a status word does not trip the check.
     """
-    problems: list[str] = []
-    keys: list[str] = []
-    values: list[str] = []
+    return [problem for problem, _, _ in _boundary_rows(line, sensitive, allowed_fields)]
 
-    def walk(value: Any) -> None:
-        if isinstance(value, Mapping):
-            for k, v in value.items():
-                if isinstance(k, str):
-                    keys.append(k)
-                else:
-                    problems.append("non_string_key")
-                walk(v)
-        elif isinstance(value, (list, tuple)):
-            for v in value:
-                walk(v)
-        elif isinstance(value, str):
-            values.append(value)
-        elif not (value is None or isinstance(value, (bool, int, float))):
-            problems.append("non_json_value")
 
-    walk(line)
-    problems += ["not_a_token" for s in keys + values if not SAFE_TOKEN.fullmatch(s)]
-    secrets = [s for s in sensitive if s]
-    problems += ["sensitive_value" for leaf in values if len(leaf) >= SENSITIVE_MIN and leaf not in VOCABULARY
-                 for s in secrets if s in leaf]
-    return problems
+def _clean_boundary_details(value: Any) -> list[dict[str, str]]:
+    """Keep only code-owned labels before a diagnostic reaches disabled.json or a report."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    clean = {(item.get("field"), item.get("class")) for item in value if isinstance(item, Mapping)
+             and item.get("field") in BOUNDARY_FIELDS and item.get("class") in BOUNDARY_CLASSES}
+    return [{"field": field, "class": category} for field, category in sorted(clean)]
 
 
 # ---------------------------------------------------------------- file reads: zones, same disk, hash
@@ -678,6 +791,7 @@ class Reader:
         self.budget = HashBudget()
         self.manifests: dict[str, dict | None] = {}
         self.workspace_state: dict[str, str] = {}
+        self.reference_cache: dict[str, tuple[str, dict | None]] = {}
 
     def workspace(self, workdir: Any) -> str:
         """`ok`, or why this workspace is not read: remote, zone_excluded, not_regular, missing."""
@@ -746,6 +860,27 @@ class Reader:
             st = os.lstat(path)
         except FileNotFoundError:
             return "missing", None
+        return self._hash_file(path, st)
+
+    def accepted_reference_file(self, root: str, name: str) -> tuple[str, dict | None]:
+        """Hash a named file only below a same-host reference directory recorded by the runner."""
+        if (not os.path.isabs(root) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,256}", name)
+                or _norm(os.path.realpath(root)) != _norm(root)):
+            return "not_regular", None
+        path = os.path.join(root, name)
+        if path in self.reference_cache:
+            status, seen = self.reference_cache[path]
+            return ("cached" if status == "hashed" else status), seen
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            answer = ("missing", None)
+        else:
+            answer = self._hash_file(path, st)
+        self.reference_cache[path] = answer
+        return answer
+
+    def _hash_file(self, path: str, st: os.stat_result) -> tuple[str, dict | None]:
         if _is_link(st) or not stat.S_ISREG(st.st_mode):
             return "not_regular", None
         if not zone_allows(path, self.zones, self.visibility, forms=self.zone_forms or []):
@@ -849,6 +984,154 @@ def _unknown_ratio(rows: Iterable[tuple[Mapping[str, Any], tuple[str, ...]]]) ->
     return round(unknown / total, 4) if total else None
 
 
+_INPUT_NAME = re.compile(r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]{1,120}(?:\.[A-Za-z0-9_-]{1,120})*"
+                         r"\.[A-Za-z0-9]{1,12})(?![A-Za-z0-9_-])")
+
+
+def _mentioned_names(req: Mapping[str, Any]) -> set[str]:
+    text = req.get("text")
+    if not isinstance(text, str):
+        return set()
+    return {m.group(1) for m in _INPUT_NAME.finditer(text[:100_000])}
+
+
+def _output_names(req: Mapping[str, Any]) -> set[str]:
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    found: set[str] = set()
+    for step in plan.get("steps") or []:
+        if not isinstance(step, Mapping):
+            continue
+        values = list(step.get("outputs") or [])
+        values += [entry.get("name") for entry in step.get("output_types") or [] if isinstance(entry, Mapping)]
+        found.update(Path(value.replace("\\", "/")).name.casefold()
+                     for value in values if isinstance(value, str))
+    return found
+
+
+def _target_types(req: Mapping[str, Any], vocab: Any) -> set[str]:
+    """Declared types of outputs the PI named, not incidental plan-added reports or QC files."""
+    if vocab is None:
+        return set()
+    named = {name.casefold() for name in _mentioned_names(req)}
+    found: set[str] = set()
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    for step in plan.get("steps") or []:
+        if not isinstance(step, Mapping):
+            continue
+        for entry in step.get("output_types") or []:
+            if not isinstance(entry, Mapping) or entry.get("vocab") != vocab.sha256:
+                continue
+            name, key = entry.get("name"), entry.get("data_type")
+            if (isinstance(name, str) and Path(name.replace("\\", "/")).name.casefold() in named
+                    and vocab.is_key("data", key)):
+                found.add(key)
+    return found
+
+
+def _input_identity(kind: str, value: str) -> str | None:
+    """Opaque identity for an already recorded public link or accession; URI paths keep their case."""
+    folded = kind.casefold()
+    try:
+        normalized = (sem.normalize_uri(value) if folded in ("url", "uri") or "://" in value
+                      else sem.normalize_id(folded, value))
+    except (TypeError, ValueError):
+        return None
+    return "link:" + hashlib.sha256(f"{folded}:{normalized}".encode("utf-8")).hexdigest()
+
+
+def _request_input_hashes(req: Mapping[str, Any]) -> set[str]:
+    """Opaque identities from structured public links only; path references provide no runner evidence."""
+    found: set[str] = set()
+    for ref in req.get("references") or []:
+        if not isinstance(ref, Mapping):
+            continue
+        kind, value = ref.get("kind"), ref.get("value")
+        if not isinstance(kind, str) or not isinstance(value, str) or not value:
+            continue
+        identity = None if kind.casefold() == "path" else _input_identity(kind, value)
+        if identity is not None:
+            found.add(identity)
+    return found
+
+
+def _accepted_file_hashes(records: Any, requests: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
+                          current: str, hashes: dict) -> dict[str, set[str]]:
+    """Persist each request's input digest at its own shadow observation; never re-hash history."""
+    found: dict[str, set[str]] = {}
+    for task_id, task in records.tasks.items():
+        request = task.get("request_id")
+        result = task.get("result") if isinstance(task.get("result"), Mapping) else {}
+        manifest = records.manifests.get(result.get("workdir") or "")
+        run = ((manifest or {}).get("runs") or {}).get(task_id)
+        if not isinstance(request, str) or not isinstance(run, Mapping):
+            continue
+        req = requests.get(request) or {}
+        outputs = _output_names(req)
+        names = {name for name in _mentioned_names(req) if name.casefold() not in outputs}
+        for root in run.get("reference_dirs") or []:
+            if not isinstance(root, str) or not root:
+                continue
+            for name in sorted(names, key=str.casefold):
+                link = _norm(os.path.join(root, name))
+                key = opaque("input", request, link)
+                seen = observed.get(key)
+                if seen is None and request == current:
+                    status, seen = reader.accepted_reference_file(root, name)
+                    if status in ("hashed", "cached") and seen is not None:
+                        observed[key] = {"sha256": seen["sha256"], "size": seen["size"], "at": time.time()}
+                        hashes["observed_new"] += 1
+                        if status == "hashed":
+                            hashes["hashed"] += 1
+                            hashes["bytes"] += seen["size"]
+                    else:
+                        seen = None
+                if isinstance(seen, Mapping) and isinstance(seen.get("sha256"), str):
+                    found.setdefault(request, set()).add("file:" + seen["sha256"])
+    return found
+
+
+def _declared_artifact_inputs(p: Any) -> dict[str, set[str]]:
+    """Existing #249 plan edges become input hashes only when the referenced artifact was already hashed."""
+    found: dict[str, set[str]] = {}
+    for row in p.runs.values():
+        request = row.get("request")
+        if not isinstance(request, str):
+            continue
+        for artifact in row.get("_used") or []:
+            art = p.artifacts.get(artifact)
+            if art is not None and art.get("sha256") != sem.UNKNOWN:
+                found.setdefault(request, set()).add("file:" + art["sha256"])
+    return found
+
+
+def _root_inputs(request: str, direct: Mapping[str, set[str]], artifacts: Mapping[str, set[str]],
+                 cache: dict[str, set[str] | None], stack: frozenset[str] = frozenset()) -> set[str] | None:
+    """Replace an explicitly linked earlier artifact with that artifact's root request inputs."""
+    if request in cache:
+        return cache[request]
+    if request in stack or not direct.get(request):
+        cache[request] = None
+        return None
+    roots: set[str] = set()
+    for identity in direct[request]:
+        producers = artifacts.get(identity)
+        if not producers:
+            roots.add(identity)
+            continue
+        earlier = sorted(rid for rid in producers if rid != request)
+        if not earlier:
+            roots.add(identity)
+            continue
+        resolved = [_root_inputs(rid, direct, artifacts, cache, stack | {request}) for rid in earlier]
+        known = [value for value in resolved if value]
+        if not known or any(value != known[0] for value in known[1:]):
+            cache[request] = None
+            return None
+        roots.update(known[0])
+    cache[request] = roots or None
+    return cache[request]
+
+
 def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[str, dict],
                        check: Callable[[], None]) -> tuple[dict, dict]:
     """(provenance summary, hash summary). ``observed`` (opaque artifact key -> first observation) is updated."""
@@ -919,6 +1202,21 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                                            observed=seen_now)
         p = sem.project(model, records)
         check()
+        direct_inputs = {request: _request_input_hashes(req)
+                         for request, req in snap["requests"].items()}
+        for evidence in (_accepted_file_hashes(records, snap["requests"], reader, observed, rid, hashes),
+                         _declared_artifact_inputs(p)):
+            for request, identities in evidence.items():
+                direct_inputs.setdefault(request, set()).update(identities)
+        artifact_inputs: dict[str, set[str]] = {}
+        for row in p.artifacts.values():
+            if row["sha256"] != sem.UNKNOWN and isinstance(row.get("request"), str):
+                artifact_inputs.setdefault("file:" + row["sha256"], set()).add(row["request"])
+        input_cache: dict[str, set[str] | None] = {}
+        current_inputs = _root_inputs(rid, direct_inputs, artifact_inputs, input_cache)
+        vocab = output_vocab.current()
+        targets = _target_types(snap["requests"].get(rid) or {}, vocab)
+        check()
         incomplete = bool(invalid or snap.get("history_truncated") or snap.get("tasks_truncated")
                           or len(p.edges) > MAX_EDGES or reader.budget.exhausted)
         advisory = sem.find_reusable(p)
@@ -937,6 +1235,15 @@ def compute_provenance(snap: Mapping[str, Any], reader: Reader, observed: dict[s
                 reasons.append("not_generated")
             if row["data_type"] == sem.UNKNOWN:
                 reasons.append("type_unknown")
+            if not targets:
+                reasons.append("target_type_unknown")
+            elif row["data_type"] != sem.UNKNOWN and row["data_type"] not in targets:
+                reasons.append("target_type_mismatch")
+            candidate_inputs = _root_inputs(row["request"], direct_inputs, artifact_inputs, input_cache)
+            if current_inputs is None or candidate_inputs is None:
+                reasons.append("input_unknown")
+            elif current_inputs != candidate_inputs:
+                reasons.append("input_mismatch")
             state = hash_state.get(art)
             if state == "zone_excluded":
                 reasons.append("zone_excluded")
@@ -1059,6 +1366,8 @@ def type_problems(line: Mapping[str, Any], allowed_ids: Iterable[str]) -> list[s
 
 def failed_line(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
     """A request whose job stopped before the models ran: ids and the failure only, so the report counts it."""
+    if snap.get("job") == "followup":  # semantics-hook: actions
+        return _followup_failed(snap, status, exc, epoch=epoch, ms=ms)  # semantics-hook: actions
     rid = snap["rid"]
     req = (snap.get("requests") or {}).get(rid) or {}
     project = req.get("project_id")
@@ -1074,6 +1383,8 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     """One request line: both models side by side, ids, kinds, hashes and counts only.
 
     ``hash_over`` says when output hashing has used its share of the time cap (#159)."""
+    if snap.get("job") == "followup":  # semantics-hook: actions
+        return _followup_compute(snap, check, epoch=epoch)  # semantics-hook: actions
     started = time.perf_counter()
     read_rows(snap, check)
     rid = snap["rid"]
@@ -1096,8 +1407,127 @@ def compute_line(snap: Mapping[str, Any], observed: dict[str, dict], check: Call
     for state in reader.workspace_state.values():
         workspaces[state] = workspaces.get(state, 0) + 1
     line["hash"] = {**hashes, "workspaces": dict(sorted(workspaces.items()))}
+    if "actions" in snap:  # semantics-hook: actions
+        line["actions"] = compute_actions(snap, check)  # semantics-hook: actions
     line["ms"] = _ms(started)
     return line
+
+
+# semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this block)
+# The action layer's shadow (semantics_actions.py): the hook lines marked for actions call
+# these. Off by default; nothing here executes an action, and with actions off none of it runs or is imported.
+
+ACTIONS_HELD = ("confirm",)  # A2 (CLI execution of request.followup) is held for its own PR
+ACTION_BACKLOG = 20  # follow-up observations kept behind a full queue; more are dropped and counted
+
+
+def _actions() -> Any:
+    from . import semantics_actions
+    return semantics_actions
+
+
+def _actions_config(cfg: ShadowConfig, value: Any, raw: Any) -> ShadowConfig:
+    """``actions: shadow`` adds the A1 observations to the shadow. Any other value keeps actions off with one
+    warning and leaves the shadow as it was; no value turns execution on."""
+    from dataclasses import replace
+    mode = _mode(value)
+    if mode == "shadow":
+        return replace(cfg, actions=True)
+    if mode != "off":
+        key = "actions:" + repr(raw)[:500]
+        if key not in _warned:
+            _warned.add(key)
+            log.warning("semantics actions setting ignored (%s); actions stay off and the shadow goes on",
+                        "confirm is held (A2); this version records only" if mode in ACTIONS_HELD
+                        else "actions must be off or shadow")
+    return cfg
+
+
+def actions_setting(settings: Any) -> str:
+    """What the setting asks of the action layer: shadow, off, held (confirm) or invalid."""
+    if configured(settings) != "shadow":
+        return "off"
+    raw = getattr(settings, "semantics", None)
+    mode = _mode(raw.get("actions") if isinstance(raw, Mapping) else None)
+    return mode if mode in ("off", "shadow") else "held" if mode in ACTIONS_HELD else "invalid"
+
+
+def _actions_inputs(hub: Any, rid: str) -> dict:
+    """Event loop side: states, times and booleans from memory, like take_snapshot."""
+    from ..adapters import enforces_read_only
+    return _actions().request_inputs(hub.requests[rid], hub.approvals, hub.agents, getattr(hub, "agent_runner", {}),
+                                     cso_agent=hub.s.orchestrator.cso_agent, recruiter=hub.s.recruit.agent_id,
+                                     read_only=enforces_read_only, now=time.time())
+
+
+def _actions_rows(snap: dict, own: Mapping[str, Any], decisions: Mapping[str, Any]) -> None:
+    rows = _actions().row_inputs(own, decisions)
+    acts = snap["actions"]
+    acts["tasks"], acts["decided"] = rows["tasks"], rows["decided"]
+    acts["sensitive"] = [*(acts.get("sensitive") or []), *rows["sensitive"]]
+
+
+def compute_actions(snap: Mapping[str, Any], check: Callable[[], None]) -> dict:
+    started = time.perf_counter()
+    try:
+        out = _actions().evaluate(snap["actions"], check)
+        check()
+        return {"status": "ok", "ms": _ms(started), **out}
+    except ShadowTimeout as exc:
+        return _failed("timeout", exc, started)
+    except ShadowStop:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail open: a metric, never the request
+        return _failed("error", exc, started)
+
+
+def _followup_compute(snap: Mapping[str, Any], check: Callable[[], None], *, epoch: int) -> dict:
+    started = time.perf_counter()
+    check()
+    line = _actions().followup_line(snap["actions"], rid=snap["rid"], epoch=epoch, ts=round(time.time(), 3),
+                                    busy_skipped=int(snap.get("busy_skipped") or 0))
+    line["ms"] = _ms(started)
+    return line
+
+
+def _followup_failed(snap: Mapping[str, Any], status: str, exc: BaseException, *, epoch: int, ms: float) -> dict:
+    acts = snap.get("actions") or {}
+    return {"v": 1, "type": "followup", "ts": round(time.time(), 3), "epoch": epoch, "request_id": snap.get("rid"),
+            "phase": acts.get("phase"), "key": acts.get("key"), "status": status, "error_kind": type(exc).__name__,
+            "ms": ms}
+
+
+def _actions_shape(line: Mapping[str, Any]) -> list[str]:
+    if "actions" not in line and line.get("type") != "followup":
+        return []
+    return _actions().shape_problems(line)
+
+
+def _actions_boundary(line: Mapping[str, Any], boundary: list[dict[str, str]]) -> list[str]:
+    failures = _actions_shape(line)
+    if failures:
+        boundary.append({"field": "actions", "class": "schema"})
+    return failures
+
+
+def _actions_failed(line: Mapping[str, Any]) -> bool:
+    if "actions" in line:
+        return not isinstance(line["actions"], Mapping) or line["actions"].get("status") != "ok"
+    return line.get("type") == "followup" and line.get("status") != "ok"
+
+
+def _actions_report(rep: dict, paths: ShadowPaths, settings: Any) -> None:
+    """Add the A1 section to the report when actions are set or recorded; otherwise the report stays as it was."""
+    setting = actions_setting(settings)
+    lines, _ = read_lines(paths)
+    if setting == "off" and not any(line.get("type") == "followup" or "actions" in line for line in lines):
+        return
+    rep["actions"] = _actions().report(lines, setting=setting, on=setting == "shadow" and bool(rep["state"]["on"]))
+
+
+def _actions_render(rep: Mapping[str, Any]) -> list[str]:
+    return _actions().render(rep) if "actions" in rep else []
+# semantics-actions: end
 
 
 # ---------------------------------------------------------------- worker and breaker
@@ -1126,6 +1556,8 @@ class ShadowService:
         self.counts = {"lines": 0, "failures": 0, "busy": 0, "discarded": 0}
         self.thread_name = f"labhq-semantics-shadow-{next(_SERVICES)}"
         self.pending = 0  # queued or running jobs
+        self.action_backlog: deque = deque()  # semantics-hook: actions (follow-up observations behind the queue)
+        self.action_skipped = 0  # semantics-hook: actions (dropped: queue and backlog full)
 
     @classmethod
     def start(cls, hub: Any) -> "ShadowService | None":
@@ -1212,13 +1644,17 @@ class ShadowService:
             epoch = self.epoch
         log.warning("semantics shadow turned itself off: %s%s", reason,
                     f" ({detail['kind']})" if detail.get("kind") else "")
+        boundary = _clean_boundary_details(detail.get("boundary")) if reason == "info_boundary" else []
         try:
-            write_disabled(self.paths, reason, epoch, counts)
+            write_disabled(self.paths, reason, epoch, counts, boundary=boundary)
         except OSError as exc:
             log.warning("semantics disabled.json not written (%s); off for this process", type(exc).__name__)
         try:
-            append_line(self.paths, {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": epoch,
-                                     "reason": reason, "counts": counts})
+            line = {"v": 1, "type": "auto_off", "ts": round(time.time(), 3), "epoch": epoch,
+                    "reason": reason, "counts": counts}
+            if boundary:
+                line["boundary"] = boundary
+            append_line(self.paths, line)
         except OSError:
             pass
 
@@ -1234,6 +1670,7 @@ class ShadowService:
             snap["busy_skipped"] = self.busy_skipped
             with self.lock:
                 job = (self.gen, self.queue, snap)
+                self.yield_followup()  # semantics-hook: actions (a waiting follow-up never takes this slot)
                 try:
                     self.queue.put_nowait(job)
                     self.pending += 1
@@ -1251,6 +1688,81 @@ class ShadowService:
         except Exception as exc:  # noqa: BLE001 - the request already finished; this must not touch it
             log.warning("semantics shadow skipped a request (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
+
+    # semantics-actions: begin (#149 결정 13 A1; scripts/semantics_shadow_remove.py --only actions deletes this)
+    def after_followup(self, rid: str, fid: str | None, phase: str, outcome: str | None = None) -> None:
+        """A follow-up was asked, refused or ended. Queue its observation: never raises, never waits, never counts
+        toward the B1 busy limit. Behind a busy queue it waits in a backlog of ACTION_BACKLOG, in order and after
+        the queued job; past that it is dropped and counted. With actions off it returns before reading anything."""
+        if not self.cfg.actions:
+            return
+        try:
+            self.refresh()
+            self.check_stuck()
+            if self.latched:
+                return
+            from ..adapters import enforces_read_only
+            inputs = _actions().followup_inputs(self.hub.requests[rid], fid, phase, outcome, self.hub.agents,
+                                                cso_agent=self.hub.s.orchestrator.cso_agent,
+                                                read_only=enforces_read_only, now=time.time())
+            snap = json.loads(json.dumps({"job": "followup", "rid": rid, "actions": inputs}, default=str))
+            with self.lock:
+                queued = False
+                if not self.action_backlog:  # an earlier observation still waiting goes first
+                    try:
+                        self.queue.put_nowait((self.gen, self.queue, snap))
+                        queued = True
+                    except queue.Full:
+                        pass
+                if queued:
+                    self.ensure_thread()
+                elif len(self.action_backlog) >= ACTION_BACKLOG:
+                    self.action_skipped += 1  # written with the next backlog line, which a drop guarantees
+                    return
+                else:
+                    self.action_backlog.append((self.gen, snap))
+                self.pending += 1
+        except Exception as exc:  # noqa: BLE001 - the follow-up itself must never see this
+            log.warning("semantics actions skipped a follow-up observation (%s)", type(exc).__name__)
+            self.outcome(failed=True, on_loop=True)
+
+    def yield_followup(self) -> None:
+        """Event loop side, under self.lock, just before a request job is queued: a follow-up observation still
+        waiting in the queue of one steps back to the front of the backlog, so a request job finds the queue as
+        it would without actions and B1's busy count never sees a follow-up. With actions off it does nothing."""
+        if not self.cfg.actions or not self.queue.full():
+            return
+        try:
+            job = self.queue.get_nowait()
+        except queue.Empty:  # the worker took it first
+            return
+        if isinstance(job[2], Mapping) and job[2].get("job") == "followup":
+            self.action_backlog.appendleft((job[0], job[2]))  # still pending: work_backlog runs it next
+        else:
+            self.queue.put_nowait(job)  # a request job: only putters hold self.lock, so its slot is still free
+
+    def work_backlog(self, jobs: queue.Queue) -> None:
+        """Worker side, after each job: the follow-up observations that found the queue busy, oldest first, and
+        only while the queue is empty, so a request job queued before them is never overtaken."""
+        while jobs is self.queue:
+            with self.lock:
+                if not self.action_backlog or not jobs.empty():
+                    return
+                gen, snap = self.action_backlog.popleft()
+                snap = {**snap, "busy_skipped": self.action_skipped}  # drops so far ride on this line
+                self.action_skipped = 0
+            try:
+                if gen != self.gen or self.latched or self.external_off():
+                    self.counts["discarded"] += 1
+                    continue
+                self.work(gen, snap)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("semantics actions observation failed (%s)", type(exc).__name__)
+                self.outcome(failed=True)
+            finally:
+                with self.lock:
+                    self.pending = max(0, self.pending - 1)
+    # semantics-actions: end
 
     def ensure_thread(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -1288,6 +1800,7 @@ class ShadowService:
             finally:
                 with self.lock:
                     self.pending = max(0, self.pending - 1)
+                self.work_backlog(jobs)  # semantics-hook: actions
 
     def work(self, gen: int, snap: dict) -> None:
         started = time.monotonic()
@@ -1366,14 +1879,24 @@ class ShadowService:
 
     def finish(self, gen: int, snap: Mapping[str, Any], line: dict) -> None:
         try:
-            problems = boundary_problems(line, sensitive_strings(snap))
-            problems += type_problems(line, (output_vocab.current() or _NO_VOCAB).edam_ids)
+            vocabulary = output_vocab.current() or _NO_VOCAB
+            allowed = {"vocab_sha256": vocabulary.sha256} if vocabulary.sha256 else {}
+            boundary = boundary_findings(line, sensitive_values(snap), allowed_fields=allowed)
+            problems = boundary_problems(line, sensitive_values(snap), allowed_fields=allowed)
+            type_failures = type_problems(line, vocabulary.edam_ids)
+            type_fields = {"type_version": "vocab_sha256", "type_fields": "provenance.types",
+                           "type_bucket": "provenance.types", "type_declarations": "provenance.declarations",
+                           "type_objects": "objects.artifact_types"}
+            boundary += [{"field": type_fields.get(problem, "unknown"), "class": problem}
+                         for problem in type_failures]
+            problems += type_failures
+            problems += _actions_boundary(line, boundary)  # semantics-hook: actions
         except Exception as exc:  # noqa: BLE001 - an unchecked line is never written
             log.warning("semantics shadow boundary check failed (%s); record not written", type(exc).__name__)
             self.outcome(failed=True)
             return
         if problems:
-            self.trip("info_boundary")
+            self.trip("info_boundary", boundary=boundary)
             return
         failed = False
         for model in [m for m in MODELS if m in line]:
@@ -1381,6 +1904,7 @@ class ShadowService:
                 failed = True
                 log.warning("semantics shadow %s %s (%s)", model, line[model].get("status"),
                             line[model].get("error_kind"))
+        failed = _actions_failed(line) or failed  # semantics-hook: actions
         try:
             if self.gen != gen or self.external_off():
                 self.counts["discarded"] += 1
@@ -1581,7 +2105,8 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         proposals.append(f"오답: 검토 {len(marks)}건 중 wrong {wrong}건(≥20%)")
     return {
         "state": {"on": setting == "shadow" and disabled is None, "setting": setting,
-                  "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch")},
+                  "reason": (disabled or {}).get("reason"), "epoch": state.get("epoch"),
+                  "boundary": _clean_boundary_details((disabled or {}).get("boundary"))},
         "requests": len(requests), "broken_lines": broken,
         "period": [_day(requests[0].get("ts")), _day(requests[-1].get("ts"))] if requests else None,
         "busy_skipped": sum(int(r.get("busy_skipped") or 0) for r in requests),
@@ -1596,8 +2121,9 @@ def build_report(paths: ShadowPaths, today: date | None = None, setting: str = "
         "versions": dict(sorted(versions.items())),
         "types": {k: dict(sorted(v.items())) for k, v in types.items()}, "declarations": declarations,
         "marks": {"reviewed": len(marks), "wrong": wrong},
-        "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason")}
-                     for l in lines if l.get("type") == "auto_off"],
+        "auto_off": [{"day": _day(l.get("ts")), "epoch": l.get("epoch"), "reason": l.get("reason"),
+                      "boundary": _clean_boundary_details(l.get("boundary"))}
+                      for l in lines if l.get("type") == "auto_off"],
         "deadline": deadline.isoformat(), "midpoint": (INTRODUCED + timedelta(days=MIDPOINT_DAYS)).isoformat(),
         "propose_removal": proposals,
     }
@@ -1610,10 +2136,14 @@ def render_report(rep: Mapping[str, Any]) -> str:
     def v(x: Any) -> str:
         return "-" if x is None else str(x)
 
+    def boundary(value: Any) -> str:
+        detail = _clean_boundary_details(value)
+        return " · 경계 " + ", ".join(f"{item['field']}:{item['class']}" for item in detail) if detail else ""
+
     out = [
         "semantics shadow report (로컬 기록, 네트워크 없음)",
         f"상태: {'on' if st['on'] else 'off'} · 설정 {st['setting']} · 자동 off {v(st['reason'])} · "
-        f"epoch {v(st['epoch'])}",
+        f"epoch {v(st['epoch'])}{boundary(st.get('boundary'))}",
         f"요청 {rep['requests']}건 · 기간 {' ~ '.join(rep['period']) if rep['period'] else '-'} · "
         f"busy로 건너뜀 {rep['busy_skipped']} · 깨진 줄 {rep['broken_lines']}",
         f"계산 p95 {v(rep['total_p95_ms'])} ms · snapshot p95 {v(rep['snapshot_p95_ms'])} ms",
@@ -1644,13 +2174,15 @@ def render_report(rep: Mapping[str, Any]) -> str:
         "",
         "자동 off 이력:" + ("" if rep["auto_off"] else " 없음"),
     ]
-    out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}" for a in rep["auto_off"]]
+    out += [f"- {a['day']} epoch {v(a['epoch'])}: {a['reason']}{boundary(a.get('boundary'))}"
+            for a in rep["auto_off"]]
     out += ["", f"중간 점검 {rep['midpoint']} · 판정 기한 {rep['deadline']} (기준은 전부 미측정 제안치)"]
     if rep["propose_removal"]:
         out += ["PROPOSE_REMOVAL — 제거 제안(결정은 PI):"] + [f"- {x}" for x in rep["propose_removal"]]
         out.append("제거: semantics: off → scripts/semantics_shadow_remove.py → state_dir/semantics 삭제(선택)")
     else:
         out.append("제거 제안: 없음")
+    out += _actions_render(rep)  # semantics-hook: actions
     return "\n".join(out)
 
 
@@ -1716,6 +2248,7 @@ def run_cli(args: argparse.Namespace, settings: Any) -> int:
         if args.semantics_cmd == "report":
             today = date.fromisoformat(args.today) if args.today else None
             rep = build_report(paths, today, configured(settings))
+            _actions_report(rep, paths, settings)  # semantics-hook: actions
             print(json.dumps(rep, ensure_ascii=False, indent=2) if args.json else render_report(rep))
         elif args.semantics_cmd == "enable":
             print(enable(paths))

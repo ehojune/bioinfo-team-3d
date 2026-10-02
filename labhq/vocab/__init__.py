@@ -191,16 +191,18 @@ def load(directory: Path | None = None) -> Vocab:
         raise VocabError(f"{LOCAL_FILE}: missing") from None
     edam_sha = problem = None
     subset_path = directory / SUBSET_FILE
-    if subset_path.exists():
-        try:
+    try:
+        if subset_path.exists():
             mapping, edam_sha = parse_subset(_read(subset_path), terms)
             terms = {k: Term(t.key, t.branch, t.extensions, *mapping[k]) for k, t in terms.items()}
-        except VocabError:
-            problem = "subset_unreadable"
-        except ValueError as exc:
-            problem = str(exc)
-        if problem:
-            log.warning("EDAM subset ignored (%s); output type keys stay local", problem)
+    except FileNotFoundError:
+        pass  # optional file disappeared after exists(): the same contract as an absent subset
+    except (VocabError, OSError):
+        problem = "subset_unreadable"
+    except ValueError as exc:
+        problem = str(exc)
+    if problem:
+        log.warning("EDAM subset ignored (%s); output type keys stay local", problem)
     return Vocab(terms=terms, local_sha256=local_sha, edam_sha256=edam_sha, edam_problem=problem)
 
 
@@ -214,8 +216,9 @@ def current() -> Vocab | None:
     if "v" not in _CACHE:
         try:
             _CACHE["v"] = load()
-        except (VocabError, OSError) as exc:
-            log.warning("output type vocabulary unavailable (%s); output type declarations stay off", exc)
+        except Exception as exc:
+            log.warning("output type vocabulary unavailable (%s); output type declarations stay off",
+                        type(exc).__name__)
             _CACHE["v"] = None
     return _CACHE["v"]
 

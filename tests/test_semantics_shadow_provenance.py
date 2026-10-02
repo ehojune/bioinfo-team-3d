@@ -1,6 +1,8 @@
 """Provenance model in shadow (#150 B1): live rows, read tolerantly, never more confident than the rows allow."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from labhq.research.semantics import records_from_rows
 from tests.semantics_shadow_lab import fake_hub, line_for, request_row, task_row, workspace
 
@@ -117,6 +119,14 @@ def _typed_pair(tmp_path, *, version=None, zones=None):
     wd_b, _ = workspace(tmp_path, "task_b1", "analyst", {})
     requests = {"req_a": request_row("req_a", [("s1", "analyst")], created_at=1.0),
                 "req_b": request_row("req_b", [("s1", "analyst")], created_at=2.0)}
+    for req in requests.values():
+        req["text"] = "Create outputs/counts.tsv."
+        req["references"] = [{"kind": "doi", "value": "10.0000/reuse-input"}]
+        req["plan"]["steps"][0].update({
+            "outputs": ["outputs/counts.tsv"],
+            "output_types": [{"name": "outputs/counts.tsv", "data_type": "raw_counts",
+                              "format": "tsv", "vocab": V.sha256}],
+        })
     tasks = {"task_a1": typed_row("req_a", "task_a1", "s1", "analyst", wd, ["outputs/counts.tsv"],
                                   {"outputs/counts.tsv": {"data_type": "raw_counts"}}, version=version),
              "task_b1": task_row("req_b", "task_b1", "s1", "analyst", wd_b, [])}
@@ -178,3 +188,209 @@ def test_type_fields_are_a_finite_allow_list_for_keys_and_values(tmp_path, chang
     assert shadow.type_problems(line, V.edam_ids) == []
     change(line)
     assert problem in shadow.type_problems(line, V.edam_ids)
+
+
+# ---------------------------------------------------------------- reuse selector precision (#263)
+
+def _target_request(rid, input_name, output_name="wanted.tsv", data_type="table", *, created_at=9.0):
+    req = request_row(rid, [("make", "analyst")], created_at=created_at,
+                      text=f"Read inputs/{input_name} and save outputs/{output_name}.")
+    req["references"] = [{"kind": "doi", "value": f"10.0000/{input_name}"}]
+    req["plan"]["steps"][0].update({
+        "outputs": [f"outputs/{output_name}"],
+        "output_types": [{"name": f"outputs/{output_name}", "data_type": data_type,
+                          "format": "tsv", "vocab": V.sha256}],
+    })
+    return req
+
+
+def _history_task(tmp_path, rid, tid, output_name, data_type):
+    wd, _ = workspace(tmp_path, tid, "analyst", {f"outputs/{output_name}": b"x\n"})
+    return typed_row(rid, tid, "make", "analyst", wd, [f"outputs/{output_name}"], {
+        f"outputs/{output_name}": {"data_type": data_type, "format": "tsv"},
+    })
+
+
+def _accepted_reference(task, reference):
+    manifest_path = Path(task["result"]["workdir"]) / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["runs"] = {task["result"]["task_id"]: {"reference_dirs": [str(reference)]}}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_reuse_requires_same_input_identity_and_target_type_before_ranking(tmp_path):
+    requests = {
+        "req_same": _target_request("req_same", "same.tsv", "same.tsv", created_at=1.0),
+        "req_input": _target_request("req_input", "other.tsv", "other.tsv", created_at=2.0),
+        "req_type": _target_request("req_type", "same.tsv", "check.md", "qc_report", created_at=3.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=4.0),
+    }
+    tasks = {
+        "task_same": _history_task(tmp_path, "req_same", "task_same", "same.tsv", "table"),
+        "task_input": _history_task(tmp_path, "req_input", "task_input", "other.tsv", "table"),
+        "task_type": _history_task(tmp_path, "req_type", "task_type", "check.md", "qc_report"),
+    }
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    for rid in ("req_same", "req_input", "req_type"):
+        line_for(hub, rid, observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["history_artifacts"] == 3 and prov["candidates"] == 1, (
+        prov["excluded"]["input_unknown"], prov["excluded"]["input_mismatch"],
+        prov["excluded"]["target_type_unknown"], prov["excluded"]["target_type_mismatch"])
+    assert prov["excluded"]["input_mismatch"] == 1
+    assert prov["excluded"]["target_type_mismatch"] == 1
+    assert prov["excluded"]["input_unknown"] == prov["excluded"]["target_type_unknown"] == 0
+    assert len(prov["candidate_refs"]) == 1
+
+
+@pytest.mark.parametrize("missing, reason", [("input", "input_unknown"), ("target", "target_type_unknown")])
+def test_reuse_needs_declared_input_identity_and_target_type(tmp_path, missing, reason):
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "same.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    if missing == "input":
+        requests["req_now"]["references"] = []
+    else:
+        requests["req_now"]["plan"]["steps"][0]["output_types"] = []
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "same.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    line = line_for(hub, "req_now", observed)
+    assert line["provenance"]["candidates"] == 0
+    assert line["provenance"]["excluded"][reason] == 1
+    assert "same.tsv" not in json.dumps(line)
+    assert shadow.boundary_problems(line, []) == []
+
+
+def test_a_gateway_path_reference_is_unknown_even_when_the_file_exists(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "Sample.TSV").write_text("same\n", encoding="utf-8")
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "same.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    requests["req_now"]["references"] = [{"kind": "path", "value": str(inputs)}]
+    requests["req_now"]["text"] = "Read Sample.TSV and save outputs/wanted.tsv."
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "same.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["input_unknown"] == 1
+
+
+def test_a_same_host_runner_accepted_reference_is_an_opaque_input_link(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "same.tsv").write_text("same\n", encoding="utf-8")
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "old.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    for req in requests.values():
+        req["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    for task in tasks.values():
+        _accepted_reference(task, inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 1 and prov["excluded"]["input_unknown"] == 0
+
+
+def test_a_history_input_keeps_its_observed_digest_when_the_reference_file_changes(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    source = inputs / "same.tsv"
+    source.write_text("before\n", encoding="utf-8")
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "old.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    for req in requests.values():
+        req["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    for task in tasks.values():
+        _accepted_reference(task, inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    source.write_text("after\n", encoding="utf-8")
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["input_mismatch"] == 1
+
+
+def test_an_accepted_reference_keeps_the_filename_case_used_on_disk(tmp_path):
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "Sample.TSV").write_text("same\n", encoding="utf-8")
+    requests = {
+        "req_old": _target_request("req_old", "Sample.TSV", "old.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "Sample.TSV", created_at=2.0),
+    }
+    for req in requests.values():
+        req["references"] = [{"kind": "path", "value": str(inputs)}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "old.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    for task in tasks.values():
+        _accepted_reference(task, inputs)
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_old", observed)
+    assert line_for(hub, "req_now", observed)["provenance"]["candidates"] == 1
+
+
+def test_github_url_identity_keeps_case_sensitive_ref_path(tmp_path):
+    requests = {
+        "req_old": _target_request("req_old", "same.tsv", "same.tsv", created_at=1.0),
+        "req_now": _target_request("req_now", "same.tsv", created_at=2.0),
+    }
+    requests["req_old"]["references"] = [{"kind": "github", "value": "https://github.com/org/repo/tree/Data-v1"}]
+    requests["req_now"]["references"] = [{"kind": "github", "value": "https://github.com/org/repo/tree/data-v1"}]
+    tasks = {"task_old": _history_task(tmp_path, "req_old", "task_old", "same.tsv", "table")}
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks)
+    observed = {}
+    line_for(hub, "req_old", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 0 and prov["excluded"]["input_mismatch"] == 1
+
+
+def test_an_explicit_artifact_input_is_reduced_to_the_same_root_input(tmp_path):
+    requests = {
+        "req_raw": _target_request("req_raw", "same.tsv", "raw.tsv", created_at=1.0),
+        "req_mid": _target_request("req_mid", "same.tsv", "mid.tsv", created_at=2.0),
+        "req_now": _target_request("req_now", "same.tsv", "wanted.tsv", created_at=3.0),
+    }
+    tasks = {
+        "task_raw": _history_task(tmp_path, "req_raw", "task_raw", "raw.tsv", "table"),
+        "task_mid": _history_task(tmp_path, "req_mid", "task_mid", "mid.tsv", "table"),
+    }
+    mid_ws = tasks["task_mid"]["result"]["workdir_id"]
+    requests["req_now"]["plan"]["steps"][0]["input_refs"] = [f"art:req_mid/{mid_ws}/outputs/mid.tsv"]
+    wd, _ = workspace(tmp_path, "task_now", "analyst", {})
+    tasks["task_now"] = task_row("req_now", "task_now", "make", "analyst", wd, [])
+    hub = fake_hub(tmp_path, requests, tasks, zones=[DataZone(path=str(tmp_path), level="internal")])
+    observed = {}
+    line_for(hub, "req_raw", observed)
+    line_for(hub, "req_mid", observed)
+    prov = line_for(hub, "req_now", observed)["provenance"]
+    assert prov["candidates"] == 2 and len(prov["candidate_refs"]) == 2
+    assert prov["excluded"]["input_unknown"] == prov["excluded"]["input_mismatch"] == 0

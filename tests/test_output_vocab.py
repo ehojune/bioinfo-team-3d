@@ -94,6 +94,20 @@ def test_missing_vocabulary_turns_declarations_off_without_raising(tmp_path, mon
         vocab.reset_cache()
 
 
+def test_unexpected_vocabulary_loader_error_turns_declarations_off(monkeypatch, caplog):
+    def broken_load(*_args, **_kwargs):
+        raise RuntimeError("unexpected loader failure")
+
+    monkeypatch.setattr(vocab, "load", broken_load)
+    vocab.reset_cache()
+    try:
+        with caplog.at_level(logging.WARNING, logger="labhq.vocab"):
+            assert vocab.current() is None
+        assert "declarations stay off" in caplog.text
+    finally:
+        vocab.reset_cache()
+
+
 def test_without_a_subset_every_key_is_local(vdir):
     v = vocab.load(vdir)
     assert v.edam_sha256 is None and v.edam_problem is None and v.edam_ids == frozenset()
@@ -134,6 +148,28 @@ def test_unparsable_subset_is_ignored(vdir):
     assert vocab.load(vdir).edam_problem == "subset_unreadable"
 
 
+def test_subset_io_error_is_isolated_from_local_keys(vdir, monkeypatch, caplog):
+    subset = vdir / vocab.SUBSET_FILE
+    real_read = vocab._read
+    real_exists = Path.exists
+
+    def exists(path):
+        return True if path == subset else real_exists(path)
+
+    def read(path):
+        if path == subset:
+            raise OSError("optional subset unavailable")
+        return real_read(path)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    monkeypatch.setattr(vocab, "_read", read)
+    with caplog.at_level(logging.WARNING, logger="labhq.vocab"):
+        loaded = vocab.load(vdir)
+    assert loaded.edam_problem == "subset_unreadable" and loaded.edam_sha256 is None
+    assert loaded.is_key("data", "raw_counts") and loaded.is_key("format", "tsv")
+    assert "subset_unreadable" in caplog.text
+
+
 @pytest.mark.parametrize("name, key", [
     ("outputs/reads_R1.fastq.gz", "fastq"), ("outputs/x.FQ", "fastq"), ("outputs/genome.fa", "fasta"),
     ("outputs/t.TSV", "tsv"), ("outputs/a.gff3", "gff3"), ("outputs/a.gff", None), ("outputs/a.txt", None),
@@ -147,6 +183,11 @@ def test_format_from_extension(name, key):
 def test_shared_yaml_loader_refuses_duplicate_keys_without_a_path():
     with pytest.raises(UniqueKeyError, match=r"where\.yaml: line 2 .*duplicate key 'a'"):
         load_yaml_unique("a: 1\na: 2\n", "where.yaml")
+
+
+def test_shared_yaml_loader_reports_an_unhashable_key_as_a_yaml_error():
+    with pytest.raises(UniqueKeyError, match=r"where\.yaml: line 1 .*unhashable key"):
+        load_yaml_unique("? [a, b]\n: x\n", "where.yaml")
 
 
 def test_vocabulary_import_loads_no_semantics_module():

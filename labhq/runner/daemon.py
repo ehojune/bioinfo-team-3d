@@ -43,6 +43,12 @@ log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def labhq_mcp_timeout_s(settings: Settings) -> int:
+    """How long a staff CLI may wait on one labhq MCP call: the longest approval or ask wait, plus 120 s for the
+    tool's own work. Claude gets it as each server's `timeout` and MCP_TOOL_TIMEOUT, Codex as `tool_timeout_sec`."""
+    return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+
+
 def check_job_group(settings: Settings) -> None:
     if not settings.hpc.submit_prefix:
         return
@@ -384,7 +390,7 @@ class Runner:
     def _mcp_servers(self, agent: AgentSpec, env: dict[str, str], allow_ask: bool = True) -> list[McpServerSpec]:
         env = {**env, "PYTHONPATH": os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))}
         servers: list[McpServerSpec] = []
-        timeout_s = max(self.s.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + 120
+        timeout_s = labhq_mcp_timeout_s(self.s)
         if "approval" in agent.builtin_mcp:
             servers.append(McpServerSpec(name="labhq_approval", command=sys.executable,
                                          args=["-m", "labhq.tools.approval_mcp"], env=env,
@@ -716,8 +722,7 @@ class Runner:
                 # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
                 # MCP server at all (the profile has none, and labhq_ask would be one).
                 mcp_servers=[] if read_only else self._mcp_servers(agent, env),
-                env={**env, "MCP_TOOL_TIMEOUT": str((max(self.s.policy.approvals.timeout_s,
-                                                          ASK_MAX_WAIT_S) + 120) * 1000)},
+                env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs,
                 # Other engines never read these rules; only paths a rule can name go in (#177).
@@ -791,7 +796,11 @@ class Runner:
                 await emit("agent.log", {"level": "warn", "text": note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
         if "output_types_vocab" in task.meta:  # the gateway asked for type records (#221): collected outputs only
-            result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+            try:
+                result.output_types = output_types.runner_records(found, task.meta, output_vocab.current())
+            except Exception:
+                result.output_types = {}
+                await emit("agent.log", {"level": "warn", "text": "output type records unavailable; result kept"})
         try:
             for name in (f"RESULT_{task.id}.md", "RESULT.md"):  # never through a link the agent made (#165)
                 write_owned(ws.dir, f"outputs/{name}", result.text or "")

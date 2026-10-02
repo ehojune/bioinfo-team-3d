@@ -224,7 +224,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             for raw in agent.plugin_dirs:
                 error = error.replace(raw, _safe_path(raw))
         status = ("warn" if plugin else "fail") if error else "ok" if ready else "warn"
-        hint = ("직원 전용 CODEX_HOME에서 codex login한 뒤 engines.codex.env.CODEX_HOME에 지정하세요."
+        hint = ("무인 실행 전에 직원 CODEX_HOME의 elevated sandbox setup을 대화형으로 마치세요."
+                if engine == "codex" and error and "elevated sandbox setup" in error else
+                "직원 전용 CODEX_HOME에서 codex login한 뒤 engines.codex.env.CODEX_HOME에 지정하세요."
                 if engine == "codex" and error and "CODEX_HOME" in error else
                 f"Resolve the {engine} adapter preflight or install/configure its executable.")
         rows.append(_row("staff", agent.id, status, error or f"engine={engine}", hint))

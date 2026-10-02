@@ -2,6 +2,94 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #271 #282 — 단계 실패·revise 뒤 opt-in CSO 재계획과 저장 계획 max_steps 축소 처리
+
+- 결론: 저장 계획이 현재 `max_steps`보다 길면 자르지 않고 실패한다(연구 lane은 승인 hash·상태 유지). `orchestrator.max_replans`(기본 0, 전과 같음)를 켜면 단계 실패나 revise 뒤 CSO가 남은 DAG만 다시 계획한다.
+- 바뀐 것: 완료 단계는 다시 돌리지 않고 의존성도 그대로 둔다. 새 단계는 새 id로 `validate_steps`·`max_steps`를 통과해야 반영되고, 질문은 clarify gate, 비용은 budget gate를 다시 탄다. 시도 횟수는 CSO 호출 전에 저장하고 재시작 뒤에도 현재 상한으로 판정한다. PI 거절·취소 단계와 살아 있는 HPC job이 있는 단계는 우회하지 않는다. 연구 lane은 재계획하지 않는다. 재계획 이력은 reviewer·최종 보고 prompt와 보고서 metadata에 남는다.
+- 실행한 것: 새 회귀 29건이 main 코드에서 실패하고 이 branch에서 통과했다. 전체 pytest 2513 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check`가 통과했다.
+- 미해결: 후속 P2 2건(재계획 clarify 답변 뒤 재시작 시 재질문, drop하지 않은 flagged 단계 검사). Codex 사용량 한도로 Claude가 이어받았다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/settings.py`, `config/labhq.example.yaml`, `tests/test_cso.py`, `tests/test_output_types_research.py`.
+
+## 2026-10-02 · #276 — 교차 세션 inbound 거부와 90초 MCP 대기 실증
+
+- 결론: Claude 2.1.282는 `crossSessionInbound`를 지원한다. labhq가 만드는 Claude 직원·bench 명령에 `refuse`를 넣었고, 실제 CLI에서 다른 세션이 이름으로 보낸 메시지가 거부됐다. 90초 뒤 답하는 labhq MCP 호출은 fake CLI로 Claude·Codex 모두, 실제 CLI로 Claude에서 timeout 없이 한 번에 끝났다.
+- 바뀐 것: Claude 직원 `--settings`(모든 profile)와 bench Claude arm에 `crossSessionInbound: "refuse"`. 러너의 labhq MCP timeout 계산을 `labhq_mcp_timeout_s()` 하나로 모았다. 지연 MCP 서버, 각 CLI의 tool timeout 규칙을 따르는 fake CLI, 실제 CLI probe(`scripts/probe_inbound_mcp.py`)를 더했다.
+- 실행한 것: 실제 Claude 2.1.282(sonnet), 임시 폴더, 지연 90초·승인 timeout 60초·labhq MCP timeout 1320초, 세 설정을 동시에 한 번씩. 세 run 모두 서버 호출 1회·tool error 0으로 marker를 돌려줬다. refuse(97.2초)는 수신 쪽 debug log에 거부가 남고 보낸 쪽에 `Cross-session message refused` 통지가 왔다. 설정 없음(main, 102.0초)과 accept(96.5초)는 메시지가 직원 세션 큐에 들어갔고 거부 통지가 없었다. 회귀: inbound 9건·bench 1건·보낸 쪽 통지 파싱 1건이 수정 전 실패, 90초 test는 Codex `tool_timeout_sec`를 빼면 `request timed out`으로 실패했다. 전체 pytest 2500 passed/44 skipped, Node 13개, `scripts/check_public.sh` 통과.
+- 미해결: 실제 Codex 장시간 probe는 Codex 사용량 한도로 돌리지 못해 #276을 열어 둔다(`python scripts/probe_inbound_mcp.py codex --output-dir <저장소 밖>`). 보낸 쪽은 `ListAgents`를 막아 모델이 PI 세션 목록을 읽지 않지만, 이름을 찾으려고 CLI가 로컬 세션에 접속하는 것은 막지 않는다. 실측 원본은 저장소 밖에만 있다.
+- 근거: `labhq/adapters/claude_code.py`, `labhq/bench.py`, `labhq/runner/daemon.py`, `scripts/probe_inbound_mcp.py`, `tests/test_claude_inbound.py`, `tests/test_long_mcp_call.py`, `tests/test_probe_inbound_mcp.py`.
+
+## 2026-10-02 · #274 — Biology 담당에 Claude Science와 같은 공개 과학 MCP
+
+- 결론: PI 결정 B. biologist(Claude Code)와 lit_scout(문헌·웹 검색)에 로그인 없는 공개 hosted MCP 다섯 개(PubMed·bioRxiv·ChEMBL·Open Targets·ClinicalTrials)를, sci_reviewer에는 인용 확인용 PubMed·bioRxiv를 붙였다(PI 제안, PR 댓글). 로그인이 필요한 BioRender·Synapse·Wiley·Owkin과 사용량 문구 표시 조건이 있는 Consensus는 뺐다.
+- 바뀐 것: `agents/core/biologist.yaml`·`lit_scout.yaml`·`sci_reviewer.yaml` mcp 목록과 prompt 한 줄(공개 ID·일반 용어만 보내고 코호트·통제 데이터는 보내지 않음), `scripts/integrations.py` 표시 이름, README 배지·연결된 도구 표.
+- 실행한 것: `tests/test_integrations.py`·`tests/test_registry.py`, `scripts/integrations.py --check`, `scripts/check_public.sh`.
+- 미해결: life-sciences skill(scvi-tools 등)은 plugin 경로가 PC마다 달라 이번에 넣지 않았다.
+- 근거: `agents/core/biologist.yaml`, `scripts/integrations.py`.
+
+## 2026-10-02 · #252 — 저장소 라이선스: 코드 GPL-3.0, 문서·데이터 CC BY-SA 4.0
+
+- 결론: PI 결정으로 코드는 GPL-3.0-or-later, 문서·그림·데이터 표·역할 정의는 CC BY-SA 4.0이다. EDAM에서 뽑은 표(draft #253)도 CC BY-SA 4.0으로 들어갈 수 있게 됐다.
+- 바뀐 것: `LICENSE`(GPL-3.0 전문), `LICENSE-CC-BY-SA-4.0.txt`(CC BY-SA 4.0 전문, GitHub license API 원문), README 상단 배지 2개와 §14 라이선스 표(제3자 예외: three.js MIT, placeholder.gltf CC0).
+- 실행한 것: `scripts/check_public.sh`, `scripts/integrations.py --check`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `LICENSE`, `LICENSE-CC-BY-SA-4.0.txt`, `README.md` §14.
+
+## 2026-10-02 · #229 #238 — CSO 산출 경로 정규화와 결과 블록 보존
+
+- 결론: 선언·지시문·dependency·resume·연구 lane이 한 번 정규화된 `outputs/<name>`을 쓰며, bench 구조화 결과 블록은 LabHQ 상태·비용 문구 뒤에서도 최종 블록으로 남는다. 정보 경계와 실행 가드는 낮추지 않았다.
+- 바뀐 것: 공백은 제거하고 원문 `..`·home·절대 경로는 정규화 전에 거부한다. 중복 선언은 합치고, 자기 산출의 루트·절대·home·bare 지시 경로는 대소문자와 무관하게 canonical 경로로 고친다. 같은 basename의 외부 입력과 산출이 섞이거나 외부 입력만 있으면 표현을 추측하지 않고 계획 교정을 요구하며, 중첩 home은 전체 경로를 한 번에 바꾼다. 외부 절대·home·drive 입력은 workspace artifact dependency로 추론하지 않고 canonical `outputs/...` 참조는 추론한다. 경로 문자열 안의 action 단어는 동사 판정에서 제외한다. 저장 계획 resume와 연구 CP1도 같은 검사를 다시 탄다. `wait_for_clarification: false`는 교정 계획 질문도 첫 계획처럼 기록한 뒤 진행한다. main에 이미 있던 단순 `./<name>` 교정은 기존 회귀로 유지했다.
+- 실행한 것: 최초 확인 조건 10건과 봇 P1 회귀 8건이 수정 전 실패했다. 최종 관련 180건과 전체 pytest 2483 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `scripts/patch_notes.py check`, `git diff --check`가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/util.py`, `labhq/orchestrator/cso.py`, `tests/test_cso.py`, `tests/test_research_protocol.py`, `tests/test_output_types_research.py`.
+
+## 2026-10-02 · #247 #254 — Windows 불안정 test의 완료 조건 고정
+
+- 결론: #247은 `latched` 뒤 영속 기록이 끝나기 전 `enable`이 겹친 확인 경합, #254는 worker 대기가 아닌 호스트 지연까지 재던 1초 한계가 원인이었다. 제품 코드 결함은 아니었다.
+- 바뀐 것: #247은 `disabled.json`·`auto_off` 기록과 이전 worker 결과 폐기를 조건 대기한다. #254는 막힌 worker가 풀리기 전에 event-loop 호출이 반환하는 순서를 확인하고 worker `join`·blocking queue put도 금지한다.
+- 실행한 것: 수정 전 #247은 유휴 100회 0, 단일 CPU 과부하 100회 2 실패(PermissionError 1·부분 JSON 1), 수정 후 두 test 모두 유휴 100회와 같은 부하 100회에서 실패 0이었다. 관련 파일 69건도 통과했다.
+- 미해결: 없음.
+- 근거: `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_worker.py`.
+
+## 2026-10-02 · PR #277 — 산출 종류 선언 reader 일치와 예외 격리
+
+- 결론: #249 후속 P2 네 건을 닫았다. legacy와 typed 선언은 공용 reader가 같은 local vocabulary로 판정하고, 계획 선언과 runner record가 다르면 basis와 무관하게 충돌로 남긴다. 기본값은 off이며 off의 prompt·schema·dispatch는 #249 main 계약 그대로다.
+- 바뀐 것: `no_vocab` 이유를 바로잡고, hash 불가 YAML key·어휘 loader·optional subset I/O·runner record 생성 예외를 선언 기능 안에 격리했다. EDAM 표가 없어도 local 38-key vocabulary는 동작하며 성공한 task 결과는 보존한다.
+- 실행한 것: 새 회귀는 수정 전 11 failed/91 passed, 수정 뒤 102 passed. 전체 pytest 2458 passed/44 skipped, Node 13개, `scripts/check_public.sh`, patch-notes·diff 검사가 통과했다.
+- 미해결: 없음. EDAM 표·NOTICE·생성 script는 draft #253 범위이며 이 PR에는 없다.
+- 근거: `labhq/vocab/{__init__.py,declare.py}`, `labhq/yaml_unique.py`, `labhq/runner/daemon.py`, `labhq/research/semantics.py`, `tests/test_output_{types,vocab}.py`, `tests/test_semantics_{objects,output_types}.py`.
+
+## 2026-10-02 · #263 — 재사용 후보 입력 정체성·목표 data type 필터
+
+- 결론: 2차 실행 15건을 DB 사본으로 다시 계산했다. 판정표 34쌍의 후보는 34→3, 정밀도는 8.8%(3/34)→100%(3/3), 참 양성은 3→3, 거짓 양성은 31→0, 거짓 음성은 0→0이다. B1 그대로이며 CSO·실행 경로에는 값을 주지 않는다.
+- 바뀐 것: 각 요청이 끝날 때 같은 host runner가 허용했다고 manifest에 남긴 reference의 입력 hash를 불투명 키 아래 보존하고, 과거 요청 입력은 다시 읽지 않는다. 요청문에서 계획의 출력 이름을 뺀 입력 이름만 쓰며 증거 없는 path는 `input_unknown`이다. 공개 accession·URL은 기록된 link만 쓰고 GitHub ref의 대소문자를 보존한다. 이 입력 정체성과 PI가 이름을 적은 산출의 #249 선언 data type이 모두 일치해야 후보가 된다. 제외 결과는 네 고정 사유의 개수만 남기고 필터 뒤에 순위를 매긴다.
+- 실행한 것: 핵심 회귀 3건이 수정 전 실패했다. 자동 리뷰 두 차례의 P1 2건과 같은 정체성 부류 P2 3건을 고친 뒤 관련 66건(3 skipped), 전체 pytest 2450 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다. #264 정보 경계 검사는 새 고정 사유만 허용하고 경로·파일명을 기록하지 않는 회귀로 확인했다.
+- 미해결: 2차 원본에서 #261 자동 off 뒤 네 live 요청은 정답표가 없어 혼동행렬에서 제외했다. 15건 전체 replay의 최종 후보도 같은 3개였으며, B2 전환 근거로 쓰지 않는다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_provenance.py`, `tests/test_semantics_shadow_hash.py`, `tests/test_direct_outputs.py`.
+
+## 2026-10-02 · #262 — Windows Codex elevated sandbox setup 사전 차단
+
+- 결론: 직원 Codex는 격리한 `CODEX_HOME`에서 떴지만 그 홈에는 elevated sandbox setup marker가 없었다. LabHQ가 `--ignore-user-config`와 `windows.sandbox="elevated"`를 명시하므로 개인 설정은 원인이 아니다. Codex가 무인 실행 중 관리자 helper를 띄우려다 사용자가 취소해 Windows 1223으로 실패했고, 기존 처리는 최종 응답이 있다는 이유로 성공처럼 넘긴 뒤 `missing_outputs`로 바꿨다.
+- 바뀐 것: 초기화된 직원 `CODEX_HOME`에 marker가 없으면 adapter preflight와 doctor가 Codex를 시작하기 전에 이유를 밝히고 멈춘다. 실시간 1223 event도 `sandbox_setup_required` 실패로 보존한다. 더 약한 sandbox로 자동 전환하지 않는다.
+- 실행한 것: 회귀 test 3건을 실패부터 확인했다. 관련 test 190 passed/17 skipped, 전체 pytest 2432 passed/44 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과. 격리 폴더에서 `unelevated` 저장은 2회 성공했지만 상위 canary 쓰기도 성공해 작업 폴더 경계를 지키지 못했으므로 채택하지 않았다. UAC와 elevated setup은 실행하지 않았다.
+- 미해결: 실제 elevated 직원 실행 2회 저장 확인은 관리자가 해당 직원 `CODEX_HOME`의 setup을 대화형으로 마친 뒤 해야 한다. preflight는 marker 존재 여부를 확인하며, 버전 비호환은 실행 중 1223 원인 분류로 남는다. sandbox·권한 변경이므로 병합하지 않는다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/adapters/codex.py`, `labhq/doctor.py`, `tests/test_isolation.py`, `tests/test_real_streams.py`, `tests/test_doctor.py`.
+
+## 2026-10-02 · #261 — 연구 계획의 어휘 판본 hash가 정보 경계에 걸린 오판
+
+- 결론: 2차 실행의 연구 요청을 최신 main에서 다시 계산했다. 걸린 칸은 `vocab_sha256`, 부류는 검증된 산출 어휘 판본 hash였다. 연구 계획의 같은 판본을 자유 입력처럼 민감값에 넣어, 줄의 공개 판본 칸이 자기 자신과 일치하자 차단한 오판이다.
+- 바뀐 것: 현재 설치된 어휘 판본과 정확히 같은 값만 `vocab_sha256` 칸에서 허용한다. 같은 값이 다른 칸에 있거나 다른 판본이면 계속 막는다. 경계 위반으로 자동 off될 때 `disabled.json`·자동 off 줄·report에 고정된 칸 이름과 부류만 남기며 값은 쓰지 않는다. 경로·파일명·URL·DOI·직원 ID·자유 문장 차단 회귀를 넣었다.
+- 실행한 것: DB 사본 재계산은 수정 전 `vocab_sha256:identifier` 1건, 수정 뒤 경계·type·action shape 문제 0건이다. 회귀는 수정 전 10건 실패를 확인했다. 관련 75건, 의미 모델 415건(2 skipped), 전체 pytest 2438 passed/44 skipped, Node 13개, `scripts/check_public.sh`가 통과했다.
+- 미해결: 정보 경계 변경이라 PR은 병합하지 않는다. 봇 리뷰가 끝나 P1이 없으면 총괄에게 넘긴다.
+- 근거: `labhq/research/semantics_shadow.py`, `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_shadow_report.py`, `README.md`.
+
+## 2026-10-02 · #149 결정 13 · #150 — 액션 층 그림자 A1 (실행 없음)
+
+- 결론: 객체 뷰 위에 기존 액션 7종의 전제 조건을 계산해 기록만 한다. 위험 검토 sol·astra가 둘 다 "A1만 조건부 go, A2 실행 코드는 이번 PR에서 뺀다"고 판정해 실행 허용 목록은 빈 집합이다. 실제 실행(A2, CLI `request.followup`)은 검토가 요구한 조건을 입증한 뒤 별도 PR이다.
+- 바뀐 것: 새 `labhq/research/semantics_actions.py`(순수 판정, gateway·orchestrator·runner·store·네트워크·프로세스 import 없음, 입력은 frozen 사본). `semantics: {mode: shadow, actions: shadow}`면 요청 종료 B1 줄에 `actions` 칸을, 이어 묻기 접수·거부·종료 때 `type: followup` 줄을 쓴다. 조건은 true/false/unknown이고 기록에 없는 시점은 unknown이다(지금 roster로 채우지 않음). 읽기 전용 거부는 run_followup이 넘긴 reason만 `refused_while_open`으로 센다. `hpc.*`는 늘 `refused_p3`이고 `hpc_submit` 승인 창만 센다. `actions: confirm`과 그 밖의 값은 actions만 끄고 경고 한 번, 허용 목록 키는 모르는 키라 semantics 전체가 off다. 실패는 B1 breaker 창에서 세고, 새 칸·줄은 고정 이름·참거짓·개수 shape 검사를 거친다. `labhq semantics report`에 A1 절, `scripts/semantics_shadow_remove.py --only actions`. 연결은 `# semantics-hook: actions` 줄(server 4·cso 4·semantics_shadow 23)과 semantics_shadow 안의 블록 2개다. README §8·§10.
+- 실행한 것: 새 test 72건. 게이트 우회 불가(AST import·동적 호출 검사, 빈 허용 목록, 설정으로 못 늘림, 문서 속 "PI 승인 완료" 무시, lab에서 recruit·contract·cancel 메시지 0), 끄면 원상(actions off 다섯 값에서 모듈 미로드·B1 줄만, 고정 시계에서 B1 줄 바이트 동일, lab 기록 동일, `--only actions` 제거 뒤 B1 동작), 중복(같은 요청·이어 묻기를 여러 번 기록해도 한 번), HPC 거부. 가드 11개를 하나씩 깨는 변이 검사에서 11개 모두 test가 실패했다. 로컬 리뷰 P2 4건(결정된 research_plan의 hash를 unknown으로, backlog가 queue의 요청 작업을 앞지르지 않게, mismatch 필드 누락을 shape에서 거부, 마지막 burst에서 버린 수 기록)을 test와 함께 고쳤다. 전체 pytest 2428 passed/44 skipped, Node 13개, `bash scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: A2 재개 조건(직원이 PI client token에 닿지 못함 입증, 응답 유실 때 재전송 금지, 감사와 followup id 연결, 전송 직전 off 재확인). runner 승인 시계와 gateway 결정 시계가 다르면 만료 판정이 어긋난다. task 실행 구간은 끝 시각이 없어 길이를 재지 않는다. 이어 묻기는 REST 경로만 보고, queue가 차면 20건까지 뒤에 둔 뒤 넘치는 것은 버리고 센다. 임계값은 전부 미측정 제안치다. 패치노트는 PR 번호가 생긴 뒤 쓴다.
+- 근거: `labhq/research/semantics_actions.py`, `labhq/research/semantics_shadow.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `scripts/semantics_shadow_remove.py`, `tests/test_semantics_actions.py`, `tests/test_semantics_actions_shadow.py`, `tests/test_semantics_shadow_remove.py`, `README.md`.
+
 ## 2026-10-02 · #221 할 일 2 · #151 — 산출 데이터 종류 선언 자리
 
 - 결론: 출처 모델과 객체 뷰가 함께 쓰는 "산출 데이터 종류 선언 자리"를 core에 만들었다(PI 결정 12). 기본 off라 지금 동작은 그대로다. 켜면 CSO가 단계 산출마다 data_type·format key를 적고, 러너가 실제로 모은 산출에 붙이며, 두 그림자 모델이 같은 읽기 함수로 읽는다. 팔란티어식 액션은 계속 보류다.

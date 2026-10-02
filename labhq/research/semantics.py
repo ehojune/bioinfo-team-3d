@@ -596,8 +596,8 @@ def judge_data_type(rule: DataTypeRule, generator: str, typed: Mapping[str, Mapp
                     path: str) -> Judged:
     """``typed`` is labhq.vocab.declare.read of the generating run: one reader for both models (#221).
 
-    A legacy ``{path: key}`` declaration counts only for a key of this model's own vocabulary; a typed one only
-    under the vocabulary version it was declared with (the reader turns any other version into unknown)."""
+    Legacy and typed declarations have both been checked by that reader. A typed declaration only counts under
+    the vocabulary version it named; the reader turns any other version into unknown."""
     if rule.source == "none":
         return Judged(UNKNOWN, "no_data_type_source")
     if generator == UNKNOWN:
@@ -605,8 +605,6 @@ def judge_data_type(rule: DataTypeRule, generator: str, typed: Mapping[str, Mapp
     field = ((typed or {}).get(path) or {}).get("data_type")
     if field is None:
         return Judged(UNKNOWN, "not_declared")
-    if field.legacy:
-        return Judged(field.value) if field.value in rule.vocabulary else Judged(UNKNOWN, "not_declared")
     if field.basis != "declared":
         return Judged(UNKNOWN, field.reason or "not_declared")
     return Judged(field.value)

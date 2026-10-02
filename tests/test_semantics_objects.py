@@ -186,6 +186,39 @@ def test_both_models_read_the_same_declarations(tmp_path):
     assert objects == provenance == {("raw_counts", "declared"), ("report", "declared")}
 
 
+def test_both_models_reject_the_same_unknown_legacy_declaration(tmp_path):
+    wd, _ = workspace(tmp_path, "task_a1", "analyst", {"outputs/a.tsv": b"x"})
+    row = task_row("req_a", "task_a1", "s1", "analyst", wd, ["outputs/a.tsv"])
+    row["payload"]["meta"]["output_types"] = {"outputs/a.tsv": "nonsense"}
+    hub = fake_hub(tmp_path, {"req_a": request_row("req_a", [("s1", "analyst")])}, {"task_a1": row})
+    snap = take_snapshot(hub, "req_a", ShadowConfig())
+    read_rows(snap, lambda: None)
+
+    (object_artifact,) = build_view(snap, vocab=V).objects["Artifact"].values()
+    records, _ = sem.records_from_rows(snap["requests"], snap["tasks"])
+    (provenance_artifact,) = sem.project(sem.load_model(), records, types_vocab=V).artifacts.values()
+    assert object_artifact["data_type"] == provenance_artifact["data_type"] == sem.UNKNOWN
+    assert provenance_artifact["unknown"]["data_type"] == "not_declared"
+
+
+def test_both_models_keep_a_plan_format_when_runner_inference_disagrees(tmp_path):
+    wd, _ = workspace(tmp_path, "task_a1", "analyst", {"outputs/a.csv": b"x"})
+    row = task_row("req_a", "task_a1", "s1", "analyst", wd, ["outputs/a.csv"])
+    meta = {"output_types_vocab": V.sha256, "output_types": {"outputs/a.csv": {"format": "tsv"}}}
+    row["payload"]["meta"].update(meta)
+    row["result"]["output_types"] = declare.runner_records(
+        ["outputs/a.csv"], {"output_types_vocab": V.sha256, "output_types": {}}, V)
+    hub = fake_hub(tmp_path, {"req_a": request_row("req_a", [("s1", "analyst")])}, {"task_a1": row})
+    snap = take_snapshot(hub, "req_a", ShadowConfig())
+    read_rows(snap, lambda: None)
+
+    (object_artifact,) = build_view(snap, vocab=V).objects["Artifact"].values()
+    records, _ = sem.records_from_rows(snap["requests"], snap["tasks"])
+    (provenance_artifact,) = sem.project(sem.load_model(), records, types_vocab=V).artifacts.values()
+    assert object_artifact["format"] == sem.UNKNOWN and object_artifact["format_basis"] == "unknown"
+    assert provenance_artifact["_types"]["format"].reason == "declaration_conflict"
+
+
 def test_the_line_s_object_type_counts_hold_no_key_or_id(tmp_path):
     hub, _ = _typed_snapshot(tmp_path, {"outputs/a.tsv": {"data_type": "raw_counts"}})
     objects = line_for(hub, "req_a")["objects"]
