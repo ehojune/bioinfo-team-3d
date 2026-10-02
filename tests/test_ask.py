@@ -13,7 +13,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from labhq.gateway.server import RequestIn, create_app
-from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine
+from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine, TaskResult
 from labhq.orchestrator.cso import hard_stop_kind
 from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
@@ -119,6 +119,88 @@ async def test_broker_capability_token_cannot_impersonate_another_task():
                                  json={"task_id": "task_a", "agent_id": "analyst", "type": "agent.log"})
         assert good.status_code == 200
     assert seen[-1]["task_id"] == "task_a" and seen[-1]["request_id"] == "req_a"
+
+
+async def test_broker_attaches_the_task_workdir_to_an_ask(tmp_path):
+    seen = []
+
+    async def record(body):
+        seen.append(body)
+
+    broker = Broker(0, record, record, record, record)
+    workdir = str(tmp_path / "runs" / "task_a")
+    token = broker.issue_task_token("task_a", "analyst", "req_a", workdir=workdir)
+    transport = httpx.ASGITransport(app=broker.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
+        response = await client.post("/ask", headers={"X-Labhq-Token": token}, json={
+            "to": "cso", "question": "Read the table?", "why_blocked": "Need its values",
+            "refs": ["outputs/table.tsv"], "wait": "hibernate",
+        })
+    assert response.status_code == 200
+    assert seen[0].source_workdir == workdir
+
+
+async def test_consult_reads_the_ask_workspace_and_verified_refs(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    source = tmp_path / "runs" / "source"
+    (source / "outputs").mkdir(parents=True)
+    (source / "outputs" / "table.tsv").write_text("n\n3\n", encoding="utf-8")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="three")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="How many?", why_blocked="Need the artifact",
+                     refs=["outputs/table.tsv"], source_workdir=str(source))
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        consult = calls[0]
+        assert consult.meta["upstream_dirs"] == [str(source.resolve())]
+        assert "outputs/table.tsv" in consult.prompt
+        assert consult.meta.get("workdir") != str(source.resolve()), "consult writes only to its own workspace"
+    finally:
+        hub.store.close()
+
+
+async def test_consult_rejects_a_ref_whose_link_leaves_the_ask_workspace(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    source, outside = tmp_path / "runs" / "source", tmp_path / "outside"
+    source.mkdir(parents=True)
+    outside.mkdir()
+    (outside / "secret.tsv").write_text("secret\n", encoding="utf-8")
+    try:
+        os.symlink(outside / "secret.tsv", source / "linked.tsv")
+    except OSError as exc:
+        hub.store.close()
+        pytest.skip(f"symlink unavailable: {exc}")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        raise AssertionError("invalid refs must be rejected before consult dispatch")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="Read it?", why_blocked="Need the artifact", refs=["linked.tsv"],
+                     source_workdir=str(source))
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert answer["status"] == "rejected" and "refs" in answer["reason"]
+        assert calls == []
+    finally:
+        hub.store.close()
 
 
 async def test_fake_mcp_client_gets_one_terminal_answer(tmp_path):

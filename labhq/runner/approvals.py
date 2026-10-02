@@ -47,9 +47,11 @@ class Broker:
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
-    def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None) -> str:
+    def issue_task_token(self, task_id: str, agent_id: str, request_id: str | None, *,
+                         workdir: str | None = None) -> str:
         token = secrets.token_urlsafe(24)
-        self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id}
+        self.identities[token] = {"task_id": task_id, "agent_id": agent_id, "request_id": request_id,
+                                  "source_workdir": workdir}
         return token
 
     def revoke_task_token(self, token: str) -> None:

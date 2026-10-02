@@ -756,7 +756,7 @@ class Runner:
                 await emit("agent.status", {"state": "error", "error": error})
                 await emit("task.result", result.model_dump(mode="json"))
                 return result
-            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
+            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),

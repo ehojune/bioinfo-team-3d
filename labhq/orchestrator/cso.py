@@ -261,9 +261,30 @@ Question: {question}
 Why blocked: {why_blocked}
 Tried: {tried}
 Options: {options}
+Refs in the blocked task workspace: {refs}
 
 Request: {request}
 Plan: {plan}"""
+
+
+def ask_workspace_inputs(ask: AskRequest) -> tuple[str | None, list[str], str | None]:
+    """Resolve only refs that remain inside the runner-attested task workspace (#86)."""
+    if not ask.source_workdir:
+        return None, [], "ask.refs cannot be verified without the original task workspace" if ask.refs else None
+    try:
+        source = Path(ask.source_workdir)
+        root = source.resolve(strict=True)
+        if not source.is_dir():
+            raise OSError
+        refs = []
+        for ref in ask.refs:
+            target = (source / ref).resolve(strict=True)
+            if not target.is_relative_to(root):
+                raise ValueError
+            refs.append(Path(ref.replace("\\", "/")).as_posix())
+    except (OSError, RuntimeError, ValueError):
+        return None, [], "ask.refs must name existing paths inside the original task workspace"
+    return str(root), refs, None
 
 
 FOLLOWUP_PROMPT = """The PI asks a follow-up question about this finished request. Answer from the work already done:
@@ -1051,10 +1072,16 @@ class Orchestrator:
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
 
+        source_workdir, refs, input_error = ask_workspace_inputs(ask)
+        if input_error:
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason=input_error, **{"from": "labhq", "routed_to": routed}))
+            return
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
+            refs=json.dumps(refs, ensure_ascii=False),
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
@@ -1084,7 +1111,10 @@ class Orchestrator:
                     agent_id=routed, request_id=ask.request_id, prompt=prompt,
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
-                          "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+                          "agent_overrides": overrides,
+                          **({"upstream_dirs": [source_workdir], "consult_refs": refs}
+                             if source_workdir else {}),
+                          **({"workdir": workdir} if workdir else {})},
                 )
                 result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
                                 else self.run_step(consult))
