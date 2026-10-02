@@ -9,8 +9,10 @@ staff member wrote without reporting them. The bundle carries the records, never
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
@@ -39,14 +41,24 @@ def _is_plain_dir(path: Path) -> bool:
         return False
 
 
+def _lexically_inside(path: str, root: Path) -> bool:
+    """``path`` is a local absolute path under ``root`` by text alone: no UNC, device or ``\\\\?\\`` form, no ``..``."""
+    if path.startswith(("\\\\", "//")) or ".." in re.split(r"[\\/]", path) or not os.path.isabs(path):
+        return False
+    text = os.path.normcase(os.path.normpath(path))
+    base = os.path.normcase(os.path.normpath(os.path.abspath(str(root))))
+    return text != base and text.startswith(base.rstrip("\\/") + os.sep)
+
+
 def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, str | None]:
     """The step's work folder on this PC, inside ``runner.workspace_root``, or None and the reason.
 
     A work folder is ``<root>/<YYYY-MM-DD>/<workdir_id>``. The recorded absolute path is tried first, then each
     date folder; a link in the folder's place or a path that resolves outside the root is never used."""
     workdir_id = result.get("workdir_id")
+    # ':' would make `root / day / id` a drive-relative path on Windows.
     if (not isinstance(workdir_id, str) or workdir_id in ("", ".", "..")
-            or any(sep in workdir_id for sep in ("/", "\\"))):
+            or any(sep in workdir_id for sep in ("/", "\\", ":"))):
         return None, "결과에 workdir_id가 없습니다"
     try:
         real_root = root.resolve()
@@ -54,7 +66,10 @@ def locate_workdir(root: Path, result: Mapping[str, Any]) -> tuple[Path | None, 
         return None, "runner.workspace_root를 확인할 수 없습니다"
     candidates: list[Path] = []
     recorded = result.get("workdir")
-    if isinstance(recorded, str) and recorded and Path(recorded).name == workdir_id:
+    # The recorded path comes from the gateway: it is checked as text before any lookup, so a UNC or other
+    # outside path never reaches the file system (an lstat of \\host\share would already open SMB and send NTLM).
+    if (isinstance(recorded, str) and recorded and Path(recorded).name == workdir_id
+            and _lexically_inside(recorded, root)):
         candidates.append(Path(recorded))
     try:
         with os.scandir(root) as entries:
@@ -287,15 +302,23 @@ def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -
               "report_check": report.get("report_check")}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "workdir_id", "path", "size",
                                                  "recorded_sha256", "sha256", "status")} for row in report["files"]]
+    import tempfile
+
     out = Path(out)
-    partial = out.with_name(out.name + ".partial")
+    if not out.name or out.is_dir():
+        raise ValueError(f"감사 번들은 파일 이름이 있는 경로여야 합니다: {out}")
+    # A new, exclusively created temp file beside the target: a name planted in advance (a link at
+    # `<out>.partial` pointing at a PI file) is never opened, so writing the bundle cannot truncate another file.
+    # os.replace then swaps the name itself and never follows a link at `out`.
+    fd, partial = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent)
     try:
-        with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as bundle:
+        with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as bundle:
             bundle.writestr("README.md", _bundle_readme(report))
             bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
             bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
         os.replace(partial, out)
     except BaseException:
-        partial.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            os.unlink(partial)
         raise
     return out

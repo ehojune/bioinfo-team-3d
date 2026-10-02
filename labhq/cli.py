@@ -153,7 +153,7 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
     elif bundle:
         try:
             report["bundle"] = str(write_bundle(report, req, Path(bundle)))
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # ValueError: a path with no file name (`--bundle .`)
             report["reasons"].append(f"감사 번들을 쓰지 못했습니다: {exc}")
             report["exit_code"] = 2
     print(json.dumps(report, ensure_ascii=False, indent=2) if as_json else render_verify(report))

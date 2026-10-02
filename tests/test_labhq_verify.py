@@ -267,3 +267,45 @@ async def test_workdir_not_on_this_pc_or_unknown_request_exit_2(tmp_path, monkey
                                     response=httpx.Response(404))
     code, out = _verify(monkeypatch, capsys, settings, missing)
     assert code == 2 and "요청이 없습니다" in out
+
+
+def test_recorded_unc_workdir_is_never_looked_up(tmp_path, monkeypatch):
+    """A gateway record naming a UNC path (host share) must not reach the file system: an lstat there already opens
+    SMB and sends NTLM, before any containment check could refuse it (PR #339 review)."""
+    from labhq.evidence import audit
+
+    looked: list[str] = []
+    monkeypatch.setattr(audit, "_is_plain_dir", lambda path: looked.append(str(path)) or False)
+    root = tmp_path / "workspace_root"
+    (root / "2026-10-03").mkdir(parents=True)
+    for recorded in (r"\attacker\share\x\task_v_analyst", "//attacker/share/task_v_analyst",
+                     str(root / ".." / "elsewhere" / "task_v_analyst")):
+        looked.clear()
+        found, _reason = audit.locate_workdir(root, {"workdir_id": "task_v_analyst", "workdir": recorded})
+        assert found is None
+        assert all("attacker" not in path and "elsewhere" not in path for path in looked), looked
+
+
+EMPTY_REPORT = {"request_id": "req_v", "files": [], "problems": [], "unreported_outputs": {}}
+
+def test_bundle_never_writes_through_a_planted_partial_link(tmp_path):
+    """A worker could plant `<bundle>.partial` as a link to a PI file; writing the bundle must not truncate it."""
+    from labhq.evidence.audit import write_bundle
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    out = tmp_path / "bundle.zip"
+    try:
+        os.symlink(victim, tmp_path / "bundle.zip.partial")
+    except (OSError, NotImplementedError):
+        pytest.skip("this account cannot create a file symlink")
+    write_bundle(EMPTY_REPORT, {"id": "req_v"}, out)
+    assert victim.read_text(encoding="utf-8") == "keep me"
+    assert set(zipfile.ZipFile(out).namelist()) == set(BUNDLE_FILES)
+
+
+def test_bundle_path_without_a_file_name_is_refused(tmp_path):
+    from labhq.evidence.audit import write_bundle
+
+    with pytest.raises(ValueError):
+        write_bundle(EMPTY_REPORT, {"id": "req_v"}, tmp_path)
