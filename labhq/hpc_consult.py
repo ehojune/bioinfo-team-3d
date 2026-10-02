@@ -18,7 +18,7 @@ from typing import Callable
 
 from .policy import restricted_paths, touches_resolved
 from .settings import HpcSettings, PolicySettings
-from .tools.scheduler import Scheduler, build_script, command_env
+from .tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, JobInfo, Scheduler, build_script, command_env
 
 Run = Callable[[list[str]], "subprocess.CompletedProcess | None"]
 
@@ -202,11 +202,20 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
     except (RuntimeError, OSError) as e:
         return {"outcome": "submit_failed", "message": hide(str(e))}
     max_polls = max(1, max_polls)
+    missing = 0
     for attempt in range(max_polls):
         try:
             info = backend.status(job_id)
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:  # e.g. qstat timed out: never resubmit
             return {"outcome": "status_failed", "job_id": job_id, "message": hide(str(e))}
+        if info.state == "missing":
+            missing += 1
+            if missing >= MISSING_POLLS_BEFORE_FINISHED:
+                info = JobInfo(job_id=job_id, state="unknown_finished",
+                               detail="the scheduler stopped listing the trial job before its final state was read")
+                break
+        else:
+            missing = 0
         if info.terminal:
             break
         if attempt + 1 < max_polls:

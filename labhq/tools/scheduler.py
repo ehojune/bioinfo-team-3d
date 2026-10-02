@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from ..settings import HpcSettings, slurm_cluster_option
 
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
+MISSING_POLLS_BEFORE_FINISHED = 3
 
 # Commands each backend runs on the runner (or hpc.ssh_host); doctor checks they are installed.
 COMMANDS = {
@@ -139,7 +140,11 @@ def script_directives(body: str, prefixes: tuple[str, ...] | None = None) -> lis
 def slurm_cluster_directive(body: str) -> str | None:
     """First option in an #SBATCH line that picks another cluster, or None."""
     for line in script_directives(body, ("#SBATCH",)):
-        if option := slurm_cluster_option(line[len("#SBATCH"):].split()):
+        try:
+            tokens = shlex.split(line[len("#SBATCH"):], comments=True, posix=True)
+        except ValueError:
+            return "<malformed directive>"  # fail closed before sbatch interprets it differently
+        if option := slurm_cluster_option(tokens):
             return option
     return None
 
@@ -440,8 +445,12 @@ class Scheduler:
         for r in records:
             if r.state == "unknown":
                 r.state, r.detail = "unknown_finished", f"unrecognized Slurm state {r.raw_state}"
+        accounted = slurm_job(job_id, records)
+        if live is None and accounted and not accounted.terminal:
+            return JobInfo(job_id=job_id, state="missing",
+                           detail="squeue no longer lists the job but Slurm accounting still reports it active")
         # Accounting can lag behind the controller: keep squeue's final state, else let the watcher retry.
-        return slurm_job(job_id, records) or live or JobInfo(job_id=job_id, state="missing")
+        return accounted or live or JobInfo(job_id=job_id, state="missing")
 
     def cancel(self, job_id: str) -> str:
         if self.cfg.scheduler == "mock":

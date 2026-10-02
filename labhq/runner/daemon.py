@@ -33,7 +33,7 @@ from ..pipeline_pr import collect_pipeline_submission, pipeline_rejection
 from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
-from ..tools.scheduler import TERMINAL, Scheduler, job_in_family
+from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
 from ..util import output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -974,7 +974,7 @@ class Runner:
         """
         job_id = str(identity.get("job_id") or "")
         for tracked, j in self.jobs.items():
-            if (not j.get("submitted_by_runner") or not job_in_family(tracked, job_id)
+            if (not j.get("submitted_by_runner") or j.get("terminal") or not job_in_family(tracked, job_id)
                     or j.get("agent_id") != identity.get("agent_id")):
                 continue
             if j.get("task_id") == identity.get("task_id") or (
@@ -1000,9 +1000,11 @@ class Runner:
             if state == "missing":  # SGE accounting lag: give it a few polls
                 j["missing"] += 1
                 self.store.put("job", jid, j)
-                if j["missing"] < 3:
+                if j["missing"] < MISSING_POLLS_BEFORE_FINISHED:
                     continue
                 state = "unknown_finished"
+            else:
+                j["missing"] = 0
             if state != j["state"]:
                 j.update(state=state, exit_status=info.exit_status)
                 await self.emit(Event(type="job.state", task_id=j["task_id"], agent_id=j["agent_id"],

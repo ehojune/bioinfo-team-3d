@@ -236,6 +236,29 @@ async def test_runner_submit_owns_the_id_its_own_scheduler_call_returned(tmp_pat
         runner.store.close()
 
 
+async def test_terminal_tracked_job_is_not_owned_for_cancellation(tmp_path):
+    runner, workdir, token = _submit_runner(tmp_path)
+    try:
+        script = workdir / "jobs" / "align_1.sh"
+        script.write_text("#!/bin/bash\nsleep 1\n", encoding="utf-8")
+        submitted = await _post(runner, token, "/jobs/submit", {"script": str(script), "name": "align"})
+        assert submitted.json()["job_id"] == "4100"
+        runner.jobs["4100"]["terminal"] = True
+        assert (await _post(runner, token, "/jobs/owned", {"job_id": "4100"})).json() == {"owned": False}
+    finally:
+        runner.store.close()
+
+
+async def test_remote_pbs_submit_always_asks_because_directive_prefix_is_remote(monkeypatch, tmp_path):
+    hpc, run, seen = _mcp(monkeypatch, tmp_path, "pbs", threshold=100,
+                          broker_reply={"/approval": {"approved": False, "note": "fixture PI denied"}})
+    hpc.S.hpc.ssh_host = "login.fixture"
+    denied = json.loads(await hpc.hpc_submit("sleep 1", "plain", cores=1, walltime="01:00:00"))
+    assert denied["submitted"] is False and run.calls == []
+    assert [path for path, _ in seen] == ["/jobs/submit", "/approval"]
+    assert any("PBS_DPREFIX" in reason for reason in seen[1][1]["detail"]["approval_reasons"])
+
+
 async def test_runner_submit_cannot_skip_the_pi(tmp_path):
     runner, workdir, token = _submit_runner(tmp_path, threshold=0)
     asked = []
@@ -500,6 +523,13 @@ def test_read_only_scheduler_commands_stay_allowed(command):
     assert evaluate_tool("Bash", {"command": command}, PolicySettings()).action == "allow"
 
 
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("command", ["printf 'requeue 4100' | scontrol\nshow job 4100",
+                                      "qrsub -a 01010000", "qrdel 12", "pbs_rsub -R r.yml", "pbs_rdel R1"])
+def test_multiline_scontrol_and_reservation_commands_ask(tool, command):
+    assert evaluate_tool(tool, {"command": command}, PolicySettings()).action == "ask"
+
+
 # ---------- 5. bundled short options choosing a cluster ----------
 
 @pytest.mark.parametrize("body,option", [("#SBATCH -vM other\necho hi", "-vM"),
@@ -515,6 +545,16 @@ def test_bundled_cluster_option_is_found(tmp_path, body, option):
 @pytest.mark.parametrize("body", ["#SBATCH -JM\necho hi", "#SBATCH -vJM\necho hi", "#SBATCH -pMain\necho hi"])
 def test_m_inside_an_option_value_is_not_a_cluster(body):
     assert slurm_cluster_directive(body) is None  # -J / -p take the rest of the token as their value
+
+
+@pytest.mark.parametrize("body", ['#SBATCH "-M" other\necho hi', "#SBATCH '--clusters=x'\necho hi",
+                                  "#SBATCH \\-Mother\necho hi"])
+def test_quoted_or_escaped_cluster_option_is_found(body):
+    assert slurm_cluster_directive(body) in {"-M", "--clusters=x", "-Mother"}
+
+
+def test_malformed_sbatch_directive_fails_closed():
+    assert slurm_cluster_directive('#SBATCH "-M other\necho hi')
 
 
 # ---------- 6. clusters without Slurm accounting ----------
@@ -544,6 +584,17 @@ def test_without_accounting_a_job_gone_from_squeue_is_missing_not_an_error(stub)
     fake.fail["sacct"] = stub
     info = backend.status(job_id)
     assert info.state == "missing" and "accounting storage is disabled" in info.detail
+
+
+@pytest.mark.parametrize("state", ["PENDING", "RUNNING"])
+def test_gone_job_with_stale_active_accounting_is_missing(state):
+    backend, fake = _slurm()
+    job_id = backend.submit("/w/j.sh", "align")
+    fake.set(job_id, state)
+    fake.account(job_id)
+    fake.purge(job_id)
+    info = backend.status(job_id)
+    assert info.state == "missing" and not info.terminal
 
 
 async def test_runner_wakes_with_unknown_finished_when_accounting_is_disabled(tmp_path):
