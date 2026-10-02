@@ -9,3 +9,6 @@ rows:
 - sha: e8b22c8
   at: 2026-10-02 21:49
   text: consult source를 열지 않고 검증한 ref 파일만 refs/에 중립 이름으로 복사하며 파일·전체 크기 상한을 적용
+- sha: 8ffc390
+  at: 2026-10-02 22:02
+  text: consult staging 경로를 숨기고 ref를 handle로 복사하며 ask cache를 ref별로 분리
