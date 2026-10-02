@@ -297,18 +297,16 @@ class Hub:
         return await self.release_quota(entry["engine"], manual=True)
 
     async def resume_quota_request(self, rid: str) -> None:
-        """After a gateway restart, keep the durable wait and resume without a PI approval."""
+        """After a gateway restart, recover at once without a PI approval.
+
+        The durable waits stay. Each recovered step meets its own engine's hold in run_step, so steps on
+        other engines and checkpoints that already arrived do not wait for that quota.
+        """
         req = self.requests[rid]
-        waits = list((req.get("quota_waits") or {}).items())
-        if not waits:
+        if not req.get("quota_waits"):
             req["status"] = "interrupted"
             self.save_request(rid)
             return
-        await asyncio.gather(*(self.wait_quota(rid, step_id, entry["engine"],
-                                               resume_at=float(entry["resume_at"]),
-                                               deadline_at=float(entry["deadline_at"]),
-                                               reason=entry.get("reason") or "subscription quota")
-                               for step_id, entry in waits))
         await self.resume_when_ready(rid)
 
     def running_tasks(self) -> list[dict]:

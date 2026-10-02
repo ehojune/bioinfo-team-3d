@@ -1,18 +1,22 @@
 import asyncio
-from datetime import datetime
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from labhq import quota as quota_module
 from labhq.gateway.server import Hub, create_app
-from labhq.models import AskRequest, Task, TaskResult
+from labhq.models import AgentSpec, AskRequest, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator, failure_kind
-from labhq.quota import parse_quota_wait
+from labhq.quota import parse_quota_wait, quota_reset_instant, received_quota_wait
+from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "quota"
+KST = timezone(timedelta(hours=9))
 
 
 @pytest.mark.parametrize(
@@ -40,6 +44,80 @@ def test_unreadable_reset_uses_bounded_default_but_burst_limit_does_not():
     assert parse_quota_wait("claude_code",
                             "Server is temporarily limiting requests (not your usage limit) · Rate limited",
                             now=now) is None
+
+
+def test_runner_resolves_the_reset_in_its_zone_and_the_gateway_trusts_the_instant(monkeypatch):
+    """#302 P1: a KST runner's 'resets 5:50pm' is 17:50 KST even on a UTC gateway, not 9 hours later."""
+    text = (FIXTURES / "claude.txt").read_text(encoding="utf-8")
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=KST).timestamp()
+    instant = quota_reset_instant("claude_code", text, now=now, tz=KST)
+    assert instant == datetime(2026, 10, 2, 17, 50, tzinfo=KST).timestamp()
+    assert parse_quota_wait("claude_code", text, now=now, tz=timezone.utc).resume_at - instant == 9 * 3600
+
+    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: timezone.utc)  # the gateway's zone
+    trusted = received_quota_wait("claude_code", text, instant, now=now, default_wait_s=3600)
+    assert trusted.resume_at == instant and trusted.parsed
+    assert failure_kind(TaskResult(task_id="t", agent_id="a", ok=False, error="limit",
+                                   quota_reset_at=instant)) == "quota"
+    # A runner that sent no instant: the clock time has no zone the gateway knows, so the wait is capped.
+    fallback = received_quota_wait("claude_code", text, None, now=now, default_wait_s=3600)
+    assert fallback.resume_at == now + 3600 and not fallback.parsed
+    relative = (FIXTURES / "antigravity.txt").read_text(encoding="utf-8")
+    assert received_quota_wait("antigravity", relative, None, now=now).resume_at == now + 2 * 3600 + 17 * 60
+    assert received_quota_wait("codex", "ordinary failure", None, now=now) is None
+
+
+@pytest.mark.asyncio
+async def test_runner_sends_the_reset_instant_in_its_own_zone(tmp_path, monkeypatch):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    text = (FIXTURES / "codex.txt").read_text(encoding="utf-8")
+
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error=text)
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: KST)  # the runner's zone
+    result = await runner.run_task(Task(id="t-quota", request_id="r", agent_id="worker", prompt="work",
+                                        meta={"kind": "step", "step_id": "A"}))
+    expected = datetime(2026, 10, 8, 2, 53, tzinfo=KST).timestamp()
+    assert result.quota_reset_at == expected
+    sent = [e for e in runner.store.pending() if e["type"] == "task.result"]
+    assert sent[-1]["data"]["quota_reset_at"] == expected
+    assert "quota_reset_at" not in TaskResult(task_id="t", agent_id="a", ok=True).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_gateway_waits_until_the_runner_instant_not_its_own_reading(tmp_path, monkeypatch):
+    hub = _hub(tmp_path, max_wait=1000)
+    monkeypatch.setattr(quota_module, "local_zone", lambda _stamp: timezone.utc)
+    instant = time.time() + 0.05
+    waits, calls = [], []
+    original_publish = hub.publish
+
+    async def publish(event, *args, **kwargs):
+        await original_publish(event, *args, **kwargs)
+        if event["type"] == "request.step_quota_wait":
+            waits.append(event["data"]["resume_at"])
+
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:  # the text alone would be read as 5:50pm in the gateway's zone
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, quota_reset_at=instant,
+                              error="You've hit your usage limit · resets 5:50pm")
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done")
+
+    hub.publish = publish
+    hub.dispatch = dispatch
+    result = await asyncio.wait_for(Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="work", meta={"kind": "step", "step_id": "A"})), 2)
+    assert result.ok and len(calls) == 2 and waits == [instant]
+    assert time.time() >= instant
 
 
 def _hub(tmp_path, *, max_wait=1.0):
@@ -174,7 +252,7 @@ async def test_quota_beyond_maximum_fails_without_waiting(tmp_path):
 async def test_gateway_restart_keeps_wait_and_auto_recovery_path(tmp_path):
     hub = _hub(tmp_path)
     hub.requests["r"].update(status="waiting_quota", quota_waits={
-        "A": {"engine": "codex", "resume_at": 0, "deadline_at": 9999999999, "reason": "limit"}})
+        "A": {"engine": "codex", "resume_at": 9999999999, "deadline_at": 9999999999, "reason": "limit"}})
     hub.save_request("r")
     hub.store.close()
 
@@ -184,12 +262,55 @@ async def test_gateway_restart_keeps_wait_and_auto_recovery_path(tmp_path):
     resumed = asyncio.Event()
 
     async def resume_when_ready(rid):
-        assert rid == "r" and "quota_waits" not in restored.requests[rid]
+        # Recovery starts before the reset; the durable wait stays for the step to meet in run_step.
+        assert rid == "r" and restored.requests[rid]["quota_waits"]["A"]["engine"] == "codex"
         resumed.set()
 
     restored.resume_when_ready = resume_when_ready
     await asyncio.wait_for(restored.resume_quota_request("r"), 1)
     assert resumed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_restart_recovery_holds_only_the_step_on_the_limited_engine(tmp_path):
+    """#302 P2: an independent step runs at once; only the quota step waits for its engine's reset."""
+    hub = _hub(tmp_path, max_wait=1000)
+    hub.requests["r"].update(status="waiting_quota", quota_waits={
+        "A": {"engine": "codex", "resume_at": 9999999999, "deadline_at": 9999999999, "reason": "limit"}})
+    hub.save_request("r")
+    hub.store.close()
+
+    restored = Hub(hub.s)
+    restored.agents = {"worker": {"id": "worker", "engine": "codex"},
+                       "helper": {"id": "helper", "engine": "claude_code"}}
+    restored.resume_agents = lambda _rid: set()
+    calls, outcome = [], {}
+    independent_done = asyncio.Event()
+
+    async def dispatch(task):
+        calls.append(task.meta["step_id"])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="done")
+
+    async def run_request(rid, resume=False):
+        assert resume
+        held = asyncio.create_task(restored.orchestrator.run_step(
+            Task(agent_id="worker", request_id=rid, prompt="a", meta={"kind": "step", "step_id": "A"})))
+        outcome["B"] = await restored.orchestrator.run_step(
+            Task(agent_id="helper", request_id=rid, prompt="b", meta={"kind": "step", "step_id": "B"}))
+        independent_done.set()
+        outcome["A"] = await held
+
+    restored.dispatch = dispatch
+    restored.orchestrator.run_request = run_request
+    recovery = asyncio.create_task(restored.resume_quota_request("r"))
+    await asyncio.wait_for(independent_done.wait(), 1)
+    assert outcome["B"].ok and calls == ["B"]
+    assert restored.requests["r"]["status"] == "waiting_quota"
+    assert restored.request_summary(restored.requests["r"])["step_progress"]["steps"]["A"] == "waiting_quota"
+    await restored.force_quota_resume("r", "A")
+    await asyncio.wait_for(recovery, 1)
+    assert outcome["A"].ok and calls == ["B", "A"]
+    assert "quota_waits" not in restored.requests["r"]
 
 
 def test_resume_quota_endpoint_releases_the_real_hold(tmp_path):

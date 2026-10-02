@@ -91,6 +91,22 @@ assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,2000);
 fresh.apply({type:'request.step_quota_resumed',request_id:'r3',data:{step_id:'s2',engine:'codex',manual:true}});
 assert.equal(fresh.req('r3').steps.s2,'pending');
 assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,undefined);
+// #302: the request leaves 한도 대기 when its last quota step resumes, not before.
+const quota=create();
+quota.apply({type:'snapshot',data:{requests:[{id:'q',status:'waiting_quota',created_at:1,
+  step_status:{a:'waiting_quota',b:'waiting_quota',c:'done'}}]}});
+quota.apply({type:'request.step_quota_resumed',request_id:'q',data:{step_id:'a',engine:'codex',manual:false}});
+assert.equal(quota.req('q').status,'waiting_quota','another step still waits for quota');
+quota.apply({type:'request.step_quota_resumed',request_id:'q',data:{step_id:'b',engine:'claude_code',manual:false}});
+assert.equal(quota.req('q').status,'running','the last quota step resumed');
+assert.equal(quota.S.current,'q');
+quota.apply({type:'request.step_quota_wait',request_id:'q',data:{step_id:'a',engine:'codex',resume_at:3000}});
+assert.equal(quota.req('q').status,'waiting_quota','a new wait shows again');
+quota.apply({type:'request.step_done',request_id:'q',data:{step_id:'a',ok:false,reason:'quota_wait_limit'}});
+assert.equal(quota.req('q').status,'running','a quota step that ended leaves no wait');
+quota.apply({type:'request.failed',request_id:'q',data:{error:'quota_wait_limit'}});
+quota.apply({type:'request.step_quota_wait',request_id:'q',data:{step_id:'b',engine:'codex',resume_at:3000}});
+assert.equal(quota.req('q').status,'failed','a late wait event does not reopen a finished request');
 const activeSnapshot=create();
 activeSnapshot.apply({type:'snapshot',data:{requests:[
   {id:'done-newer',status:'done',created_at:2},

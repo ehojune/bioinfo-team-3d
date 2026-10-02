@@ -180,6 +180,8 @@ class TaskResult(BaseModel):
     revision_failed: str | None = None
     error_kind: str | None = None
     error: str | None = None
+    # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).
+    quota_reset_at: float | None = None
 
     @model_validator(mode="after")
     def infer_cost_known(self) -> "TaskResult":
@@ -196,10 +198,13 @@ class TaskResult(BaseModel):
 
     @model_serializer(mode="wrap")
     def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
-        # Results without declarations serialize exactly as before the field existed.
+        # Results without declarations or a quota reset serialize exactly as before those fields existed.
         data = handler(self)
-        if isinstance(data, dict) and not data.get("output_types"):
-            data.pop("output_types", None)
+        if isinstance(data, dict):
+            if not data.get("output_types"):
+                data.pop("output_types", None)
+            if data.get("quota_reset_at") is None:
+                data.pop("quota_reset_at", None)
         return data
 
 

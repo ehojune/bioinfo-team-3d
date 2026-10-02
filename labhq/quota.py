@@ -1,12 +1,17 @@
-"""Subscription-quota error detection and bounded reset-time parsing."""
+"""Subscription-quota error detection and bounded reset-time parsing.
+
+A CLI prints a reset clock time without a zone, in the zone of the machine it runs on. The runner therefore
+resolves it to an instant (`quota_reset_instant`) and the gateway trusts that instant (`received_quota_wait`).
+"""
 
 from __future__ import annotations
 
 import calendar
+import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 
 
 @dataclass(frozen=True)
@@ -19,6 +24,11 @@ _MONTHS = {name.casefold(): number for number, name in enumerate(calendar.month_
 _MONTHS.update({name.casefold(): number for number, name in enumerate(calendar.month_name) if name})
 _WEEKDAYS = {name.casefold(): number for number, name in enumerate(calendar.day_abbr)}
 _WEEKDAYS.update({name.casefold(): number for number, name in enumerate(calendar.day_name)})
+
+
+def local_zone(stamp: float) -> tzinfo | None:
+    """This machine's zone at `stamp`, the one its CLIs print reset clock times in."""
+    return datetime.fromtimestamp(stamp).astimezone().tzinfo
 
 
 def _clock(hour: str, minute: str | None, meridiem: str | None) -> tuple[int, int]:
@@ -67,7 +77,8 @@ def _absolute_reset(text: str, now: datetime) -> datetime | None:
     return target
 
 
-def _relative_reset(text: str, now: datetime) -> datetime | None:
+def _relative_seconds(text: str) -> float | None:
+    """A duration ("reset after 2h 17m") is the same instant in every zone."""
     match = re.search(r"quota will reset after\s+([^\n]+)", text, re.IGNORECASE)
     if not match:
         return None
@@ -78,31 +89,74 @@ def _relative_reset(text: str, now: datetime) -> datetime | None:
     seconds = sum(float(value) * units[unit.casefold()] for value, unit in re.findall(
         r"(\d+(?:\.\d+)?)\s*(days?|d|hours?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
         fragment, re.IGNORECASE))
-    return now + timedelta(seconds=seconds) if seconds > 0 else None
+    return seconds if seconds > 0 else None
+
+
+def is_quota_error(engine: str, error: str | None) -> bool:
+    """An account-quota limit, not an ordinary burst/server rate limit."""
+    folded = (error or "").casefold()
+    name = str(engine or "").casefold()
+    if "not your usage limit" in folded:
+        return False
+    if name in {"claude", "claude_code"}:
+        return bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded)
+    if name == "codex":
+        return "hit your usage limit" in folded
+    if name in {"agy", "antigravity"}:
+        return (("exhausted your capacity" in folded or "quota exhausted" in folded
+                 or "usage limit" in folded) and "reset" in folded)
+    return ("hit your usage limit" in folded or
+            bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded) or
+            bool(("exhausted your capacity" in folded or "quota exhausted" in folded)
+                 and "reset" in folded))
 
 
 def parse_quota_wait(engine: str, error: str | None, *, now: float | None = None,
-                     default_wait_s: float = 3600) -> QuotaWait | None:
-    """Return an account-quota reset, not an ordinary burst/server rate limit."""
+                     default_wait_s: float = 3600, tz: tzinfo | None = None) -> QuotaWait | None:
+    """Return an account-quota reset, reading a clock time in `tz` (default: this machine's zone).
+
+    Only the machine that ran the CLI knows that zone, so the gateway does not call this on a result's text.
+    """
+    if not is_quota_error(engine, error):
+        return None
     text = error or ""
-    folded = text.casefold()
-    name = str(engine or "").casefold()
-    if "not your usage limit" in folded:
+    stamp = time.time() if now is None else now
+    seconds = _relative_seconds(text)
+    if seconds:
+        return QuotaWait(stamp + seconds, True)
+    target = _absolute_reset(text, datetime.fromtimestamp(stamp, tz or local_zone(stamp)))
+    return QuotaWait(target.timestamp() if target else stamp + default_wait_s, target is not None)
+
+
+def quota_reset_instant(engine: str, error: str | None, *, now: float | None = None,
+                        tz: tzinfo | None = None) -> float | None:
+    """Runner side: the reset as epoch seconds, or None when it is not a quota error or has no readable reset."""
+    wait = parse_quota_wait(engine, error, now=now, tz=tz)
+    return wait.resume_at if wait and wait.parsed else None
+
+
+def received_quota_wait(engine: str, error: str | None, reset_at: object, *, now: float | None = None,
+                        default_wait_s: float = 3600) -> QuotaWait | None:
+    """Gateway side: trust the runner's instant; without one, never wait longer than `default_wait_s`.
+
+    A result from a runner that sends no instant still carries the CLI's text. A duration in it is kept, but a
+    clock time is in the runner's zone, which the gateway cannot know, so the wait is capped and checked again.
+    The caller's `quota_max_wait_s` deadline bounds every wait.
+    """
+    if reset_at is not None:
+        try:
+            instant = float(reset_at)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            instant = math.nan
+        if math.isfinite(instant):
+            return QuotaWait(instant, True)
+    if not is_quota_error(engine, error):
         return None
-    if name in {"claude", "claude_code"}:
-        detected = bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded)
-    elif name == "codex":
-        detected = "hit your usage limit" in folded
-    elif name in {"agy", "antigravity"}:
-        detected = (("exhausted your capacity" in folded or "quota exhausted" in folded
-                     or "usage limit" in folded) and "reset" in folded)
-    else:
-        detected = ("hit your usage limit" in folded or
-                    bool(re.search(r"(?:usage|session|weekly) limit", folded) and "reset" in folded) or
-                    bool(("exhausted your capacity" in folded or "quota exhausted" in folded)
-                         and "reset" in folded))
-    if not detected:
-        return None
-    current = datetime.fromtimestamp(time.time() if now is None else now).astimezone()
-    target = _relative_reset(text, current) or _absolute_reset(text, current)
-    return QuotaWait((target.timestamp() if target else current.timestamp() + default_wait_s), target is not None)
+    text = error or ""
+    stamp = time.time() if now is None else now
+    seconds = _relative_seconds(text)
+    if seconds:
+        return QuotaWait(stamp + seconds, True)
+    cap = stamp + default_wait_s
+    target = _absolute_reset(text, datetime.fromtimestamp(stamp, local_zone(stamp)))
+    return QuotaWait(min(target.timestamp(), cap) if target else cap, False)

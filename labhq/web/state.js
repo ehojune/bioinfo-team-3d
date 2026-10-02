@@ -113,6 +113,12 @@ function endApproval(id, effects) {
   S.approvals.delete(id);
   effects.push({ type: 'toast.clear', approval_id: id });
 }
+// The gateway sends no request status event for quota: the request waits exactly while one of its steps does.
+function syncQuotaStatus(q) {
+  const parked = Object.values(q.steps).includes('waiting_quota');
+  if (parked && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
+  else if (!parked && q.status === 'waiting_quota') q.status = 'running';
+}
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   S.current = (all.find(r => isActiveRequest(r.status)) || all[0] || {}).id || null;
@@ -290,17 +296,19 @@ function apply(ev, replay = false) {
     case 'request.step_quota_wait': {
       const q = req(rid); q.steps[d.step_id] = 'waiting_quota';
       Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine });
+      syncQuotaStatus(q);
       break;
     }
     case 'request.step_quota_resumed': {
       const q = req(rid), detail = stepDetail(rid, d.step_id);
       if (q.steps[d.step_id] === 'waiting_quota') q.steps[d.step_id] = 'pending';
       delete detail.quota_resume_at; delete detail.quota_engine;
+      syncQuotaStatus(q);
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; break; }
-    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; syncQuotaStatus(q); break; }
+    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncQuotaStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
       q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';

@@ -22,7 +22,7 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
-from ..quota import parse_quota_wait
+from ..quota import is_quota_error, received_quota_wait
 from ..research.contract import (canonical_plan_json, classify_intake, freeze_plan, refresh_plan_approval,
                                  research_plan_errors, research_plan_schema, validate_research_plan,
                                  with_pack_refs)
@@ -734,7 +734,7 @@ def failure_kind(outcome: TaskResult | BaseException) -> str | None:
         # risks another qsub even when the CLI supports session resume.
         return "terminal"
     error = (outcome.error or "").lower()
-    if parse_quota_wait("", error):
+    if outcome.quota_reset_at is not None or is_quota_error("", error):
         return "quota"
     if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
                                       "budget", "cancel", "ineligibletier", "401")):
@@ -1288,7 +1288,8 @@ class Orchestrator:
         current = task
         res = await dispatch_with_retry(current, start=initial_attempt)
         while True:
-            quota = parse_quota_wait(engine, res.error, default_wait_s=self.cfg.quota_default_wait_s)
+            quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
+                                                             default_wait_s=self.cfg.quota_default_wait_s)
             if quota is None:
                 clear_quota_window()
                 break
