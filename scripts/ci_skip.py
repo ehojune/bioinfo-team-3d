@@ -6,7 +6,8 @@ STATUS.md or patch_notes/, or (for a merge of the base branch) files that arrive
 until a commit whose pytest jobs all passed. The merged-in combination itself is not re-tested; main's own CI
 runs again after the squash merge.
 
-usage: python scripts/ci_skip.py HEAD_SHA   (env GITHUB_REPOSITORY, GH_TOKEN)
+usage: python scripts/ci_skip.py HEAD_SHA BASE_SHA   (env GITHUB_REPOSITORY, GH_TOKEN)
+A merge counts only when its second parent is on the base branch (an ancestor of BASE_SHA).
 """
 from __future__ import annotations
 
@@ -33,11 +34,15 @@ def notes_only(path: str) -> bool:
     return path == "STATUS.md" or path.startswith("patch_notes/")
 
 
-def safe_step(commit: str) -> bool:
-    """The commit's own change against its first parent is notes, or files taken unchanged from the merged side."""
+def on_base(sha: str, base: str) -> bool:
+    return subprocess.run(["git", "merge-base", "--is-ancestor", sha, base], capture_output=True).returncode == 0
+
+
+def safe_step(commit: str, base: str) -> bool:
+    """The commit's own change against its first parent is notes, or files taken unchanged from the base branch."""
     parents = git("rev-list", "--parents", "-n", "1", commit).split()[1:]
-    if not parents:
-        return False
+    if not parents or len(parents) > 2 or (len(parents) == 2 and not on_base(parents[1], base)):
+        return False  # a merge of anything but the base branch (another feature branch) always reruns
     for path in filter(None, git("diff", "--name-only", parents[0], commit).splitlines()):
         if notes_only(path):
             continue
@@ -59,10 +64,10 @@ def pytest_passed(sha: str) -> bool:
     return all(job in passed for job in JOBS)
 
 
-def can_skip(head: str, passed=pytest_passed) -> bool:
+def can_skip(head: str, base: str, passed=pytest_passed) -> bool:
     commit = head
     for _ in range(MAX_WALK):
-        if not safe_step(commit):
+        if not safe_step(commit, base):
             return False
         commit = git("rev-parse", f"{commit}^1")
         if passed(commit):
@@ -72,7 +77,7 @@ def can_skip(head: str, passed=pytest_passed) -> bool:
 
 if __name__ == "__main__":
     try:
-        skip = len(sys.argv) > 1 and can_skip(sys.argv[1])
+        skip = len(sys.argv) > 2 and can_skip(sys.argv[1], sys.argv[2])
     except Exception as exc:  # noqa: BLE001 - any doubt runs the tests
         print(f"ci_skip: {type(exc).__name__}: {exc}", file=sys.stderr)
         skip = False

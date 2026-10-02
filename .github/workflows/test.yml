@@ -19,13 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 20
+          fetch-depth: 0  # the base branch history decides whether a merge came from it
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - id: check
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/ci_skip.py "${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+        run: python scripts/ci_skip.py "${{ github.event.pull_request.head.sha }}" "${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
 
   pytest:
     needs: changes

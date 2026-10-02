@@ -6,7 +6,7 @@
 
 - 결론: PI 요청. PR 브랜치는 pull_request로 한 번만 돌고, 패치노트만 더한 push나 STATUS·패치노트 충돌만 푼 main 병합 push는 직전 커밋의 pytest가 통과했으면 pytest를 건너뛴다(skipped). 합쳐진 조합 자체는 다시 시험하지 않고, squash 병합 뒤 main CI가 다시 돈다.
 - 바뀐 것: `.github/workflows/test.yml`(push는 main만, `changes` job, `checks: read`), `scripts/ci_skip.py`, `tests/test_ci_skip.py`.
-- 실행한 것: `tests/test_ci_skip.py` 4건. 실제 #285 기록에 적용하면 코드 커밋이 통과한 뒤의 패치노트 커밋 1건만 건너뛰고 나머지는 그대로 돈다.
+- 실행한 것: `tests/test_ci_skip.py` 5건(다른 기능 branch를 합친 병합은 언제나 다시 돈다 — 봇 P1). 병합은 두 번째 parent가 base branch에 있을 때만 인정한다. 실제 #285 기록에 적용하면 코드 커밋이 통과한 뒤의 패치노트 커밋 1건만 건너뛰고 나머지는 그대로 돈다.
 - 미해결: 없음.
 - 근거: `scripts/ci_skip.py`.
 

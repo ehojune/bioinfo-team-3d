@@ -39,9 +39,9 @@ def test_a_patch_note_commit_after_a_passed_code_commit_skips(repo):
     run(repo, "checkout", "-q", "-b", "pr")
     code = commit(repo, {"app.py": "a = 2\n"}, "code")
     head = commit(repo, {"patch_notes/README.md": "# n\nrow\n"}, "notes")
-    assert cs.can_skip(head, passed=lambda sha: sha == code)
-    assert not cs.can_skip(head, passed=lambda sha: False)  # nothing passed yet: run
-    assert not cs.can_skip(code, passed=lambda sha: True)  # the code commit itself always runs
+    assert cs.can_skip(head, 'main', passed=lambda sha: sha == code)
+    assert not cs.can_skip(head, 'main', passed=lambda sha: False)  # nothing passed yet: run
+    assert not cs.can_skip(code, 'main', passed=lambda sha: True)  # the code commit itself always runs
 
 
 def test_merging_main_skips_only_when_every_file_came_from_main_unchanged(repo):
@@ -55,7 +55,7 @@ def test_merging_main_skips_only_when_every_file_came_from_main_unchanged(repo):
     run(repo, "add", "STATUS.md")
     run(repo, "commit", "-q", "--no-edit")
     head = run(repo, "rev-parse", "HEAD")
-    assert cs.can_skip(head, passed=lambda sha: sha == tested)  # lib.py came from main as is
+    assert cs.can_skip(head, 'main', passed=lambda sha: sha == tested)  # lib.py came from main as is
 
 
 def test_a_file_both_sides_changed_reruns(repo):
@@ -68,7 +68,18 @@ def test_a_file_both_sides_changed_reruns(repo):
     run(repo, "checkout", "-q", "pr")
     run(repo, "merge", "-q", "--no-edit", "main")  # clean auto-merge of both edits
     head = run(repo, "rev-parse", "HEAD")
-    assert base and not cs.can_skip(head, passed=lambda sha: sha == tested)  # app.py matches neither side
+    assert base and not cs.can_skip(head, 'main', passed=lambda sha: sha == tested)  # app.py matches neither side
+
+
+def test_merging_another_feature_branch_reruns(repo):
+    run(repo, "checkout", "-q", "-b", "pr")
+    tested = commit(repo, {"app.py": "a = 2\n"}, "pr")
+    run(repo, "checkout", "-q", "-b", "other", "main")
+    commit(repo, {"new.py": "c = 1\n"}, "untested feature")
+    run(repo, "checkout", "-q", "pr")
+    run(repo, "merge", "-q", "--no-edit", "other")
+    head = run(repo, "rev-parse", "HEAD")
+    assert not cs.can_skip(head, "main", passed=lambda sha: sha == tested)  # new.py came from a non-base branch
 
 
 def test_no_token_means_no_skip(monkeypatch):
