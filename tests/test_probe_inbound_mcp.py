@@ -78,3 +78,27 @@ def test_probe_controls_change_only_the_inbound_value(tmp_path, inbound, expecte
     assert changed == generated
     i = staff.index("--settings")
     assert control[:i + 1] == staff[:i + 1] and control[i + 2:] == staff[i + 2:]
+
+
+def _line(event: dict) -> str:
+    return json.dumps(event)
+
+
+def test_probe_reads_the_senders_refused_notice_and_tool_results():
+    """Event shapes from Claude 2.1.282 stream-json: the receipt for a refused message is a system notice, separate
+    from the SendMessage tool result (which says queued either way)."""
+    queued = '{"success":true,"message":"probe -> labhq-inbound-probe-x (queued there)"}'
+    tool_result = {"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": [{"type": "text", "text": queued}]}]}}
+    notice = {"type": "system", "subtype": "informational", "level": "warning",
+              "content": "Cross-session message refused (recipient: uds:pipe-x). It was not delivered."}
+    other = {"type": "system", "subtype": "informational", "content": "Something else"}
+    stream = "\n".join([_line({"type": "system", "subtype": "init"}), "not json", _line(["a", "list"]),
+                        _line({"type": "user", "message": {"role": "user", "content": "plain text"}}),
+                        _line(tool_result), _line(other), _line(notice)])
+
+    refused = probe._sender_result(stream)
+    accepted = probe._sender_result("\n".join([_line(tool_result), _line(other)]))
+
+    assert refused == {"tool_results": [json.dumps([{"type": "text", "text": queued}])], "refused_notice": True}
+    assert accepted["refused_notice"] is False and accepted["tool_results"] == refused["tool_results"]

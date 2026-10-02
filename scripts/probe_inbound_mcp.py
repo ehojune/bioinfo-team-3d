@@ -4,8 +4,8 @@ One staff session, launched by the adapter with the command labhq builds, calls 
 --delay seconds, longer than the approval timeout it runs with. For Claude Code a second session sends the staff
 session one cross-session message while it waits. `--inbound accept` and `--inbound unset` (the settings before
 #276) are control runs that show where the message would otherwise go. Both sessions run in temporary folders
-and contact nothing but the CLI's own service. The receiver's --debug-file is the evidence: Claude 2.1.282 logs a
-refusal there and sends the sender a refused receipt, while an accepted message is queued.
+and contact nothing but the CLI's own service. The receiver's --debug-file and the sender's stream are the evidence:
+Claude 2.1.282 logs a refusal in the first and shows the sender a refused notice, while an accepted message is queued.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ MARKER = "LABHQ_DELAY_OK"
 # Claude 2.1.282 --debug-file lines for an inbound peer message
 REFUSED_LOG = "[cross-session-inbound] refused inbound peer message"
 QUEUED_LOG = "[uds-messaging] Routed user message to queue"
+REFUSED_NOTICE = "Cross-session message refused"  # the sender's system notice when the receiver refuses
 PROMPT = ("Call the slow_answer tool of the labhq_ask MCP server exactly once, then reply with exactly the text it "
           "returned and nothing else.")
 
@@ -79,8 +80,8 @@ def _tee(adapter, path: Path) -> None:
 
 
 async def _send(binary: str, receiver: str, nonce: str, model: str | None, folder: Path, out: Path) -> dict:
-    """A second, separately isolated Claude session sends one message by name. ListAgents stays denied, so it never
-    lists the PI's own sessions."""
+    """A second, separately isolated Claude session sends one message by name. ListAgents stays denied, so the model
+    never reads the PI's session list; the CLI itself still connects to local sessions to find the name."""
     folder.mkdir()
     env = merge_staff_env(dict(os.environ), {}, {})
     isolation = {**user_config_isolation(env, folder), "permissions": {"deny": ["ListAgents"]}}
@@ -97,17 +98,27 @@ async def _send(binary: str, receiver: str, nonce: str, model: str | None, folde
     stdout, stderr = await proc.communicate()
     (out / "sender.raw.jsonl").write_bytes(stdout)
     (out / "sender.raw.stderr.txt").write_bytes(stderr)
-    results = []
-    for line in stdout.decode(errors="replace").splitlines():
+    return {"exit_code": proc.returncode, **_sender_result(stdout.decode(errors="replace"))}
+
+
+def _sender_result(stream: str) -> dict:
+    """The sender's tool results, and whether Claude told it the receiver refused the message."""
+    results, refused = [], False
+    for line in stream.splitlines():
         try:
             event = json.loads(line)
         except ValueError:
             continue
-        for block in (event.get("message") or {}).get("content") or []:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "system" and event.get("subtype") == "informational":
+            refused = refused or REFUSED_NOTICE in str(event.get("content"))
+        message = event.get("message")
+        for block in (message.get("content") if isinstance(message, dict) else None) or []:
             if isinstance(block, dict) and block.get("type") == "tool_result":
                 content = block.get("content")
                 results.append(content if isinstance(content, str) else json.dumps(content, ensure_ascii=False))
-    return {"exit_code": proc.returncode, "tool_results": [r[:300] for r in results]}
+    return {"tool_results": [r[:300] for r in results], "refused_notice": refused}
 
 
 async def _probe(args: argparse.Namespace, out: Path) -> dict:
