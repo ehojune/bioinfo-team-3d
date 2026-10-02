@@ -2,6 +2,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #270 — 미집계 비용을 0으로 더하지 않고 엔진별로 환산·표시
+
+- 결론: 보고되지 않은 비용은 이제 $0이 아니라 `미집계 N건`으로 따로 센다. Codex처럼 token만 보고하는 task는 판본 있는 OpenAI API 가격표로 `추정`하고, 웹·CLI·GitHub·bench가 `확인 $a + 추정 $b + 미집계 N건`과 엔진별 소계를 보여 준다. 예산 상한은 미집계 task마다 `per_task_usd`를 쓴 것으로 보고 판정한다.
+- 바뀐 것: `labhq/costs.py`(가격표: Standard·짧은 문맥, 2026-10-02 확인, 모델 ID 정확 일치·과금 token 항목이 다 있을 때만 환산, 90일 지나면 경고). gateway가 task마다 분류를 남기고, 버려진·전달 불확실·재시작 뒤 응답 없는 task는 미집계, 보내지 않은 task만 실제 $0이다. CSO 예산 판정과 재시작 복구, 보고서 metadata, bench 상한(미집계가 남으면 판정 불가, test-agent 불통과).
+- 실행한 것: 새·바꾼 회귀 24건과 `tests/web_state.cjs`가 main 코드에서 실패하고 이 branch에서 통과한다. 전체 pytest 2596 passed/44 skipped, Node 13개, `scripts/check_public.sh`, `git diff --check` 통과. 가격표 단가와 계산식은 OpenAI pricing·prompt-caching 문서로 확인했다.
+- 미해결: Gemini·Antigravity는 근거 있는 가격표가 없어 미집계로 남는다. staff `CODEX_HOME`에서 문맥 창을 272K보다 키우면 추정은 하한이다. Codex 사용량 한도로 Claude가 이어받았다.
+- 근거: `labhq/costs.py`, `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `labhq/bench.py`, `tests/test_cost_accounting.py`.
+
 ## 2026-10-02 · #258 #259 #260 #266 #268 #269 — 그림자·액션 후속 P2 묶음
 
 - 결론: 액션 층 그림자의 epoch 전환·report·breaker 결함 3건과 B1 그림자의 직원 ID 경계·재사용 입력 계보 3건을 고쳤다. 실행 허용 목록은 빈 집합, `hpc.*` 거부, CSO에 주는 것 없음, 기록에 값 없음은 그대로다. 정보 경계는 막는 값만 늘었다.
