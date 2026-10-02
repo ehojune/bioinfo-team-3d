@@ -54,6 +54,11 @@ policy:
   budget:
     per_task_usd: 5
     per_request_usd: 30
+  bioinfo_agent:
+    hard_stops: [data_zone, budget_cap, installation]
+    pipeline_pr: false                     # 기본 꺼짐. true면 새 pipeline을 아래 저장소에 branch·PR로 올림
+    pipeline_repo: ehojune/bioinfo-agent   # gateway token이 branch·PR을 만들며 직원에게 token을 주지 않음
+    pipeline_base_branch: main
 
 recruit:
   agent_id: recruiter
@@ -64,7 +69,7 @@ recruit:
   contract_model: sonnet
 
 github:
-  token_env: GITHUB_TOKEN        # 게이트웨이 호스트의 환경변수에서 읽음 (YAML에 토큰 금지). fine-grained PAT: Issues·Contents RW
+  token_env: GITHUB_TOKEN        # 게이트웨이 환경변수. fine-grained PAT: Issues·Contents·Pull requests RW
   dashboard_url: null            # 예: https://labhq.<tailnet>.ts.net — 이슈 본문에 사무실 링크
   codex_mention: "@codex"        # codex 멘션은 PR 상단 리뷰 요청에만 한 번
 

@@ -25,7 +25,8 @@ BROKER = os.environ.get("LABHQ_BROKER_URL", f"http://127.0.0.1:{S.runner.broker_
 TOKEN = os.environ.get("LABHQ_BROKER_TOKEN", "")
 TASK = os.environ.get("LABHQ_TASK_ID")
 AGENT = os.environ.get("LABHQ_AGENT_ID")
-WORKDIR = str(Path(os.environ.get("LABHQ_WORKDIR", ".")).resolve())
+WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
+WORKDIR = str(Path(WORKDIR_INPUT).resolve())
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
 
 server = make_server("labhq-approval", instructions="Permission gate for tool calls (policy + PI approval).")
@@ -54,7 +55,8 @@ def _text_only_tool():
 async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
-    d = evaluate_tool(tool_name, input or {}, S.policy, allowed_roots=[WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR)
+    d = evaluate_tool(tool_name, input or {}, S.policy,
+                      allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR)
     # A respelled write path (#219) is what was judged and what the PI sees, so Claude must write that one.
     tool_input = d.updated_input or input or {}
     if d.action == "allow":

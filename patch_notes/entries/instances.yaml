@@ -1,0 +1,14 @@
+pr: 303
+rows:
+- sha: ef7c08d
+  at: 2026-10-02 19:19
+  text: 이름별 빈 포트·경로·token 설정 생성과 모든 명령의 --instance 선택, 웹·홈 화면 instance 이름 표시를 추가
+- sha: 184ab7d
+  at: 2026-10-02 19:24
+  text: '--instance: 초기화되지 않은 이름은 기본 설정으로 넘어가지 않고 거부'
+- sha: 54b71be
+  at: 2026-10-02 19:29
+  text: 인스턴스마다 파견직 명단 폴더를 따로 둠(runner.contract_dir)
+- sha: db85ace
+  at: 2026-10-02 19:34
+  text: 'main 병합: cli.py에서 A2 액션 명령과 --instance 처리를 함께 살림'

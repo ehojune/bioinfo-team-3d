@@ -45,6 +45,27 @@ def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
     assert "worker" in doctor.render(result)
 
 
+@pytest.mark.parametrize("same_account,expected", [
+    (True, "warn"),
+    (False, "skip"),  # an owner mismatch alone is not proof of isolation (#304 review)
+    (None, "skip"),
+])
+def test_doctor_compares_runner_with_config_owner(tmp_path, monkeypatch, same_account, expected):
+    settings = _settings(tmp_path)
+    config = tmp_path / "labhq.yaml"
+    config.write_text("gateway: {}\n", encoding="utf-8")
+    settings.config_path = str(config)
+    monkeypatch.setattr(doctor, "_config_owner_is_current_user", lambda path: same_account)
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    result = doctor.collect(settings)
+
+    row = next(r for r in result["checks"] if r["name"] == "runner account isolation")
+    assert row["status"] == expected
+    assert "docs/runner-account.md" in row["hint"]
+    assert result["summary"]["fail"] == 0
+
+
 def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "1")
@@ -254,3 +275,38 @@ def test_doctor_checks_slurm_commands(tmp_path, monkeypatch, missing, status):
     assert row["status"] == status
     assert row["detail"].startswith("slurm; local sbatch/squeue/sacct/scancel ")
     assert result["runner_capabilities"]["scheduler"] == "slurm" and result["runner_capabilities"]["hpc_tools"]
+
+
+@pytest.mark.parametrize("current,expected", [
+    ("labhq-runner", "ok"), (r"PC\labhq-runner", "ok"), (r"OTHERPC\labhq-runner", "warn"), ("pi", "warn"), (None, "skip"),
+])
+def test_doctor_checks_the_named_runner_account(tmp_path, monkeypatch, current, expected):
+    settings = _settings(tmp_path)
+    settings.runner.os_account = "labhq-runner"
+    monkeypatch.setenv("COMPUTERNAME", "PC")
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: current)
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    row = next(r for r in doctor.collect(settings)["checks"] if r["name"] == "runner account isolation")
+    assert row["status"] == expected
+
+
+def test_doctor_warns_when_the_runner_config_holds_the_client_token(tmp_path, monkeypatch):
+    """#304 review: staff run as the runner account; a client token there lets them approve as the PI."""
+    settings = _settings(tmp_path)
+    settings.runner.os_account = "labhq-runner"
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "labhq-runner")
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+    settings.gateway.client_token = "a-real-token"
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" in names
+    settings.gateway.client_token = "change-me-client"
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" not in names
+    # #304 review: the default is a working token whenever the gateway still uses it, on any account.
+    assert "default client token" in names
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "pi")
+    assert "default client token" in [r["name"] for r in doctor.collect(settings)["checks"]]
+    monkeypatch.setattr(doctor, "_current_os_account", lambda: "labhq-runner")
+    settings.gateway.client_token = ""
+    names = [r["name"] for r in doctor.collect(settings)["checks"]]
+    assert "runner config holds client token" not in names and "default client token" not in names

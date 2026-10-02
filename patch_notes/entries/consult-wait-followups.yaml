@@ -1,0 +1,9 @@
+pr: 309
+rows:
+- sha: 21007da
+  at: 2026-10-02 19:54
+  text: consult 대기를 이벤트로 깨우고 최신 turn·직원 session·재시작 roster를 안전하게 이어 씀(#205~#209)
+- sha: 16d12b4
+  at: 2026-10-02 20:00
+  text: 'session 대기: 알던 holder가 끝나면 원장을 한 번 더 확인해, 새 task id로 이어진 작업이 잡은 session을
+    놓지 않음'

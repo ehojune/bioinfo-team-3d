@@ -4,6 +4,62 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · #199 #203 — 승인 시간 초과 정리와 stale 알림 범위
+
+- 결론: 러너에서 만료된 승인은 gateway와 화면에서도 즉시 끝나며, stale 알림은 누른 화면에만 보인다.
+- 바뀐 것: broker가 `approval.timed_out`을 보내면 gateway가 승인 기록을 지우고 `approval.resolved(state=timed_out)`를 배포한다. `approval.stale`은 해당 WebSocket에 직접 보낸다.
+- 실행한 것: 수정 전 회귀 test 2건 실패 확인. 수정 뒤 관련 pytest 287건 통과, 1건 skip. 공개 검사와 diff 검사 통과.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어서 확인한다.
+- 근거: `labhq/runner/approvals.py`, `labhq/runner/daemon.py`, `labhq/gateway/server.py`, `tests/test_approval_timeout.py`, `tests/test_web.py`.
+
+## 2026-10-02 · PR #310 — 쓰기 게이트 경로 판정 후속
+
+- 결론: 파일 도구의 환경 변수 표기는 펼치지 않고, 링크·junction으로 적힌 작업 폴더의 셸 쓰기는 원래 표기 안에서 허용한다.
+- 바뀐 것: 파일 도구 경로 정규화만 환경 변수 미전개로 바꾸고, `LABHQ_WORKDIR` 원문을 셸 쓰기 루트에 추가했다.
+- 실행한 것: 수정 전 회귀 테스트 2건 실패를 확인했다. 수정 뒤 관련 pytest 101건과 `scripts/check_public.sh`를 통과시켰다.
+- 미해결: 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/policy.py`, `labhq/tools/approval_mcp.py`, `tests/test_claude_write_paths.py`.
+
+## 2026-10-02 · PR #309 — consult·대기 후속(#205~#209)
+
+- 결론: session 대기는 원장 반복 조회 없이 상태 변화에 깨어나며, 완료된 최신 turn을 잇는다. 직원 재실행과 재시작 전 facilities 질의도 같은 점유·route 규칙을 따른다.
+- 바뀐 것: task·runner 상태 신호, 최신 session 추적, 고아 CSO 결과 반영, runner별 마지막 roster, 직원 step의 공통 `_free_session` 판정을 추가했다. #206은 main에서 이미 해결된 구현과 회귀를 확인했다.
+- 실행한 것: 수정 전 4 failed/1 passed, 수정 후 관련 pytest 203 passed. 공개 저장소 검사와 diff 검사를 통과했다.
+- 미해결: 없음. 전체 pytest와 CI는 지시대로 GitHub Actions에 맡긴다.
+- 근거: `labhq/gateway/server.py`, `labhq/orchestrator/cso.py`, `tests/test_consult_restart.py`, `tests/test_cso.py`.
+
+## 2026-10-02 · #293 — plan-only 재개 대기 범위
+
+- 결론: `plan_only` 요청은 plan 저장 뒤 gateway가 재시작돼도 실행하지 않을 직원을 기다리지 않고 계획만 끝낸다.
+- 바뀐 것: plan 저장 전에는 CSO·briefing 담당만 기다리고, 저장 뒤에는 recovery agent를 요구하지 않는다. 두 경계를 회귀 테스트로 고정했다.
+- 실행한 것: 수정 전 저장된 plan의 worker·reviewer·CSO를 기다리는 실패를 확인했다. 관련 pytest 70건과 `scripts/check_public.sh`, patch-notes·목차 검사를 통과시켰다.
+- 미해결: 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/gateway/server.py`, `tests/test_state.py`.
+
+## 2026-10-02 · PR #303 — 한 PC 여러 labhq 인스턴스(#37 결정 ②-1 A)
+
+- 결론: `labhq init --instance <이름>`으로 한 PC의 연구소를 포트·경로·token까지 나누고, 모든 명령에서 같은 이름을 고를 수 있다. 기본 동작은 그대로다.
+- 바뀐 것: 이름별 config·state·runs·talent·runner id·빈 gateway/broker 포트·무작위 token, `--instance`/`--config` 충돌 거부, 웹 제목·홈 화면 이름, 로그인·사용량 공유 경고.
+- 실행한 것: 관련 pytest 58 passed, Node CJS 13개, `scripts/check_public.sh`, `git diff --check` 통과. 전체 pytest는 CI에 맡겼다.
+- 미해결: 없음. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/init_wizard.py`, `labhq/cli.py`, `labhq/gateway/server.py`, `tests/test_instances.py`.
+
+## 2026-10-02 · PR #304 — runner 전용 Windows 계정(#298 ③)
+
+- 결론: runner와 직원 CLI를 PI와 다른 표준 사용자로 띄우고, PI 홈은 OS ACL로 막는다. gateway는 PI 계정에 둔다.
+- 바뀐 것: 실행 순서대로 쓴 절차서와 README 링크. 순서는 계정 → 폴더 권한과 labhq 설치(`C:\LabHQ\app`) → runner 계정에 직원 CLI 설치·로그인·Codex elevated setup → 설정 두 개 생성(client token이 있는 gateway.yaml은 PI만, 없는 runner.yaml은 runner만 읽기)과 파일 권한 → 점검·실행·업데이트·복구. doctor 점검: `runner.os_account`를 적으면 `whoami`(프로세스 token의 DOMAIN\user)가 그 계정일 때만 ok, 아니면 warn이고, 그 runner 설정에 client token이 있으면 warn. client token이 공개된 기본값(`change-me-client`)이면 어느 계정이든 warn(runner 설정은 빈 값으로 둔다). `os_account`가 없으면 설정 파일 소유자와 실행 계정이 같을 때 warn, 다르면 확인 안 됨(skip).
+- 실행한 것: 새 회귀 3건은 구현 전 실패를 확인했다. doctor·init 관련 pytest 73 passed(기존 디코딩 warning 1건), 공개정보 검사와 diff 검사 통과.
+- 미해결: 실제 계정 생성·ACL 변경·CLI 로그인은 PI가 절차서를 따라 실행해야 한다. 봇 리뷰와 CI 판정은 개발 총괄이 이어받는다.
+- 근거: `docs/runner-account.md`, `labhq/doctor.py`, `tests/test_doctor.py`.
+
+## 2026-10-02 · #301 — bioinfo-agent 질문 게이트와 파이프라인 PR
+
+- 결론: bioinfo-agent의 일반 질문과 새 파이프라인 생성 판단은 CSO가 답한다. 통제 데이터 구역·비용 상한 초과·프로그램 설치만 PI 승인으로 보낸다. 공개 bioinfo-agent 저장소로 가는 자동 PR은 기본 꺼짐이고 `policy.bioinfo_agent.pipeline_pr: true`로 켠다(PI 결정, #300).
+- 바뀐 것: 켜면 gateway가 새 파이프라인 산출을 검사해 branch와 PR로 올린다. 꺼져 있으면 gateway가 러너에 파일을 요청하지 않고 GitHub도 부르지 않는다. 직원에게 GitHub 토큰을 주지 않는다. 파일은 확장자로는 코드만 받고, json·yaml·md 같은 형식은 정해진 pipeline 경로(`nextflow_schema.json`·`docs/*.md` 등)에서만, 표는 https 테스트 데이터를 가리키는 `assets/samplesheet*.csv`만 받는다. 성공으로 끝난 turn의 산출만 올린다. 절대경로는 접두어 목록 없이 모두 거부한다(`#!` 인터프리터와 `/dev/null`류만 예외). PR 상태는 snapshot에도 실려 늦게 접속한 화면에도 남는다.
+- 실행한 것: 관련 pytest 545건 통과·4건 제외, 웹 상태 43건, 공개 검사를 통과했다. README는 51,970자에서 52,267자로 297자 늘었다. 전체 pytest는 CI에 맡겼다.
+- 미해결: 켤 때 gateway 토큰에 bioinfo-agent 저장소의 Contents·Pull requests 쓰기 권한이 있어야 한다. 다른 labhq 사용자에게 기여 여부를 묻는 일은 #300. 컨테이너 안 `/opt/...` 경로나 README 예시 `/data/...`가 있는 pipeline(예: 기존 pacbio-hifi-wgs)은 거부되어 PR이 열리지 않는다.
+- 근거: `labhq/pipeline_pr.py`, `labhq/integrations/github.py`, `labhq/gateway/server.py`, `tests/test_bioinfo_pipeline_pr.py`.
+
 ## 2026-10-02 · #149 결정 17 · #151 입력 종류–방법 적합성 그림자 판정
 
 - 결론: 로컬 operation 관계표로 단계 입력을 `fit`·`mismatch`·`unknown` 중 하나로 세며, 세 개의 합계만 그림자 기록과 report에 남긴다.

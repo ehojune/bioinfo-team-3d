@@ -878,6 +878,22 @@ def test_resume_synthesis_does_not_wait_for_finished_reviewer(tmp_path):
     assert hub.resume_agents("r") == {"cso"}
 
 
+def test_plan_only_resume_before_plan_waits_only_for_planners(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "plan_only", "status": "interrupted"}
+
+    assert hub.resume_agents("r") == {"chief_of_staff", "cso"}
+
+
+def test_plan_only_resume_after_plan_waits_for_no_agents(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "mode": "plan_only", "status": "interrupted", "plan": {"steps": [
+        {"id": "s", "agent_id": "worker", "depends_on": []},
+    ]}}
+
+    assert hub.resume_agents("r") == set()
+
+
 @pytest.mark.asyncio
 async def test_unaccepted_dispatch_is_resent_with_original_task_id(tmp_path):
     s = settings(tmp_path)

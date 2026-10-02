@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_serializer, model_validator
 
@@ -176,6 +176,7 @@ class TaskResult(BaseModel):
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
     output_types: dict[str, Any] = {}
     provenance: dict[str, Any] = {}  # manifest summary; the gateway may not share the runner's disk
+    pipeline_submission: dict[str, Any] | None = None  # gateway-only handoff; stripped before web publication
     partial_results: bool = False
     revision_failed: str | None = None
     error_kind: str | None = None
@@ -195,11 +196,13 @@ class TaskResult(BaseModel):
         return bounded_records(value) if value is not None else {}
 
     @model_serializer(mode="wrap")
-    def _drop_empty_output_types(self, handler: Any) -> dict[str, Any]:
-        # Results without declarations serialize exactly as before the field existed.
+    def _drop_empty_internal_fields(self, handler: Any) -> dict[str, Any]:
+        # Results without declarations or a gateway handoff serialize exactly as before those fields existed.
         data = handler(self)
         if isinstance(data, dict) and not data.get("output_types"):
             data.pop("output_types", None)
+        if isinstance(data, dict) and data.get("pipeline_submission") is None:
+            data.pop("pipeline_submission", None)
         return data
 
 
@@ -277,9 +280,10 @@ HARD_STOP_PATTERNS = {
 }
 
 
-def hard_stop_kind(ask: AskRequest) -> str | None:
+def hard_stop_kind(ask: AskRequest, allowed: Iterable[str] | None = None) -> str | None:
     text = "\n".join([ask.question, ask.why_blocked, *ask.tried, *ask.options]).casefold()
+    enabled = set(HARD_STOP_PATTERNS) if allowed is None else set(allowed)
     for kind, patterns in HARD_STOP_PATTERNS.items():
-        if any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
+        if kind in enabled and any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
             return kind
     return None
