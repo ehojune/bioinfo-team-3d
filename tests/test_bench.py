@@ -291,6 +291,74 @@ def test_test_agent_runs_cases_in_order_and_writes_summary(tmp_path, monkeypatch
     assert json.loads((tmp_path / "test-agent-summary.json").read_text(encoding="utf-8")) == summary
 
 
+def test_test_agent_does_not_pass_an_unaccounted_budget(tmp_path, monkeypatch):
+    async def fake(case_id, output, engines="real", **_kwargs):
+        return {"case_id": case_id, "run_id": "run-unknown", "rows": [{
+            "engine": "labhq", "status": "done", "checks_passed": True,
+            "artifact_exists": True, "within_budget": None, "unscripted_approvals": 0,
+        }]}
+
+    monkeypatch.setattr(bench, "run_case", fake)
+    summary = asyncio.run(bench.run_test_agent(tmp_path, engines="mock"))
+    assert summary["passed"] == 0 and summary["failed"] == 5
+
+
+def test_partly_unaccounted_cost_is_neither_within_budget_nor_hidden():
+    from labhq.costs import aggregate_costs, classify_cost
+
+    items = {"t1": classify_cost(engine="claude_code", model="opus", usage={}, usage_known=True,
+                                 cost_usd=0.3, cost_known=True, task_id="t1"),
+             "t2": classify_cost(engine="codex", model=None, usage={}, usage_known=True,
+                                 cost_usd=None, cost_known=False, task_id="t2")}
+    partial = {"cost_usd": 0.3, "cost_known": False, "cost_summary": aggregate_costs(items)}
+
+    assert bench._within_budget(partial, 1.0) is None  # the unknown task may have spent anything
+    assert bench._within_budget(partial, 0.2) is False  # the counted part alone is over the cap
+    assert bench._within_budget({"cost_usd": 0.3, "cost_known": False}, 1.0) is None  # older run.json
+    assert bench._within_budget({"cost_usd": 0.3, "cost_known": True}, 1.0) is True
+    row = {"engine": "labhq", "model": None, "status": "done", "artifact_exists": True, "checks_passed": True,
+           "pi_interventions": 0, "cost_usd": 0.3, "cost_budget_ratio": 0.3, "within_budget": None,
+           "token_total": 0, "duration_s": 1.0, "cost_summary": partial["cost_summary"]}
+    table = bench._comparison_markdown({"case_id": "c", "mode": "real", "budget_usd": 1.0, "rows": [row]})
+    assert "| 확인 0.3000 + 미집계 1건 | ≥0.300 | 미집계 |" in table
+    assert "## 비용 내역" in table and "claude_code 확인 $0.3000 · codex 미집계 1건" in table
+    legacy = {**row, "cost_summary": None, "cost_known": False}
+    assert "| 0.3000 + 미집계 | ≥0.300 |" in bench._comparison_markdown(
+        {"case_id": "c", "mode": "real", "budget_usd": 1.0, "rows": [legacy]})
+
+
+@pytest.mark.parametrize("model,status", [("gpt-6-astra", "estimated"), ("unpriced-model", "unknown")])
+def test_codex_arm_cost_is_estimated_only_with_a_price_row(tmp_path, monkeypatch, model, status):
+    from labhq.settings import Settings
+
+    settings = Settings.model_validate({"bench": {"arms": {
+        "custom": {"engine": "codex", "model": model, "effort": "max"}}}})
+    raw = (b'{"type":"turn.completed","usage":{"input_tokens":100000,"cached_input_tokens":0,'
+           b'"cache_write_input_tokens":0,"output_tokens":10000,"reasoning_output_tokens":0}}\n')
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return raw, b""
+
+    async def spawn(*args, **kwargs):
+        (tmp_path / "answer.md").write_text("codex answer", encoding="utf-8")
+        return Process()
+
+    monkeypatch.setattr("labhq.adapters.base._resolve_command", lambda command, *args: command)
+    monkeypatch.setattr("labhq.adapters.base.child_config_dirs", lambda *args: [tmp_path])
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    run = asyncio.run(bench._run_baseline(bench.load_case("public-protein-qc"), "custom", tmp_path,
+                                         "real", ["fake-cli"], settings))
+    item = run["cost_summary"]
+    if status == "estimated":  # 100k x $10 + 10k x $50 per 1M
+        assert run["cost_usd"] == pytest.approx(1.5) and run["cost_known"] is True
+        assert item["estimated_usd"] == pytest.approx(1.5) and item["prices"][0]["model"] == "gpt-6-astra"
+    else:
+        assert run["cost_usd"] is None and run["cost_known"] is False and item["unknown_count"] == 1
+
+
 def test_one_failed_arm_is_scored_and_does_not_stop_the_next(tmp_path, monkeypatch):
     async def fake(case, arm, arm_dir, engines, command, settings):
         if arm == "sonnet-max":
