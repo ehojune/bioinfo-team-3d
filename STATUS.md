@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-02 · 그림자 후속(#211 #212)
+
+- 결론: 이전 epoch의 breaker 저장 실패가 새 epoch를 끄지 않으며, `derived_from`은 A·B 모두 최대 64 artifact hop까지만 `yes`다.
+- 바뀐 것: breaker 저장 실패에 epoch 조건을 붙이고, N=64·65·66 계보 경계를 `yes`·`unknown`·`unknown`으로 고정했다.
+- 실행한 것: 수정 전 두 회귀 실패를 확인했다. 수정 뒤 관련 pytest 160건과 공개 저장소 검사·diff 검사를 통과했다. 기존 17문항 판정은 바뀌지 않았다.
+- 미해결: CI와 봇 리뷰는 개발 총괄이 이어받는다.
+- 근거: `labhq/research/semantics_shadow.py`, `labhq/research/semantics.py`, `tests/test_semantics_shadow_breaker.py`, `tests/test_semantics_pilot.py`.
+
 ## 2026-10-02 · HPC 승인·추적 후속(#215 #224)
 
 - 결론: 시험 job이 세 번 연속 사라지면 `unknown_finished`로 끝내고, 스케줄러 우회와 오래된 job 취소를 막았다.
