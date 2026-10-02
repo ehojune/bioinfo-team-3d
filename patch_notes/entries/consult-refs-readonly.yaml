@@ -6,3 +6,6 @@ rows:
 - sha: 0fef219
   at: 2026-10-02 21:38
   text: gateway는 runner 경로를 전달만 하고 같은 runner가 consult refs를 작업 폴더 안에서 검증하도록 고침
+- sha: e8b22c8
+  at: 2026-10-02 21:49
+  text: consult source를 열지 않고 검증한 ref 파일만 refs/에 중립 이름으로 복사하며 파일·전체 크기 상한을 적용

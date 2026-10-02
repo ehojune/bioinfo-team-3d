@@ -1,8 +1,8 @@
-## 2026-10-02 · PR #323 — consult refs와 read-only 후속(#86 #165)
+## 2026-10-02 · PR #323 — consult ref 격리(#86 #165)
 
-- 결론: gateway는 runner 경로를 검사하지 않고, 같은 runner만 원래 작업 폴더를 받아 refs를 검증한다.
-- 바뀐 것: 빈 refs 질의는 작업 폴더와 무관하게 보낸다. 다른 runner consult는 원래 workspace를 받지 않고 파일을 읽을 수 없다고 밝힌다.
-- 실행한 것: 봇 P1 회귀가 수정 전 4건 실패·1건 skip, 수정 뒤 관련 pytest 141건 통과·2건 skip. 공개 검사를 통과했다.
-- 해결됨: #165의 1~3번은 PR #216, 4번은 `.codex` fail-closed와 #148 종료 상태를 확인했다. 5번 실측 fixture를 추가했다.
-- 미해결: CI와 재검토는 개발 총괄이 확인한다.
-- 근거: `labhq/orchestrator/cso.py`, `labhq/runner/daemon.py`, `labhq/runner/approvals.py`, `tests/test_ask.py`.
+- 결론: 같은 runner의 consult도 source workspace를 열지 않고, 검증한 ref 파일의 복사본만 읽는다.
+- 바뀐 것: 폴더·링크 ref는 거부한다. 파일은 `refs/consult-<task>/ref-NN.<ext>`로 이름을 바꿔 복사하며, 파일당 8 MiB·전체 32 MiB를 넘으면 제외 사유를 prompt에 남긴다.
+- 실행한 것: 새 회귀는 수정 전 5 failed·1 passed, 수정 후 6 passed. 관련 pytest 48 passed·1 skipped, 공개 검사도 통과했다.
+- 해결: source의 `CLAUDE.md`·`.claude/rules/`와 선언하지 않은 파일은 consult에 노출되지 않는다.
+- 미해결: CI와 봇 재검토 판정은 개발 총괄이 이어받는다.
+- 근거: `labhq/runner/daemon.py`, `tests/test_ask.py`, `tests/test_read_only_followups.py`.
