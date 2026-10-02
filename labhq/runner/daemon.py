@@ -835,7 +835,9 @@ class Runner:
             if output_scan_note:
                 await emit("agent.log", {"level": "warn", "text": output_scan_note})
         result.outputs = list(dict.fromkeys([*result.outputs, *found]))
-        if agent.id == "bioinfo-agent" and task.meta.get("pipeline_pr") is True:  # the gateway asked (#300)
+        # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).
+        if (agent.id == "bioinfo-agent" and task.meta.get("pipeline_pr") is True  # the gateway asked (#300)
+                and result.ok and not waiting(result)):
             if listed_outputs is None:
                 listed_outputs, output_scan_note = await asyncio.to_thread(
                     ws.scan_outputs, zones, self.s.runner.reference_scan_max_entries,

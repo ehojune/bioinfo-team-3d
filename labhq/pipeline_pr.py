@@ -15,11 +15,20 @@ PIPELINE_SCHEMA = 1
 PIPELINE_MAX_FILES = 100
 PIPELINE_MAX_BYTES = 1_000_000
 PIPELINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
-# Allowlist of pipeline source kinds (#301 review). Anything else is refused, so a new data format
-# (samples.csv, counts.tsv, reads.fastq, calls.vcf, cells.h5ad, ...) never needs a denylist entry.
-PIPELINE_SOURCE_SUFFIXES = {".nf", ".config", ".groovy", ".py", ".r", ".sh", ".md", ".yaml", ".yml", ".json"}
-# Small extensionless or .txt files: LICENSE, .gitignore, the assets/NO_* placeholders of an optional input.
-PIPELINE_SMALL_TEXT_SUFFIXES = {"", ".txt"}
+# Allowlist (#301 review). Only code passes by its suffix. A kind that can hold a table (json, yaml, txt, md,
+# csv, extensionless) passes only at a known pipeline path, so samples.json or cohort.yml is refused whatever
+# its extension, and a new data format (reads.fastq, calls.vcf, cells.h5ad, ...) never needs a denylist entry.
+PIPELINE_CODE_SUFFIXES = {".nf", ".config", ".groovy", ".py", ".r", ".sh"}
+PIPELINE_KNOWN_FILE = re.compile(
+    r"(?:[A-Za-z0-9_-]+/)*README\.md|CHANGELOG\.md|CITATIONS\.md|LICENSE|\.gitignore|\.nf-core\.ya?ml"
+    r"|nextflow_schema\.json|modules\.json|docs/[A-Za-z0-9_-]+\.md"
+    r"|assets/schema_input\.json|assets/multiqc_config\.ya?ml"
+    r"|(?:modules/(?:[A-Za-z0-9_-]+/)+)?environment\.ya?ml|modules/(?:[A-Za-z0-9_-]+/)+meta\.ya?ml"
+)
+# An extensionless helper script in bin/ is code when it starts with "#!".
+PIPELINE_BIN_SCRIPT = re.compile(r"bin/[A-Za-z0-9_-]+")
+# assets/NO_* placeholders stage an unset optional input and are never read.
+PIPELINE_PLACEHOLDER = re.compile(r"assets/NO_[A-Z0-9_]+")
 PIPELINE_SMALL_TEXT_BYTES = 4096
 # bioinfo-agent new-pipeline.md section 7: assets/ holds samplesheet examples and the test fixture list, and the
 # test profile points at remote miniature data. So a table passes only as assets/samplesheet*.csv|tsv whose
@@ -49,14 +58,16 @@ def _local_absolute_path(text: str) -> bool:
 
 def _file_kind_rejection(relative: PurePosixPath, content: str) -> str | None:
     """Why one bundle file is not pipeline source. `relative` is the path inside pipelines/<name>/."""
-    suffix = relative.suffix.casefold()
+    path = relative.as_posix()
     size = len(content.encode("utf-8"))
-    if suffix in PIPELINE_SOURCE_SUFFIXES:
+    if relative.suffix.casefold() in PIPELINE_CODE_SUFFIXES or PIPELINE_KNOWN_FILE.fullmatch(path):
         return None
-    if suffix in PIPELINE_SMALL_TEXT_SUFFIXES:
-        return None if size <= PIPELINE_SMALL_TEXT_BYTES else "small text file exceeds 4 KB"
-    if not PIPELINE_FIXTURE.fullmatch(relative.as_posix()):
-        return "file type is not pipeline source"
+    if PIPELINE_BIN_SCRIPT.fullmatch(path):
+        return None if content.startswith("#!") else "bin/ file without an extension must be a #! script"
+    if PIPELINE_PLACEHOLDER.fullmatch(path):
+        return None if size <= PIPELINE_SMALL_TEXT_BYTES else "placeholder exceeds 4 KB"
+    if not PIPELINE_FIXTURE.fullmatch(path):
+        return "not pipeline code or a known pipeline file"
     if size > PIPELINE_FIXTURE_BYTES:
         return "test samplesheet exceeds 8 KB"
     rows = [line for line in content.splitlines() if line.strip() and not line.lstrip().startswith("#")]

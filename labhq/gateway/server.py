@@ -675,7 +675,8 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
-            if result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr:
+            if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr
+                    and result.ok and not waiting(result)):
                 self.store.put("pipeline_submission", tid, {
                     "request_id": rid, "task_id": tid, "agent_id": result.agent_id,
                     "state": "ready", "submission": result.pipeline_submission,

@@ -186,7 +186,13 @@ FIXTURE = "sample,file\nsmoke,https://raw.githubusercontent.com/nf-core/test-dat
     {"path": "pipelines/tiny/calls.vcf", "content": "##fileformat=VCFv4.2\n"},
     {"path": "pipelines/tiny/aln.sam", "content": "@HD\tVN:1.6\n"},
     {"path": "pipelines/tiny/cells.h5ad", "content": "HDF\n"},
-    {"path": "pipelines/tiny/notes.txt", "content": "KOR-0012 case\n" * 400},
+    {"path": "pipelines/tiny/notes.txt", "content": "KOR-0012 case\n"},
+    {"path": "pipelines/tiny/samples.json", "content": '[{"sample": "KOR-0012", "phenotype": "case"}]\n'},
+    {"path": "pipelines/tiny/assets/cohort.yml", "content": "KOR-0012: case\n"},
+    {"path": "pipelines/tiny/meta.yml", "content": "KOR-0012: case\n"},
+    {"path": "pipelines/tiny/results.md", "content": "| sample | phenotype |\n| KOR-0012 | case |\n"},
+    {"path": "pipelines/tiny/bin/samples", "content": "KOR-0012 case\n"},
+    {"path": "pipelines/tiny/assets/NO_TRF", "content": "x" * 5000},
 ])
 async def test_data_files_never_reach_the_public_pipeline_pr(tmp_path, bad):
     """#301 review P1: only pipeline source kinds pass; a table passes only as a bioinfo-agent test fixture list."""
@@ -207,6 +213,12 @@ async def test_pipeline_source_and_test_fixture_list_still_open_a_pr(tmp_path):
         {"path": "pipelines/tiny/bin/summarise.py", "content": "#!/usr/bin/env python3\nimport sys\n"},
         {"path": "pipelines/tiny/bin/plot.R", "content": "x <- 1\n"},
         {"path": "pipelines/tiny/nextflow_schema.json", "content": "{}\n"},
+        {"path": "pipelines/tiny/assets/schema_input.json", "content": "{}\n"},
+        {"path": "pipelines/tiny/docs/usage.md", "content": "# Usage\n"},
+        {"path": "pipelines/tiny/modules/local/run/meta.yml", "content": "name: run\n"},
+        {"path": "pipelines/tiny/environment.yml", "content": "dependencies: []\n"},
+        {"path": "pipelines/tiny/bin/check_samplesheet", "content": "#!/usr/bin/env python3\nprint(1)\n"},
+        {"path": "pipelines/tiny/LICENSE", "content": "MIT License\n"},
         {"path": "pipelines/tiny/conf/test.config",
          "content": "params.input = \"${projectDir}/assets/samplesheet.test.csv\"\n"},
         {"path": "pipelines/tiny/modules/run.nf",
@@ -312,8 +324,9 @@ async def test_gateway_asks_the_runner_for_pipeline_files_only_when_turned_on(tm
         hub.store.close()
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_path, monkeypatch, enabled):
+@pytest.mark.parametrize(("enabled", "outcome"), [(False, "ok"), (True, "ok"), (True, "failed"), (True, "waiting")])
+async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_path, monkeypatch, enabled, outcome):
+    """Off unless the gateway asks (#300), and only from a finished successful turn (#301 review)."""
     from labhq.runner.daemon import Runner
 
     configured = settings(tmp_path)
@@ -329,14 +342,30 @@ async def test_runner_attaches_pipeline_files_only_when_the_gateway_asks(tmp_pat
             (folder / "manifest.json").write_text(json.dumps({"schema": 1, "name": "tiny"}), encoding="utf-8")
             for name in ("main.nf", "nextflow.config", "README.md"):
                 (folder / name).write_text("x\n", encoding="utf-8")
-            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+            if outcome == "waiting":  # an HPC job is still out: the bundle is not validated yet
+                runner.jobs["job-1"] = {"task_id": ctx.task.id}
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=outcome != "failed", text="done")
 
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
     meta = {"kind": "direct", **({"pipeline_pr": True} if enabled else {})}
     result = await runner.run_task(Task(id="t", request_id="r", agent_id=agent.id, prompt="build", meta=meta))
-    if enabled:
+    if enabled and outcome == "ok":
         assert result.pipeline_submission["state"] == "ready"
     else:
         assert result.pipeline_submission is None
         assert "pipeline_submission" not in result.model_dump(mode="json")
+
+
+async def test_gateway_ignores_a_bundle_from_a_failed_or_unfinished_turn(tmp_path):
+    hub = Hub(settings(tmp_path, pipeline_pr=True))
+    hub.requests["r"] = {"id": "r", "status": "running"}
+    try:
+        for tid, extra in (("t1", {"ok": False}), ("t2", {"ok": True, "pending_jobs": ["job-1"]})):
+            result = TaskResult(task_id=tid, agent_id="bioinfo-agent", text="", pipeline_submission=pipeline(), **extra)
+            await hub.on_runner_message("runner", {"type": "task.result", "task_id": tid, "request_id": "r",
+                                                   "data": result.model_dump(mode="json")})
+            assert hub.store.get("pipeline_submission", tid) is None
+        assert not [e for e in hub.events if e["type"] == "pipeline.ready"]
+    finally:
+        hub.store.close()
