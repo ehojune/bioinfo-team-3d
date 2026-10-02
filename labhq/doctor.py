@@ -17,7 +17,9 @@ import yaml
 from .adapters.base import RunContext, _resolve_command, codex_app_choice, expand_env
 from .adapters import get_adapter
 from .models import AgentSpec, Engine, Task
-from .private_paths import plugin_keep_dirs, resolve_private_paths, staff_codex_homes
+from . import private_paths as private_path_module
+from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
+                            plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir, staff_codex_homes)
 from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner import codex_sandbox
@@ -192,21 +194,70 @@ def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
 PRIVATE_PATHS_HINT = "See README §8 'PI 개인 경로' (policy.private_paths)."
 
 
-def _private_paths_row(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> dict:
-    """How many PI personal paths are closed to staff, and which configured ones hold a work folder."""
+def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> PrivatePaths:
     workspace = settings.path(settings.runner.workspace_root)
     codex = forced == Engine.codex or (forced is None and any(a.engine == Engine.codex for a in agents))
     keep = [workspace, *(settings.path(r) for r in settings.runner.reference_roots),
             *(settings.path(p.local_dir) for p in settings.projects if p.local_dir),
             *(d for a in agents for d in plugin_keep_dirs(settings, a.plugin_dirs, workspace)),
             *staff_codex_homes(settings, workspace, codex)]
-    private = resolve_private_paths(settings, keep)
+    return resolve_private_paths(settings, keep)
+
+
+def _private_paths_row(private: PrivatePaths) -> dict:
+    """How many PI personal paths are closed to staff, and which configured ones hold a work folder."""
     if not private.enabled:
         return _row("staff", "private paths", "warn", "off (policy.private_paths: [])", PRIVATE_PATHS_HINT)
     detail = f"{len(private.labels)} active"
     if private.skipped:
         detail += "; skipped, holds a work folder: " + ", ".join(private.skipped)
     return _row("staff", "private paths", "ok" if private.labels else "warn", detail, PRIVATE_PATHS_HINT)
+
+
+CLAUDE_STAFF_DIR = ".labhq/claude-staff"
+
+
+def claude_login_command(windows: bool) -> str:
+    """What the PI runs once to sign the staff Claude in to ~/.labhq/claude-staff. Home variables only, so no
+    user name or path is printed."""
+    if windows:
+        return f"$env:CLAUDE_CONFIG_DIR = Join-Path $HOME '{CLAUDE_STAFF_DIR}'; claude 실행 뒤 /login (끝나면 그 창은 닫기)"
+    return f'CLAUDE_CONFIG_DIR="$HOME/{CLAUDE_STAFF_DIR}" claude 실행 뒤 /login'
+
+
+def _claude_staff_row(settings: Settings, agents: list[AgentSpec], forced: Engine | None, private: PrivatePaths,
+                      login_code: int | None) -> dict | None:
+    """Claude staff with the PI's ~/.claude closed to them (#298 ⑤): Claude saves long tool output under its config
+    folder and reads it back, so they need their own (engines.claude_code.env.CLAUDE_CONFIG_DIR)."""
+    claude = forced == Engine.claude_code or (forced is None and any(a.engine == Engine.claude_code for a in agents))
+    home = private_path_module.host_home()
+    pi = os.path.join(home, ".claude")
+    if not claude or not os.path.lexists(pi) or not inside_any(pi, private.paths):
+        return None
+    windows = os.name == "nt"
+    standard = os.path.join(home, *CLAUDE_STAFF_DIR.split("/"))
+    login = claude_login_command(windows)
+    configured = configured_claude_config_dir(settings)
+    if not configured:
+        var = "${USERPROFILE}" if windows else "${HOME}"
+        return _row("staff", "claude staff config", "warn",
+                    "Claude 직원이 PI ~/.claude를 설정 폴더로 씀: 그 아래 저장된 긴 출력을 다시 읽지 못할 수 있음",
+                    f"engines.claude_code.env.CLAUDE_CONFIG_DIR: {var}/{CLAUDE_STAFF_DIR} 로 두고 로그인: {login}")
+    if in_pi_claude(configured):
+        return _row("staff", "claude staff config", "fail",
+                    "CLAUDE_CONFIG_DIR가 PI ~/.claude이거나 그 안: 직원이 PI 로그인을 쓰고 긴 출력도 막힘",
+                    f"직원 전용 폴더(~/{CLAUDE_STAFF_DIR})로 바꾸고 로그인: {login}")
+    staff = staff_claude_config_dir(settings)
+    if not staff:
+        return _row("staff", "claude staff config", "warn", "CLAUDE_CONFIG_DIR가 상대 경로: task 폴더마다 달라짐",
+                    f"절대 경로(~/{CLAUDE_STAFF_DIR} 등)로 두세요.")
+    if not inside_any(staff, [standard]) or not inside_any(standard, [staff]):
+        login = "CLAUDE_CONFIG_DIR를 engines.claude_code.env 값으로 두고 claude 실행 뒤 /login"
+    if login_code == 0:
+        return _row("staff", "claude staff config", "ok", "직원 전용 설정 폴더, 로그인됨", "")
+    if login_code is None and os.path.isdir(staff):
+        return _row("staff", "claude staff config", "skip", "직원 전용 설정 폴더, 로그인 확인 생략", "")
+    return _row("staff", "claude staff config", "warn", "직원 전용 설정 폴더에 로그인 없음", f"로그인: {login}")
 
 
 def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict, seen: set[Path],
@@ -320,6 +371,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
 
     available: dict[str, bool] = {}
     codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
+    login_codes: dict[str, int | None] = {}  # the CLI's own status command, with engines.<name>.env applied
     for name in settings.engines.__class__.model_fields:
         spec = getattr(settings.engines, name)
         env = {**os.environ, **expand_env(spec.env, os.environ)}
@@ -348,6 +400,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                          "Check the executable and prefix_args if version fails."))
         if name in LOGIN:
             code, _ = (None, "") if dry_run else _probe([*resolved, *LOGIN[name]], env)
+            login_codes[name] = code
             rows.append(_row("login", name, "ok" if code == 0 else "warn",
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
@@ -402,7 +455,11 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         if plugin:
             rows.append(_row("plugin", agent.id, "warn" if error else "ok", error or "plugin ready",
                              "Set the plugin directory and install its required skill."))
-    rows.append(_private_paths_row(settings, agents, forced))
+    private = _doctor_private(settings, agents, forced)
+    rows.append(_private_paths_row(private))
+    claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
+    if claude_staff:
+        rows.append(claude_staff)
     try:
         paper = skill_installed(settings.recruit.contract_engine)
     except OSError:

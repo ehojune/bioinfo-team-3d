@@ -277,3 +277,69 @@ async def test_the_approval_server_opens_only_the_folders_the_runner_named(tmp_p
                                                                      "input": {"file_path": str(path)}})
                 seen[name] = json.loads(result.content[0].text)["behavior"]
     assert seen == {"mine": "allow", "login": "deny"}
+
+
+# ---------------- doctor ----------------
+
+def _doctor_rows(tmp_path, monkeypatch, env, *, login_rc=1, engine="claude_code", private=None, pi_claude=True):
+    monkeypatch.setattr(private_paths, "_labhq_entries", REAL_LABHQ_ENTRIES)
+    home = _home(tmp_path)
+    monkeypatch.setattr(private_paths, "host_home", lambda: str(home))
+    if pi_claude:
+        (home / ".claude").mkdir()
+    agents = tmp_path / "agents" / "core"
+    agents.mkdir(parents=True)
+    (agents / "worker.yaml").write_text(f"id: worker\nname: Worker\nrole: test\nengine: {engine}\n", encoding="utf-8")
+    data = {"runner": {"state_dir": str(tmp_path / "state"), "workspace_root": str(tmp_path / "runs"),
+                       "agents_dir": str(agents.parent)},
+            "gateway": {"state_dir": str(tmp_path / "gateway")}, "hpc": {"scheduler": "none"},
+            "engines": {"claude_code": {"bin": "claude", "env": env}}}
+    if private is not None:
+        data["policy"] = {"private_paths": private}
+    settings = Settings.model_validate(data)
+    claude = str(tmp_path / "bin" / "claude")
+    monkeypatch.setattr(doctor, "_resolve_command", lambda cmd, env, name: [claude] if name == "claude_code" else cmd)
+    monkeypatch.setattr(doctor.shutil, "which", lambda name, **kw: claude if name == claude else None)
+    probes = []
+
+    def probe(argv, env):
+        probes.append((argv, env.get("CLAUDE_CONFIG_DIR")))
+        return (login_rc, "") if argv[-2:] == ["auth", "status"] else (0, "2.1.282 (Claude Code)")
+
+    monkeypatch.setattr(doctor, "_probe", probe)
+    rows = doctor.collect(settings)["checks"]
+    return home, [r for r in rows if r["name"] == "claude staff config"], probes
+
+
+def test_doctor_warns_when_claude_staff_share_the_pi_folder(tmp_path, monkeypatch):
+    home, rows, _probes = _doctor_rows(tmp_path, monkeypatch, {})
+    assert len(rows) == 1 and rows[0]["status"] == "warn" and "긴 출력" in rows[0]["detail"]
+    assert "CLAUDE_CONFIG_DIR" in rows[0]["hint"] and ".labhq/claude-staff" in rows[0]["hint"]
+    assert str(home) not in rows[0]["detail"] + rows[0]["hint"]
+
+
+@pytest.mark.parametrize("inside", ["", "staff"])
+def test_doctor_fails_a_staff_folder_that_is_the_pi_folder_or_inside_it(tmp_path, monkeypatch, inside):
+    env = {"CLAUDE_CONFIG_DIR": "${LABHQ_TEST_PI_CLAUDE}" + (f"/{inside}" if inside else "")}
+    monkeypatch.setenv("LABHQ_TEST_PI_CLAUDE", str(tmp_path / "home" / ".claude"))
+    _home_, rows, _probes = _doctor_rows(tmp_path, monkeypatch, env)
+    assert len(rows) == 1 and rows[0]["status"] == "fail"
+
+
+@pytest.mark.parametrize("login_rc,status", [(1, "warn"), (0, "ok")])
+def test_doctor_checks_the_login_in_the_staff_folder(tmp_path, monkeypatch, login_rc, status):
+    staff = tmp_path / "home" / ".labhq" / "claude-staff"
+    staff.mkdir(parents=True)
+    _home_, rows, probes = _doctor_rows(tmp_path, monkeypatch, {"CLAUDE_CONFIG_DIR": str(staff)}, login_rc=login_rc)
+    assert len(rows) == 1 and rows[0]["status"] == status
+    assert any(argv[-2:] == ["auth", "status"] and folder == str(staff) for argv, folder in probes)
+    if status == "warn":
+        assert "/login" in rows[0]["hint"] and "CLAUDE_CONFIG_DIR" in rows[0]["hint"]
+
+
+@pytest.mark.parametrize("case", ["off", "no_pi_folder", "codex_only"])
+def test_doctor_says_nothing_when_the_pi_folder_is_not_closed_to_claude_staff(tmp_path, monkeypatch, case):
+    _home_, rows, _probes = _doctor_rows(tmp_path, monkeypatch, {}, private=[] if case == "off" else None,
+                                         pi_claude=case != "no_pi_folder",
+                                         engine="codex" if case == "codex_only" else "claude_code")
+    assert rows == []
