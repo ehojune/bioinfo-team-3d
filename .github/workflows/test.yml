@@ -58,6 +58,22 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q --durations=15  # the 15 slowest tests, to find what to speed up
 
+  pytest-slow:
+    # The real 90 s MCP call (#276) runs here, beside the suite, so a wall-clock timeout regression fails CI (#308).
+    needs: changes
+    if: needs.changes.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      LABHQ_SLOW_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q tests/test_long_mcp_call.py
+
   readme:
     # Full suite skipped but README.md changed: run the one file that reads it (PI 2026-10-02).
     needs: changes

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import shutil
 from pathlib import Path
 
 import pytest
@@ -19,8 +20,8 @@ ACTION_HOOKS = {"labhq/gateway/server.py": 4, "labhq/orchestrator/cso.py": 4, "l
 
 
 @pytest.fixture(scope="module")
-def removable_lab_state(tmp_path_factory):
-    """Build the live lab state once; both removal modes must preserve the same state."""
+def pristine_lab_state(tmp_path_factory):
+    """Build the live lab state once, as a template no test opens: a Hub on it would recover the running request."""
     root = tmp_path_factory.mktemp("semantics-removal") / "lab"
     lab = asyncio.run(run_lab(root, {"mode": "shadow", "actions": "shadow"},
                               ["CD276 세포유형 분석 [artifact]"]))
@@ -31,6 +32,12 @@ def removable_lab_state(tmp_path_factory):
     hub.save_request("req_inflight1")
     hub.store.close()
     return root / "state"
+
+
+@pytest.fixture
+def removable_lab_state(pristine_lab_state, tmp_path):
+    """Each removal mode gets its own copy, so each starts from a fresh `running` request in any order."""
+    return Path(shutil.copytree(pristine_lab_state, tmp_path / "state"))
 
 
 def expected_hooks() -> dict:
