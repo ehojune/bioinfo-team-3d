@@ -25,6 +25,7 @@ import httpx
 
 from ..costs import cost_detail, cost_text
 from ..intake import mask_published_references, public_url, url_pattern
+from ..pipeline_pr import pipeline_rejection
 from ..policy import _PathTextScan, _scan_mentions_zone, _scan_path_text, restricted_paths
 from ..settings import PolicySettings, ProjectSettings, Settings
 from ..util import clip, short
@@ -361,6 +362,34 @@ class GitHubClient:
             body["sha"] = sha
         return await self._req("PUT", f"/repos/{repo}/contents/{path}", json=body)
 
+    async def repo_info(self, repo: str) -> dict:
+        return await self._req("GET", f"/repos/{repo}")
+
+    async def branch_sha(self, repo: str, branch: str) -> str:
+        ref = await self._req("GET", f"/repos/{repo}/git/ref/heads/{branch}")
+        return str((ref.get("object") or {}).get("sha") or "")
+
+    async def create_branch(self, repo: str, branch: str, sha: str) -> dict:
+        return await self._req("POST", f"/repos/{repo}/git/refs",
+                               json={"ref": f"refs/heads/{branch}", "sha": sha})
+
+    async def path_exists(self, repo: str, path: str, branch: str) -> bool:
+        response = await self.http.get(f"/repos/{repo}/contents/{path}", params={"ref": branch})
+        if response.status_code == 404:
+            return False
+        if response.status_code >= 400:
+            raise GitHubHTTPError("GET", f"/repos/{repo}/contents/{path}", response)
+        return True
+
+    async def find_pull(self, repo: str, branch: str, marker: str) -> dict | None:
+        pulls = await self._req("GET", f"/repos/{repo}/pulls", params={"state": "all", "per_page": 100})
+        return next((pull for pull in pulls if marker in (pull.get("body") or "") and
+                     (pull.get("head") or {}).get("ref", branch) == branch), None)
+
+    async def create_pull(self, repo: str, title: str, body: str, branch: str, base: str) -> dict:
+        return await self._req("POST", f"/repos/{repo}/pulls",
+                               json={"title": title, "body": body, "head": branch, "base": base})
+
     async def request_codex_review(self, repo: str, pr: int, note: str = "", mention: str = "@codex") -> dict:
         return await self.comment(repo, pr, codex_comment("review" + (f"\n\n{note}" if note else ""), mention))
 
@@ -373,7 +402,7 @@ def _cost_line(cost_usd, cost_known, summary: dict | None) -> str:
 
 class ProjectReporter:
     HANDLED = {"request.created", "request.plan", "request.review", "recruit.done",
-               "request.completed", "request.failed"}
+               "request.completed", "request.failed", "pipeline.ready"}
 
     def __init__(self, hub: "Hub", settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.hub, self.s, self.transport = hub, settings, transport
@@ -392,7 +421,8 @@ class ProjectReporter:
                 self._warned.add("root-zone")
                 log.warning("GitHub updates are off: a filesystem root is a restricted data zone")
             return False
-        return any(p.repo for p in self.s.projects)
+        bioinfo = self.s.policy.bioinfo_agent
+        return bool((bioinfo.pipeline_pr and bioinfo.pipeline_repo) or any(p.repo for p in self.s.projects))
 
     def client(self) -> GitHubClient | None:
         if self._client is None:
@@ -470,8 +500,79 @@ class ProjectReporter:
         await self.hub.publish({"type": "github.posted", "ts": time.time(), "request_id": rid,
                                 "data": {"kind": kind, "url": url, "number": number}})
 
+    def _pipeline_rejection(self, submission: dict) -> str | None:
+        return pipeline_rejection(submission, self.s)
+
+    async def _pipeline_status(self, entry: dict, status: str, reason: str | None = None,
+                               url: str | None = None, number: int | None = None) -> None:
+        previous, previous_reason = entry.get("state"), entry.get("reason")
+        entry.update(state=status, reason=reason, url=url, number=number, updated_at=time.time())
+        self.hub.store.put("pipeline_submission", entry["task_id"], entry)
+        if previous == status and previous_reason == reason:
+            return
+        await self.hub.publish({"type": "pipeline.pr", "ts": time.time(),
+                                "request_id": entry.get("request_id"), "task_id": entry["task_id"],
+                                "agent_id": entry.get("agent_id"),
+                                "data": {"status": status, "name": (entry.get("submission") or {}).get("name"),
+                                         "reason": reason, "url": url, "number": number}})
+
+    async def _handle_pipeline(self, ev: dict) -> bool:
+        entry = self.hub.store.get("pipeline_submission", str(ev.get("task_id") or ""))
+        if not self.s.policy.bioinfo_agent.pipeline_pr or not entry or entry.get("state") in {"open", "rejected"}:
+            return True
+        submission = entry.get("submission") or {}
+        reason = self._pipeline_rejection(submission)
+        if reason:
+            await self._pipeline_status(entry, "rejected", reason)
+            return True
+        gh = self.client()
+        if gh is None:
+            await self._pipeline_status(entry, "pending", f"{self.s.github.token_env} is not set")
+            return False
+
+        repo = self.s.policy.bioinfo_agent.pipeline_repo
+        base = self.s.policy.bioinfo_agent.pipeline_base_branch
+        name = submission["name"]
+        branch = f"labhq-{name}-{str(entry.get('request_id') or entry['task_id'])[-8:]}"
+        marker = f"<!-- labhq pipeline {entry['task_id']} -->"
+        try:
+            info = await gh.repo_info(repo)
+            if info.get("private") is True or info.get("visibility") not in {None, "public"}:
+                await self._pipeline_status(entry, "rejected", "pipeline target repository is not public")
+                return True
+            existing = await gh.find_pull(repo, branch, marker)
+            if existing is None:
+                if await gh.path_exists(repo, f"pipelines/{name}", base):
+                    await self._pipeline_status(entry, "rejected", "pipeline target already exists")
+                    return True
+                sha = await gh.branch_sha(repo, base)
+                if not sha:
+                    raise RuntimeError("pipeline base branch has no commit")
+                try:
+                    await gh.create_branch(repo, branch, sha)
+                except GitHubHTTPError as error:
+                    if error.status_code != 422:
+                        raise
+                for item in submission["files"]:
+                    await gh.put_file(repo, item["path"], item["content"],
+                                      f"{name} pipeline: add generated file", branch)
+                body = (f"labhq bioinfo-agent가 만든 `{name}` pipeline입니다.\n\n"
+                        f"{submission.get('summary') or ''}\n\n{marker}")
+                existing = await gh.create_pull(repo, submission.get("title") or f"{name} pipeline 추가",
+                                                body, branch, base)
+            await self._pipeline_status(entry, "open", url=existing.get("html_url"),
+                                        number=existing.get("number"))
+            return True
+        except GitHubHTTPError as error:
+            if error.status_code in {401, 403, 404}:
+                await self._pipeline_status(entry, "pending", "bioinfo-agent repository write permission required")
+                return False
+            raise
+
     async def handle(self, ev: dict) -> bool | None:
         rid = ev["request_id"]
+        if ev["type"] == "pipeline.ready":
+            return await self._handle_pipeline(ev)
         proj = self.project_of(rid)
         if not proj or not proj.repo or root_zone_restricted(self.s.policy):
             return
