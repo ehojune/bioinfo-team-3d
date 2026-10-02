@@ -405,3 +405,50 @@ def test_resume_quota_endpoint_releases_the_real_hold(tmp_path):
         response = client.post("/api/requests/r/steps/A/resume-quota", headers=headers, json={})
     assert response.status_code == 200 and response.json()["released"] == [{"request_id": "r", "step_id": "A"}]
     assert "quota_waits" not in hub.requests["r"]
+
+
+def test_a_yearless_feb_29_reset_after_the_leap_day_uses_the_default_wait():
+    # #302 review: the next year has no Feb 29; that must not crash the runner's quota handling.
+    now = datetime(2028, 3, 1, 12, 0).astimezone().timestamp()
+    parsed = parse_quota_wait("codex", "You've hit your usage limit. Your limit resets Feb 29 9am",
+                              now=now, default_wait_s=900)
+    assert parsed and not parsed.parsed and parsed.resume_at == now + 900
+
+
+@pytest.mark.asyncio
+async def test_a_followup_quota_wait_keeps_the_finished_request_status(tmp_path):
+    # #302 review: a follow-up on a done request parks and resumes without reopening it.
+    hub = _hub(tmp_path)
+    hub.requests["r"]["status"] = "done"
+    parked = asyncio.Event()
+    original_publish = hub.publish
+
+    async def publish(event, *args, **kwargs):
+        await original_publish(event, *args, **kwargs)
+        if event["type"] == "request.step_quota_wait":
+            parked.set()
+
+    hub.publish = publish
+    waiter = asyncio.create_task(hub.wait_quota("r", "followup-1", "codex", resume_at=9999999999,
+                                                deadline_at=9999999999, reason="limit"))
+    await asyncio.wait_for(parked.wait(), 1)
+    assert hub.requests["r"]["status"] == "done"
+    await hub.force_quota_resume("r", "followup-1")
+    assert await asyncio.wait_for(waiter, 1)
+    assert hub.requests["r"]["status"] == "done" and "quota_waits" not in hub.requests["r"]
+
+
+def test_restart_drops_a_followup_quota_wait_on_a_finished_request(tmp_path):
+    # The follow-up is interrupted by the restart; its wait must not hold the engine or rerun the request.
+    hub = _hub(tmp_path)
+    hub.requests["r"].update(status="done", quota_waits={
+        "followup-1": {"engine": "codex", "resume_at": 9999999999, "deadline_at": 9999999999,
+                       "reason": "limit"}})
+    hub.save_request("r")
+    hub.store.close()
+
+    restored = Hub(hub.s)
+    assert restored.requests["r"]["status"] == "done"
+    assert "quota_waits" not in restored.requests["r"]
+    assert restored.quota_hold("codex") is None
+    restored.store.close()

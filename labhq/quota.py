@@ -75,7 +75,10 @@ def _absolute_reset(text: str, now: datetime) -> datetime | None:
         except ValueError:
             return None
         if not match.group("year") and target <= now:
-            target = target.replace(year=year + 1)
+            try:
+                target = target.replace(year=year + 1)
+            except ValueError:  # "Feb 29" after this leap day: no reading, so the bounded default wait applies
+                return None
         return target
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     weekday = match.group("weekday")

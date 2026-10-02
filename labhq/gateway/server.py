@@ -203,6 +203,11 @@ class Hub:
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
             if stale:
                 self.save_request(rid)
+            if not is_active_request(req.get("status")) and req.get("quota_waits"):
+                # Only a follow-up parks on a finished request, and it was interrupted above; its wait must not
+                # hold the engine or send the finished request back through run_request (#302 review).
+                req.pop("quota_waits")
+                self.save_request(rid)
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
                 for a in self.approvals.values()
@@ -270,7 +275,9 @@ class Hub:
                  "reason": short(reason, 500), "waiting_since": time.time()}
         previous = (req.get("quota_waits") or {}).get(step_id)
         req.setdefault("quota_waits", {})[step_id] = entry
-        req["status"] = "waiting_quota"
+        if is_active_request(req.get("status")):
+            # A follow-up on a finished request parks without reopening it: done/failed stays (#302 review).
+            req["status"] = "waiting_quota"
         self.save_request(rid)
         if previous != entry:
             await self.publish({"type": "request.step_quota_wait", "ts": time.time(), "request_id": rid,
