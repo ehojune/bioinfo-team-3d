@@ -7,3 +7,7 @@ rows:
   at: 2026-10-02 19:26
   text: 새 pipeline 자동 PR은 기본 꺼짐(policy.bioinfo_agent.pipeline_pr로 켬). 켜도 pipeline
     소스와 https 테스트 목록만 받고 절대경로는 모두 거부
+- sha: 60c3249
+  at: 2026-10-02 19:36
+  text: pipeline PR은 확장자로 코드만 받고 json·yaml·md는 정해진 pipeline 경로에서만 받음. 성공으로 끝난 turn의
+    산출만 제출
