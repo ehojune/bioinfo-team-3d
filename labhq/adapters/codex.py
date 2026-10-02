@@ -33,6 +33,7 @@ ELEVATED_SETUP_ERROR = (
     "LabHQ did not fall back to a weaker sandbox."
 )
 CODEX_HOME_STATE = ("auth.json", "installation_id", "sessions", ".sandbox", ".sandbox-bin")
+CACHE_DIRS = {"PIP_CACHE_DIR": "pip", "MPLCONFIGDIR": "matplotlib", "XDG_CACHE_HOME": "xdg"}
 
 
 SPAWN_FAILED = "Failed to create unified exec process:"  # Codex's own wording when it cannot start a command
@@ -74,6 +75,17 @@ class CodexAdapter(AgentAdapter):
         write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
         if ctx.task.output_schema:
             ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
+
+    def staff_env(self, ctx: RunContext) -> dict[str, str]:
+        env = super().staff_env(ctx)
+        if ctx.read_only:
+            return env
+        cache_root = ctx.workdir / ".labhq" / "cache"
+        present = {name.casefold() for name in env}
+        for name, directory in CACHE_DIRS.items():
+            if name.casefold() not in present:
+                env[name] = str(cache_root / directory)
+        return env
 
     def compose_prompt(self, ctx: RunContext) -> str:
         t = ctx.task
