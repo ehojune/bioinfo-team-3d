@@ -32,6 +32,8 @@ _LINK_ERRNOS = {errno.ELOOP, errno.ENOTDIR, getattr(errno, "EMLINK", errno.ELOOP
 _ERROR_DIRECTORY = 267  # Windows: a file where a folder was asked for
 _FLAGS = (os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
           | getattr(os, "O_CLOEXEC", 0))
+_FILE_FLAGS = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+               | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0))
 
 
 def _not_plain(exc: OSError) -> OSError:
@@ -79,6 +81,33 @@ class HeldDir:
             return False
         with other:
             return other.ident == self.ident
+
+    def open_read_file(self, name: str) -> int:
+        """Open a regular child file for reading relative to this held folder, without following a link."""
+        if os.name == "nt":
+            handle = _win_open_child_file(self._handle, name)
+            try:
+                attributes, _ident = _win_info(handle)
+                if (attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                        or attributes & stat.FILE_ATTRIBUTE_DIRECTORY):
+                    raise NotPlainFolder(errno.ENOTDIR, f"{name} is a link or not a regular file")
+                fd = msvcrt.open_osfhandle(handle, _FILE_FLAGS)
+                handle = None
+                return fd
+            finally:
+                if handle is not None:
+                    _close(handle)
+        try:
+            fd = os.open(name, _FILE_FLAGS, dir_fd=self._handle)
+        except OSError as exc:
+            raise _not_plain(exc) from None
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise NotPlainFolder(errno.ENOTDIR, f"{name} is not a regular file")
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
 
     def entries(self, limit: int) -> list[HeldEntry]:
         """At most `limit` entries of this folder, in the order the file system lists them."""
@@ -248,6 +277,22 @@ if os.name == "nt":
         # FILE_OPEN; FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT
         status = _ntdll.NtCreateFile(ctypes.byref(handle), _ACCESS, ctypes.byref(attributes),
                                      ctypes.byref(status_block), None, 0, _SHARE, 1, 0x1 | 0x20 | 0x200000, None, 0)
+        if status < 0:
+            raise ctypes.WinError(_ntdll.RtlNtStatusToDosError(status))
+        return handle.value
+
+    def _win_open_child_file(parent: int, name: str) -> int:
+        """NtCreateFile relative to the parent's handle, requiring a non-directory non-link file."""
+        buffer = ctypes.create_unicode_buffer(name)
+        size = ctypes.sizeof(buffer) - ctypes.sizeof(ctypes.c_wchar)
+        object_name = _UnicodeString(size, size, ctypes.cast(buffer, ctypes.c_void_p))
+        attributes = _ObjectAttributes(ctypes.sizeof(_ObjectAttributes), parent, ctypes.pointer(object_name), 0,
+                                       None, None)
+        handle, status_block = wintypes.HANDLE(), _IoStatusBlock()
+        # FILE_OPEN; FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT
+        status = _ntdll.NtCreateFile(ctypes.byref(handle), _ACCESS, ctypes.byref(attributes),
+                                     ctypes.byref(status_block), None, 0, _SHARE, 1, 0x40 | 0x20 | 0x200000,
+                                     None, 0)
         if status < 0:
             raise ctypes.WinError(_ntdll.RtlNtStatusToDosError(status))
         return handle.value

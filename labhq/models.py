@@ -253,6 +253,8 @@ class AskRequest(BaseModel):
     tried: list[str] = Field(default_factory=list, max_length=12)
     options: list[str] = Field(default_factory=list, max_length=12)
     refs: list[str] = Field(default_factory=list, max_length=20)
+    # Set by the runner's capability token, never trusted from the MCP caller (#86).
+    source_workdir: str | None = None
     wait: Literal["short", "hibernate"] = "short"
     created_at: float = Field(default_factory=time.time)
 

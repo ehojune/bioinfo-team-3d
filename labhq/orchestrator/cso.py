@@ -13,7 +13,7 @@ import json
 import re
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
@@ -261,6 +261,8 @@ Question: {question}
 Why blocked: {why_blocked}
 Tried: {tried}
 Options: {options}
+Refs in the blocked task workspace: {refs}
+{reference_note}
 
 Request: {request}
 Plan: {plan}"""
@@ -955,8 +957,10 @@ class Orchestrator:
 
     async def answer_ask(self, ask: AskRequest, runner_id: str) -> None:
         """Route one bounded question. Hard stops are classified before any model runs."""
+        normalized_refs = [str(PurePosixPath(ref.replace("\\", "/"))) for ref in ask.refs]
         signature = hashlib.sha256(
-            f"{ask.task_id}\0{ask.to}\0{ask.question.strip().casefold()}".encode("utf-8")
+            (f"{ask.task_id}\0{ask.to}\0{ask.question.strip().casefold()}\0"
+             + json.dumps(normalized_refs, ensure_ascii=False, separators=(",", ":"))).encode("utf-8")
         ).hexdigest()
         entries = self.hub.store.all("ask")
         current = entries.get(ask.id) or {}
@@ -1051,10 +1055,18 @@ class Orchestrator:
                 reason=refusal, **{"from": "labhq", "routed_to": routed}))
             return
 
+        # A task workdir belongs to its runner's filesystem. The gateway only forwards it when the
+        # consult will run on that same runner; the runner validates the path and refs before launch.
+        same_runner = self.hub.agent_runner.get(routed) == runner_id
+        refs = normalized_refs if same_runner else []
+        source_workdir = ask.source_workdir if refs and ask.source_workdir else None
+        reference_note = ("참고 파일은 다른 runner에 있어 읽을 수 없다"
+                          if ask.refs and not same_runner else "")
         request = self.hub.requests.get(ask.request_id or "", {})
         prompt = CONSULT_PROMPT.format(
             sender=ask.agent_id, question=ask.question, why_blocked=ask.why_blocked,
             tried=json.dumps(ask.tried, ensure_ascii=False), options=json.dumps(ask.options, ensure_ascii=False),
+            refs=json.dumps(refs, ensure_ascii=False), reference_note=reference_note,
             request=clip(request.get("text") or "", 4000), plan=clip(json.dumps(request.get("plan") or {},
                                                                                  ensure_ascii=False), 6000),
         )
@@ -1084,7 +1096,10 @@ class Orchestrator:
                     agent_id=routed, request_id=ask.request_id, prompt=prompt,
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
                     meta={"kind": "consult", "ask_id": ask.id, "title": f"{ask.agent_id} 질의 답변",
-                          "agent_overrides": overrides, **({"workdir": workdir} if workdir else {})},
+                          "agent_overrides": overrides,
+                          **({**({"source_workdir": source_workdir} if source_workdir else {}),
+                              "consult_refs": refs} if refs else {}),
+                          **({"workdir": workdir} if workdir else {})},
                 )
                 result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
                                 else self.run_step(consult))

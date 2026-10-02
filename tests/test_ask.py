@@ -13,7 +13,7 @@ from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from labhq.gateway.server import RequestIn, create_app
-from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine
+from labhq.models import ASK_MAX_WAIT_S, ASK_WAIT_SECONDS, AgentSpec, AskRequest, Engine, Task, TaskResult
 from labhq.orchestrator.cso import hard_stop_kind
 from labhq.runner.approvals import Broker
 from labhq.runner.daemon import Runner
@@ -22,6 +22,15 @@ from labhq.util import free_port
 
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def _junction(link: Path, target: Path) -> None:
+    if os.name == "nt":  # a junction needs no symlink privilege
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
 
 
 async def _until(predicate, timeout=20.0):
@@ -119,6 +128,331 @@ async def test_broker_capability_token_cannot_impersonate_another_task():
                                  json={"task_id": "task_a", "agent_id": "analyst", "type": "agent.log"})
         assert good.status_code == 200
     assert seen[-1]["task_id"] == "task_a" and seen[-1]["request_id"] == "req_a"
+
+
+async def test_broker_attaches_the_task_workdir_to_an_ask(tmp_path):
+    seen = []
+
+    async def record(body):
+        seen.append(body)
+
+    broker = Broker(0, record, record, record, record)
+    workdir = str(tmp_path / "runs" / "task_a")
+    token = broker.issue_task_token("task_a", "analyst", "req_a", workdir=workdir)
+    transport = httpx.ASGITransport(app=broker.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://broker") as client:
+        response = await client.post("/ask", headers={"X-Labhq-Token": token}, json={
+            "to": "cso", "question": "Read the table?", "why_blocked": "Need its values",
+            "refs": ["outputs/table.tsv"], "wait": "hibernate",
+        })
+    assert response.status_code == 200
+    assert seen[0].source_workdir == workdir
+
+
+async def test_consult_reads_the_ask_workspace_and_verified_refs(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    source = tmp_path / "runs" / "source"
+    (source / "outputs").mkdir(parents=True)
+    (source / "outputs" / "table.tsv").write_text("n\n3\n", encoding="utf-8")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="three")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="How many?", why_blocked="Need the artifact",
+                     refs=["outputs/table.tsv"], source_workdir=str(source))
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        consult = calls[0]
+        assert consult.meta["source_workdir"] == str(source)
+        assert consult.meta["consult_refs"] == ["outputs/table.tsv"]
+        assert "outputs/table.tsv" in consult.prompt
+        assert consult.meta.get("workdir") != str(source.resolve()), "consult writes only to its own workspace"
+    finally:
+        hub.store.close()
+
+
+async def test_consult_cache_signature_includes_normalized_refs(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True,
+                          text=task.meta["consult_refs"][0])
+
+    hub.dispatch = dispatch
+    common = dict(task_id="source", agent_id="worker", request_id="r", to="cso",
+                  question="What does it say?", why_blocked="Need the artifact",
+                  source_workdir=str(tmp_path / "runs" / "source"))
+    try:
+        await hub.orchestrator.answer_ask(AskRequest(**common, refs=["outputs\\a.tsv"]), "runner")
+        second = AskRequest(**common, refs=["outputs/b.tsv"])
+        await hub.orchestrator.answer_ask(second, "runner")
+        assert len(calls) == 2
+        answer = hub.store.get("ask", second.id)["answer"]
+        assert answer["answer"] == "outputs/b.tsv" and not answer.get("cached")
+    finally:
+        hub.store.close()
+
+
+async def test_gateway_does_not_resolve_a_runner_workdir_when_refs_are_empty(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="General question?", why_blocked="Need advice", refs=[],
+                     source_workdir="Z:/runner-only/missing")
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert answer["status"] == "answered"
+        assert len(calls) == 1
+    finally:
+        hub.store.close()
+
+
+async def test_consult_on_another_runner_withholds_the_source_workspace(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.agents = {"cso": {"engine": "mock"}}
+    hub.agent_runner = {"cso": "runner-b"}
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id="cso", ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    ask = AskRequest(task_id="source", agent_id="worker", request_id="r", to="cso",
+                     question="Read it?", why_blocked="Need the artifact", refs=["outputs/table.tsv"],
+                     source_workdir="C:/runner-a/runs/source")
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner-a")
+        consult = calls[0]
+        assert "source_workdir" not in consult.meta
+        assert "consult_refs" not in consult.meta
+        assert "참고 파일은 다른 runner에 있어 읽을 수 없다" in consult.prompt
+    finally:
+        hub.store.close()
+
+
+async def test_runner_stages_only_declared_consult_refs(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    (source / ".claude" / "rules").mkdir(parents=True)
+    ref = source / "outputs" / "table.tsv"
+    ref.parent.mkdir()
+    ref.write_text("n\n3\n", encoding="utf-8")
+    (source / "secret.tsv").write_text("not declared", encoding="utf-8")
+    (source / "CLAUDE.md").write_text("untrusted instruction", encoding="utf-8")
+    (source / ".claude" / "rules" / "policy.md").write_text("untrusted rule", encoding="utf-8")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read table.tsv", meta={
+        "kind": "consult", "source_workdir": str(source),
+        "consult_refs": ["outputs/table.tsv"]})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok
+        ctx = calls[0]
+        assert str(source.resolve()) not in ctx.extra_dirs
+        staged = ctx.workdir / "refs" / f"consult-{task.id}"
+        files = [path for path in staged.rglob("*") if path.is_file()]
+        assert [path.name for path in files] == ["ref-01.tsv"]
+        assert files[0].read_text(encoding="utf-8") == "n\n3\n"
+        assert "refs/" in ctx.task.prompt and "ref-01.tsv" in ctx.task.prompt
+        source_text = str(source.resolve())
+        manifest = (ctx.workdir / "manifest.json").read_text(encoding="utf-8")
+        assert source_text not in ctx.task.prompt and source_text not in manifest
+        assert "source_workdir" not in ctx.task.meta and "consult_refs" not in ctx.task.meta
+    finally:
+        runner.store.close()
+
+
+async def test_runner_skips_ref_when_parent_becomes_a_link_after_validation(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    parent = source / "outputs"
+    parent.mkdir(parents=True)
+    (parent / "table.tsv").write_text("safe", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "table.tsv").write_text("secret", encoding="utf-8")
+    original = runner._consult_workspace_input
+
+    def swap_after_validation(task):
+        result = original(task)
+        moved = source / "original-outputs"
+        parent.rename(moved)
+        try:
+            _junction(parent, outside)
+        except OSError as error:
+            moved.rename(parent)
+            pytest.skip(f"this OS account cannot create the directory link ({error})")
+        return result
+
+    monkeypatch.setattr(runner, "_consult_workspace_input", swap_after_validation)
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the ref", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": ["outputs/table.tsv"]})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok and len(calls) == 1
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        assert list(staged.iterdir()) == []
+        assert "참고 파일 제외" in calls[0].task.prompt
+        assert "secret" not in calls[0].task.prompt
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("raw_ref", ["../outside.tsv", "folder"])
+async def test_runner_rejects_non_file_consult_refs(tmp_path, monkeypatch, raw_ref):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    (source / "folder").mkdir(parents=True)
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the ref", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": [raw_ref]})
+    try:
+        result = await runner.run_task(task)
+        assert not result.ok and "consult refs" in (result.error or "")
+        assert calls == []
+    finally:
+        runner.store.close()
+
+
+async def test_runner_renames_instruction_named_consult_refs(tmp_path, monkeypatch):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    source = Path(settings.runner.workspace_root) / "source"
+    (source / ".claude" / "rules").mkdir(parents=True)
+    refs = ["CLAUDE.md", "AGENTS.md", "GEMINI.md", ".claude/rules/policy.md"]
+    for raw_ref in refs:
+        path = source / raw_ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(raw_ref, encoding="utf-8")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read the refs", meta={
+        "kind": "consult", "source_workdir": str(source), "consult_refs": refs})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        names = {path.name.casefold() for path in staged.iterdir()}
+        assert names == {f"ref-{number:02d}.md" for number in range(1, 5)}
+        assert not {"claude.md", "agents.md", "gemini.md"} & names
+        assert ".claude" not in {part.casefold() for path in staged.rglob("*") for part in path.parts}
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize("cap", ["file", "total"])
+async def test_runner_skips_consult_refs_over_size_caps(tmp_path, monkeypatch, cap):
+    settings = Settings()
+    settings.runner.state_dir = str(tmp_path / "state")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    runner = Runner(settings)
+    agent = AgentSpec(id="cso", name="CSO", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda task: agent)
+    monkeypatch.setattr("labhq.runner.daemon.CONSULT_REF_MAX_FILE_BYTES", 4)
+    monkeypatch.setattr("labhq.runner.daemon.CONSULT_REFS_MAX_TOTAL_BYTES", 6)
+    source = Path(settings.runner.workspace_root) / "source"
+    source.mkdir(parents=True)
+    (source / "first.txt").write_bytes(b"1234")
+    (source / "second.txt").write_bytes(b"56789" if cap == "file" else b"5678")
+    calls = []
+
+    class Adapter:
+        async def run(self, ctx):
+            calls.append(ctx)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text="answer")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *args: Adapter())
+    task = Task(agent_id="cso", prompt="Read refs", meta={
+        "kind": "consult", "source_workdir": str(source),
+        "consult_refs": ["first.txt", "second.txt"]})
+    try:
+        result = await runner.run_task(task)
+        assert result.ok
+        staged = calls[0].workdir / "refs" / f"consult-{task.id}"
+        assert [path.name for path in staged.iterdir()] == ["ref-01.txt"]
+        assert "참고 파일 제외" in calls[0].task.prompt
+        assert "second.txt" in calls[0].task.prompt and "상한" in calls[0].task.prompt
+    finally:
+        runner.store.close()
 
 
 async def test_fake_mcp_client_gets_one_terminal_answer(tmp_path):

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import stat
 import sys
 import time
 import uuid
@@ -22,7 +23,9 @@ import yaml
 
 from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
 from ..adapters.base import RunContext
-from ..adapters.owned import OwnedPathError, owned_link_error, read_owned, write_owned
+from ..adapters.held_dir import HeldDir
+from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
+                              remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
@@ -45,6 +48,9 @@ from .workspace import TaskWorkspace
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
+CONSULT_REF_MAX_FILE_BYTES = 8 * 1024 * 1024
+CONSULT_REFS_MAX_TOTAL_BYTES = 32 * 1024 * 1024
+CONSULT_REF_COPY_CHUNK = 1024 * 1024
 
 
 def labhq_mcp_timeout_s(settings: Settings) -> int:
@@ -502,6 +508,143 @@ class Runner:
             return f"하위 링크가 통제 데이터 구역을 가리키거나 풀 수 없음: {links[0].relative_to(directory).as_posix()}{more}"
         return incomplete
 
+    def _consult_workspace_input(
+        self, task: Task,
+    ) -> tuple[tuple[Path, tuple[str, ...], list[tuple[str, tuple[str, ...]]]] | None, str | None]:
+        """Validate declared runner-local refs; staging reopens every component through held folders (#86)."""
+        raw_source = task.meta.get("source_workdir")
+        refs = task.meta.get("consult_refs") or []
+        if task.meta.get("kind") != "consult" or not refs:
+            return None, None
+        if not raw_source:
+            return None, "consult refs에 원래 작업 폴더가 없습니다"
+        try:
+            workspace_root = self.ws_root.resolve(strict=True)
+            source = Path(str(raw_source))
+            resolved_source = source.resolve(strict=True)
+            if not source.is_dir() or is_link(source) or not resolved_source.is_relative_to(workspace_root):
+                raise ValueError
+            source_parts = resolved_source.relative_to(workspace_root).parts
+            resolved: list[tuple[str, tuple[str, ...]]] = []
+            for raw_ref in refs:
+                normalized = str(raw_ref).replace("\\", "/")
+                if (not normalized or normalized.startswith(("/", "../")) or "/../" in normalized
+                        or normalized.endswith("/..") or re.match(r"^[A-Za-z]:", normalized)):
+                    raise ValueError
+                current = source
+                for part in Path(normalized).parts:
+                    current /= part
+                    if not os.path.lexists(current) or is_link(current):
+                        raise ValueError
+                if (not current.resolve(strict=True).is_relative_to(resolved_source)
+                        or not current.is_file()):
+                    raise ValueError
+                resolved.append((normalized, tuple(Path(normalized).parts)))
+        except (OSError, RuntimeError, ValueError):
+            return None, "consult refs는 이 runner의 원래 작업 폴더 안에 있는 링크 아닌 파일이어야 합니다"
+        return (workspace_root, source_parts, resolved), None
+
+    @staticmethod
+    def _open_consult_ref(root: Path, source_parts: tuple[str, ...], ref_parts: tuple[str, ...]) -> int:
+        """Open a ref relative to handles held from the workspace root through every parent folder."""
+        with contextlib.ExitStack() as stack:
+            held = stack.enter_context(HeldDir.hold(root))
+            for part in (*source_parts, *ref_parts[:-1]):
+                held = stack.enter_context(held.child(part))
+            return held.open_read_file(ref_parts[-1])
+
+    @staticmethod
+    def _copy_consult_ref(fd: int, target: Path, limit: int) -> int | None:
+        """Copy one already-held regular file; None means it grew past the limit."""
+        copied = 0
+        complete = False
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("consult ref is not a regular file")
+            with os.fdopen(fd, "rb") as opened, target.open(mode="xb") as staged:
+                fd = -1
+                while chunk := opened.read(CONSULT_REF_COPY_CHUNK):
+                    copied += len(chunk)
+                    if copied > limit:
+                        return None
+                    staged.write(chunk)
+            complete = True
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if not complete and os.path.lexists(target):
+                remove_entry(target)
+        return copied
+
+    def _stage_consult_refs(self, task: Task, ws: TaskWorkspace) -> tuple[Task, str | None]:
+        """Copy declared refs into this consult's workspace under neutral filenames."""
+        inputs, error = self._consult_workspace_input(task)
+        if task.meta.get("kind") == "consult":
+            task = task.model_copy(update={"meta": {
+                key: value for key, value in task.meta.items()
+                if key not in {"source_workdir", "consult_refs"}
+            }})
+        if error or inputs is None:
+            return task, error
+        workspace_root, source_parts, sources = inputs
+        safe_id = "consult-" + re.sub(r"[^A-Za-z0-9_.-]", "_", task.id)[:80]
+        relative_root = Path("refs") / safe_id
+        staged_root = plain_directory(ws.dir, relative_root)
+        if staged_root is None:
+            return task, "consult refs 복사 폴더를 안전하게 만들 수 없습니다"
+        try:
+            for entry in staged_root.iterdir():
+                remove_entry(entry)
+        except OSError:
+            return task, "consult refs 복사 폴더를 안전하게 비울 수 없습니다"
+
+        total = 0
+        copied: dict[str, str] = {}
+        skipped: list[tuple[str, str]] = []
+        for number, (raw_ref, ref_parts) in enumerate(sources, 1):
+            fd = -1
+            try:
+                fd = self._open_consult_ref(workspace_root, source_parts, ref_parts)
+                size = os.fstat(fd).st_size
+            except OSError:
+                if fd >= 0:
+                    os.close(fd)
+                skipped.append((raw_ref, "검증 뒤 경로가 바뀌었거나 안전하게 열 수 없음"))
+                continue
+            if size > CONSULT_REF_MAX_FILE_BYTES:
+                os.close(fd)
+                skipped.append((raw_ref, f"개별 파일 크기 상한 {CONSULT_REF_MAX_FILE_BYTES} bytes 초과"))
+                continue
+            if total + size > CONSULT_REFS_MAX_TOTAL_BYTES:
+                os.close(fd)
+                skipped.append((raw_ref, f"전체 크기 상한 {CONSULT_REFS_MAX_TOTAL_BYTES} bytes 초과"))
+                continue
+            suffix = Path(raw_ref).suffix if re.fullmatch(r"\.[A-Za-z0-9]{1,10}", Path(raw_ref).suffix) else ".bin"
+            relative = relative_root / f"ref-{number:02d}{suffix.lower()}"
+            try:
+                actual = self._copy_consult_ref(
+                    fd, ws.dir / relative,
+                    min(CONSULT_REF_MAX_FILE_BYTES, CONSULT_REFS_MAX_TOTAL_BYTES - total),
+                )
+            except OSError:
+                skipped.append((raw_ref, "안전하게 복사할 수 없음"))
+                continue
+            if actual is None:
+                skipped.append((raw_ref, "복사 중 크기 상한 초과"))
+                continue
+            total += actual
+            copied[raw_ref] = relative.as_posix()
+
+        notes = []
+        if copied:
+            notes.append("참고 파일 복사본(이 경로만 읽으세요): "
+                         + json.dumps(copied, ensure_ascii=False, sort_keys=True))
+        notes.extend(f"참고 파일 제외: {json.dumps(raw_ref, ensure_ascii=False)} ({reason})"
+                     for raw_ref, reason in skipped)
+        if notes:
+            task = task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(notes)})
+        return task, None
+
     async def _project_links(self, directories: list[str], zones: list[Path], emit,
                              fail_closed: bool = False) -> tuple[list[str], str | None]:
         """Links in a writable project folder that lead into a zone, and their aliases, for Claude deny rules (#132).
@@ -607,6 +750,9 @@ class Runner:
         base = self.ws_root.resolve()
         owned |= {Path(d).resolve() for d in task.meta.get("upstream_dirs", [])
                   if Path(d).resolve().is_relative_to(base)}
+        source = task.meta.get("source_workdir")
+        if source and Path(source).resolve().is_relative_to(base):
+            owned.add(Path(source).resolve())
         return ReadOnlyWatch(roots, self.s.runner.read_only_check_max_entries, owned, skip), notes
 
     async def _read_only_verdict(self, result: TaskResult, watch: ReadOnlyWatch, emit, ws: TaskWorkspace,
@@ -690,6 +836,14 @@ class Runner:
                 self.task_req[task.id] = task.request_id
             assert ws is not None
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            task, consult_error = self._stage_consult_refs(task, ws)
+            ws.task = task
+            if consult_error:
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=consult_error)
+                await emit("agent.log", {"level": "alert", "text": consult_error})
+                await emit("agent.status", {"state": "error", "error": short(consult_error, 200)})
+                await emit("task.result", result.model_dump(mode="json"))
+                return result
             # Every folder opened to the task is judged by the same zone rule (intake.overlaps_zone) (#132).
             denied_links, _incomplete = await self._project_links(extra_dirs, zones, emit)
             unruled = [link for link in denied_links if not claude_rule_ready(link)]
@@ -756,7 +910,7 @@ class Runner:
                 await emit("agent.status", {"state": "error", "error": error})
                 await emit("task.result", result.model_dump(mode="json"))
                 return result
-            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id)
+            broker_token = self.broker.issue_task_token(task.id, agent.id, task.request_id, workdir=str(ws.dir))
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),

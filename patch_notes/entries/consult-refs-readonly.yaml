@@ -1,0 +1,23 @@
+pr: 323
+rows:
+- sha: 17af209
+  at: 2026-10-02 21:29
+  text: ask의 원래 작업 폴더와 검증된 refs를 consult read-only 입력으로 연결하고 Claude 숨김 메모리 실측을 남김
+- sha: 0fef219
+  at: 2026-10-02 21:38
+  text: gateway는 runner 경로를 전달만 하고 같은 runner가 consult refs를 작업 폴더 안에서 검증하도록 고침
+- sha: e8b22c8
+  at: 2026-10-02 21:49
+  text: consult source를 열지 않고 검증한 ref 파일만 refs/에 중립 이름으로 복사하며 파일·전체 크기 상한을 적용
+- sha: 8ffc390
+  at: 2026-10-02 22:02
+  text: consult staging 경로를 숨기고 ref를 handle로 복사하며 ask cache를 ref별로 분리
+- sha: 6115d9d
+  at: 2026-10-02 22:05
+  text: 'main 병합: held_dir에 consult용 상대 파일 열기와 main의 소유 파일 쓰기를 함께 둠'
+- sha: 8d1830e
+  at: 2026-10-02 22:06
+  text: HeldDir 읽기용 open_read_file과 쓰기용 open_file을 나눔(병합 뒤 같은 이름 충돌)
+- sha: bf27728
+  at: 2026-10-02 22:20
+  text: consult ref 복사의 이진 모드를 keyword로 넘겨 text encoding 검사를 통과

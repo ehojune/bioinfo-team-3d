@@ -483,6 +483,15 @@ async def test_a_read_only_claude_run_excludes_memory_files_in_workspace_subfold
     assert not any(_glob(pattern, f"{wd}/outputs/result.md") for pattern in excludes), "only memory files"
 
 
+def test_real_claude_probe_read_hidden_outputs_without_loading_memory():
+    result = json.loads((Path(__file__).parent / "fixtures/real/claude_code/claude_hidden_memory_excludes.json")
+                        .read_text(encoding="utf-8"))
+    assert result["claude_version"] == "2.1.282 (Claude Code)"
+    assert result["excluded_exit_code"] == 0 and result["excluded_read_values"] is True
+    assert result["excluded_loaded_plain_memory"] is False
+    assert result["excluded_loaded_hidden_memory"] is False
+
+
 @pytest.mark.asyncio
 async def test_case_ignored_claude_exclude_adds_the_rule_spelling_inside_a_hidden_folder(
         tmp_path, monkeypatch, spawned):
