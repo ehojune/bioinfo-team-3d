@@ -2073,8 +2073,27 @@ async def test_unresolved_review_still_gets_a_cso_report():
     assert len(kinds(hub, "synthesis")) == 1
     assert req["status"] == "failed" and req["outcome"] == "review_unresolved"
     assert req["report"].startswith("CSO report body")
-    assert "Review: revisions unresolved." not in req["report"]
+    # labhq appends every open issue verbatim: the CSO saw the review clipped to 3,000 characters (PR #338 review)
+    assert "Review: revisions unresolved. The reviewer's open issues, verbatim:\n- A: no sensitivity check → add one" \
+        in req["report"]
+    assert req["error"] == "리뷰 지적이 수정 상한 뒤에도 남아 있습니다"
     assert req["review"]["verdict"] == "revise"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_report_lists_every_open_issue_even_past_the_prompt_clip():
+    """Five long issues overflow the 3,000-character review in the synthesis prompt; the report still lists all."""
+    issues = [{"step_id": "A", "problem": f"issue {i} " + "x" * 700, "request": f"fix {i}"} for i in range(5)]
+    hub = unresolved_hub(lambda task: result(task, text="CSO report body"))
+    UNRESOLVED_REVIEW["issues"], saved = issues, UNRESOLVED_REVIEW["issues"]
+    try:
+        await Orchestrator(hub).run_request("r")
+    finally:
+        UNRESOLVED_REVIEW["issues"] = saved
+    report = hub.requests["r"]["report"]
+    assert all(f"→ fix {i}" in report for i in range(5))
+    synthesis = kinds(hub, "synthesis")[0]
+    assert "fix 4" not in synthesis.prompt  # the clip the appended list makes up for
 
 
 @pytest.mark.asyncio

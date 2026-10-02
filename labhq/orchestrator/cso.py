@@ -2964,9 +2964,17 @@ class Orchestrator:
                     final = await self.run_step(synthesis)
                 except BudgetExceeded as error:
                     final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
-                self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
-                             f"\n\nReview: revisions unresolved.\n\nSynthesis failed: {final.error}",
-                             serialized_results(), ok=False, review=review)
+                # The CSO sees the review clipped to 3,000 characters, so labhq appends every open issue itself:
+                # the report always carries the full list, whatever the synthesis left out (PR #338 review).
+                open_issues = "\n".join(
+                    f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
+                    for issue in review.get("issues") or [])
+                self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
+                                   f"\n\nSynthesis failed: {final.error}") +
+                             "\n\nReview: revisions unresolved. The reviewer's open issues, verbatim:\n" +
+                             (open_issues or "- (no issue text)"),
+                             serialized_results(), ok=False, review=review,
+                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
                 return
             final = await self.run_step(synthesis)
             self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
