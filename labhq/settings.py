@@ -30,6 +30,7 @@ class RunnerSettings(BaseModel):
     workspace_root: str = "~/.labhq/runs"
     agents_dir: str = "./agents"
     talent_dir: str = "~/.labhq/talent"  # 인재풀: every contract ever hired, kept for rehire
+    contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
     broker_port: int = 8788
     task_timeout_s: int = 6 * 3600
     job_poll_s: int = 60

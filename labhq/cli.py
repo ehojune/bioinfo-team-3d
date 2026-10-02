@@ -686,7 +686,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "talent":
         from .registry import Registry
 
-        reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir))
+        reg = Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir),
+                       s.path(s.runner.contract_dir) if s.runner.contract_dir else None)
         for spec in reg.talent_pool():
             c = spec.contract
             print(f"🐥 {Path(c.talent_dir).name if c and c.talent_dir else spec.id:<24} {spec.name:<24} "

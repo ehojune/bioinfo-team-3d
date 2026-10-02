@@ -194,7 +194,7 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
                             "state_dir": f"{root}/state/gateway"})
             runner.update({"id": instance, "broker_port": _unused_port(used),
                            "state_dir": f"{root}/state/runner", "workspace_root": f"{root}/runs",
-                           "talent_dir": f"{root}/talent"})
+                           "talent_dir": f"{root}/talent", "contract_dir": f"{root}/contract"})
             data["instance"] = instance
         agents_dir = _find_agents_dir(target, data.setdefault("runner", {}).get("agents_dir", "../agents"))
         if agents_dir is None:

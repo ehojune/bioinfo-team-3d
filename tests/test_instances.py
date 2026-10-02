@@ -112,3 +112,15 @@ def test_an_uninitialised_instance_name_is_refused_instead_of_using_defaults(iso
     assert exc.value.code == 2
     cli.main(["init", "--instance", "typo", "--yes"])  # init itself still creates it
     cli.main(["agents", "--instance", "typo"])
+
+
+def test_instances_keep_their_own_contract_roster(isolated_home):
+    """#303 review: hiring or releasing in one instance must not change another's roster."""
+    from labhq.registry import Registry
+    cli.main(["init", "--instance", "lab1", "--yes"])
+    cli.main(["init", "--instance", "lab2", "--yes"])
+    one, two = (Settings.load(str(_instance(isolated_home, n)[0])) for n in ("lab1", "lab2"))
+    assert one.runner.contract_dir and one.runner.contract_dir != two.runner.contract_dir
+    regs = [Registry(s.path(s.runner.agents_dir), s.path(s.runner.talent_dir), s.path(s.runner.contract_dir)) for s in (one, two)]
+    assert regs[0].contract_dir != regs[1].contract_dir
+    assert regs[0].agents_dir == regs[1].agents_dir  # core staff are shared on purpose
