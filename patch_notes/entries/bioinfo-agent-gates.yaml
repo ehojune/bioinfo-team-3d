@@ -1,0 +1,5 @@
+pr: 301
+rows:
+- sha: 9fa63ca
+  at: 2026-10-02 19:09
+  text: bioinfo-agent 질문은 CSO가 답하고 새 파이프라인은 공개 검사 뒤 bioinfo-agent 저장소 PR로 올림
