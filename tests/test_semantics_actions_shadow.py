@@ -331,6 +331,54 @@ async def test_the_backlog_never_overtakes_a_queued_request_job(tmp_path):
     assert not service.action_backlog and len(_lines(tmp_path)) == 2
 
 
+async def test_a_new_epoch_discards_the_old_followup_backlog_and_starts_the_new_one(tmp_path, monkeypatch):
+    """#258: work owned by the closed epoch must not keep pending nonzero or stop a new worker."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    monkeypatch.setattr(service, "ensure_thread", lambda: None)
+    service.queue.put_nowait((service.gen, service.queue, {"job": "placeholder"}))
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    service.action_skipped = 2
+    service.current = (service.gen, time.monotonic())  # the job holding the queue looks stuck
+    assert (len(service.action_backlog), service.pending) == (1, 1)
+
+    service.new_epoch(2)
+    assert (len(service.action_backlog), service.action_skipped, service.pending) == (0, 0, 0)
+    assert service.counts["discarded"] == 1
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    shadow.ShadowService.ensure_thread(service)
+    assert service.drain(10)
+    assert [(line["phase"], line["epoch"], line["busy_skipped"]) for line in _lines(tmp_path)] == [("ended", 2, 0)]
+
+
+async def test_the_closed_epochs_worker_never_takes_the_new_epochs_pending_count(tmp_path, monkeypatch):
+    """#258: the old thread returns after a new epoch replaced its queue; drain still waits for the new work."""
+    from labhq.research import semantics_shadow as shadow
+
+    hub = _hub(tmp_path)
+    service = hub.semantics_shadow
+    hub.requests["req_f1"] = {"id": "req_f1", "status": "done",
+                              "followups": [{"id": "fu_1", "status": "done"}]}
+    old = service.queue
+    old.put_nowait((service.gen, old, {"job": "placeholder"}))
+    service.pending = 1
+    service.current = (service.gen, time.monotonic())
+    service.new_epoch(2)
+    assert service.queue is not old and service.pending == 0
+    monkeypatch.setattr(service, "ensure_thread", lambda: None)  # the new epoch's worker has not started yet
+    service.after_followup("req_f1", "fu_1", "ended", "done")
+    assert service.pending == 1
+    service.run(old)  # the old thread: its closed-epoch job is dropped and it ends
+    assert service.pending == 1 and not service.drain(0.1)
+    shadow.ShadowService.ensure_thread(service)
+    assert service.drain(10)
+    assert [(line["phase"], line["epoch"]) for line in _lines(tmp_path)] == [("ended", 2)]
+
+
 def acts_report(lines):
     from labhq.research import semantics_actions as acts
     return acts.report(lines, setting="shadow", on=True)
@@ -424,7 +472,7 @@ async def test_removing_the_action_layer_only_leaves_the_b1_shadow_working(tmp_p
     hub.save_request("req_inflight1")
     summary = removal.check(tmp_path / "lab" / "state", only="actions")
     assert summary["files"] == removal.ACTIONS_OWNED
-    assert summary["hook_lines"] == 8 + 23 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 23
+    assert summary["hook_lines"] == 8 + 24 and summary["blocks"] == 2  # server 4, cso 4, semantics_shadow 24
     assert summary["state"] == {"done": 1, "interrupted": 1, "resume_approvals": 1, "b1_line": "ok",
                                 "actions_field": False}
     assert " passed" in summary["pytest"] and "failed" not in summary["pytest"]

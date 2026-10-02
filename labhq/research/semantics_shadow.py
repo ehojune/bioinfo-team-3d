@@ -1631,6 +1631,7 @@ class ShadowService:
             self.epoch, self.latched, self.gen = epoch, None, self.gen + 1
             self.recent.clear()
             self.consecutive = self.busy = self.busy_skipped = 0
+            self.drop_backlog()  # semantics-hook: actions (#258)
             if stuck:  # the old thread may never return; give the new epoch its own worker
                 self.queue, self.thread, self.pending = queue.Queue(maxsize=1), None, 0
             self.current = None  # an older job belongs to the closed epoch: no stuck check, no watchdog trip
@@ -1726,6 +1727,16 @@ class ShadowService:
             log.warning("semantics actions skipped a follow-up observation (%s)", type(exc).__name__)
             self.outcome(failed=True, on_loop=True)
 
+    def drop_backlog(self) -> None:
+        """Under self.lock, when a new epoch starts (#258): the closed epoch's waiting follow-up observations, their
+        drop count and their share of pending go, so neither drain() nor the next follow-up waits on work that would
+        only be discarded."""
+        dropped = len(self.action_backlog)
+        self.action_backlog.clear()
+        self.action_skipped = 0
+        self.counts["discarded"] += dropped
+        self.pending = max(0, self.pending - dropped)
+
     def yield_followup(self) -> None:
         """Event loop side, under self.lock, just before a request job is queued: a follow-up observation still
         waiting in the queue of one steps back to the front of the backlog, so a request job finds the queue as
@@ -1761,7 +1772,8 @@ class ShadowService:
                 self.outcome(failed=True)
             finally:
                 with self.lock:
-                    self.pending = max(0, self.pending - 1)
+                    if jobs is self.queue:  # a replaced queue's count was cleared with it (#258)
+                        self.pending = max(0, self.pending - 1)
     # semantics-actions: end
 
     def ensure_thread(self) -> None:
@@ -1799,7 +1811,8 @@ class ShadowService:
                 self.outcome(failed=True)
             finally:
                 with self.lock:
-                    self.pending = max(0, self.pending - 1)
+                    if jobs is self.queue:  # a new epoch's replaced queue took this job's count with it (#258)
+                        self.pending = max(0, self.pending - 1)
                 self.work_backlog(jobs)  # semantics-hook: actions
 
     def work(self, gen: int, snap: dict) -> None:
