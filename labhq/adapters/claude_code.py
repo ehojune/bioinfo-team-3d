@@ -166,6 +166,13 @@ class ClaudeCodeAdapter(AgentAdapter):
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
 
+    def prompt_pointer_error(self, ctx: RunContext) -> str | None:
+        tools = ctx.agent.builtin_tools
+        if (ctx.prompt_pointer and ctx.prompt == ctx.prompt_pointer and tools is not None
+                and "read" not in {tool.strip().casefold() for tool in tools.split(",")}):
+            return "long prompt requires the Claude Read builtin to open its TASK file; execution refused"
+        return None
+
     def preflight_error(self, ctx: RunContext, env: dict[str, str]) -> str | None:
         # Errors name the configured entry (e.g. ${BIOINFO_AGENT_DIR}), never the resolved path: they reach
         # task results, the final report and project GitHub updates.

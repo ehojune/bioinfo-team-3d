@@ -1,5 +1,6 @@
 """Run each real adapter against a fake CLI that replays that CLI's JSON event stream."""
 
+import errno
 import json
 import sys
 from pathlib import Path
@@ -134,6 +135,51 @@ async def _run_long_prompt(tmp: Path, monkeypatch, *, pointer: str | None, promp
     res = await get_adapter(Engine.claude_code, s).run(ctx)
     argv_file = tmp / "claude.argv"
     return res, json.loads(argv_file.read_text()) if argv_file.exists() else None
+
+
+async def test_posix_argument_byte_limit_goes_by_task_file(tmp_path, monkeypatch):
+    from labhq.adapters import base
+    monkeypatch.setattr(base, "command_line_limit", lambda: None)
+    monkeypatch.setattr(base, "argument_byte_limit", lambda: 6000)
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    res, argv = await _run_long_prompt(
+        tmp_path, monkeypatch, pointer=pointer, prompt="한" * 2500,
+    )
+    assert res.ok, res.error
+    assert argv[argv.index("-p") + 1] == pointer
+
+
+async def test_spawn_e2big_is_a_failed_result(tmp_path, monkeypatch):
+    from labhq.adapters import base
+
+    async def e2big(*args, **kwargs):
+        raise OSError(errno.E2BIG, "argument list too long")
+
+    monkeypatch.setattr(base.asyncio, "create_subprocess_exec", e2big)
+    res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=None, prompt="short")
+    assert argv is None
+    assert not res.ok and "argument list too long" in res.error.lower()
+
+
+async def test_claude_pointer_prompt_requires_read_builtin(tmp_path, monkeypatch):
+    s = Settings()
+    s.engines.claude_code.bin = sys.executable
+    s.engines.claude_code.prefix_args = [str(_fake_cli(tmp_path, "claude"))]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.claude_code, model="m",
+                      builtin_tools="Glob,Grep", system_prompt="ROLE")
+    task = Task(agent_id="a1", prompt="long")
+    wd = tmp_path / "wd"
+    wd.mkdir()
+
+    async def emit(t, d):
+        pass
+
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    ctx = RunContext(task=task, agent=agent, workdir=wd, settings=s, mcp_servers=[], env={}, emit=emit,
+                     prompt=pointer, prompt_pointer=pointer)
+    res = await get_adapter(Engine.claude_code, s).run(ctx)
+    assert not (tmp_path / "claude.argv").exists()
+    assert not res.ok and "Read" in res.error and "long" in res.error
 
 
 async def test_prompt_over_the_command_line_limit_goes_by_task_file(tmp_path, monkeypatch):
