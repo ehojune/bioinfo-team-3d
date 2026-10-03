@@ -240,7 +240,7 @@ RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, 
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
 
-STEP_PROMPT = """Overall request (context only): {request}
+RESEARCH_STEP_PROMPT = """Overall request (context only): {request}
 
 Your step ({step_id}): {instruction}
 
@@ -250,6 +250,62 @@ and if you give it up, say what you tried and why you stopped. If you cannot pro
 return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
 with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work."""
+
+STEP_PROMPT = RESEARCH_STEP_PROMPT + """
+
+Unless you are returning blocking_decision, end the answer with these exact headings, in this order:
+## Findings
+## Evidence
+## Not established
+## Method changes
+Before making a factual claim, save it to a file and cite its exact workspace path under ## Evidence. A failed
+lookup is neither evidence nor proof of absence. Under ## Method changes, state any weaker method you used and why;
+write None when there was no change. Keep a heading even when its section is empty."""
+
+GENERAL_SECTION_KEYS = {
+    "Findings": "findings",
+    "Evidence": "evidence",
+    "Not established": "not_established",
+    "Method changes": "method_changes",
+}
+_SECOND_LEVEL_HEADING = re.compile(r"^##[ \t]+([^\r\n#]+?)[ \t]*$", re.MULTILINE)
+_PLAIN_OUTPUT_PATH = re.compile(r"(?<![A-Za-z0-9_.-])(?:\./)?outputs[\\/][^\s`\"'<>()\[\]{}]+")
+
+
+def parse_general_result(text: str) -> dict[str, str]:
+    """Read the optional ordinary-step result block. Legacy free text remains unstructured."""
+    matches = list(_SECOND_LEVEL_HEADING.finditer(text or ""))
+    if not any(match.group(1).strip() in GENERAL_SECTION_KEYS for match in matches):
+        return {}
+    sections = {key: "" for key in GENERAL_SECTION_KEYS.values()}
+    for index, match in enumerate(matches):
+        key = GENERAL_SECTION_KEYS.get(match.group(1).strip())
+        if key:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            sections[key] = text[match.end():end].strip()
+    return sections
+
+
+def _general_evidence_paths(text: str) -> list[str]:
+    """Workspace output paths cited in Evidence, in first-seen order."""
+    candidates = re.findall(r"`([^`\r\n]+)`", text or "") + _PLAIN_OUTPUT_PATH.findall(text or "")
+    found = []
+    for candidate in candidates:
+        candidate = candidate.rstrip(".,;:")
+        relative = output_relpath(candidate)
+        if relative and relative.startswith("outputs/") and relative not in found:
+            found.append(relative)
+    return found
+
+
+def attach_general_result(result: TaskResult) -> TaskResult:
+    """Attach the lightweight contract and warn, but never reject, when Evidence names an uncollected path."""
+    sections = parse_general_result(result.text)
+    if not sections:
+        return result
+    collected = {path for raw in [*result.outputs, *result.output_sha256] if (path := output_relpath(raw))}
+    missing = [path for path in _general_evidence_paths(sections["evidence"]) if path not in collected]
+    return result.model_copy(update={"general_sections": sections, "evidence_path_warnings": missing})
 
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
@@ -301,6 +357,9 @@ Team results so far:
 SYNTH_PROMPT = """Write the final report for the PI.
 Structure: 1) answer / recommendation, 2) evidence by step (with file paths), 3) reviewer concerns and how
 they were addressed, 4) what would change the conclusion, 5) next steps (including any proposed contract hires).
+Do not turn a failed lookup into evidence or proof of absence. LabHQ appends the warning section itself; do not
+copy it into your report. Warning preview ("(none)" means there is no warning section):
+{warnings}
 
 Request: {request}
 
@@ -495,6 +554,7 @@ def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     return later.model_copy(update={
         "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
                                      - set(later.outputs)),
+        "tool_errors": [*first.tool_errors, *later.tool_errors],
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })
@@ -590,6 +650,27 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
         before = report[:blocks[0].start()].rstrip()
         return ((before + "\n\n") if before else "") + metadata + "\n\n" + blocks[0].group(0)
     return report.rstrip() + "\n\n" + metadata
+
+
+def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict]) -> str:
+    """Short deterministic warnings for ordinary reports; tool payloads never pass their first bounded line."""
+    lines = []
+    for step in steps:
+        sid = step["id"]
+        result = results.get(sid)
+        if result is None:
+            continue
+        paths = (result.evidence_path_warnings if isinstance(result, TaskResult)
+                 else result.get("evidence_path_warnings") or [])
+        if paths:
+            shown = ", ".join(str(path) for path in paths[:5])
+            suffix = f" (+{len(paths) - 5}개)" if len(paths) > 5 else ""
+            lines.append(f"- {sid}: Evidence 경로 불일치 {len(paths)}건: {shown}{suffix}")
+        errors = result.tool_errors if isinstance(result, TaskResult) else result.get("tool_errors") or []
+        if errors:
+            first = str(errors[0]).splitlines()[0].strip() or "tool failed"
+            lines.append(f"- {sid}: {FAILED_LOOKUP_TITLE} {len(errors)}건; 첫 줄: {short(first, 160)}")
+    return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
 
 
 def _research_plan_digest(plan: dict) -> str:
@@ -1640,6 +1721,7 @@ class Orchestrator:
             previous_session = current.resume_session_id
             previous_result = None
             retry_answers = []
+            tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
                 await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
@@ -1680,6 +1762,9 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                if res.tool_errors:
+                    tool_errors.extend(res.tool_errors)
+                    res = res.model_copy(update={"tool_errors": list(tool_errors)})
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
                 answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
@@ -1719,6 +1804,7 @@ class Orchestrator:
             """Every turn of the step, wake and wrap-up included, parks on a subscription quota and resumes."""
             current = turn
             res = await dispatch_with_retry(current, max_attempts, start)
+            tool_errors = list(res.tool_errors)
             while True:
                 quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
                                                                  default_wait_s=self.cfg.quota_default_wait_s)
@@ -1753,6 +1839,8 @@ class Orchestrator:
                                      **({"workdir": res.workdir} if res.workdir else {})},
                                resume_session_id=res.session_id if can_resume else None)
                 res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
+                tool_errors.extend(res.tool_errors)
+                res = res.model_copy(update={"tool_errors": list(tool_errors)})
 
         res = await dispatch_turn(task, start=initial_attempt)
         overrides = task.meta.get("agent_overrides") or {}
@@ -1804,6 +1892,7 @@ class Orchestrator:
                                              "output_sha256": {**{path: digest for path, digest in
                                                                   res.output_sha256.items() if path not in rewritten},
                                                                **partial.output_sha256},
+                                             "tool_errors": [*res.tool_errors, *partial.tool_errors],
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
@@ -1834,7 +1923,7 @@ class Orchestrator:
                                            previous_result=res, context_chars=self.cfg.context_chars_per_step),
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
-            res = await dispatch_turn(wake)
+            res = merged_turn(res, await dispatch_turn(wake))
         if res.ok and waiting(res):
             res = res.model_copy(update={
                 "ok": False, "error_kind": "wake_limit",
@@ -1936,7 +2025,8 @@ class Orchestrator:
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
-            prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
+            template = RESEARCH_STEP_PROMPT if research_plan else STEP_PROMPT
+            prompt = template.format(request=request, step_id=step["id"], instruction=step["instruction"])
             if research_plan:
                 contract = ((req_state or {}).get("research_contract") or {})
                 prompt += ("\n\nReturn the structured research result contract required by the output schema. "
@@ -1995,6 +2085,7 @@ class Orchestrator:
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
+                               **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),
                                **({"workdir": workdir} if workdir else {})})
@@ -2006,7 +2097,9 @@ class Orchestrator:
                     "context": ""})
             async with sem:
                 outcome = await self.run_step(task)
-                if not research_plan or not outcome.ok or blocking_question(outcome):
+                if not research_plan:
+                    return attach_general_result(outcome)
+                if not outcome.ok or blocking_question(outcome):
                     return outcome
                 if step.get("outputs"):
                     missing = [name for name in step["outputs"] if output_relpath(name) not in outcome.outputs]
@@ -3297,7 +3390,9 @@ class Orchestrator:
             synthesis = Task(
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
-                                           review=short(review, 3000)) + replan_history_note(req) +
+                                           review=short(review, 3000),
+                                           warnings=general_report_warnings(steps, results) or "(none)") +
+                       replan_history_note(req) +
                        (UNRESOLVED_REVIEW_NOTE if unresolved else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})})
@@ -3347,6 +3442,10 @@ class Orchestrator:
         req = self.hub.requests[rid]
         metadata = []
         if req.get("plan", {}).get("steps") and results:
+            if not req.get("research_contract"):
+                warnings = general_report_warnings(req["plan"]["steps"], results)
+                if warnings:
+                    metadata.append(warnings)
             audit = []
             for step in req["plan"]["steps"]:
                 entry = results.get(step["id"], {})

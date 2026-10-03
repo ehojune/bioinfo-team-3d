@@ -2,7 +2,7 @@
 
 import pytest
 
-from labhq.adapters.base import ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer
+from labhq.adapters.base import GENERAL_RESULT_RULES, ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task
@@ -13,11 +13,13 @@ PATH_RULE = "write paths relative to your workspace, not built from shell variab
 WAIT_RULE = "Wait for every command to finish and verify its result before ending your turn"
 
 
-def _ctx(tmp_path, engine, read_only):
+def _ctx(tmp_path, engine, read_only, *, general=False):
     agent = AgentSpec(id="worker", name="Worker", role="test", engine=engine, system_prompt="ROLE")
     workdir = tmp_path / ("ro" if read_only else "rw")
     workdir.mkdir(parents=True, exist_ok=True)
-    return RunContext(task=Task(agent_id="worker", prompt="go"), agent=agent, workdir=workdir, settings=Settings(),
+    return RunContext(task=Task(agent_id="worker", prompt="go",
+                                meta={"general_result_contract": True} if general else {}),
+                      agent=agent, workdir=workdir, settings=Settings(),
                       mcp_servers=[], env={}, emit=None, prompt="go", read_only=read_only)
 
 
@@ -58,6 +60,15 @@ def test_every_staff_footer_covers_failed_and_empty_lookups_and_weaker_methods(t
            "filters" in footer
     assert "If you fall back to a weaker method" in footer and "never switch silently" in footer
     assert "부재 증명" not in ROLE_FOOTER  # the built-in tool failure line (#339) stays on the tool error only
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_only_ordinary_steps_get_the_lightweight_result_rule(tmp_path, read_only):
+    general = role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only, general=True))
+    research = role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only))
+    assert "Save a factual claim to a file before stating it" in general
+    assert "cite that path under ## Evidence" in general
+    assert GENERAL_RESULT_RULES not in research
 
 
 def test_writing_staff_get_the_environment_rule():

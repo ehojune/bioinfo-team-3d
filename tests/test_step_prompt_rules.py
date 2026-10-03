@@ -14,8 +14,22 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # Result field rules are appended only for an executing research contract; the generic prompt stays unchanged.
+    # #58 1: the generic contract changed intentionally; research keeps the old bytes below.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
+        "19d93b83d554dd8d5eefebbc61aac607719e04880be7670190e1a961fccd2943")
+
+
+def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
+    text = _render()
+    for heading in ("## Findings", "## Evidence", "## Not established", "## Method changes"):
+        assert heading in text
+    assert "Before making a factual claim, save it to a file" in text
+    assert "A failed lookup is neither evidence nor proof of absence" in text
+    assert "state any weaker method" in text
+
+
+def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
+    assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
         "47ca4f080f8371e09b8a3351085ddaf4886401169ec13292f0b03ede9a47f422")
 
 
