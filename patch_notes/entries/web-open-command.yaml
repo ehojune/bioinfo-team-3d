@@ -3,3 +3,6 @@ rows:
 - sha: dc59088
   at: 2026-10-04 04:02
   text: labhq open이 웹 사무실을 토큰을 넣은 채 열고, gateway 시작 줄과 토큰 칸이 들어가는 법을 알린다.
+- sha: 61bb04d
+  at: 2026-10-04 04:10
+  text: 3D 사무실의 토큰 칸에도 설정 키와 labhq open --3d 안내를 넣었다.
