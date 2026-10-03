@@ -69,6 +69,11 @@ for(let i=0;i<150;i++)fresh.apply({type:'agent.log',agent_id:'analyst',ts:1000+i
 assert.equal(fresh.S.feed.length,120); assert.equal(fresh.S.agents.get('analyst').log.length,40);
 fresh.apply({type:'agent.usage',request_id:'r2',data:{tokens:{input_tokens:9},cost_known:false}});
 assert.equal(fresh.S.requests.get('r2').costKnown,false);
+fresh.apply({type:'request.note',request_id:'r2',ts:1234,data:{id:'note_1',text:'표도 그려 주세요',at:1234}});
+assert.equal(fresh.S.requests.get('r2').piNotes[0].text,'표도 그려 주세요');
+const notesSnapshot=create();
+notesSnapshot.apply({type:'snapshot',data:{requests:[{id:'r2',status:'running',pi_notes:[{id:'note_1',text:'표도 그려 주세요',at:1234}]}]}});
+assert.equal(notesSnapshot.S.requests.get('r2').piNotes[0].at,1234,'a late client restores PI notes');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'pending',name:'tiny',reason:'write permission required'}});
 assert.equal(fresh.S.requests.get('r2').pipelinePr.status,'pending');
 fresh.apply({type:'pipeline.pr',request_id:'r2',data:{status:'open',name:'tiny',url:'https://example.org/pr/9',number:9}});

@@ -269,6 +269,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .ref-hint{font-size:12px;color:var(--muted);margin-top:4px}
 .req-refs{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px}.req-refs li{overflow-wrap:anywhere}
 .followups{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.followups ol{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.pi-notes{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.pi-notes h3{font-size:13px;margin:0 0 5px}.pi-notes ol{margin:0;padding-left:20px}.pi-notes time{color:var(--muted);font-size:11px;margin-right:6px}
 .fu-q{margin:0;font-weight:500;overflow-wrap:anywhere}.fu-a{white-space:pre-wrap;font:14px/1.6 var(--ui);margin:4px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;max-height:260px;overflow:auto}
 .fu-wait,.fu-more{margin:4px 0 0;color:var(--muted);font-size:13px}.fu-more .btn{min-height:32px;margin-left:6px}.fu-err{margin:4px 0 0;color:var(--error-ink);font-size:13px}
 .fu-in{display:flex;gap:8px;align-items:flex-end;margin-top:8px}.fu-in textarea{flex:1;min-width:0;font:inherit;font-size:16px;border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:var(--panel);color:var(--ink);resize:vertical}
@@ -395,6 +396,8 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <span class="memo" id="memo" title="끌어다 직원 책상에 놓으면 그 직원에게 바로 맡겨요">메모</span>
     <label class="sr" for="ask">요청 내용</label>
     <input id="ask" type="text" enterkeyhint="send" placeholder="무엇을 알아볼까요?">
+    <label class="sr" for="send-mode">보내는 방식</label>
+    <select id="send-mode" hidden><option value="note">이 요청에 메모</option><option value="request">새 요청</option></select>
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="sr" for="project">프로젝트</label>
@@ -552,7 +555,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderStaff(); renderRefs();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -718,11 +721,13 @@ const reportHTML = q => !q.report ? '' : `<details class="report"><summary>최�
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}</details>`;
 const auditHTML = q => api?.auditBundle
   ? `<p><a class="btn audit-bundle" href="/api/requests/${encodeURIComponent(q.id)}/audit-bundle" data-rid="${esc(q.id)}" download>감사 번들</a></p>` : '';
+const notesHTML = q => !(q.piNotes || []).length ? '' : `<section class="pi-notes" aria-label="실행 중 메모"><h3>실행 중 메모</h3><ol>${q.piNotes.map(note =>
+  `<li><time datetime="${new Date(Number(note.at || 0) * 1000).toISOString()}">${ago(note.at)}</time>${esc(note.text)}</li>`).join('')}</ol></section>`;
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -735,7 +740,7 @@ function renderRequest() {
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${reportHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -781,6 +786,20 @@ function renderTargets() {
   ps.hidden = !S.projects.length;
   ps.innerHTML = '<option value="">프로젝트 없음</option>' + S.projects.map(p => `<option value="${esc(p.id)}">${esc(p.name || p.id)}</option>`).join('');
   if ([...ps.options].some(o => o.value === pcur)) ps.value = pcur;
+}
+let composerRid = null;
+function renderComposerMode() {
+  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota'].includes(q.status);
+  const mode = $('#send-mode');
+  mode.hidden = !active;
+  if (active && composerRid !== q.id) { composerRid = q.id; mode.value = 'note'; }
+  if (!active) composerRid = null;
+  const noteMode = active && mode.value === 'note';
+  $('#target').hidden = noteMode;
+  $('#project').hidden = noteMode || !S.projects.length;
+  $('#ref-toggle').hidden = noteMode;
+  $('#ask').placeholder = noteMode ? '이 요청의 다음 단계에 전할 메모' : '무엇을 알아볼까요?';
+  $('#send').textContent = noteMode ? '메모 보내기' : '보내기';
 }
 
 /* ---------------- interactions ---------------- */
@@ -828,6 +847,13 @@ $('#ref-toggle').addEventListener('click', () => showRefs($('#ref-panel').hidden
 async function send() {
   const input = $('#ask'), text = input.value.trim(), target = $('#target').value, project = $('#project').value;
   if (!text) { toast('무엇을 맡길지 먼저 적어 주세요'); input.focus(); return; }
+  const current = S.requests.get(S.current);
+  const noteMode = current && ['running', 'waiting_for_runner', 'waiting_quota'].includes(current.status) && $('#send-mode').value === 'note';
+  if (noteMode) {
+    try { await api.note(current.id, text); input.value = ''; toast('다음 단계에 전할 메모를 보냈어요'); }
+    catch (e) { toast(`메모를 보내지 못했어요: ${e.message}`); }
+    return;
+  }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
@@ -837,6 +863,7 @@ async function send() {
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }
 $('#send').addEventListener('click', send);
+$('#send-mode').addEventListener('change', renderComposerMode);
 $('#ask').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); send(); } });
 $('#approvals').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]'); if (!btn) return;
@@ -925,7 +952,7 @@ $('#sheet').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]'); if (!btn) return;
   const id = d.dataset.agent, act = btn.dataset.act;
   if (act === 'close') return closeSheet();
-  if (act === 'assign') { closeSheet(); $('#target').value = id; $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
+  if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
   try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
 });
@@ -951,6 +978,7 @@ $('#sheet').addEventListener('click', async e => {
     if (over) {
       over.classList.remove('drop');
       const id = over.dataset.agent; over = null;
+      $('#send-mode').value = 'request'; renderComposerMode();
       $('#target').value = id;
       if ($('#ask').value.trim()) send(); else { $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); }
     }
@@ -985,6 +1013,7 @@ function startLive() {
   let ws = null, backoff = 1000;
   api = {
     request: body => post('/api/requests', body),
+    note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
@@ -1225,6 +1254,7 @@ const Demo = (() => {
     start,
     api: {
       request: async body => { queue.push(body); toast('데모: 지금 진행 중인 일이 끝나면 시작해요'); return { request_id: 'queued' }; },
+      note: async (rid, text) => { E('request.note', { request_id: rid, data: { id: `note_demo${++n}`, text, at: now() } }); },
       followup: async (rid, text) => {
         const id = `fu_demo${++n}`;
         E('request.followup', { request_id: rid, data: { id, text, agent_id: 'cso', status: 'running' } });

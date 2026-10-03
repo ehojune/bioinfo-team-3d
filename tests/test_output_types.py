@@ -327,10 +327,13 @@ def test_reader_marks_conflicts_and_malformed_records_unknown():
 
 
 def test_reader_judges_legacy_strings_once_against_the_local_vocabulary():
-    fields = read({"output_types": {"outputs/a.tsv": "raw_counts", "outputs/b.tsv": "nonsense"}})
+    fields = read({"output_types": {"outputs/a.tsv": "raw_counts", "outputs/b.tsv": "nonsense",
+                                    "outputs/c.tsv": "normalized_counts", "outputs/d.gff3": "features"}})
     assert fields["outputs/a.tsv"]["data_type"].legacy
     assert fields["outputs/a.tsv"]["data_type"].value == "raw_counts"
     assert fields["outputs/b.tsv"]["data_type"].reason == "not_declared"
+    assert fields["outputs/c.tsv"]["data_type"].reason == "vocab_changed"
+    assert fields["outputs/d.gff3"]["data_type"].reason == "vocab_changed"
 
 
 def test_inferred_runner_record_cannot_override_a_plan_declaration():

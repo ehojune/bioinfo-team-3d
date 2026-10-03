@@ -4,6 +4,20 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 실행 중 요청에 PI 메모 (#373 질문 6)
+
+**결론:** 실행 중 CSO 요청의 메모를 첫 계획부터 전달하고, 다음 turn이 없는 direct 요청은 거절합니다.
+
+| 곳 | 바뀐 것 |
+|---|---|
+| gateway·CLI | 미종료 CSO 요청에만 메모를 저장하고 `request.note`를 냅니다. direct 요청은 409와 **끝난 뒤 이어 묻기** 안내를 돌려줍니다 |
+| orchestrator | 메모 뒤 시작하는 plan·replan·단계·continuation·review·synthesis가 읽습니다. 연구 lane은 CP1 뒤 동결 계획을 바꾸지 않습니다 |
+| 웹 | 진행 중 CSO 요청의 입력 기본값은 **이 요청에 메모**입니다. direct 요청에는 메모 선택을 보이지 않습니다 |
+
+**검증:** 첫 구현 전 Python 6 failed·Node 1 failed. 리뷰 회귀는 수정 전 4 failed, 수정 뒤 pytest 8 passed·Node 2개 파일 통과. 공개 저장소·패치노트·목차 검사 통과.
+
+**미해결:** 실행 중 session steer·pause는 #59 범위입니다.
+
 # PR #376 — runner 로컬 소프트웨어를 반영한 CSO 계획
 
 - 결론: CSO가 runner의 R·Python 패키지·계산 도구 상태를 알고 계획하며, 빌드 실패는 준비한 대체안으로 넘깁니다.
@@ -11,6 +25,20 @@
 - 실행한 것: 새 회귀 수정 전 4 failed, 수정 뒤 관련 pytest 287 passed. 공개·patch note·목차·diff 검사 통과.
 - 미해결: 없음.
 - 근거: `labhq/doctor.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_doctor.py`, `tests/test_cso.py`.
+
+# 출력 데이터 종류 어휘 PI 검토 반영
+
+**결론:** PI가 검토한 41키를 그대로 반영했다. 정규화 값은 count·expression·transformed로 나뉘고 `features`는 `genomic_features`로 바뀌었다.
+
+| 항목 | 결과 |
+|---|---|
+| 어휘·입력 적합성 | 새 3키와 이름 변경, 45키 상한, 분석별 fit·mismatch 반영 |
+| EDAM 1.25 | 고정 release에서 재생성. 34키 연결, 7키 local-only. `variant_annotations`에 맞는 살아 있는 data 용어가 없어 `null` 유지 |
+| 옛 선언 | hash가 있는 선언은 기존 `vocab_changed` 판정을 쓴다. hash가 없는 legacy `normalized_counts`·`features`도 `vocab_changed`로 막았다 |
+| semantics fixture | PI 어휘 검토로 `normalized_counts` 뜻이 바뀌어 q02·q06 후보를 `unknown(vocab_changed)`로 고정했다 |
+| 고정값 | PLAN schema·prompt와 `single_cell_de@2`·`bulk_tumor_normal@1` 내용·hash는 바뀌지 않았다 |
+
+**검증:** Windows 전체 pytest 3676 passed·53 skipped. semantics pilot 110 passed, shadow 제거 5 passed. EDAM subset 재생성·검사 통과.
 
 # 웹 사무실 진입: `labhq open` (PI 방문 2026-10-04)
 

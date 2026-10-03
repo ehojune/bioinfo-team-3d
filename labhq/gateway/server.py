@@ -42,6 +42,7 @@ SNAPSHOT_ANSWER_CHARS = 2000
 SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
 SNAPSHOT_RESULT_CHARS = 500
+MAX_PI_NOTES = 20
 
 
 def snapshot_followup(entry: dict) -> dict:
@@ -107,6 +108,17 @@ class FollowupIn(BaseModel):
     def not_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("follow-up text is empty")
+        return value.strip()
+
+
+class NoteIn(BaseModel):
+    text: str = Field(max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("note text is empty")
         return value.strip()
 
 
@@ -1371,6 +1383,22 @@ class Hub:
         asyncio.get_running_loop().create_task(self.orchestrator.run_followup(rid, entry["id"]))
         return entry
 
+    async def add_note(self, rid: str, text: str) -> dict:
+        """Store a PI note for later turns without interrupting the turn already running."""
+        req = self.requests[rid]
+        if is_terminal_request(req.get("status")):
+            raise ValueError("요청이 끝났습니다. 이어 묻기를 쓰세요")
+        if req.get("mode") == "direct":
+            raise ValueError("직접 맡긴 요청에는 실행 중 메모를 보낼 수 없습니다. 끝난 뒤 이어 묻기를 쓰세요")
+        notes = req.setdefault("pi_notes", [])
+        if len(notes) >= MAX_PI_NOTES:
+            raise ValueError(f"메모는 요청마다 {MAX_PI_NOTES}개까지 보낼 수 있습니다")
+        entry = {"id": new_id("note"), "text": text.strip(), "at": time.time()}
+        notes.append(entry)
+        self.save_request(rid)
+        await self.publish({"type": "request.note", "ts": entry["at"], "request_id": rid, "data": entry})
+        return entry
+
     async def _start_request(self, rid: str) -> None:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
@@ -1400,7 +1428,7 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
-                                                                  "references")},
+                                                                  "references", "pi_notes")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],
@@ -1581,6 +1609,16 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if hub.semantics_shadow is not None:  # semantics-hook: actions
             hub.semantics_shadow.after_followup(rid, entry["id"], "asked")  # semantics-hook: actions
         return {"request_id": rid, "followup_id": entry["id"]}
+
+    @app.post("/api/requests/{rid}/notes", dependencies=[Depends(auth)])
+    async def add_note(rid: str, body: NoteIn) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            entry = await hub.add_note(rid, body.text)
+        except ValueError as error:
+            raise HTTPException(409, str(error))
+        return {"request_id": rid, "note": entry}
 
     @app.get("/api/requests/{rid}", dependencies=[Depends(auth)])
     async def get_request(rid: str) -> dict:
