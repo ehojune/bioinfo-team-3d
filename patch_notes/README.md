@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:08 | [`c82a305`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/c82a305) | 게이트: 경로에 붙은 숫자를 스트림 번호로 보지 않음(봇 P1) |
+| 16:04 | [`ce35d46`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/ce35d46) | 게이트: 명령 단어를 나누기 전에 리다이렉트를 빼서 cp 목적지를 /dev/null로 읽지 않음(7차 시운전 오탐) |
+| 16:04 | [`a0211d8`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/a0211d8) | README: 리다이렉트는 명령 목적지로 읽지 않음 |
 | 15:08 | [`68e1c86`](https://github.com/ehojune/bioinfo-team-3d/pull/353/commits/68e1c86) | 결과 살리기: 마지막 교정이 PI 질문을 내면 살리지 않음, 중복 link는 그 link만 뗌(봇 지적) |
 | 15:02 | [`48c30cf`](https://github.com/ehojune/bioinfo-team-3d/pull/353/commits/48c30cf) | 교정 뒤 남은 행 단위 계약 위반을 파생 행·link와 함께 분리하고 CP2·receipt·보고서에 남겼다. |
 | 14:16 | [`2fa931a`](https://github.com/ehojune/bioinfo-team-3d/pull/352/commits/2fa931a) | 결과 교정 turn이 산출 파일을 바꾸면 단계를 실패시킴(봇 P1) |

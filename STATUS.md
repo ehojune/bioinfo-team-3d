@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · 게이트 오탐 — 리다이렉트 대상을 명령 목적지로 읽음
+
+- 결론: `cp a outputs/ 2>/dev/null`의 /dev/null을 cp 목적지로 읽던 오탐을 고쳤다(7차 모의 시운전). PowerShell `Copy-Item ... 2>$null`도 같다.
+- 바뀐 것: `labhq/policy.py` `_shell_write_targets`가 명령 이름 기반 검사 전에 리다이렉트 구간을 지운다. 리다이렉트 대상은 기존 리다이렉트 검사가 그대로 판정한다.
+- 실행한 것: 관련 test 451건 통과, 새 test 6건은 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_shell_write_quotes.py`.
+
 ## 2026-10-03 · PR 준비 — 연구 결과 계약 위반 행 분리(#90, #298)
 
 - 결론: 교정 뒤에도 남은 행 단위 위반은 해당 행·파생 행·link만 빼고 CP2로 넘긴다. 구조 위반은 계속 단계를 실패시킨다.
