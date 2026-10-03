@@ -42,3 +42,6 @@ rows:
 - sha: 8ac590a
   at: 2026-10-04 00:37
   text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(조상 단계 결합, 리다이렉트, Codex strict schema, Windows CA, 로드맵)을 매뉴얼로 옮김'
+- sha: 873146a
+  at: 2026-10-04 00:41
+  text: 'README에 예시 절(요청 한 문장 → 결과 세 줄)과 docs/examples/gse10072(요청 원문·카드·그림 3장·보고서 원문)'
