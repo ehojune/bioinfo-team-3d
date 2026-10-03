@@ -1,4 +1,4 @@
-"""CP2 evidence review (#90): artifact binding, the research lane's own failure path, and structured decisions."""
+"""CP2 evidence review (#90): artifact binding, result correction, failure, and structured decisions."""
 
 import asyncio
 
@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.research.contract import plan_sha256
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
@@ -21,6 +22,12 @@ def _settings(*, max_replans=0, evidence_checkpoint=True):
     settings.orchestrator.reviewer_agent = None
     settings.orchestrator.max_replans = max_replans
     return settings
+
+
+def _invalid_result(hub, task):
+    result = _cp2_result(hub, task)
+    del result["evidence"][0]["assessment_reason"]
+    return result
 
 
 def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
@@ -123,6 +130,142 @@ def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
     assert refused["inference"] == "derived from refused evidence e_ghost"
     assert [row["claim_id"] for row in bound["unsupported_claims"]] == ["lost"]
     assert bound["artifact_sha256"] == {"own": "a" * 64, "up_id": "b" * 64, "up_abs": "b" * 64}
+
+
+# ---------- Result contract correction ----------
+
+@pytest.mark.asyncio
+async def test_invalid_result_is_corrected_once_and_the_request_continues():
+    settings = _settings()
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = (_invalid_result(hub, task) if task.meta["kind"] == "step" else _cp2_result(hub, task))
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path] if task.meta["kind"] == "step" else [], workdir="runs/s1",
+                          session_id="session-1", cost_usd=1.0)
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    orchestrator = Orchestrator(hub)
+    await orchestrator.run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    correction = hub.calls[2]
+    assert correction.meta["step_id"] == "s1" and correction.meta["workdir"] == "runs/s1"
+    assert correction.meta["outputs"] == [] and correction.meta["parse_attempt"] == 1
+    assert "assessment_reason" in correction.prompt
+    assert "Do not recreate or modify output files" in correction.prompt
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
+    assert hub.requests["r"]["results"]["s1"]["structured"]["evidence"][0]["assessment_reason"]
+    assert orchestrator.attempts["r"]["s1"] == 2
+    assert orchestrator.cost["r"] == 2.0  # the original and correction turns both stay on the same step
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrections, expected_kinds", [
+    (1, ["plan", "step", "result_correction"]),
+    (0, ["plan", "step"]),
+])
+async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corrections, expected_kinds):
+    settings = _settings()
+    settings.research.result_corrections = corrections
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=_invalid_result(hub, task), outputs=[path], workdir="runs/s1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**CP1, "approval_id": "a1", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == expected_kinds
+    result = hub.requests["r"]["results"]["s1"]
+    assert result["error"].startswith("invalid research result contract: ")
+    assert "assessment_reason" in result["error"]
+    assert hub.requests["r"]["outcome"] == "research_failed"
+
+
+@pytest.mark.asyncio
+async def test_research_step_prompt_lists_validator_only_field_rules():
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    await Orchestrator(hub).run_request("r")
+
+    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    for text in ("YYYY-MM-DD", "observation, literature_claim, database_annotation, experimental",
+                 "directness, source_level, independence_group, assessment_reason",
+                 "observed requires source.locator", "not_found requires source.query",
+                 "failed/unavailable requires status_detail", "inference/hypothesis",
+                 "value, unit, conditions, denominator", "unknown"):
+        assert text in prompt
+
+
+@pytest.mark.asyncio
+async def test_restart_recovers_the_step_and_its_correction_without_dispatching_them_twice(tmp_path):
+    from labhq.gateway.server import Hub, SavedResults
+    from labhq.models import Task
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agents["worker"] = {"id": "worker", "name": "worker", "role": "test", "engine": "mock"}
+    plan = valid_plan()
+    plan["steps"][0]["outputs"] = ["outputs/result1.tsv"]
+    frozen = plan_sha256(plan)
+    hub.requests["r"] = {
+        "id": "r", "text": "compare conditions", "mode": "orchestrate", "status": "interrupted",
+        "plan": plan, "research_contract": {"execution_enabled": True, "plan_sha256": frozen}, "results": {},
+    }
+    hub.save_request("r")
+    step = plan["steps"][0]
+    initial_task = Task(id="initial-task", agent_id="worker", request_id="r", prompt="run",
+                        meta={"kind": "step", "step_id": "s1", "revision": 0})
+    initial = TaskResult(task_id=initial_task.id, agent_id="worker", ok=True,
+                         structured=_invalid_result(hub, initial_task), outputs=["outputs/result1.tsv"],
+                         workdir="runs/s1")
+    correction_task = Task(id="correction-task", agent_id="worker", request_id="r", prompt="fix",
+                           meta={"kind": "result_correction", "step_id": "s1", "revision": 0,
+                                 "parse_attempt": 1, "parent_task": initial.task_id, "workdir": "runs/s1"})
+    corrected = TaskResult(task_id=correction_task.id, agent_id="worker", ok=True,
+                           structured=_cp2_result(hub, correction_task), workdir="runs/s1")
+    for task, result in ((initial_task, initial), (correction_task, corrected)):
+        hub.store.put("task", task.id, {
+            "request_id": "r", "step_id": "s1", "kind": task.meta["kind"], "attempt": 1,
+            "revision": 0, "parse_attempt": task.meta.get("parse_attempt", 0),
+            "parent_task": task.meta.get("parent_task"), "payload": task.model_dump(mode="json"),
+            "accepted": True, "completed": True, "dispatched_at": 1.0,
+            "result": result.model_dump(mode="json"),
+        })
+    hub.recovery_steps.add("r")
+    results = SavedResults(hub, "r")
+
+    await hub.orchestrator.run_dag("r", "compare conditions", [step], results, only={"s1"})
+
+    assert hub.recovered_tasks == {"initial-task", "correction-task"}
+    assert results["s1"].ok and results["s1"].structured["evidence"][0]["assessment_reason"]
+    assert not any(event["type"] == "task.dispatched" for event in hub.events)
 
 
 # ---------- P1: the research lane never enters generic re-planning ----------

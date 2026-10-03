@@ -561,6 +561,17 @@ def validate_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any])
     return result
 
 
+def research_result_errors(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> list[str]:
+    """Every readable result-contract problem for the one correction turn."""
+    try:
+        validate_research_result(value, plan=plan)
+    except ValidationError as error:
+        return schema_error_lines(error)
+    except (TypeError, ValueError) as error:
+        return [part for part in (item.strip() for item in str(error).split(";")) if part]
+    return []
+
+
 def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
     """What the step declared is what its result answers: only its claims, and every required slot addressed."""
     errors = [f"claim {claim.id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"

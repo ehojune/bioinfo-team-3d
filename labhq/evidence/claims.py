@@ -39,6 +39,20 @@ SourceLevel = Literal["primary", "secondary", "tertiary"]
 QUANTITY_REQUIRED = ("value", "unit", "conditions", "denominator")
 QUANTITY_UNKNOWABLE = (*QUANTITY_REQUIRED, "method", "uncertainty")
 
+# Cross-field validators below cannot be expressed by the engine-facing JSON schema. The research step prompt
+# renders this one list, so employees see the same requirements that ``SourceRef``, ``Quantity`` and ``Evidence``
+# enforce after the turn.
+RESULT_CONTRACT_FIELD_RULES = (
+    "An external source requires accessed_at as a real YYYY-MM-DD date.",
+    "observation, literature_claim, database_annotation, experimental require status, source, directness, "
+    "source_level, independence_group, assessment_reason.",
+    "For those evidence kinds: observed requires source.locator; not_found requires source.query; "
+    "failed/unavailable requires status_detail.",
+    "inference/hypothesis leave status empty, require derived_from, and cannot fill evidence slots.",
+    "Each quantity requires value, unit, conditions, denominator; for each missing field put an unknown entry "
+    "whose value states its impact on the conclusion.",
+)
+
 # Which countable link relation a claim status asserts.
 STATUS_NEEDS = {"supported": "supports", "partially_supported": "supports", "contradicted": "contradicts"}
 

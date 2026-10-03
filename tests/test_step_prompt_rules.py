@@ -1,5 +1,7 @@
 """Rules the plan and step prompts carry from code, so they do not depend on the CSO passing them on (#84)."""
 
+import hashlib
+
 import pytest
 
 from labhq.intake import QUESTION_RULE
@@ -9,6 +11,12 @@ from labhq.orchestrator.cso import STEP_PROMPT
 
 def _render() -> str:
     return " ".join(STEP_PROMPT.format(request="REQ", step_id="s1", instruction="INSTR").split())
+
+
+def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
+    # Result field rules are appended only for an executing research contract; the generic prompt stays unchanged.
+    assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
+        "47ca4f080f8371e09b8a3351085ddaf4886401169ec13292f0b03ede9a47f422")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
