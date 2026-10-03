@@ -208,7 +208,9 @@ class RecruitProposal(StrictModel):
 
 
 class PackPlanValue(StrictModel):
-    fields: dict[str, Any]
+    # Domain pack declarations support only these scalar value types; keeping that in the core schema also gives
+    # Structured Outputs a concrete lossless value schema for arbitrary field names.
+    fields: dict[str, str | int | bool]
     validators: dict[str, str]
     acceptance: dict[str, str]
 

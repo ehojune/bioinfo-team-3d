@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from labhq.adapters.base import RunContext, RunState
 from labhq.adapters.codex import CodexAdapter
+from labhq.evidence.claims import Quantity
 from labhq.models import AgentSpec, Engine, Task
 from labhq.orchestrator.cso import (PLAN_SCHEMA, RESEARCH_LANE_REVIEW_SCHEMA, REVIEW_SCHEMA,
                                     plan_schema, replan_schema)
@@ -18,6 +19,13 @@ from labhq.vocab.declare import ENTRY_SCHEMA
 from labhq.settings import Settings
 
 
+UNSUPPORTED_TYPE_CONSTRAINTS = {
+    "minLength", "maxLength", "pattern", "format",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minItems", "maxItems",
+}
+
+
 def _objects(value):
     if isinstance(value, dict):
         if value.get("type") == "object" or "properties" in value:
@@ -27,6 +35,21 @@ def _objects(value):
     elif isinstance(value, list):
         for child in value:
             yield from _objects(child)
+
+
+def _schema_keys(value, *, schema_node=True):
+    if isinstance(value, dict):
+        if schema_node:
+            yield from value
+        for key, child in value.items():
+            if key in {"properties", "$defs", "definitions"} and isinstance(child, dict):
+                for schema in child.values():
+                    yield from _schema_keys(schema)
+            elif schema_node:
+                yield from _schema_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _schema_keys(child)
 
 
 @pytest.mark.parametrize("schema", [
@@ -46,9 +69,125 @@ def test_every_engine_output_schema_converts_to_openai_strict_without_mutation(s
     assert not any("default" in node for node in _objects(converted))
 
 
-@pytest.mark.parametrize("schema", [REVIEW_SCHEMA, RESEARCH_LANE_REVIEW_SCHEMA, OFFER_SCHEMA])
+@pytest.mark.parametrize("schema", [
+    PLAN_SCHEMA, plan_schema(True), replan_schema(False), replan_schema(True), REVIEW_SCHEMA,
+    RESEARCH_PLAN_SCHEMA, research_plan_schema(True, ENTRY_SCHEMA), RESEARCH_RESULT_SCHEMA,
+    RESEARCH_STEP_SCHEMA, RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_SCHEMA, OFFER_SCHEMA,
+])
+def test_engine_output_schema_omits_unsupported_type_constraints(schema):
+    assert UNSUPPORTED_TYPE_CONSTRAINTS.isdisjoint(_schema_keys(openai_strict_schema(schema)))
+
+
+def test_format_property_name_is_not_treated_as_schema_keyword():
+    converted = openai_strict_schema(research_plan_schema(True, ENTRY_SCHEMA))
+    output_types = converted["$defs"]["ResearchStep"]["properties"]["output_types"]
+
+    assert "format" in output_types["anyOf"][0]["items"]["properties"]
+
+
+def test_optional_array_uses_supported_anyof_transport():
+    converted = openai_strict_schema(RESEARCH_STEP_SCHEMA)
+    assumptions = converted["$defs"]["Comparison"]["properties"]["assumptions"]
+
+    assert assumptions["anyOf"][0]["type"] == "array"
+    assert assumptions["anyOf"][1] == {"type": "null"}
+
+
+def test_original_pydantic_validation_keeps_removed_transport_constraints():
+    converted = openai_strict_schema(RESEARCH_STEP_SCHEMA)
+    invalid = {
+        "schema_version": 2, "plan_sha256": "a" * 64, "step_id": "",
+        "claims": [], "evidence": [], "links": [], "artifact_refs": [],
+        "not_established": [], "failures": [], "method_changes": [],
+    }
+
+    assert RESEARCH_STEP_SCHEMA["properties"]["step_id"]["minLength"] == 1
+    assert "minLength" not in converted["properties"]["step_id"]
+    with pytest.raises(ValidationError, match="at least 1 character"):
+        ResearchResult.model_validate(invalid)
+
+
+@pytest.mark.parametrize("schema", [RESEARCH_LANE_REVIEW_SCHEMA, OFFER_SCHEMA])
 def test_already_strict_schema_is_unchanged(schema):
     assert openai_strict_schema(schema) == schema
+
+
+def test_dictionary_schema_round_trips_nested_values_through_refs():
+    schema = {
+        "$defs": {
+            "Value": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "metadata": {"type": "object", "additionalProperties": {"type": "integer"}},
+                },
+                "required": ["label", "metadata"],
+            },
+        },
+        "type": "object",
+        "properties": {
+            "values": {"type": "object", "additionalProperties": {"$ref": "#/$defs/Value"}},
+        },
+        "required": ["values"],
+    }
+    response = {"values": [{"key": "sample", "value": {
+        "label": "kept", "metadata": [{"key": "depth", "value": 7}],
+    }}]}
+
+    converted = openai_strict_schema(schema)
+    values = converted["properties"]["values"]
+    nested = converted["$defs"]["Value"]["properties"]["metadata"]
+    values_entry = converted["$defs"][values["items"]["$ref"].rsplit("/", 1)[-1]]
+
+    assert values["type"] == "array" and nested["type"] == "array"
+    assert values_entry["properties"]["value"] == {"$ref": "#/$defs/Value"}
+    assert strip_optional_nulls(response, schema) == {
+        "values": {"sample": {"label": "kept", "metadata": {"depth": 7}}},
+    }
+
+
+def test_dictionary_transport_rejects_duplicate_keys():
+    schema = {"type": "object", "additionalProperties": {"type": "string"}}
+    response = [{"key": "same", "value": "first"}, {"key": "same", "value": "second"}]
+
+    with pytest.raises(ValueError, match="duplicate dictionary key 'same'"):
+        strip_optional_nulls(response, schema)
+
+
+def test_mixed_fixed_and_arbitrary_object_is_rejected_explicitly():
+    schema = {
+        "type": "object",
+        "properties": {"fixed": {"type": "string"}},
+        "required": ["fixed"],
+        "additionalProperties": {"type": "integer"},
+    }
+
+    with pytest.raises(ValueError, match="properties and schema-valued additionalProperties"):
+        openai_strict_schema(schema)
+
+
+def test_quantity_unknown_reasons_survive_dictionary_transport():
+    schema = {
+        "$defs": {"Quantity": RESEARCH_STEP_SCHEMA["$defs"]["Quantity"]},
+        "type": "object",
+        "properties": {"quantity": {"$ref": "#/$defs/Quantity"}},
+        "required": ["quantity"],
+    }
+    response = {"quantity": {
+        "id": "q1", "measure": "reported effect", "value": None, "unit": None,
+        "conditions": None, "denominator": None, "method": None, "uncertainty": None,
+        "unknown": [
+            {"key": "value", "value": "the source did not report an estimate"},
+            {"key": "unit", "value": "the scale cannot be interpreted"},
+            {"key": "conditions", "value": "the assay context is unavailable"},
+            {"key": "denominator", "value": "the sample base is unavailable"},
+        ],
+    }}
+
+    cleaned = strip_optional_nulls(response, schema)
+    parsed = Quantity.model_validate(cleaned["quantity"])
+
+    assert parsed.unknown["value"] == "the source did not report an estimate"
 
 
 def test_optional_nulls_are_removed_recursively_but_required_nulls_remain():
