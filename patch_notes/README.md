@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:48 | [`162b23a`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/162b23a) | README: 셸 쓰기 검사가 따옴표·heredoc 안의 > 를 다루는 방식 |
+| 08:39 | [`e8d7c17`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/e8d7c17) | 게이트: PowerShell 호출 연산자·dot-source·[scriptblock]이 있으면 따옴표를 가리지 않음(봇 P1) |
+| 08:27 | [`8c191a2`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/8c191a2) | 가리기를 줄의 모든 명령이 인용문을 텍스트로만 읽을 때로 좁히고(허용 목록), 구분자에 $가 있는 heredoc·괄호 안 '<<'·줄 끝 CR·$(( )) 안의 따옴표·토큰 중간의 here-string 머리는 원문을 훑게 해 가린 뒤 리다이렉트가 숨는 입력을 막았다. |
 | 08:26 | [`4277230`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/4277230) | 분석가·QC 직원 지침에 donor 구조 반영, seed 고정, 연관으로 서술을 더했다. |
 | 08:26 | [`b9e6af3`](https://github.com/ehojune/bioinfo-team-3d/pull/342/commits/b9e6af3) | 과학 리뷰어 지침에 과잉 일반화·cherry-picking·추측 점검과 근거 문장 인용을 더했다. |
 | 08:25 | [`7bda364`](https://github.com/ehojune/bioinfo-team-3d/pull/341/commits/7bda364) | 결정함 다시 그리기가 쓰던 답의 포커스를 뺏지 않게: 렌더마다 모든 카드를 다시 끼우지 않고 끝난 카드만 빼고 새 카드만 끼움(2.5D·3D 공통) |
@@ -26,6 +29,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 07:41 | [`d59cba0`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/d59cba0) | ask broker 연결 실패 test를 ToolError 계약에 맞추고 400 경로의 공유 producer 단언을 따로 두었다. |
 | 07:41 | [`53abc40`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/53abc40) | labhq verify: 기록 해시가 없는 산출도 지금 없으면 missing으로 본다(거짓 missing은 폴더 산출·통제 구역·대소문자 규칙으로 막음). |
 | 07:39 | [`53ba01c`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/53ba01c) | 리뷰 미해결 보고서에 리뷰어 지적 전체를 labhq가 원문대로 붙임 |
+| 07:36 | [`ff24e21`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/ff24e21) | 셸 쓰기 검사가 따옴표·주석·heredoc 본문·PowerShell here-string 안의 '>'를 리다이렉트로 보지 않게 했다(모의 시운전 승인 카드 오탐 두 건). 셸이 다르게 읽을 여지가 있으면 예전처럼 원문을 훑고, 원문 훑기도 '>'마다 대상을 읽는다. |
 | 07:27 | [`668884f`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/668884f) | 쓰기 직원 공통 지침에 임시 파일은 작업 폴더 .tmp/, 경로는 상대 경로로 쓰라는 두 줄을 넣어 승인 카드를 줄였다. |
 | 07:25 | [`cfe88ae`](https://github.com/ehojune/bioinfo-team-3d/pull/338/commits/cfe88ae) | 리뷰가 수정 상한 뒤에도 수정을 요구한 요청에 CSO가 미해결 지적을 한계로 적은 최종 보고서를 쓰게 했다(요청은 failed 유지). |
 | 07:24 | [`51c0946`](https://github.com/ehojune/bioinfo-team-3d/pull/339/commits/51c0946) | 내장 hpc 도구의 모든 실패와 ask 도구의 broker 연결 실패를 isError로 돌리고 "이 실패는 증거도 부재 증명도 아닙니다" 줄을 붙였다. approval은 deny로 두고 같은 줄만 붙였다. |
