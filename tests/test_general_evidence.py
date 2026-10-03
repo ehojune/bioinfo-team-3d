@@ -108,3 +108,27 @@ def test_research_prompt_and_empty_research_result_fields_stay_unchanged():
         "47ca4f080f8371e09b8a3351085ddaf4886401169ec13292f0b03ede9a47f422")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
+
+
+def test_inline_code_that_is_not_an_output_path_is_not_a_warning():
+    """PR #363 review: `pandas 2.2` or `GSE10072` in Evidence is not a missing output."""
+    result = TaskResult(task_id="t", agent_id="worker", ok=True, text=FULL.replace(
+        "`outputs/table.tsv`", "`outputs/table.tsv` (`pandas 2.2`, `GSE10072`, `python .tmp/run.py`)"),
+        outputs=["outputs/table.tsv"], output_sha256={"outputs/table.tsv": "a" * 64})
+    assert attach_general_result(result).evidence_path_warnings == []
+
+
+@pytest.mark.asyncio
+async def test_a_retry_that_succeeds_keeps_the_earlier_failed_lookups():
+    """PR #363 review: a transient failure with a tool error, then a clean success, must keep the tool error."""
+    async def dispatch(task):
+        if len(hub.calls) == 1:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="HTTP 503 overloaded",
+                              tool_errors=["fixture lookup failed"])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="done")
+
+    hub = FakeHub(dispatch)
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A"}))
+    assert len(hub.calls) == 2 and res.ok
+    assert res.tool_errors == ["fixture lookup failed"]

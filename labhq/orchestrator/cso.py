@@ -288,7 +288,9 @@ def parse_general_result(text: str) -> dict[str, str]:
 
 def _general_evidence_paths(text: str) -> list[str]:
     """Workspace output paths cited in Evidence, in first-seen order."""
-    candidates = re.findall(r"`([^`\r\n]+)`", text or "") + _PLAIN_OUTPUT_PATH.findall(text or "")
+    # Inline code is a path only when it names one (`outputs/x.tsv`): `pandas 2.2` or `GSE123` is not (PR #363 review).
+    quoted = [code for code in re.findall(r"`([^`\r\n]+)`", text or "") if re.match(r"(?:\./)?outputs/", code.strip())]
+    candidates = quoted + _PLAIN_OUTPUT_PATH.findall(text or "")
     found = []
     for candidate in candidates:
         candidate = candidate.rstrip(".,;:")
@@ -1764,6 +1766,7 @@ class Orchestrator:
                         previous_session = res.session_id
                 if res.tool_errors:
                     tool_errors.extend(res.tool_errors)
+                if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
