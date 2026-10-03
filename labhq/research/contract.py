@@ -216,12 +216,23 @@ class PackPlanValue(StrictModel):
     acceptance: dict[str, str]
 
 
+class PackNotApplicable(StrictModel):
+    not_applicable: str = Field(min_length=1)
+
+    @field_validator("not_applicable")
+    @classmethod
+    def reason_is_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("not_applicable reason must not be blank")
+        return value
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
     intake: IntakeDecision
     brief: ResearchBrief
     protocol: ProtocolContract
-    pack_values: dict[str, PackPlanValue]
+    pack_values: dict[str, PackPlanValue | PackNotApplicable]
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
@@ -346,20 +357,47 @@ def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = No
 
 
 def _present(value: Any) -> bool:
-    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set)):
+        return any(_present(item) for item in value)  # [""] names nothing (PR #366 review)
+    if isinstance(value, dict):
+        return bool(value)
+    return True
+
+
+_MISSING = object()
+
+
+def _pack_rule_value(field: str, pack_fields: dict[str, Any], plan_values: dict[str, Any]) -> Any:
+    if field in pack_fields:
+        return pack_fields[field]
+    if field in plan_values:
+        return plan_values[field]
+    if "." not in field:
+        return _MISSING
+    current: Any = plan_values
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return _MISSING
+        current = current[part]
+    return current
 
 
 def _pack_predicate_matches(predicate: Any, pack_fields: dict[str, Any], plan_values: dict[str, Any]) -> bool:
-    if predicate.field in pack_fields:
-        current = pack_fields[predicate.field]
-    elif predicate.field in plan_values:
-        current = plan_values[predicate.field]
-    elif "." not in predicate.field:
+    current = _pack_rule_value(predicate.field, pack_fields, plan_values)
+    if "present" in predicate.model_fields_set:
+        return _present(None if current is _MISSING else current) is predicate.present
+    if "min_items" in predicate.model_fields_set:
+        if not isinstance(current, (list, tuple)):
+            return False
+        distinct = {item.strip().casefold() if isinstance(item, str) else json.dumps(item, sort_keys=True, default=str)
+                    for item in current if _present(item)}
+        return len(distinct) >= predicate.min_items
+    if current is _MISSING:
         return False
-    else:
-        current: Any = plan_values
-        for part in predicate.field.split("."):
-            current = current[part]
     if "value" in predicate.model_fields_set:
         return current == predicate.value
     if "in_" in predicate.model_fields_set:
@@ -414,6 +452,9 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
             elif field.minimum is not None and current < field.minimum:
                 errors.append(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
                 invalid_fields.add(name)
+            elif field.pattern is not None and re.fullmatch(field.pattern, current) is None:
+                errors.append(f"pack_values[{key}].fields.{name} must match {field.pattern}")
+                invalid_fields.add(name)
     fields_ok = fields is not None and not errors
 
     validators = _section(supplied, "validators")
@@ -441,9 +482,20 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
     if fields is not None and plan_values is not None:
         for rule in pack.rules:
             predicates = [*rule.conditions, rule.require or rule.forbid]
-            if any(predicate.field in declared and predicate.field in invalid_fields for predicate in predicates):
+            rule_fields = [predicate.field for predicate in predicates if predicate is not None]
+            if rule.allowed_combinations is not None:
+                rule_fields += rule.allowed_combinations.fields
+            if any(name in declared and name in invalid_fields for name in rule_fields):
                 continue  # only a rule whose own input is broken must wait for the corrected draft
             if not all(_pack_predicate_matches(condition, fields, plan_values) for condition in rule.conditions):
+                continue
+            if rule.allowed_combinations is not None:
+                current = [_pack_rule_value(name, fields, plan_values)
+                           for name in rule.allowed_combinations.fields]
+                passed = current in rule.allowed_combinations.rows
+                if not passed:
+                    names = ", ".join(rule.allowed_combinations.fields)
+                    errors.append(f"pack rule {rule.id} failed: allowed combination of {names}")
                 continue
             if rule.require is not None:
                 passed = _pack_predicate_matches(rule.require, fields, plan_values)
@@ -461,9 +513,11 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
     if not isinstance(supplied_all, dict):
         return []
     errors: list[str] = []
-    if set(supplied_all) != set(active_packs):
-        missing = sorted(set(active_packs) - set(supplied_all))
-        unexpected = sorted(set(supplied_all) - set(active_packs))
+    applied = {key: value for key, value in supplied_all.items()
+               if not (isinstance(value, dict) and set(value) == {"not_applicable"})}
+    if set(applied) != set(active_packs):
+        missing = sorted(set(active_packs) - set(applied))
+        unexpected = sorted(set(applied) - set(active_packs))
         errors.append(f"research plan pack_values must equal the configured snapshot: {sorted(active_packs)}" +
                       (f"; missing {missing}" if missing else "") + (f"; unexpected {unexpected}" if unexpected else ""))
     if not active_packs:

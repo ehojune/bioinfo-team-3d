@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,6 +28,16 @@ class PackField(StrictModel):
     value_type: Literal["string", "integer", "boolean"] = "string"
     allowed_values: list[str] = []
     minimum: float | None = None
+    pattern: str | None = None
+
+    @model_serializer(mode="plain")
+    def serialize_field(self) -> dict[str, Any]:
+        # Keep hashes of packs without the new constraint byte-for-byte stable.
+        result = {"name": self.name, "description": self.description, "required": self.required,
+                  "value_type": self.value_type, "allowed_values": self.allowed_values, "minimum": self.minimum}
+        if self.pattern is not None:
+            result["pattern"] = self.pattern
+        return result
 
 
 class PackValidator(StrictModel):
@@ -52,12 +63,15 @@ class PackPredicate(StrictModel):
     value: Any = None
     in_: list[Any] | None = Field(default=None, alias="in", min_length=1)
     not_in: list[Any] | None = Field(default=None, min_length=1)
+    present: bool | None = None
+    # At least this many distinct non-blank list items: `present` passes a list with one group or [""] (PR #366 review).
+    min_items: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def exactly_one_operator(self) -> "PackPredicate":
-        operators = {"value", "in_", "not_in"} & self.model_fields_set
+        operators = {"value", "in_", "not_in", "present", "min_items"} & self.model_fields_set
         if len(operators) != 1:
-            raise ValueError("pack predicate requires exactly one operator: value, in, or not_in")
+            raise ValueError("pack predicate requires exactly one operator: value, in, not_in, present, or min_items")
         return self
 
     @model_serializer(mode="plain")
@@ -67,9 +81,30 @@ class PackPredicate(StrictModel):
             result["value"] = self.value
         elif "in_" in self.model_fields_set:
             result["in"] = self.in_
-        else:
+        elif "not_in" in self.model_fields_set:
             result["not_in"] = self.not_in
+        elif "min_items" in self.model_fields_set:
+            result["min_items"] = self.min_items
+        else:
+            result["present"] = self.present
         return result
+
+
+class PackAllowedCombinations(StrictModel):
+    fields: list[str] = Field(min_length=2)
+    rows: list[list[str | int | bool | None]] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def rectangular_unique_table(self) -> "PackAllowedCombinations":
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("pack allowed_combinations fields must be unique")
+        wrong = [index for index, row in enumerate(self.rows) if len(row) != len(self.fields)]
+        if wrong:
+            raise ValueError(f"pack allowed_combinations rows must have {len(self.fields)} cells; bad rows: {wrong}")
+        encoded = [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in self.rows]
+        if len(encoded) != len(set(encoded)):
+            raise ValueError("pack allowed_combinations rows must be unique")
+        return self
 
 
 class PackRule(StrictModel):
@@ -79,14 +114,23 @@ class PackRule(StrictModel):
     when: PackPredicate | list[PackPredicate] | None = None
     require: PackPredicate | None = None
     forbid: PackPredicate | None = None
+    allowed_combinations: PackAllowedCombinations | None = None
 
     @model_validator(mode="after")
     def exactly_one_outcome(self) -> "PackRule":
-        if (self.require is None) == (self.forbid is None):
-            raise ValueError("pack rule requires exactly one of require or forbid")
+        outcomes = sum(item is not None for item in (self.require, self.forbid, self.allowed_combinations))
+        if outcomes != 1:
+            raise ValueError("pack rule requires exactly one of require, forbid, or allowed_combinations")
         if isinstance(self.when, list) and not self.when:
             raise ValueError("pack rule when list requires at least one predicate")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_rule(self, handler: Any) -> dict[str, Any]:
+        result = handler(self)
+        if self.allowed_combinations is None:
+            result.pop("allowed_combinations", None)
+        return result
 
     @property
     def conditions(self) -> list[PackPredicate]:
@@ -100,8 +144,10 @@ _PLAN_RULE_FIELDS = {
     "brief.question", "brief.purpose", "brief.subject", "brief.scope", "brief.study_type",
     "brief.primary_hypothesis", "protocol.revision", "protocol.analysis_unit",
     "protocol.statistics.applicable", "protocol.statistics.reason", "protocol.statistics.estimand",
-    "protocol.statistics.analysis_unit", "protocol.statistics.multiple_testing",
+    "protocol.statistics.analysis_unit", "protocol.statistics.comparison_groups",
+    "protocol.statistics.primary_outcomes", "protocol.statistics.multiple_testing",
     "protocol.statistics.missing_and_exclusions", "protocol.statistics.effect_size_and_interval",
+    "protocol.statistics.sensitivity_analyses",
     "notes",
 }
 
@@ -131,6 +177,13 @@ class DomainRulePack(StrictModel):
                 raise ValueError(f"domain pack field {field.name}: allowed_values requires string type")
             if field.minimum is not None and field.value_type != "integer":
                 raise ValueError(f"domain pack field {field.name}: minimum requires integer type")
+            if field.pattern is not None:
+                if field.value_type != "string":
+                    raise ValueError(f"domain pack field {field.name}: pattern requires string type")
+                try:
+                    re.compile(field.pattern)
+                except re.error as error:
+                    raise ValueError(f"domain pack field {field.name}: invalid pattern: {error}") from error
         for section, rules in (("validator", self.validators), ("rule", self.rules)):
             ids = [rule.id for rule in rules]
             if len(ids) != len(set(ids)):
@@ -145,6 +198,17 @@ class DomainRulePack(StrictModel):
                     continue
                 if predicate.field not in known and predicate.field not in _PLAN_RULE_FIELDS:
                     raise ValueError(f"domain pack rule {rule.id}: unknown rule field {predicate.field!r}")
+            if rule.allowed_combinations is not None:
+                for name in rule.allowed_combinations.fields:
+                    if name not in known and name not in _PLAN_RULE_FIELDS:
+                        raise ValueError(f"domain pack rule {rule.id}: unknown combination field {name!r}")
+                declared = {field.name: field for field in self.fields}
+                for row in rule.allowed_combinations.rows:
+                    for name, value in zip(rule.allowed_combinations.fields, row):
+                        field = declared.get(name)
+                        if field and field.allowed_values and value not in field.allowed_values:
+                            raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
+                                             f"allowed for {name}")
         return self
 
     @property
@@ -207,6 +271,29 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
                 raise ValueError(f"research packs conflict on rule {rule.id!r} ({key})")
             rules[rule.id] = value
     return selected
+
+
+def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
+    """Require an explicit answer for every configured pack, then return the applicable ones."""
+    if not isinstance(pack_values, dict):
+        raise ValueError("research plan must answer every configured pack in pack_values")
+    unknown = sorted(set(pack_values) - set(configured))
+    if unknown:
+        raise ValueError(f"research plan selected unconfigured packs: {unknown}")
+    missing = sorted(set(configured) - set(pack_values))
+    if missing:
+        raise ValueError(f"research plan pack_values is missing configured packs: {missing}; provide values or "
+                         f'{{"not_applicable": "<reason>"}} for each one')
+    applied: dict[str, LoadedPack] = {}
+    for key, loaded in configured.items():
+        value = pack_values[key]
+        if isinstance(value, dict) and "not_applicable" in value:
+            reason = value.get("not_applicable")
+            if set(value) != {"not_applicable"} or not isinstance(reason, str) or not reason.strip():
+                raise ValueError(f"research plan pack_values[{key}] requires one non-empty not_applicable reason")
+            continue
+        applied[key] = loaded
+    return applied
 
 
 def configured_packs(settings: Any) -> dict[str, LoadedPack]:

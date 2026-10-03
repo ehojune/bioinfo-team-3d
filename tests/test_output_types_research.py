@@ -20,12 +20,11 @@ from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid
 
 V = vocab.load()
 CANARY = "CANARY-research-91c2"
-# current main after #239 (d1e3cab), json.dumps without sorting: what the engines receive, byte for byte
-# The prompt hash moved once on purpose since: the plan questions got their 500-character limit (off still adds
-# nothing).
-RESEARCH_PLAN_SCHEMA_SHA = "157ec518575a00ea05dd1399d719d3a0ad9d481e6abd1696a3ee50057ae8265f"
+# json.dumps without sorting: what the engines receive, byte for byte. The plan schema and prompt changed together
+# when every configured pack began requiring either full values or an explicit not_applicable reason (PR #366).
+RESEARCH_PLAN_SCHEMA_SHA = "3c9a69dad6e52fbb5a2a67593561f1c14441e2847fd8b00af1fabaa3dfc47130"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "3f92d9256bf368295eb3a6d92eb20210feaf25418842b25c46e8d5c61ae116c5"  # + ENV_STEP_RULE (2nd mock trial)
+RESEARCH_PROMPT_SHA = "b980116a4487ba7ffe2967b03f251c12504faf006ad08379bfb2f7b6c98f0ef3"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
 
 
