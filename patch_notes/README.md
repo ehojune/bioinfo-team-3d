@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:10 | [`61bb04d`](https://github.com/ehojune/bioinfo-team-3d/pull/372/commits/61bb04d) | 3D 사무실의 토큰 칸에도 설정 키와 labhq open --3d 안내를 넣었다. |
+| 04:02 | [`dc59088`](https://github.com/ehojune/bioinfo-team-3d/pull/372/commits/dc59088) | labhq open이 웹 사무실을 토큰을 넣은 채 열고, gateway 시작 줄과 토큰 칸이 들어가는 법을 알린다. |
 | 03:08 | [`f132912`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f132912) | 경로 어디에든 . 이나 .. 성분이 있으면 없는 이름으로 건너뛰지 않는다(Windows는 missing/.. 을 먼저 지운다). |
 | 03:00 | [`f587b05`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f587b05) | 없는 이름 판정이 첫 성분을 /, /와 \, NTFS stream 앞 이름으로 모두 대조하고 8.3 이름은 따옴표 안에서도 센다. |
 | 02:54 | [`91e3287`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/91e3287) | 없는 이름 판정에서 대소문자·유니코드 정규화·끝 점과 공백을 모두 같은 이름으로 본다(대소문자 무시 볼륨의 링크). |
