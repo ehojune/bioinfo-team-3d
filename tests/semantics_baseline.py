@@ -384,8 +384,9 @@ def artifact_row(reg: Registry, aid: str) -> dict:
 
 
 # Declared data meanings (pilot change 2). broader is kept for reference only: never inherited.
-VOCABULARY = {"raw_counts": {"broader": "expression_counts"}, "normalized_counts": {"broader": "expression_counts"},
-              "de_table": {}}
+# PI vocabulary review changed the meaning of these legacy declarations, so the independent baseline rejects them too.
+VOCABULARY = {"raw_counts": {"broader": "expression_counts"}, "de_table": {}}
+LEGACY_CHANGED_TYPES = {"normalized_counts", "features"}
 
 
 def data_type(generator: str, output_types: str | None, path: str, unknown: dict) -> str:
@@ -394,6 +395,9 @@ def data_type(generator: str, output_types: str | None, path: str, unknown: dict
         unknown["data_type"] = "generator_unknown"
         return UNKNOWN
     declared = {normalize_artifact_path(k): v for k, v in (json.loads(output_types or "null") or {}).items()}
+    if declared.get(path) in LEGACY_CHANGED_TYPES:
+        unknown["data_type"] = "vocab_changed"
+        return UNKNOWN
     if declared.get(path) in VOCABULARY:
         return declared[path]
     unknown["data_type"] = "not_declared"

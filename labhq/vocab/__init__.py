@@ -30,7 +30,8 @@ VOCAB_DIR = Path(__file__).parent
 LOCAL_FILE = "output_types.yaml"
 SUBSET_FILE = "edam_subset.yaml"
 BRANCHES = ("data", "format", "operation")
-MAX_KEYS = 40          # local keys and distinct EDAM terms are each capped here (#151)
+# PI review split normalized counts into count, expression and transformed sets; keep a little headroom (#151).
+MAX_KEYS = 45          # local keys and distinct EDAM terms are each capped here
 MAX_FILE_BYTES = 256 * 1024
 KEY = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 EXTENSION = re.compile(r"^\.[a-z0-9]{1,8}$")

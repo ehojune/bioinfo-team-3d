@@ -47,7 +47,7 @@ LICENSE = "https://creativecommons.org/licenses/by-sa/4.0"
 MAX_BYTES = 32 * 1024 ** 2
 MAX_DEPTH = 64
 MAX_ANCESTORS = 256
-MAX_KEYS = 40
+MAX_KEYS = 45
 
 NS_EDAM = "http://edamontology.org/"
 NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"

@@ -39,8 +39,13 @@ def subset_for(local_dir, overrides=None):
 def test_packaged_vocabulary_loads_with_counts_under_the_cap():
     v = vocab.load()
     counts = v.counts()
+    assert vocab.MAX_KEYS == 45
+    assert counts["keys"] == 41
     assert counts["keys"] <= vocab.MAX_KEYS and counts["edam_terms"] <= vocab.MAX_KEYS
-    assert (counts["data"], counts["format"], counts["operation"]) == (18, 14, 6)
+    assert (counts["data"], counts["format"], counts["operation"]) == (21, 14, 6)
+    reviewed = {"genomic_features", "normalized_expression", "transformed_expression", "variant_annotations"}
+    assert reviewed <= set(v.keys("data"))
+    assert "features" not in v.terms
     assert v.is_key("data", "raw_counts") and not v.is_key("format", "raw_counts")
     assert re.fullmatch(r"[0-9a-f]{64}", v.sha256)
 
@@ -75,11 +80,11 @@ def test_bad_local_file_is_refused(vdir, mutate, match):
         vocab.load(vdir)
 
 
-def test_more_than_forty_keys_is_refused(vdir):
+def test_more_than_forty_five_keys_is_refused(vdir):
     path = vdir / vocab.LOCAL_FILE
-    extra = "".join(f"  extra_{i}:\n    branch: data\n    definition: x\n" for i in range(3))
+    extra = "".join(f"  extra_{i}:\n    branch: data\n    definition: x\n" for i in range(5))
     path.write_text(path.read_text(encoding="utf-8") + extra, encoding="utf-8")
-    with pytest.raises(vocab.VocabError, match="1 to 40"):
+    with pytest.raises(vocab.VocabError, match="1 to 45"):
         vocab.load(vdir)
 
 
