@@ -18,6 +18,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 03:00 | [`f587b05`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f587b05) | 없는 이름 판정이 첫 성분을 /, /와 \, NTFS stream 앞 이름으로 모두 대조하고 8.3 이름은 따옴표 안에서도 센다. |
 | 02:54 | [`91e3287`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/91e3287) | 없는 이름 판정에서 대소문자·유니코드 정규화·끝 점과 공백을 모두 같은 이름으로 본다(대소문자 무시 볼륨의 링크). |
 | 02:47 | [`56b29bd`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/56b29bd) | 작업 폴더로 cd한 뒤 긴 인라인 스크립트(python -c)가 후보 상한에 걸려 PI에게 묻던 게이트 오탐을 없앴다. |
+| 02:30 | [`7e55568`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/7e55568) | main 병합: README는 분리 판 유지, 그사이 main README 변경(벌크 pack, 관찰 산출 tool_use_id, 감사 번들, CA 변수, 로드맵)을 매뉴얼로 옮김 |
 | 02:16 | [`b7c803b`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/b7c803b) | 일반 보고서는 heading 앞의 답을 지우지 않도록 군말 떼기를 빼고 프롬프트 지시만 남긴다. |
 | 02:10 | [`8e9371b`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/8e9371b) | pack 규칙에 min_items를 넣어 bulk 비교군을 서로 다른 두 개 이상으로 요구하고, 빈 문자열만 든 목록은 값 없음으로 본다. |
 | 02:09 | [`07b9964`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/07b9964) | 라운드 중 재시작 뒤에도 이어 가는 수정 단계가 현재 upstream 결과를 받는다. |
@@ -32,6 +33,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 00:44 | [`ea1ff0c`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/ea1ff0c) | Bash process substitution을 인자로 남기고 내부 redirect만 검사 |
 | 00:44 | [`e613c34`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/e613c34) | PI 결정 재실행 뒤 이전 도구 실패를 중복 없이 보존 |
 | 00:44 | [`332b18d`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/332b18d) | CA 환경 변수 하나만 정했을 때 다른 변수도 같은 파일로 보완 |
+| 00:41 | [`873146a`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/873146a) | README에 예시 절(요청 한 문장 → 결과 세 줄)과 docs/examples/gse10072(요청 원문·카드·그림 3장·보고서 원문) |
+| 00:37 | [`8ac590a`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/8ac590a) | main 병합: README는 분리 판 유지, 그사이 main README 변경(조상 단계 결합, 리다이렉트, Codex strict schema, Windows CA, 로드맵)을 매뉴얼로 옮김 |
 | 00:20 | [`2e4d95c`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/2e4d95c) | Evidence의 inline code는 outputs/ 경로일 때만 근거 경로로 읽음(봇 P1), 재시도가 성공해도 앞선 시도의 실패한 조회를 보고서에 남김(봇 P2) |
 | 00:18 | [`03f22b5`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/03f22b5) | 게이트: Git Bash 경로를 통제 구역·개인 경로·쓰기 검사 전에 Windows 표기로 바꿔 /c/<구역> 복사가 통과하지 않음(봇 P1) |
 | 00:11 | [`a9368cf`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/a9368cf) | 게이트: Windows Claude의 Bash(Git Bash) 쓰기 경로 /c/...를 C:/...로 읽어 자기 작업 폴더 쓰기를 묻지 않음(12차 시운전, 같은 단계 카드 3장) |
@@ -71,6 +74,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 12:45 | [`57d529b`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/57d529b) | README에 Codex strict schema 변환과 optional null 정리 동작을 한 줄로 기록했다. |
 | 12:43 | [`1a9c5a2`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/1a9c5a2) | Codex 직원 output schema를 OpenAI strict 형식으로 바꾸고 optional null을 원래 계약에 맞게 정리했다. |
 | 11:56 | [`470664f`](https://github.com/ehojune/bioinfo-team-3d/pull/350/commits/470664f) | adapter preflight에 실패한 직원을 runner roster에서 빼고 계획 재검증과 Claude 배경 작업 차단을 추가했다. |
+| 10:42 | [`351a0ad`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/351a0ad) | HANDOFF 큐 #57을 6–8로 되돌리고 병합된 #346 행을 뺌, 매뉴얼에 lab.scope |
+| 10:37 | [`8ad2e42`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/8ad2e42) | 요청 흐름 그림의 revise는 지적된 단계로 되돌리고, 승인 게이트 그림의 주석은 Claude 직원 범위로 좁힘 |
+| 10:37 | [`6de2a0e`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/6de2a0e) | 의미 모델과 온톨로지: README에 짧은 소개와 그림(semantics-model.svg), 매뉴얼에 자세한 절 |
+| 10:37 | [`95d4ed3`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/95d4ed3) | README 걸림돌 정리(두 번째 터미널의 LABHQ_CONFIG, 폰 데모 조건), 로드맵 요약을 ⑥에 맞추고 매뉴얼 리뷰 규칙을 한 곳으로 |
+| 10:37 | [`7f62cc2`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/7f62cc2) | PI Q&A에 ⑥ 결정(PR #347 반영)과 온톨로지 요청을 반영하고 개인 경로 답의 범위를 Claude 직원으로 밝힘 |
+| 10:37 | [`06df67a`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/06df67a) | CLAUDE.md에 문서 나눔과 README·매뉴얼 갱신 주기를 넣고 HANDOFF 결정 표에 범위 변경 기록 |
+| 10:28 | [`17d113f`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/17d113f) | 개념 그림 3장 추가: 요청 흐름, 승인 게이트, 연구 lane |
+| 10:28 | [`4f8377a`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/4f8377a) | README를 처음 써 보는 사람용으로 줄이고 본문을 docs/manual.md로 옮김, 배지는 README에 연결된 도구 표는 매뉴얼에 생성 |
+| 10:28 | [`264c567`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/264c567) | README 절 번호(§8·§10·§14)를 가리키던 doctor 힌트·HPC 안내·설정 주석·절차서를 매뉴얼 절 이름으로 바꿈 |
+| 10:28 | [`47d5f18`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/47d5f18) | docs/pi-qa.md 추가: PI가 물은 것과 답, ①~⑥ 결정을 표로 정리 |
+| 10:28 | [`17bc8a4`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/17bc8a4) | README의 개발 전용 단락(느린 test, 도구 표 갱신, fixture 재캡처)을 HANDOFF 작업 방식 표로, 문서 나눔 규칙을 AGENTS.md로 |
+| 10:28 | [`a03f571`](https://github.com/ehojune/bioinfo-team-3d/pull/349/commits/a03f571) | 문서 갱신 주기 검사가 README 대신 docs/manual.md 수정도 세도록 함 |
 | 10:16 | [`16a20a6`](https://github.com/ehojune/bioinfo-team-3d/pull/348/commits/16a20a6) | 범위 확인 후속: 첫 판정 유지, bench는 범위 카드에 진행, web_scope_card를 CI에(#346 봇 지적) |
 | 10:13 | [`66ccd34`](https://github.com/ehojune/bioinfo-team-3d/pull/347/commits/66ccd34) | 로드맵 ⑥: 버전마다 통과 기준, v0.75(HPC 공개)·v0.9(통제 데이터)·v0.95(온보딩), HANDOFF 작업 큐 정리 |
 | 09:50 | [`53b759d`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/53b759d) | 범위 밖 일반 요청은 실행 전에 PI에게 묻기: 계획에 scope 판정(in·borderline·out), 설정 lab.scope, out이면 범위 확인 카드, 중단하면 단계 없이 끝남(#36) |
