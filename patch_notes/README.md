@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:51 | [`1e64413`](https://github.com/ehojune/bioinfo-team-3d/pull/367/commits/1e64413) | Claude 쓰기 호출을 관찰 산출물에 연결하고 인증된 웹 감사 번들을 추가 |
+| 00:51 | [`33adaed`](https://github.com/ehojune/bioinfo-team-3d/pull/367/commits/33adaed) | README와 HANDOFF에 #58 증거 계층 완료 상태와 검증 경로를 기록 |
 | 00:44 | [`ea1ff0c`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/ea1ff0c) | Bash process substitution을 인자로 남기고 내부 redirect만 검사 |
 | 00:44 | [`e613c34`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/e613c34) | PI 결정 재실행 뒤 이전 도구 실패를 중복 없이 보존 |
 | 00:44 | [`332b18d`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/332b18d) | CA 환경 변수 하나만 정했을 때 다른 변수도 같은 파일로 보완 |
