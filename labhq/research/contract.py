@@ -49,15 +49,25 @@ _SIMPLE_SIGNALS = (
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
 )
 
+_BIOLOGICAL_CONDITION_PAIRS = (
+    (r"\btumou?r\b|종양", r"\bnormal\b|정상"),
+    (r"\b(?:treated|treatment)\b|처리", r"\b(?:untreated|control)\b|대조"),
+    (r"\b(?:patient|case|diseased?)\b|환자", r"\b(?:healthy|control)\b|건강인|대조"),
+)
+
+
+def _has_named_biological_contrast(text: str) -> bool:
+    return any(re.search(f"(?:{left}).{{0,40}}(?:{right})|(?:{right}).{{0,40}}(?:{left})",
+                         text, re.IGNORECASE)
+               for left, right in _BIOLOGICAL_CONDITION_PAIRS)
+
 
 def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope") -> IntakeDecision:
     """Classify without an extra model call; ambiguous requests enter the research planning lane."""
     single_cell = bool(re.search(r"single[- ]cell|scRNA[- ]?seq|단일\s*세포", text, re.IGNORECASE))
     bulk = not single_cell and bool(re.search(r"\bbulk\b|microarray|마이크로어레이|벌크", text, re.IGNORECASE))
     data_type = "single_cell" if single_cell else "bulk" if bulk else None
-    comparison = bool(re.search(
-        r"\bcompar(?:e|es|ed|ing|ison)\b|\bversus\b|\bvs\.?\b|differential\s+expression|"
-        r"차등\s*발현|비교|종양.{0,20}정상|tumou?r.{0,20}normal", text, re.IGNORECASE))
+    comparison = _has_named_biological_contrast(text)
     applicability = {"expression_data_type": data_type,
                      "comparison_design": "between_conditions" if comparison else None}
     if requested in {"simple", "research"}:

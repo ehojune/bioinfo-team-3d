@@ -224,6 +224,8 @@ class DomainRulePack(StrictModel):
                 for row in rule.allowed_combinations.rows:
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
+                        if field and value is None and not field.required:
+                            continue
                         if field and not _matches_value_type(value, field.value_type):
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} has wrong "
                                              f"type for {name} ({field.value_type})")
@@ -360,10 +362,12 @@ def assess_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *,
         predicates = _applicability_predicates(loaded)
         basis = ({predicate.field: _plan_field(machine_plan, predicate.field) for predicate in predicates}
                  if predicates else {})
-        known = bool(predicates) and all(item is not None for item in basis.values())
-        status = ("applies" if known and all(_predicate_matches_plan(predicate, machine_plan)
-                                             for predicate in predicates or []) else
-                  "does_not_apply" if known else "undetermined")
+        matches = [(None if basis[predicate.field] is None else _predicate_matches_plan(predicate, machine_plan))
+                   for predicate in predicates or []]
+        status = ("does_not_apply" if any(result is False for result in matches) else
+                  "applies" if matches and all(result is True for result in matches) else
+                  "undetermined")
+        known = status != "undetermined"
         is_not_applicable = isinstance(value, dict) and "not_applicable" in value
         basis_text = ", ".join(f"{name}={item!r}" for name, item in basis.items())
         if isinstance(value, dict) and "not_applicable" in value:

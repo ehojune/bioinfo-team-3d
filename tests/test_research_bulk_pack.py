@@ -8,9 +8,9 @@ import yaml
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research.contract import validate_research_plan
-from labhq.research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog,
-                                  load_pack, select_applied_packs)
+from labhq.research.contract import classify_intake, validate_research_plan
+from labhq.research.packs import (assess_applied_packs, configured_packs, pack_refs, pack_snapshot,
+                                  render_pack_catalog, load_pack, select_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -285,6 +285,47 @@ def test_machine_applicable_pack_rejects_cso_not_applicable_claim_with_basis_fie
         select_applied_packs(configured, plan["pack_values"], plan=plan)
 
 
+def test_method_comparison_from_free_text_leaves_condition_design_undetermined():
+    intake = classify_intake("Compare single-cell clustering methods")
+    configured = _selected(SINGLE_CELL_PACK)
+    applied, decisions = assess_applied_packs(
+        configured,
+        {SINGLE_CELL_PACK: {"not_applicable": "The request compares clustering methods, not conditions."}},
+        intake=intake,
+    )
+
+    assert intake.expression_data_type == "single_cell"
+    assert intake.comparison_design is None
+    assert not applied
+    assert decisions[SINGLE_CELL_PACK]["status"] == "undetermined"
+
+
+def test_named_biological_condition_contrast_is_machine_applicable():
+    intake = classify_intake("Run bulk tumor versus normal differential expression")
+    configured = _selected(BULK_PACK)
+    applied, decisions = assess_applied_packs(configured, valid_bulk_values(), intake=intake)
+
+    assert intake.expression_data_type == "bulk"
+    assert intake.comparison_design == "between_conditions"
+    assert list(applied) == [BULK_PACK]
+    assert decisions[BULK_PACK]["status"] == "applies"
+
+
+def test_single_cell_clustering_makes_bulk_pack_not_applicable():
+    configured = _selected(BULK_PACK)
+    reason = "The request is single-cell clustering, not bulk differential expression."
+    intake = classify_intake("Cluster the single-cell data")
+
+    applied, decisions = assess_applied_packs(
+        configured,
+        {BULK_PACK: {"not_applicable": reason}},
+        intake=intake,
+    )
+
+    assert not applied
+    assert decisions[BULK_PACK]["status"] == "does_not_apply"
+
+
 @pytest.mark.parametrize("bad_row", [["1", True], [1, 1]])
 def test_user_pack_rejects_allowed_combination_cells_with_wrong_declared_type(tmp_path, bad_row):
     raw = yaml.safe_load(Path("labhq/research/packs/bulk_tumor_normal.yaml").read_text(encoding="utf-8"))
@@ -301,6 +342,25 @@ def test_user_pack_rejects_allowed_combination_cells_with_wrong_declared_type(tm
     source.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
     with pytest.raises(ValueError, match="combination value.*type"):
         load_pack(source)
+
+
+def test_user_pack_allows_null_for_an_omitted_optional_combination_field(tmp_path):
+    raw = yaml.safe_load(Path("labhq/research/packs/bulk_tumor_normal.yaml").read_text(encoding="utf-8"))
+    raw.update(id="optional_table", title="Optional table fixture", applies_when="test only")
+    raw["fields"] = [
+        {"name": "count", "description": "Optional count", "required": False, "value_type": "integer"},
+        {"name": "flag", "description": "Flag", "required": True, "value_type": "boolean"},
+    ]
+    raw["validators"] = [{"id": "optional_table.fields", "requirement": "Supply the required field.",
+                          "required_fields": ["flag"]}]
+    raw["rules"] = [{"id": "optional_table.combination", "description": "The optional field may be absent.",
+                     "allowed_combinations": {"fields": ["count", "flag"], "rows": [[None, True]]}}]
+    source = tmp_path / "optional_table.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    loaded = load_pack(source)
+
+    assert loaded.pack.rules[0].allowed_combinations.rows == [[None, True]]
 
 
 async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_one():
