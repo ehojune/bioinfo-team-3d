@@ -1,6 +1,7 @@
 """Staff trust the OS store on Windows (9th mock trial): an institution's TLS inspection root is in the Windows
 store and not in certifi, so `requests` in a staff venv failed CERTIFICATE_VERIFY_FAILED."""
 
+import os
 import ssl
 
 import certifi
@@ -9,6 +10,7 @@ import pytest
 from labhq.adapters.read_only import read_only_engine_env
 from labhq.models import Engine, Task
 from labhq.runner import system_ca
+from labhq.util import merge_staff_env
 from tests.test_private_paths import _capture_runner, _runner_settings
 
 FAKE_DER = b"0\x82fake-root"
@@ -56,20 +58,66 @@ async def test_runner_points_staff_at_the_bundle_in_the_workspace_root(tmp_path,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["runner env", "engine env", "off", "no store"])
-async def test_runner_leaves_a_ca_the_pi_chose_or_a_missing_store_alone(tmp_path, monkeypatch, case):
+@pytest.mark.parametrize("case", ["off", "no store"])
+async def test_runner_leaves_a_disabled_or_missing_store_alone(tmp_path, monkeypatch, case):
     for name in system_ca.CA_ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: None if case == "no store" else "PEM\n")
     settings = _runner_settings(tmp_path, [])
-    if case == "runner env":
-        monkeypatch.setenv("SSL_CERT_FILE", "/pi/ca.pem")
-    if case == "engine env":
-        settings.engines.claude_code.env = {"REQUESTS_CA_BUNDLE": "/pi/ca.pem"}
     if case == "off":
         settings.runner.system_ca_bundle = False
     runner, seen = _capture_runner(settings, monkeypatch)
     assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+    assert not set(system_ca.CA_ENV) & set(seen["ctx"].env)
+    assert not (runner.ws_root / ".labhq-system-ca.pem").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("read_only", [False, True])
+@pytest.mark.parametrize("source,name,other", [
+    ("runner", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"),
+    ("engine", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"),
+])
+async def test_runner_fills_the_other_ca_variable_from_the_one_the_pi_set(
+        tmp_path, monkeypatch, source, name, other, read_only):
+    for variable in system_ca.CA_ENV:
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: "AUTO PEM\n")
+    settings = _runner_settings(tmp_path, [])
+    chosen = "C:/pi/chosen-ca.pem"
+    if source == "runner":
+        monkeypatch.setenv(name, chosen)
+    else:
+        settings.engines.claude_code.env = {name: chosen}
+    runner, seen = _capture_runner(settings, monkeypatch)
+    meta = {"kind": "consult"} if read_only else {}
+
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q", meta=meta))).ok
+    engine_env = settings.engines.claude_code.env
+    if read_only:
+        engine_env = read_only_engine_env(engine_env)[0]
+    effective = merge_staff_env(dict(os.environ), engine_env, seen["ctx"].env)
+
+    assert effective[name] == effective[other] == chosen
+    assert seen["ctx"].env[other] == chosen and name not in seen["ctx"].env
+    assert not (runner.ws_root / ".labhq-system-ca.pem").exists()
+
+
+@pytest.mark.asyncio
+async def test_runner_leaves_two_pi_ca_variables_unchanged(tmp_path, monkeypatch):
+    for variable in system_ca.CA_ENV:
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("SSL_CERT_FILE", "C:/pi/ssl.pem")
+    settings = _runner_settings(tmp_path, [])
+    settings.engines.claude_code.env = {"REQUESTS_CA_BUNDLE": "C:/pi/requests.pem"}
+    monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: "AUTO PEM\n")
+    runner, seen = _capture_runner(settings, monkeypatch)
+
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+    effective = merge_staff_env(dict(os.environ), settings.engines.claude_code.env, seen["ctx"].env)
+
+    assert effective["SSL_CERT_FILE"] == "C:/pi/ssl.pem"
+    assert effective["REQUESTS_CA_BUNDLE"] == "C:/pi/requests.pem"
     assert not set(system_ca.CA_ENV) & set(seen["ctx"].env)
     assert not (runner.ws_root / ".labhq-system-ca.pem").exists()
 

@@ -801,7 +801,7 @@ class Runner:
                                   "(read-only policy)"})
 
     def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
-        """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
+        """Keep the two Python CA variables paired, or point both at the OS trust store (9th mock trial).
 
         The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
         folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
@@ -810,7 +810,12 @@ class Runner:
         if not self.s.runner.system_ca_bundle:
             return {}
         engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
-        if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
+        configured = {name: engine_env.get(name) or os.environ.get(name) for name in CA_ENV}
+        chosen = {name: value for name, value in configured.items() if value}
+        if len(chosen) == 1:
+            missing = next(name for name in CA_ENV if name not in chosen)
+            return {missing: next(iter(chosen.values()))}
+        if chosen:
             return {}
         pem = system_ca_pem()
         if not pem:
