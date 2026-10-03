@@ -228,13 +228,26 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
 
 
 def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
-    """Select the configured packs that the PLAN says match their ``applies_when`` description."""
+    """Require an explicit answer for every configured pack, then return the applicable ones."""
     if not isinstance(pack_values, dict):
-        return {}
+        raise ValueError("research plan must answer every configured pack in pack_values")
     unknown = sorted(set(pack_values) - set(configured))
     if unknown:
         raise ValueError(f"research plan selected unconfigured packs: {unknown}")
-    return {key: loaded for key, loaded in configured.items() if key in pack_values}
+    missing = sorted(set(configured) - set(pack_values))
+    if missing:
+        raise ValueError(f"research plan pack_values is missing configured packs: {missing}; provide values or "
+                         f'{{"not_applicable": "<reason>"}} for each one')
+    applied: dict[str, LoadedPack] = {}
+    for key, loaded in configured.items():
+        value = pack_values[key]
+        if isinstance(value, dict) and "not_applicable" in value:
+            reason = value.get("not_applicable")
+            if set(value) != {"not_applicable"} or not isinstance(reason, str) or not reason.strip():
+                raise ValueError(f"research plan pack_values[{key}] requires one non-empty not_applicable reason")
+            continue
+        applied[key] = loaded
+    return applied
 
 
 def configured_packs(settings: Any) -> dict[str, LoadedPack]:

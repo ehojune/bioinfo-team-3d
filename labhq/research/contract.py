@@ -216,12 +216,23 @@ class PackPlanValue(StrictModel):
     acceptance: dict[str, str]
 
 
+class PackNotApplicable(StrictModel):
+    not_applicable: str = Field(min_length=1)
+
+    @field_validator("not_applicable")
+    @classmethod
+    def reason_is_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("not_applicable reason must not be blank")
+        return value
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
     intake: IntakeDecision
     brief: ResearchBrief
     protocol: ProtocolContract
-    pack_values: dict[str, PackPlanValue]
+    pack_values: dict[str, PackPlanValue | PackNotApplicable]
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
@@ -464,9 +475,11 @@ def _pack_value_errors(supplied_all: Any, plan: ResearchPlan | None, active_pack
     if not isinstance(supplied_all, dict):
         return []
     errors: list[str] = []
-    if set(supplied_all) != set(active_packs):
-        missing = sorted(set(active_packs) - set(supplied_all))
-        unexpected = sorted(set(supplied_all) - set(active_packs))
+    applied = {key: value for key, value in supplied_all.items()
+               if not (isinstance(value, dict) and set(value) == {"not_applicable"})}
+    if set(applied) != set(active_packs):
+        missing = sorted(set(active_packs) - set(applied))
+        unexpected = sorted(set(applied) - set(active_packs))
         errors.append(f"research plan pack_values must equal the configured snapshot: {sorted(active_packs)}" +
                       (f"; missing {missing}" if missing else "") + (f"; unexpected {unexpected}" if unexpected else ""))
     if not active_packs:

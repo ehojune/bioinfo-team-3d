@@ -216,10 +216,11 @@ Contract rules:
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
-- For every configured pack whose `applies_when` matches this request, fill top-level `pack_values[key]` with exactly
-  the keys in its `pack_values_keys`; omit configured packs that do not match:
-  a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
-  acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
+- Answer every configured pack in top-level `pack_values`. If its `applies_when` matches, fill `pack_values[key]`
+  with exactly the keys in its `pack_values_keys`: a value for each field, a non-empty explanation for each validator
+  id, and a non-empty outcome for each acceptance id. Otherwise return exactly
+  `{{"not_applicable": "<non-empty reason>"}}` for that key; the reason is shown to the PI and frozen in the PLAN.
+  Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
   the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
@@ -1099,7 +1100,7 @@ def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
     if packs:
         lines += ["", "설정된 domain pack: " + "; ".join(f"{key} ({loaded.pack.applies_when})"
                                                        for key, loaded in sorted(packs.items())),
-                  "요청에 맞는 pack만 `pack_values`에 넣습니다. 적용 조건을 잘못 골랐다면 계획을 고치세요."]
+                  "모든 configured pack에 값 또는 `not_applicable` 사유를 답합니다."]
     return "\n".join(lines)
 
 
@@ -2966,9 +2967,14 @@ class Orchestrator:
                                                                     plan.get("pack_values") if isinstance(plan, dict)
                                                                     else None)
                         except ValueError as error:
-                            candidate_packs = {}
+                            supplied = plan.get("pack_values") if isinstance(plan, dict) else None
+                            candidate_packs = {
+                                key: loaded for key, loaded in configured_pack_defs.items()
+                                if isinstance(supplied, dict) and key in supplied and
+                                not (isinstance(supplied[key], dict) and "not_applicable" in supplied[key])
+                            }
                             selection_problems = [str(error)]
-                        # The CSO chooses matching applies_when entries; labhq writes their exact refs (#222).
+                        # The CSO answers every pack; labhq freezes exact refs only for applicable entries (#222).
                         plan = with_pack_refs(plan, pack_refs(candidate_packs))
                         output_problems = []
                         try:

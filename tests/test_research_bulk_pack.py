@@ -40,9 +40,13 @@ def valid_bulk_values():
                 "bulk_tumor_normal.positive_control_rows": "Every control names a gene, direction, and PMID.",
             },
             "acceptance": {
+                "bulk_tumor_normal.none_unpaired_model": "Not active because pairing is complete.",
                 "bulk_tumor_normal.partial_mixed_model": "Not active because pairing is complete.",
+                "bulk_tumor_normal.partial_count_model": "Not active because pairing is complete.",
                 "bulk_tumor_normal.complete_paired_model": "The mixed model preserves complete pairing.",
+                "bulk_tumor_normal.complete_count_model": "Not active because input is log2 normalized.",
                 "bulk_tumor_normal.raw_counts_count_model": "Not active because input is log2 normalized.",
+                "bulk_tumor_normal.log2_normalized_non_count_model": "The mixed model uses normalized values.",
             },
         }
     }
@@ -92,7 +96,19 @@ def test_bulk_pack_loads_with_schema_review_questions_and_failure_fixtures():
          "bulk_tumor_normal.partial_mixed_model"),
         ({"pairing": "complete", "primary_model": "unpaired"},
          "bulk_tumor_normal.complete_paired_model"),
-        ({"expression_scale": "raw_counts"}, "bulk_tumor_normal.raw_counts_count_model"),
+        ({"pairing": "none", "primary_model": "paired_t"},
+         "bulk_tumor_normal.none_unpaired_model"),
+        ({"pairing": "none", "primary_model": "mixed_model"},
+         "bulk_tumor_normal.none_unpaired_model"),
+        ({"pairing": "none", "primary_model": "unpaired"}, None),
+        ({"expression_scale": "raw_counts", "primary_model": "paired_count_glm"}, None),
+        ({"expression_scale": "raw_counts", "primary_model": "paired_t"},
+         "bulk_tumor_normal.raw_counts_count_model"),
+        ({"expression_scale": "log2_normalized", "primary_model": "paired_count_glm"},
+         "bulk_tumor_normal.log2_normalized_non_count_model"),
+        ({"pairing": "partial", "expression_scale": "raw_counts", "primary_model": "paired_count_glm"}, None),
+        ({"pairing": "partial", "expression_scale": "raw_counts", "primary_model": "count_glm_negative_binomial"},
+         "bulk_tumor_normal.partial_count_model"),
     ],
 )
 def test_bulk_pairing_and_expression_scale_rules(fields, failure):
@@ -123,15 +139,30 @@ def test_bulk_required_methods_and_positive_control_rows_are_rejected(field, val
 def test_only_the_pack_matching_applies_when_is_frozen_when_both_are_configured():
     configured = _selected(SINGLE_CELL_PACK, BULK_PACK)
 
-    bulk_plan = valid_plan(pack_values=valid_bulk_values())
+    bulk_values = valid_bulk_values()
+    bulk_values[SINGLE_CELL_PACK] = {"not_applicable": "The request uses bulk, not single-cell, expression."}
+    bulk_plan = valid_plan(pack_values=bulk_values)
     bulk = select_applied_packs(configured, bulk_plan["pack_values"])
     assert list(bulk) == [BULK_PACK]
     _validate(bulk_plan, bulk)
 
-    single_plan = valid_plan(pack_values=valid_single_cell_values())
+    single_values = valid_single_cell_values()
+    single_values[BULK_PACK] = {"not_applicable": "The request uses single-cell, not bulk, expression."}
+    single_plan = valid_plan(pack_values=single_values)
     single = select_applied_packs(configured, single_plan["pack_values"])
     assert list(single) == [SINGLE_CELL_PACK]
     _validate(single_plan, single)
+
+
+def test_every_configured_pack_requires_values_or_a_not_applicable_reason():
+    configured = _selected(SINGLE_CELL_PACK, BULK_PACK)
+    with pytest.raises(ValueError, match=f"missing.*{SINGLE_CELL_PACK}"):
+        select_applied_packs(configured, valid_bulk_values())
+
+    no_reason = valid_bulk_values()
+    no_reason[SINGLE_CELL_PACK] = {"not_applicable": ""}
+    with pytest.raises(ValueError, match="non-empty not_applicable reason"):
+        select_applied_packs(configured, no_reason)
 
 
 async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_one():
@@ -141,22 +172,34 @@ async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_o
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
 
+    missing = valid_bulk_values()
+    answered = valid_bulk_values()
+    reason = "The request compares bulk tissue and has no single-cell measurements."
+    answered[SINGLE_CELL_PACK] = {"not_applicable": reason}
+    replies = [missing, answered]
+
     async def reply(task):
-        assert "whose `applies_when` matches this request" in task.prompt
+        assert "every configured pack" in task.prompt
         assert f'"key": "{SINGLE_CELL_PACK}"' in task.prompt
         assert f'"key": "{BULK_PACK}"' in task.prompt
+        if len(replies) == 1:
+            assert f"pack_values is missing configured packs: ['{SINGLE_CELL_PACK}']" in task.prompt
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
-                          structured=valid_plan(pack_values=valid_bulk_values()))
+                          structured=valid_plan(pack_values=replies.pop(0)))
 
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
                   text="Compare bulk tumor and normal expression")
     await Orchestrator(hub).run_request("r")
 
     request = hub.requests["r"]
-    assert request["outcome"] == "plan_approved"
-    assert list(request["plan"]["pack_values"]) == [BULK_PACK]
+    assert request.get("outcome") == "plan_approved", json.dumps(request, default=str, indent=2)
+    assert len(hub.calls) == 2
+    assert request["plan"]["pack_values"][SINGLE_CELL_PACK] == {"not_applicable": reason}
     assert [row["id"] for row in request["plan"]["protocol"]["packs"]] == ["bulk_tumor_normal"]
     assert list(request["research_contract"]["pack_snapshot"]) == [BULK_PACK]
+    assert json.loads(hub.approvals[0]["detail"]["plan_canonical"])["pack_values"][SINGLE_CELL_PACK] == {
+        "not_applicable": reason,
+    }
 
 
 def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
@@ -169,9 +212,13 @@ def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
         "positive_controls", "sensitivity_analyses",
     ]
     assert row["pack_values_keys"]["acceptance"] == [
+        "bulk_tumor_normal.none_unpaired_model",
         "bulk_tumor_normal.partial_mixed_model",
+        "bulk_tumor_normal.partial_count_model",
         "bulk_tumor_normal.complete_paired_model",
+        "bulk_tumor_normal.complete_count_model",
         "bulk_tumor_normal.raw_counts_count_model",
+        "bulk_tumor_normal.log2_normalized_non_count_model",
     ]
 
 
