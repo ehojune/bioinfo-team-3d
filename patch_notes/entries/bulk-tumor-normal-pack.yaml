@@ -9,3 +9,6 @@ rows:
 - sha: b6ad693
   at: 2026-10-04 01:31
   text: core 통계 정본과 폐쇄형 scale·pairing·model 조합표를 추가
+- sha: 4f641c4
+  at: 2026-10-04 01:53
+  text: 패키지에 든 설정 예시를 저장소 예시와 맞췄다(CI 템플릿 일치 검사).
