@@ -1,0 +1,5 @@
+pr: 0
+rows:
+- sha: 1a9c5a2
+  at: 2026-10-03 12:43
+  text: Codex 직원 output schema를 OpenAI strict 형식으로 바꾸고 optional null을 원래 계약에 맞게 정리했다.
