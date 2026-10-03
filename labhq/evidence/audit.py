@@ -297,7 +297,7 @@ def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -
     claims = {"request_id": report.get("request_id"), "plan_sha256": contract.get("plan_sha256"),
               "ledgers": research_ledgers(req) if contract else {},
               "artifact_sha256": receipt.get("artifact_sha256") or {},
-              "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_evidence",
+              "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
                                                     "unsupported_claims", "unreported_outputs") if key in receipt},
               "report_check": report.get("report_check")}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "workdir_id", "path", "size",

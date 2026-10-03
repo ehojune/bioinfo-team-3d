@@ -1,13 +1,14 @@
 """CP2 evidence review (#90): artifact binding, result correction, failure, and structured decisions."""
 
 import asyncio
+import copy
 
 import pytest
 from pydantic import ValidationError
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research.contract import plan_sha256
+from labhq.research.contract import plan_sha256, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
@@ -28,6 +29,24 @@ def _invalid_result(hub, task):
     result = _cp2_result(hub, task)
     del result["evidence"][0]["assessment_reason"]
     return result
+
+
+def _standalone_result():
+    plan = valid_plan()
+    frozen = plan_sha256(plan)
+    hub = type("Hub", (), {"requests": {"r": {"plan": plan,
+        "research_contract": {"plan_sha256": frozen}}}})()
+    task = type("Task", (), {"meta": {"step_id": "s1"}})()
+    return plan, _cp2_result(hub, task)
+
+
+def _extra_observation(row_id="bad"):
+    return {"id": row_id, "kind": "observation", "observation": "cross-check",
+            "status": "observed",
+            "source": {"uri": "https://example.org/record", "accessed_at": "2026-10-03",
+                       "locator": "table 1"},
+            "directness": "indirect", "source_level": "primary", "independence_group": "crosscheck",
+            "assessment_reason": "an independent cross-check", "slots": []}
 
 
 def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
@@ -133,6 +152,132 @@ def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
 
 
 # ---------- Result contract correction ----------
+
+@pytest.mark.parametrize("broken", [
+    "accessed_at", "assessment_reason", "status", "source", "conditions", "denominator", "unknown",
+    "independence_group",
+])
+def test_field_level_contract_defects_refuse_only_the_bad_evidence_row(broken):
+    plan, result = _standalone_result()
+    row = _extra_observation()
+    if broken == "accessed_at":
+        row["source"]["accessed_at"] = "2026/10/03"
+    elif broken in {"assessment_reason", "status", "source", "independence_group"}:
+        row.pop(broken)
+        if broken == "independence_group":
+            row["kind"] = "literature_claim"
+    else:
+        quantity = {"id": "q_bad", "measure": "effect", "value": 1.2, "unit": "fold",
+                    "conditions": ["case vs control"], "denominator": "6 donors", "unknown": {}}
+        if broken == "unknown":
+            quantity.pop("value")
+        else:
+            quantity.pop(broken)
+        row["quantities"] = [quantity]
+    result["evidence"].append(row)
+
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None
+    assert [item.id for item in salvaged.evidence] == ["e1"]
+    assert [(item["row_type"], item["row_id"]) for item in refused] == [("evidence", "bad")]
+    assert unsupported == []
+
+
+def test_refusing_evidence_also_refuses_derived_rows_and_their_links():
+    plan, result = _standalone_result()
+    bad = _extra_observation("bad_parent")
+    bad["source"]["accessed_at"] = "not-a-date"
+    result["evidence"] += [bad, {"id": "derived", "kind": "inference", "observation": "interpretation",
+                                  "derived_from": ["bad_parent"], "slots": []}]
+    result["links"].append({"claim_id": "c1", "claim_revision": 1, "evidence_id": "derived",
+                            "relation": "context", "rationale": "interpretation only"})
+
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [item.id for item in salvaged.evidence] == ["e1"]
+    refused_ids = {(row["row_type"], row["row_id"]) for row in refused}
+    assert ("evidence", "bad_parent") in refused_ids and ("evidence", "derived") in refused_ids
+    assert any(row_type == "link" and "->derived:" in row_id for row_type, row_id in refused_ids)
+
+
+@pytest.mark.parametrize("change", ["json", "schema_version", "plan_sha256", "step_id", "required_slot"])
+def test_structural_result_defects_are_not_salvaged(change):
+    plan, result = _standalone_result()
+    value = copy.deepcopy(result)
+    if change == "json":
+        value = "not json"
+    elif change == "schema_version":
+        value["schema_version"] = 1
+    elif change == "plan_sha256":
+        value["plan_sha256"] = "0" * 64
+    elif change == "step_id":
+        value["step_id"] = "s9"
+    else:
+        value["evidence"][0]["slots"] = []
+
+    salvaged, refused, unsupported, problems = salvage_research_result(value, plan=plan, expected_step_id="s1")
+
+    assert salvaged is None and refused == [] and unsupported == [] and problems
+
+
+@pytest.mark.asyncio
+async def test_two_failed_corrections_salvage_inference_support_into_cp2_and_report_metadata():
+    settings = _settings()
+    assert settings.research.result_corrections == 2
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = _cp2_result(hub, task)
+        result["links"][0]["relation"] = "context"
+        result["evidence"].append({
+            "id": "E_pairing_crosscheck", "kind": "inference", "observation": "paired donors are comparable",
+            "derived_from": ["e1"], "slots": [],
+        })
+        result["links"].append({
+            "claim_id": "c1", "claim_revision": 1, "evidence_id": "E_pairing_crosscheck",
+            "relation": "supports", "rationale": "the inferred pairing supports the claim",
+        })
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path] if task.meta["kind"] == "step" else [], workdir="runs/s1",
+                          session_id="session-1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == [
+        "plan", "step", "result_correction", "result_correction"]
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
+    saved = hub.requests["r"]["results"]["s1"]["structured"]
+    assert [row["id"] for row in saved["evidence"]] == ["e1"]
+    assert saved["claims"] == [] and saved["links"] == []
+    card = hub.approvals[1]["detail"]
+    assert any(row["row_id"] == "E_pairing_crosscheck" for row in card["refused_rows"])
+    assert [row["claim_id"] for row in card["unsupported_claims"]] == ["c1"]
+    receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+    assert receipt["refused_rows"] == card["refused_rows"]
+    assert "계약에 맞지 않아 뺀 근거" in hub.requests["r"]["report"]
+
+
+def test_normal_result_needs_no_salvage():
+    plan, result = _standalone_result()
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+    assert salvaged is not None and salvaged.step_id == "s1"
+    assert [row.id for row in salvaged.evidence] == ["e1"] and [claim.id for claim in salvaged.claims] == ["c1"]
+    assert refused == [] and unsupported == [] and problems == []
 
 @pytest.mark.asyncio
 async def test_invalid_result_is_corrected_once_and_the_request_continues():
@@ -542,3 +687,51 @@ async def test_a_correction_that_changes_an_output_file_fails_the_step():
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
     assert "the result correction changed output files" in result["error"]
     assert hub.requests["r"]["outcome"] == "research_failed"
+
+
+def test_a_duplicate_link_refuses_only_the_extra_link_not_the_evidence():
+    """`evidence e1 is linked to claim c1 more than once` must not match the generic evidence pattern first and
+    drop the valid row with all its links (PR #353 review)."""
+    plan, result = _standalone_result()
+    result["links"].append(dict(result["links"][0]))
+
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [item.id for item in salvaged.evidence] == ["e1"] and len(salvaged.links) == 1
+    assert [row["row_type"] for row in refused] == ["link"]
+
+
+@pytest.mark.asyncio
+async def test_a_correction_that_still_asks_the_pi_is_not_salvaged():
+    """A last correction that asks a blocking question is never salvaged into CP2 (PR #353 review)."""
+    settings = _settings()
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = _cp2_result(hub, task)
+        result["evidence"].append(_extra_observation("bad"))
+        result["evidence"][-1]["source"]["accessed_at"] = "not-a-date"
+        if task.meta["kind"] == "result_correction":
+            result["blocking_decision"] = "Which cohort should I use?"
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path] if task.meta["kind"] == "step" else [], workdir="runs/s1",
+                          session_id="session-1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**CP1, "approval_id": "a1", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert "cannot ask a new blocking_decision" in hub.requests["r"]["results"]["s1"]["error"]
+    assert len(hub.approvals) == 1  # CP1 only: nothing reached CP2

@@ -17,9 +17,10 @@ const web=path.join(__dirname,'../labhq/web');
 const source=fs.readFileSync(path.join(web,'ui/decide.js'),'utf8');
 const modulePromise=import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 const REFUSED=[{step_id:'s1',evidence_id:'e1',reason:'cites artifact a1 at outputs/missing.tsv'}];
+const REFUSED_ROWS=[{step_id:'s1',row_type:'evidence',row_id:'e_bad',reason:'invalid accessed_at'}];
 const cp2={id:'cp2',kind:'research_evidence',summary:'CP2 evidence review',created_at:1,
   detail:{gate:'research_evidence',plan_sha256:'f'.repeat(64),choices:['approve','revise','deny'],
-    refused_evidence:REFUSED,results:{s1:{claims:[],evidence:[]}}}};
+    refused_rows:REFUSED_ROWS,refused_evidence:REFUSED,results:{s1:{claims:[],evidence:[]}}}};
 
 test('the CP2 card offers approve, revise and deny and sends each as a choice',async()=>{
   const decide=await modulePromise,container=new Element(),sent=[];
@@ -35,12 +36,14 @@ test('the CP2 card offers approve, revise and deny and sends each as a choice',a
   assert.deepEqual(sent,[[true,'Request revision','approve'],[false,'Request revision','revise'],[false,'Request revision','deny']]);
 });
 
-test('refused evidence and its reason lead the CP2 card detail',async()=>{
+test('contract-refused rows and their reasons lead the CP2 card detail',async()=>{
   const decide=await modulePromise,container=new Element();
   const [row]=decide.syncDecisionCards(container,[cp2]);
   const list=row._decisionParts.detail.children[0];
-  assert.equal(list.children[0].textContent,'거부된 evidence (승인 대상 아님)');
-  assert.match(list.children[1].textContent,/outputs\/missing\.tsv/);
+  assert.equal(list.children[0].textContent,'계약에 맞지 않아 뺀 근거');
+  assert.match(list.children[1].textContent,/invalid accessed_at/);
+  assert.equal(list.children[2].textContent,'거부된 evidence (승인 대상 아님)');
+  assert.match(list.children[3].textContent,/outputs\/missing\.tsv/);
   assert.doesNotMatch(row._decisionParts.detail.textContent,/choices/);
 });
 
