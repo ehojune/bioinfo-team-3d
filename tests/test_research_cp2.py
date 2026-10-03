@@ -376,9 +376,11 @@ async def test_a_research_step_past_its_turn_limit_finishes_in_its_session(finis
         if not task.resume_session_id:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="error_max_turns",
                               error_kind="error_max_turns", session_id="session-1", workdir="runs/s1",
-                              outputs=[path], output_sha256={path: "a" * 64})
+                              outputs=[path], output_sha256={path: "a" * 64},
+                              unreported_outputs=["outputs/scratch.tsv"])
+        # The runner rehashes every declared output after each turn: the finish turn rewrote this one.
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_cp2_result(hub, task),
-                          outputs=[path], workdir="runs/s1", session_id="session-1")
+                          outputs=[path], output_sha256={path: "b" * 64}, workdir="runs/s1", session_id="session-1")
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
                                     text="compare conditions")
@@ -398,7 +400,9 @@ async def test_a_research_step_past_its_turn_limit_finishes_in_its_session(finis
     if finish_turns:
         assert hub.calls[2].resume_session_id == "session-1"
         receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
-        assert receipt["refused_evidence"] == []  # the first turn's hash still binds the evidence artifact
+        assert receipt["refused_evidence"] == []
+        assert receipt["artifact_sha256"] == {"s1/a1": "b" * 64}  # the file as it is now, not the first turn's
+        assert hub.approvals[1]["detail"]["unreported_outputs"] == {"s1": ["outputs/scratch.tsv"]}
 
 
 @pytest.mark.asyncio

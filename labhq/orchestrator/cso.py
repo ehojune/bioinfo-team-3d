@@ -456,15 +456,12 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
 
 
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
-    """A later turn of the same task in the same workspace. Its files join the first turn's; a file it touched loses
-    the first turn's hash, so `labhq verify` reports it unrecorded rather than a mismatch (#58, PR #339 review)."""
-    touched = set(later.unreported_outputs) | set(later.output_sha256)
-    outputs = list(dict.fromkeys([*first.outputs, *later.outputs]))
+    """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
+    are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
+    limit, keeps no stale digest (PR #355 review). Files the step wrote without reporting them stay listed."""
     return later.model_copy(update={
-        "outputs": outputs,
-        "output_sha256": {**{path: digest for path, digest in first.output_sha256.items() if path not in touched},
-                          **later.output_sha256},
-        "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs)) - set(outputs)),
+        "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
+                                     - set(later.outputs)),
         "workdir": later.workdir or first.workdir,
         "workdir_id": later.workdir_id or first.workdir_id,
     })

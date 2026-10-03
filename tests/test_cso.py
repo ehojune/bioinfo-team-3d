@@ -2243,16 +2243,22 @@ async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuati
 
 
 @pytest.mark.asyncio
-async def test_a_step_with_finish_turns_finishes_in_its_session_under_half_the_limit(continuations):
+@pytest.mark.parametrize("outputs, hashes", [
+    (["outputs/table.tsv", "outputs/report.md"], {"outputs/table.tsv": "a" * 64, "outputs/report.md": "c" * 64}),
+    (["outputs/report.md"], {"outputs/report.md": "c" * 64}),  # the finish turn removed table.tsv
+    (["outputs/table.tsv", "outputs/report.md"], {"outputs/report.md": "c" * 64}),  # grew past the hash limit
+])
+async def test_a_step_with_finish_turns_finishes_in_its_session_under_half_the_limit(continuations, outputs, hashes):
     """A research step that ran out of turns had already done the work (7th mock trial: QC had reproduced every
-    number). It finishes in the same session; a file the finish turn did not touch keeps the first turn's hash."""
+    number). It finishes in the same session, and the outputs are as the runner saw them after that turn: a removed
+    or unhashable file keeps no hash from the first turn (PR #355 review)."""
     async def dispatch(task):
         if task.resume_session_id:
-            return result(task, text="done", session_id="session-1", workdir="runs/A",
-                          outputs=["outputs/table.tsv", "outputs/report.md"],
-                          output_sha256={"outputs/report.md": "c" * 64})
+            return result(task, text="done", session_id="session-1", workdir="runs/A", outputs=outputs,
+                          output_sha256=hashes)
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
-                      workdir="runs/A", outputs=["outputs/table.tsv"], output_sha256={"outputs/table.tsv": "a" * 64})
+                      workdir="runs/A", outputs=["outputs/table.tsv"], output_sha256={"outputs/table.tsv": "0" * 64},
+                      unreported_outputs=["outputs/scratch.tsv"])
 
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: True
@@ -2264,8 +2270,8 @@ async def test_a_step_with_finish_turns_finishes_in_its_session_under_half_the_l
     assert finish.resume_session_id == "session-1" and finish.meta["parent_task"] == hub.calls[0].id
     assert finish.meta["workdir"] == "runs/A" and finish.meta["agent_overrides"] == {"max_turns": 20}
     assert continuations[0]["updates"] == FINISH_PROMPT and finish.prompt == continuations[0]["prompt"]
-    assert res.outputs == ["outputs/table.tsv", "outputs/report.md"]
-    assert res.output_sha256 == {"outputs/table.tsv": "a" * 64, "outputs/report.md": "c" * 64}
+    assert res.outputs == outputs and res.output_sha256 == hashes
+    assert res.unreported_outputs == ["outputs/scratch.tsv"]
 
 
 @pytest.mark.asyncio
