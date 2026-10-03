@@ -359,6 +359,7 @@ Team results so far:
 SYNTH_PROMPT = """Write the final report for the PI.
 Structure: 1) answer / recommendation, 2) evidence by step (with file paths), 3) reviewer concerns and how
 they were addressed, 4) what would change the conclusion, 5) next steps (including any proposed contract hires).
+Start with the report's first heading: no preamble.
 Do not turn a failed lookup into evidence or proof of absence. LabHQ appends the warning section itself; do not
 copy it into your report. Warning preview ("(none)" means there is no warning section):
 {warnings}
@@ -499,6 +500,10 @@ Final report (excerpt):
 {report}
 {history}
 PI follow-up question: {question}"""
+
+
+REVISION_RESULT_RULE = ("\nReturn your complete revised result, not only the changes: it replaces your previous "
+                        "result for later steps and the report, so anything you leave out is lost.")
 
 
 def continuation_prompt(task: Task, updates: str, *, resumable: bool,
@@ -772,7 +777,8 @@ def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> di
 
     A revised step changes what its dependents read, so a dependent the reviewer did not flag re-runs too, with a
     note naming the revised upstream steps; otherwise a later revision or the report reads a bridge step (s5 → s8
-    → s9) built on the old result. Flagged steps keep their own notes and get no extra one.
+    → s9) built on the old result. A flagged step below a revised one gets the same note after its own: in the 12th
+    mock trial the report step fixed only its flagged sentences and kept the numbers s8 and s9 had just withdrawn.
     """
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
     for step in steps:
@@ -783,17 +789,17 @@ def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> di
     while pending:
         sid = pending.pop()
         for child in children.get(sid, []):
-            if child in feedback:
-                continue
             roots = {sid} if sid in feedback else revised_above.get(sid, set())
             if not roots <= revised_above.get(child, set()):
                 revised_above.setdefault(child, set()).update(roots)
-                pending.append(child)
+                if child not in feedback:  # a flagged step is already pending as a root of its own
+                    pending.append(child)
     extended = dict(feedback)
     for sid in (s["id"] for s in steps):
         if sid in revised_above:
-            extended[sid] = (f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the "
-                             "scientific review. Redo your step on their new results and update your outputs.\n")
+            extended[sid] = feedback.get(sid, "") + (
+                f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the scientific "
+                "review. Redo your step on their new results and update your outputs.\n")
     return extended
 
 
@@ -2063,7 +2069,8 @@ class Orchestrator:
                 updates.append(ASK_WAKE_PROMPT.format(answers=qa_text(decision)))
             revising = bool(feedback and step["id"] in feedback)
             if revising:
-                updates.append(f"[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}")
+                updates.append(f"[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}"
+                               + REVISION_RESULT_RULE)
             previous = results.get(step["id"])
             if previous is None and decision and decision.get("previous_result"):
                 previous = TaskResult.model_validate(decision["previous_result"])
@@ -2075,6 +2082,11 @@ class Orchestrator:
                 session_id, workdir = await self._free_session(
                     step["agent_id"], session_id, workdir, rid=rid, step=step["id"])
             can_resume = bool(session_id and self.hub.supports_resume(step["agent_id"]))
+            if revising and can_resume and ctx:
+                # A resumed session gets only the updates; without this it keeps the upstream results it read before
+                # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
+                # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
+                updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
