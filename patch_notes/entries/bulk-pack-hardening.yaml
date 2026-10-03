@@ -3,3 +3,6 @@ rows:
 - sha: 881a843
   at: 2026-10-04 02:47
   text: 폐쇄형 intake로 pack 적용을 판정하고 pairing 근거 유형과 조합표 셀 타입을 검증
+- sha: edb05ef
+  at: 2026-10-04 03:01
+  text: 방법 비교의 pack 오적용과 optional null 조합표 거부를 바로잡음
