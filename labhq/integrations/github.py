@@ -58,7 +58,7 @@ QUERY_VALUE = re.compile(r"[^&#\s\"'<>)\]]+")
 URL_USERINFO = re.compile(r"(?<![A-Za-z0-9+.-])([A-Za-z][A-Za-z0-9+.-]*:(?:\\?/){2})((?:[^/\\?#\s@\"'<>]|\\(?!/))+)@")
 USERINFO_SCHEMES = {"http", "https", "ftp", "ftps", "ws", "wss"}
 # Webhook URLs carry the credential in the path, under no parameter name (#134). Only these hosts are known;
-# a self-hosted webhook (`/hooks/<id>`) is not recognized, and README §10 says so. JSON-escaped slashes count, and so
+# a self-hosted webhook (`/hooks/<id>`) is not recognized, and docs/manual.md '알려진 한계' says so. JSON-escaped slashes count, and so
 # do percent-encoded ones (`?next=https%3A%2F%2Fhooks.slack.com%2Fservices%2F...`, once or twice encoded, #180); the
 # tail then stops at the `&` that starts the outer URL's next parameter. A percent escape just before the URL
 # (`%2F%2Fhooks...`, `next%3Dhttps%253A...`) ends a separator, not a longer host name, so the match still starts.

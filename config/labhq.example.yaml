@@ -21,7 +21,7 @@ runner:
 engines:
 # bioinfo-agent plugin 경로는 러너 환경변수 BIOINFO_AGENT_DIR로 지정 (agents/core/bioinfo-agent.yaml).
   claude_code: {bin: claude}
-  # Claude 직원 전용 설정 폴더(README §8). PI ~/.claude는 개인 경로라 막히고, Claude는 긴 출력을 설정 폴더에서 다시 읽음.
+  # Claude 직원 전용 설정 폴더(docs/manual.md 'PI 개인 경로'). PI ~/.claude는 개인 경로라 막히고, Claude는 긴 출력을 설정 폴더에서 다시 읽음.
   # labhq init이 ~/.claude를 보면 아래처럼 넣음(Windows는 ${USERPROFILE}). 로그인: 그 폴더로 claude 실행 뒤 /login
   # claude_code: {bin: claude, env: {CLAUDE_CONFIG_DIR: "${HOME}/.labhq/claude-staff"}}
   codex: {bin: codex, extra_args: []}
@@ -51,7 +51,7 @@ hpc:
 policy:
   data_zones:                 # Windows 러너는 restricted 구역이 있으면 시작 거부. Windows 체험: data_zones: []
     - {path: /data/restricted, level: restricted, note: "DUA 적용 코호트 데이터"}
-  # PI 개인 경로(README §8): 직원이 PI 계정으로 돌 때 열면 안 되는 곳. 키를 빼면 아래 기본 목록,
+  # PI 개인 경로(docs/manual.md 'PI 개인 경로'): 직원이 PI 계정으로 돌 때 열면 안 되는 곳. 키를 빼면 아래 기본 목록,
   # [] 이면 끔. ~는 runner PC에서 펼치고, 없는 경로는 건너뜀. 작업 폴더를 담은 경로는 그 task에서 빠짐.
   # private_paths:
   #   - ~/.ssh

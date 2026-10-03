@@ -151,7 +151,7 @@ def draft(scheduler: str, found: dict) -> tuple[dict, list[str]]:
         partitions = _lines(found.get("partitions"))
         if partitions:
             notes.append(f"partition 후보: {', '.join(partitions)} (*가 기본). 계정·QOS는 hpc.slurm.sbatch_args에 더하세요.")
-    notes.append("로그인 노드에서만 제출된다면 hpc.ssh_host를, 데이터 계정 전환이 필요하면 README §8의 "
+    notes.append("로그인 노드에서만 제출된다면 hpc.ssh_host를, 데이터 계정 전환이 필요하면 docs/manual.md '데이터 구역'의 "
                  "submit_prefix·user·job_group을 직접 정하세요. 상담은 이것들을 바꾸지 않습니다.")
     HpcSettings.model_validate(hpc)  # the draft must load as it is
     return hpc, notes
