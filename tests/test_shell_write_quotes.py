@@ -203,3 +203,16 @@ def test_a_redirect_is_not_read_as_a_command_word(tool, command, expected):
 
 def test_a_real_redirect_next_to_a_copy_is_still_a_target():
     assert set(_shell_write_targets("cp a outputs/ 2>/elsewhere/log")) == {"outputs/", "/elsewhere/log"}
+
+
+@pytest.mark.parametrize("command, target", [
+    ("cp a /work2>/dev/null", "/work2"),          # the 2 belongs to the path; only `>/dev/null` is a redirect
+    ("cp a out1>/dev/null", "out1"),
+    ("cp a /elsewhere/x9 2>/dev/null", "/elsewhere/x9"),
+])
+def test_a_digit_glued_to_a_path_is_not_a_stream_number(command, target):
+    assert target in set(_shell_write_targets(command))
+
+
+def test_a_path_ending_in_a_digit_outside_the_roots_still_asks():
+    assert _decide("Bash", "cp a /work2>/dev/null").action == "ask"

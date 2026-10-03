@@ -43,7 +43,8 @@ _BARE_WORD = re.compile(r"[^\s|;&<>]+")
 # A whole redirection with its stream number and target (`2>/dev/null`, `2>&1`, `*> log`, `< in.txt`). Its target is
 # judged by the redirect pass; left in a command's words, `cp a b 2>/dev/null` read /dev/null as the copy
 # destination (7th mock trial, 2026-10-03).
-_REDIRECTION_SPAN = re.compile(r'''(?:\d+|&|\*)?(?:>{1,2}&?|<)\s*(?:"[^"]*"|'[^']*'|[^\s|;&<>]+)''')
+# A stream number counts only as its own token: in `cp a /work2>/dev/null` the 2 belongs to the path (PR #354 review).
+_REDIRECTION_SPAN = re.compile(r'''(?:(?<![^\s|;&()])(?:\d+|&|\*))?(?:>{1,2}&?|<)\s*(?:"[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 _PS_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also quotes with typographic marks
 _PS_DOUBLE = '"\u201c\u201d\u201e'
 _PS_SINGLE_AT = re.compile(f"[{_PS_SINGLE}]")
