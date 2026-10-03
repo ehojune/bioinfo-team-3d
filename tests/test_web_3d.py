@@ -127,6 +127,7 @@ def test_package_data_includes_office_assets():
     ('web_issue184.cjs', 'fail 0'),
     ('web_decision_focus.cjs', 'fail 0'),
     ('web_decision_summary.cjs', 'fail 0'),
+    ('web_scope_card.cjs', 'fail 0'),
     ('web_clarify_options.cjs', 'fail 0'),
     ('web_cp2_evidence.cjs', 'fail 0'),
     ('web_issue75.cjs', 'mobile staff collapse and bounded grouped decision history: OK'),
