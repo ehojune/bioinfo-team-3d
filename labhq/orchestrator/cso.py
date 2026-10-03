@@ -522,24 +522,17 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
 
 
 _HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
-_BREAK_AT_END = re.compile(r"(?:^|\n)[ \t]*(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\s*$")
 
 
-def report_body(text: str, *, break_only: bool = False) -> str:
+def report_body(text: str) -> str:
     """The report from its first heading: a short lead-in before it ("Writing the report now... ---") is talk to the
-    lab, not part of the report (10th mock trial). Text with an anchor or longer than a few lines is kept.
-
-    `break_only` (the general report, whose answer may come before any heading) drops a lead-in only when a
-    thematic break ("---") closes it, as both observed lead-ins did; a short recommendation stays (PR #368 review).
-    """
+    lab, not part of the report (10th mock trial). Text with an anchor or longer than a few lines is kept."""
     heading = _HEADING.search(text or "")
     if not heading or heading.start() == 0:
         return text
     lead = text[:heading.start()]
     # A fence before the "heading" means it may sit inside a code block (PR #361 review).
     if "[[claim:" in lead or "```" in lead or "~~~" in lead or len(lead.strip()) > 400:
-        return text
-    if break_only and not _BREAK_AT_END.search(lead):
         return text
     return text[heading.start():]
 
@@ -3432,7 +3425,7 @@ class Orchestrator:
                 open_issues = "\n".join(
                     f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
                     for issue in review.get("issues") or [])
-                self._finish(rid, (report_body(final.text, break_only=True) if final.ok else self.report_results(steps, results, n) +
+                self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
                                    f"\n\nSynthesis failed: {final.error}") +
                              "\n\nReview: revisions unresolved. The reviewer's open issues, verbatim:\n" +
                              (open_issues or "- (no issue text)"),
@@ -3440,7 +3433,7 @@ class Orchestrator:
                              error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
                 return
             final = await self.run_step(synthesis)
-            self._finish(rid, report_body(final.text, break_only=True) if final.ok else self.report_results(steps, results, n) +
+            self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
                          f"\n\nSynthesis failed: {final.error}", serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:

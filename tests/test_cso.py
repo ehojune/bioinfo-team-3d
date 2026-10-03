@@ -2404,32 +2404,20 @@ async def test_resumed_revision_gets_the_revised_upstream_results_and_must_retur
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "Recommendation: use the paired model; the unpaired one inflates the DE count.\n\n# Evidence\nbody",
+    "Recommendation: use the paired model.\n\n---\n# Evidence\nbody",
+])
 @pytest.mark.parametrize("accept", [True, False])
-async def test_general_report_starts_at_its_first_heading(accept):
-    """12th mock trial: the general synthesis opened with "리뷰어의 마지막 지적 7건을 … 확인했습니다. 이제 … 씁니다. ---"."""
-    hub = unresolved_hub(lambda task: result(task, text="Checked the reviewer's notes. Writing the report now.\n\n"
-                                                        "---\n# Report\nbody"), accept=accept)
-    await Orchestrator(hub).run_request("r")
-    assert hub.requests["r"]["report"].startswith("# Report\nbody")
+async def test_general_report_keeps_everything_before_its_first_heading(text, accept):
+    """PR #368 review: the general report may put its answer before any heading, with or without a "---" after it, so
+    labhq drops nothing; the synthesis prompt alone asks for no preamble (12th mock trial lead-in)."""
+    from labhq.orchestrator.cso import SYNTH_PROMPT
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("accept", [True, False])
-async def test_general_report_keeps_a_short_answer_written_before_its_first_heading(accept):
-    """PR #368 review: the general report puts its answer first; only a lead-in closed by "---" is talk to drop."""
-    text = "Recommendation: use the paired model; the unpaired one inflates the DE count.\n\n# Evidence\nbody"
     hub = unresolved_hub(lambda task: result(task, text=text), accept=accept)
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["report"].startswith(text)
-
-
-def test_report_body_break_only_needs_a_thematic_break_before_the_heading():
-    from labhq.orchestrator.cso import report_body
-
-    assert report_body("Answer: yes.\n\n# Evidence\nx", break_only=True).startswith("Answer: yes.")
-    for rule in ("---", "***", "___", "- - -"):
-        assert report_body(f"Writing it now.\n\n{rule}\n# Report\nx", break_only=True) == "# Report\nx"
-    assert report_body("Answer: yes.\n\n# Evidence\nx") == "# Evidence\nx"  # the research lane is unchanged
+    assert "Start with the report's first heading: no preamble." in SYNTH_PROMPT
 
 
 @pytest.mark.asyncio
