@@ -323,9 +323,9 @@ class OrchestratorSettings(BaseModel):
     # professional-biology policy makes it unsuitable for this role (#272).
     cso_models: list[str] = ["opus", "gpt-6-astra"]
     max_revisions: int = 1
-    # Opt-in (#271): after a step failure or a review `revise`, the CSO may re-plan the unfinished part of
-    # the DAG, at most this many times per request. 0 keeps the old behavior (fail, or revise in place).
+    # A review `revise` may re-plan the unfinished DAG this many times. Failure re-plans use their own cap.
     max_replans: int = Field(default=0, ge=0)
+    max_failure_replans: int = Field(default=1, ge=0)
     max_steps: int = 12
     max_parallel_steps: int = 4
     max_wake_cycles: int = 5
@@ -335,6 +335,14 @@ class OrchestratorSettings(BaseModel):
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
     quota_default_wait_s: float = Field(default=3600, ge=1)
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_replan_cap_applies_to_failures(cls, value: Any) -> Any:
+        """A config written before #373 used max_replans for both triggers; preserve that meaning."""
+        if isinstance(value, dict) and "max_replans" in value and "max_failure_replans" not in value:
+            value = {**value, "max_failure_replans": value["max_replans"]}
+        return value
 
     @field_validator("cso_models")
     @classmethod
