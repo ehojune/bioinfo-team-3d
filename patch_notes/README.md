@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:18 | [`4daf1a6`](https://github.com/ehojune/bioinfo-team-3d/pull/344/commits/4daf1a6) | 분석 환경은 요청마다 환경 단계 하나로(계획·직원 규칙), PI 질문은 blocking_decision 객체를 우선해 읽음 |
 | 08:53 | [`077f0d8`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/077f0d8) | 결정 카드: summary 줄바꿈을 2.5D·3D 모두 그대로 보여 준다 |
 | 08:53 | [`a712690`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/a712690) | CI가 돌리지 않던 Node test 8개를 등록한다 |
 | 08:51 | [`f84c361`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/f84c361) | 연구 계획 프롬프트: PI 질문은 500자 이하, 질문을 맨 앞에 |
