@@ -2163,3 +2163,22 @@ async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuati
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
                                                 meta={"kind": "step", "step_id": "A"}))
     assert res.output_sha256 == {"outputs/keep.tsv": "b" * 64, "outputs/PARTIAL_STATUS.md": "c" * 64}
+
+
+def test_plan_prompts_ask_for_one_environment_step():
+    """2nd mock trial: steps built their own venvs and could not add a package to another step's (2026-10-03)."""
+    from labhq.orchestrator.cso import ENV_STEP_RULE, PLAN_PROMPT, RESEARCH_PLAN_PROMPT
+
+    assert "plan one environment step first" in ENV_STEP_RULE
+    assert ENV_STEP_RULE in PLAN_PROMPT and ENV_STEP_RULE in RESEARCH_PLAN_PROMPT
+
+
+def test_question_object_is_found_beside_a_larger_unrelated_object():
+    """A large object with a raw newline, read leniently, must not hide the escaped question (PR #343 review)."""
+    from labhq.orchestrator.cso import blocking_question
+
+    text = ('Notes: {"table": "row 1\nrow 2", "rows": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]}\n'
+            '{"blocking_decision": "Install networkx?\n- a) yes\n- b) no"}')
+    res = TaskResult(task_id="t", agent_id="worker", ok=True, text=text)
+    assert blocking_question(res) == "Install networkx?\n- a) yes\n- b) no"
+    assert blocking_question(TaskResult(task_id="t", agent_id="worker", ok=True, text='{"table": "a\nb"}')) is None

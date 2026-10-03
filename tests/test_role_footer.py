@@ -55,3 +55,10 @@ def test_every_staff_footer_covers_failed_and_empty_lookups_and_weaker_methods(t
            "filters" in footer
     assert "If you fall back to a weaker method" in footer and "never switch silently" in footer
     assert "부재 증명" not in ROLE_FOOTER  # the built-in tool failure line (#339) stays on the tool error only
+
+
+def test_writing_staff_get_the_environment_rule():
+    from labhq.adapters.base import WORKSPACE_WRITE_RULES
+
+    assert "environment step's interpreter" in WORKSPACE_WRITE_RULES
+    assert "--target ./.pylib" in WORKSPACE_WRITE_RULES and "never write into another step's workspace" in WORKSPACE_WRITE_RULES

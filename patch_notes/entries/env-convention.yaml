@@ -1,0 +1,5 @@
+pr: 344
+rows:
+- sha: 4daf1a6
+  at: 2026-10-03 09:18
+  text: 분석 환경은 요청마다 환경 단계 하나로(계획·직원 규칙), PI 질문은 blocking_decision 객체를 우선해 읽음
