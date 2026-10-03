@@ -1,0 +1,5 @@
+pr: 359
+rows:
+- sha: a2bbedf
+  at: 2026-10-03 19:43
+  text: 'Windows에서 직원 Python이 OS 신뢰 저장소도 믿게: certifi+OS 저장소 PEM을 SSL_CERT_FILE·REQUESTS_CA_BUNDLE로(9차 시운전 기관 TLS 검사)'
