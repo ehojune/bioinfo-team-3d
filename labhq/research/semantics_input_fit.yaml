@@ -8,24 +8,24 @@ agent_operations:
   data_steward: data_retrieval
 operations:
   statistical_analysis:
-    fit: [raw_counts, normalized_counts, de_table, enrichment_table, sample_metadata, table]
-    mismatch: [sequence_reads, sequence, alignment, variants, assembly, features, protein_structure]
+    fit: [raw_counts, normalized_counts, normalized_expression, transformed_expression, de_table, enrichment_table, sample_metadata, table]
+    mismatch: [sequence_reads, sequence, alignment, variants, assembly, genomic_features, protein_structure]
     edam_relation: null
   de_analysis:
-    fit: [raw_counts, normalized_counts]
-    mismatch: [sequence_reads, sequence, alignment, variants, assembly, features, protein_structure]
+    fit: [raw_counts, normalized_counts, transformed_expression]
+    mismatch: [sequence_reads, sequence, alignment, variants, assembly, genomic_features, variant_annotations, protein_structure]
     edam_relation: null
   enrichment_analysis:
     fit: [de_table]
-    mismatch: [raw_counts, normalized_counts, sequence_reads, sequence, alignment, variants, assembly]
+    mismatch: [raw_counts, normalized_counts, normalized_expression, transformed_expression, sequence_reads, sequence, alignment, variants, assembly]
     edam_relation: null
   read_mapping:
     fit: [sequence_reads, sequence]
-    mismatch: [alignment, variants, assembly, features, protein_structure]
+    mismatch: [alignment, variants, assembly, genomic_features, variant_annotations, protein_structure]
     edam_relation: null
   variant_calling:
     fit: [alignment]
-    mismatch: [sequence_reads, sequence, variants, assembly, features, protein_structure]
+    mismatch: [sequence_reads, sequence, variants, assembly, genomic_features, variant_annotations, protein_structure]
     edam_relation: null
   data_retrieval:
     fit: []

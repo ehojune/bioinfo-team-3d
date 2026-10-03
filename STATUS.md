@@ -4,6 +4,28 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #376 — runner 로컬 소프트웨어를 반영한 CSO 계획
+
+- 결론: CSO가 runner의 R·Python 패키지·계산 도구 상태를 알고 계획하며, 빌드 실패는 준비한 대체안으로 넘깁니다.
+- 바뀐 것: runner hello 요약, 일반·연구 계획과 재계획의 runner별 한 줄, binary wheel·대체안 규칙, prompt hash와 manual.
+- 실행한 것: 새 회귀 수정 전 4 failed, 수정 뒤 관련 pytest 287 passed. 공개·patch note·목차·diff 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/doctor.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_doctor.py`, `tests/test_cso.py`.
+
+# 출력 데이터 종류 어휘 PI 검토 반영
+
+**결론:** PI가 검토한 41키를 그대로 반영했다. 정규화 값은 count·expression·transformed로 나뉘고 `features`는 `genomic_features`로 바뀌었다.
+
+| 항목 | 결과 |
+|---|---|
+| 어휘·입력 적합성 | 새 3키와 이름 변경, 45키 상한, 분석별 fit·mismatch 반영 |
+| EDAM 1.25 | 고정 release에서 재생성. 34키 연결, 7키 local-only. `variant_annotations`에 맞는 살아 있는 data 용어가 없어 `null` 유지 |
+| 옛 선언 | hash가 있는 선언은 기존 `vocab_changed` 판정을 쓴다. hash가 없는 legacy `normalized_counts`·`features`도 `vocab_changed`로 막았다 |
+| semantics fixture | PI 어휘 검토로 `normalized_counts` 뜻이 바뀌어 q02·q06 후보를 `unknown(vocab_changed)`로 고정했다 |
+| 고정값 | PLAN schema·prompt와 `single_cell_de@2`·`bulk_tumor_normal@1` 내용·hash는 바뀌지 않았다 |
+
+**검증:** Windows 전체 pytest 3676 passed·53 skipped. semantics pilot 110 passed, shadow 제거 5 passed. EDAM subset 재생성·검사 통과.
+
 # 웹 사무실 진입: `labhq open` (PI 방문 2026-10-04)
 
 **결론:** PI가 일반 `gateway` 시작 뒤 웹의 '게이트웨이 토큰' 칸에서 무엇을 넣을지 몰라 시운전을 못 했습니다. 이제 세 곳에서 길을 알립니다.

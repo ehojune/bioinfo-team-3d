@@ -210,6 +210,7 @@ class Runner:
         self.connected = asyncio.Event()
         self._stopping = False
         self.engine_versions: dict[str, str] | None = None  # probed once, off the event loop, before connecting
+        self.local_software: dict | None = None  # bounded doctor probes, once before the first hello
         self.codex_sandbox = SandboxWatch()  # elevated setup still fits this Codex (#328)
         self._finish_interrupted_tasks()
 
@@ -298,6 +299,13 @@ class Runner:
         if self.engine_versions is None:
             engines = {a["engine"] for a in self.roster()}  # effective engines (force_engine applies)
             self.engine_versions = await asyncio.to_thread(engine_cli_versions, self.s, engines)
+        if self.local_software is None:
+            from ..doctor import local_software_summary
+            try:
+                self.local_software = await asyncio.to_thread(local_software_summary, sys.executable)
+            except Exception:  # noqa: BLE001 - a host probe must not keep the runner offline
+                log.warning("runner %s could not summarize local software", self.s.runner.id, exc_info=True)
+                self.local_software = {}
         while not self._stopping:
             try:
                 async with websockets.connect(url, max_size=64 * 2**20, ping_interval=20, ping_timeout=60) as ws:
@@ -356,11 +364,16 @@ class Runner:
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
-        return {"scheduler": self.s.hpc.scheduler,
-                "compute_backends": ["local CLI"] + ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
-                                    (["external labhq_hpc MCP"] if external_hpc else []),
-                "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc,
-                "engine_cli_versions": dict(self.engine_versions or {})}
+        capabilities = {"scheduler": self.s.hpc.scheduler,
+                        "compute_backends": ["local CLI"] +
+                                            ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
+                                            (["external labhq_hpc MCP"] if external_hpc else []),
+                        "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc,
+                        "engine_cli_versions": dict(self.engine_versions or {})}
+        local_software = getattr(self, "local_software", None)
+        if local_software is not None:
+            capabilities["local_software"] = local_software
+        return capabilities
 
     def hello(self) -> dict:
         return {"type": "runner.hello", "runner_id": self.s.runner.id,

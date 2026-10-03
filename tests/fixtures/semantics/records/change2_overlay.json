@@ -1,6 +1,6 @@
 {
   "synthetic": true,
-  "note": "Change 2 only: merged into state.task[task_id].payload.meta.output_types before the change-2 run.",
+  "note": "Change 2 only: merged into state.task[task_id].payload.meta.output_types before the change-2 run. normalized_counts is intentionally legacy and resolves to unknown(vocab_changed) after the PI vocabulary review.",
   "task_meta": {
     "task_q1fetch": {
       "output_types": {

@@ -634,14 +634,16 @@ changes:
           *A2 : {match: {used_by_request: "yes"}, recommend: true}
           *A5 : {match: {used_by_request: "yes"}, recommend: true}
   change2:
-    what: "task meta output_types 선언(records/change2_overlay.json)으로 data_type을 basis declared로 채운다. broader 상속 금지는 유지"
+    what: "task meta output_types 선언(records/change2_overlay.json)으로 data_type을 판정한다. PI 어휘 검토로 뜻이 바뀐 normalized_counts는 unknown(vocab_changed)이며 broader 상속 금지는 유지"
     order: [A, B]
     applies_on: change1
-    vocabulary_needed: {raw_counts: {broader: expression_counts}, normalized_counts: {broader: expression_counts}, de_table: {}}
+    vocabulary_needed: {raw_counts: {broader: expression_counts}, de_table: {}}
+    legacy_changed_types: [normalized_counts]
     nodes:
       artifacts:
       - {id: *A1, data_type: raw_counts, unknown: {}, rows: {data_type: ['overlay2[task_q1fetch].output_types["outputs/raw_counts.tsv"]']}}
-      - {id: *A2, data_type: normalized_counts, unknown: {}, rows: {data_type: ['overlay2[task_q1dew].output_types["outputs/norm_counts.tsv"]']}}
+      # PI 어휘 검토로 normalized_counts의 뜻이 바뀌어 q02·q06 후보도 unknown(vocab_changed)으로 고정한다.
+      - {id: *A2, data_type: unknown, unknown: {data_type: vocab_changed}, rows: {data_type: ['overlay2[task_q1dew].output_types["outputs/norm_counts.tsv"]']}}
       - {id: *A3, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q1dew].output_types["outputs/de_table.tsv"]']}}
       - {id: *A5, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q2de].output_types["outputs/de_table.tsv"]']}}
       - {id: *A5f, data_type: de_table, unknown: {}, rows: {data_type: ['overlay2[task_q2flt].output_types["outputs/de_filtered.tsv"]']}}
@@ -655,18 +657,10 @@ changes:
       # unknown 칸은 data_type 이유만 바뀐다. 다른 칸의 이유(generated_by·sha256 등)는 그대로다
     edges_added:
       e73: {src: *A1, rel: means, dst: "type:raw_counts", basis: declared, rows: ['overlay2[task_q1fetch].output_types["outputs/raw_counts.tsv"]']}
-      e74: {src: *A2, rel: means, dst: "type:normalized_counts", basis: declared, rows: ['overlay2[task_q1dew].output_types["outputs/norm_counts.tsv"]']}
       e75: {src: *A3, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q1dew].output_types["outputs/de_table.tsv"]']}
       e76: {src: *A5, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q2de].output_types["outputs/de_table.tsv"]']}
       e77: {src: *A5f, rel: means, dst: "type:de_table", basis: declared, rows: ['overlay2[task_q2flt].output_types["outputs/de_filtered.tsv"]']}
       e78: {src: *A6, rel: means, dst: "type:raw_counts", basis: declared, rows: ['overlay2[task_q3fetch].output_types["outputs/raw_counts.tsv"]']}
-    queries:
-      q06:
-        selected: [*A2]
-        excluded_unknown: []
-        candidates:
-          *A2 : {match: {key: "yes", data_type: "no"}, recommend: false}   # normalized_counts ≠ raw_counts. 공통 broader로 호환되지 않는다
-
 # 측정 규약(M7). 구현 전에 고정한다(보정 1).
 measurement:
   order: "B를 먼저 만든다. 상태 base → change1(B→A) → change2(A→B). 각 구현은 자기 상태의 답으로 채점한다"

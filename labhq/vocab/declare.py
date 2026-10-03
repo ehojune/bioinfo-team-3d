@@ -41,6 +41,8 @@ MAX_RECORDS = 1000      # declarations or records read from one task row
 MAX_ENTRIES = 64        # entries of one step: the research contract (ResearchStep.output_types) has the same cap
 CONFLICT = "\x00conflict"  # a staff field declared more than once for one file; never a vocabulary key
 _ENTRY_KEYS = {"name", *FIELDS}
+# Bare legacy declarations have no vocabulary hash. These names changed meaning or were renamed in the PI review.
+LEGACY_CHANGED_TYPES = frozenset({"normalized_counts", "features"})
 
 
 @dataclass(frozen=True)
@@ -254,6 +256,8 @@ def _from_meta(given: Any, field: str, version: Any, vocab: Vocab | None) -> Fie
             return unknown("not_declared")
         if vocab is None:
             return unknown("no_vocab")
+        if given in LEGACY_CHANGED_TYPES:
+            return unknown("vocab_changed")
         return (Field(given, "declared", source="plan", legacy=True)
                 if vocab.is_key("data", given) else unknown("not_declared"))
     if not isinstance(given, Mapping) or field not in given:

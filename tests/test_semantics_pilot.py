@@ -16,8 +16,8 @@ RECORDS = FIXTURE / "records"
 
 # Fixed after the one independent review and correction 1. Changing either is a pilot correction
 # (a separate commit with its reason) or an experiment failure, never a routine update.
-EXPECTED_SHA256 = "e8f094595f3e4c19056df37ac2ee54425c8d5d20499e312e6f59671e05671c02"
-FIXTURE_SHA256 = "a2596ef7f86b27f78925f27af27b0e726b99804e187df3dcb95ff06c3daa0316"
+EXPECTED_SHA256 = "a0d91ea4d29bf0b0e7e9b8f41bace6552a07cce653b69fbce292a9029e89539c"
+FIXTURE_SHA256 = "9021fbb445c7485452b5da99c4367924ad348a8147434ebfb8af914c53757daa"
 
 
 def inventory_sha256(root: Path) -> str:
@@ -115,14 +115,16 @@ def test_model_b_answers_are_advisory(fixture_paths):
 
 
 def test_changes_move_only_the_declared_answers(expected):
-    """Before/after outputs are fixed: change 1 moves q02 and five uses, change 2 moves q06 and data types."""
+    """Before/after outputs are fixed: change 1 moves q02 and five uses; change 2 moves data-type facts."""
     base, one, two = (pilot.expected_state(expected, s) for s in pilot.STATES)
     moved = lambda a, b: sorted(q for q in a["answers"] if a["answers"][q] != b["answers"][q])  # noqa: E731
-    assert moved(base, one) == ["q02"] and moved(one, two) == ["q06"]
+    # PI vocabulary review makes normalized_counts unknown again, so q06's raw answer no longer moves.
+    assert moved(base, one) == ["q02"] and moved(one, two) == []
     kinds = lambda s: {u["edge"]: u["reuse_kind"] for u in s["nodes"]["uses"]}  # noqa: E731
     assert sorted(e for e in kinds(base) if kinds(base)[e] != kinds(one)[e]) == ["e07", "e10", "e28", "e36", "e68"]
     types = {a["id"]: a["data_type"] for a in two["nodes"]["artifacts"]}
-    assert sum(t != "unknown" for t in types.values()) == 6 and len(two["edges"]) == len(one["edges"]) + 6
+    # normalized_counts now has unknown(vocab_changed), leaving five declared types and five means edges.
+    assert sum(t != "unknown" for t in types.values()) == 5 and len(two["edges"]) == len(one["edges"]) + 5
     assert {impl().state for impl in pilot.IMPLS.values()} == {"change2"}
 
 
