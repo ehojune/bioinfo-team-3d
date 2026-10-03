@@ -64,7 +64,8 @@ async def test_restart_keeps_approval_and_resumes_only_remaining_steps(tmp_path)
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                 structured={"verdict": "revise" if revise else "accept",
                             "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
-                                          "issues": [{"step_id": "s2", "problem": "check", "request": "revise"}]
+                                          "issues": [{"step_id": "s2", "priority": "P1", "problem": "check",
+                                                      "request": "revise"}]
                                           if revise else []})
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="new")
 
@@ -690,7 +691,8 @@ async def test_restart_during_revision_preserves_feedback_and_adopts_revision(tm
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                               structured={"verdict": "revise", "scores": {
                                   "addresses_question": 4, "evidence": 3, "thoroughness": 4},
-                                  "issues": [{"step_id": "s", "problem": "weak", "request": "check again"}]})
+                                  "issues": [{"step_id": "s", "priority": "P1", "problem": "weak",
+                                              "request": "check again"}]})
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="original")
 
     first.orchestrator.run_step = first_step
@@ -830,7 +832,8 @@ async def test_review_revision_budget_survives_restart(tmp_path):
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                           structured={"verdict": "revise", "scores": {
                               "addresses_question": 4, "evidence": 3, "thoroughness": 4},
-                              "issues": [{"step_id": "s", "problem": "weak", "request": "revise"}]})
+                              "issues": [{"step_id": "s", "priority": "P1", "problem": "weak",
+                                          "request": "revise"}]})
 
     async def before_restart(task):
         if task.meta["kind"] == "review":

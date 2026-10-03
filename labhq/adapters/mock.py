@@ -88,7 +88,8 @@ class MockAdapter(AgentAdapter):
             structured = {
                 "verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 4, "evidence": 3 if revise else 4, "thoroughness": 4},
-                "issues": [{"step_id": target, "problem": "민감도 분석 누락", "request": "파라미터 2개로 재분석"}]
+                "issues": [{"step_id": target, "priority": "P1", "problem": "민감도 분석 누락",
+                            "request": "파라미터 2개로 재분석"}]
                           if revise else [],
             }
         elif kind == "recruit":

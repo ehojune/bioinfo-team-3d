@@ -956,6 +956,10 @@ def test_review_schema_requires_complete_typed_fields():
     assert not valid_review({**valid, "scores": {**valid["scores"], "evidence": "3"}})
     assert not valid_review({**valid, "scores": {**valid["scores"], "evidence": 6}})
     assert not valid_review({**valid, "issues": [{"step_id": "A", "problem": "missing"}]})
+    issue = {"step_id": "A", "priority": "P1", "problem": "wrong model", "request": "use paired data"}
+    assert valid_review({**valid, "issues": [issue]})
+    assert not valid_review({**valid, "issues": [{key: value for key, value in issue.items()
+                                                  if key != "priority"}]})
     assert not valid_review({**valid, "extra": "unexpected"})
 
 
@@ -1124,7 +1128,8 @@ async def test_failed_revision_keeps_first_result_and_workspace():
             return result(task, structured={"verdict": "revise" if revise else "accept",
                                             "scores": {"addresses_question": 4, "evidence": 4,
                                                        "thoroughness": 4},
-                                            "issues": [{"step_id": "A", "problem": "check", "request": "retry"}]
+                                            "issues": [{"step_id": "A", "priority": "P1", "problem": "check",
+                                                        "request": "retry"}]
                                             if revise else []})
         return result(task, text="final")
 
@@ -1636,7 +1641,8 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
         revise = task.meta["revision"] == 0
         return {"verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
-                "issues": [{"step_id": "analysis", "problem": "method", "request": "revise in place"}]
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "method",
+                            "request": "revise in place"}]
                 if revise else []}
 
     hub = replan_hub(original, lambda task: result(task, text="analysis done"),
@@ -1665,7 +1671,8 @@ async def test_failed_in_place_revision_keeps_its_result_and_does_not_failure_re
         revise = task.meta["revision"] == 0
         return {"verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
-                "issues": [{"step_id": "analysis", "problem": "method", "request": "revise in place"}]
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "method",
+                            "request": "revise in place"}]
                 if revise else []}
 
     def on_replan(task):
@@ -1810,7 +1817,7 @@ async def test_review_revise_can_add_only_needed_step_without_rerunning_successe
         revise = task.meta["revision"] == 0
         return {"verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
-                "issues": [{"step_id": "analysis", "problem": "robustness",
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "robustness",
                             "request": "add a sensitivity check"}] if revise else []}
 
     def on_replan(task):
@@ -1845,7 +1852,7 @@ async def test_review_replan_replaces_flagged_step_with_its_dependents_only():
         revise = task.meta["revision"] == 0
         return {"verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 3, "evidence": 2, "thoroughness": 3},
-                "issues": [{"step_id": "analysis", "problem": "wrong model",
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "wrong model",
                             "request": "use a mixed model"}] if revise else []}
 
     def on_replan(task):
@@ -1880,7 +1887,8 @@ async def test_review_replan_declined_falls_back_to_targeted_revision():
         revise = task.meta["revision"] == 0
         return {"verdict": "revise" if revise else "accept",
                 "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
-                "issues": [{"step_id": "analysis", "problem": "typo", "request": "fix the table"}] if revise else []}
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "typo",
+                            "request": "fix the table"}] if revise else []}
 
     hub = replan_hub(original, lambda task: result(task, text="analysis done"),
                      lambda task: replan_plan([], notes="revise in place"), on_review=on_review)
@@ -2067,7 +2075,8 @@ async def test_resume_during_replan_reuses_the_interrupted_attempt():
 
 
 REVISE = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
-          "issues": [{"step_id": "analysis", "problem": "robustness", "request": "add a sensitivity check"}]}
+          "issues": [{"step_id": "analysis", "priority": "P1", "problem": "robustness",
+                      "request": "add a sensitivity check"}]}
 
 
 @pytest.mark.parametrize("phase, plan_ids, reviews, replans", [
@@ -2272,11 +2281,16 @@ def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
 
 
 UNRESOLVED_REVIEW = {"verdict": "revise", "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
-                     "issues": [{"step_id": "A", "problem": "no sensitivity check", "request": "add one"}]}
+                     "issues": [{"step_id": "A", "priority": "P1", "problem": "no sensitivity check",
+                                 "request": "add one"}]}
+LEGACY_UNRESOLVED_REVIEW = {
+    **UNRESOLVED_REVIEW,
+    "issues": [{key: value for key, value in UNRESOLVED_REVIEW["issues"][0].items() if key != "priority"}],
+}
 STEP_A = {"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}
 
 
-def unresolved_hub(on_synthesis, *, accept=False):
+def unresolved_hub(on_synthesis, *, accept=False, review=None):
     """A FakeHub whose reviewer asks for revision every round (or accepts with `accept`); one step A."""
     async def dispatch(task):
         kind = task.meta["kind"]
@@ -2285,14 +2299,81 @@ def unresolved_hub(on_synthesis, *, accept=False):
         if kind == "step":
             return result(task, text=f"A revision {task.meta.get('revision', 0)}")
         if kind == "review":
-            return result(task, structured={**UNRESOLVED_REVIEW, "verdict": "accept", "issues": []} if accept
-                          else UNRESOLVED_REVIEW)
+            selected = review or UNRESOLVED_REVIEW
+            return result(task, structured={**selected, "verdict": "accept", "issues": []} if accept else selected)
         assert kind == "synthesis", kind
         return on_synthesis(task)
 
     hub = FakeHub(dispatch)
     hub.s.orchestrator.max_revisions = 1
     return hub
+
+
+@pytest.mark.asyncio
+async def test_p2_only_review_is_done_without_revision_and_report_keeps_the_issue():
+    p2_review = {
+        "verdict": "revise",
+        "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+        "issues": [{"step_id": "A", "priority": "P2", "problem": "evidence is thin",
+                    "request": "state the limitation"}],
+    }
+    hub = unresolved_hub(lambda task: result(task, text="CSO report body"), review=p2_review)
+    hub.s.orchestrator.max_revisions = 0
+
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done" and req["review"]["verdict"] == "accept"
+    assert [task.meta["revision"] for task in kinds(hub, "review")] == [0]
+    assert step_ids(hub) == ["A"]
+    assert "리뷰 참고" in kinds(hub, "synthesis")[0].prompt
+    assert "P2 · A: evidence is thin → state the limitation" in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_review_replan_and_revision_feedback_use_only_p1_issues():
+    reviews = [{
+        "verdict": "revise",
+        "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+        "issues": [
+            {"step_id": "analysis", "priority": "P1", "problem": "wrong model",
+             "request": "use the paired model"},
+            {"step_id": "analysis", "priority": "P2", "problem": "weak wording",
+             "request": "soften the claim"},
+        ],
+    }, {
+        "verdict": "accept",
+        "scores": {"addresses_question": 5, "evidence": 4, "thoroughness": 4},
+        "issues": [],
+    }]
+    revision_prompts = []
+
+    def on_step(task):
+        if task.meta["revision"]:
+            revision_prompts.append(task.prompt)
+        return result(task, text="analysis done")
+
+    def on_replan(task):
+        assert "wrong model" in task.prompt and "weak wording" not in task.prompt
+        return replan_plan([], notes="revise in place")
+
+    def on_review(task):
+        return reviews[task.meta["revision"]]
+
+    hub = replan_hub([{"id": "analysis", "agent_id": "worker", "instruction": "analyze",
+                       "depends_on": []}], on_step, on_replan, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done"
+    assert step_ids(hub) == ["analysis", "analysis"]
+    assert len(revision_prompts) == 1
+    assert "wrong model" in revision_prompts[0] and "weak wording" not in revision_prompts[0]
+
+
+def test_legacy_review_without_priority_is_treated_as_p1():
+    from labhq.orchestrator.cso import with_p1_verdict
+
+    assert with_p1_verdict(LEGACY_UNRESOLVED_REVIEW)["verdict"] == "revise"
 
 
 @pytest.mark.asyncio
@@ -2316,7 +2397,8 @@ async def test_unresolved_review_still_gets_a_cso_report():
 @pytest.mark.asyncio
 async def test_unresolved_report_lists_every_open_issue_even_past_the_prompt_clip():
     """Five long issues overflow the 3,000-character review in the synthesis prompt; the report still lists all."""
-    issues = [{"step_id": "A", "problem": f"issue {i} " + "x" * 700, "request": f"fix {i}"} for i in range(5)]
+    issues = [{"step_id": "A", "priority": "P1", "problem": f"issue {i} " + "x" * 700,
+               "request": f"fix {i}"} for i in range(5)]
     hub = unresolved_hub(lambda task: result(task, text="CSO report body"))
     UNRESOLVED_REVIEW["issues"], saved = issues, UNRESOLVED_REVIEW["issues"]
     try:
@@ -2362,7 +2444,7 @@ async def test_unresolved_review_falls_back_to_step_results_when_synthesis_fails
         hub.requests["r"].update(
             plan={"steps": [{**STEP_A, "outputs": []}]}, cost_usd=50.0,
             results={"A": result(Task(agent_id="worker", prompt="a"), text="A revision 1").model_dump(mode="json")},
-            review_progress={"phase": "unresolved", "next_revision": 2, "review": UNRESOLVED_REVIEW,
+            review_progress={"phase": "unresolved", "next_revision": 2, "review": LEGACY_UNRESOLVED_REVIEW,
                              "last_completed_review": 1, "last_completed_revision": 1})
         hub.result_map = lambda rid: {k: TaskResult.model_validate(v) for k, v in hub.requests[rid]["results"].items()}
     await Orchestrator(hub).run_request("r", resume=resume)

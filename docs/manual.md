@@ -180,6 +180,8 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 
 요청은 위 순서로 흐릅니다. 연구로 분류된 요청은 [연구 lane](#연구-lane과-검증)을 따릅니다.
 
+일반 lane 과학 리뷰는 지적마다 P1·P2·P3를 붙입니다. P1은 고치면 결론이 바뀌는 문제, P2는 결론은 같지만 근거나 표현이 약한 문제, P3는 사소한 문제입니다. P1만 재계획·수정하고, 수정 상한 뒤 P1이 남을 때만 요청을 실패로 표시합니다. P2는 최종 보고서의 `리뷰 참고`에 원문을 남깁니다. 우선순위가 없던 옛 저장 리뷰는 재시작할 때 P1로 봅니다.
+
 ```mermaid
 flowchart LR
   subgraph 클라이언트

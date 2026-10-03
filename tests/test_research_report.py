@@ -244,7 +244,7 @@ def test_research_review_schema_is_strict():
     assert valid_review(ACCEPT, RESEARCH_LANE_REVIEW_SCHEMA) and not valid_review(ACCEPT)
     assert not valid_review({**ACCEPT, "issues": [{**ACCEPT["issues"][0], "priority": "P4"}]},
                             RESEARCH_LANE_REVIEW_SCHEMA)
-    assert "scores" in REVIEW_SCHEMA["properties"]  # the generic review is untouched
+    assert "scores" in REVIEW_SCHEMA["properties"]  # the generic review keeps its separate scoring fields
 
 
 @pytest.mark.asyncio
