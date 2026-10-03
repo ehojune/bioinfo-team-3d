@@ -39,3 +39,6 @@ rows:
 - sha: 351a0ad
   at: 2026-10-03 10:42
   text: 'HANDOFF 큐 #57을 6–8로 되돌리고 병합된 #346 행을 뺌, 매뉴얼에 lab.scope'
+- sha: 8ac590a
+  at: 2026-10-04 00:37
+  text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(조상 단계 결합, 리다이렉트, Codex strict schema, Windows CA, 로드맵)을 매뉴얼로 옮김'
