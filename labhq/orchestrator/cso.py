@@ -567,6 +567,32 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
             f"\n\nContinuation updates:\n{updates}")
 
 
+_PI_NOTE_TASK_KINDS = frozenset({"plan", "replan", "step", "wrap_up", "review", "synthesis", "direct"})
+
+
+def with_pi_notes(task: Task, request: dict) -> Task:
+    """Attach the notes visible at dispatch time; a turn already in the runner is never changed."""
+    notes = request.get("pi_notes") or []
+    kind = task.meta.get("kind", "step")
+    if not notes or kind not in _PI_NOTE_TASK_KINDS:
+        return task
+    lines = ["## PI notes sent during this request",
+             "Use these notes in this newly dispatched turn. They do not change work that already finished."]
+    for note in notes:
+        try:
+            sent = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(note.get("at") or 0)))
+        except (TypeError, ValueError, OverflowError):
+            sent = "time unknown"
+        lines.append(f"- [{note.get('id') or 'note'} · {sent}] {note.get('text') or ''}")
+    if request.get("research_contract"):
+        lines.extend(["", "This is a research request with a frozen plan. Treat the notes as reference only; do not "
+                      "change the frozen plan. If a note needs a plan change, state that a new CP1 approval is required."])
+    if kind == "synthesis":
+        lines.extend(["", "In the final report, include one line per PI note saying whether it was incorporated. If it "
+                      "was not, give the reason and what new request is needed."])
+    return task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(lines)})
+
+
 _HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
 
 
@@ -1803,7 +1829,8 @@ class Orchestrator:
                 await self._emit(rid, "request.step_attempt", {"step_id": key, "attempt": attempt})
                 offline = False
                 try:
-                    res = await self.hub.dispatch(attempt_task)
+                    dispatched = with_pi_notes(attempt_task, self.hub.requests.get(rid) or {})
+                    res = await self.hub.dispatch(dispatched)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:

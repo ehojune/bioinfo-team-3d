@@ -530,6 +530,9 @@ def main(argv: list[str] | None = None) -> None:
     sp.add_argument("--plan-only", action="store_true", help="stop after the CSO plan; do not run or review steps")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
     sp.add_argument("--no-wait", action="store_true")
+    note = sub.add_parser("note", help="send a note to later stages of a running request")
+    note.add_argument("request_id")
+    note.add_argument("text")
     sub.add_parser("watch")
     sub.add_parser("projects", help="list projects and their GitHub repos")
     cr = sub.add_parser("codex-review", help="ask Codex to review a PR in a project repo (posts '@codex review')")
@@ -735,6 +738,8 @@ def main(argv: list[str] | None = None) -> None:
             print(_api(s, "POST", "/api/requests", json=body))
         else:
             asyncio.run(_send_and_wait(s, body))
+    elif args.cmd == "note":
+        print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
     elif args.cmd == "watch":
         asyncio.run(_watch(s))
     elif args.cmd == "projects":

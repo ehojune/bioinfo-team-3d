@@ -87,6 +87,7 @@ function req(rid) {
     const q = { id: rid, text: '', steps: {}, plan: [], github: [], cost: 0, costKnown: true, phase: 'briefing', status: 'running', created_at: now() };
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
+    Object.defineProperty(q, 'piNotes', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     S.requests.set(rid, q);
@@ -174,6 +175,7 @@ function apply(ev, replay = false) {
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
         q.followups = (r.followups || []).map(f => ({ ...f }));
+        q.piNotes = (r.pi_notes || []).map(note => ({ ...note }));
         Object.assign(q.steps, r.step_status || {});
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
@@ -368,6 +370,12 @@ function apply(ev, replay = false) {
       const q = req(rid), entry = { id: d.id, text: d.text, agent_id: d.agent_id, status: 'running', asked_at: ts };
       q.followups = [...q.followups.filter(f => f.id !== d.id), entry];
       feed({ who: 'pi', to: d.agent_id || 'cso', text: `이어 묻기: ${short(d.text, 130)}` }, ts, rid);
+      break;
+    }
+    case 'request.note': {
+      const q = req(rid), entry = { id: d.id, text: d.text, at: d.at || ts };
+      q.piNotes = [...q.piNotes.filter(note => note.id !== entry.id), entry];
+      feed({ who: 'pi', to: 'cso', text: `실행 중 메모: ${short(d.text, 130)}` }, ts, rid);
       break;
     }
     case 'request.followup_done': {
