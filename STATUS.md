@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-04 · v0.25 전 작은 결함 세 건
+
+- 결론: Bash process substitution 오탐, 결정 답변 뒤 도구 실패 누락, CA 변수 한쪽 누락을 고쳤다.
+- 바뀐 것: `<(`·`>(` 토큰은 인자로 남기고 내부 redirect는 검사한다. 결정 전후 `tool_errors`를 중복 없이 합친다. CA 변수 하나만 정했으면 다른 변수도 같은 파일을 쓴다.
+- 실행한 것: 새 회귀는 수정 전 6 failed·3 passed, 수정 뒤 관련 pytest 344 passed. 공개 저장소 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/policy.py`, `labhq/orchestrator/cso.py`, `labhq/runner/daemon.py`, `tests/test_shell_write_quotes.py`, `tests/test_cso.py`, `tests/test_system_ca.py`.
+
 ## 2026-10-04 · 게이트 — Git Bash 경로
 
 - 결론: 12차 모의 시운전(일반 lane, v0.25 사전 점검)에서 data_steward가 자기 작업 폴더 `.tmp`에 쓸 때마다 게이트가 PI에게 물었다(같은 단계 3장). Claude의 Bash는 Windows에서 Git Bash라 경로를 `/c/Users/...`로 쓰는데, 허용 루트는 `C:/Users/...`여서 비교가 안 됐다.

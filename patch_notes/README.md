@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:44 | [`ea1ff0c`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/ea1ff0c) | Bash process substitution을 인자로 남기고 내부 redirect만 검사 |
+| 00:44 | [`e613c34`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/e613c34) | PI 결정 재실행 뒤 이전 도구 실패를 중복 없이 보존 |
+| 00:44 | [`332b18d`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/332b18d) | CA 환경 변수 하나만 정했을 때 다른 변수도 같은 파일로 보완 |
 | 00:20 | [`2e4d95c`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/2e4d95c) | Evidence의 inline code는 outputs/ 경로일 때만 근거 경로로 읽음(봇 P1), 재시도가 성공해도 앞선 시도의 실패한 조회를 보고서에 남김(봇 P2) |
 | 00:18 | [`03f22b5`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/03f22b5) | 게이트: Git Bash 경로를 통제 구역·개인 경로·쓰기 검사 전에 Windows 표기로 바꿔 /c/<구역> 복사가 통과하지 않음(봇 P1) |
 | 00:11 | [`a9368cf`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/a9368cf) | 게이트: Windows Claude의 Bash(Git Bash) 쓰기 경로 /c/...를 C:/...로 읽어 자기 작업 폴더 쓰기를 묻지 않음(12차 시운전, 같은 단계 카드 3장) |
