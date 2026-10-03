@@ -1,4 +1,4 @@
-"""Generate the public README badges and inventory from repository files (no local config reads).
+"""Generate the public README badges and the manual's inventory table from repository files (no local config reads).
 
 python scripts/integrations.py --write
 python scripts/integrations.py --check
@@ -22,10 +22,14 @@ BADGES_START = "<!-- badges:start -->"
 BADGES_END = "<!-- badges:end -->"
 KINDS = ("내장 MCP", "외부 MCP", "Claude Code plugin", "skill", "엔진 기능")
 LIFE_SCIENCES = "https://www.anthropic.com/news/healthcare-life-sciences"
-# README anchors for targets without an official page (test_badge_links_resolve checks them).
-TOOLS_ANCHOR = "#연결된-도구"
-HPC_ANCHOR = "#8-설정-포인트"
-CLI_ANCHOR = "#bioinfo-agent-연결하기"
+# Badges sit at the README top; the inventory table lives in the manual (PI #298: the README is for
+# first-time users, details go to docs/manual.md).
+README = "README.md"
+MANUAL = "docs/manual.md"
+# Manual anchors for targets without an official page (test_badge_anchors_point_at_manual_headings checks them).
+TOOLS_ANCHOR = f"{MANUAL}#연결된-도구"
+HPC_ANCHOR = f"{MANUAL}#설정-포인트"
+CLI_ANCHOR = f"{MANUAL}#bioinfo-agent-연결하기"
 
 
 # simple-icons slugs checked to draw a logo on shields.io (badge SVG has <image>, 2026-10-01).
@@ -196,13 +200,15 @@ def collect(agents_dir: Path) -> list[Integration]:
     return sorted(rows.values(), key=lambda r: (KINDS.index(r.kind), r.name, r.description))
 
 
-def render(agents_dir: Path) -> str:
+def render(agents_dir: Path, prefix: str = "") -> str:
+    """The inventory table; ``prefix`` makes repository-relative links resolve from the file that holds it."""
     lines = ["| 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |", "|---|---|---|---|---|"]
     for row in collect(agents_dir):
         staff = ", ".join(row.staff[s] for s in sorted(row.staff))
         lines.append(f"| {row.kind} | {row.name} | {row.description} | {staff} | "
                      + " · ".join(sorted(row.sources)) + " |")
-    return "\n".join(lines) + "\n"
+    table = "\n".join(lines) + "\n"
+    return re.sub(r"\]\((?!https?://|#)", "](" + prefix, table) if prefix else table
 
 
 def shield(label: str, message: str, look: Look) -> str:
@@ -301,29 +307,30 @@ def badges(root: Path) -> str:
     return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
 
 
-def marker_span(readme: str, start: str, end: str) -> tuple[int, int]:
+def marker_span(text: str, start: str, end: str) -> tuple[int, int]:
     """Where one generated block sits, start marker through end marker."""
-    if readme.count(start) != 1 or readme.count(end) != 1:
-        raise ValueError("README needs exactly one marker pair")
-    first, last = readme.index(start), readme.index(end)
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise ValueError("a generated block needs exactly one marker pair")
+    first, last = text.index(start), text.index(end)
     if last < first:
-        raise ValueError("README markers are out of order")
+        raise ValueError("generated block markers are out of order")
     return first, last + len(end)
 
 
-def replace_block(readme: str, start: str, end: str, content: str) -> str:
-    first, last = marker_span(readme, start, end)
-    return readme[:first] + start + "\n" + content + end + readme[last:]
+def replace_block(text: str, start: str, end: str, content: str, foreign: tuple[str, str]) -> str:
+    # One block per file: the other block's markers here would go stale, or be erased when nested (#153).
+    if any(marker in text for marker in foreign):
+        raise ValueError("generated block markers are in the wrong file")
+    first, last = marker_span(text, start, end)
+    return text[:first] + start + "\n" + content + end + text[last:]
 
 
-def update_readme(readme: str, badge_block: str, inventory: str) -> str:
-    # Each block is replaced whole, so a pair nested in or crossing the other would be erased (#153).
-    (_, first_end), (second_start, _) = sorted([marker_span(readme, BADGES_START, BADGES_END),
-                                                marker_span(readme, START, END)])
-    if first_end > second_start:
-        raise ValueError("README marker blocks overlap")
-    readme = replace_block(readme, BADGES_START, BADGES_END, badge_block)
-    return replace_block(readme, START, END, inventory)
+def update_readme(readme: str, badge_block: str) -> str:
+    return replace_block(readme, BADGES_START, BADGES_END, badge_block, (START, END))
+
+
+def update_manual(manual: str, inventory: str) -> str:
+    return replace_block(manual, START, END, inventory, (BADGES_START, BADGES_END))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -336,19 +343,25 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not (args.root / "agents" / "core").is_dir():
             raise ValueError("agents/core is missing")
-        path = args.root / "README.md"
-        current = path.read_text(encoding="utf-8")
-        expected = update_readme(current, badges(args.root), render(args.root / "agents"))
+        readme, manual = args.root / README, args.root / MANUAL
+        current = {path: path.read_text(encoding="utf-8") for path in (readme, manual)}
+        # Both files are computed before either is written, so a bad marker in one leaves both untouched.
+        expected = {readme: update_readme(current[readme], badges(args.root)),
+                    manual: update_manual(current[manual],
+                                          render(args.root / "agents", "../" * MANUAL.count("/")))}
         if args.write:
-            path.write_text(expected, encoding="utf-8")
+            for path, text in expected.items():
+                if text != current[path]:
+                    path.write_text(text, encoding="utf-8")
             return 0
         if current == expected:
             return 0
-        print("README integrations are stale; run scripts/integrations.py --write", file=sys.stderr)
+        print("README badges or the manual inventory are stale; run scripts/integrations.py --write",
+              file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError, TypeError, AttributeError, SyntaxError, yaml.YAMLError):
         # Avoid echoing raw YAML/errors, which could include local paths or secrets.
-        print("Cannot generate integrations: check staff YAML, repository files and README markers",
+        print("Cannot generate integrations: check staff YAML, repository files and README/manual markers",
               file=sys.stderr)
         return 1
 

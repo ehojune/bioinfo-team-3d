@@ -89,7 +89,7 @@ jobs:
       - run: pytest -q tests/test_integrations.py
 
   patch-notes:
-    # PI 결정(2026-10-01): 커밋마다 패치노트 한 줄, main 커밋 3개 안에 README 갱신.
+    # PI 결정(2026-10-01): 커밋마다 패치노트 한 줄, main 커밋 3개 안에 README나 docs/manual.md 갱신.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:

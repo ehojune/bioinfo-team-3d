@@ -4,7 +4,8 @@
 - 커밋마다 patch_notes/entries/<branch>.yaml에 한 줄. 기록만 고친 커밋은 제외한다.
 - STATUS는 docs/status/<시각>-<branch>.md에 쓴다.
 - 생성 파일 STATUS.md와 patch_notes/README.md는 PR에서 직접 고치지 않는다.
-- main 커밋 3개 안에 README.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋은 세지 않는다.
+- main 커밋 3개 안에 README.md나 docs/manual.md를 한 번은 갱신한다. 생성 목차만 갱신한 main 커밋은 세지 않는다.
+  README는 처음 써 보는 사람용이고 기능 설명은 매뉴얼에 있어서, 둘 중 어느 쪽을 고쳐도 센다(#298).
 
   python scripts/patch_notes.py check --base origin/main [--head HEAD]
   python scripts/patch_notes.py rows --base origin/main --pr 49
@@ -22,6 +23,7 @@ import yaml
 ENTRIES = "patch_notes/entries"
 GENERATED = {"STATUS.md", "patch_notes/README.md"}
 README_EVERY = 3
+DOCS = ("README.md", "docs/manual.md")  # either one counts as the periodic documentation refresh
 KST = timezone(timedelta(hours=9))
 
 
@@ -130,11 +132,11 @@ def check(base: str, head: str, cwd: Path | None = None) -> list[str]:
         names = ", ".join(sorted(touched & GENERATED))
         problems.append(f"생성 파일({names})을 직접 바꾸지 말고 entries·docs/status에 쓰세요.")
 
-    last = git("log", "-1", "--format=%H", base, "--", "README.md", cwd=cwd)
+    last = git("log", "-1", "--format=%H", base, "--", *DOCS, cwd=cwd)
     behind = counted_main_commits(last, base, cwd)
-    if commits and "README.md" not in touched and behind + 1 >= README_EVERY:
-        problems.append(f"main에 README.md를 안 고친 커밋이 {behind}개 쌓였습니다. 이 PR에서 README를 갱신해 주세요 "
-                        f"(커밋 {README_EVERY}개마다 한 번).")
+    if commits and not touched & set(DOCS) and behind + 1 >= README_EVERY:
+        problems.append(f"main에 문서({'·'.join(DOCS)})를 안 고친 커밋이 {behind}개 쌓였습니다. "
+                        f"이 PR에서 README나 매뉴얼을 갱신해 주세요 (커밋 {README_EVERY}개마다 한 번).")
     return problems
 
 
@@ -167,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     for problem in problems:
         print(f"✗ {problem}")
     if not problems:
-        print("✓ 패치노트와 README 갱신 규칙을 지켰습니다")
+        print("✓ 패치노트와 문서 갱신 규칙을 지켰습니다")
     return 1 if problems else 0
 
 

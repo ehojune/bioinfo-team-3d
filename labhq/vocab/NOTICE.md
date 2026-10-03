@@ -16,4 +16,4 @@
 `scripts/edam_subset.py`가 원본 파일에서 기계적으로 뽑는다. 원본 파일은 저장소에 넣지 않는다.
 
 `edam_map.yaml`과 `edam_subset.yaml`은 같은 CC BY-SA 4.0 조건으로 제공한다. 저장소의 문서·데이터도 CC BY-SA 4.0,
-코드는 GPL-3.0이다(PI 결정 #252, README §14).
+코드는 GPL-3.0이다(PI 결정 #252, docs/manual.md '라이선스').

@@ -4,6 +4,26 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #376 — runner 로컬 소프트웨어를 반영한 CSO 계획
+
+- 결론: CSO가 runner의 R·Python 패키지·계산 도구 상태를 알고 계획하며, 빌드 실패는 준비한 대체안으로 넘깁니다.
+- 바뀐 것: runner hello 요약, 일반·연구 계획과 재계획의 runner별 한 줄, binary wheel·대체안 규칙, prompt hash와 manual.
+- 실행한 것: 새 회귀 수정 전 4 failed, 수정 뒤 관련 pytest 287 passed. 공개·patch note·목차·diff 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/doctor.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_doctor.py`, `tests/test_cso.py`.
+
+# 웹 사무실 진입: `labhq open` (PI 방문 2026-10-04)
+
+**결론:** PI가 일반 `gateway` 시작 뒤 웹의 '게이트웨이 토큰' 칸에서 무엇을 넣을지 몰라 시운전을 못 했습니다. 이제 세 곳에서 길을 알립니다.
+
+| 곳 | 바뀐 것 |
+|---|---|
+| `labhq open [--3d]` | 설정의 `gateway.client_token`을 주소에 실어 기본 브라우저로 엽니다. 웹이 토큰을 저장하고 주소에서 지웁니다. 토큰은 터미널·로그에 찍지 않습니다. 브라우저를 못 열면 설정 파일 위치와 키 이름을 알립니다 |
+| `gateway` 시작 줄 | `웹 사무실: http://…/ (다른 창에서 labhq open)` 한 줄, 토큰 없음 |
+| 웹 토큰 칸 | "설정 파일의 gateway.client_token 값, 또는 labhq open" 안내 |
+
+**검증:** 새 test 2개(주소에만 토큰, 3D·브라우저 실패 안내), 관련 test 238 passed.
+
 # 게이트 오탐 G7: 작업 폴더 cd 뒤 긴 인라인 스크립트 (13차 리허설)
 
 **결론:** 직원이 `cd <자기 작업 폴더> && python3 -c "<긴 스크립트>"`를 돌리면, 스크립트 단어 수백 개가 경로 후보로 세어져 상한(256)을 넘고 개인 경로 카드가 났습니다. 이 카드를 없앴습니다. 링크·`..`·개인 경로 아래로의 cd는 그대로 묻습니다.
@@ -176,6 +196,14 @@
 - 실행한 것: 새 회귀 5건은 수정 전 실패했고 수정 후 통과했다. 관련 pytest 302건과 공개 저장소 검사가 통과했다.
 - 미해결: 없음.
 - 근거: `labhq/adapters/__init__.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/base.py`, `tests/test_cso.py`, `tests/test_role_footer.py`.
+
+## 2026-10-03 · README를 읽는 사람별로 나눔 (v0.25 때 병합, 초안 PR)
+
+- 결론: README는 처음 쓰는 사람용(11KB)으로 줄이고, 본문은 `docs/manual.md`, PI 문답과 결정은 `docs/pi-qa.md`, 개발 규칙은 AGENTS·HANDOFF로 나눴다. 병합은 v0.25 릴리즈 때다.
+- 바뀐 것: `README.md`, `docs/manual.md`, `docs/pi-qa.md`, `docs/media/*.svg` 4장, `AGENTS.md`·`CLAUDE.md`·`HANDOFF.md`, 절 번호 참조를 쓰던 코드 주석, `scripts/integrations.py`(배지는 README, 도구 표는 매뉴얼), `scripts/patch_notes.py`(매뉴얼 갱신도 문서 갱신으로 셈).
+- 실행한 것: 관련 test 72건 통과(2건 skip), `scripts/integrations.py --check`, `scripts/check_public.sh`, 문서 내부 링크·앵커 깨짐 0건.
+- 미해결: 없음. 로드맵 결정 ⑥은 PR #347로 반영돼 매뉴얼 로드맵 절에 들어 있다.
+- 근거: `docs/manual.md`, `docs/pi-qa.md`, Refs #298.
 
 ## 2026-10-03 · #346 후속 — 범위 판정 보존, bench, CI
 

@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" role="img" aria-labelledby="t d">
+  <title id="t">의미 모델과 온톨로지</title>
+  <desc id="d">끝난 요청의 기록을 그림자 계산이 출처 모델과 객체 뷰로 묶어 ID·종류·hash·개수만 남기고, 산출 종류 이름표(labhq 어휘와 EDAM 용어)로 단계 입력이 맞는지 세며, A/B는 연구 요청 절반에만 재사용 후보를 CSO 계획에 참고로 준다.</desc>
+  <style>
+    text { font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; fill: #0F172A; }
+    .title { font-size: 18px; font-weight: 700; }
+    .h { font-size: 15px; font-weight: 700; }
+    .s { font-size: 12px; fill: #475569; }
+    .lbl { font-size: 12px; font-weight: 700; fill: #334155; }
+    .mono { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 12px; }
+    .ok { font-size: 13px; fill: #166534; }
+    .bad { font-size: 13px; fill: #991B1B; }
+    .unk { font-size: 13px; fill: #475569; }
+    .band { font-size: 14px; font-weight: 700; fill: #92400E; }
+    .bs { font-size: 12px; fill: #92400E; }
+    .note { font-size: 12px; fill: #475569; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="530" rx="16" fill="#F8FAFC"/>
+  <text class="title" x="32" y="38">의미 모델과 온톨로지</text>
+
+  <!-- shadow pipeline -->
+  <rect x="32" y="96" width="180" height="88" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="122" y="126" text-anchor="middle">끝난 요청</text>
+  <text class="s" x="122" y="148" text-anchor="middle">요청·단계·직원·잡·승인</text>
+  <text class="s" x="122" y="166" text-anchor="middle">산출 파일 hash</text>
+
+  <line x1="212" y1="140" x2="246" y2="140" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="248" y="96" width="180" height="88" rx="10" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.8"/>
+  <text class="h" x="338" y="126" text-anchor="middle">그림자 계산</text>
+  <text class="s" x="338" y="148" text-anchor="middle">요청이 끝난 뒤</text>
+  <text class="s" x="338" y="166" text-anchor="middle">gateway가 따로 계산</text>
+
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M428,124 C446,124 446,99 464,99"/>
+    <path d="M428,156 C446,156 446,185 464,185"/>
+  </g>
+
+  <rect x="466" y="64" width="290" height="70" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="486" y="92">출처 모델</text>
+  <text class="s" x="486" y="116">이 결과를 누가 만들었고 다시 써도 되나</text>
+
+  <rect x="466" y="150" width="290" height="70" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="486" y="178">객체 뷰</text>
+  <text class="s" x="486" y="202">누가 무엇을 맡았고 무엇이 승인을 기다리나</text>
+
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M756,99 C774,99 774,124 792,124"/>
+    <path d="M756,185 C774,185 774,156 792,156"/>
+  </g>
+
+  <rect x="794" y="96" width="174" height="88" rx="10" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text class="h" x="881" y="126" text-anchor="middle">기록 한 줄</text>
+  <text class="s" x="881" y="148" text-anchor="middle">ID·종류·hash·개수만</text>
+  <text class="s" x="881" y="166" text-anchor="middle">원본·경로·본문 없음</text>
+
+  <!-- ontology -->
+  <rect x="32" y="244" width="936" height="168" rx="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="52" y="272">낱말 사전 (ontology)</text>
+  <text class="s" x="230" y="272">CSO가 단계 산출의 종류를 이 어휘로 적는다 (선택 기능, 기본 꺼짐)</text>
+
+  <text class="lbl" x="52" y="300">labhq 어휘 38개</text>
+  <text class="lbl" x="262" y="300">EDAM 공용 용어 (32개 key 연결)</text>
+  <text class="lbl" x="640" y="300">단계 입력 맞춤 (de_analysis 예)</text>
+
+  <g fill="#F1F5F9" stroke="#94A3B8">
+    <rect x="52" y="312" width="160" height="24" rx="6"/>
+    <rect x="52" y="342" width="160" height="24" rx="6"/>
+    <rect x="52" y="372" width="160" height="24" rx="6"/>
+  </g>
+  <text class="mono" x="132" y="328" text-anchor="middle">raw_counts</text>
+  <text class="mono" x="132" y="358" text-anchor="middle">alignment</text>
+  <text class="mono" x="132" y="388" text-anchor="middle">de_analysis</text>
+
+  <g stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)">
+    <line x1="214" y1="324" x2="258" y2="324"/>
+    <line x1="214" y1="354" x2="258" y2="354"/>
+    <line x1="214" y1="384" x2="258" y2="384"/>
+  </g>
+
+  <g fill="#E0F2FE" stroke="#0284C7">
+    <rect x="262" y="312" width="300" height="24" rx="6"/>
+    <rect x="262" y="342" width="300" height="24" rx="6"/>
+    <rect x="262" y="372" width="300" height="24" rx="6"/>
+  </g>
+  <text class="mono" x="412" y="328" text-anchor="middle" fill="#075985">Gene expression matrix</text>
+  <text class="mono" x="412" y="358" text-anchor="middle" fill="#075985">Sequence alignment</text>
+  <text class="mono" x="412" y="388" text-anchor="middle" fill="#075985">Differential gene expression profiling</text>
+
+  <line x1="610" y1="288" x2="610" y2="400" stroke="#E2E8F0" stroke-width="1.5"/>
+
+  <text class="ok" x="640" y="330">raw_counts 입력 → 맞음</text>
+  <text class="bad" x="640" y="354">alignment 입력 → 틀림</text>
+  <text class="unk" x="640" y="378">종류 선언 없음 → 모름</text>
+  <text class="s" x="640" y="400">개수만 세고 막지 않는다</text>
+
+  <!-- A/B -->
+  <rect x="32" y="430" width="936" height="58" rx="12" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text class="band" x="52" y="454">A/B (semantics: ab)</text>
+  <text class="bs" x="226" y="454">10건 또는 3주마다 두 쪽을 비교해 버릴지·둘지·넓힐지 정한다</text>
+  <text class="bs" x="52" y="476">연구 요청 절반만 CSO 계획에 '다시 쓸 만한 지난 결과' 목록(artifact ID·종류·만든 요청)을 참고로 준다. 나머지 절반은 계산만 한다.</text>
+
+  <text class="note" x="32" y="514">기본은 off. 켜도 계획·승인·실행은 꺼 둔 때와 같다(A/B만 예외). 원본 데이터는 어디로도 가지 않는다.</text>
+</svg>

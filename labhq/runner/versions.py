@@ -9,9 +9,9 @@ from ..adapters.base import _resolve_command, expand_env
 from ..settings import Settings
 
 
-def _probe(argv: list[str], env: dict[str, str]) -> tuple[int | None, str]:
+def _probe(argv: list[str], env: dict[str, str], timeout: float = 5) -> tuple[int | None, str]:
     try:
-        done = subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace", timeout=5,
+        done = subprocess.run(argv, env=env, capture_output=True, text=True, errors="replace", timeout=timeout,
                               stdin=subprocess.DEVNULL)
         return done.returncode, (done.stdout or done.stderr).strip()
     except (OSError, subprocess.SubprocessError):

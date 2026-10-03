@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -34,6 +35,11 @@ SOURCES = {
     "GEO": "https://www.ncbi.nlm.nih.gov/geo/",
 }
 LOGIN = {"claude_code": ["auth", "status"], "codex": ["login", "status"]}
+LOCAL_PYTHON_PACKAGES = {
+    "pandas": "pandas", "numpy": "numpy", "scipy": "scipy", "matplotlib": "matplotlib",
+    "statsmodels": "statsmodels", "scikit-learn": "sklearn", "gseapy": "gseapy", "pydeseq2": "pydeseq2",
+}
+LOCAL_TOOLS = ("docker", "nextflow", "java", "wsl")
 
 
 def _safe_path(path: str | Path) -> str:
@@ -187,7 +193,7 @@ def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     return adapter_preflight_error(settings, agent)
 
 
-PRIVATE_PATHS_HINT = "See README §8 'PI 개인 경로' (policy.private_paths)."
+PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_paths)."
 
 
 def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> PrivatePaths:
@@ -286,6 +292,30 @@ def _network_check(url: str) -> bool:
     return False
 
 
+def _import_available(python_executable: str, import_name: str) -> bool:
+    code, _ = _probe(
+        [python_executable, "-I", "-c", f"import importlib; importlib.import_module({import_name!r})"],
+        dict(os.environ), timeout=3,
+    )
+    return code == 0
+
+
+def local_software_summary(python_executable: str) -> dict:
+    """Bounded runner facts for planning. Executable paths and probe output never leave this function."""
+    rscript = shutil.which("Rscript")
+    r_code, r_raw = _probe([rscript, "--version"], dict(os.environ), timeout=3) if rscript else (None, "")
+    py_code, py_raw = _probe([python_executable, "--version"], dict(os.environ), timeout=3)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {name: pool.submit(_import_available, python_executable, import_name)
+                   for name, import_name in LOCAL_PYTHON_PACKAGES.items()}
+        packages = {name: future.result() for name, future in futures.items()}
+    return {
+        "r": {"available": r_code == 0, "version": _version(r_raw) if r_code == 0 else None},
+        "python": {"version": _version(py_raw) if py_code == 0 else "unreported", "packages": packages},
+        "tools": {name: bool(shutil.which(name)) for name in LOCAL_TOOLS},
+    }
+
+
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
             dry_run: bool = False, require_roster: bool = False) -> dict:
     rows: list[dict] = []
@@ -312,7 +342,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                         "not verified: set runner.os_account to the dedicated account" if same_owner is False else
                         "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
-                     "Default guard is policy.private_paths (README §8). Optional, advanced: a dedicated runner "
+                     "Default guard is policy.private_paths (docs/manual.md 'PI 개인 경로'). Optional, advanced: a dedicated runner "
                      "account, docs/runner-account.md."))
     if settings.gateway.client_token == "change-me-client":
         # The published default is a working client token for anyone while a gateway accepts it, and a runner

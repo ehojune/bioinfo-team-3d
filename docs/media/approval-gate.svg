@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="460" viewBox="0 0 1000 460" role="img" aria-labelledby="t d">
+  <title id="t">승인 게이트와 데이터 구역·개인 경로</title>
+  <desc id="d">Claude 직원의 파일·셸 접근이 승인 게이트를 거쳐 허용, PI 확인, 거부로 나뉘는 기준과 데이터 구역 세 등급을 보여 준다.</desc>
+  <style>
+    text { font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; fill: #0F172A; }
+    .title { font-size: 18px; font-weight: 700; }
+    .h { font-size: 15px; font-weight: 700; }
+    .s { font-size: 12px; fill: #475569; }
+    .li { font-size: 13px; }
+    .note { font-size: 12px; fill: #475569; }
+    .chip { font-size: 12px; font-weight: 700; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="460" rx="16" fill="#F8FAFC"/>
+  <text class="title" x="32" y="38">승인 게이트 · 데이터 구역 · 개인 경로</text>
+
+  <!-- source -->
+  <rect x="32" y="166" width="176" height="104" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="120" y="196" text-anchor="middle">직원의 접근</text>
+  <text class="s" x="120" y="220" text-anchor="middle">파일 읽기·쓰기</text>
+  <text class="s" x="120" y="240" text-anchor="middle">셸 명령 · MCP 호출</text>
+  <text class="s" x="120" y="258" text-anchor="middle">HPC 잡 제출</text>
+
+  <line x1="208" y1="218" x2="246" y2="218" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- gate -->
+  <rect x="248" y="150" width="200" height="136" rx="12" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.8"/>
+  <text class="h" x="348" y="182" text-anchor="middle">승인 게이트</text>
+  <text class="s" x="348" y="206" text-anchor="middle">경로를 실제 경로로 풀어</text>
+  <text class="s" x="348" y="226" text-anchor="middle">데이터 구역·개인 경로와</text>
+  <text class="s" x="348" y="246" text-anchor="middle">허용 폴더에 대조</text>
+  <text class="s" x="348" y="270" text-anchor="middle">(Claude 직원 기준)</text>
+
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M448,190 C470,190 470,118 496,118"/>
+    <line x1="448" y1="226" x2="496" y2="226"/>
+    <path d="M448,262 C470,262 470,334 496,334"/>
+  </g>
+
+  <!-- outcomes -->
+  <rect x="498" y="64" width="470" height="104" rx="10" fill="#ECFDF5" stroke="#16A34A" stroke-width="1.5"/>
+  <text class="h" x="518" y="90" fill="#166534">허용</text>
+  <text class="li" x="518" y="114">· 개인 경로·restricted 밖의 읽기</text>
+  <text class="li" x="518" y="136">· 작업·프로젝트·이전 단계 폴더 안 쓰기</text>
+  <text class="li" x="518" y="158">· 그 밖의 평범한 셸 명령 (python script.py 등)</text>
+
+  <rect x="498" y="178" width="470" height="104" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="1.5"/>
+  <text class="h" x="518" y="204" fill="#92400E">PI 확인 — 결정함 카드</text>
+  <text class="li" x="518" y="228">· 작업 폴더 밖 쓰기 · 위험 명령 · 임계값 넘는 HPC 제출</text>
+  <text class="li" x="518" y="250">· 개인 경로가 보이는 셸 · 레지스트리 접근</text>
+  <text class="li" x="518" y="272">· restricted 구역을 건드리는 셸·MCP</text>
+
+  <rect x="498" y="292" width="470" height="84" rx="10" fill="#FEE2E2" stroke="#DC2626" stroke-width="1.5"/>
+  <text class="h" x="518" y="318" fill="#991B1B">거부</text>
+  <text class="li" x="518" y="342">· restricted 원본을 파일 도구로 열기 → HPC 잡에서 요약만</text>
+  <text class="li" x="518" y="364">· PI 개인 경로(~/.ssh·브라우저 프로필 등)를 파일 도구로 열기</text>
+
+  <!-- zones legend -->
+  <text class="h" x="32" y="318">데이터 구역</text>
+  <rect x="32" y="332" width="76" height="26" rx="13" fill="#DCFCE7" stroke="#16A34A"/>
+  <text class="chip" x="70" y="350" text-anchor="middle" fill="#166534">public</text>
+  <rect x="116" y="332" width="84" height="26" rx="13" fill="#E0F2FE" stroke="#0284C7"/>
+  <text class="chip" x="158" y="350" text-anchor="middle" fill="#075985">internal</text>
+  <rect x="208" y="332" width="96" height="26" rx="13" fill="#FEE2E2" stroke="#DC2626"/>
+  <text class="chip" x="256" y="350" text-anchor="middle" fill="#991B1B">restricted</text>
+  <text class="note" x="32" y="378">restricted 원본은 HPC 잡 안에서만 다룬다</text>
+
+  <text class="note" x="32" y="404">파일·셸·개인 경로 게이트는 Claude 직원 기준이다. Codex·그 밖 엔진 직원은 지침만 받는다.</text>
+  <text class="note" x="32" y="422">HPC 제출과 예산 승인은 엔진과 상관없이 runner·orchestrator가 판정한다.</text>
+  <text class="note" x="32" y="440">경로 가드는 sandbox가 아니어서 실행 중에 만든 경로는 놓친다.</text>
+</svg>

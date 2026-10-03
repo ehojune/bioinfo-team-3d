@@ -1,4 +1,4 @@
-"""Public inventory and README-top badges follow repository configuration and reject README drift."""
+"""README-top badges and the manual's inventory follow repository configuration and reject drift."""
 import re
 import subprocess
 import sys
@@ -7,7 +7,10 @@ import pytest
 import yaml
 
 from scripts import integrations
-from scripts.integrations import BADGES_END, BADGES_START, END, ROOT, START, Look, badges, main, render
+from scripts.integrations import BADGES_END, BADGES_START, END, MANUAL, ROOT, START, Look, badges, main, render
+
+README_TEXT = f"# title\n{BADGES_START}\n{BADGES_END}\nafter\n"
+MANUAL_TEXT = f"# manual\nbefore\n{START}\n{END}\nafter\n"
 
 
 def staff(root, filename, **settings):
@@ -16,11 +19,23 @@ def staff(root, filename, **settings):
     (core / filename).write_text(yaml.safe_dump(settings), encoding="utf-8")
 
 
-def readme(root):
-    path = root / "README.md"
-    path.write_text(f"# title\n{BADGES_START}\n{BADGES_END}\nbefore\n{START}\n{END}\nafter\n",
-                    encoding="utf-8")
-    return path
+def docs(root, readme_text=README_TEXT, manual_text=MANUAL_TEXT):
+    """README with the badge markers and docs/manual.md with the inventory markers."""
+    readme, manual = root / "README.md", root / MANUAL
+    manual.parent.mkdir(parents=True, exist_ok=True)
+    readme.write_bytes(readme_text.encode("utf-8"))
+    manual.write_bytes(manual_text.encode("utf-8"))
+    return readme, manual
+
+
+def snapshot(*paths):
+    return [path.read_bytes() for path in paths]
+
+
+def slugs(text, prefix=""):
+    """GitHub heading ids: lowercase, punctuation dropped, spaces to hyphens."""
+    return {prefix + "#" + re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
+            for h in re.findall(r"^#{1,6} (.+)$", text, re.MULTILINE)}
 
 
 def block(text, start, end):
@@ -40,7 +55,13 @@ def test_repository_readme_passes_cli_check():
     assert "PubMed" in content and "bioRxiv / medRxiv" in content
     assert "bioinfo-agent (`bioinfo`)" in content and "Paper2Agent" in content
     assert "labhq_ask" in content and "AlphaGenome" not in content  # labhq_ask is wired by the runner (#39)
-    assert "img.shields.io" not in content  # count badges are gone from §2; targets live at the top
+    assert "img.shields.io" not in content  # count badges are gone from the table; targets live at the top
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    manual = (ROOT / MANUAL).read_text(encoding="utf-8")
+    assert START not in readme and BADGES_START not in manual  # README for first-time users (#298)
+    table = block(manual, START, END)
+    local = re.findall(r"\]\((?!https?://)([^)#]+)\)", table)
+    assert local and all((ROOT / MANUAL).parent.joinpath(target).resolve().exists() for target in local)
 
 
 def test_repository_badges_name_exact_targets_at_readme_top():
@@ -66,14 +87,13 @@ def test_repository_badges_name_exact_targets_at_readme_top():
     assert str(ROOT) not in text and not re.search(r"(?<![A-Za-z])[A-Za-z]:[\\/]|/Users/|/home/", generated)
 
 
-def test_badge_anchors_point_at_readme_headings():
+def test_badge_anchors_point_at_manual_headings():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    # GitHub heading ids: lowercase, punctuation dropped, spaces to hyphens.
-    slugs = {"#" + re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
-             for h in re.findall(r"^#{1,6} (.+)$", text, re.MULTILINE)}
-    used = set(re.findall(r"\]\((#[^)]+)\)", block(text, BADGES_START, BADGES_END)))
+    headings = slugs((ROOT / MANUAL).read_text(encoding="utf-8"), MANUAL)
+    top = block(text, BADGES_START, BADGES_END)
+    used = set(re.findall(r"\]\(((?:docs/[^)#]*)?#[^)]+)\)", top))
     anchors = {integrations.TOOLS_ANCHOR, integrations.HPC_ANCHOR, integrations.CLI_ANCHOR}
-    assert used and used <= anchors <= slugs
+    assert used and used <= anchors <= headings
 
 
 def test_temporary_inventory_deduplicates_and_uses_public_provenance(tmp_path, monkeypatch):
@@ -119,30 +139,31 @@ def test_temporary_inventory_deduplicates_and_uses_public_provenance(tmp_path, m
 
 def test_config_change_fails_check_and_write_preserves_surrounding_text(tmp_path):
     staff(tmp_path, "staff.yaml", id="staff", engine="codex", builtin_mcp=[], tools=[])
-    path = readme(tmp_path)
+    readme, manual = docs(tmp_path)
     args = ["--root", str(tmp_path)]
     assert main([*args, "--write"]) == 0
-    original = path.read_bytes()
+    original = snapshot(readme, manual)
     assert main([*args, "--check"]) == 0
     staff(tmp_path, "staff.yaml", id="staff", engine="codex", builtin_mcp=[], tools=["WebSearch"])
     assert main([*args, "--check"]) == 1
     result = subprocess.run([sys.executable, str(ROOT / "scripts" / "integrations.py"),
                              *args, "--check"], capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 1
-    assert path.read_bytes() == original  # Check is read-only.
+    assert snapshot(readme, manual) == original  # Check is read-only.
     assert main([*args, "--write"]) == 0
     assert main([*args, "--check"]) == 0
-    text = path.read_text(encoding="utf-8")
-    assert text.startswith(f"# title\n{BADGES_START}\n") and text.endswith(f"{END}\nafter\n")
-    assert f"{BADGES_END}\nbefore\n{START}\n" in text
-    assert "Codex 웹 검색" in text
+    text, table = readme.read_text(encoding="utf-8"), manual.read_text(encoding="utf-8")
+    assert text.startswith(f"# title\n{BADGES_START}\n") and text.endswith(f"{BADGES_END}\nafter\n")
+    assert table.startswith(f"# manual\nbefore\n{START}\n") and table.endswith(f"{END}\nafter\n")
+    assert "Codex 웹 검색" in table and "Codex 웹 검색" not in text
+    assert "](../agents/core/staff.yaml)" in table  # links resolve from docs/
     assert main([*args, "--write"]) == 0
-    assert path.read_text(encoding="utf-8") == text
+    assert (readme.read_text(encoding="utf-8"), manual.read_text(encoding="utf-8")) == (text, table)
     # A badge-only change (another Codex staff) also makes --check fail.
     staff(tmp_path, "second.yaml", id="second", engine="codex", builtin_mcp=[], tools=["WebSearch"])
     assert main([*args, "--check"]) == 1
     assert main([*args, "--write"]) == 0
-    assert "Codex: 직원 2명" in block(path.read_text(encoding="utf-8"), BADGES_START, BADGES_END)
+    assert "Codex: 직원 2명" in block(readme.read_text(encoding="utf-8"), BADGES_START, BADGES_END)
 
 
 def test_unknown_connections_do_not_publish_private_fields(tmp_path):
@@ -153,8 +174,8 @@ def test_unknown_connections_do_not_publish_private_fields(tmp_path):
     content = render(tmp_path / "agents")
     top = badges(tmp_path)
     assert "custom_mcp" in content and "plugin (custom:1)" in content
-    assert "custom_mcp: MCP" in labels(top)  # named server, linked to the README table
-    assert "](#연결된-도구)" in top
+    assert "custom_mcp: MCP" in labels(top)  # named server, linked to the manual's table
+    assert "](docs/manual.md#연결된-도구)" in top
     assert "plugin (custom" not in top  # an unnamed plugin directory gets no badge
     assert "private" not in content + top
 
@@ -163,13 +184,13 @@ def test_unknown_connections_do_not_publish_private_fields(tmp_path):
                                           ("engine", "C:/private/engine")])
 def test_non_identifier_staff_values_fail_without_writing(tmp_path, field, value):
     staff(tmp_path, "one.yaml", id="one", **{field: value})
-    path = readme(tmp_path)
-    original = path.read_bytes()
+    paths = docs(tmp_path)
+    original = snapshot(*paths)
     assert main(["--root", str(tmp_path), "--write"]) == 1
-    assert path.read_bytes() == original
+    assert snapshot(*paths) == original
 
 
-@pytest.mark.parametrize("markers", [
+BAD_README = [
     "no markers", f"{END}\n{START}", f"{START}{START}{END}",
     f"{START}\n{END}",  # badge markers missing
     f"{BADGES_END}\n{BADGES_START}\n{START}\n{END}",
@@ -178,14 +199,33 @@ def test_non_identifier_staff_values_fail_without_writing(tmp_path, field, value
     f"{BADGES_START}\n{START}\n{BADGES_END}\n{END}",
     f"{START}\n{BADGES_START}\n{BADGES_END}\n{END}",  # badges nested in integrations (#153)
     f"{BADGES_START}\n{START}\n{END}\n{BADGES_END}",  # integrations nested in badges
-])
-def test_bad_markers_fail_without_writing(tmp_path, markers):
+    f"{BADGES_START}\n{BADGES_END}\n{START}\n{END}",  # the inventory belongs in the manual now
+]
+BAD_MANUAL = [
+    "no markers", f"{END}\n{START}", f"{START}{START}{END}",
+    f"{BADGES_START}\n{BADGES_END}",  # badge markers instead of inventory markers
+    f"{START}\n{END}\n{BADGES_START}\n{BADGES_END}",  # badges belong at the README top
+    f"{START}\n{BADGES_START}\n{BADGES_END}\n{END}",
+]
+
+
+@pytest.mark.parametrize("readme_text, manual_text", [(text, MANUAL_TEXT) for text in BAD_README]
+                         + [(README_TEXT, text) for text in BAD_MANUAL])
+def test_bad_markers_fail_without_writing(tmp_path, readme_text, manual_text):
     staff(tmp_path, "one.yaml", id="one")
-    path = tmp_path / "README.md"
-    path.write_text(markers, encoding="utf-8")
+    paths = docs(tmp_path, readme_text, manual_text)
+    original = snapshot(*paths)
     assert main(["--root", str(tmp_path), "--write"]) == 1
-    assert path.read_text(encoding="utf-8") == markers
+    assert snapshot(*paths) == original  # neither file is written, even the one with good markers
     assert main(["--root", str(tmp_path), "--check"]) == 1
+
+
+def test_missing_manual_fails_without_writing_the_readme(tmp_path):
+    staff(tmp_path, "one.yaml", id="one")
+    readme, manual = docs(tmp_path)
+    manual.unlink()
+    assert main(["--root", str(tmp_path), "--write"]) == 1
+    assert readme.read_text(encoding="utf-8") == README_TEXT
 
 
 def test_removed_configuration_removes_badges_and_rows(tmp_path):
@@ -223,11 +263,11 @@ def test_schedulers_come_from_settings_literal(tmp_path):
     hpc_settings(tmp_path, 'Literal["pbs"]')
     assert [label for label in labels(badges(tmp_path)) if "scheduler" in label] == ["PBS: HPC scheduler"]
     hpc_settings(tmp_path, "str")  # the support list must stay readable from code, not silently empty
-    path = readme(tmp_path)
+    readme, manual = docs(tmp_path)
     assert main(["--root", str(tmp_path), "--write"]) == 1
     hpc_settings(tmp_path, 'Literal["../private"]')
     assert main(["--root", str(tmp_path), "--write"]) == 1
-    assert path.read_text(encoding="utf-8") == f"# title\n{BADGES_START}\n{BADGES_END}\nbefore\n{START}\n{END}\nafter\n"
+    assert (readme.read_text(encoding="utf-8"), manual.read_text(encoding="utf-8")) == (README_TEXT, MANUAL_TEXT)
 
 
 def test_repository_facts_follow_pyproject_workflows_and_license(tmp_path):
@@ -242,7 +282,8 @@ def test_repository_facts_follow_pyproject_workflows_and_license(tmp_path):
     (workflows / "manual.yml").write_text("name: manual\non:\n  workflow_dispatch:\njobs: {}\n", encoding="utf-8")
     top = badges(tmp_path)
     assert "[![ci: GitHub Actions](https://github.com/owner/repo/actions/workflows/ci.yml/badge.svg)]" in top
-    assert "manual" not in top  # manual-only workflows have no branch status
+    # manual-only workflows have no branch status ("manual" alone now also names docs/manual.md links)
+    assert "manual.yml" not in top and "[![manual" not in top
     assert "Python: 3.11+" in labels(top) and "license" not in top and "패치노트" not in top
     (tmp_path / "LICENSE").write_text("MIT License\n", encoding="utf-8")
     (tmp_path / "patch_notes").mkdir()
@@ -253,8 +294,9 @@ def test_repository_facts_follow_pyproject_workflows_and_license(tmp_path):
     targets, facts = top.rstrip("\n").split("\n\n")  # tools first, repository facts in a second row
     assert "Python" in facts and "Python" not in targets
     (tmp_path / "pyproject.toml").write_text('[project]\nrequires-python = "~=3.10"\n', encoding="utf-8")
-    path = readme(tmp_path)
+    paths = docs(tmp_path)
     assert main(["--root", str(tmp_path), "--write"]) == 1  # not a plain minimum: refuse to guess
+    assert snapshot(*paths) == [README_TEXT.encode("utf-8"), MANUAL_TEXT.encode("utf-8")]
 
 
 def test_logos_are_limited_to_verified_slugs():

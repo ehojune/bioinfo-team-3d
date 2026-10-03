@@ -385,7 +385,7 @@ def test_doctor_reports_active_and_skipped_private_paths(tmp_path, monkeypatch, 
     settings = _doctor_settings(tmp_path, [str(tmp_path) if p == "TMP" else p for p in private])
     row = _doctor_row(settings, monkeypatch)
     assert (row["status"], row["detail"]) == (status, detail.replace("OUTSIDE", f"{OUTSIDE_HOME_LABEL} …/{tmp_path.name}"))
-    assert "README" in row["hint"] and str(home) not in row["detail"]
+    assert "docs/manual.md 'PI 개인 경로'" in row["hint"] and str(home) not in row["detail"]
 
 
 # ---------------- review of PR #324 ----------------
