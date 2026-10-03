@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:16 | [`2fa931a`](https://github.com/ehojune/bioinfo-team-3d/pull/352/commits/2fa931a) | 결과 교정 turn이 산출 파일을 바꾸면 단계를 실패시킴(봇 P1) |
+| 14:10 | [`46973c9`](https://github.com/ehojune/bioinfo-team-3d/pull/352/commits/46973c9) | 연구 단계 결과 JSON이 계약 검증에 실패하면 같은 세션·workdir에서 설정 횟수만큼 교정하고, validator 전용 필드 규칙을 prompt에 명시했다. |
 | 13:31 | [`03d6cb5`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/03d6cb5) | Codex strict schema에서 사전을 왕복하고 지원하지 않는 제약과 중첩 nullable array를 호환 형태로 바꿨다. |
 | 12:45 | [`57d529b`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/57d529b) | README에 Codex strict schema 변환과 optional null 정리 동작을 한 줄로 기록했다. |
 | 12:43 | [`1a9c5a2`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/1a9c5a2) | Codex 직원 output schema를 OpenAI strict 형식으로 바꾸고 optional null을 원래 계약에 맞게 정리했다. |
