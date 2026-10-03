@@ -180,7 +180,7 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
-        self.system_ca_file: str | None = None  # written once on first use; '' when there is none
+        self.system_ca_text: str | None = None  # read once on first use; '' when there is none
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
@@ -804,32 +804,40 @@ class Runner:
     def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
         """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
 
-        The PEM sits in the workspace root, which only the runner writes: a task folder could hold a link an
-        earlier run left, and the runner state folder may be closed to the Codex sandbox."""
+        The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
+        folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
+        spawn the file is compared with the copy in memory and rewritten when it differs: a CA one task planted is
+        never trusted by the next (PR #359 review)."""
         if not self.s.runner.system_ca_bundle:
             return {}
         engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
         if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
             return {}
-        if self.system_ca_file is None:
-            self.system_ca_file = ""
-            pem = system_ca_pem()
-            if pem:
-                target = self.ws_root / ".labhq-system-ca.pem"
-                tmp = None
-                try:
-                    self.ws_root.mkdir(parents=True, exist_ok=True)
-                    fd, tmp = tempfile.mkstemp(dir=self.ws_root, prefix=".labhq-system-ca.", suffix=".tmp")
-                    with os.fdopen(fd, "w", encoding="ascii") as handle:
-                        handle.write(pem)
-                    os.replace(tmp, target)
-                    self.system_ca_file = str(target)
-                except OSError:
-                    log.warning("system CA bundle not written", exc_info=True)
-                    if tmp:
-                        with contextlib.suppress(OSError):
-                            os.unlink(tmp)
-        return {name: self.system_ca_file for name in CA_ENV} if self.system_ca_file else {}
+        if self.system_ca_text is None:
+            self.system_ca_text = system_ca_pem() or ""
+        if not self.system_ca_text:
+            return {}
+        target = self.ws_root / ".labhq-system-ca.pem"
+        expected = self.system_ca_text.encode("ascii")
+        try:
+            if not is_link(target) and target.is_file() and target.read_bytes() == expected:
+                return {name: str(target) for name in CA_ENV}
+        except OSError:
+            pass
+        tmp = None
+        try:
+            self.ws_root.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self.ws_root, prefix=".labhq-system-ca.", suffix=".tmp")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(expected)
+            os.replace(tmp, target)  # replaces a link itself, never the file it points at
+        except OSError:
+            log.warning("system CA bundle not written", exc_info=True)
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            return {}
+        return {name: str(target) for name in CA_ENV}
 
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)

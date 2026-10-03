@@ -6,6 +6,7 @@ import ssl
 import certifi
 import pytest
 
+from labhq.adapters.read_only import read_only_engine_env
 from labhq.models import Engine, Task
 from labhq.runner import system_ca
 from tests.test_private_paths import _capture_runner, _runner_settings
@@ -69,3 +70,24 @@ async def test_runner_leaves_a_ca_the_pi_chose_or_a_missing_store_alone(tmp_path
     assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
     assert not set(system_ca.CA_ENV) & set(seen["ctx"].env)
     assert not (runner.ws_root / ".labhq-system-ca.pem").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_bundle_a_task_rewrote_is_restored_before_the_next_spawn(tmp_path, monkeypatch):
+    """Staff share the runner's account and can rewrite the file; a planted CA must not reach the next task
+    (PR #359 review)."""
+    for name in system_ca.CA_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: "PEM\n")
+    runner, seen = _capture_runner(_runner_settings(tmp_path, []), monkeypatch)
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+    target = runner.ws_root / ".labhq-system-ca.pem"
+    target.write_text("PEM\nATTACKER CA\n", encoding="ascii")
+    assert (await runner.run_task(Task(id="t2", agent_id="worker", request_id="r", prompt="q"))).ok
+    assert target.read_text(encoding="ascii") == "PEM\n"
+    assert seen["ctx"].env["SSL_CERT_FILE"] == str(target)
+
+
+def test_a_read_only_run_keeps_the_pis_requests_bundle():
+    kept = read_only_engine_env({"REQUESTS_CA_BUNDLE": "/pi/ca.pem", "SSL_CERT_FILE": "/pi/ca.pem"})[0]
+    assert kept == {"REQUESTS_CA_BUNDLE": "/pi/ca.pem", "SSL_CERT_FILE": "/pi/ca.pem"}
