@@ -21,11 +21,12 @@ V = vocab.load()
 CANARY = "CANARY-7f3a-secret"
 # main before #221 (1b73b5d): the plan schema and the rendered plan prompt with fixed arguments. The prompt hash
 # moved on purpose since: #84 added the phone-card length rule to the plan questions; the 2nd mock trial added the
-# one-environment-step rule (ENV_STEP_RULE). Off still adds nothing.
-PLAN_SCHEMA_SHA = "62d0943358bdf2035f4919f92f19bba765a83a10e3d5abe6750d615bee5ccabf"
-PLAN_PROMPT_SHA = "f0053d969d530f363ef515844be904c3c8438cf72cf72b3c322a8966262f224b"
+# one-environment-step rule (ENV_STEP_RULE); #36 added the scope verdict (schema, was 62d09433…) and the lab scope
+# rule (prompt, was f0053d96…). Off still adds nothing.
+PLAN_SCHEMA_SHA = "f8f30b831ff2aa79018ceed6185184a82c959d4885ca71a8a0fe678c10ee4eb9"
+PLAN_PROMPT_SHA = "8829c2160710490a2985ea02db5f5ce3b93b21e91518be9f828936fda43f2817"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                   question_rule=QUESTION_RULE)
+                   question_rule=QUESTION_RULE, lab_scope="LAB")
 
 
 def sha(value):

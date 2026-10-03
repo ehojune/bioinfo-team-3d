@@ -28,7 +28,7 @@ def test_plan_questions_fit_the_phone_card_and_the_research_plan_keeps_its_own_r
     """Plan questions are structured (options are a/b/c/d buttons), so only the length and the order apply."""
     rule = QUESTION_RULE + " Each question must fit the PI's phone card: at most 700 characters, the question itself first."
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                question_rule=QUESTION_RULE, output_types_rule="")
+                question_rule=QUESTION_RULE, output_types_rule="", lab_scope="LAB")
     assert rule in cso.PLAN_PROMPT.format(**args)
     assert "phone card" not in cso.RESEARCH_PLAN_PROMPT.format(**args, intake="INTAKE", packs="PACKS")
 
