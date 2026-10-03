@@ -2409,3 +2409,22 @@ async def test_general_report_starts_at_its_first_heading(accept):
                                                         "---\n# Report\nbody"), accept=accept)
     await Orchestrator(hub).run_request("r")
     assert hub.requests["r"]["report"].startswith("# Report\nbody")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accept", [True, False])
+async def test_general_report_keeps_a_short_answer_written_before_its_first_heading(accept):
+    """PR #368 review: the general report puts its answer first; only a lead-in closed by "---" is talk to drop."""
+    text = "Recommendation: use the paired model; the unpaired one inflates the DE count.\n\n# Evidence\nbody"
+    hub = unresolved_hub(lambda task: result(task, text=text), accept=accept)
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["report"].startswith(text)
+
+
+def test_report_body_break_only_needs_a_thematic_break_before_the_heading():
+    from labhq.orchestrator.cso import report_body
+
+    assert report_body("Answer: yes.\n\n# Evidence\nx", break_only=True).startswith("Answer: yes.")
+    for rule in ("---", "***", "___", "- - -"):
+        assert report_body(f"Writing it now.\n\n{rule}\n# Report\nx", break_only=True) == "# Report\nx"
+    assert report_body("Answer: yes.\n\n# Evidence\nx") == "# Evidence\nx"  # the research lane is unchanged
