@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:08 | [`f132912`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f132912) | 경로 어디에든 . 이나 .. 성분이 있으면 없는 이름으로 건너뛰지 않는다(Windows는 missing/.. 을 먼저 지운다). |
+| 03:00 | [`f587b05`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f587b05) | 없는 이름 판정이 첫 성분을 /, /와 \, NTFS stream 앞 이름으로 모두 대조하고 8.3 이름은 따옴표 안에서도 센다. |
+| 02:54 | [`91e3287`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/91e3287) | 없는 이름 판정에서 대소문자·유니코드 정규화·끝 점과 공백을 모두 같은 이름으로 본다(대소문자 무시 볼륨의 링크). |
+| 02:47 | [`56b29bd`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/56b29bd) | 작업 폴더로 cd한 뒤 긴 인라인 스크립트(python -c)가 후보 상한에 걸려 PI에게 묻던 게이트 오탐을 없앴다. |
 | 02:16 | [`b7c803b`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/b7c803b) | 일반 보고서는 heading 앞의 답을 지우지 않도록 군말 떼기를 빼고 프롬프트 지시만 남긴다. |
 | 02:10 | [`8e9371b`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/8e9371b) | pack 규칙에 min_items를 넣어 bulk 비교군을 서로 다른 두 개 이상으로 요구하고, 빈 문자열만 든 목록은 값 없음으로 본다. |
 | 02:09 | [`07b9964`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/07b9964) | 라운드 중 재시작 뒤에도 이어 가는 수정 단계가 현재 upstream 결과를 받는다. |
