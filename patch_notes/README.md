@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:08 | [`37722ed`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/37722ed) | 동결 protocol은 단계·리뷰·보고서 프롬프트 어디서도 자르지 않고, 길면 단계 목록만 자름(봇 P1) |
+| 18:57 | [`9c00cda`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/9c00cda) | 연구 단계 프롬프트에 동결 protocol(제외 기준·분석 단위·통계)을 넣고 이탈은 method_changes에 적게(8차 시운전 리뷰 P1) |
 | 18:49 | [`83f0c58`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/83f0c58) | README: CP2 근거 결합은 조상 단계 산출도 인정, 실제 CLI로 CP2·리뷰까지 확인(8차) |
 | 18:48 | [`395a2f1`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/395a2f1) | CP2 근거 결합: 조상 단계 전체의 수집·hash된 산출물을 검증된 artifact로 인정(8차 시운전 거부 8건 중 6건) |
 | 17:34 | [`e0ca434`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/e0ca434) | 게이트: -Path를 이름으로 준 쓰기 cmdlet의 위치 인자는 -Value로 보고 목적지로 묻지 않음(봇 P2) |
