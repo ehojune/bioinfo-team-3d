@@ -127,7 +127,9 @@ async def test_every_step_continuation_uses_common_prompt(tmp_path, continuation
     assert continued.resume_session_id == (session if can_resume else None)
     if can_resume:
         assert request not in continued.prompt and instruction not in continued.prompt
-        assert context not in continued.prompt and prior_text not in continued.prompt
+        assert prior_text not in continued.prompt
+        # A resumed revision re-reads its current upstream results (PR #368); other continuations do not.
+        assert (context in continued.prompt) is (route == "revision")
     else:
         for required in (request, instruction, context, prior_text):
             assert required in continued.prompt
@@ -2395,10 +2397,10 @@ async def test_resumed_revision_gets_the_revised_upstream_results_and_must_retur
     a, b = sorted(hub.calls, key=lambda task: task.meta["step_id"])
     assert b.resume_session_id == "B-session"
     assert "- soften the summary" in b.prompt and "Upstream step(s) A were revised" in b.prompt
-    assert "Upstream results after this revision round" in b.prompt and "A v2 result" in b.prompt
+    assert "Current upstream results" in b.prompt and "A v2 result" in b.prompt
     assert "A v1 result" not in b.prompt
     assert REVISION_RESULT_RULE in a.prompt and REVISION_RESULT_RULE in b.prompt
-    assert "Upstream results after this revision round" not in a.prompt  # nothing above A was revised
+    assert "Current upstream results" not in a.prompt  # A has no upstream step
 
 
 @pytest.mark.asyncio
@@ -2428,3 +2430,30 @@ def test_report_body_break_only_needs_a_thematic_break_before_the_heading():
     for rule in ("---", "***", "___", "- - -"):
         assert report_body(f"Writing it now.\n\n{rule}\n# Report\nx", break_only=True) == "# Report\nx"
     assert report_body("Answer: yes.\n\n# Evidence\nx") == "# Evidence\nx"  # the research lane is unchanged
+
+
+@pytest.mark.asyncio
+async def test_resumed_revision_after_a_restart_still_gets_the_current_upstream_results(tmp_path):
+    """PR #368 review: after a restart mid-round, A's finished revision is no longer pending, so the resumed B is run
+    with feedback naming only B; it must still read A's current result, not the one in its old session."""
+    async def dispatch(task):
+        return result(task, text="B v2 result")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+
+    async def wait_session_free(agent_id, session_id, held_workdir, **kwargs):
+        return session_id, held_workdir
+
+    hub.wait_session_free = wait_session_free
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "Cluster", "depends_on": []},
+             {"id": "B", "agent_id": "worker", "instruction": "Report", "depends_on": ["A"]}]
+    outcomes = {"A": TaskResult(task_id="revised-A", agent_id="worker", ok=True, text="A v2 result"),
+                "B": TaskResult(task_id="prior-B", agent_id="worker", ok=True, text="B v1 result",
+                                session_id="B-session", workdir=str(tmp_path / "B"))}
+    feedback = {"B": "- soften the summary\n- Upstream step(s) A were revised after the scientific review.\n"}
+    await Orchestrator(hub).run_dag("r", "Original request", steps, outcomes, only={"B"}, feedback=feedback)
+
+    (b,) = hub.calls
+    assert b.resume_session_id == "B-session"
+    assert "Current upstream results" in b.prompt and "A v2 result" in b.prompt

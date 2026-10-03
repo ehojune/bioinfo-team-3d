@@ -2089,10 +2089,11 @@ class Orchestrator:
                 session_id, workdir = await self._free_session(
                     step["agent_id"], session_id, workdir, rid=rid, step=step["id"])
             can_resume = bool(session_id and self.hub.supports_resume(step["agent_id"]))
-            if revising and can_resume and ctx and any(d in feedback for d in step["depends_on"]):
+            if revising and can_resume and ctx:
                 # A resumed session gets only the updates; without this it keeps the upstream results it read before
-                # the revision round (12th mock trial).
-                updates.append(f"[Upstream results after this revision round — they replace what you read before]\n{ctx}")
+                # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
+                # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
+                updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
