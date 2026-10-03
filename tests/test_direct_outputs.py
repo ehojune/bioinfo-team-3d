@@ -320,9 +320,9 @@ def test_labhq_result_names_follow_the_outputs_volume_case_rule(tmp_path, monkey
     assert note is None
 
 
-def test_readme_documents_direct_round_output_paths_and_cap():
-    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
-    round_section = readme.split("- **라운드 기록**", 1)[1].split("\n- **", 1)[0]
+def test_manual_documents_direct_round_output_paths_and_cap():
+    manual = (Path(__file__).parents[1] / "docs" / "manual.md").read_text(encoding="utf-8")
+    round_section = manual.split("- **라운드 기록**", 1)[1].split("\n- **", 1)[0].split("\n## ", 1)[0]
     assert "direct" in round_section and "outputs/" in round_section and "200" in round_section
 
 

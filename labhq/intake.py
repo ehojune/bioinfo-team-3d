@@ -499,7 +499,7 @@ def scan_reference_dir(directory: Path, zones: list[Path], max_entries: int, max
     symlink or junction below it. A reference is a promise about what the task reads, so a link must resolve
     inside the directory, and a mount point below it is refused because its contents live elsewhere. A
     directory too large or too deep to list within the caps, or one that cannot be listed, is refused (fail
-    closed). Links made after this check and hard links are not seen; README §10 says so.
+    closed). Links made after this check and hard links are not seen; docs/manual.md '알려진 한계' says so.
     """
     for kind, path, info in _walk(directory, max_entries, max_depth):
         name = _name(path, directory)

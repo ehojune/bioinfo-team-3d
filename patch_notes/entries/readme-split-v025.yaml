@@ -1,0 +1,50 @@
+pr: 349
+rows:
+- sha: 17d113f
+  at: 2026-10-03 10:28
+  text: '개념 그림 3장 추가: 요청 흐름, 승인 게이트, 연구 lane'
+- sha: 4f8377a
+  at: 2026-10-03 10:28
+  text: README를 처음 써 보는 사람용으로 줄이고 본문을 docs/manual.md로 옮김, 배지는 README에 연결된 도구 표는 매뉴얼에
+    생성
+- sha: 264c567
+  at: 2026-10-03 10:28
+  text: README 절 번호(§8·§10·§14)를 가리키던 doctor 힌트·HPC 안내·설정 주석·절차서를 매뉴얼 절 이름으로 바꿈
+- sha: 47d5f18
+  at: 2026-10-03 10:28
+  text: 'docs/pi-qa.md 추가: PI가 물은 것과 답, ①~⑥ 결정을 표로 정리'
+- sha: 17bc8a4
+  at: 2026-10-03 10:28
+  text: README의 개발 전용 단락(느린 test, 도구 표 갱신, fixture 재캡처)을 HANDOFF 작업 방식 표로, 문서 나눔 규칙을
+    AGENTS.md로
+- sha: a03f571
+  at: 2026-10-03 10:28
+  text: 문서 갱신 주기 검사가 README 대신 docs/manual.md 수정도 세도록 함
+- sha: 8ad2e42
+  at: 2026-10-03 10:37
+  text: 요청 흐름 그림의 revise는 지적된 단계로 되돌리고, 승인 게이트 그림의 주석은 Claude 직원 범위로 좁힘
+- sha: 6de2a0e
+  at: 2026-10-03 10:37
+  text: '의미 모델과 온톨로지: README에 짧은 소개와 그림(semantics-model.svg), 매뉴얼에 자세한 절'
+- sha: 95d4ed3
+  at: 2026-10-03 10:37
+  text: README 걸림돌 정리(두 번째 터미널의 LABHQ_CONFIG, 폰 데모 조건), 로드맵 요약을 ⑥에 맞추고 매뉴얼 리뷰 규칙을
+    한 곳으로
+- sha: 7f62cc2
+  at: 2026-10-03 10:37
+  text: 'PI Q&A에 ⑥ 결정(PR #347 반영)과 온톨로지 요청을 반영하고 개인 경로 답의 범위를 Claude 직원으로 밝힘'
+- sha: 06df67a
+  at: 2026-10-03 10:37
+  text: CLAUDE.md에 문서 나눔과 README·매뉴얼 갱신 주기를 넣고 HANDOFF 결정 표에 범위 변경 기록
+- sha: 351a0ad
+  at: 2026-10-03 10:42
+  text: 'HANDOFF 큐 #57을 6–8로 되돌리고 병합된 #346 행을 뺌, 매뉴얼에 lab.scope'
+- sha: 8ac590a
+  at: 2026-10-04 00:37
+  text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(조상 단계 결합, 리다이렉트, Codex strict schema, Windows CA, 로드맵)을 매뉴얼로 옮김'
+- sha: 873146a
+  at: 2026-10-04 00:41
+  text: 'README에 예시 절(요청 한 문장 → 결과 세 줄)과 docs/examples/gse10072(요청 원문·카드·그림 3장·보고서 원문)'
+- sha: 7e55568
+  at: 2026-10-04 02:30
+  text: 'main 병합: README는 분리 판 유지, 그사이 main README 변경(벌크 pack, 관찰 산출 tool_use_id, 감사 번들, CA 변수, 로드맵)을 매뉴얼로 옮김'

@@ -67,7 +67,7 @@ class EngineBin(BaseModel):
 
 class IsolatedEngineBin(EngineBin):
     # Staff sessions must not inherit the PI's own CLI setup (hooks, skills, plugins, global instructions).
-    # Only engines whose adapter implements it; gemini/antigravity have no flag for it (README §10).
+    # Only engines whose adapter implements it; gemini/antigravity have no flag for it (docs/manual.md '알려진 한계').
     isolate_user_config: bool = True
 
 
@@ -302,7 +302,7 @@ class PolicySettings(BaseModel):
 
 class RecruitSettings(BaseModel):
     agent_id: str = "recruiter"
-    permission_mode: str = "auto"  # unattended conversion; see README (run inside a container if you can)
+    permission_mode: str = "auto"  # unattended conversion; see docs/manual.md '파견직 제도' (run inside a container if you can)
     max_budget_usd: float = 25.0
     default_ttl_days: int = 30
     contract_engine: str = "claude_code"

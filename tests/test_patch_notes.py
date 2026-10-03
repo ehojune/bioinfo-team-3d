@@ -64,8 +64,25 @@ def test_readme_must_change_at_least_once_every_three_main_commits(repo):
     assert any("README" in problem for problem in pn.check("main", "HEAD", repo))
     commit(repo, {"README.md": "v2\n"}, "README 갱신")
     problems = pn.check("main", "HEAD", repo)
-    assert not any("README.md를 안 고친" in problem for problem in problems)
+    assert not any("를 안 고친 커밋" in problem for problem in problems)
     assert any("README 갱신" in problem for problem in problems)
+
+
+def test_a_manual_edit_counts_as_the_documentation_refresh(repo):
+    commit(repo, {"b.py": "1\n"}, "main change 1")
+    commit(repo, {"b.py": "2\n"}, "main change 2")
+    run(repo, "checkout", "-q", "-b", "feature")
+    change = commit(repo, {"c.py": "1\n"}, "feature change")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change)}, "패치노트")
+    assert any("를 안 고친 커밋이 2개" in problem for problem in pn.check("main", "HEAD", repo))
+    manual = commit(repo, {"docs/manual.md": "details\n"}, "매뉴얼 갱신")
+    commit(repo, {"patch_notes/entries/feature.yaml": entry(change, manual)}, "패치노트")
+    assert pn.check("main", "HEAD", repo) == []
+    run(repo, "checkout", "-q", "main")
+    commit(repo, {"docs/manual.md": "main details\n"}, "manual on main")
+    assert pn.counted_main_commits(run(repo, "log", "-1", "--format=%H", "--", *pn.DOCS), "main", repo) == 0
+    commit(repo, {"docs/other.md": "x\n"}, "another doc")  # only README and the manual count
+    assert pn.counted_main_commits(run(repo, "log", "-1", "--format=%H", "--", *pn.DOCS), "main", repo) == 1
 
 
 def test_rows_lists_commits_newest_first_as_yaml(repo):
@@ -85,7 +102,7 @@ def test_a_readme_edit_reverted_later_is_not_a_refresh(repo):
     edit = commit(repo, {"README.md": "v2\n"}, "README edit")
     revert = commit(repo, {"README.md": "v1\n"}, "README revert")
     commit(repo, {"patch_notes/entries/feature.yaml": entry(edit, revert)}, "패치노트")
-    assert any("README.md를 안 고친" in problem for problem in pn.check("main", "HEAD", repo))
+    assert any("를 안 고친 커밋" in problem for problem in pn.check("main", "HEAD", repo))
 
 
 @pytest.mark.parametrize("files,needs_note", [

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="430" viewBox="0 0 1000 430" role="img" aria-labelledby="t d">
+  <title id="t">연구 lane: 계획에서 검증까지</title>
+  <desc id="d">연구 요청이 고정된 계획, CP1 계획 승인, 단계 실행과 결과 원장, CP2 근거 승인, 리뷰, claim 앵커 보고서를 거쳐 labhq verify로 다시 검사되는 순서를 보여 준다.</desc>
+  <style>
+    text { font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; fill: #0F172A; }
+    .title { font-size: 18px; font-weight: 700; }
+    .h { font-size: 15px; font-weight: 700; }
+    .s { font-size: 12px; fill: #475569; }
+    .cp { font-size: 12px; fill: #92400E; }
+    .mono { font-family: "Consolas", "SFMono-Regular", "Menlo", monospace; font-size: 12px; fill: #334155; }
+    .note { font-size: 12px; fill: #475569; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="430" rx="16" fill="#F8FAFC"/>
+  <text class="title" x="32" y="38">연구 lane — 계획에서 검증까지</text>
+
+  <!-- row 1 -->
+  <rect x="32" y="70" width="200" height="96" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="132" y="98" text-anchor="middle">CSO 계획</text>
+  <text class="s" x="132" y="122" text-anchor="middle">PLAN v2 · schema·pack 검사</text>
+  <text class="s" x="132" y="142" text-anchor="middle">hash로 고정</text>
+
+  <rect x="274" y="70" width="200" height="96" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="1.8"/>
+  <text class="h" x="374" y="98" text-anchor="middle">CP1 계획 승인</text>
+  <text class="cp" x="374" y="122" text-anchor="middle">PI가 질문·가설·기준 확인</text>
+  <text class="cp" x="374" y="142" text-anchor="middle">계획이 바뀌면 다시 승인</text>
+
+  <rect x="516" y="70" width="200" height="96" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="616" y="98" text-anchor="middle">단계 실행</text>
+  <text class="s" x="616" y="122" text-anchor="middle">claim·evidence 결과 원장</text>
+  <text class="s" x="616" y="142" text-anchor="middle">runner가 산출 sha256 기록</text>
+
+  <rect x="758" y="70" width="210" height="96" rx="10" fill="#FEF3C7" stroke="#D97706" stroke-width="1.8"/>
+  <text class="h" x="863" y="98" text-anchor="middle">CP2 근거 승인</text>
+  <text class="cp" x="863" y="122" text-anchor="middle">승인 · 수정 요청 · 거부</text>
+  <text class="cp" x="863" y="142" text-anchor="middle">근거가 산출에 묶였는지 확인</text>
+
+  <g stroke="#64748B" stroke-width="2" marker-end="url(#arrow)">
+    <line x1="232" y1="118" x2="272" y2="118"/>
+    <line x1="474" y1="118" x2="514" y2="118"/>
+    <line x1="716" y1="118" x2="756" y2="118"/>
+  </g>
+  <path d="M863,166 L863,206 L132,206 L132,236" fill="none" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+  <text class="note" x="497" y="198" text-anchor="middle">승인하면</text>
+
+  <!-- row 2 -->
+  <rect x="32" y="238" width="200" height="96" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="132" y="266" text-anchor="middle">리뷰</text>
+  <text class="s" x="132" y="290" text-anchor="middle">claim을 원장·산출과 대조</text>
+  <text class="s" x="132" y="310" text-anchor="middle">P1 지적이면 revise로 끝</text>
+
+  <rect x="274" y="238" width="200" height="96" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="374" y="266" text-anchor="middle">보고서</text>
+  <text class="mono" x="374" y="290" text-anchor="middle">[[claim:step/claim]]</text>
+  <text class="s" x="374" y="310" text-anchor="middle">결론 문장마다 앵커, 검사</text>
+
+  <rect x="516" y="238" width="200" height="96" rx="10" fill="#ECFDF5" stroke="#16A34A" stroke-width="1.5"/>
+  <text class="h" x="616" y="266" text-anchor="middle">끝 상태</text>
+  <text class="mono" x="616" y="290" text-anchor="middle">research_reported</text>
+  <text class="s" x="616" y="310" text-anchor="middle">앵커 문제면 report_incomplete</text>
+
+  <rect x="758" y="238" width="210" height="96" rx="10" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.8"/>
+  <text class="h" x="863" y="266" text-anchor="middle">labhq verify</text>
+  <text class="s" x="863" y="290" text-anchor="middle">runner PC에서 해시·앵커 재검사</text>
+  <text class="s" x="863" y="310" text-anchor="middle">--bundle 감사 zip</text>
+
+  <g stroke="#64748B" stroke-width="2" marker-end="url(#arrow)">
+    <line x1="232" y1="286" x2="272" y2="286"/>
+    <line x1="474" y1="286" x2="514" y2="286"/>
+    <line x1="716" y1="286" x2="756" y2="286" stroke-dasharray="5 4"/>
+  </g>
+  <text class="note" x="737" y="356" text-anchor="middle">나중에 언제든</text>
+
+  <text class="note" x="32" y="384">research.enabled일 때 CSO가 연구로 분류한 요청만 이 길로 간다. evidence_checkpoint를 꺼 두면 CP1 승인에서 멈춘다.</text>
+  <text class="note" x="32" y="406">단계가 실패하면 research_failed로 끝난다. CP3·CP4는 아직 없다. 규칙: docs/research_protocol.md</text>
+</svg>

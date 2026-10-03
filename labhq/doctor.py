@@ -187,7 +187,7 @@ def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
     return adapter_preflight_error(settings, agent)
 
 
-PRIVATE_PATHS_HINT = "See README §8 'PI 개인 경로' (policy.private_paths)."
+PRIVATE_PATHS_HINT = "See docs/manual.md 'PI 개인 경로' (policy.private_paths)."
 
 
 def _doctor_private(settings: Settings, agents: list[AgentSpec], forced: Engine | None) -> PrivatePaths:
@@ -312,7 +312,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                         "not verified: set runner.os_account to the dedicated account" if same_owner is False else
                         "OS account comparison unavailable")
     rows.append(_row("config", "runner account isolation", owner_status, owner_detail,
-                     "Default guard is policy.private_paths (README §8). Optional, advanced: a dedicated runner "
+                     "Default guard is policy.private_paths (docs/manual.md 'PI 개인 경로'). Optional, advanced: a dedicated runner "
                      "account, docs/runner-account.md."))
     if settings.gateway.client_token == "change-me-client":
         # The published default is a working client token for anyone while a gateway accepts it, and a runner
