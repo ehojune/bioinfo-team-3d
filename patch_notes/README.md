@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:04 | [`d44f51a`](https://github.com/ehojune/bioinfo-team-3d/pull/360/commits/d44f51a) | 원본 JSON 결합 검사는 claims·evidence가 list일 때만 해 scalar ledger에서 예외 대신 교정을 받음(봇 P1) |
+| 20:00 | [`57f7929`](https://github.com/ehojune/bioinfo-team-3d/pull/360/commits/57f7929) | 결과 계약의 슬롯·claim 결합 문제를 필드 오류와 함께 첫 교정에 알림(9차 시운전: 슬롯 누락이 마지막 검증에서야 드러나 단계 실패) |
 | 19:08 | [`37722ed`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/37722ed) | 동결 protocol은 단계·리뷰·보고서 프롬프트 어디서도 자르지 않고, 길면 단계 목록만 자름(봇 P1) |
 | 18:57 | [`9c00cda`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/9c00cda) | 연구 단계 프롬프트에 동결 protocol(제외 기준·분석 단위·통계)을 넣고 이탈은 method_changes에 적게(8차 시운전 리뷰 P1) |
 | 18:49 | [`83f0c58`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/83f0c58) | README: CP2 근거 결합은 조상 단계 산출도 인정, 실제 CLI로 CP2·리뷰까지 확인(8차) |
