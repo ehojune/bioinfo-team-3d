@@ -778,20 +778,24 @@ def _real(p: str) -> str | None:
 
 
 def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None]) -> bool:
-    """Whether relative `token` surely names nothing in `folder`: its first component is literal and not there.
+    """Whether relative `token` surely names nothing in `folder`: no spelling of its first component is there.
 
-    A bare word with a glob, brace, tilde (8.3 short name), stream, escape or expansion may name an entry, so does
-    `.` or `..`. A word with whitespace came from inside quotes, where only an expansion still changes it."""
-    first = token
-    while first.startswith("./"):
-        first = first[2:]
-    first = first.split("/", 1)[0]  # a backslash is an escape in bash and a separator on Windows: kept below
-    if first in ("", ".", ".."):
+    The first component is read every way a host may split it: at `/` (bash, POSIX) and at `/` or `\\` (Windows),
+    each also before an NTFS stream (`name:stream`). The shell may still rewrite a bare word (glob, brace, escape)
+    but not quoted text, which is what a word with whitespace is; expansions work in both, and an 8.3 short name
+    (`~`) is the filesystem's own spelling. `.` and `..` name the folder or its parent. (PR #371 review)"""
+    path = token
+    while path[:2] in ("./", ".\\"):
+        path = path[2:]
+    slash = path.split("/", 1)[0]
+    either = re.split(r"[/\\]", path, maxsplit=1)[0]
+    if slash in ("", ".", "..") or either in ("", ".", ".."):
         return False
-    special = "$%`!" if any(char.isspace() for char in first) else "*?[]{}~:\\$%^!`"
-    if any(char in first for char in special):
+    shell = "$%`!" if any(char.isspace() for char in slash) else "*?[]{}^\\$%`!"
+    if any(char in slash for char in shell) or "~" in slash:
         return False
-    if not _entry_key(first):
+    keys = {_entry_key(spelling) for part in (slash, either) for spelling in (part, part.split(":", 1)[0])}
+    if "" in keys:
         return False
     if folder not in listings:
         try:
@@ -799,7 +803,7 @@ def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None])
         except (OSError, ValueError):
             listings[folder] = None
     names = listings[folder]
-    return names is not None and _entry_key(first) not in names
+    return names is not None and not keys & names
 
 
 def _entry_key(name: str) -> str:
