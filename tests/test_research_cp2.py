@@ -507,3 +507,38 @@ async def test_research_plan_prompt_matches_the_evidence_checkpoint(on):
         assert "stops at CP2" in prompt and "artifact_refs path must be one of that step's declared outputs" in prompt
     else:
         assert cp1_only in prompt and "CP2" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_correction_that_changes_an_output_file_fails_the_step():
+    """A correction may only rewrite the result JSON; a changed file would no longer match the hash CP2 binds
+    evidence to (PR #352 review)."""
+    settings = _settings()
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        if task.meta["kind"] == "step":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_invalid_result(hub, task),
+                              outputs=[path], output_sha256={path: "a" * 64}, workdir="runs/s1",
+                              session_id="session-1")
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_cp2_result(hub, task),
+                          unreported_outputs=[path], workdir="runs/s1", session_id="session-1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**CP1, "approval_id": "a1", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    result = hub.requests["r"]["results"]["s1"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    assert "the result correction changed output files" in result["error"]
+    assert hub.requests["r"]["outcome"] == "research_failed"

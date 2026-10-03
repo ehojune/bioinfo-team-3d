@@ -1977,6 +1977,16 @@ class Orchestrator:
                             "workdir": current.workdir or original.workdir,
                             "workdir_id": current.workdir_id or original.workdir_id,
                         })
+                    if current.unreported_outputs:
+                        # A correction only rewrites the result JSON. A file it changed would no longer match the
+                        # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
+                        return original.model_copy(update={
+                            "ok": False,
+                            "error": "invalid research result contract: the result correction changed output files "
+                                     "it must not touch: " + ", ".join(current.unreported_outputs),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
 
         while todo or running:
             # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
