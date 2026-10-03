@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:52 | [`aef9a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/aef9a6e) | 기다릴 HPC job·질의가 남은 turn에는 마무리 turn을 붙이지 않음(봇 P1) |
+| 16:47 | [`9c80c43`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/9c80c43) | 마무리 turn 뒤 산출물은 그 turn 뒤 runner가 본 목록·hash로, 지우거나 hash 못 한 파일의 옛 hash를 남기지 않음(봇 P1) |
+| 16:42 | [`63f41e1`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/63f41e1) | 연구 단계가 턴 상한에 걸리면 같은 세션에서 절반 상한으로 한 번 마무리, 수습 turn 2→4턴(7차 시운전 QC 실패) |
 | 16:08 | [`c82a305`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/c82a305) | 게이트: 경로에 붙은 숫자를 스트림 번호로 보지 않음(봇 P1) |
 | 16:04 | [`ce35d46`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/ce35d46) | 게이트: 명령 단어를 나누기 전에 리다이렉트를 빼서 cp 목적지를 /dev/null로 읽지 않음(7차 시운전 오탐) |
 | 16:04 | [`a0211d8`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/a0211d8) | README: 리다이렉트는 명령 목적지로 읽지 않음 |
