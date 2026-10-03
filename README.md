@@ -577,7 +577,7 @@ REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`stat
 | 버전 | 정의 | 지금 | 남은 것 |
 |---|---|---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 | mock 데모·실제 실행·bench 경로가 있다. 같은 계정 실행의 개인 경로 차단은 PR 리뷰 중 | 개인 경로 차단 병합, 개발 총괄의 모의 시운전, 거기서 나온 수정 |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다(코드·test). `labhq verify`가 산출 해시와 앵커를 다시 검사하고 감사 번들을 만든다. 실제 CLI로는 CP1까지만 확인했다. CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 실제 CLI로 연구 요청을 보고서까지 완주, 증거 계층 나머지(#58 ① 일반 단계 결과 계약·tool_use_id), pack 추가, 로컬 분석 환경과 패키지 설치 정책 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 | 연구 lane은 `evidence_checkpoint`를 켜면 CP2 승인 뒤 리뷰와 claim 앵커를 검사한 보고서까지 간다(코드·test). `labhq verify`가 산출 해시와 앵커를 다시 검사하고 감사 번들을 만든다. 패키지가 필요한 요청은 계획 첫머리에 환경 단계 하나를 두고 뒤 단계가 그 interpreter를 쓴다(#344). 실제 CLI로는 CP1까지만 확인했다. CP3·CP4는 없다. pack은 `single_cell_de@2` 하나 | 실제 CLI로 연구 요청을 보고서까지 완주, 증거 계층 나머지(#58 ① 일반 단계 결과 계약·tool_use_id), pack 추가, 여러 단계가 한 환경을 함께 쓰는 방식(동시 설치 경합) |
 | v0.75 | PI가 통제 데이터와 HPC로 연구한다 | Windows 러너는 restricted 구역이 있으면 뜨지 않는다. Slurm은 가짜 fixture로만 확인했다. 실제 HPC 접근 방식이 정해지기 전에는 분석 잡을 내지 않는다 | Linux 클러스터 러너, 통제 데이터 시험, HPC 접근 방식 PI 결정([HANDOFF](HANDOFF.md) 결정 대기 1), 실제 제출 |
 | v1 | 다른 일반 연구자가 자기 통제 데이터로 연구 문제를 두 개까지 푼다 | `labhq init`·doctor와 Windows 러너 전용 계정 절차서가 있다. 계정 분리는 손으로 한다 | 설치·온보딩, 계정 분리 자동화, 문서 |
 | v1.25 | 연구를 넘어 논문을 쓴다 | 없음 | 원고, 인용, 그림 |
