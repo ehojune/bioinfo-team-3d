@@ -185,3 +185,21 @@ def test_real_redirects_are_still_found(tool, command, target):
 ])
 def test_redirects_the_blanking_must_not_hide(tool, command):
     assert _decide(tool, command).action == "ask"
+
+
+@pytest.mark.parametrize("tool, command, expected", [
+    # 7th mock trial: the stream redirect's target was read as the copy destination.
+    ("Bash", "cp .tmp/preprocess.py outputs/ 2>/dev/null; ls outputs", ["outputs/"]),
+    ("Bash", "awk -F'\t' '{print $1}' outputs/t.tsv; cp .tmp/x.py outputs/ 2>/dev/null", ["outputs/"]),
+    ("Bash", "cp a.txt b.txt 2>&1", ["b.txt"]),
+    ("Bash", "mv a.txt b.txt < in.txt", ["b.txt"]),
+    ("PowerShell", "Copy-Item a.txt -Destination b.txt 2>$null", ["b.txt"]),
+])
+def test_a_redirect_is_not_read_as_a_command_word(tool, command, expected):
+    targets = list(_shell_write_targets(command, powershell=tool == "PowerShell"))
+    assert "/dev/null" not in targets and "$null" not in targets and "&1" not in targets and "1" not in targets
+    assert set(targets) == set(expected)
+
+
+def test_a_real_redirect_next_to_a_copy_is_still_a_target():
+    assert set(_shell_write_targets("cp a outputs/ 2>/elsewhere/log")) == {"outputs/", "/elsewhere/log"}

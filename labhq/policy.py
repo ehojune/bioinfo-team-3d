@@ -40,6 +40,10 @@ NULL_DEVICES = frozenset({"/dev/null", "nul", "nul:", "$null", "\\\\.\\nul", "//
 
 _REDIRECT_OP = re.compile(r">{1,2}")
 _BARE_WORD = re.compile(r"[^\s|;&<>]+")
+# A whole redirection with its stream number and target (`2>/dev/null`, `2>&1`, `*> log`, `< in.txt`). Its target is
+# judged by the redirect pass; left in a command's words, `cp a b 2>/dev/null` read /dev/null as the copy
+# destination (7th mock trial, 2026-10-03).
+_REDIRECTION_SPAN = re.compile(r'''(?:\d+|&|\*)?(?:>{1,2}&?|<)\s*(?:"[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 _PS_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also quotes with typographic marks
 _PS_DOUBLE = '"\u201c\u201d\u201e'
 _PS_SINGLE_AT = re.compile(f"[{_PS_SINGLE}]")
@@ -423,13 +427,17 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         target = match.group(1).strip("\"'") if match else ""
         if target and target.casefold() not in NULL_DEVICES:
             yield target
+    def unredirected(value: str) -> str:  # same length, so positions in the blanked text still hold
+        return _REDIRECTION_SPAN.sub(lambda m: " " * len(m.group()), value)
+
     if text is None:
         segments = [[m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
-                    for segment in re.split(r"[|;&\n]", command)]
+                    for segment in re.split(r"[|;&\n]", unredirected(command))]
     else:
+        words_text = unredirected(text)
         segments = [[command[m.start():m.end()].strip("\"'")
-                     for m in _BARE_WORD.finditer(text, seg.start(), seg.end())]
-                    for seg in re.finditer(r"[^|;&\n]+", text)]
+                     for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
+                    for seg in re.finditer(r"[^|;&\n]+", words_text)]
     for words in segments:
         yield from _named_write_targets(words)
 
