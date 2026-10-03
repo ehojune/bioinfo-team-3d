@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:26 | [`3ceb440`](https://github.com/ehojune/bioinfo-team-3d/pull/376/commits/3ceb440) | runner의 로컬 소프트웨어를 CSO 계획에 알리고 빌드 실패는 계획한 대체안으로 진행 |
 | 04:10 | [`61bb04d`](https://github.com/ehojune/bioinfo-team-3d/pull/372/commits/61bb04d) | 3D 사무실의 토큰 칸에도 설정 키와 labhq open --3d 안내를 넣었다. |
 | 04:02 | [`dc59088`](https://github.com/ehojune/bioinfo-team-3d/pull/372/commits/dc59088) | labhq open이 웹 사무실을 토큰을 넣은 채 열고, gateway 시작 줄과 토큰 칸이 들어가는 법을 알린다. |
 | 03:08 | [`f132912`](https://github.com/ehojune/bioinfo-team-3d/pull/371/commits/f132912) | 경로 어디에든 . 이나 .. 성분이 있으면 없는 이름으로 건너뛰지 않는다(Windows는 missing/.. 을 먼저 지운다). |

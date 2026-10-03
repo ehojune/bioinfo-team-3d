@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# PR #376 — runner 로컬 소프트웨어를 반영한 CSO 계획
+
+- 결론: CSO가 runner의 R·Python 패키지·계산 도구 상태를 알고 계획하며, 빌드 실패는 준비한 대체안으로 넘깁니다.
+- 바뀐 것: runner hello 요약, 일반·연구 계획과 재계획의 runner별 한 줄, binary wheel·대체안 규칙, prompt hash와 manual.
+- 실행한 것: 새 회귀 수정 전 4 failed, 수정 뒤 관련 pytest 287 passed. 공개·patch note·목차·diff 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/doctor.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `tests/test_doctor.py`, `tests/test_cso.py`.
+
 # 웹 사무실 진입: `labhq open` (PI 방문 2026-10-04)
 
 **결론:** PI가 일반 `gateway` 시작 뒤 웹의 '게이트웨이 토큰' 칸에서 무엇을 넣을지 몰라 시운전을 못 했습니다. 이제 세 곳에서 길을 알립니다.
