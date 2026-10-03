@@ -112,8 +112,10 @@ REVIEW_SCHEMA: dict[str, Any] = {
                    "required": ["addresses_question", "evidence", "thoroughness"]},
         "issues": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
-            "properties": {"step_id": {"type": "string"}, "problem": {"type": "string"}, "request": {"type": "string"}},
-            "required": ["step_id", "problem", "request"]}},
+            "properties": {"step_id": {"type": "string"},
+                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
+                           "problem": {"type": "string"}, "request": {"type": "string"}},
+            "required": ["step_id", "priority", "problem", "request"]}},
     },
     "required": ["verdict", "scores", "issues"],
 }
@@ -372,8 +374,9 @@ RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_
 
 REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
-List concrete issues per step_id with a specific revision request. Use verdict "revise" only if fixing an
-issue would materially change the conclusions.
+List concrete issues per step_id with a priority and a specific revision request. Priority P1 means fixing the issue
+would change a conclusion; P2 means the conclusion stays the same but its evidence or wording is weak; P3 is minor.
+Use verdict "revise" only when there is at least one P1 issue; otherwise use "accept".
 
 Request: {request}
 
@@ -434,6 +437,10 @@ UNRESOLVED_REVIEW_NOTE = (
     "reviewer's remaining issues, one by one, in a section titled \"해결되지 않은 리뷰 지적\", and do not state any "
     "conclusion those issues bear on as if it were settled.")
 
+REVIEW_REFERENCE_NOTE = (
+    "\n\nThe remaining P2 issues do not change the conclusion. Include them in a section titled \"리뷰 참고\", "
+    "without presenting them as completed revisions.")
+
 # The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
 RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
 PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
@@ -466,12 +473,24 @@ RESEARCH_REVIEW_RETRY = ('\n\nReturn ONLY a JSON object with verdict exactly "ac
                          'issue with every field. Do not add prose.')
 
 def with_p1_verdict(review: dict) -> dict:
-    """The research review's verdict follows its priorities: revise exactly when an issue is P1 (a fix would change
-    the conclusion). A reviewer verdict that disagrees is kept as ``reviewer_verdict`` (PR #336 review)."""
-    verdict = "revise" if any(issue.get("priority") == "P1" for issue in review.get("issues") or []) else "accept"
+    """Set revise exactly for P1 issues; old stored issues without priority remain P1-compatible."""
+    verdict = "revise" if any(issue.get("priority", "P1") == "P1"
+                              for issue in review.get("issues") or []) else "accept"
     if review.get("verdict") == verdict:
         return review
     return {**review, "verdict": verdict, "reviewer_verdict": review.get("verdict")}
+
+
+def issues_at_priority(review: dict, priority: str) -> list[dict]:
+    """Return one priority tier, treating legacy stored issues without a priority as P1."""
+    return [issue for issue in review.get("issues") or []
+            if isinstance(issue, dict) and issue.get("priority", "P1") == priority]
+
+
+def review_at_priority(review: dict, priority: str) -> dict:
+    """Keep review context while exposing only one tier to a re-plan or revision round."""
+    issues = issues_at_priority(review, priority)
+    return {**review, "verdict": "revise" if priority == "P1" and issues else "accept", "issues": issues}
 
 
 RESEARCH_SYNTH_PROMPT = """Write the final research report for the PI from the frozen plan, the evidence the PI
@@ -3417,6 +3436,9 @@ class Orchestrator:
                 req["review_progress"] = progress
                 self.hub.save_request(rid)
             review: dict = progress.get("review") or {}
+            if review.get("verdict") in {"accept", "revise"} and isinstance(review.get("issues"), list):
+                # A review saved before generic priorities existed resumes with its missing priorities as P1.
+                review = with_p1_verdict(review)
             reviewer = self.cfg.reviewer_agent
             start_rev = (self.cfg.max_revisions + 1 if progress.get("phase") in {"synthesis", "unresolved"}
                          else int(progress.get("next_revision") or 0))
@@ -3431,7 +3453,7 @@ class Orchestrator:
                         agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
                         prompt=prompt if parse_attempt == 1 else prompt +
                         '\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise", scores, and issues. '
-                        'Do not omit verdict or add prose.',
+                        'Every issue must include step_id, priority, problem, and request. Do not add prose.',
                         meta={**refs, "kind": "review", "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
                     if rid in self.budget_denials:
@@ -3442,7 +3464,7 @@ class Orchestrator:
                     if parsed is None:
                         parsed = extract_json(r.text)
                     if r.ok and valid_review(parsed):
-                        review = parsed
+                        review = with_p1_verdict(parsed)
                         break
                 if not review:
                     review = {"status": "review_unparsed", "reason": r.error or "missing or invalid verdict"}
@@ -3465,7 +3487,8 @@ class Orchestrator:
                     req["review_progress"] = progress
                     self.hub.save_request(rid)
                     break
-                if await attempt_replan(review, progress) == "applied":
+                p1_review = review_at_priority(review, "P1")
+                if await attempt_replan(p1_review, progress) == "applied":
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
                     await recover_failures()
                     if rid in self.budget_denials or has_failures():
@@ -3478,7 +3501,7 @@ class Orchestrator:
                     continue
                 # Off, declined or failed: the reviewer's notes go to the flagged steps in place, as before #271.
                 feedback: dict[str, str] = {}
-                for issue in review.get("issues") or []:
+                for issue in issues_at_priority(review, "P1"):
                     if issue.get("step_id") in {s["id"] for s in steps}:
                         feedback.setdefault(issue["step_id"], "")
                         feedback[issue["step_id"]] += f"- {issue.get('problem')}: {issue.get('request')}\n"
@@ -3509,6 +3532,7 @@ class Orchestrator:
             # Still "revise" when revising stopped (F5): the CSO writes the report with the open issues in their own
             # section and the request stays failed. A failed or budget-denied synthesis ends with the step results.
             unresolved = review.get("verdict") == "revise"
+            p2_issues = issues_at_priority(review, "P2")
             if unresolved:
                 req["outcome"] = "review_unresolved"
                 self.hub.save_request(rid)
@@ -3523,7 +3547,8 @@ class Orchestrator:
                                            review=short(review, 3000),
                                            warnings=general_report_warnings(steps, results) or "(none)") +
                        replan_history_note(req) +
-                       (UNRESOLVED_REVIEW_NOTE if unresolved else ""),
+                       (UNRESOLVED_REVIEW_NOTE if unresolved else "") +
+                       (REVIEW_REFERENCE_NOTE if p2_issues else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})})
             if unresolved:
@@ -3544,8 +3569,11 @@ class Orchestrator:
                              error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
                 return
             final = await self.run_step(synthesis)
-            self._finish(rid, final.text if final.ok else self.report_results(steps, results, n) +
-                         f"\n\nSynthesis failed: {final.error}", serialized_results(),
+            p2_appendix = ("\n\n## 리뷰 참고\n남은 P2 지적 원문:\n" + "\n".join(
+                f"- P2 · {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
+                for issue in p2_issues)) if p2_issues else ""
+            self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
+                         f"\n\nSynthesis failed: {final.error}") + p2_appendix, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
