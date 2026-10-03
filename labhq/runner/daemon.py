@@ -300,9 +300,9 @@ class Runner:
             engines = {a["engine"] for a in self.roster()}  # effective engines (force_engine applies)
             self.engine_versions = await asyncio.to_thread(engine_cli_versions, self.s, engines)
         if self.local_software is None:
-            from ..doctor import local_software_summary, staff_python
+            from ..doctor import staff_python_summary
             try:
-                self.local_software = await asyncio.to_thread(local_software_summary, staff_python())
+                self.local_software = await asyncio.to_thread(staff_python_summary)
             except Exception:  # noqa: BLE001 - a host probe must not keep the runner offline
                 log.warning("runner %s could not summarize local software", self.s.runner.id, exc_info=True)
                 self.local_software = {}

@@ -315,6 +315,34 @@ def staff_python(environ: Mapping[str, str] | None = None) -> str:
     return sys.executable
 
 
+def staff_python_summary(environ: Mapping[str, str] | None = None) -> dict:
+    """`local_software_summary` of the PATH interpreter staff should use, with the command that runs it.
+
+    One PC can answer `python3` and `python` with different interpreters: on the PI's PC `python3` is a 3.14 with no
+    analysis packages and `python` is the 3.12 that has pandas. Every candidate is probed and the one with the most
+    analysis packages wins (ties keep the python3, python, py order), so the CSO can tell staff which command to run."""
+    path = (environ if environ is not None else os.environ).get("PATH")
+    best: dict | None = None
+    seen: set[str] = set()
+    for name in ("python3", "python", "py"):
+        found = shutil.which(name, path=path)
+        if not found or os.path.normcase(found) in seen:
+            continue
+        seen.add(os.path.normcase(found))
+        summary = local_software_summary(found)
+        summary["python"]["command"] = name
+        if best is None or _package_count(summary) > _package_count(best):
+            best = summary
+    if best is None:
+        best = local_software_summary(sys.executable)
+        best["python"]["command"] = None
+    return best
+
+
+def _package_count(summary: dict) -> int:
+    return sum(1 for available in summary["python"]["packages"].values() if available)
+
+
 def local_software_summary(python_executable: str) -> dict:
     """Bounded runner facts for planning. Executable paths and probe output never leave this function."""
     rscript = shutil.which("Rscript")

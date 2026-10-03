@@ -365,4 +365,37 @@ def test_runner_probes_the_staff_python(monkeypatch):
     from pathlib import Path
 
     src = Path(daemon.__file__).read_text(encoding="utf-8")
-    assert "local_software_summary, staff_python()" in src and "local_software_summary, sys.executable" not in src
+    # Since PR #381 the runner probes every PATH interpreter (staff_python_summary), not one staff_python().
+    assert "asyncio.to_thread(staff_python_summary)" in src and "local_software_summary, sys.executable" not in src
+
+
+
+def test_staff_python_summary_picks_the_interpreter_with_the_analysis_packages(monkeypatch):
+    """The PI's PC: `python3` is a 3.14 with no analysis packages, `python` is the 3.12 with pandas (2026-10-04)."""
+    paths = {"python3": "/apps/python3", "python": "/py312/python"}
+    monkeypatch.setattr(doctor.shutil, "which", lambda name, path=None: paths.get(name))
+
+    def summary(executable):
+        has = executable == "/py312/python"
+        return {"r": {"available": False, "version": None},
+                "python": {"version": "3.12.10" if has else "3.14.7",
+                           "packages": {"pandas": has, "numpy": has, "gseapy": False}},
+                "tools": {}}
+
+    monkeypatch.setattr(doctor, "local_software_summary", summary)
+    picked = doctor.staff_python_summary({"PATH": "/x"})
+    assert picked["python"]["command"] == "python" and picked["python"]["version"] == "3.12.10"
+    paths.pop("python")
+    assert doctor.staff_python_summary({"PATH": "/x"})["python"]["command"] == "python3"  # the only one left
+    paths.clear()
+    assert doctor.staff_python_summary({"PATH": "/x"})["python"]["command"] is None  # labhq's own, no command
+
+
+def test_cso_capabilities_name_the_python_command():
+    from labhq.orchestrator.cso import _format_local_software
+
+    line = _format_local_software({"r": {"available": False}, "python": {"version": "3.12.10", "command": "python",
+                                                                          "packages": {"pandas": True}}, "tools": {}})
+    assert "Python=3.12.10 run as `python`" in line and "R=missing" in line
+    odd = _format_local_software({"python": {"version": "3.12.10", "command": "rm -rf /", "packages": {}}})
+    assert "rm -rf" not in odd  # only the three known command names are shown
