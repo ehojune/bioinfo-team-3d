@@ -414,6 +414,9 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
             elif field.minimum is not None and current < field.minimum:
                 errors.append(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
                 invalid_fields.add(name)
+            elif field.pattern is not None and re.fullmatch(field.pattern, current) is None:
+                errors.append(f"pack_values[{key}].fields.{name} must match {field.pattern}")
+                invalid_fields.add(name)
     fields_ok = fields is not None and not errors
 
     validators = _section(supplied, "validators")

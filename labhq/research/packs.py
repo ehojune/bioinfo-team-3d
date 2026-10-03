@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,6 +28,16 @@ class PackField(StrictModel):
     value_type: Literal["string", "integer", "boolean"] = "string"
     allowed_values: list[str] = []
     minimum: float | None = None
+    pattern: str | None = None
+
+    @model_serializer(mode="plain")
+    def serialize_field(self) -> dict[str, Any]:
+        # Keep hashes of packs without the new constraint byte-for-byte stable.
+        result = {"name": self.name, "description": self.description, "required": self.required,
+                  "value_type": self.value_type, "allowed_values": self.allowed_values, "minimum": self.minimum}
+        if self.pattern is not None:
+            result["pattern"] = self.pattern
+        return result
 
 
 class PackValidator(StrictModel):
@@ -131,6 +142,13 @@ class DomainRulePack(StrictModel):
                 raise ValueError(f"domain pack field {field.name}: allowed_values requires string type")
             if field.minimum is not None and field.value_type != "integer":
                 raise ValueError(f"domain pack field {field.name}: minimum requires integer type")
+            if field.pattern is not None:
+                if field.value_type != "string":
+                    raise ValueError(f"domain pack field {field.name}: pattern requires string type")
+                try:
+                    re.compile(field.pattern)
+                except re.error as error:
+                    raise ValueError(f"domain pack field {field.name}: invalid pattern: {error}") from error
         for section, rules in (("validator", self.validators), ("rule", self.rules)):
             ids = [rule.id for rule in rules]
             if len(ids) != len(set(ids)):
@@ -207,6 +225,16 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
                 raise ValueError(f"research packs conflict on rule {rule.id!r} ({key})")
             rules[rule.id] = value
     return selected
+
+
+def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
+    """Select the configured packs that the PLAN says match their ``applies_when`` description."""
+    if not isinstance(pack_values, dict):
+        return {}
+    unknown = sorted(set(pack_values) - set(configured))
+    if unknown:
+        raise ValueError(f"research plan selected unconfigured packs: {unknown}")
+    return {key: loaded for key, loaded in configured.items() if key in pack_values}
 
 
 def configured_packs(settings: Any) -> dict[str, LoadedPack]:

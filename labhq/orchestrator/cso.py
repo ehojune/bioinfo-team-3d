@@ -31,7 +31,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
-from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
+from ..research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review,
+                              select_applied_packs)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -215,7 +216,8 @@ Contract rules:
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
-- For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
+- For every configured pack whose `applies_when` matches this request, fill top-level `pack_values[key]` with exactly
+  the keys in its `pack_values_keys`; omit configured packs that do not match:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
   acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
@@ -1096,8 +1098,8 @@ def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
              f"않았습니다(남은 문제 {len(problems)}건).", "", "남은 문제:", *_problem_lines(problems, "- ")]
     if packs:
         lines += ["", "설정된 domain pack: " + "; ".join(f"{key} ({loaded.pack.applies_when})"
-                                                      for key, loaded in sorted(packs.items())),
-                  "요청 대상이 이 pack과 다르면 pack 값을 채울 수 없습니다. 그때는 `research.active_packs`를 확인하세요."]
+                                                       for key, loaded in sorted(packs.items())),
+                  "요청에 맞는 pack만 `pack_values`에 넣습니다. 적용 조건을 잘못 골랐다면 계획을 고치세요."]
     return "\n".join(lines)
 
 
@@ -2708,7 +2710,8 @@ class Orchestrator:
                                                                    self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
-            packs = configured_packs(self.hub.s) if research_lane else {}
+            configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
+            packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             capabilities = "\n".join(  # the first plan and a re-plan after resume (#271) both need it
                 f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
@@ -2766,6 +2769,8 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
+                    packs = select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                    active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
                                                        active_packs=active_pack_hashes,
@@ -2829,7 +2834,7 @@ class Orchestrator:
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
+                            packs=render_pack_catalog(configured_pack_defs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
                         prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
@@ -2939,11 +2944,11 @@ class Orchestrator:
                     vocab = self._output_vocab()
                     workers = sorted(known - orchestration)
 
-                    def plan_problems(candidate: Any) -> list[str]:
+                    def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
                         try:
                             problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
-                                                            active_packs=active_pack_hashes,
-                                                            expected_intake=intake, pack_definitions=packs)
+                                                            active_packs=pack_snapshot(candidate_packs),
+                                                            expected_intake=intake, pack_definitions=candidate_packs)
                         except (ValueError, TypeError) as error:
                             problems = [str(error)]
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
@@ -2955,8 +2960,16 @@ class Orchestrator:
 
                     for attempt in (1, 2):
                         type_stats = {}
-                        # The pack snapshot is configuration, so labhq writes protocol.packs, not the CSO (#222).
-                        plan = with_pack_refs(plan, pack_refs(packs))
+                        selection_problems = []
+                        try:
+                            candidate_packs = select_applied_packs(configured_pack_defs,
+                                                                    plan.get("pack_values") if isinstance(plan, dict)
+                                                                    else None)
+                        except ValueError as error:
+                            candidate_packs = {}
+                            selection_problems = [str(error)]
+                        # The CSO chooses matching applies_when entries; labhq writes their exact refs (#222).
+                        plan = with_pack_refs(plan, pack_refs(candidate_packs))
                         output_problems = []
                         try:
                             plan, _ = _normalize_plan_outputs(plan)
@@ -2965,16 +2978,18 @@ class Orchestrator:
                         # Declarations are normalized (or, when off, removed) after output paths, so names pair
                         # with the exact artifacts the runner will collect.
                         plan = prepare_research_declarations(plan, vocab, type_stats)
-                        problems = output_problems + plan_problems(plan)
+                        problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         if not problems:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
-                                                               active_packs=active_pack_hashes,
-                                                               expected_intake=intake, pack_definitions=packs)
+                                                               active_packs=pack_snapshot(candidate_packs),
+                                                               expected_intake=intake, pack_definitions=candidate_packs)
+                            packs = candidate_packs
+                            active_pack_hashes = pack_snapshot(packs)
                             break
                         if attempt == 2:
                             req["outcome"] = "plan_invalid"
                             req["plan_validation"] = {"attempts": attempt, "errors": problems}
-                            report = plan_invalid_report(problems, packs)
+                            report = plan_invalid_report(problems, configured_pack_defs)
                             self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
                             return
                         plan_res = await make_plan(text + "\n\n" + plan_correction(problems))

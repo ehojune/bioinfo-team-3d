@@ -1,0 +1,104 @@
+schema_version: 1
+id: bulk_tumor_normal
+version: "1"
+title: Bulk expression differential analysis between two tissues or conditions
+core_contract: extend_only
+applies_when: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.
+sources:
+  - title: labhq mock research runs 8 through 11
+    url: docs/research_protocol.md
+    revision: "2026-10-03"
+    license: repository-local protocol; no external text copied
+fields:
+  - name: sample_unit
+    description: Definition of one sample and one patient as the biological unit.
+    required: true
+    value_type: string
+  - name: pairing
+    description: Whether the two conditions have no, partial, or complete patient pairing.
+    required: true
+    value_type: string
+    allowed_values: [none, partial, complete]
+  - name: pairing_evidence
+    description: Metadata fields used to establish pairing; expression similarity must not be used.
+    required: true
+    value_type: string
+  - name: primary_model
+    description: Primary pairing-aware model fixed before approval.
+    required: true
+    value_type: string
+    allowed_values: [paired_t, mixed_model, unpaired]
+  - name: model_rule
+    description: Pre-specified number of verified pairs required to use a paired model.
+    required: true
+    value_type: string
+  - name: expression_scale
+    description: Scale of the expression values entering differential analysis.
+    required: true
+    value_type: string
+    allowed_values: [log2_normalized, raw_counts, other]
+  - name: low_expression_filter
+    description: Low-expression filtering rule fixed before approval.
+    required: true
+    value_type: string
+  - name: de_threshold
+    description: Differential-expression threshold including FDR and absolute log2 fold change.
+    required: true
+    value_type: string
+  - name: multiple_testing
+    description: Multiple-testing correction fixed before approval.
+    required: true
+    value_type: string
+  - name: positive_controls
+    description: Semicolon-separated GENE|direction|PMID rows; direction is up_in_first_condition or down_in_first_condition.
+    required: true
+    value_type: string
+    pattern: '^(?:[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)(?:;[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)*$'
+  - name: sensitivity_analyses
+    description: Sensitivity analyses fixed before approval.
+    required: true
+    value_type: string
+validators:
+  - id: bulk_tumor_normal.pairing_definition
+    requirement: Pairing and its metadata evidence must be fixed without inferring pairs from expression.
+    required_fields: [sample_unit, pairing, pairing_evidence, primary_model, model_rule]
+  - id: bulk_tumor_normal.de_contract
+    requirement: Expression scale, low-expression filter, DE threshold, and multiplicity must be fixed before approval.
+    required_fields: [expression_scale, low_expression_filter, de_threshold, multiple_testing, sensitivity_analyses]
+  - id: bulk_tumor_normal.positive_control_rows
+    requirement: Every positive-control row must name a gene, expected direction, and PMID source.
+    required_fields: [positive_controls]
+reviewer_questions:
+  - Does the primary model preserve the verified pairing structure?
+  - Is the low-expression filter identical to the frozen value?
+  - Does each positive-control direction match its PMID source?
+fixtures:
+  - id: paired_but_unpaired
+    purpose: Reject an unpaired primary model when verified pairing is partial or complete.
+  - id: filter_undefined
+    purpose: Reject a plan that leaves the low-expression filter undefined.
+rules:
+  - id: bulk_tumor_normal.partial_mixed_model
+    description: Partial pairing requires a mixed model that can retain paired and unpaired samples.
+    when:
+      field: pairing
+      value: partial
+    require:
+      field: primary_model
+      value: mixed_model
+  - id: bulk_tumor_normal.complete_paired_model
+    description: Complete pairing requires a paired t-test or mixed model.
+    when:
+      field: pairing
+      value: complete
+    require:
+      field: primary_model
+      in: [paired_t, mixed_model]
+  - id: bulk_tumor_normal.raw_counts_count_model
+    description: Raw counts require a count likelihood; this pack's paired_t, mixed_model, and unpaired choices are linear-scale models.
+    when:
+      field: expression_scale
+      value: raw_counts
+    forbid:
+      field: primary_model
+      in: [paired_t, mixed_model, unpaired]
