@@ -256,6 +256,7 @@ Rules:
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
+- """ + ENV_STEP_RULE + """ If the plan already has an environment step, new steps depend on it instead.
 - {empty_rule}
 
 PI's request: {request}
@@ -943,7 +944,10 @@ def blocking_question(result: TaskResult) -> str | None:
     """
     structured = (result.structured if isinstance(result.structured, dict)
                   else extract_json(result.text, strict=False))
-    if not (isinstance(structured, dict) and "blocking_decision" in structured) and result.text:
+    # Only free text is searched: a structured result is authoritative, and its text may quote a sample JSON
+    # (a CLI engine's log line) that is not a question (PR #344 review).
+    if not isinstance(result.structured, dict) and not (
+            isinstance(structured, dict) and "blocking_decision" in structured) and result.text:
         # A larger unrelated object (with a raw newline, read leniently) must not hide the question (PR #343 review).
         structured = _object_with_key(result.text, "blocking_decision") or structured
     question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)

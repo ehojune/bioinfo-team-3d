@@ -2182,3 +2182,14 @@ def test_question_object_is_found_beside_a_larger_unrelated_object():
     res = TaskResult(task_id="t", agent_id="worker", ok=True, text=text)
     assert blocking_question(res) == "Install networkx?\n- a) yes\n- b) no"
     assert blocking_question(TaskResult(task_id="t", agent_id="worker", ok=True, text='{"table": "a\nb"}')) is None
+
+
+def test_structured_result_is_not_overridden_by_a_sample_question_in_its_text():
+    """A CLI engine can send a structured result and log text apart; a sample JSON in that text is not a question
+    (PR #344 review)."""
+    from labhq.orchestrator.cso import REPLAN_PROMPT, ENV_STEP_RULE, blocking_question
+
+    res = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"summary": "done"},
+                     text='log: example {"blocking_decision": "sample?"}')
+    assert blocking_question(res) is None
+    assert ENV_STEP_RULE in REPLAN_PROMPT
