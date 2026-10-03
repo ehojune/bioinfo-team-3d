@@ -1388,6 +1388,8 @@ class Hub:
         req = self.requests[rid]
         if is_terminal_request(req.get("status")):
             raise ValueError("요청이 끝났습니다. 이어 묻기를 쓰세요")
+        if req.get("mode") == "direct":
+            raise ValueError("직접 맡긴 요청에는 실행 중 메모를 보낼 수 없습니다. 끝난 뒤 이어 묻기를 쓰세요")
         notes = req.setdefault("pi_notes", [])
         if len(notes) >= MAX_PI_NOTES:
             raise ValueError(f"메모는 요청마다 {MAX_PI_NOTES}개까지 보낼 수 있습니다")

@@ -49,6 +49,14 @@ def test_note_endpoint_persists_emits_and_rejects_finished_requests(tmp_path):
     assert response.status_code == 409
     assert "이어 묻기를 쓰세요" in response.json()["detail"]
 
+    app2.state.hub.requests["direct"] = {
+        "id": "direct", "text": "work", "mode": "direct", "status": "running"
+    }
+    with TestClient(app2) as client:
+        response = client.post("/api/requests/direct/notes", json={"text": "too early"}, headers=auth)
+    assert response.status_code == 409
+    assert "이어 묻기를 쓰세요" in response.json()["detail"]
+
 
 def test_note_limits_are_enforced(tmp_path):
     settings = _settings(tmp_path)
@@ -107,6 +115,29 @@ async def test_a_note_reaches_only_turns_dispatched_after_it_was_sent():
 
 
 @pytest.mark.asyncio
+async def test_a_note_sent_during_briefing_reaches_plan_and_later_replan():
+    hub = PromptHub()
+
+    def briefing(task):
+        hub.requests["r"]["pi_notes"].append(
+            {"id": "note_plan", "text": "stratify by sex", "at": 10}
+        )
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="brief")
+
+    hub.replies = [briefing]
+    orchestrator = Orchestrator(hub)
+    await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="briefing",
+                                     meta={"kind": "briefing"}))
+    for kind in ("plan", "replan"):
+        await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt=kind,
+                                         meta={"kind": kind}))
+
+    assert "stratify by sex" not in hub.calls[0].prompt
+    assert all("stratify by sex" in task.prompt for task in hub.calls[1:])
+    assert all("frozen plan" not in task.prompt for task in hub.calls[1:])
+
+
+@pytest.mark.asyncio
 async def test_a_note_sent_during_a_turn_reaches_its_next_continuation():
     hub = PromptHub()
 
@@ -127,11 +158,13 @@ async def test_review_and_synthesis_get_notes_and_research_keeps_the_frozen_plan
     hub = PromptHub(research=True)
     hub.requests["r"]["pi_notes"] = [{"id": "note_3", "text": "compare another cohort", "at": 12}]
     orchestrator = Orchestrator(hub)
-    for kind in ("review", "synthesis"):
+    for kind in ("plan", "review", "synthesis"):
         await orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt=kind,
                                          meta={"kind": kind}))
 
-    review, synthesis = (task.prompt for task in hub.calls)
+    frozen_plan, review, synthesis = (task.prompt for task in hub.calls)
+    assert "compare another cohort" in frozen_plan
+    assert "reference only" in frozen_plan and "new CP1" in frozen_plan
     assert "PI notes sent during this request" in review
     assert "reference only" in review and "new CP1" in review
     assert "one line per PI note" in synthesis
@@ -155,4 +188,5 @@ def test_both_web_views_show_notes_and_the_composer_defaults_to_note():
     live3d = (root / "labhq/web/lab3d/src/live.js").read_text(encoding="utf-8")
     assert '<option value="note">이 요청에 메모</option><option value="request">새 요청</option>' in index
     assert "mode.value = 'note'" in index and "/notes`" in index
+    assert "q.mode !== 'direct'" in index
     assert "실행 중 메모" in index and "q.piNotes" in live3d and "toLocaleTimeString" in live3d

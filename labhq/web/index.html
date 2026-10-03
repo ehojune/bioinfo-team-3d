@@ -789,7 +789,7 @@ function renderTargets() {
 }
 let composerRid = null;
 function renderComposerMode() {
-  const q = S.requests.get(S.current), active = q && ['running', 'waiting_for_runner', 'waiting_quota'].includes(q.status);
+  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota'].includes(q.status);
   const mode = $('#send-mode');
   mode.hidden = !active;
   if (active && composerRid !== q.id) { composerRid = q.id; mode.value = 'note'; }

@@ -524,7 +524,7 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
             f"\n\nContinuation updates:\n{updates}")
 
 
-_PI_NOTE_TASK_KINDS = frozenset({"step", "wrap_up", "review", "synthesis", "direct"})
+_PI_NOTE_TASK_KINDS = frozenset({"plan", "replan", "step", "wrap_up", "review", "synthesis", "direct"})
 
 
 def with_pi_notes(task: Task, request: dict) -> Task:
