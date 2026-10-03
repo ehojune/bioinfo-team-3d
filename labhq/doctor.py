@@ -14,9 +14,9 @@ from urllib.request import Request, urlopen
 
 import yaml
 
-from .adapters.base import RunContext, _resolve_command, codex_app_choice, expand_env
-from .adapters import get_adapter
-from .models import AgentSpec, Engine, Task
+from .adapters.base import _resolve_command, codex_app_choice, expand_env
+from .adapters import adapter_preflight_error, get_adapter
+from .models import AgentSpec, Engine
 from . import private_paths as private_path_module
 from .private_paths import (PrivatePaths, configured_claude_config_dir, in_pi_claude, inside_any,
                             plugin_keep_dirs, resolve_private_paths, staff_claude_config_dir, staff_codex_homes)
@@ -184,11 +184,7 @@ def _roster(settings: Settings) -> list[AgentSpec]:
 
 
 def _adapter_check(settings: Settings, agent: AgentSpec) -> str | None:
-    ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent,
-                     workdir=settings.path(settings.runner.workspace_root), settings=settings,
-                     mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
-    adapter = get_adapter(agent.engine, settings)
-    return adapter.preflight_error(ctx, {**os.environ, **adapter.engine_env(), **ctx.env})
+    return adapter_preflight_error(settings, agent)
 
 
 PRIVATE_PATHS_HINT = "See README §8 'PI 개인 경로' (policy.private_paths)."

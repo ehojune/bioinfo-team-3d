@@ -22,7 +22,8 @@ from typing import Any
 import websockets
 import yaml
 
-from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
+from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
+                        read_only_refusal)
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
@@ -333,12 +334,23 @@ class Runner:
                    "agents": self.roster(), "capabilities": self.capabilities()})
 
     def roster(self) -> list[dict]:
-        agents = self.registry.roster()
-        if self.s.runner.force_engine:
-            agents = [{**a, "engine": self.s.runner.force_engine} for a in agents]
-        return [{**a, "hpc_tools": ("hpc" in a.get("builtin_mcp", []) and
-                                     self.s.hpc.scheduler != "none") or "labhq_hpc" in a.get("mcp", [])}
-                for a in agents]
+        agents = []
+        for registered in self.registry.agents.values():
+            agent = registered
+            if self.s.runner.force_engine:
+                agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+            try:
+                refused = adapter_preflight_error(self.s, agent, self.ws_root)
+            except OSError:
+                refused = "adapter preflight files inaccessible"
+            if refused:
+                log.warning("runner %s omits unavailable staff %s: %s", self.s.runner.id, agent.id, refused)
+                continue
+            summary = agent.summary()
+            agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
+                                                      self.s.hpc.scheduler != "none") or
+                                                     "labhq_hpc" in summary.get("mcp", [])})
+        return agents
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
