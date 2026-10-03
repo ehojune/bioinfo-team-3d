@@ -477,6 +477,24 @@ async def test_research_step_prompt_carries_the_frozen_protocol():
         assert text in prompt
 
 
+def test_no_prompt_clips_the_frozen_protocol():
+    """Real plans run past 20,000 characters (8th mock trial) and protocol fields have no length limit, so clipping
+    a digest could drop the exclusion criteria in its middle (PR #358 review). Only the step list is clipped."""
+    from labhq.orchestrator.cso import _research_plan_digest, _research_protocol_digest
+
+    plan = valid_plan(steps=12)
+    plan["protocol"]["selection_criteria"] = [f"selection rule {i}: " + "x" * 400 for i in range(20)]
+    plan["protocol"]["exclusion_criteria"] = ["EXCLUDE genes below the 20th percentile in 80% of samples"]
+    plan["protocol"]["primary_metrics"] = ["log fold change " + "y" * 4000]
+    for step in plan["steps"]:
+        step["instruction"] = "long instruction " + "z" * 2000
+    for digest in (_research_protocol_digest(plan), _research_plan_digest(plan)):
+        assert "EXCLUDE genes below the 20th percentile in 80% of samples" in digest
+        assert plan["protocol"]["statistics"]["multiple_testing"] in digest
+        assert "selection rule 19" in digest
+    assert "chars clipped" in _research_plan_digest(plan)  # the step list still has a budget
+
+
 @pytest.mark.asyncio
 async def test_restart_recovers_the_step_and_its_correction_without_dispatching_them_twice(tmp_path):
     from labhq.gateway.server import Hub, SavedResults
