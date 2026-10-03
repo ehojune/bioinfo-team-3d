@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:10 | [`9df2eec`](https://github.com/ehojune/bioinfo-team-3d/pull/384/commits/9df2eec) | 최종 보고서의 실행 기록을 부록으로 모으고 분석 script와 reference를 outputs에 보존 |
 | 06:37 | [`8083b82`](https://github.com/ehojune/bioinfo-team-3d/pull/383/commits/8083b82) | 일반 lane 리뷰에 P1·P2·P3를 구분해 P1만 수정·실패로 처리하고 P2는 보고서 참고로 남김 |
 | 06:14 | [`3c992bd`](https://github.com/ehojune/bioinfo-team-3d/pull/381/commits/3c992bd) | runner 요약이 PATH의 python3·python·py를 모두 검사해 분석 패키지가 가장 많은 interpreter와 그 명령을 CSO에 알린다. |
 | 05:59 | [`96170e0`](https://github.com/ehojune/bioinfo-team-3d/pull/380/commits/96170e0) | 매뉴얼에 runner 요약이 검사하는 python의 순서(python3, python, py)와 예외를 적었다. |
