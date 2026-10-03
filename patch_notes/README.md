@@ -14,7 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:20 | [`14f54f6`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/14f54f6) | 리뷰 수정이 실패해 첫 결과를 지킨 단계는 실패로 세지 않고 재계획하지 않는다(기존 설계 유지). |
+| 04:57 | [`e7a3b64`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/e7a3b64) | 모든 대체 경로가 같은 선언 파일명을 쓰게 하고 리뷰 수정 실패도 failure re-plan을 거치게 함 |
 | 04:57 | [`2d0f329`](https://github.com/ehojune/bioinfo-team-3d/pull/377/commits/2d0f329) | 계획 전 메모를 plan과 replan에 전달하고 direct 요청 메모는 이어 묻기로 안내한다 |
+| 04:49 | [`9655afe`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/9655afe) | 단계 실패 재계획을 리뷰 revise와 분리해 기본 1회 허용하고, 선언 산출은 모든 실행 경로에서 생기는 파일로 제한 |
 | 04:45 | [`c8cb504`](https://github.com/ehojune/bioinfo-team-3d/pull/377/commits/c8cb504) | 실행 중 PI 메모를 저장해 다음 단계·리뷰·보고서에 전달하고 웹·CLI에서 보낸다 |
 | 04:41 | [`df487b0`](https://github.com/ehojune/bioinfo-team-3d/pull/374/commits/df487b0) | main 병합: README 분리 판을 받고, 어휘 키 수(41개, EDAM 연결 34개)를 README·매뉴얼에 맞췄다 |
 | 04:30 | [`75d4c60`](https://github.com/ehojune/bioinfo-team-3d/pull/374/commits/75d4c60) | PI 어휘 검토로 뜻이 바뀐 normalized_counts를 semantics fixture와 독립 baseline에서 vocab_changed로 고정했다. |

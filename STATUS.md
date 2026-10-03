@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 단계 실패 재계획과 선언 산출 규칙
+
+- 결론: 일반 단계와 리뷰 수정 단계의 실패를 기본 1회 재계획하며, 모든 대체 경로는 같은 선언 파일명에 씁니다.
+- 바뀐 것: `max_failure_replans`와 이전 설정 호환, 경로 독립 파일명·척도 및 출처 기록 규칙, 리뷰 수정 실패 복구.
+- 실행한 것: 봇 지적 회귀는 수정 전 2 failed·1 passed, 수정 뒤 관련 pytest 242 passed. 공개·패치노트·목차·diff 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/settings.py`, `tests/test_cso.py`, `tests/test_output_types.py`, `tests/test_output_types_research.py`, `docs/manual.md`.
+
 # 실행 중 요청에 PI 메모 (#373 질문 6)
 
 **결론:** 실행 중 CSO 요청의 메모를 첫 계획부터 전달하고, 다음 turn이 없는 direct 요청은 거절합니다.
