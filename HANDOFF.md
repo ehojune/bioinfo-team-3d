@@ -19,7 +19,7 @@
 |---|---|
 | PR 한 개의 흐름 | 브랜치 → 코드 커밋 → push·PR 열기(패치노트 링크에 PR 번호가 필요) → `patch_notes/entries/<branch>.yaml`·`docs/status/` 기록 커밋 → CI(pytest 3.10·3.12·Windows, patch-notes) → squash 병합 |
 | 패치노트 | 줄에 커밋 해시가 들어가서 코드 커밋 뒤에 브랜치 전용 YAML을 쓴다. `python scripts/patch_notes.py rows --pr N`이 초안을 만든다. 공유 `patch_notes/README.md`는 main에서 자동 생성한다 |
-| README 주기 | 생성 목차만 갱신한 main 커밋은 빼고, main 커밋 3개 안에 README를 한 번 고쳐야 CI가 통과한다 |
+| README 주기 | 생성 목차만 갱신한 main 커밋은 빼고, main 커밋 3개 안에 README나 `docs/manual.md`를 한 번 고쳐야 CI가 통과한다 |
 | 리뷰 봇 깊이 | 고정 상한은 없다. 새 라운드는 직전 수정 확인이나 다른 부류의 결함이 있을 때만. 같은 부류가 더 좁게 반복되면 그 부류를 구조로 한 번 닫고 병합한다. 보통 2~3회에 끝나고, 5회를 넘기면 계속할지 판단한 이유를 PR에 적는다 |
 | Codex에 통째 위임 | Codex sandbox는 `.git`에 쓸 수 없다. 지시서에 "commit하지 말고 `.pr-drafts/commits.json`에 [{message, files}]"를 넣고, 받는 쪽이 커밋한다. 커밋 제목을 `#`로 시작하지 않는다(rebase가 주석으로 지운다) |
 | 병렬 PR | 같은 설정을 두 PR이 다른 규칙으로 넣으면 충돌 없이 한쪽이 덮인다(#76의 MCP timeout). 병합 뒤 겹친 규칙을 테스트로 확인한다 |
