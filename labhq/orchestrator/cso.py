@@ -368,7 +368,7 @@ Claim anchors (labhq checks them by machine):
   anchors. A failed or empty lookup is neither evidence nor proof of absence.
 - Report the reviewer's P1 and P2 issues as limitations.
 Structure: 1) answer, 2) evidence by claim (with anchors and file paths), 3) 확립되지 않은 것, 4) limitations,
-5) what would change the conclusion, and next steps.
+5) what would change the conclusion, and next steps. Start with the report's first heading: no preamble.
 
 Request: {request}
 
@@ -453,6 +453,21 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
     return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
             f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
             f"\n\nContinuation updates:\n{updates}")
+
+
+_HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
+
+
+def report_body(text: str) -> str:
+    """The report from its first heading: a short lead-in before it ("Writing the report now... ---") is talk to the
+    lab, not part of the report (10th mock trial). Text with an anchor or longer than a few lines is kept."""
+    heading = _HEADING.search(text or "")
+    if not heading or heading.start() == 0:
+        return text
+    lead = text[:heading.start()]
+    if "[[claim:" in lead or len(lead.strip()) > 400:
+        return text
+    return text[heading.start():]
 
 
 def step_ancestors(steps: list[dict]) -> dict[str, set[str]]:
@@ -2408,12 +2423,13 @@ class Orchestrator:
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
-        check = check_report(final.text, ledgers, unsupported=unsupported, refused=refused,
+        body = report_body(final.text)
+        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
-        report = _append_report_metadata(final.text, [*claim_check, cp2_audit])
+        report = _append_report_metadata(body, [*claim_check, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
