@@ -14,8 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:20 | [`2e4d95c`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/2e4d95c) | Evidence의 inline code는 outputs/ 경로일 때만 근거 경로로 읽음(봇 P1), 재시도가 성공해도 앞선 시도의 실패한 조회를 보고서에 남김(봇 P2) |
 | 00:18 | [`03f22b5`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/03f22b5) | 게이트: Git Bash 경로를 통제 구역·개인 경로·쓰기 검사 전에 Windows 표기로 바꿔 /c/<구역> 복사가 통과하지 않음(봇 P1) |
 | 00:11 | [`a9368cf`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/a9368cf) | 게이트: Windows Claude의 Bash(Git Bash) 쓰기 경로 /c/...를 C:/...로 읽어 자기 작업 폴더 쓰기를 묻지 않음(12차 시운전, 같은 단계 카드 3장) |
+| 00:10 | [`21c88d6`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/21c88d6) | 일반 단계 결과 블록을 파싱하고 미수집 Evidence 경로·실패한 도구 호출을 최종 보고서 경고로 남겼다. 연구 result v2는 유지했다. |
 
 ## 2026-10-03
 
