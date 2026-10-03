@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-04
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:18 | [`03f22b5`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/03f22b5) | 게이트: Git Bash 경로를 통제 구역·개인 경로·쓰기 검사 전에 Windows 표기로 바꿔 /c/<구역> 복사가 통과하지 않음(봇 P1) |
+| 00:11 | [`a9368cf`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/a9368cf) | 게이트: Windows Claude의 Bash(Git Bash) 쓰기 경로 /c/...를 C:/...로 읽어 자기 작업 폴더 쓰기를 묻지 않음(12차 시운전, 같은 단계 카드 3장) |
+
 ## 2026-10-03
 
 | 시간 | 커밋 | 주요 변경사항 |
