@@ -61,7 +61,17 @@ _PS_DATA_COMMANDS = frozenset({
     "join-path", "split-path", "resolve-path", "get-location", "pwd", "set-location", "cd", "sl", "copy-item", "copy",
     "cp", "cpi", "move-item", "move", "mv", "mi", "get-date", "select-object", "select", "sort-object",
     "measure-object", "format-table", "format-list", "out-string", "out-null", "convertto-json", "convertfrom-json",
-    "new-object"})
+    "new-object", "get-filehash", "import-csv", "export-csv"})  # 8th mock trial: Get-FileHash next to a quoted row
+# Writers whose first positional argument is the destination (with the PowerShell 5.1 aliases sc, ac, ni, epcsv).
+_PS_WRITERS = frozenset({"set-content", "sc", "add-content", "ac", "out-file", "new-item", "ni", "export-csv",
+                         "epcsv", "export-clixml", "tee-object"})
+_PS_PATH_FLAGS = frozenset({"-path", "-literalpath", "-filepath", "-pspath", "-lp"})
+_PS_SWITCHES = frozenset({"-force", "-nonewline", "-append", "-noclobber", "-passthru", "-whatif", "-confirm",
+                          "-asbytestream", "-notypeinformation", "-includetypeinformation", "-useculture",
+                          "-noenumerate"})
+# Parameters whose value is text, never a path, so a quoted row such as "...<GSM>/suppl/..." is not a destination.
+_PS_TEXT_FLAGS = frozenset({"-value", "-inputobject", "-encoding", "-width", "-delimiter", "-itemtype", "-stream",
+                            "-depth"})
 # String and file methods. InvokeScript, Create, Start, Invoke and the like may run their argument.
 _PS_DATA_METHODS = frozenset({
     "replace", "split", "join", "trim", "trimstart", "trimend", "substring", "contains", "startswith", "endswith",
@@ -396,21 +406,50 @@ def _quoted_text_is_data(command: str, skeleton: str, powershell: bool) -> bool:
     return not (inline and _PROCESS_CALL.search(command))
 
 
+def _ps_writer_targets(args: list[str]) -> Iterator[str]:
+    """A PowerShell writer's destination: a flag's value, else its first positional argument.
+
+    `Set-Content -Encoding utf8 C:/x/out.txt` names its path after a flag (8th mock trial review). PowerShell takes
+    any prefix of a parameter name (-Pa, -Enc), so the next word after any flag that is not a switch or a known text
+    parameter also counts as a destination: unsure words are reported, never skipped.
+    """
+    i, named = 0, False
+    while i < len(args):
+        word = args[i]
+        if not (word.startswith("-") and len(word) > 1):
+            if not named:  # with the path named, the first positional argument binds to -Value (PR #356 review)
+                yield word
+            return
+        flag, colon, value = word.casefold().partition(":")
+        named = named or flag in _PS_PATH_FLAGS
+        if flag in _PS_SWITCHES:
+            i += 1
+        elif colon:  # -Path:C:/x
+            if flag not in _PS_TEXT_FLAGS:
+                yield word[len(flag) + 1:]
+            i += 1
+        else:
+            if flag not in _PS_TEXT_FLAGS and i + 1 < len(args):
+                yield args[i + 1]
+            i += 2
+
+
 def _named_write_targets(words: list[str]) -> Iterator[str]:
     if not words:
         return
     name = words[0].casefold()
-    if name not in {"set-content", "out-file", "add-content", "new-item",
-                    "copy-item", "move-item", "cp", "mv"}:
+    if name == "tee":  # bash tee writes every file argument; in PowerShell tee is Tee-Object
+        yield from (word for word in words[1:] if not word.startswith("-"))
         return
-    for flag in ("-literalpath", "-path", "-filepath", "-destination"):
-        for i, word in enumerate(words[:-1]):
-            if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
-                yield words[i + 1]
-    if name in {"copy-item", "move-item", "cp", "mv"}:
-        yield words[-1]
-    elif len(words) > 1 and not words[1].startswith("-"):
-        yield words[1]
+    if name in _PS_WRITERS:
+        yield from _ps_writer_targets(words[1:])
+        return
+    if name not in {"copy-item", "move-item", "cp", "mv"}:
+        return
+    for i, word in enumerate(words[:-1]):
+        if word.casefold() == "-destination":
+            yield words[i + 1]
+    yield words[-1]
 
 
 def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str]:

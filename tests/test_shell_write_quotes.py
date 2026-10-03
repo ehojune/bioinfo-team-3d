@@ -216,3 +216,43 @@ def test_a_digit_glued_to_a_path_is_not_a_stream_number(command, target):
 
 def test_a_path_ending_in_a_digit_outside_the_roots_still_asks():
     assert _decide("Bash", "cp a /work2>/dev/null").action == "ask"
+
+
+# 8th mock trial: a hash next to a quoted manifest row, all inside the staff member's own folder.
+TRIAL8_POWERSHELL = (
+    "$h = (Get-FileHash outputs/raw/cel_header_scan_dates.tsv -Algorithm SHA256).Hash.ToLower(); "
+    "$len=(Get-Item outputs/raw/cel_header_scan_dates.tsv).Length; "
+    'Add-Content -Encoding utf8 outputs/data_manifest.tsv "outputs/raw/cel_header_scan_dates.tsv`t'
+    "https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM254nnn/<GSM>/suppl/<GSM>.CEL.gz (107 URLs, per-row in file)`t$h`t"
+    '$len`t2026-10-03`t1`tDerived table: scan date from CEL DatHeader (header bytes only streamed)"; '
+    "Get-Content outputs/data_manifest.tsv")
+
+
+@pytest.mark.parametrize("command", [
+    TRIAL8_POWERSHELL,
+    'Add-Content -Path outputs/m.tsv -Value "/suppl/<GSM>.CEL.gz"',  # a text parameter is not a destination
+    "Set-Content outputs/x.txt -Encoding utf8 -Value C:/data/row",
+    "Set-Content -Path outputs/x.txt C:/data/row",  # with -Path named, the positional word is the value
+    "Out-File -FilePath:outputs/x.txt -Encoding utf8 C:/data/row",
+])
+def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
+    assert _decide("PowerShell", command).action == "allow"
+
+
+@pytest.mark.parametrize("tool, command", [
+    ("PowerShell", "Set-Content -Encoding utf8 C:/elsewhere/x.txt a"),  # the path after a flag was never read
+    ("PowerShell", "Add-Content -NoNewline -Encoding utf8 C:/elsewhere/x.txt a"),
+    ("PowerShell", "Out-File -Encoding utf8 C:/elsewhere/x.txt -InputObject a"),
+    ("PowerShell", "Set-Content -Pa C:/elsewhere/x.txt -Value a"),  # a prefix of -Path
+    ("PowerShell", "Set-Content -Path:C:/elsewhere/x.txt -Value a"),
+    ("PowerShell", "Set-Content -Fo C:/elsewhere/x.txt a"),  # a prefix of the -Force switch
+    ("PowerShell", "Set-Content -Path C:/elsewhere/x.txt outputs/row"),
+    ("PowerShell", "sc C:/elsewhere/x.txt a"),
+    ("PowerShell", "New-Item -ItemType File C:/elsewhere/x.txt"),
+    ("PowerShell", "Get-Process | Export-Csv -NoTypeInformation C:/elsewhere/p.csv"),
+    ("PowerShell", "Get-Date | Tee-Object C:/elsewhere/t.txt"),
+    ("Bash", "echo x | tee /elsewhere/x"),
+    ("Bash", "echo x | tee -a outputs/log /elsewhere/x"),
+])
+def test_a_write_named_after_a_flag_or_through_tee_still_asks(tool, command):
+    assert _decide(tool, command).action == "ask"
