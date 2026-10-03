@@ -180,7 +180,6 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
-        self.system_ca_text: str | None = None  # read once on first use; '' when there is none
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
@@ -806,19 +805,18 @@ class Runner:
 
         The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
         folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
-        spawn the file is compared with the copy in memory and rewritten when it differs: a CA one task planted is
-        never trusted by the next (PR #359 review)."""
+        spawn the store is read again and the file rewritten when it differs: a CA one task planted is never trusted
+        by the next, and a root the institution replaced reaches staff without a runner restart (PR #359 review)."""
         if not self.s.runner.system_ca_bundle:
             return {}
         engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
         if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
             return {}
-        if self.system_ca_text is None:
-            self.system_ca_text = system_ca_pem() or ""
-        if not self.system_ca_text:
+        pem = system_ca_pem()
+        if not pem:
             return {}
         target = self.ws_root / ".labhq-system-ca.pem"
-        expected = self.system_ca_text.encode("ascii")
+        expected = pem.encode("ascii")
         try:
             if not is_link(target) and target.is_file() and target.read_bytes() == expected:
                 return {name: str(target) for name in CA_ENV}

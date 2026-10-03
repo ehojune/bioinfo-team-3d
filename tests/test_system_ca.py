@@ -37,19 +37,21 @@ def test_the_bundle_is_certifi_then_the_os_store_and_only_on_windows(monkeypatch
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", [Engine.claude_code, Engine.codex])
-async def test_runner_points_staff_at_the_bundle_written_once_in_the_workspace_root(tmp_path, monkeypatch, engine):
+async def test_runner_points_staff_at_the_bundle_in_the_workspace_root(tmp_path, monkeypatch, engine):
     for name in system_ca.CA_ENV:
         monkeypatch.delenv(name, raising=False)
-    calls = []
-    monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: calls.append(1) or "PEM\n")
+    stores = iter(["PEM\n", "PEM\nNEW INSTITUTION ROOT\n"])
+    monkeypatch.setattr("labhq.runner.daemon.system_ca_pem", lambda: next(stores))
     settings = _runner_settings(tmp_path, [])
     runner, seen = _capture_runner(settings, monkeypatch, engine=engine)
-    for task_id in ("t1", "t2"):
-        assert (await runner.run_task(Task(id=task_id, agent_id="worker", request_id="r", prompt="q"))).ok
-    env = seen["ctx"].env
     target = runner.ws_root / ".labhq-system-ca.pem"
+    assert (await runner.run_task(Task(id="t1", agent_id="worker", request_id="r", prompt="q"))).ok
+    assert target.read_text(encoding="ascii") == "PEM\n"
+    assert (await runner.run_task(Task(id="t2", agent_id="worker", request_id="r", prompt="q"))).ok
+    env = seen["ctx"].env
     assert env["SSL_CERT_FILE"] == env["REQUESTS_CA_BUNDLE"] == str(target)
-    assert target.read_text(encoding="ascii") == "PEM\n" and len(calls) == 1
+    # the store is read at every spawn: a root the institution replaced needs no runner restart (PR #359 review)
+    assert target.read_text(encoding="ascii") == "PEM\nNEW INSTITUTION ROOT\n"
     assert not list(runner.ws_root.glob(".labhq-system-ca.*.tmp"))
 
 
