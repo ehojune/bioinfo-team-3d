@@ -26,6 +26,16 @@ class IntakeDecision(StrictModel):
     scope_status: Literal["in_scope", "needs_pi_confirmation"] = "in_scope"
     confidence: Literal["clear", "ambiguous"] = "clear"
     source: Literal["explicit", "rule", "cso"] = "rule"
+    expression_data_type: Literal["bulk", "single_cell", "other"] | None = None
+    comparison_design: Literal["between_conditions", "other"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unknown_applicability(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        for key in ("expression_data_type", "comparison_design"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 _RESEARCH_SIGNALS = (
@@ -39,22 +49,40 @@ _SIMPLE_SIGNALS = (
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
 )
 
+_BIOLOGICAL_CONDITION_PAIRS = (
+    (r"\btumou?r\b|종양", r"\bnormal\b|정상"),
+    (r"\b(?:treated|treatment)\b|처리", r"\b(?:untreated|control)\b|대조"),
+    (r"\b(?:patient|case|diseased?)\b|환자", r"\b(?:healthy|control)\b|건강인|대조"),
+)
+
+
+def _has_named_biological_contrast(text: str) -> bool:
+    return any(re.search(f"(?:{left}).{{0,40}}(?:{right})|(?:{right}).{{0,40}}(?:{left})",
+                         text, re.IGNORECASE)
+               for left, right in _BIOLOGICAL_CONDITION_PAIRS)
+
 
 def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope") -> IntakeDecision:
     """Classify without an extra model call; ambiguous requests enter the research planning lane."""
+    single_cell = bool(re.search(r"single[- ]cell|scRNA[- ]?seq|단일\s*세포", text, re.IGNORECASE))
+    bulk = not single_cell and bool(re.search(r"\bbulk\b|microarray|마이크로어레이|벌크", text, re.IGNORECASE))
+    data_type = "single_cell" if single_cell else "bulk" if bulk else None
+    comparison = _has_named_biological_contrast(text)
+    applicability = {"expression_data_type": data_type,
+                     "comparison_design": "between_conditions" if comparison else None}
     if requested in {"simple", "research"}:
         return IntakeDecision(work_kind=requested, reason=f"PI specified work_kind={requested}",
-                              scope_status=scope_status, source="explicit")
+                              scope_status=scope_status, source="explicit", **applicability)
     research = any(re.search(pattern, text, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
     simple = any(re.search(pattern, text, re.IGNORECASE) for pattern in _SIMPLE_SIGNALS)
     if simple and not research:
         return IntakeDecision(work_kind="simple", reason="request is a fixed transformation, aggregation, or source summary",
-                              scope_status=scope_status)
+                              scope_status=scope_status, **applicability)
     if research:
         return IntakeDecision(work_kind="research", reason="request asks for a new conclusion, hypothesis, or method choice",
-                              scope_status=scope_status)
+                              scope_status=scope_status, **applicability)
     return IntakeDecision(work_kind="research", reason="request is not clearly limited to a simple operation",
-                          scope_status=scope_status, confidence="ambiguous")
+                          scope_status=scope_status, confidence="ambiguous", **applicability)
 
 
 class PackRef(StrictModel):
@@ -554,8 +582,9 @@ def _contract_errors(plan: ResearchPlan | None, value: Any, *, max_steps: int, a
     supplied = ({key: item.model_dump(mode="python") for key, item in plan.pack_values.items()}
                 if plan is not None else raw.get("pack_values"))
     errors += _pack_value_errors(supplied, plan, active_packs, pack_definitions)
-    if plan is not None and expected_intake and (plan.intake.work_kind != expected_intake.work_kind or
-                                                 plan.intake.scope_status != expected_intake.scope_status):
+    if plan is not None and expected_intake and any(
+            getattr(plan.intake, field) != getattr(expected_intake, field)
+            for field in ("work_kind", "scope_status", "expression_data_type", "comparison_design")):
         errors.append("research PLAN intake does not match the request intake decision")
     return errors
 

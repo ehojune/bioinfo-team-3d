@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research.contract import validate_research_plan
-from labhq.research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog,
-                                  select_applied_packs)
+from labhq.research.contract import classify_intake, validate_research_plan
+from labhq.research.packs import (assess_applied_packs, configured_packs, pack_refs, pack_snapshot,
+                                  render_pack_catalog, load_pack, select_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -38,6 +39,7 @@ def valid_bulk_values():
         BULK_PACK: {
             "fields": {
                 "pairing": "complete",
+                "pairing_evidence_type": "metadata_patient_id",
                 "pairing_evidence": "metadata.patient_id and tissue_type",
                 "primary_model": "mixed_model",
                 "model_rule": "use a paired model with at least 10 verified pairs",
@@ -52,6 +54,7 @@ def valid_bulk_values():
                 "bulk_tumor_normal.positive_control_rows": "Every control names a gene, direction, and PMID.",
             },
             "acceptance": {
+                "bulk_tumor_normal.pairing_evidence_type": "Pairing uses an allowed non-expression evidence source.",
                 "bulk_tumor_normal.core_statistics_applicable": "The comparison uses the core statistics contract.",
                 "bulk_tumor_normal.core_estimand": "The core protocol names the condition effect.",
                 "bulk_tumor_normal.core_analysis_unit": "The core protocol names the donor analysis unit.",
@@ -76,6 +79,7 @@ def _bulk_plan(**fields):
     values = valid_bulk_values()
     values[BULK_PACK]["fields"].update(fields)
     plan = valid_plan(pack_values=values)
+    plan["intake"].update(expression_data_type="bulk", comparison_design="between_conditions")
     plan["brief"]["subject"] = "bulk tumor and normal tissue expression"
     return plan, selected
 
@@ -175,7 +179,7 @@ def test_bulk_pack_loads_with_schema_review_questions_and_failure_fixtures():
     pack = selected[BULK_PACK].pack
     assert pack.key == BULK_PACK
     assert [field.name for field in pack.fields] == [
-        "pairing", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
+        "pairing", "pairing_evidence_type", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
         "low_expression_filter", "de_threshold", "positive_controls",
     ]
     assert [fixture.id for fixture in pack.fixtures] == ["paired_but_unpaired", "filter_undefined"]
@@ -216,6 +220,16 @@ def test_bulk_pairing_and_expression_scale_rules(fields, failure):
             _validate(plan, selected)
 
 
+def test_paired_bulk_plan_requires_closed_pairing_evidence_type():
+    plan, selected = _bulk_plan(pairing="complete")
+    del plan["pack_values"][BULK_PACK]["fields"]["pairing_evidence_type"]
+    with pytest.raises(ValueError, match="bulk_tumor_normal.pairing_evidence_type"):
+        _validate(plan, selected)
+
+    plan, selected = _bulk_plan(pairing="complete", pairing_evidence_type="supplementary_table")
+    _validate(plan, selected)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -238,14 +252,16 @@ def test_only_the_pack_matching_applies_when_is_frozen_when_both_are_configured(
     bulk_values = valid_bulk_values()
     bulk_values[SINGLE_CELL_PACK] = {"not_applicable": "The request uses bulk, not single-cell, expression."}
     bulk_plan = valid_plan(pack_values=bulk_values)
-    bulk = select_applied_packs(configured, bulk_plan["pack_values"])
+    bulk_plan["intake"].update(expression_data_type="bulk", comparison_design="between_conditions")
+    bulk = select_applied_packs(configured, bulk_plan["pack_values"], plan=bulk_plan)
     assert list(bulk) == [BULK_PACK]
     _validate(bulk_plan, bulk)
 
     single_values = valid_single_cell_values()
     single_values[BULK_PACK] = {"not_applicable": "The request uses single-cell, not bulk, expression."}
     single_plan = valid_plan(pack_values=single_values)
-    single = select_applied_packs(configured, single_plan["pack_values"])
+    single_plan["intake"].update(expression_data_type="single_cell", comparison_design="between_conditions")
+    single = select_applied_packs(configured, single_plan["pack_values"], plan=single_plan)
     assert list(single) == [SINGLE_CELL_PACK]
     _validate(single_plan, single)
 
@@ -259,6 +275,92 @@ def test_every_configured_pack_requires_values_or_a_not_applicable_reason():
     no_reason[SINGLE_CELL_PACK] = {"not_applicable": ""}
     with pytest.raises(ValueError, match="non-empty not_applicable reason"):
         select_applied_packs(configured, no_reason)
+
+
+def test_machine_applicable_pack_rejects_cso_not_applicable_claim_with_basis_fields():
+    configured = _selected(BULK_PACK)
+    plan = valid_plan(pack_values={BULK_PACK: {"not_applicable": "No bulk data"}})
+    plan["intake"].update(expression_data_type="bulk", comparison_design="between_conditions")
+    with pytest.raises(ValueError, match=r"intake\.expression_data_type='bulk'.*intake\.comparison_design"):
+        select_applied_packs(configured, plan["pack_values"], plan=plan)
+
+
+def test_method_comparison_from_free_text_leaves_condition_design_undetermined():
+    intake = classify_intake("Compare single-cell clustering methods")
+    configured = _selected(SINGLE_CELL_PACK)
+    applied, decisions = assess_applied_packs(
+        configured,
+        {SINGLE_CELL_PACK: {"not_applicable": "The request compares clustering methods, not conditions."}},
+        intake=intake,
+    )
+
+    assert intake.expression_data_type == "single_cell"
+    assert intake.comparison_design is None
+    assert not applied
+    assert decisions[SINGLE_CELL_PACK]["status"] == "undetermined"
+
+
+def test_named_biological_condition_contrast_is_machine_applicable():
+    intake = classify_intake("Run bulk tumor versus normal differential expression")
+    configured = _selected(BULK_PACK)
+    applied, decisions = assess_applied_packs(configured, valid_bulk_values(), intake=intake)
+
+    assert intake.expression_data_type == "bulk"
+    assert intake.comparison_design == "between_conditions"
+    assert list(applied) == [BULK_PACK]
+    assert decisions[BULK_PACK]["status"] == "applies"
+
+
+def test_single_cell_clustering_makes_bulk_pack_not_applicable():
+    configured = _selected(BULK_PACK)
+    reason = "The request is single-cell clustering, not bulk differential expression."
+    intake = classify_intake("Cluster the single-cell data")
+
+    applied, decisions = assess_applied_packs(
+        configured,
+        {BULK_PACK: {"not_applicable": reason}},
+        intake=intake,
+    )
+
+    assert not applied
+    assert decisions[BULK_PACK]["status"] == "does_not_apply"
+
+
+@pytest.mark.parametrize("bad_row", [["1", True], [1, 1]])
+def test_user_pack_rejects_allowed_combination_cells_with_wrong_declared_type(tmp_path, bad_row):
+    raw = yaml.safe_load(Path("labhq/research/packs/bulk_tumor_normal.yaml").read_text(encoding="utf-8"))
+    raw.update(id="typed_table", title="Typed table fixture", applies_when="test only")
+    raw["fields"] = [
+        {"name": "count", "description": "Count", "required": True, "value_type": "integer"},
+        {"name": "flag", "description": "Flag", "required": True, "value_type": "boolean"},
+    ]
+    raw["validators"] = [{"id": "typed_table.fields", "requirement": "Supply both fields.",
+                          "required_fields": ["count", "flag"]}]
+    raw["rules"] = [{"id": "typed_table.combination", "description": "Only typed cells are allowed.",
+                     "allowed_combinations": {"fields": ["count", "flag"], "rows": [bad_row]}}]
+    source = tmp_path / "typed_table.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    with pytest.raises(ValueError, match="combination value.*type"):
+        load_pack(source)
+
+
+def test_user_pack_allows_null_for_an_omitted_optional_combination_field(tmp_path):
+    raw = yaml.safe_load(Path("labhq/research/packs/bulk_tumor_normal.yaml").read_text(encoding="utf-8"))
+    raw.update(id="optional_table", title="Optional table fixture", applies_when="test only")
+    raw["fields"] = [
+        {"name": "count", "description": "Optional count", "required": False, "value_type": "integer"},
+        {"name": "flag", "description": "Flag", "required": True, "value_type": "boolean"},
+    ]
+    raw["validators"] = [{"id": "optional_table.fields", "requirement": "Supply the required field.",
+                          "required_fields": ["flag"]}]
+    raw["rules"] = [{"id": "optional_table.combination", "description": "The optional field may be absent.",
+                     "allowed_combinations": {"fields": ["count", "flag"], "rows": [[None, True]]}}]
+    source = tmp_path / "optional_table.yaml"
+    source.write_text(yaml.safe_dump(raw, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+    loaded = load_pack(source)
+
+    assert loaded.pack.rules[0].allowed_combinations.rows == [[None, True]]
 
 
 async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_one():
@@ -298,15 +400,41 @@ async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_o
     }
 
 
+async def test_unknown_applicability_accepts_cso_claim_and_marks_cp1_card_and_report():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    reason = "The available request does not identify the expression modality."
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=valid_plan(pack_values={BULK_PACK: {"not_applicable": reason}}))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                  text="Investigate the available expression data")
+    await Orchestrator(hub).run_request("r")
+
+    decision = hub.approvals[0]["detail"]["pack_applicability"][BULK_PACK]
+    assert decision["status"] == "undetermined"
+    assert decision["notice"] == "적용 판정 불가, CSO 신고"
+    assert "적용 판정 불가, CSO 신고" in hub.requests["r"]["report"]
+
+
 def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
     rows = {row["key"]: row for row in map(json.loads, render_pack_catalog(_selected(BULK_PACK)).splitlines())}
     row = rows[BULK_PACK]
-    assert "bulk" in row["applies_when"].lower()
+    assert row["applies_when"] == [
+        {"field": "intake.expression_data_type", "value": "bulk"},
+        {"field": "intake.comparison_design", "value": "between_conditions"},
+    ]
     assert row["pack_values_keys"]["fields"] == [
-        "pairing", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
+        "pairing", "pairing_evidence_type", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
         "low_expression_filter", "de_threshold", "positive_controls",
     ]
     assert row["pack_values_keys"]["acceptance"] == [
+        "bulk_tumor_normal.pairing_evidence_type",
         "bulk_tumor_normal.core_statistics_applicable",
         "bulk_tumor_normal.core_estimand",
         "bulk_tumor_normal.core_analysis_unit",

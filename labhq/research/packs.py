@@ -141,6 +141,7 @@ class PackRule(StrictModel):
 
 _PLAN_RULE_FIELDS = {
     "intake.work_kind", "intake.scope_status", "intake.confidence", "intake.source",
+    "intake.expression_data_type", "intake.comparison_design",
     "brief.question", "brief.purpose", "brief.subject", "brief.scope", "brief.study_type",
     "brief.primary_hypothesis", "protocol.revision", "protocol.analysis_unit",
     "protocol.statistics.applicable", "protocol.statistics.reason", "protocol.statistics.estimand",
@@ -158,7 +159,7 @@ class DomainRulePack(StrictModel):
     version: str = Field(min_length=1)
     title: str = Field(min_length=1)
     core_contract: Literal["extend_only"]
-    applies_when: str = Field(min_length=1)
+    applies_when: str | list[PackPredicate]
     sources: list[PackSource] = Field(min_length=1)
     fields: list[PackField] = Field(min_length=1)
     validators: list[PackValidator] = Field(min_length=1)
@@ -172,6 +173,23 @@ class DomainRulePack(StrictModel):
         if len(field_names) != len(set(field_names)):
             raise ValueError("domain pack field names must be unique")
         known = set(field_names)
+        if isinstance(self.applies_when, list):
+            if not self.applies_when:
+                raise ValueError("pack applies_when requires at least one predicate")
+            machine_fields = {"intake.expression_data_type", "intake.comparison_design"}
+            machine_values = {"intake.expression_data_type": {"bulk", "single_cell", "other"},
+                              "intake.comparison_design": {"between_conditions", "other"}}
+            for predicate in self.applies_when:
+                if predicate.field not in machine_fields:
+                    raise ValueError(f"pack applies_when field must be a closed intake choice: {predicate.field}")
+                if {"present", "min_items"} & predicate.model_fields_set:
+                    raise ValueError("pack applies_when must compare a closed intake choice")
+                values = ([predicate.value] if "value" in predicate.model_fields_set else
+                          predicate.in_ if "in_" in predicate.model_fields_set else predicate.not_in)
+                if any(value not in machine_values[predicate.field] for value in values or []):
+                    raise ValueError(f"pack applies_when has an invalid closed choice for {predicate.field}")
+        elif not self.applies_when.strip():
+            raise ValueError("pack applies_when must not be blank")
         for field in self.fields:
             if field.allowed_values and field.value_type != "string":
                 raise ValueError(f"domain pack field {field.name}: allowed_values requires string type")
@@ -206,6 +224,11 @@ class DomainRulePack(StrictModel):
                 for row in rule.allowed_combinations.rows:
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
+                        if field and value is None and not field.required:
+                            continue
+                        if field and not _matches_value_type(value, field.value_type):
+                            raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} has wrong "
+                                             f"type for {name} ({field.value_type})")
                         if field and field.allowed_values and value not in field.allowed_values:
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
                                              f"allowed for {name}")
@@ -214,6 +237,12 @@ class DomainRulePack(StrictModel):
     @property
     def key(self) -> str:
         return f"{self.id}@{self.version}"
+
+
+def _matches_value_type(value: Any, value_type: str) -> bool:
+    return ((value_type == "string" and isinstance(value, str)) or
+            (value_type == "integer" and isinstance(value, int) and not isinstance(value, bool)) or
+            (value_type == "boolean" and isinstance(value, bool)))
 
 
 class LoadedPack(StrictModel):
@@ -273,8 +302,43 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
     return selected
 
 
-def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
-    """Require an explicit answer for every configured pack, then return the applicable ones."""
+def _plan_field(plan: Any, field: str) -> Any:
+    if hasattr(plan, "model_dump"):
+        plan = plan.model_dump(mode="python")
+    current = plan
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _applicability_predicates(loaded: LoadedPack) -> list[PackPredicate] | None:
+    applies_when = loaded.pack.applies_when
+    if isinstance(applies_when, list):
+        return applies_when
+    # single_cell_de@2 predates machine-readable applicability. Keep its bytes/hash stable while routing it
+    # through the same authoritative intake decision as newer packs.
+    if loaded.pack.key == "single_cell_de@2":
+        return [PackPredicate(field="intake.expression_data_type", value="single_cell"),
+                PackPredicate(field="intake.comparison_design", value="between_conditions")]
+    return None
+
+
+def _predicate_matches_plan(predicate: PackPredicate, plan: Any) -> bool:
+    current = _plan_field(plan, predicate.field)
+    if "value" in predicate.model_fields_set:
+        return current == predicate.value
+    if "in_" in predicate.model_fields_set:
+        return current in predicate.in_
+    if "not_in" in predicate.model_fields_set:
+        return current not in predicate.not_in
+    return False
+
+
+def assess_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *, plan: Any = None,
+                         intake: Any = None) -> tuple[dict[str, LoadedPack], dict[str, dict[str, Any]]]:
+    """Select packs from machine intake facts; use the CSO answer only when those facts are unavailable."""
     if not isinstance(pack_values, dict):
         raise ValueError("research plan must answer every configured pack in pack_values")
     unknown = sorted(set(pack_values) - set(configured))
@@ -284,16 +348,51 @@ def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) ->
     if missing:
         raise ValueError(f"research plan pack_values is missing configured packs: {missing}; provide values or "
                          f'{{"not_applicable": "<reason>"}} for each one')
+    if hasattr(intake, "model_dump"):
+        intake = intake.model_dump(mode="python")
+    if hasattr(plan, "model_dump"):
+        plan = plan.model_dump(mode="python")
+    machine_plan = dict(plan) if isinstance(plan, dict) else {}
+    if isinstance(intake, dict):
+        machine_plan["intake"] = intake
     applied: dict[str, LoadedPack] = {}
+    decisions: dict[str, dict[str, Any]] = {}
     for key, loaded in configured.items():
         value = pack_values[key]
+        predicates = _applicability_predicates(loaded)
+        basis = ({predicate.field: _plan_field(machine_plan, predicate.field) for predicate in predicates}
+                 if predicates else {})
+        matches = [(None if basis[predicate.field] is None else _predicate_matches_plan(predicate, machine_plan))
+                   for predicate in predicates or []]
+        status = ("does_not_apply" if any(result is False for result in matches) else
+                  "applies" if matches and all(result is True for result in matches) else
+                  "undetermined")
+        known = status != "undetermined"
+        is_not_applicable = isinstance(value, dict) and "not_applicable" in value
+        basis_text = ", ".join(f"{name}={item!r}" for name, item in basis.items())
         if isinstance(value, dict) and "not_applicable" in value:
             reason = value.get("not_applicable")
             if set(value) != {"not_applicable"} or not isinstance(reason, str) or not reason.strip():
                 raise ValueError(f"research plan pack_values[{key}] requires one non-empty not_applicable reason")
+        if status == "applies" and is_not_applicable:
+            raise ValueError(f"research plan pack_values[{key}] cannot use not_applicable because applies_when "
+                             f"matched {basis_text}")
+        if status == "does_not_apply" and not is_not_applicable:
+            raise ValueError(f"research plan pack_values[{key}] must use not_applicable because applies_when did "
+                             f"not match {basis_text}")
+        selected_by = "machine" if known else "cso_report"
+        decisions[key] = {"status": status, "basis": basis, "selected_by": selected_by,
+                          **({"notice": "적용 판정 불가, CSO 신고"} if not known else {})}
+        if is_not_applicable:
             continue
         applied[key] = loaded
-    return applied
+    return applied, decisions
+
+
+def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *, plan: Any = None,
+                         intake: Any = None) -> dict[str, LoadedPack]:
+    """Compatibility wrapper returning only the applied pack definitions."""
+    return assess_applied_packs(configured, pack_values, plan=plan, intake=intake)[0]
 
 
 def configured_packs(settings: Any) -> dict[str, LoadedPack]:
@@ -330,7 +429,7 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
     for key, loaded in sorted(packs.items()):
         pack = loaded.pack
         rows.append(json.dumps({"key": key, "sha256": loaded.sha256,
-                                "applies_when": pack.applies_when,
+                                "applies_when": pack.model_dump(mode="json", by_alias=True)["applies_when"],
                                 # The exact keys of pack_values[key]: acceptance ids are the rule ids (#222).
                                 "pack_values_keys": {"fields": [field.name for field in pack.fields],
                                                      "validators": [v.id for v in pack.validators],

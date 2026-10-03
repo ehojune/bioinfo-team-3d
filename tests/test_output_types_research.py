@@ -22,7 +22,7 @@ V = vocab.load()
 CANARY = "CANARY-research-91c2"
 # json.dumps without sorting: what the engines receive, byte for byte. The plan schema and prompt changed together
 # when every configured pack began requiring either full values or an explicit not_applicable reason (PR #366).
-RESEARCH_PLAN_SCHEMA_SHA = "3c9a69dad6e52fbb5a2a67593561f1c14441e2847fd8b00af1fabaa3dfc47130"
+RESEARCH_PLAN_SCHEMA_SHA = "cf54b7819eb32c3981c577990186eeb2f227a88d7df03e87ee0186680571424e"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
 RESEARCH_PROMPT_SHA = "b980116a4487ba7ffe2967b03f251c12504faf006ad08379bfb2f7b6c98f0ef3"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
@@ -112,6 +112,7 @@ async def test_off_removes_declarations_and_freezes_the_plan_of_main():
     assert raw_sha(schemas[0]) == RESEARCH_PLAN_SCHEMA_SHA and "output_types" not in hub.calls[0].prompt
     assert "output_types" not in req["plan"]["steps"][0] and "output_types_stats" not in req
     expected = plan_with([])(req["plan"]["protocol"]["packs"])
+    expected["intake"] = req["plan"]["intake"]
     expected["steps"][0]["outputs"] = ["outputs/result1.tsv"]
     undeclared = rc.plan_sha256(expected)
     assert req["research_contract"]["plan_sha256"] == undeclared

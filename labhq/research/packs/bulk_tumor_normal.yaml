@@ -3,7 +3,11 @@ id: bulk_tumor_normal
 version: "1"
 title: Bulk expression differential analysis between two tissues or conditions
 core_contract: extend_only
-applies_when: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.
+applies_when:
+  - field: intake.expression_data_type
+    value: bulk
+  - field: intake.comparison_design
+    value: between_conditions
 sources:
   - title: labhq mock research runs 8 through 11
     url: docs/research_protocol.md
@@ -15,8 +19,13 @@ fields:
     required: true
     value_type: string
     allowed_values: [none, partial, complete]
+  - name: pairing_evidence_type
+    description: Closed source type used to establish pairing without expression-derived inference.
+    required: false
+    value_type: string
+    allowed_values: [metadata_patient_id, sample_title, characteristics_field, supplementary_table, publication_table]
   - name: pairing_evidence
-    description: Metadata fields used to establish pairing; expression similarity must not be used.
+    description: Explanation of the named source used to establish pairing; expression similarity must not be used.
     required: true
     value_type: string
   - name: primary_model
@@ -66,6 +75,14 @@ fixtures:
   - id: filter_undefined
     purpose: Reject a plan that leaves the low-expression filter undefined.
 rules:
+  - id: bulk_tumor_normal.pairing_evidence_type
+    description: Partial or complete pairing requires a closed, non-expression evidence source type.
+    when:
+      field: pairing
+      in: [partial, complete]
+    require:
+      field: pairing_evidence_type
+      present: true
   - id: bulk_tumor_normal.core_statistics_applicable
     description: An applied bulk differential-expression pack requires the core statistics contract.
     require:
