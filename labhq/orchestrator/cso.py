@@ -31,8 +31,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
-from ..research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review,
-                              select_applied_packs)
+from ..research.packs import (assess_applied_packs, configured_packs, pack_refs, pack_snapshot,
+                              render_pack_catalog, render_pack_review)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -2730,6 +2730,7 @@ class Orchestrator:
             configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
+            pack_applicability: dict[str, dict[str, Any]] = {}
             capabilities = "\n".join(  # the first plan and a re-plan after resume (#271) both need it
                 f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
                 f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
@@ -2751,6 +2752,7 @@ class Orchestrator:
                     "execution_enabled": execution_enabled,
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
                     "pack_snapshot": active_pack_hashes,
+                    "pack_applicability": pack_applicability,
                     "approval": approval,
                 }
                 self.hub.save_request(rid)
@@ -2758,12 +2760,17 @@ class Orchestrator:
                     plan_hash = req["research_contract"]["plan_sha256"]
                     summary = ("CP1 research plan approval: approve the frozen question, methods, completion/stop "
                                f"conditions, data boundary, and selected packs. plan_sha256={plan_hash}")
+                    unknown = [key for key, decision in pack_applicability.items()
+                               if decision.get("status") == "undetermined"]
+                    if unknown:
+                        summary += "; 적용 판정 불가, CSO 신고: " + ", ".join(unknown)
                     decision = await self.hub.request_approval(
                         kind="research_plan", request_id=rid, summary=summary[:700],
                         detail={"gate": "research_plan", "target_sha256": plan_hash,
                                 "plan_canonical": canonical_plan_json(plan),
                                 "protocol_revision": plan["protocol"]["revision"],
                                 "packs": plan["protocol"]["packs"],
+                                "pack_applicability": pack_applicability,
                                 "scope_status": plan["intake"]["scope_status"]})
                     approval = freeze_plan(plan, decision)
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
@@ -2786,7 +2793,9 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
-                    packs = select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                    req["plan"] = {**req["plan"], "intake": intake.model_dump(mode="json")}
+                    packs, pack_applicability = assess_applied_packs(
+                        configured_pack_defs, req["plan"].get("pack_values"), plan=req["plan"], intake=intake)
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
@@ -2958,6 +2967,8 @@ class Orchestrator:
                             self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
                             return
                 if research_lane:
+                    if isinstance(plan, dict):
+                        plan = {**plan, "intake": intake.model_dump(mode="json")}
                     vocab = self._output_vocab()
                     workers = sorted(known - orchestration)
 
@@ -2979,9 +2990,10 @@ class Orchestrator:
                         type_stats = {}
                         selection_problems = []
                         try:
-                            candidate_packs = select_applied_packs(configured_pack_defs,
-                                                                    plan.get("pack_values") if isinstance(plan, dict)
-                                                                    else None)
+                            candidate_packs, candidate_applicability = assess_applied_packs(
+                                configured_pack_defs,
+                                plan.get("pack_values") if isinstance(plan, dict) else None,
+                                plan=plan, intake=intake)
                         except ValueError as error:
                             supplied = plan.get("pack_values") if isinstance(plan, dict) else None
                             candidate_packs = {
@@ -3006,6 +3018,7 @@ class Orchestrator:
                                                                active_packs=pack_snapshot(candidate_packs),
                                                                expected_intake=intake, pack_definitions=candidate_packs)
                             packs = candidate_packs
+                            pack_applicability = candidate_applicability
                             active_pack_hashes = pack_snapshot(packs)
                             break
                         if attempt == 2:
@@ -3024,6 +3037,8 @@ class Orchestrator:
                             return
                         plan = (plan_res.structured if isinstance(plan_res.structured, dict)
                                 else extract_json(plan_res.text) or {})
+                        if isinstance(plan, dict):
+                            plan = {**plan, "intake": intake.model_dump(mode="json")}
                     req["plan"] = validated.model_dump(mode="json")
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
@@ -3505,6 +3520,11 @@ class Orchestrator:
         if req.get("pending_questions"):
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
+        applicability = ((req.get("research_contract") or {}).get("pack_applicability") or {})
+        unknown_packs = [key for key, decision in applicability.items()
+                         if decision.get("status") == "undetermined"]
+        if unknown_packs:
+            metadata.append("적용 판정 불가, CSO 신고: " + ", ".join(unknown_packs))
         if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
             metadata.append("Re-plan history:\n" + "\n".join(replan_history_lines(req["replan_history"])))
         scope = req.get("scope_check") or {}
