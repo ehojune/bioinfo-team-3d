@@ -85,7 +85,7 @@ rules:
     description: The core statistics contract must name both comparison groups.
     require:
       field: protocol.statistics.comparison_groups
-      present: true
+      min_items: 2
   - id: bulk_tumor_normal.core_primary_outcomes
     description: The core statistics contract must name the primary outcomes.
     require:

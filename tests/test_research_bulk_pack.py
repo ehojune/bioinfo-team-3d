@@ -137,6 +137,15 @@ def test_bulk_pack_requires_core_statistical_decisions_even_when_core_allows_a_w
         _validate(plan, selected)
 
 
+@pytest.mark.parametrize("groups", [["tumor"], [""], ["", "  "], ["Tumor", "tumor "]])
+def test_bulk_pack_requires_two_distinct_named_comparison_groups(groups):
+    """PR #366 review: `present` passed a single group or [""], so a plan without a control group reached CP1."""
+    plan, selected = _bulk_plan()
+    plan["protocol"]["statistics"]["comparison_groups"] = groups
+    with pytest.raises(ValueError, match="bulk_tumor_normal.core_comparison_groups"):
+        _validate(plan, selected)
+
+
 def test_bulk_model_choices_are_one_closed_decision_table():
     rules = {rule.id: rule for rule in _selected(BULK_PACK)[BULK_PACK].pack.rules}
     table = rules["bulk_tumor_normal.model_compatibility"].allowed_combinations

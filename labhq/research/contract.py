@@ -361,7 +361,9 @@ def _present(value: Any) -> bool:
         return False
     if isinstance(value, str):
         return bool(value.strip())
-    if isinstance(value, (list, tuple, dict, set)):
+    if isinstance(value, (list, tuple, set)):
+        return any(_present(item) for item in value)  # [""] names nothing (PR #366 review)
+    if isinstance(value, dict):
         return bool(value)
     return True
 
@@ -388,6 +390,12 @@ def _pack_predicate_matches(predicate: Any, pack_fields: dict[str, Any], plan_va
     current = _pack_rule_value(predicate.field, pack_fields, plan_values)
     if "present" in predicate.model_fields_set:
         return _present(None if current is _MISSING else current) is predicate.present
+    if "min_items" in predicate.model_fields_set:
+        if not isinstance(current, (list, tuple)):
+            return False
+        distinct = {item.strip().casefold() if isinstance(item, str) else json.dumps(item, sort_keys=True, default=str)
+                    for item in current if _present(item)}
+        return len(distinct) >= predicate.min_items
     if current is _MISSING:
         return False
     if "value" in predicate.model_fields_set:

@@ -64,12 +64,14 @@ class PackPredicate(StrictModel):
     in_: list[Any] | None = Field(default=None, alias="in", min_length=1)
     not_in: list[Any] | None = Field(default=None, min_length=1)
     present: bool | None = None
+    # At least this many distinct non-blank list items: `present` passes a list with one group or [""] (PR #366 review).
+    min_items: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def exactly_one_operator(self) -> "PackPredicate":
-        operators = {"value", "in_", "not_in", "present"} & self.model_fields_set
+        operators = {"value", "in_", "not_in", "present", "min_items"} & self.model_fields_set
         if len(operators) != 1:
-            raise ValueError("pack predicate requires exactly one operator: value, in, not_in, or present")
+            raise ValueError("pack predicate requires exactly one operator: value, in, not_in, present, or min_items")
         return self
 
     @model_serializer(mode="plain")
@@ -81,6 +83,8 @@ class PackPredicate(StrictModel):
             result["in"] = self.in_
         elif "not_in" in self.model_fields_set:
             result["not_in"] = self.not_in
+        elif "min_items" in self.model_fields_set:
+            result["min_items"] = self.min_items
         else:
             result["present"] = self.present
         return result

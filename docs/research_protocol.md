@@ -124,7 +124,7 @@ rules:
     description: A fully confounded design is limited to descriptive reporting.
 ```
 
-predicate는 `field`와 `value`, `in`, `not_in` 중 하나만 쓴다. rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. `when`에 predicate 목록을 주면 모두 맞을 때만 rule이 걸린다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
+predicate는 `field`와 `value`, `in`, `not_in`, `present`, `min_items` 중 하나만 쓴다. `present`는 빈 문자열만 든 목록을 값이 없는 것으로 보고, `min_items: N`은 서로 다른 빈칸 아닌 항목이 N개 이상인 목록만 통과시킨다(비교군 두 개 등). rule은 선택적인 `when`과 `require` 또는 `forbid` 하나를 둔다. `when`에 predicate 목록을 주면 모두 맞을 때만 rule이 걸린다. field는 pack이 선언한 field 또는 허용된 PLAN scalar(`intake.*`, `brief`의 기본 scalar, `protocol.revision|analysis_unit`, `protocol.statistics`의 scalar, `notes`)다.
 
 active pack 중 `applies_when`이 맞는 것만 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값·pattern을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다. 교정 prompt에는 schema·pack 문제를 한 번에 모두 넣는다. 교정 뒤에도 실패하면 요청을 `plan_invalid`로 끝내고 남은 문제를 보고서와 `plan_validation`에 남긴다(#222).
 
