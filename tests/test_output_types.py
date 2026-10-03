@@ -22,9 +22,9 @@ CANARY = "CANARY-7f3a-secret"
 # main before #221 (1b73b5d): the plan schema and the rendered plan prompt with fixed arguments. The prompt hash
 # moved on purpose since: #84 added the phone-card length rule to the plan questions; the 2nd mock trial added the
 # one-environment-step rule (ENV_STEP_RULE); #36 added the scope verdict (schema, was 62d09433…) and the lab scope
-# rule (prompt, was f0053d96…). Off still adds nothing.
+# rule (prompt, was f0053d96…); #373 restricted installs to wheels and required planned fallbacks. Off still adds nothing.
 PLAN_SCHEMA_SHA = "f8f30b831ff2aa79018ceed6185184a82c959d4885ca71a8a0fe678c10ee4eb9"
-PLAN_PROMPT_SHA = "8829c2160710490a2985ea02db5f5ce3b93b21e91518be9f828936fda43f2817"
+PLAN_PROMPT_SHA = "58acacbd22a95da2eb31b51aa470464ae99e3ca416fea1dd960cc304063c1163"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB")
 

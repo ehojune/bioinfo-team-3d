@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -34,6 +35,11 @@ SOURCES = {
     "GEO": "https://www.ncbi.nlm.nih.gov/geo/",
 }
 LOGIN = {"claude_code": ["auth", "status"], "codex": ["login", "status"]}
+LOCAL_PYTHON_PACKAGES = {
+    "pandas": "pandas", "numpy": "numpy", "scipy": "scipy", "matplotlib": "matplotlib",
+    "statsmodels": "statsmodels", "scikit-learn": "sklearn", "gseapy": "gseapy", "pydeseq2": "pydeseq2",
+}
+LOCAL_TOOLS = ("docker", "nextflow", "java", "wsl")
 
 
 def _safe_path(path: str | Path) -> str:
@@ -284,6 +290,30 @@ def _network_check(url: str) -> bool:
         except Exception:
             continue
     return False
+
+
+def _import_available(python_executable: str, import_name: str) -> bool:
+    code, _ = _probe(
+        [python_executable, "-I", "-c", f"import importlib; importlib.import_module({import_name!r})"],
+        dict(os.environ), timeout=3,
+    )
+    return code == 0
+
+
+def local_software_summary(python_executable: str) -> dict:
+    """Bounded runner facts for planning. Executable paths and probe output never leave this function."""
+    rscript = shutil.which("Rscript")
+    r_code, r_raw = _probe([rscript, "--version"], dict(os.environ), timeout=3) if rscript else (None, "")
+    py_code, py_raw = _probe([python_executable, "--version"], dict(os.environ), timeout=3)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {name: pool.submit(_import_available, python_executable, import_name)
+                   for name, import_name in LOCAL_PYTHON_PACKAGES.items()}
+        packages = {name: future.result() for name, future in futures.items()}
+    return {
+        "r": {"available": r_code == 0, "version": _version(r_raw) if r_code == 0 else None},
+        "python": {"version": _version(py_raw) if py_code == 0 else "unreported", "packages": packages},
+        "tools": {name: bool(shutil.which(name)) for name in LOCAL_TOOLS},
+    }
 
 
 def collect(settings: Settings, *, requested_config: str | None = None, network: bool = False,
