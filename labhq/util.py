@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -142,6 +143,237 @@ def extract_json(text: str | None, *, strict: bool = True) -> Any | None:
         if isinstance(obj, dict) and (best is None or end > best[1]):
             best = (obj, end)
     return best[0] if best else None
+
+
+def _allows_null(schema: dict[str, Any]) -> bool:
+    typ = schema.get("type")
+    if typ == "null" or isinstance(typ, list) and "null" in typ:
+        return True
+    return any(isinstance(choice, dict) and _allows_null(choice)
+               for key in ("anyOf", "oneOf") for choice in schema.get(key, []))
+
+
+def _nullable_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if _allows_null(schema):
+        return schema
+    if "$ref" in schema:
+        return {"anyOf": [schema, {"type": "null"}]}
+    typ = schema.get("type")
+    # The Codex backend rejects a nullable array type inside a nested object array (for example
+    # Claim.comparisons[].assumptions). The equivalent anyOf form is accepted by the supported subset.
+    if typ == "array":
+        return {"anyOf": [schema, {"type": "null"}]}
+    if isinstance(typ, str):
+        return {**schema, "type": [typ, "null"]}
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+_OPENAI_STRICT_UNSUPPORTED_TYPE_CONSTRAINTS = {
+    "minLength", "maxLength", "pattern", "format",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minItems", "maxItems",
+}
+
+
+def openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a strict Structured Outputs schema without changing the application's contract.
+
+    OpenAI requires every object property in ``required`` and forbids additional properties. Fields that the
+    application contract leaves optional become nullable only in this transport copy; the original schema stays
+    available for validation and stable hashes.
+    """
+    out = copy.deepcopy(schema)
+    definition_names = set(out.get("$defs", {})) if isinstance(out.get("$defs"), dict) else set()
+
+    def visit(node: Any, path: str = "$schema") -> Any:
+        if isinstance(node, list):
+            return [visit(item, f"{path}[]") for item in node]
+        if not isinstance(node, dict):
+            return node
+        # The Codex Structured Outputs backend rejects type-specific constraints for this model family. The
+        # application's unchanged Pydantic schema enforces them after transport validation.
+        for keyword in _OPENAI_STRICT_UNSUPPORTED_TYPE_CONSTRAINTS:
+            node.pop(keyword, None)
+        # Structured Outputs rejects annotation defaults; optionality is represented by null instead.
+        node.pop("default", None)
+        properties = node.get("properties")
+        additional = node.get("additionalProperties")
+        object_type = node.get("type") == "object" or (
+                isinstance(node.get("type"), list) and "object" in node["type"])
+        if (isinstance(additional, dict) or additional is True) and isinstance(properties, dict) and properties:
+            raise ValueError(f"{path}: objects with properties and schema-valued additionalProperties are unsupported")
+        if isinstance(additional, dict) or object_type and not properties and additional is not False:
+            allowed = {"type", "additionalProperties", "properties", "title", "description", "$defs",
+                       "definitions", "$id", "$schema"}
+            unsupported = sorted(set(node) - allowed)
+            if unsupported:
+                raise ValueError(f"{path}: dictionary schema keywords are unsupported: {unsupported}")
+            typ = node.get("type")
+            types = set(typ) if isinstance(typ, list) else {typ}
+            if typ is not None and "object" not in types:
+                raise ValueError(f"{path}: schema-valued additionalProperties requires object type")
+            value_schema = visit(additional, f"{path}.additionalProperties") if isinstance(additional, dict) else {}
+            converted = {
+                key: ({name: visit(schema, f"{path}.{key}.{name}") for name, schema in value.items()}
+                      if key in {"$defs", "definitions"} and isinstance(value, dict)
+                      else visit(value, f"{path}.{key}"))
+                for key, value in node.items()
+                if key not in {"type", "additionalProperties", "properties"}
+            }
+            converted.update({
+                "type": ["array", "null"] if "null" in types else "array",
+                "_labhq_dictionary_transport": True,
+                "items": {
+                    "type": "object",
+                    "properties": {"key": {"type": "string"}, "value": value_schema},
+                    "required": ["key", "value"],
+                    "additionalProperties": False,
+                },
+            })
+            return converted
+        original_required = set(node.get("required", []))
+        if isinstance(properties, dict):
+            for key, child in list(properties.items()):
+                child = visit(child, f"{path}.properties.{key}")
+                if key not in original_required:
+                    child = _nullable_schema(child)
+                properties[key] = child
+            node["required"] = list(properties)
+            node["additionalProperties"] = False
+        elif object_type:
+            if additional is not False:
+                raise ValueError(f"{path}: arbitrary object requires a schema-valued additionalProperties")
+            node["properties"] = {}
+            node["required"] = []
+            node["additionalProperties"] = False
+        for key, child in list(node.items()):
+            if key != "properties":
+                if key in {"$defs", "definitions"} and isinstance(child, dict):
+                    node[key] = {name: visit(schema, f"{path}.{key}.{name}")
+                                 for name, schema in child.items()}
+                else:
+                    node[key] = visit(child, f"{path}.{key}")
+        return node
+
+    converted = visit(out)
+    dictionary_arrays: list[dict[str, Any]] = []
+
+    def find_dictionary_arrays(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                find_dictionary_arrays(item)
+        elif isinstance(node, dict):
+            if node.pop("_labhq_dictionary_transport", False):
+                dictionary_arrays.append(node)
+            for child in node.values():
+                find_dictionary_arrays(child)
+
+    find_dictionary_arrays(converted)
+    if dictionary_arrays:
+        definitions = converted.setdefault("$defs", {})
+        for index, dictionary in enumerate(dictionary_arrays, 1):
+            name = "LabhqDictionaryEntry" if index == 1 else f"LabhqDictionaryEntry{index}"
+            while name in definition_names:
+                index += 1
+                name = f"LabhqDictionaryEntry{index}"
+            definition_names.add(name)
+            definitions[name] = dictionary["items"]
+            # Hoisting keeps deeply nested dictionaries within the Structured Outputs schema-depth limit; the
+            # referenced object is still the lossless key/value transport contract.
+            dictionary["items"] = {"$ref": f"#/$defs/{name}"}
+    return converted
+
+
+def strip_optional_nulls(value: Any, schema: dict[str, Any]) -> Any:
+    """Drop transport-only nulls for fields optional in ``schema``; preserve required nulls for validation."""
+    root = schema
+
+    def dictionary_value_schema(node: Any) -> dict[str, Any] | None:
+        node = dereference(node)
+        if not isinstance(node, dict) or node.get("properties"):
+            return None
+        additional = node.get("additionalProperties")
+        typ = node.get("type")
+        types = set(typ) if isinstance(typ, list) else {typ}
+        if isinstance(additional, dict):
+            return additional
+        if "object" in types and additional is not False:
+            return {}
+        return None
+
+    def dereference(node: Any) -> Any:
+        seen: set[str] = set()
+        while isinstance(node, dict) and isinstance(node.get("$ref"), str):
+            ref = node["$ref"]
+            if ref in seen or not ref.startswith("#/"):
+                break
+            seen.add(ref)
+            target: Any = root
+            for part in ref[2:].split("/"):
+                target = target[part.replace("~1", "/").replace("~0", "~")]
+            node = target
+        return node
+
+    def matches(candidate: Any, current: Any) -> bool:
+        candidate = dereference(candidate)
+        if not isinstance(candidate, dict):
+            return False
+        typ = candidate.get("type")
+        types = set(typ) if isinstance(typ, list) else {typ}
+        if current is None:
+            return "null" in types
+        if isinstance(current, dict):
+            return "object" in types or "properties" in candidate
+        if isinstance(current, list):
+            return "array" in types or dictionary_value_schema(candidate) is not None
+        if isinstance(current, bool):
+            return "boolean" in types
+        if isinstance(current, str):
+            return "string" in types
+        if isinstance(current, int):
+            return "integer" in types or "number" in types
+        if isinstance(current, float):
+            return "number" in types
+        return False
+
+    def shape(node: Any, current: Any) -> Any:
+        node = dereference(node)
+        if not isinstance(node, dict):
+            return node
+        choices = node.get("anyOf") or node.get("oneOf")
+        if isinstance(choices, list):
+            return next((shape(choice, current) for choice in choices if matches(choice, current)), node)
+        return node
+
+    def clean(current: Any, node: Any) -> Any:
+        node = shape(node, current)
+        dictionary_value = dictionary_value_schema(node)
+        if dictionary_value is not None:
+            if not isinstance(current, list):
+                return copy.deepcopy(current)
+            cleaned = {}
+            for index, entry in enumerate(current):
+                if not isinstance(entry, dict) or set(entry) != {"key", "value"} or not isinstance(entry["key"], str):
+                    raise ValueError(f"invalid dictionary entry at index {index}")
+                key = entry["key"]
+                if key in cleaned:
+                    raise ValueError(f"duplicate dictionary key {key!r}")
+                cleaned[key] = clean(entry["value"], dictionary_value)
+            return cleaned
+        if isinstance(current, dict) and isinstance(node, dict):
+            properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+            required = set(node.get("required", []))
+            cleaned = {}
+            for key, child in current.items():
+                if child is None and key in properties and key not in required:
+                    continue
+                cleaned[key] = clean(child, properties.get(key, {}))
+            return cleaned
+        if isinstance(current, list) and isinstance(node, dict):
+            return [clean(item, node.get("items", {})) for item in current]
+        return copy.deepcopy(current)
+
+    return clean(value, schema)
 
 
 def free_port() -> int:

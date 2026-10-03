@@ -23,7 +23,7 @@ CANARY = "CANARY-research-91c2"
 # current main after #239 (d1e3cab), json.dumps without sorting: what the engines receive, byte for byte
 # The prompt hash moved once on purpose since: the plan questions got their 500-character limit (off still adds
 # nothing).
-RESEARCH_PLAN_SCHEMA_SHA = "d1e3dd0295981c11cb1c7de101f1baec76067d11a9d5f09d41b49eeff733db70"
+RESEARCH_PLAN_SCHEMA_SHA = "157ec518575a00ea05dd1399d719d3a0ad9d481e6abd1696a3ee50057ae8265f"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
 RESEARCH_PROMPT_SHA = "3f92d9256bf368295eb3a6d92eb20210feaf25418842b25c46e8d5c61ae116c5"  # + ENV_STEP_RULE (2nd mock trial)
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
