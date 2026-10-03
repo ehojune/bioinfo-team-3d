@@ -23,10 +23,10 @@ CANARY = "CANARY-7f3a-secret"
 # moved on purpose since: #84 added the phone-card length rule to the plan questions; the 2nd mock trial added the
 # one-environment-step rule (ENV_STEP_RULE); #36 added the scope verdict (schema, was 62d09433…) and the lab scope
 # rule (prompt, was f0053d96…); #373 restricted installs to wheels and required planned fallbacks. PR #378 review
-# requires every permitted path to write the same declared filename, so the fixed prompt hash changes. Off still adds
-# nothing.
+# requires every permitted path to write the same declared filename. #373 bench A now declares analysis scripts and
+# result-determining references under outputs/, so the fixed prompt hash changes again. Off still adds nothing.
 PLAN_SCHEMA_SHA = "f8f30b831ff2aa79018ceed6185184a82c959d4885ca71a8a0fe678c10ee4eb9"
-PLAN_PROMPT_SHA = "11358300ce94fe2683b118cd81b900cbda6551d0cf79e11c4f2e7c92d87484dc"
+PLAN_PROMPT_SHA = "b9c9628b9565dc45ac1edbf579670a01763c3ea9b3d78e3fb0220b24d35a684f"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB")
 

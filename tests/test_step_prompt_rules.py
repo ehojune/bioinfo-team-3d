@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #58 1: the generic contract changed intentionally; research keeps the old bytes below.
+    # #373 bench A: analysis code and result-determining references must survive under outputs/, not .tmp.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "19d93b83d554dd8d5eefebbc61aac607719e04880be7670190e1a961fccd2943")
+        "631d9f13ea8b388558f853c2f8917c0cc2e3c4102bb412004f3d62474d85f92f")
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -28,9 +28,18 @@ def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
     assert "state any weaker method" in text
 
 
+def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
+    for prompt in (cso.STEP_PROMPT, cso.RESEARCH_STEP_PROMPT):
+        assert "outputs/scripts/" in prompt
+        assert "outputs/reference/" in prompt
+        assert ".tmp" in prompt and "disposable" in prompt
+        assert "seed" in prompt and "tool and data versions" in prompt
+
+
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
+    # #373 bench A applies the same reproducibility rule to the frozen research lane.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "47ca4f080f8371e09b8a3351085ddaf4886401169ec13292f0b03ede9a47f422")
+        "9cd64d4c5c82e9db5526182227d4c29bd4e5f8a44ba067d17d65039dee0ed6d8")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
@@ -53,6 +62,22 @@ def test_plan_questions_fit_the_phone_card_and_the_research_plan_keeps_its_own_r
                 question_rule=QUESTION_RULE, output_types_rule="", lab_scope="LAB")
     assert rule in cso.PLAN_PROMPT.format(**args)
     assert "phone card" not in cso.RESEARCH_PLAN_PROMPT.format(**args, intake="INTAKE", packs="PACKS")
+
+
+def test_plan_prompts_declare_analysis_scripts_as_outputs():
+    for prompt in (cso.PLAN_PROMPT, cso.REPLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT):
+        assert "analysis step" in prompt
+        assert "outputs/scripts/" in prompt
+        assert "outputs/reference/" in prompt
+
+
+def test_report_prompts_put_the_readable_body_before_the_execution_appendix():
+    for prompt in (cso.SYNTH_PROMPT, cso.RESEARCH_SYNTH_PROMPT):
+        structure = prompt.split("Use these sections in this order:", 1)[1]
+        headings = [structure.index(f'"{heading}"') for heading in ("결론과 권고", "결과", "방법 요약", "한계")]
+        assert headings == sorted(headings)
+        assert "부록: 실행 기록" in prompt
+        assert "[부록: 실행 기록](#부록-실행-기록)" in prompt
 
 
 def test_step_prompt_asks_for_escaped_line_breaks_inside_the_json_string():

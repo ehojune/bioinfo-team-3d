@@ -2212,6 +2212,26 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
     assert report.index("Budget: $1.25 > $1.00; approved.") < report.index("<!-- LABHQ_BENCH_RESULT -->")
 
 
+@pytest.mark.asyncio
+async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
+    async def dispatch(task):
+        return result(task, text="unused")
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"].update(plan={"steps": [{"id": "A"}]})
+    Orchestrator(hub)._finish(
+        "r", "## 결론과 권고\n결론 본문", {
+            "A": {"status": "done", "workdir_id": "w", "outputs": ["outputs/answer.md"],
+                  "tool_errors": ["lookup timed out"]},
+        }, ok=True)
+
+    report = hub.requests["r"]["report"]
+    appendix = report.index("## 부록: 실행 기록")
+    assert report.index("## 결론과 권고") < appendix
+    assert appendix < report.index("## 보고서 경고")
+    assert appendix < report.index("Step status and output paths")
+
+
 def test_cso_plan_prompt_states_the_outputs_rule():
     from labhq.orchestrator.cso import PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 
@@ -2392,6 +2412,17 @@ async def test_unresolved_review_still_gets_a_cso_report():
         in req["report"]
     assert req["error"] == "리뷰 지적이 수정 상한 뒤에도 남아 있습니다"
     assert req["review"]["verdict"] == "revise"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_review_original_is_in_the_execution_appendix():
+    hub = unresolved_hub(lambda task: result(task, text="## 결론과 권고\nCSO report body"))
+    await Orchestrator(hub).run_request("r")
+
+    report = hub.requests["r"]["report"]
+    appendix = report.index("## 부록: 실행 기록")
+    assert report.index("## 결론과 권고") < appendix
+    assert appendix < report.index("Review: revisions unresolved.")
 
 
 @pytest.mark.asyncio
