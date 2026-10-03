@@ -6,3 +6,6 @@ rows:
 - sha: 9c80c43
   at: 2026-10-03 16:47
   text: '마무리 turn 뒤 산출물은 그 turn 뒤 runner가 본 목록·hash로, 지우거나 hash 못 한 파일의 옛 hash를 남기지 않음(봇 P1)'
+- sha: aef9a6e
+  at: 2026-10-03 16:52
+  text: '기다릴 HPC job·질의가 남은 turn에는 마무리 turn을 붙이지 않음(봇 P1)'
