@@ -6,3 +6,6 @@ rows:
 - sha: 6fff2a8
   at: 2026-10-03 20:00
   text: 'CA 묶음을 매 spawn 전에 메모리 사본과 비교해 바뀌었으면 다시 씀(봇 P1), 읽기 전용 실행도 REQUESTS_CA_BUNDLE 유지(봇 P2)'
+- sha: a8b12aa
+  at: 2026-10-03 20:12
+  text: 'OS 신뢰 저장소를 매 spawn 때 다시 읽어 기관 루트 교체가 runner 재시작 없이 반영됨(봇 P2)'
