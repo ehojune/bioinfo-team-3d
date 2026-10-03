@@ -208,6 +208,10 @@ DECLARED_OUTPUTS_FALLBACK_RULE = (
     "outputs/data/expression_matrix.tsv.gz) and record the chosen path, scale, and source in the same step's record "
     "(for example outputs/data/fetch_log.md or the file header). Do not declare different filenames per path.")
 
+ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
+    "Every analysis step declares the scripts it runs under outputs/scripts/ (for example "
+    "outputs/scripts/analyze.py), as well as result-determining intermediate artifacts under outputs/reference/.")
+
 
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
@@ -227,6 +231,7 @@ Rules:
   outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
   or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -270,6 +275,7 @@ Contract rules:
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
@@ -309,7 +315,11 @@ paths, caveats and open questions. Do not quietly switch to a weaker method when
 and if you give it up, say what you tried and why you stopped. If you cannot proceed without a PI decision,
 return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
-with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work."""
+with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work.
+
+For reproducibility, save every analysis script under outputs/scripts/ and every result-determining reference or
+intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
+Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
 
@@ -405,6 +415,7 @@ Rules:
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
+- """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - """ + ENV_STEP_RULE + """ If the plan already has an environment step, new steps depend on it instead.
@@ -419,11 +430,13 @@ Team results so far:
 {results}"""
 
 SYNTH_PROMPT = """Write the final report for the PI.
-Structure: 1) answer / recommendation, 2) evidence by step (with file paths), 3) reviewer concerns and how
-they were addressed, 4) what would change the conclusion, 5) next steps (including any proposed contract hires).
-Start with the report's first heading: no preamble.
-Do not turn a failed lookup into evidence or proof of absence. LabHQ appends the warning section itself; do not
-copy it into your report. Warning preview ("(none)" means there is no warning section):
+Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"
+including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
+conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
+Do not turn a failed lookup into evidence or proof of absence. LabHQ appends warnings, review records and execution
+details under "부록: 실행 기록"; do not copy their details into the body. When the warning preview is not "(none)",
+summarize its importance in one line under "한계" and link to [부록: 실행 기록](#부록-실행-기록).
+Warning preview ("(none)" means there is no warning section):
 {warnings}
 
 Request: {request}
@@ -504,11 +517,13 @@ Claim anchors (labhq checks them by machine):
   exactly [[claim:<step_id>/<claim_id>]].
 - Anchor only the citable claims listed below, each with the anchor shown there. A claim that is not listed as
   citable is not established: do not state it as a conclusion.
-- Put the not-established items and failed lookups below in their own section titled "확립되지 않은 것", without
-  anchors. A failed or empty lookup is neither evidence nor proof of absence.
+- A failed or empty lookup is neither evidence nor proof of absence. LabHQ appends its details, CP2 records and the
+  claim check under "부록: 실행 기록". Summarize an important warning in one line under "한계" and link to
+  [부록: 실행 기록](#부록-실행-기록), without copying the raw warning into the body.
 - Report the reviewer's P1 and P2 issues as limitations.
-Structure: 1) answer, 2) evidence by claim (with anchors and file paths), 3) 확립되지 않은 것, 4) limitations,
-5) what would change the conclusion, and next steps. Start with the report's first heading: no preamble.
+Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim anchors and file paths, 3) "방법 요약"
+including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
+conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
 
 Request: {request}
 
@@ -750,17 +765,27 @@ def unavailable_plan_agents(steps: Any, known: set[str], excluded: frozenset[str
     return sorted(set(bad))
 
 
+EXECUTION_APPENDIX_TITLE = "## 부록: 실행 기록"
+
+
 def _append_report_metadata(report: str, sections: list[str]) -> str:
-    """Add LabHQ audit text without moving a sole trailing benchmark result block from last place (#229)."""
+    """Collect LabHQ audit text in one trailing appendix while keeping a benchmark result block last (#229)."""
     if not sections:
         return report
     metadata = "\n\n".join(section.strip() for section in sections if section.strip())
+    if not metadata:
+        return report
     marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
     blocks = list(marker.finditer(report))
+    benchmark = ""
     if len(blocks) == 1 and not report[blocks[0].end():].strip():
-        before = report[:blocks[0].start()].rstrip()
-        return ((before + "\n\n") if before else "") + metadata + "\n\n" + blocks[0].group(0)
-    return report.rstrip() + "\n\n" + metadata
+        benchmark = blocks[0].group(0)
+        report = report[:blocks[0].start()].rstrip()
+    if EXECUTION_APPENDIX_TITLE in report:
+        report = report.rstrip() + "\n\n" + metadata
+    else:
+        report = report.rstrip() + "\n\n" + EXECUTION_APPENDIX_TITLE + "\n\n" + metadata
+    return report + (("\n\n" + benchmark) if benchmark else "")
 
 
 def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict]) -> str:
@@ -3564,10 +3589,12 @@ class Orchestrator:
                 open_issues = "\n".join(
                     f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
                     for issue in review.get("issues") or [])
-                self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
-                                   f"\n\nSynthesis failed: {final.error}") +
-                             "\n\nReview: revisions unresolved. The reviewer's open issues, verbatim:\n" +
-                             (open_issues or "- (no issue text)"),
+                body = (final.text if final.ok else self.report_results(steps, results, n) +
+                        f"\n\nSynthesis failed: {final.error}")
+                report = _append_report_metadata(
+                    body, ["Review: revisions unresolved. The reviewer's open issues, verbatim:\n" +
+                           (open_issues or "- (no issue text)")])
+                self._finish(rid, report,
                              serialized_results(), ok=False, review=review,
                              error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
                 return
@@ -3575,8 +3602,10 @@ class Orchestrator:
             p2_appendix = ("\n\n## 리뷰 참고\n남은 P2 지적 원문:\n" + "\n".join(
                 f"- P2 · {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
                 for issue in p2_issues)) if p2_issues else ""
-            self._finish(rid, (final.text if final.ok else self.report_results(steps, results, n) +
-                         f"\n\nSynthesis failed: {final.error}") + p2_appendix, serialized_results(),
+            body = (final.text if final.ok else self.report_results(steps, results, n) +
+                    f"\n\nSynthesis failed: {final.error}")
+            report = _append_report_metadata(body, [p2_appendix]) if p2_appendix else body
+            self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())

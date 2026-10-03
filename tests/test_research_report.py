@@ -153,6 +153,18 @@ async def test_report_whose_anchors_do_not_check_out_is_incomplete(report, artif
 
 
 @pytest.mark.asyncio
+async def test_research_claim_check_and_execution_status_share_the_appendix():
+    hub = _hub(report="The effect is present.")
+    await Orchestrator(hub).run_request("r")
+
+    report = hub.requests["r"]["report"]
+    appendix = report.index("## 부록: 실행 기록")
+    assert report.index("The effect is present.") < appendix
+    assert appendix < report.index("Claim check:")
+    assert appendix < report.index("Step status and output paths")
+
+
+@pytest.mark.asyncio
 async def test_a_claim_resting_only_on_refused_evidence_is_not_offered_for_citation():
     hub = _hub(artifact_path="outputs/missing.tsv")
     await Orchestrator(hub).run_request("r")
