@@ -804,6 +804,9 @@ def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_
     policy = Settings().policy
     policy.data_zones = [DataZone(path=str(tmp_path / "vault"))]
     ws = str(workdir)
+    # The decoys exist: a word naming nothing in the workdir is read as spelled and costs no resolution (13th trial).
+    for i in range(MAX_RESOLVED_CANDIDATES + 1):
+        (workdir / f"d{i}.txt").write_text("", encoding="utf-8")
     decoys = " ".join(f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1))
     for tool, tool_input in [("Bash", {"command": f"cat {decoys} ref/link/raw.tsv"}),
                              ("PowerShell", {"command": f"Get-Content {decoys} ref/link/raw.tsv"}),
@@ -820,6 +823,10 @@ def test_too_many_path_candidates_ask_instead_of_passing_a_link_into_a_zone(tmp_
         assert evaluate_tool(tool, tool_input, policy, allowed_roots=[ws], workdir=ws).action == "allow", tool
     many_paths = {"paths": [f"d{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1)]}
     assert evaluate_tool("Task", many_paths, policy, allowed_roots=[ws], workdir=ws).action == "ask"
+    # Decoys that name nothing in the workdir cost no resolution, so the link behind them is still followed.
+    absent = " ".join(f"none{i}.txt" for i in range(MAX_RESOLVED_CANDIDATES + 1))
+    decision = evaluate_tool("Bash", {"command": f"cat {absent} ref/link/raw.tsv"}, policy, allowed_roots=[ws], workdir=ws)
+    assert decision.action == "ask" and "not all resolved" not in decision.reason, decision
     # Without restricted zones nothing can be reached through a link, so the cap never asks.
     assert evaluate_tool("Bash", {"command": f"cat {decoys}"}, Settings().policy,
                          allowed_roots=[ws], workdir=ws).action == "allow"

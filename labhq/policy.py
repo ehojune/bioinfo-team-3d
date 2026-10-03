@@ -11,6 +11,7 @@ import os
 import ntpath
 import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
@@ -776,6 +777,40 @@ def _real(p: str) -> str | None:
         return None
 
 
+def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None]) -> bool:
+    """Whether relative `token` surely names nothing in `folder`: no spelling of its first component is there.
+
+    The first component is read every way a host may split it: at `/` (bash, POSIX) and at `/` or `\\` (Windows),
+    each also before an NTFS stream (`name:stream`). The shell may still rewrite a bare word (glob, brace, escape)
+    but not quoted text, which is what a word with whitespace is; expansions work in both, and an 8.3 short name
+    (`~`) is the filesystem's own spelling. `.` and `..` name the folder or its parent. (PR #371 review)"""
+    if any(part in (".", "..") for part in re.split(r"[/\\]", token)):
+        return False  # Windows drops `missing/..` before it looks anything up (PR #371 review)
+    slash = token.split("/", 1)[0]
+    either = re.split(r"[/\\]", token, maxsplit=1)[0]
+    if not slash or not either:
+        return False
+    shell = "$%`!" if any(char.isspace() for char in slash) else "*?[]{}^\\$%`!"
+    if any(char in slash for char in shell) or "~" in slash:
+        return False
+    keys = {_entry_key(spelling) for part in (slash, either) for spelling in (part, part.split(":", 1)[0])}
+    if "" in keys:
+        return False
+    if folder not in listings:
+        try:
+            listings[folder] = {_entry_key(name) for name in os.listdir(folder)}
+        except (OSError, ValueError):
+            listings[folder] = None
+    names = listings[folder]
+    return names is not None and not keys & names
+
+
+def _entry_key(name: str) -> str:
+    """A name as the loosest volume compares it, whatever this one does: case- and normalization-insensitive (APFS,
+    NTFS), with trailing dots and spaces dropped (Windows). Folding too much only means resolving more (PR #371)."""
+    return unicodedata.normalize("NFD", name.rstrip(". ")).casefold()
+
+
 def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
     """`touches` on this host's real filesystem: symlinks and junctions inside a candidate are followed.
 
@@ -789,12 +824,22 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
         return None
     strings = sorted(_strings(obj), key=lambda item: not item[1])  # path fields first, e.g. Write before content
     seen: set[str] = set()
+    listings: dict[str, set[str] | None] = {}
     for s, path_field in strings:
         for token in (s,) if path_field else _scan_path_text(s).candidates:
             if not token or _drive_relative(token):
                 continue
             if not _absolute(token):
                 if not workdir:
+                    continue
+                if not path_field and _absent_below(token, workdir, listings):
+                    # Nothing by that name is in the workdir, so no link there can carry it into a zone: it is read
+                    # as spelled and costs no resolution, so an inline script's hundreds of words do not hit the
+                    # cap (13th mock trial).
+                    spelled = _norm(os.path.join(_real(workdir) or workdir, token))
+                    for original, zone in zones:
+                        if _inside(spelled, zone):
+                            return original
                     continue
                 token = os.path.join(workdir, token)
             if token in seen:
@@ -1152,6 +1197,12 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     return None
 
 
+def _holds_private(base: str, private_paths: Iterable[str]) -> bool:
+    """Whether a private path is `base` or below it, as spelled or through a link in `base`."""
+    roots = {root for root in (_norm(base), _real(base)) if root}
+    return any(_inside(_norm(p), root) for p in private_paths if p for root in roots)
+
+
 def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None, home: str | None,
                         environ: Mapping[str, str] | None) -> bool:
     """`cd <home> && cat .ssh/x` (PR #324 live probe): relative paths read from each `cd` target, lexically and
@@ -1167,10 +1218,15 @@ def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None,
     words = [*_scan_path_text(cmd).candidates, *re.split(r"[\s'\"`|;&<>(),=]+", cmd)]
     tokens = [t for t in dict.fromkeys(words)
               if t and not _absolute(t) and not _drive_relative(t) and not t.startswith(("~", "$", "%"))]
-    if len(tokens) > MAX_RESOLVED_CANDIDATES:
+    # Words are read lexically from a cd target, so without `..` they name only what is below it. A target with no
+    # private path below it (the task's own workdir) needs no word check: `cd <workdir> && python -c "…"` splits into
+    # hundreds of script words and went to the PI (13th mock trial). Links are still followed below for every target.
+    escapes = any(part == ".." for t in tokens for part in re.split(r"[/\\]", t))
+    lexical = [b for b in bases if escapes or not os.path.isabs(b) or _holds_private(b, private_paths)]
+    if lexical and len(tokens) > MAX_RESOLVED_CANDIDATES:
         return True
     for base in bases:
-        spelled = [base, *(path_field_text(t, base) for t in tokens)]
+        spelled = [base, *(path_field_text(t, base) for t in tokens)] if base in lexical else [base]
         if mentioned_private_path("\n".join(spelled), private_paths, home, environ):
             return True
         if os.path.isabs(base) and touches_resolved({"command": cmd}, private_paths, workdir=base):
