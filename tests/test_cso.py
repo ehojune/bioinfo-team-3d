@@ -1103,7 +1103,7 @@ def test_saved_results_pop_is_durable(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_failed_revision_keeps_first_result_and_workspace_when_failure_replan_is_disabled():
+async def test_failed_revision_keeps_first_result_and_workspace():
     steps = [{"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
     seen = []
 
@@ -1130,10 +1130,9 @@ async def test_failed_revision_keeps_first_result_and_workspace_when_failure_rep
 
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: agent_id == "worker"
-    hub.s.orchestrator.max_failure_replans = 0
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
-    assert req["status"] == "failed"
+    assert req["status"] == "done"
     assert req["results"]["A"]["text"] == "good evidence"
     assert "revision broke" in req["results"]["A"]["revision_failed"]
     assert "revision failed" in req["report"]
@@ -1651,7 +1650,9 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
 
 
 @pytest.mark.asyncio
-async def test_failed_in_place_revision_uses_one_failure_replan():
+async def test_failed_in_place_revision_keeps_its_result_and_does_not_failure_replan():
+    """PR #378 review: a failed in-place revision keeps the step's last good result (revision_failed), so it is
+    not a step failure and spends no failure re-plan; the request goes on to the next review."""
     original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
 
     def on_step(task):
@@ -1668,10 +1669,7 @@ async def test_failed_in_place_revision_uses_one_failure_replan():
                 if revise else []}
 
     def on_replan(task):
-        assert task.meta["trigger"] == "step_failure"
-        assert "revision broke" in task.prompt
-        return replan_plan([{"id": "analysis_fallback", "agent_id": "worker",
-                             "instruction": "analyze with the fallback", "depends_on": []}])
+        raise AssertionError("a failed in-place revision must not trigger a failure re-plan")
 
     hub = replan_hub(original, on_step, on_replan, max_replans=0, max_failure_replans=1,
                      on_review=on_review)
@@ -1679,9 +1677,9 @@ async def test_failed_in_place_revision_uses_one_failure_replan():
 
     req = hub.requests["r"]
     assert req["status"] == "done", req.get("report")
-    assert step_ids(hub) == ["analysis", "analysis", "analysis_fallback"]
-    assert [(entry["trigger"], entry["status"]) for entry in req["replan_history"]] == [
-        ("step_failure", "applied")]
+    assert step_ids(hub) == ["analysis", "analysis"]
+    assert "revision broke" in req["results"]["analysis"]["revision_failed"]
+    assert not req.get("replan_history")
 
 
 @pytest.mark.asyncio

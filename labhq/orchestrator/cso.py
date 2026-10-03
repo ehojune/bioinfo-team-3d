@@ -3168,8 +3168,7 @@ class Orchestrator:
                     return status if status in {"applied", "declined"} else "failed"
 
                 by_id = {s["id"]: s for s in steps}
-                completed = [sid for sid in by_id if sid in results and results[sid].ok
-                             and not results[sid].revision_failed]
+                completed = [sid for sid in by_id if sid in results and results[sid].ok]
                 if review is None:
                     def block_reason(outcome: TaskResult) -> str | None:
                         error = outcome.error or ""
@@ -3354,14 +3353,15 @@ class Orchestrator:
 
             async def recover_failures() -> None:
                 """Opt-in (#271): re-plan around failed steps until the DAG succeeds or the cap stops it."""
-                while rid not in self.budget_denials and any(not r.ok or r.revision_failed
-                                                              for r in results.values()):
+                while rid not in self.budget_denials and any(not r.ok for r in results.values()):
                     if await attempt_replan() != "applied":
                         return
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
 
             def has_failures() -> bool:
-                return any(not result.ok or result.revision_failed for result in results.values())
+                # A failed in-place revision keeps the step's last good result (revision_failed) and is not a
+                # failure; only a step without a good result re-plans or ends the request (PR #378 review).
+                return any(not result.ok for result in results.values())
 
             if remaining:
                 await self.run_dag(rid, text, steps, results, only=remaining,
