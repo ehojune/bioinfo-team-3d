@@ -181,7 +181,10 @@ def _format_local_software(summary: object) -> str:
     packages = ", ".join(f"{name}={_availability(python.get('packages'), name)}"
                          for name in LOCAL_PACKAGE_NAMES)
     tools = ", ".join(f"{name}={_availability(summary.get('tools'), name)}" for name in LOCAL_TOOL_NAMES)
-    return f"R={r_label}; Python={_capability_version(python.get('version'))}; packages[{packages}]; tools[{tools}]"
+    command = python.get("command")
+    run_as = f" run as `{command}`" if command in ("python3", "python", "py") else ""
+    return (f"R={r_label}; Python={_capability_version(python.get('version'))}{run_as}; packages[{packages}]; "
+            f"tools[{tools}]")
 
 
 def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None) -> str:

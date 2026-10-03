@@ -1,0 +1,5 @@
+pr: 381
+rows:
+- sha: 3c992bd
+  at: 2026-10-04 06:14
+  text: runner 요약이 PATH의 python3·python·py를 모두 검사해 분석 패키지가 가장 많은 interpreter와 그 명령을 CSO에 알린다.
