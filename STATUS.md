@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · 연구 최종 보고서 — 앞 군말 제거
+
+- 결론: 10차 모의 시운전이 연구 lane을 처음 끝까지 통과했다(research_reported, 앵커 58·문제 0, verify exit 0). 보고서가 "최종 보고서를 작성 중입니다… ---"로 시작하는 작은 결함이 있어 고쳤다.
+- 바뀐 것: `labhq/orchestrator/cso.py` `report_body()` — 첫 markdown 제목 앞의 짧은 글(앵커 없음, 400자 이하)을 빼고 그 뒤를 검사·저장한다. RESEARCH_SYNTH_PROMPT에 "서문 없이 첫 제목부터".
+- 실행한 것: 전체 test 3552 passed. 새 test는 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_research_report.py::test_a_lead_in_before_the_first_heading_is_not_part_of_the_report`.
+
 ## 2026-10-03 · 결과 계약 — 결합 문제를 첫 교정에
 
 - 결론: 9차 모의 시운전이 `research_failed`로 끝났다. biologist 단계(s05)가 근거 행 id를 슬롯 이름으로 붙이고 `slots` 필드를 빠뜨렸는데, 결합 검사가 필드 검증 통과 뒤에만 돌아 슬롯 누락이 교정 2회가 끝난 뒤에야 드러났다. 하류 6단계가 skip됐다.

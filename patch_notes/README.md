@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:57 | [`bb90116`](https://github.com/ehojune/bioinfo-team-3d/pull/361/commits/bb90116) | 보고서 첫 제목 앞에 코드 펜스가 있으면 그 제목이 코드 안일 수 있어 군말로 빼지 않음(봇 P2) |
+| 21:53 | [`455e671`](https://github.com/ehojune/bioinfo-team-3d/pull/361/commits/455e671) | 연구 최종 보고서 첫 제목 앞의 짧은 군말("작성 중입니다…")은 보고서에서 빼고, 프롬프트에 서문 없이 쓰라고 적음(10차 시운전) |
 | 20:24 | [`b9e23d2`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/b9e23d2) | README: Windows 러너가 직원 Python에 OS 신뢰 저장소 CA 묶음을 주는 방식과 끄는 법 |
 | 20:12 | [`a8b12aa`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/a8b12aa) | OS 신뢰 저장소를 매 spawn 때 다시 읽어 기관 루트 교체가 runner 재시작 없이 반영됨(봇 P2) |
 | 20:04 | [`d44f51a`](https://github.com/ehojune/bioinfo-team-3d/pull/360/commits/d44f51a) | 원본 JSON 결합 검사는 claims·evidence가 list일 때만 해 scalar ledger에서 예외 대신 교정을 받음(봇 P1) |
