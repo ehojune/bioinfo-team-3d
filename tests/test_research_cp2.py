@@ -687,3 +687,51 @@ async def test_a_correction_that_changes_an_output_file_fails_the_step():
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
     assert "the result correction changed output files" in result["error"]
     assert hub.requests["r"]["outcome"] == "research_failed"
+
+
+def test_a_duplicate_link_refuses_only_the_extra_link_not_the_evidence():
+    """`evidence e1 is linked to claim c1 more than once` must not match the generic evidence pattern first and
+    drop the valid row with all its links (PR #353 review)."""
+    plan, result = _standalone_result()
+    result["links"].append(dict(result["links"][0]))
+
+    salvaged, refused, unsupported, problems = salvage_research_result(result, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [item.id for item in salvaged.evidence] == ["e1"] and len(salvaged.links) == 1
+    assert [row["row_type"] for row in refused] == ["link"]
+
+
+@pytest.mark.asyncio
+async def test_a_correction_that_still_asks_the_pi_is_not_salvaged():
+    """A last correction that asks a blocking question is never salvaged into CP2 (PR #353 review)."""
+    settings = _settings()
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = _cp2_result(hub, task)
+        result["evidence"].append(_extra_observation("bad"))
+        result["evidence"][-1]["source"]["accessed_at"] = "not-a-date"
+        if task.meta["kind"] == "result_correction":
+            result["blocking_decision"] = "Which cohort should I use?"
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path] if task.meta["kind"] == "step" else [], workdir="runs/s1",
+                          session_id="session-1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**CP1, "approval_id": "a1", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert "cannot ask a new blocking_decision" in hub.requests["r"]["results"]["s1"]["error"]
+    assert len(hub.approvals) == 1  # CP1 only: nothing reached CP2

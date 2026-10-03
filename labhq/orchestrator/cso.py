@@ -1967,8 +1967,11 @@ class Orchestrator:
                             "workdir": current.workdir or original.workdir,
                         })
                     if correction == limit:
-                        salvaged, refused_rows, unsupported_claims, salvage_problems = salvage_research_result(
-                            structured, plan=research_plan, expected_step_id=step["id"])
+                        # A result that still asks the PI a blocking question is never salvaged into CP2: the
+                        # employee said it cannot go on without that decision (PR #353 review).
+                        salvaged, refused_rows, unsupported_claims, salvage_problems = (
+                            (None, [], [], []) if asked else
+                            salvage_research_result(structured, plan=research_plan, expected_step_id=step["id"]))
                         if salvaged is not None and refused_rows:
                             save_salvage(refused_rows, unsupported_claims)
                             return original.model_copy(update={

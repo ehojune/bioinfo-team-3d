@@ -588,6 +588,13 @@ def _root_salvage_targets(problem: str, value: dict[str, Any]) -> list[tuple[str
     claims = value.get("claims") or []
     links = value.get("links") or []
 
+    # Before the generic evidence pattern below, which would refuse the whole row (PR #353 review).
+    duplicate = re.match(r"evidence (\S+) is linked to claim (\S+) more than once", problem)
+    if duplicate:
+        evidence_id, claim_id = duplicate.groups()
+        matches = [index for index, row in enumerate(links) if isinstance(row, dict)
+                   and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
+        return [("link", index) for index in matches[1:]]
     same_source = re.match(r"evidence (\S+) and (\S+) cite the same source", problem)
     if same_source:
         row_id = same_source.group(2)
@@ -613,12 +620,6 @@ def _root_salvage_targets(problem: str, value: dict[str, Any]) -> list[tuple[str
         claim_id, evidence_id = link_problem.groups()
         return [("link", index) for index, row in enumerate(links) if isinstance(row, dict)
                 and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
-    duplicate = re.match(r"evidence (\S+) is linked to claim (\S+) more than once", problem)
-    if duplicate:
-        evidence_id, claim_id = duplicate.groups()
-        matches = [index for index, row in enumerate(links) if isinstance(row, dict)
-                   and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
-        return [("link", index) for index in matches[1:]]
     return None
 
 
