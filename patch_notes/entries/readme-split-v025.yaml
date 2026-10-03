@@ -36,3 +36,6 @@ rows:
 - sha: 06df67a
   at: 2026-10-03 10:37
   text: CLAUDE.md에 문서 나눔과 README·매뉴얼 갱신 주기를 넣고 HANDOFF 결정 표에 범위 변경 기록
+- sha: 351a0ad
+  at: 2026-10-03 10:42
+  text: 'HANDOFF 큐 #57을 6–8로 되돌리고 병합된 #346 행을 뺌, 매뉴얼에 lab.scope'
