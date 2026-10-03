@@ -117,6 +117,21 @@ def _http_base(s: Settings) -> str:
     return s.gateway.url.replace("wss://", "https://").replace("ws://", "http://").rstrip("/")
 
 
+def _open_web_office(s: Settings, config: str | None, *, three_d: bool = False, opener=None) -> str:
+    """Open the web office with the client token in its address; the page stores it and drops it from the URL.
+
+    The PI could not get past the token prompt on a plain `gateway` start (PI visit 2026-10-04). The token goes
+    only to the browser, never to the terminal or a log."""
+    import webbrowser
+    from urllib.parse import quote
+
+    page = f"{_http_base(s)}/{'3d' if three_d else ''}"
+    if (opener or webbrowser.open)(f"{page}?token={quote(s.gateway.client_token, safe='')}"):
+        return f"웹 사무실을 열었습니다: {page} (토큰은 이 브라우저에 저장됩니다)"
+    return (f"브라우저를 열지 못했습니다. {page} 를 열고 '게이트웨이 토큰' 칸에 {config or '설정 파일'}의 "
+            "gateway.client_token 값을 넣으세요.")
+
+
 def _api(s: Settings, method: str, path: str, **kw):
     import httpx
 
@@ -494,6 +509,8 @@ def main(argv: list[str] | None = None) -> None:
     init.add_argument("--dry-run", action="store_true", help="preview without writing files")
     init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
     sub.add_parser("gateway")
+    op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
+    op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
     sub.add_parser("agents")
     sub.add_parser("status", help="show runners, running requests and pending approvals")
@@ -667,8 +684,12 @@ def main(argv: list[str] | None = None) -> None:
             app = create_app(s)
         except ValueError as exc:  # e.g. a retired research pack version (#170)
             p.exit(1, f"gateway: {exc}\n")
+        # The web office asks for the client token; say how to get in without printing it (PI visit 2026-10-04).
+        print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `labhq open`을 실행하면 토큰을 넣은 채 열립니다)", flush=True)
         uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
                     log_config=gateway_log_config())
+    elif args.cmd == "open":
+        print(_open_web_office(s, args.config or os.environ.get("LABHQ_CONFIG"), three_d=args.three_d))
     elif args.cmd == "runner":
         from .runner.daemon import Runner
 
