@@ -226,6 +226,10 @@ ROLE_FOOTER = """
   of the PR, and not again while a review is still running.
 """
 
+GENERAL_RESULT_RULES = (
+    "- Save a factual claim to a file before stating it, and cite that path under ## Evidence.\n"
+)
+
 
 # The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
 # built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
@@ -264,7 +268,8 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
 
 def role_footer(ctx: "RunContext") -> str:
     """ROLE_FOOTER, the write rules unless the task is read-only, and this task's personal-path section."""
-    return (ROLE_FOOTER + ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+    return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
+            ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
 
 

@@ -862,7 +862,12 @@ class Runner:
             self.workspaces[task.id] = ws
             self.task_req[task.id] = task.request_id
 
+        tool_errors: list[str] = []
+
         async def emit(typ: str, data: dict) -> None:
+            if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
+                first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
+                tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
 
         await emit("agent.status", {"state": "queued"})
@@ -1188,6 +1193,8 @@ class Runner:
                       usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
+        if tool_errors:
+            result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
