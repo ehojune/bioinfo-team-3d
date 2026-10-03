@@ -2115,7 +2115,9 @@ def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
     extended = with_downstream_revisions(steps, feedback)
 
     assert set(extended) == {"s5", "s6", "s7", "s8", "s9", "s10"}
-    assert extended["s5"] == feedback["s5"] and extended["s9"] == feedback["s9"]
+    assert extended["s5"] == feedback["s5"]
+    # 12th mock trial: a flagged step below a revised one must hear about it too, after its own notes.
+    assert extended["s9"].startswith(feedback["s9"]) and "Upstream step(s) s5 were revised" in extended["s9"]
     assert "Upstream step(s) s5 were revised" in extended["s6"] and "s5" in extended["s8"]
     assert "Upstream step(s) s9 were revised" in extended["s10"]
     assert with_downstream_revisions(steps, {"s10": "- fix wording\n"}) == {"s10": "- fix wording\n"}
@@ -2365,3 +2367,45 @@ def test_structured_result_is_not_overridden_by_a_sample_question_in_its_text():
                      text='log: example {"blocking_decision": "sample?"}')
     assert blocking_question(res) is None
     assert ENV_STEP_RULE in REPLAN_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_resumed_revision_gets_the_revised_upstream_results_and_must_return_a_full_result(tmp_path):
+    """12th mock trial: the resumed report step saw only its own notes, kept the s8 numbers s8 had withdrawn, and
+    the biologist answered with a diff ("the rest is unchanged") that then replaced its whole result."""
+    from labhq.orchestrator.cso import REVISION_RESULT_RULE, with_downstream_revisions
+
+    async def dispatch(task):
+        return result(task, text=f"{task.meta['step_id']} v2 result")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+
+    async def wait_session_free(agent_id, session_id, held_workdir, **kwargs):
+        return session_id, held_workdir
+
+    hub.wait_session_free = wait_session_free
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "Cluster", "depends_on": []},
+             {"id": "B", "agent_id": "worker", "instruction": "Report", "depends_on": ["A"]}]
+    outcomes = {sid: TaskResult(task_id=f"prior-{sid}", agent_id="worker", ok=True, text=f"{sid} v1 result",
+                                session_id=f"{sid}-session", workdir=str(tmp_path / sid)) for sid in "AB"}
+    feedback = with_downstream_revisions(steps, {"A": "- use the patient LMM\n", "B": "- soften the summary\n"})
+    await Orchestrator(hub).run_dag("r", "Original request", steps, outcomes, only={"A", "B"}, feedback=feedback)
+
+    a, b = sorted(hub.calls, key=lambda task: task.meta["step_id"])
+    assert b.resume_session_id == "B-session"
+    assert "- soften the summary" in b.prompt and "Upstream step(s) A were revised" in b.prompt
+    assert "Upstream results after this revision round" in b.prompt and "A v2 result" in b.prompt
+    assert "A v1 result" not in b.prompt
+    assert REVISION_RESULT_RULE in a.prompt and REVISION_RESULT_RULE in b.prompt
+    assert "Upstream results after this revision round" not in a.prompt  # nothing above A was revised
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accept", [True, False])
+async def test_general_report_starts_at_its_first_heading(accept):
+    """12th mock trial: the general synthesis opened with "리뷰어의 마지막 지적 7건을 … 확인했습니다. 이제 … 씁니다. ---"."""
+    hub = unresolved_hub(lambda task: result(task, text="Checked the reviewer's notes. Writing the report now.\n\n"
+                                                        "---\n# Report\nbody"), accept=accept)
+    await Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["report"].startswith("# Report\nbody")
