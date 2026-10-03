@@ -232,6 +232,10 @@ async def _until(predicate, timeout: float, message: str) -> None:
 
 
 def _scripted_answer(case: dict[str, Any], summary: str, kind: str | None = None) -> tuple[bool, str] | None:
+    if kind == "scope":
+        # Bench cases are in scope by construction; a CSO that calls one out of scope is scored on its work, not
+        # failed by an unscripted card (#346 review). The card itself stays in the run record.
+        return True, "bench 규칙: 범위 확인은 진행"
     if kind != "clarify":
         return None
     lowered = summary.lower()

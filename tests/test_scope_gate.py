@@ -202,3 +202,42 @@ async def test_restart_uses_a_saved_decision_without_asking(decision, steps):
     await Orchestrator(hub).run_request("r", resume=True)
     assert hub.approvals == [] and step_ids(hub) == steps
     assert kinds(hub, "plan") == []
+
+
+@pytest.mark.asyncio
+async def test_a_later_plan_without_a_verdict_keeps_the_first_out_verdict():
+    """An engine that does not enforce the schema may drop `scope` from the plan after a clarification; the first
+    out verdict still stops the steps (#346 review)."""
+    hub = Hub(decision={"approved": False, "note": ""})
+    plans = 0
+    original_dispatch = hub.dispatch
+
+    async def dispatch(task):
+        nonlocal plans
+        if task.meta["kind"] != "plan":
+            return await original_dispatch(task)
+        plans += 1
+        hub.calls.append(task)
+        plan = {"clarifying_questions": [], "steps": STEPS, "recruit": [], "notes": "plan"}
+        if plans == 1:
+            plan["clarifying_questions"] = ["Which equation form?"]
+            plan["scope"] = {"verdict": "out", "reason": REASON}
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        if kwargs["kind"] == "clarify":
+            return {"approved": True, "note": "incompressible"}
+        return {"approved": False, "note": ""}
+
+    hub.dispatch, hub.request_approval = dispatch, approval
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert plans == 2 and [card["kind"] for card in hub.approvals] == ["clarify", "scope"]
+    assert kinds(hub, "step") == [] and req["outcome"] == "out_of_scope_declined"
+
+
+def test_bench_proceeds_on_a_scope_card():
+    from labhq.bench import _scripted_answer
+
+    assert _scripted_answer({"scripted_pi_answers": []}, "범위 밖", "scope") == (True, "bench 규칙: 범위 확인은 진행")

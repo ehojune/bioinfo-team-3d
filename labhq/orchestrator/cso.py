@@ -2543,6 +2543,10 @@ class Orchestrator:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
                 plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                if scope_verdict(plan) and "scope_first" not in req:
+                    # Kept for a later plan (clarification, correction, A/B) that comes back without a verdict from an
+                    # engine that does not enforce the schema: an out request must not run unasked (#346 review).
+                    req["scope_first"] = scope_verdict(plan)
                 # semantics-shadow: begin (#149 decision 15 advisory A/B)
                 if research_lane:
                     service = getattr(self.hub, "semantics_" + "shadow", None)
@@ -2710,7 +2714,8 @@ class Orchestrator:
                     req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
-                    scope = scope_verdict(plan)  # the verdict of the plan that runs, recorded in every mode (#36)
+                    # The verdict of the plan that runs, else the first one given (#36, #346 review)
+                    scope = scope_verdict(plan) or req.get("scope_first")
                     if scope:
                         req["scope_check"] = scope
                 await self._emit(rid, "request.plan", req["plan"])
