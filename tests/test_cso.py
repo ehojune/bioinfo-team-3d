@@ -1103,7 +1103,7 @@ def test_saved_results_pop_is_durable(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_failed_revision_keeps_first_result_and_workspace():
+async def test_failed_revision_keeps_first_result_and_workspace_when_failure_replan_is_disabled():
     steps = [{"id": "A", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
     seen = []
 
@@ -1130,9 +1130,10 @@ async def test_failed_revision_keeps_first_result_and_workspace():
 
     hub = FakeHub(dispatch)
     hub.supports_resume = lambda agent_id: agent_id == "worker"
+    hub.s.orchestrator.max_failure_replans = 0
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
-    assert req["status"] == "done"
+    assert req["status"] == "failed"
     assert req["results"]["A"]["text"] == "good evidence"
     assert "revision broke" in req["results"]["A"]["revision_failed"]
     assert "revision failed" in req["report"]
@@ -1594,15 +1595,15 @@ async def test_failure_replan_can_be_disabled_and_failure_report_is_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_missing_declared_output_replans_once_by_default_and_uses_method_change():
+async def test_fallback_path_using_the_same_declared_filename_is_not_incomplete():
     original = [{"id": "fetch", "agent_id": "worker", "instruction": "fetch raw counts; use RPKM if unavailable",
-                 "outputs": ["outputs/raw_counts.tsv"], "depends_on": []},
+                 "outputs": ["outputs/expression_matrix.tsv.gz"], "depends_on": []},
                 {"id": "analyze", "agent_id": "worker", "instruction": "analyze counts",
                  "depends_on": ["fetch"]}]
     fallback_text = """## Findings
 RPKM data were downloaded.
 ## Evidence
-- `outputs/rpkm.tsv`
+- `outputs/expression_matrix.tsv.gz`
 ## Not established
 Raw counts were unavailable.
 ## Method changes
@@ -1611,25 +1612,21 @@ Used RPKM instead of raw counts.
 
     def on_step(task):
         if task.meta["step_id"] == "fetch":
-            return result(task, text=fallback_text, outputs=["outputs/rpkm.tsv"])
-        assert task.meta["step_id"] == "analyze_rpkm"
+            return result(task, text=fallback_text, outputs=["outputs/expression_matrix.tsv.gz"])
+        assert task.meta["step_id"] == "analyze"
         return result(task, text="analysis complete", outputs=["outputs/analysis.md"])
 
     def on_replan(task):
-        assert task.meta["trigger"] == "step_failure"
-        assert "## Findings\nRPKM data were downloaded." in task.prompt
-        assert "## Not established\nRaw counts were unavailable." in task.prompt
-        assert "## Method changes\nUsed RPKM instead of raw counts." in task.prompt
-        return replan_plan([{"id": "analyze_rpkm", "agent_id": "worker", "instruction": "analyze RPKM",
-                             "outputs": ["outputs/analysis.md"], "depends_on": []}])
+        pytest.fail("the fallback used the declared filename, so no failure re-plan is needed")
 
     hub = replan_hub(original, on_step, on_replan, max_replans=0, max_failure_replans=1)
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
     assert req["status"] == "done", req.get("report")
-    assert step_ids(hub) == ["fetch", "analyze_rpkm"]
-    assert req["replan_history"][0]["trigger"] == "step_failure"
+    assert step_ids(hub) == ["fetch", "analyze"]
+    assert req["results"]["fetch"]["status"] == "done"
+    assert "replan_history" not in req
 
 
 @pytest.mark.asyncio
@@ -1651,6 +1648,40 @@ async def test_review_replan_uses_max_replans_not_failure_cap():
     assert hub.requests["r"]["status"] == "done"
     assert not kinds(hub, "replan")
     assert step_ids(hub) == ["analysis", "analysis"]
+
+
+@pytest.mark.asyncio
+async def test_failed_in_place_revision_uses_one_failure_replan():
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+
+    def on_step(task):
+        sid = task.meta["step_id"]
+        if sid == "analysis" and task.meta["revision"]:
+            return result(task, ok=False, error="revision broke")
+        return result(task, text=f"{sid} done")
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+                "issues": [{"step_id": "analysis", "problem": "method", "request": "revise in place"}]
+                if revise else []}
+
+    def on_replan(task):
+        assert task.meta["trigger"] == "step_failure"
+        assert "revision broke" in task.prompt
+        return replan_plan([{"id": "analysis_fallback", "agent_id": "worker",
+                             "instruction": "analyze with the fallback", "depends_on": []}])
+
+    hub = replan_hub(original, on_step, on_replan, max_replans=0, max_failure_replans=1,
+                     on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["analysis", "analysis", "analysis_fallback"]
+    assert [(entry["trigger"], entry["status"]) for entry in req["replan_history"]] == [
+        ("step_failure", "applied")]
 
 
 @pytest.mark.asyncio
@@ -2179,7 +2210,7 @@ def test_cso_plan_prompt_states_the_outputs_rule():
 
     assert "outputs/<name>" in PLAN_PROMPT and "outputs/answer.md" in PLAN_PROMPT
     assert "workspace root" in PLAN_PROMPT and "absolute" in PLAN_PROMPT
-    rule = "must create on every permitted execution path"
+    rule = "same filename"
     assert all(rule in prompt for prompt in (PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT))
 
 

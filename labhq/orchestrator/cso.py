@@ -198,9 +198,10 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
     return "\n".join(lines)
 
 DECLARED_OUTPUTS_FALLBACK_RULE = (
-    "Only declare files that the step must create on every permitted execution path. Mention files made only by a "
-    "fallback path in the instruction, not outputs. If paths change the content, scale, or source, declare one "
-    "route-independent filename and record the chosen path, scale, and source inside it.")
+    "Every permitted execution path writes the step's declared output to the same filename. If paths change the "
+    "content, scale, or source, declare one route-independent filename (for example "
+    "outputs/data/expression_matrix.tsv.gz) and record the chosen path, scale, and source in the same step's record "
+    "(for example outputs/data/fetch_log.md or the file header). Do not declare different filenames per path.")
 
 
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
@@ -3167,7 +3168,8 @@ class Orchestrator:
                     return status if status in {"applied", "declined"} else "failed"
 
                 by_id = {s["id"]: s for s in steps}
-                completed = [sid for sid in by_id if sid in results and results[sid].ok]
+                completed = [sid for sid in by_id if sid in results and results[sid].ok
+                             and not results[sid].revision_failed]
                 if review is None:
                     def block_reason(outcome: TaskResult) -> str | None:
                         error = outcome.error or ""
@@ -3327,7 +3329,8 @@ class Orchestrator:
                     return record("failed", attempt, reason=str(error))
 
                 retired_ids = [sid for sid in by_id if sid in retired]
-                prior = {sid: {"ok": results[sid].ok, "error": results[sid].error,
+                prior = {sid: {"ok": results[sid].ok,
+                               "error": results[sid].error or results[sid].revision_failed,
                                "error_kind": results[sid].error_kind, "outputs": list(results[sid].outputs),
                                "workdir_id": results[sid].workdir_id} for sid in retired_ids if sid in results}
                 for sid in retired_ids:
@@ -3351,10 +3354,14 @@ class Orchestrator:
 
             async def recover_failures() -> None:
                 """Opt-in (#271): re-plan around failed steps until the DAG succeeds or the cap stops it."""
-                while rid not in self.budget_denials and any(not r.ok for r in results.values()):
+                while rid not in self.budget_denials and any(not r.ok or r.revision_failed
+                                                              for r in results.values()):
                     if await attempt_replan() != "applied":
                         return
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
+
+            def has_failures() -> bool:
+                return any(not result.ok or result.revision_failed for result in results.values())
 
             if remaining:
                 await self.run_dag(rid, text, steps, results, only=remaining,
@@ -3369,7 +3376,7 @@ class Orchestrator:
                 await self._research_after_steps(rid, text, steps, results, n, serialized_results, packs)
                 return
             await recover_failures()
-            if rid in self.budget_denials or any(not r.ok for r in results.values()):
+            if rid in self.budget_denials or has_failures():
                 self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False)
                 return
 
@@ -3434,7 +3441,7 @@ class Orchestrator:
                 if await attempt_replan(review, progress) == "applied":
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
                     await recover_failures()
-                    if rid in self.budget_denials or any(not r.ok for r in results.values()):
+                    if rid in self.budget_denials or has_failures():
                         self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                      review=review)
                         return
@@ -3464,7 +3471,8 @@ class Orchestrator:
                     req.setdefault("results", {}).pop(sid, None)
                 self.hub.save_request(rid)
                 await self.run_dag(rid, text, steps, results, only=set(feedback), feedback=feedback)
-                if rid in self.budget_denials or any(not r.ok for r in results.values()):
+                await recover_failures()
+                if rid in self.budget_denials or has_failures():
                     self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
                                  review=review)
                     return
