@@ -11,6 +11,7 @@ import os
 import ntpath
 import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
@@ -790,13 +791,21 @@ def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None])
     special = "$%`!" if any(char.isspace() for char in first) else "*?[]{}~:\\$%^!`"
     if any(char in first for char in special):
         return False
+    if not _entry_key(first):
+        return False
     if folder not in listings:
         try:
-            listings[folder] = {os.path.normcase(name) for name in os.listdir(folder)}
+            listings[folder] = {_entry_key(name) for name in os.listdir(folder)}
         except (OSError, ValueError):
             listings[folder] = None
     names = listings[folder]
-    return names is not None and os.path.normcase(first) not in names
+    return names is not None and _entry_key(first) not in names
+
+
+def _entry_key(name: str) -> str:
+    """A name as the loosest volume compares it, whatever this one does: case- and normalization-insensitive (APFS,
+    NTFS), with trailing dots and spaces dropped (Windows). Folding too much only means resolving more (PR #371)."""
+    return unicodedata.normalize("NFD", name.rstrip(". ")).casefold()
 
 
 def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:

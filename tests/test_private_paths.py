@@ -1043,3 +1043,17 @@ async def test_the_approval_server_asks_for_a_registry_read_with_no_active_path(
                                                                      "input": {"command": REG_READ}})
         seen[flag] = json.loads(result.content[0].text)["behavior"]
     assert seen == {"1": "deny", "0": "allow"}  # asked, and the broker is unreachable; explicit `[]` allows
+
+
+def test_a_word_is_absent_only_when_no_volume_could_match_it_to_an_entry(tmp_path):
+    """PR #371 review: on a case-insensitive POSIX volume `alias` opens `Alias`; Windows also drops trailing dots and
+    spaces and APFS ignores Unicode normalization. Any such spelling counts as present and is resolved."""
+    from labhq.policy import _absent_below
+
+    (tmp_path / "Alias").mkdir()
+    (tmp_path / "café").mkdir()
+    listings = {}
+    for token in ("alias/key.txt", "ALIAS", "alias./key.txt", "Alias /key.txt", "café/x", "CAFÉ"):
+        assert not _absent_below(token, str(tmp_path), listings), token
+    for token in ("nothing/x", "aliasx", "cafe/x"):
+        assert _absent_below(token, str(tmp_path), listings), token
