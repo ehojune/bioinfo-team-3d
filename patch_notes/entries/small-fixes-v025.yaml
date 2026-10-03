@@ -1,0 +1,11 @@
+pr: 365
+rows:
+- sha: ea1ff0c
+  at: 2026-10-04 00:44
+  text: Bash process substitution을 인자로 남기고 내부 redirect만 검사
+- sha: e613c34
+  at: 2026-10-04 00:44
+  text: PI 결정 재실행 뒤 이전 도구 실패를 중복 없이 보존
+- sha: 332b18d
+  at: 2026-10-04 00:44
+  text: CA 환경 변수 하나만 정했을 때 다른 변수도 같은 파일로 보완

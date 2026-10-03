@@ -176,6 +176,7 @@ class TaskResult(BaseModel):
     # output relpath -> type record (labhq.vocab.declare.runner_records); only for collected outputs (#221)
     output_types: dict[str, Any] = {}
     output_sha256: dict[str, str] = {}
+    output_tool_use_ids: dict[str, str] = {}
     unreported_outputs: list[str] = []
     # Parsed only for ordinary orchestration steps. Research steps keep their result v2 ledger in ``structured``.
     general_sections: dict[str, str] = {}
@@ -214,6 +215,8 @@ class TaskResult(BaseModel):
                 data.pop("output_types", None)
             if not data.get("output_sha256"):
                 data.pop("output_sha256", None)
+            if not data.get("output_tool_use_ids"):
+                data.pop("output_tool_use_ids", None)
             if not data.get("unreported_outputs"):
                 data.pop("unreported_outputs", None)
             if not data.get("general_sections"):

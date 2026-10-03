@@ -4,6 +4,45 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 리뷰 수정 라운드의 upstream 갱신 (12차 모의 시운전)
+
+**결론:** 12차(일반 lane)가 `review_unresolved`로 끝난 원인을 고쳤습니다. 수정 라운드에서 보고서 단계가 위 단계의 새 결과를 받지 못해 철회된 수치를 그대로 두었습니다.
+
+| 원인 | 고침 |
+|---|---|
+| 지적받은 단계는 자기 지적만 받음(`with_downstream_revisions`) | 위 단계도 다시 계산됐으면 같은 안내를 자기 지적 뒤에 붙임 |
+| 이어 가는 세션은 updates만 받아 새 upstream 결과를 못 봄 | 위 단계가 이번 라운드에 다시 돌았으면 새 upstream 결과를 updates에 넣음 |
+| 수정 답이 변경분만 담아("나머지는 그대로") 이전 결과 전체를 대체 | 수정 지시에 "전체 결과를 다시 내라"는 규칙 |
+| 일반 합성 보고서 앞 군말 | 프롬프트에 "첫 heading부터"만. 일반 보고서는 답이 heading 앞에 올 수 있어 labhq는 아무것도 떼지 않는다(봇 리뷰) |
+
+| 라운드 중 재시작 뒤 끝난 upstream 수정이 pending에서 빠짐(봇 리뷰) | 이어 가는 수정 단계에는 항상 현재 upstream 결과를 넣음 |
+
+**검증:** `pytest -q` 3592 passed, 53 skipped. 새 테스트: 이어 가는 수정 단계의 prompt, 재시작 뒤 수정, 일반 보고서 보존. 기존 테스트 둘은 새 동작으로 기대값을 바꿈(지적받은 단계도 upstream 안내를 받음, 이어 가는 수정에는 upstream 결과가 들어감).
+
+## 2026-10-04 · #58 — 관찰 산출물 tool_use_id와 웹 감사 번들
+
+- 결론: Claude 쓰기 도구의 PostToolUse 기록을 관찰 산출물에 보수적으로 연결하고, 인증된 웹 요청 상세에서 산출 파일 없는 감사 번들을 받게 했다.
+- 바뀐 것: `tool_use_id` manifest·verify·`artifacts.json`, `GET /api/requests/{id}/audit-bundle`, 2.5D·3D 링크, README와 HANDOFF의 #58 ①~⑥ 완료 상태.
+- 실행한 것: 수정 전 5 failed 확인. 관련 pytest 156 passed·4 skipped, Node 5개 통과.
+- 미해결: 없음. 이 변경으로 #58의 표 ①~⑥이 모두 끝난다.
+- 근거: `labhq/hooks/tool_use.py`, `labhq/runner/daemon.py`, `labhq/evidence/audit.py`, `labhq/gateway/server.py`, `labhq/web/`, `tests/test_observed_outputs.py`, `tests/test_labhq_verify.py`.
+
+## 2026-10-04 · 연구 lane — 벌크 두 조건 DE pack
+
+- 결론: `bulk_tumor_normal@1`의 core 통계 계약과 scale·pairing·model 조합을 기계 판정한다.
+- 바뀐 것: 분석 단위·다중검정·민감도 분석은 중복 pack 필드를 없애고 core 값을 정본으로 삼았다. 모형 규칙은 허용 조합표 하나로 닫았다.
+- 실행한 것: 두 번째 봇 지적용 test는 수정 전 10 failed, 수정 뒤 관련 test 151 passed. 기존 rule id와 pack hash test는 새 단일 표와 pack 내용 변경 때문에 갱신했다.
+- 미해결: 없음.
+- 근거: `labhq/research/contract.py`, `labhq/research/packs.py`, `labhq/research/packs/bulk_tumor_normal.yaml`, `tests/test_research_bulk_pack.py`.
+
+## 2026-10-04 · v0.25 전 작은 결함 세 건
+
+- 결론: Bash process substitution 오탐, 결정 답변 뒤 도구 실패 누락, CA 변수 한쪽 누락을 고쳤다.
+- 바뀐 것: `<(`·`>(` 토큰은 인자로 남기고 내부 redirect는 검사한다. 결정 전후 `tool_errors`를 중복 없이 합친다. CA 변수 하나만 정했으면 다른 변수도 같은 파일을 쓴다.
+- 실행한 것: 새 회귀는 수정 전 6 failed·3 passed, 수정 뒤 관련 pytest 344 passed. 공개 저장소 검사 통과.
+- 미해결: 없음.
+- 근거: `labhq/policy.py`, `labhq/orchestrator/cso.py`, `labhq/runner/daemon.py`, `tests/test_shell_write_quotes.py`, `tests/test_cso.py`, `tests/test_system_ca.py`.
+
 ## 2026-10-04 · 게이트 — Git Bash 경로
 
 - 결론: 12차 모의 시운전(일반 lane, v0.25 사전 점검)에서 data_steward가 자기 작업 폴더 `.tmp`에 쓸 때마다 게이트가 PI에게 물었다(같은 단계 3장). Claude의 Bash는 Windows에서 Git Bash라 경로를 `/c/Users/...`로 쓰는데, 허용 루트는 `C:/Users/...`여서 비교가 안 됐다.

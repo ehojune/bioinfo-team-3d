@@ -10,6 +10,7 @@ staff member wrote without reporting them. The bundle carries the records, never
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import os
 import re
@@ -172,6 +173,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         if not isinstance(result, Mapping):
             continue
         hashes = result.get("output_sha256") if isinstance(result.get("output_sha256"), Mapping) else {}
+        tool_ids = result.get("output_tool_use_ids") if isinstance(result.get("output_tool_use_ids"), Mapping) else {}
         recorded = {path: value for path, value in hashes.items() if isinstance(path, str) and isinstance(value, str)}
         outputs = [path for path in result.get("outputs") or [] if isinstance(path, str)]
         if result.get("unreported_outputs"):
@@ -184,7 +186,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         workdir, reason = locate_workdir(root, result)
         if workdir is None:
             reasons.append(f"{step_id}: {reason}")
-            files += [{**base, "path": path, "recorded_sha256": recorded.get(path), "size": None, "sha256": None,
+            files += [{**base, "path": path, "tool_use_id": tool_ids.get(path),
+                       "recorded_sha256": recorded.get(path), "size": None, "sha256": None,
                        "status": UNCHECKED, "detail": reason} for path in paths]
             continue
         if str(workdir) not in scans:  # a revision reuses its step's folder: one walk serves both
@@ -198,7 +201,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         for path in paths:
             row = by_path.get(key(path))
             below = 0 if row else sum(1 for name in by_path if name.startswith(key(path) + "/"))
-            files.append({**base, "path": path, "recorded_sha256": recorded.get(path),
+            files.append({**base, "path": path, "tool_use_id": tool_ids.get(path),
+                          "recorded_sha256": recorded.get(path),
                           **_compare(recorded.get(path), row, note, files_below=below,
                                      in_zone=row is None and overlaps_zone(workdir / path, zones))})
     report_check = rerun_report_check(req)
@@ -227,14 +231,14 @@ def render_verify(report: Mapping[str, Any]) -> str:
     lines = [f"요청 {report.get('request_id')} · status {report.get('status') or '-'} · "
              f"outcome {report.get('outcome') or '-'}",
              f"산출 파일 {len(report['files'])}개: {_counts(report)}"]
-    rows = [(str(row["step_id"]), str(row.get("agent_id") or "-"), row["status"],
+    rows = [(str(row["step_id"]), str(row.get("agent_id") or "-"), str(row.get("tool_use_id") or "-"), row["status"],
              f"{_sha(row['recorded_sha256'])}→{_sha(row['sha256'])}",
              row["path"] + (f"  ({row['detail']})" if row["detail"] and row["status"] != OK else ""))
-            for row in report["files"]]
+             for row in report["files"]]
     if rows:
-        table = [("step", "agent", "status", "sha256 기록→지금", "path"), *rows]
-        widths = [max(len(row[i]) for row in table) for i in range(4)]
-        lines += ["  " + "  ".join(cell.ljust(width) for cell, width in zip(row[:4], widths)) + "  " + row[4]
+        table = [("step", "agent", "tool_use_id", "status", "sha256 기록→지금", "path"), *rows]
+        widths = [max(len(row[i]) for row in table) for i in range(5)]
+        lines += ["  " + "  ".join(cell.ljust(width) for cell, width in zip(row[:5], widths)) + "  " + row[5]
                   for row in table]
     check = report.get("report_check")
     if check is None:
@@ -280,6 +284,8 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
              f"- 만든 시각: {report.get('checked_at')}",
              f"- labhq 판본: {report.get('labhq_version')}", "",
              NO_FILES_LINE, ""]
+    if report.get("reasons"):
+        lines += [f"파일 재해시는 러너 PC에서 `labhq verify {report.get('request_id')}`를 실행하세요.", ""]
     if report["problems"]:
         lines += ["## 문제", "", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["## 파일", "",
@@ -288,8 +294,8 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -> Path:
-    """Write README.md, claims.json and artifacts.json into ``out`` (a zip). No output file goes in."""
+def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
+    """Build the three-record audit zip in memory. No output file goes in."""
     import zipfile
 
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), Mapping) else {}
@@ -300,8 +306,19 @@ def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -
               "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
                                                     "unsupported_claims", "unreported_outputs") if key in receipt},
               "report_check": report.get("report_check")}
-    artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "workdir_id", "path", "size",
-                                                 "recorded_sha256", "sha256", "status")} for row in report["files"]]
+    artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "tool_use_id", "workdir_id",
+                                                 "path", "size", "recorded_sha256", "sha256", "status")}
+                 for row in report["files"]]
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as bundle:
+        bundle.writestr("README.md", _bundle_readme(report))
+        bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
+        bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
+    return stream.getvalue()
+
+
+def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -> Path:
+    """Write README.md, claims.json and artifacts.json into ``out`` (a zip). No output file goes in."""
     import tempfile
 
     out = Path(out)
@@ -312,10 +329,8 @@ def write_bundle(report: Mapping[str, Any], req: Mapping[str, Any], out: Path) -
     # os.replace then swaps the name itself and never follows a link at `out`.
     fd, partial = tempfile.mkstemp(prefix=f".{out.name}.", suffix=".partial", dir=out.parent)
     try:
-        with os.fdopen(fd, "wb") as stream, zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as bundle:
-            bundle.writestr("README.md", _bundle_readme(report))
-            bundle.writestr("claims.json", json.dumps(claims, ensure_ascii=False, indent=2, default=str))
-            bundle.writestr("artifacts.json", json.dumps(artifacts, ensure_ascii=False, indent=2))
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(bundle_bytes(report, req))
         os.replace(partial, out)
     except BaseException:
         with contextlib.suppress(OSError):

@@ -205,6 +205,15 @@ def test_a_real_redirect_next_to_a_copy_is_still_a_target():
     assert set(_shell_write_targets("cp a outputs/ 2>/elsewhere/log")) == {"outputs/", "/elsewhere/log"}
 
 
+@pytest.mark.parametrize("command, action", [
+    ("cp /elsewhere/src >(cat)", "allow"),
+    ("cp a >(cat > /elsewhere/x)", "ask"),
+    ("diff <(sort a) <(sort b)", "allow"),
+])
+def test_process_substitution_is_an_argument_but_its_inner_redirect_is_checked(command, action):
+    assert _decide("Bash", command).action == action
+
+
 @pytest.mark.parametrize("command, target", [
     ("cp a /work2>/dev/null", "/work2"),          # the 2 belongs to the path; only `>/dev/null` is a redirect
     ("cp a out1>/dev/null", "out1"),

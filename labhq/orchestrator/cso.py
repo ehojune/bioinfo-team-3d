@@ -31,7 +31,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
-from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
+from ..research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review,
+                              select_applied_packs)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -215,9 +216,11 @@ Contract rules:
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
-- For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
-  a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
-  acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
+- Answer every configured pack in top-level `pack_values`. If its `applies_when` matches, fill `pack_values[key]`
+  with exactly the keys in its `pack_values_keys`: a value for each field, a non-empty explanation for each validator
+  id, and a non-empty outcome for each acceptance id. Otherwise return exactly
+  `{{"not_applicable": "<non-empty reason>"}}` for that key; the reason is shown to the PI and frozen in the PLAN.
+  Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
   the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
   Domain packs may extend this contract but cannot weaken it. A missing/invalid value or conflict makes planning fail.
@@ -359,6 +362,7 @@ Team results so far:
 SYNTH_PROMPT = """Write the final report for the PI.
 Structure: 1) answer / recommendation, 2) evidence by step (with file paths), 3) reviewer concerns and how
 they were addressed, 4) what would change the conclusion, 5) next steps (including any proposed contract hires).
+Start with the report's first heading: no preamble.
 Do not turn a failed lookup into evidence or proof of absence. LabHQ appends the warning section itself; do not
 copy it into your report. Warning preview ("(none)" means there is no warning section):
 {warnings}
@@ -499,6 +503,10 @@ Final report (excerpt):
 {report}
 {history}
 PI follow-up question: {question}"""
+
+
+REVISION_RESULT_RULE = ("\nReturn your complete revised result, not only the changes: it replaces your previous "
+                        "result for later steps and the report, so anything you leave out is lost.")
 
 
 def continuation_prompt(task: Task, updates: str, *, resumable: bool,
@@ -772,7 +780,8 @@ def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> di
 
     A revised step changes what its dependents read, so a dependent the reviewer did not flag re-runs too, with a
     note naming the revised upstream steps; otherwise a later revision or the report reads a bridge step (s5 → s8
-    → s9) built on the old result. Flagged steps keep their own notes and get no extra one.
+    → s9) built on the old result. A flagged step below a revised one gets the same note after its own: in the 12th
+    mock trial the report step fixed only its flagged sentences and kept the numbers s8 and s9 had just withdrawn.
     """
     children: dict[str, list[str]] = {s["id"]: [] for s in steps}
     for step in steps:
@@ -783,17 +792,17 @@ def with_downstream_revisions(steps: list[dict], feedback: dict[str, str]) -> di
     while pending:
         sid = pending.pop()
         for child in children.get(sid, []):
-            if child in feedback:
-                continue
             roots = {sid} if sid in feedback else revised_above.get(sid, set())
             if not roots <= revised_above.get(child, set()):
                 revised_above.setdefault(child, set()).update(roots)
-                pending.append(child)
+                if child not in feedback:  # a flagged step is already pending as a root of its own
+                    pending.append(child)
     extended = dict(feedback)
     for sid in (s["id"] for s in steps):
         if sid in revised_above:
-            extended[sid] = (f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the "
-                             "scientific review. Redo your step on their new results and update your outputs.\n")
+            extended[sid] = feedback.get(sid, "") + (
+                f"- Upstream step(s) {', '.join(sorted(revised_above[sid]))} were revised after the scientific "
+                "review. Redo your step on their new results and update your outputs.\n")
     return extended
 
 
@@ -1096,8 +1105,8 @@ def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
              f"않았습니다(남은 문제 {len(problems)}건).", "", "남은 문제:", *_problem_lines(problems, "- ")]
     if packs:
         lines += ["", "설정된 domain pack: " + "; ".join(f"{key} ({loaded.pack.applies_when})"
-                                                      for key, loaded in sorted(packs.items())),
-                  "요청 대상이 이 pack과 다르면 pack 값을 채울 수 없습니다. 그때는 `research.active_packs`를 확인하세요."]
+                                                       for key, loaded in sorted(packs.items())),
+                  "모든 configured pack에 값 또는 `not_applicable` 사유를 답합니다."]
     return "\n".join(lines)
 
 
@@ -2063,7 +2072,8 @@ class Orchestrator:
                 updates.append(ASK_WAKE_PROMPT.format(answers=qa_text(decision)))
             revising = bool(feedback and step["id"] in feedback)
             if revising:
-                updates.append(f"[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}")
+                updates.append(f"[Scientific reviewer feedback — revise your step]\n{feedback[step['id']]}"
+                               + REVISION_RESULT_RULE)
             previous = results.get(step["id"])
             if previous is None and decision and decision.get("previous_result"):
                 previous = TaskResult.model_validate(decision["previous_result"])
@@ -2075,6 +2085,11 @@ class Orchestrator:
                 session_id, workdir = await self._free_session(
                     step["agent_id"], session_id, workdir, rid=rid, step=step["id"])
             can_resume = bool(session_id and self.hub.supports_resume(step["agent_id"]))
+            if revising and can_resume and ctx:
+                # A resumed session gets only the updates; without this it keeps the upstream results it read before
+                # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
+                # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
+                updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
@@ -2100,6 +2115,10 @@ class Orchestrator:
                     "context": ""})
             async with sem:
                 outcome = await self.run_step(task)
+                if decision and previous and previous.tool_errors:
+                    outcome = outcome.model_copy(update={"tool_errors": list(dict.fromkeys([
+                        *previous.tool_errors, *outcome.tool_errors,
+                    ]))})
                 if not research_plan:
                     return attach_general_result(outcome)
                 if not outcome.ok or blocking_question(outcome):
@@ -2708,7 +2727,8 @@ class Orchestrator:
                                                                    self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
-            packs = configured_packs(self.hub.s) if research_lane else {}
+            configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
+            packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             capabilities = "\n".join(  # the first plan and a re-plan after resume (#271) both need it
                 f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
@@ -2766,6 +2786,8 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
+                    packs = select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                    active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
                                                        active_packs=active_pack_hashes,
@@ -2829,7 +2851,7 @@ class Orchestrator:
                             capabilities=capabilities or "No workers available",
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
-                            packs=render_pack_catalog(packs), question_rule=QUESTION_RULE,
+                            packs=render_pack_catalog(configured_pack_defs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
                         prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
@@ -2939,11 +2961,11 @@ class Orchestrator:
                     vocab = self._output_vocab()
                     workers = sorted(known - orchestration)
 
-                    def plan_problems(candidate: Any) -> list[str]:
+                    def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
                         try:
                             problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
-                                                            active_packs=active_pack_hashes,
-                                                            expected_intake=intake, pack_definitions=packs)
+                                                            active_packs=pack_snapshot(candidate_packs),
+                                                            expected_intake=intake, pack_definitions=candidate_packs)
                         except (ValueError, TypeError) as error:
                             problems = [str(error)]
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
@@ -2955,8 +2977,21 @@ class Orchestrator:
 
                     for attempt in (1, 2):
                         type_stats = {}
-                        # The pack snapshot is configuration, so labhq writes protocol.packs, not the CSO (#222).
-                        plan = with_pack_refs(plan, pack_refs(packs))
+                        selection_problems = []
+                        try:
+                            candidate_packs = select_applied_packs(configured_pack_defs,
+                                                                    plan.get("pack_values") if isinstance(plan, dict)
+                                                                    else None)
+                        except ValueError as error:
+                            supplied = plan.get("pack_values") if isinstance(plan, dict) else None
+                            candidate_packs = {
+                                key: loaded for key, loaded in configured_pack_defs.items()
+                                if isinstance(supplied, dict) and key in supplied and
+                                not (isinstance(supplied[key], dict) and "not_applicable" in supplied[key])
+                            }
+                            selection_problems = [str(error)]
+                        # The CSO answers every pack; labhq freezes exact refs only for applicable entries (#222).
+                        plan = with_pack_refs(plan, pack_refs(candidate_packs))
                         output_problems = []
                         try:
                             plan, _ = _normalize_plan_outputs(plan)
@@ -2965,16 +3000,18 @@ class Orchestrator:
                         # Declarations are normalized (or, when off, removed) after output paths, so names pair
                         # with the exact artifacts the runner will collect.
                         plan = prepare_research_declarations(plan, vocab, type_stats)
-                        problems = output_problems + plan_problems(plan)
+                        problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         if not problems:
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
-                                                               active_packs=active_pack_hashes,
-                                                               expected_intake=intake, pack_definitions=packs)
+                                                               active_packs=pack_snapshot(candidate_packs),
+                                                               expected_intake=intake, pack_definitions=candidate_packs)
+                            packs = candidate_packs
+                            active_pack_hashes = pack_snapshot(packs)
                             break
                         if attempt == 2:
                             req["outcome"] = "plan_invalid"
                             req["plan_validation"] = {"attempts": attempt, "errors": problems}
-                            report = plan_invalid_report(problems, packs)
+                            report = plan_invalid_report(problems, configured_pack_defs)
                             self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
                             return
                         plan_res = await make_plan(text + "\n\n" + plan_correction(problems))

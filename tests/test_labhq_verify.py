@@ -212,6 +212,53 @@ async def test_bundle_holds_three_records_and_no_output_file(tmp_path, monkeypat
     assert set(json.loads(contents["claims.json"])) >= {"ledgers", "artifact_sha256", "report_check"}
 
 
+async def test_verify_table_and_bundle_show_tool_use_id(tmp_path, monkeypatch, capsys):
+    from labhq.hooks.tool_use import record_post_tool_use
+
+    def write(workdir):
+        env = {"LABHQ_WORKDIR": str(workdir), "LABHQ_TASK_ID": "task-v"}
+        assert record_post_tool_use({"tool_use_id": "toolu_table", "tool_name": "Write"}, env,
+                                    now_ns=1_000_000_000)
+        _write(workdir, "outputs/table.tsv", BODY)
+        os.utime(workdir / "outputs" / "table.tsv", ns=(1_100_000_000, 1_100_000_000))
+
+    settings, result = await _run(tmp_path, monkeypatch, write)
+    out_zip = tmp_path / "audit-tool.zip"
+
+    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--bundle", str(out_zip))
+    assert code == 0 and "tool_use_id" in out and "toolu_table" in out
+    with zipfile.ZipFile(out_zip) as bundle:
+        [artifact] = json.loads(bundle.read("artifacts.json"))
+    assert artifact["tool_use_id"] == "toolu_table"
+
+
+async def test_gateway_audit_bundle_requires_auth_and_falls_back_to_records(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import create_app
+
+    secret = b"output-must-not-be-in-zip\n"
+    settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", secret))
+    app = create_app(settings)
+    app.state.hub.requests["req_v"] = _request(result)
+    client = TestClient(app)
+    path = "/api/requests/req_v/audit-bundle"
+
+    assert client.get(path).status_code == 401
+    response = client.get(path, headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert response.status_code == 200 and response.headers["content-type"] == "application/zip"
+    with zipfile.ZipFile(__import__("io").BytesIO(response.content)) as bundle:
+        assert sorted(bundle.namelist()) == sorted(BUNDLE_FILES)
+        assert all(secret.strip() not in bundle.read(name) for name in bundle.namelist())
+
+    shutil.rmtree(result.workdir)
+    fallback = client.get(path, headers={"Authorization": f"Bearer {settings.gateway.client_token}"})
+    assert fallback.status_code == 200
+    with zipfile.ZipFile(__import__("io").BytesIO(fallback.content)) as bundle:
+        readme = bundle.read("README.md").decode("utf-8")
+    assert "파일 재해시는 러너 PC에서" in readme and "labhq verify req_v" in readme
+
+
 async def test_link_in_outputs_is_not_followed(tmp_path, monkeypatch, capsys):
     settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY))
     target = Path(result.workdir) / "outputs" / "table.tsv"
