@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:49 | [`83f0c58`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/83f0c58) | README: CP2 근거 결합은 조상 단계 산출도 인정, 실제 CLI로 CP2·리뷰까지 확인(8차) |
+| 18:48 | [`395a2f1`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/395a2f1) | CP2 근거 결합: 조상 단계 전체의 수집·hash된 산출물을 검증된 artifact로 인정(8차 시운전 거부 8건 중 6건) |
 | 17:34 | [`e0ca434`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/e0ca434) | 게이트: -Path를 이름으로 준 쓰기 cmdlet의 위치 인자는 -Value로 보고 목적지로 묻지 않음(봇 P2) |
 | 17:28 | [`9953cbd`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/9953cbd) | 게이트: 플래그 뒤에 쓴 경로·tee·sc·Export-Csv도 쓰기 목적지로 읽고, Get-FileHash 옆 따옴표 행은 텍스트로(8차 시운전 오탐과 놓친 쓰기) |
 | 16:52 | [`aef9a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/aef9a6e) | 기다릴 HPC job·질의가 남은 turn에는 마무리 turn을 붙이지 않음(봇 P1) |
