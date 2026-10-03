@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:53 | [`077f0d8`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/077f0d8) | 결정 카드: summary 줄바꿈을 2.5D·3D 모두 그대로 보여 준다 |
+| 08:53 | [`a712690`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/a712690) | CI가 돌리지 않던 Node test 8개를 등록한다 |
+| 08:51 | [`f84c361`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/f84c361) | 연구 계획 프롬프트: PI 질문은 500자 이하, 질문을 맨 앞에 |
+| 08:50 | [`33b0593`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/33b0593) | 일반 lane PI 질문: JSON 문자열 안 실제 줄바꿈도 질문으로 읽는다(extract_json strict 인자, blocking_question만 strict=False) |
+| 08:50 | [`8218a6d`](https://github.com/ehojune/bioinfo-team-3d/pull/343/commits/8218a6d) | 재계획 프롬프트: PI 질문 폰 카드 규칙을 계획과 같은 상수로 공유 |
 | 08:48 | [`162b23a`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/162b23a) | README: 셸 쓰기 검사가 따옴표·heredoc 안의 > 를 다루는 방식 |
 | 08:39 | [`e8d7c17`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/e8d7c17) | 게이트: PowerShell 호출 연산자·dot-source·[scriptblock]이 있으면 따옴표를 가리지 않음(봇 P1) |
 | 08:27 | [`8c191a2`](https://github.com/ehojune/bioinfo-team-3d/pull/340/commits/8c191a2) | 가리기를 줄의 모든 명령이 인용문을 텍스트로만 읽을 때로 좁히고(허용 목록), 구분자에 $가 있는 heredoc·괄호 안 '<<'·줄 끝 CR·$(( )) 안의 따옴표·토큰 중간의 here-string 머리는 원문을 훑게 해 가린 뒤 리다이렉트가 숨는 입력을 막았다. |
