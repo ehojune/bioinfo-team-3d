@@ -65,6 +65,7 @@ _PS_DATA_COMMANDS = frozenset({
 # Writers whose first positional argument is the destination (with the PowerShell 5.1 aliases sc, ac, ni, epcsv).
 _PS_WRITERS = frozenset({"set-content", "sc", "add-content", "ac", "out-file", "new-item", "ni", "export-csv",
                          "epcsv", "export-clixml", "tee-object"})
+_PS_PATH_FLAGS = frozenset({"-path", "-literalpath", "-filepath", "-pspath", "-lp"})
 _PS_SWITCHES = frozenset({"-force", "-nonewline", "-append", "-noclobber", "-passthru", "-whatif", "-confirm",
                           "-asbytestream", "-notypeinformation", "-includetypeinformation", "-useculture",
                           "-noenumerate"})
@@ -412,13 +413,15 @@ def _ps_writer_targets(args: list[str]) -> Iterator[str]:
     any prefix of a parameter name (-Pa, -Enc), so the next word after any flag that is not a switch or a known text
     parameter also counts as a destination: unsure words are reported, never skipped.
     """
-    i = 0
+    i, named = 0, False
     while i < len(args):
         word = args[i]
         if not (word.startswith("-") and len(word) > 1):
-            yield word
+            if not named:  # with the path named, the first positional argument binds to -Value (PR #356 review)
+                yield word
             return
         flag, colon, value = word.casefold().partition(":")
+        named = named or flag in _PS_PATH_FLAGS
         if flag in _PS_SWITCHES:
             i += 1
         elif colon:  # -Path:C:/x

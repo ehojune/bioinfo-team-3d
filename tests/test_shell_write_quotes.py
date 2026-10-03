@@ -232,6 +232,8 @@ TRIAL8_POWERSHELL = (
     TRIAL8_POWERSHELL,
     'Add-Content -Path outputs/m.tsv -Value "/suppl/<GSM>.CEL.gz"',  # a text parameter is not a destination
     "Set-Content outputs/x.txt -Encoding utf8 -Value C:/data/row",
+    "Set-Content -Path outputs/x.txt C:/data/row",  # with -Path named, the positional word is the value
+    "Out-File -FilePath:outputs/x.txt -Encoding utf8 C:/data/row",
 ])
 def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
     assert _decide("PowerShell", command).action == "allow"
@@ -244,6 +246,7 @@ def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
     ("PowerShell", "Set-Content -Pa C:/elsewhere/x.txt -Value a"),  # a prefix of -Path
     ("PowerShell", "Set-Content -Path:C:/elsewhere/x.txt -Value a"),
     ("PowerShell", "Set-Content -Fo C:/elsewhere/x.txt a"),  # a prefix of the -Force switch
+    ("PowerShell", "Set-Content -Path C:/elsewhere/x.txt outputs/row"),
     ("PowerShell", "sc C:/elsewhere/x.txt a"),
     ("PowerShell", "New-Item -ItemType File C:/elsewhere/x.txt"),
     ("PowerShell", "Get-Process | Export-Csv -NoTypeInformation C:/elsewhere/p.csv"),
