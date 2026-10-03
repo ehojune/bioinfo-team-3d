@@ -3,3 +3,6 @@ rows:
 - sha: a2bbedf
   at: 2026-10-03 19:43
   text: 'Windows에서 직원 Python이 OS 신뢰 저장소도 믿게: certifi+OS 저장소 PEM을 SSL_CERT_FILE·REQUESTS_CA_BUNDLE로(9차 시운전 기관 TLS 검사)'
+- sha: 6fff2a8
+  at: 2026-10-03 20:00
+  text: 'CA 묶음을 매 spawn 전에 메모리 사본과 비교해 바뀌었으면 다시 씀(봇 P1), 읽기 전용 실행도 REQUESTS_CA_BUNDLE 유지(봇 P2)'
