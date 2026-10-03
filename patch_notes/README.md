@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:34 | [`e0ca434`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/e0ca434) | 게이트: -Path를 이름으로 준 쓰기 cmdlet의 위치 인자는 -Value로 보고 목적지로 묻지 않음(봇 P2) |
+| 17:28 | [`9953cbd`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/9953cbd) | 게이트: 플래그 뒤에 쓴 경로·tee·sc·Export-Csv도 쓰기 목적지로 읽고, Get-FileHash 옆 따옴표 행은 텍스트로(8차 시운전 오탐과 놓친 쓰기) |
 | 16:52 | [`aef9a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/aef9a6e) | 기다릴 HPC job·질의가 남은 turn에는 마무리 turn을 붙이지 않음(봇 P1) |
 | 16:47 | [`9c80c43`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/9c80c43) | 마무리 turn 뒤 산출물은 그 turn 뒤 runner가 본 목록·hash로, 지우거나 hash 못 한 파일의 옛 hash를 남기지 않음(봇 P1) |
 | 16:42 | [`63f41e1`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/63f41e1) | 연구 단계가 턴 상한에 걸리면 같은 세션에서 절반 상한으로 한 번 마무리, 수습 turn 2→4턴(7차 시운전 QC 실패) |
