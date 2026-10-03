@@ -465,7 +465,8 @@ def report_body(text: str) -> str:
     if not heading or heading.start() == 0:
         return text
     lead = text[:heading.start()]
-    if "[[claim:" in lead or len(lead.strip()) > 400:
+    # A fence before the "heading" means it may sit inside a code block (PR #361 review).
+    if "[[claim:" in lead or "```" in lead or "~~~" in lead or len(lead.strip()) > 400:
         return text
     return text[heading.start():]
 

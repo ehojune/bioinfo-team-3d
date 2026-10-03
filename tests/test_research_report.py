@@ -285,6 +285,7 @@ async def test_a_lead_in_before_the_first_heading_is_not_part_of_the_report():
     REPORT,                                            # no heading at all
     "# 보고서\n\n" + REPORT,                           # starts with its heading
     "결론 [[claim:s1/c1]].\n\n# 근거\n\nmore",         # the lead carries an anchor: it is report text
+    "예시:\n```\n# 예시 제목\n```\n\n" + REPORT,       # the "heading" sits inside a code block (PR #361 review)
     ("긴 서문 " * 120) + "\n\n# 보고서\n\n" + REPORT,   # too long to be a lead-in
 ])
 def test_report_text_that_is_not_a_short_lead_in_is_kept(text):
