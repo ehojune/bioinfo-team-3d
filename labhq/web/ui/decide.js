@@ -122,7 +122,8 @@ export function decisionNote(row, approved = true) {
 }
 
 // CP2 evidence review (#90): the decision is a structured choice; the note is only a memo.
-const EVIDENCE_LABELS = { refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
+const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
+  refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
   results: '단계별 claim·evidence 원장' };
 export function decisionChoice(approval, act) {
   if (approval?.kind !== 'research_evidence') return null;
@@ -132,7 +133,7 @@ export function decisionChoice(approval, act) {
 function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
-    kind === 'research_evidence' ? ['refused_evidence', 'unsupported_claims', 'plan_sha256', 'results'] : [];
+    kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'plan_sha256', 'results'] : [];
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions'] :
     kind === 'research_evidence' ? ['choices'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?

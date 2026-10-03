@@ -29,8 +29,8 @@ from ..quota import is_quota_error, received_quota_wait
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
-                                 research_result_errors, validate_research_plan, validate_research_result,
-                                 with_pack_refs)
+                                 research_result_errors, salvage_research_result, validate_research_plan,
+                                 validate_research_result, with_pack_refs)
 from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
@@ -1931,6 +1931,21 @@ class Orchestrator:
                 original = outcome
                 current = outcome
                 limit = self.hub.s.research.result_corrections
+
+                def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict]) -> None:
+                    if req_state is None:
+                        return
+                    contract = req_state.get("research_contract") or {}
+                    salvage = contract.setdefault("result_salvage", {})
+                    if refused_rows or unsupported_claims:
+                        salvage[step["id"]] = {"refused_rows": refused_rows,
+                                               "unsupported_claims": unsupported_claims}
+                    else:
+                        salvage.pop(step["id"], None)
+                        if not salvage:
+                            contract.pop("result_salvage", None)
+                    self.hub.save_request(rid)
+
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
                     structured = (current.structured if isinstance(current.structured, dict)
@@ -1945,14 +1960,25 @@ class Orchestrator:
                         if validated_result.step_id != step["id"]:
                             problems = [f"research result step_id {validated_result.step_id} does not match {step['id']}"]
                     if not problems and validated_result is not None:
+                        save_salvage([], [])
                         return original.model_copy(update={
                             "structured": validated_result.model_dump(mode="json"),
                             "session_id": current.session_id or original.session_id,
                             "workdir": current.workdir or original.workdir,
                         })
                     if correction == limit:
+                        salvaged, refused_rows, unsupported_claims, salvage_problems = salvage_research_result(
+                            structured, plan=research_plan, expected_step_id=step["id"])
+                        if salvaged is not None and refused_rows:
+                            save_salvage(refused_rows, unsupported_claims)
+                            return original.model_copy(update={
+                                "structured": salvaged.model_dump(mode="json"),
+                                "session_id": current.session_id or original.session_id,
+                                "workdir": current.workdir or original.workdir,
+                            })
                         return original.model_copy(update={
-                            "ok": False, "error": "invalid research result contract: " + "; ".join(problems),
+                            "ok": False, "error": "invalid research result contract: " +
+                            "; ".join(dict.fromkeys([*problems, *salvage_problems])),
                             "session_id": current.session_id or original.session_id,
                             "workdir": current.workdir or original.workdir,
                         })
@@ -2116,11 +2142,19 @@ class Orchestrator:
             return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
         refused: list[dict[str, str]] = []
+        refused_rows: list[dict[str, str]] = []
         unsupported: list[dict[str, str]] = []
         artifact_sha256: dict[str, str | None] = {}
         unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
         for step in steps:
             result = results[step["id"]]
+            salvaged = (contract.get("result_salvage") or {}).get(step["id"]) or {}
+            step_refused = [{"step_id": step["id"], **row} for row in salvaged.get("refused_rows") or []]
+            refused_rows += step_refused
+            refused += [{"step_id": step["id"], "evidence_id": row["row_id"], "reason": row["reason"]}
+                        for row in step_refused if row.get("row_type") == "evidence"]
+            unsupported += [{"step_id": step["id"], **row}
+                            for row in salvaged.get("unsupported_claims") or []]
             upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs),
                          dict(results[d].output_sha256))
                         for d in step["depends_on"] if d in results and results[d].ok]
@@ -2134,10 +2168,12 @@ class Orchestrator:
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
-                   (f", {len(refused)} refused" if refused else "") + ". Choose approve, revise or deny.")
+                   (f", {len(refused_rows) or len(refused)} refused" if refused_rows or refused else "") +
+                   ". Choose approve, revise or deny.")
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
-                  "choices": list(EVIDENCE_CHOICES),
-                  **({"refused_evidence": refused} if refused else {}),
+                   "choices": list(EVIDENCE_CHOICES),
+                   **({"refused_rows": refused_rows} if refused_rows else {}),
+                   **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                   "results": ledgers}
@@ -2146,6 +2182,7 @@ class Orchestrator:
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
             decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
             refused = recorded.get("refused_evidence") or []
+            refused_rows = recorded.get("refused_rows") or []
             unsupported = recorded.get("unsupported_claims") or []
         else:
             cp2: str | None = None
@@ -2164,11 +2201,16 @@ class Orchestrator:
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
+                **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
+            contract.pop("result_salvage", None)
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         audit = f"CP2 evidence review: {decided}."
+        if refused_rows:
+            audit += "\n계약에 맞지 않아 뺀 근거:\n" + "\n".join(
+                f"- {row['step_id']}/{row['row_type']} {row['row_id']}: {row['reason']}" for row in refused_rows)
         if refused:
             audit += "\nRefused evidence (not approved at CP2):\n" + "\n".join(
                 f"- {row['step_id']}/{row['evidence_id']}: {row['reason']}" for row in refused)
