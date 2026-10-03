@@ -197,6 +197,12 @@ def format_capabilities(roster: list[dict], runner_capabilities: dict | None = N
         lines.append(f"- runner {runner_id} local software: {_format_local_software(runner.get('local_software'))}")
     return "\n".join(lines)
 
+DECLARED_OUTPUTS_FALLBACK_RULE = (
+    "Only declare files that the step must create on every permitted execution path. Mention files made only by a "
+    "fallback path in the instruction, not outputs. If paths change the content, scale, or source, declare one "
+    "route-independent filename and record the chosen path, scale, and source inside it.")
+
+
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
@@ -214,6 +220,7 @@ Rules:
   path inside that step's own workspace outputs/ folder, written as outputs/<name> (for example
   outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
   or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}
+- """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
@@ -256,6 +263,7 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
+- """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
@@ -389,6 +397,7 @@ Rules:
 - Give every new step a new id that this request has never used. Used ids: {used}.
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
+- """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - """ + ENV_STEP_RULE + """ If the plan already has an environment step, new steps depend on it instead.
@@ -811,7 +820,7 @@ def replan_history_lines(history: list[dict]) -> list[str]:
 
 def replan_history_note(req: dict) -> str:
     """Re-plan history for the reviewer and the final report's author. Empty, so their prompts stay as before,
-    unless orchestrator.max_replans recorded an attempt (#271)."""
+    unless one of the orchestrator re-plan caps recorded an attempt (#271, #373)."""
     if not req.get("replan_history"):
         return ""
     return ("\n\nPlan changes during this request (labhq re-plan history):\n" +
@@ -3141,17 +3150,19 @@ class Orchestrator:
                 repeats the review (recovered from the task ledger) or reviews the new steps.
                 """
                 nonlocal steps, text
-                limit = self.cfg.max_replans
+                trigger = "step_failure" if review is None else "review_revise"
+                limit = (self.cfg.max_failure_replans if trigger == "step_failure"
+                         else self.cfg.max_replans)
                 # An approved research plan changes only through a new CP1 approval of its hash, never here.
                 if limit <= 0 or research_lane:
                     return "disabled"
-                trigger = "step_failure" if review is None else "review_revise"
                 progress = req.setdefault("replan_progress", {"attempts": 0, "max": limit, "in_flight": False})
                 history = req.setdefault("replan_history", [])
 
                 def record(status: str, attempt: int | None = None, **entry: Any) -> str:
                     history.append({"attempt": attempt, "trigger": trigger, "status": status, **entry})
                     progress["in_flight"] = False
+                    progress.pop("trigger", None)
                     self.hub.save_request(rid)
                     return status if status in {"applied", "declined"} else "failed"
 
@@ -3178,12 +3189,16 @@ class Orchestrator:
                                and (reason := block_reason(results[sid]))]
                     if blocked:
                         return record("blocked", reason="; ".join(blocked))
-                used_attempts = int(progress.get("attempts") or 0)
+                used_attempts = max((int(entry.get("attempt") or 0) for entry in history
+                                     if entry.get("trigger") == trigger), default=0)
                 # A restart re-asks the attempt it interrupted; a cap lowered meanwhile still applies to it.
-                attempt = max(used_attempts, 1) if progress.get("in_flight") else used_attempts + 1
+                same_in_flight = progress.get("in_flight") and progress.get("trigger", trigger) == trigger
+                if same_in_flight:
+                    used_attempts = max(used_attempts, int(progress.get("attempts") or 0))
+                attempt = max(used_attempts, 1) if same_in_flight else used_attempts + 1
                 if attempt > limit:
                     return record("limit", reason=f"re-plan limit reached ({used_attempts}/{limit})")
-                progress.update(attempts=attempt, max=limit, in_flight=True)
+                progress.update(attempts=attempt, max=limit, in_flight=True, trigger=trigger)
                 if review_progress is not None:
                     req["review_progress"] = {**review_progress, "phase": "replan"}
                 self.hub.save_request(rid)  # counted before the CSO call, so a restart cannot reset the cap
@@ -3545,7 +3560,7 @@ class Orchestrator:
         if req.get("pending_questions"):
             metadata.append("Pending PI decisions/questions:\n" + "\n".join(
                 f"- {question}" for question in req["pending_questions"]))
-        if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
+        if req.get("replan_history"):  # only when a re-plan cap recorded an attempt (#271, #373)
             metadata.append("Re-plan history:\n" + "\n".join(replan_history_lines(req["replan_history"])))
         scope = req.get("scope_check") or {}
         if scope.get("verdict") in ("borderline", "out"):  # "in" adds nothing (#36)

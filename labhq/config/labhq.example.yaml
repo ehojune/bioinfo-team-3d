@@ -127,7 +127,8 @@ orchestrator:
   reviewer_agent: sci_reviewer
   cso_models: [opus, gpt-6-astra]       # --cso-model 허용 목록; Fable은 허용되지 않음
   max_revisions: 1
-  max_replans: 0                     # 1 이상이면 단계 실패·리뷰 revise 뒤 CSO가 남은 DAG만 다시 계획(요청당 횟수 상한)
+  max_replans: 0                     # 리뷰 revise 뒤 남은 DAG 재계획 상한
+  max_failure_replans: 1             # 단계 실패 뒤 남은 DAG 재계획 상한; 0이면 바로 실패
   max_steps: 12
   max_parallel_steps: 4
   quota_default_wait_s: 3600          # reset 시각을 못 읽거나 runner 시간대를 모를 때 최대 1시간 대기 뒤 재확인
