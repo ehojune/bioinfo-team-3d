@@ -757,6 +757,35 @@ def test_the_live_probe_cd_spellings_reach_the_gate_on_real_folders(tmp_path):
         assert gate(command).action == "allow", command
 
 
+def test_a_long_inline_script_after_cd_into_the_workdir_does_not_go_to_the_pi(tmp_path):
+    """13th mock trial: `cd <workdir> && python -c "<script>"` split into hundreds of words and hit the candidate cap.
+    A word naming nothing below the cd target is read as spelled; links, `..` and unknowable spellings still count."""
+    fake_home = tmp_path / "fh"
+    (fake_home / ".sec").mkdir(parents=True)
+    (fake_home / ".sec" / "key.txt").write_text("CANARY", encoding="utf-8")
+    ws = tmp_path / "ws"
+    (ws / "outputs").mkdir(parents=True)
+    _link_dir(ws / "alias", fake_home / ".sec")
+    found = resolve_private_paths(Settings.model_validate({"policy": {"private_paths": [str(fake_home / ".sec")]}}),
+                                  [ws], home=str(tmp_path / "elsewhere"))
+
+    def gate(command):
+        return evaluate_tool("Bash", {"command": command}, PolicySettings(), allowed_roots=[str(ws)],
+                             workdir=str(ws), environ={}, private_paths=found.paths, home=str(tmp_path / "elsewhere"))
+
+    script = "\n".join(f"v{i} = row.get('col{i}')[0] if x{i} else {{}}" for i in range(400))
+    inline = f"python3 -c \"\nimport csv\n{script}\nopen('outputs/x.tsv')\n\""
+    assert gate(f'cd "{ws}" && {inline}').action == "allow"
+    assert gate(f"cd outputs && {inline}").action == "allow"
+    for command in (f'cd "{fake_home}" && {inline} && cat .sec/key.txt',
+                    f'cd "{fake_home}" && {inline} && cat .se*/key.txt',
+                    f'cd "{ws}" && {inline} && cat ../fh/.sec/key.txt',
+                    f'cd "{ws}" && {inline} && tar czf out.tgz alias',
+                    f'cd "{ws}" && {inline} && cat alias/key.txt'):
+        decision = gate(command)
+        assert decision.action == "ask" and "private_paths" in decision.reason, command[-40:]
+
+
 # ---------------- user-environment registry (#325) ----------------
 # The PI's GITHUB_TOKEN is a user environment variable: labhq strips it from staff process env, but the same
 # account can read it back from the registry. Pure text tests; no registry is read.

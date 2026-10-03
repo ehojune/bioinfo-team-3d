@@ -776,6 +776,29 @@ def _real(p: str) -> str | None:
         return None
 
 
+def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None]) -> bool:
+    """Whether relative `token` surely names nothing in `folder`: its first component is literal and not there.
+
+    A bare word with a glob, brace, tilde (8.3 short name), stream, escape or expansion may name an entry, so does
+    `.` or `..`. A word with whitespace came from inside quotes, where only an expansion still changes it."""
+    first = token
+    while first.startswith("./"):
+        first = first[2:]
+    first = first.split("/", 1)[0]  # a backslash is an escape in bash and a separator on Windows: kept below
+    if first in ("", ".", ".."):
+        return False
+    special = "$%`!" if any(char.isspace() for char in first) else "*?[]{}~:\\$%^!`"
+    if any(char in first for char in special):
+        return False
+    if folder not in listings:
+        try:
+            listings[folder] = {os.path.normcase(name) for name in os.listdir(folder)}
+        except (OSError, ValueError):
+            listings[folder] = None
+    names = listings[folder]
+    return names is not None and os.path.normcase(first) not in names
+
+
 def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None) -> str | None:
     """`touches` on this host's real filesystem: symlinks and junctions inside a candidate are followed.
 
@@ -789,12 +812,22 @@ def touches_resolved(obj: Any, paths: Iterable[str], workdir: str | None = None)
         return None
     strings = sorted(_strings(obj), key=lambda item: not item[1])  # path fields first, e.g. Write before content
     seen: set[str] = set()
+    listings: dict[str, set[str] | None] = {}
     for s, path_field in strings:
         for token in (s,) if path_field else _scan_path_text(s).candidates:
             if not token or _drive_relative(token):
                 continue
             if not _absolute(token):
                 if not workdir:
+                    continue
+                if not path_field and _absent_below(token, workdir, listings):
+                    # Nothing by that name is in the workdir, so no link there can carry it into a zone: it is read
+                    # as spelled and costs no resolution, so an inline script's hundreds of words do not hit the
+                    # cap (13th mock trial).
+                    spelled = _norm(os.path.join(_real(workdir) or workdir, token))
+                    for original, zone in zones:
+                        if _inside(spelled, zone):
+                            return original
                     continue
                 token = os.path.join(workdir, token)
             if token in seen:
@@ -1152,6 +1185,12 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
     return None
 
 
+def _holds_private(base: str, private_paths: Iterable[str]) -> bool:
+    """Whether a private path is `base` or below it, as spelled or through a link in `base`."""
+    roots = {root for root in (_norm(base), _real(base)) if root}
+    return any(_inside(_norm(p), root) for p in private_paths if p for root in roots)
+
+
 def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None, home: str | None,
                         environ: Mapping[str, str] | None) -> bool:
     """`cd <home> && cat .ssh/x` (PR #324 live probe): relative paths read from each `cd` target, lexically and
@@ -1167,10 +1206,15 @@ def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None,
     words = [*_scan_path_text(cmd).candidates, *re.split(r"[\s'\"`|;&<>(),=]+", cmd)]
     tokens = [t for t in dict.fromkeys(words)
               if t and not _absolute(t) and not _drive_relative(t) and not t.startswith(("~", "$", "%"))]
-    if len(tokens) > MAX_RESOLVED_CANDIDATES:
+    # Words are read lexically from a cd target, so without `..` they name only what is below it. A target with no
+    # private path below it (the task's own workdir) needs no word check: `cd <workdir> && python -c "…"` splits into
+    # hundreds of script words and went to the PI (13th mock trial). Links are still followed below for every target.
+    escapes = any(part == ".." for t in tokens for part in re.split(r"[/\\]", t))
+    lexical = [b for b in bases if escapes or not os.path.isabs(b) or _holds_private(b, private_paths)]
+    if lexical and len(tokens) > MAX_RESOLVED_CANDIDATES:
         return True
     for base in bases:
-        spelled = [base, *(path_field_text(t, base) for t in tokens)]
+        spelled = [base, *(path_field_text(t, base) for t in tokens)] if base in lexical else [base]
         if mentioned_private_path("\n".join(spelled), private_paths, home, environ):
             return True
         if os.path.isabs(base) and touches_resolved({"command": cmd}, private_paths, workdir=base):
