@@ -111,21 +111,26 @@ def slugify(s: str, max_len: int = 40) -> str:
     return (s or "contract")[:max_len]
 
 
-def extract_json(text: str | None) -> Any | None:
-    """Best-effort: parse a JSON object from model output (whole text, fenced block, or last object)."""
+def extract_json(text: str | None, *, strict: bool = True) -> Any | None:
+    """Best-effort: parse a JSON object from model output (whole text, fenced block, or last object).
+
+    ``strict=False`` also accepts raw control characters (a real newline or tab) inside strings, as
+    ``json.loads(strict=False)`` does. Only callers that read free text a model was asked to lay out on lines
+    pass it.
+    """
     if not text:
         return None
     t = text.strip()
+    dec = json.JSONDecoder(strict=strict)
     try:
-        return json.loads(t)
+        return dec.decode(t)
     except ValueError:
         pass
     for block in reversed(re.findall(r"```(?:json)?\s*(.*?)```", t, flags=re.S)):
         try:
-            return json.loads(block)
+            return dec.decode(block)
         except ValueError:
             continue
-    dec = json.JSONDecoder()
     best = None
     for i, ch in enumerate(t):
         if ch != "{":

@@ -1,0 +1,18 @@
+pr: 343
+rows:
+- sha: 33b0593
+  at: 2026-10-03 08:50
+  text: '일반 lane PI 질문: JSON 문자열 안 실제 줄바꿈도 질문으로 읽는다(extract_json strict 인자, blocking_question만
+    strict=False)'
+- sha: 8218a6d
+  at: 2026-10-03 08:50
+  text: '재계획 프롬프트: PI 질문 폰 카드 규칙을 계획과 같은 상수로 공유'
+- sha: f84c361
+  at: 2026-10-03 08:51
+  text: '연구 계획 프롬프트: PI 질문은 500자 이하, 질문을 맨 앞에'
+- sha: 077f0d8
+  at: 2026-10-03 08:53
+  text: '결정 카드: summary 줄바꿈을 2.5D·3D 모두 그대로 보여 준다'
+- sha: a712690
+  at: 2026-10-03 08:53
+  text: CI가 돌리지 않던 Node test 8개를 등록한다

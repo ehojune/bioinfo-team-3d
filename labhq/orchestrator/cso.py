@@ -118,6 +118,10 @@ accessed (public vs controlled access, DUA constraints), and feasibility risks.
 
 Request: {request}"""
 
+# Plan and re-plan questions of the general lane go to the PI's phone card. Nothing validates their length, so
+# both prompts carry the same rule.
+PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
+
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
@@ -140,7 +144,7 @@ Rules:
   clarifying_questions before planning execution. Put a QC step after any data generation.
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
-- {question_rule} Each question must fit the PI's phone card: at most 700 characters, the question itself first.
+- {question_rule} """ + PI_CARD_QUESTION_RULE + """
 
 PI's request: {request}"""
 
@@ -172,7 +176,8 @@ Contract rules:
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
-- Put QC after data generation. {question_rule}
+- Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
+  validation), the question itself first.
 - For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
   acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
@@ -207,7 +212,7 @@ paths, caveats and open questions. Do not quietly switch to a weaker method when
 and if you give it up, say what you tried and why you stopped. If you cannot proceed without a PI decision,
 return JSON with "blocking_decision": "the specific question and choices", written for the PI's phone card:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
-with "- ". Do not proceed with the blocked work."""
+with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work."""
 
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
@@ -242,7 +247,7 @@ Rules:
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
 - Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
-  approval must change, ask in clarifying_questions and do not plan the blocked work.
+  approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {empty_rule}
 
 PI's request: {request}
@@ -910,8 +915,13 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
 
 
 def blocking_question(result: TaskResult) -> str | None:
-    """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None."""
-    structured = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
+    """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None.
+
+    STEP_PROMPT puts each choice on its own line, so a step may write a real newline inside the JSON string;
+    that still reads as the question instead of dropping it (#342 review).
+    """
+    structured = (result.structured if isinstance(result.structured, dict)
+                  else extract_json(result.text, strict=False))
     question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)
                                             else None)
     return question.strip() if isinstance(question, str) and question.strip() else None

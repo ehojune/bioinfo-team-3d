@@ -126,6 +126,15 @@ def test_package_data_includes_office_assets():
     ('web_issue126.cjs', 'full answer on demand in 2.5D and 3D: OK'),
     ('web_issue184.cjs', 'fail 0'),
     ('web_decision_focus.cjs', 'fail 0'),
+    ('web_decision_summary.cjs', 'fail 0'),
+    ('web_clarify_options.cjs', 'fail 0'),
+    ('web_cp2_evidence.cjs', 'fail 0'),
+    ('web_issue75.cjs', 'mobile staff collapse and bounded grouped decision history: OK'),
+    ('web_followup.cjs', 'fail 0'),
+    ('web_refs.cjs', 'fail 0'),
+    ('web_ask.cjs', 'web_ask: ask/answer feed, refusal, targets and replay passed'),
+    ('web_issue106.cjs', 'snapshot task priority, cancellation and hibernating label: OK'),
+    ('web_issue87.cjs', 'snapshot restores an active step after a 200-event replay gap: OK'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
