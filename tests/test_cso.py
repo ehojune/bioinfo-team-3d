@@ -387,8 +387,10 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
             return result(task, structured={"steps": STEPS[:2]})
         if kind == "step" and task.meta["step_id"] == "A":
             if "Your earlier blocking question and the PI's answer:" not in task.prompt:
-                return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"})
+                return result(task, text="blocked", structured={"blocking_decision": "Cases or controls?"},
+                              tool_errors=["fixture lookup failed", "shared lookup failed"])
             assert not any(t.meta.get("step_id") == "B" for t in calls)
+            return result(task, text="done", tool_errors=["shared lookup failed", "second lookup failed"])
         return result(task, text="done")
 
     hub = FakeHub(dispatch)
@@ -410,6 +412,11 @@ async def test_blocking_step_waits_then_reruns_before_dependent():
     assert decision["question"] == "Cases or controls?" and decision["answer"] == "cases"
     assert decision["previous_result"]["text"] == "blocked"
     assert decision["previous_result"]["structured"] == {"blocking_decision": "Cases or controls?"}
+    assert decision["previous_result"]["tool_errors"] == ["fixture lookup failed", "shared lookup failed"]
+    assert shared["A"].tool_errors == ["fixture lookup failed", "shared lookup failed", "second lookup failed"]
+    report = hub.requests["r"]["report"]
+    assert "A: 실패한 조회 — 증거도 부재 증명도 아님 3건" in report
+    assert "fixture lookup failed" in report
 
 
 def test_configured_orchestration_agents_are_not_workers():
