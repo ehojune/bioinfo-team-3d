@@ -1,0 +1,5 @@
+pr: 362
+rows:
+- sha: cec160d
+  at: 2026-10-03 22:57
+  text: 'README 로드맵 v0.5: 10차 시운전이 연구 lane을 보고서까지 완주(verify exit 0), 남은 것은 두 번째 완주·revise 이어 가기. HANDOFF 큐 갱신'
