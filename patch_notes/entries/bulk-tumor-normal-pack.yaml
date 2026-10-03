@@ -3,3 +3,6 @@ rows:
 - sha: 0f3bda7
   at: 2026-10-04 00:51
   text: 벌크 두 조건 차등발현 pack과 적용 조건별 CP1 판정을 추가
+- sha: f13c400
+  at: 2026-10-04 01:04
+  text: 모든 active pack의 명시적 응답과 pairing별 count·non-count 모형 규칙을 추가
