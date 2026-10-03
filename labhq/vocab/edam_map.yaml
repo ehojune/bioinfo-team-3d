@@ -6,6 +6,8 @@ version: 1
 candidates:
   raw_counts: Gene expression matrix
   normalized_counts: Gene expression matrix
+  normalized_expression: Gene expression matrix
+  transformed_expression: Gene expression matrix
   de_table: Differential gene expression profile
   enrichment_table: Over-representation data
   network: Pathway or network
@@ -18,7 +20,8 @@ candidates:
   alignment: Sequence alignment
   variants: Sequence variations
   assembly: Sequence assembly
-  features: Sequence features
+  genomic_features: Sequence features
+  variant_annotations: null
   protein_structure: Protein structure
   plot: Plot
   table: null

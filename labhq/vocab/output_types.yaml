@@ -4,213 +4,235 @@
 # generated edam_subset.yaml; nobody types an id by hand.
 #
 # Per key: branch (data | format | operation), definition (labhq's own words), extensions (format only,
-# lower case, a single trailing .gz is peeled off first), ok / not (examples), review (pending until the PI
-# or a named reviewer checks the definition and the examples).
-# At most 40 keys. Adding one requires its own review.
+# lower case, a single trailing .gz is peeled off first), ok / not (examples), review (PI reviewed every key
+# on 2026-10-04).
+# At most 45 keys. Adding one requires its own review.
 version: 1
 
 terms:
   raw_counts:
     branch: data
-    definition: "per-feature counts per sample before any library-size or variance scaling"
+    definition: "read or fragment counts per gene or transcript and sample before normalization or transformation"
     ok: ["gene x sample integer count matrix from featureCounts or STAR"]
-    not: ["TPM or CPM table", "DESeq2 normalized counts"]
-    review: pending
+    not: ["TPM or CPM table", "DESeq2 normalized counts", "VST or log-transformed expression matrix"]
+    review: "PI 2026-10-04"
   normalized_counts:
     branch: data
-    definition: "a count matrix after library-size or variance scaling, still per feature and sample"
-    ok: ["CPM, TPM, vst or log-normalized expression matrix"]
-    not: ["raw integer counts", "a table of fold changes"]
-    review: pending
+    definition: "counts per gene or transcript and sample adjusted for library size or other normalization factors, on an untransformed count scale"
+    ok: ["DESeq2 size-factor-normalized counts"]
+    not: ["raw counts", "TPM or CPM table", "VST or log-transformed expression matrix", "a table of fold changes"]
+    review: "PI 2026-10-04"
+  normalized_expression:
+    branch: data
+    definition: "expression values per gene or transcript and sample expressed in normalized units such as CPM or TPM, before log or variance-stabilizing transformation"
+    ok: ["CPM expression matrix", "TPM expression matrix"]
+    not: ["raw counts", "DESeq2 normalized counts", "VST or log-transformed expression matrix", "a table of fold changes"]
+    review: "PI 2026-10-04"
+  transformed_expression:
+    branch: data
+    definition: "expression values per gene or transcript and sample after a log or variance-stabilizing transformation"
+    ok: ["DESeq2 VST or rlog matrix", "log2-CPM matrix", "log-normalized expression matrix"]
+    not: ["raw counts", "untransformed normalized counts", "untransformed TPM or CPM table", "a table of fold changes"]
+    review: "PI 2026-10-04"
   de_table:
     branch: data
-    definition: "one row per feature with an effect size and a test statistic between groups"
-    ok: ["DESeq2 or limma results with log2FC and adjusted p-value"]
-    not: ["a count matrix", "a list of gene names without statistics"]
-    review: pending
+    definition: "differential expression results per gene or transcript and tested contrast, including an expression effect estimate and statistical significance results"
+    ok: ["DESeq2 or limma results with gene identifiers, log2FC, p-values and adjusted p-values"]
+    not: ["an expression matrix", "a list of gene names without statistics", "a functional enrichment result table"]
+    review: "PI 2026-10-04"
   enrichment_table:
     branch: data
-    definition: "gene sets or terms with an enrichment score or over-representation test result"
-    ok: ["GSEA or ORA result table"]
-    not: ["a differential expression table", "a gene set definition file"]
-    review: pending
+    definition: "enrichment results per gene set, biological function or pathway and tested comparison, including method-specific enrichment measures, p-values and multiple-testing-adjusted significance where available"
+    ok: ["GSEA results with gene set identifiers, ES or NES and adjusted significance", "ORA results with term identifiers, overlap counts and adjusted p-values"]
+    not: ["a differential expression table", "a gene set definition file", "a gene-to-function annotation table without enrichment tests"]
+    review: "PI 2026-10-04"
   network:
     branch: data
     definition: "nodes and edges between biological entities, such as interactions or pathways"
     ok: ["STRING interaction edge list", "pathway graph export"]
     not: ["a correlation matrix without edges chosen", "a plot of a network"]
-    review: pending
+    review: "PI 2026-10-04"
   sample_metadata:
     branch: data
     definition: "one row per sample with its design variables and annotations"
     ok: ["samplesheet with condition, batch and pairing columns"]
     not: ["a list of downloaded files", "per-gene annotation"]
-    review: pending
+    review: "PI 2026-10-04"
   data_manifest:
     branch: data
     definition: "a list of data files or accessions with where they came from and how they were checked"
     ok: ["accession list with source, checksum and download date"]
     not: ["sample design table", "an analysis report"]
-    review: pending
+    review: "PI 2026-10-04"
   qc_report:
     branch: data
     definition: "a report of quality checks on data or results, with pass, warn or fail per check"
     ok: ["MultiQC summary", "QC review notes per step"]
     not: ["the final analysis report", "raw QC metric dumps without judgement"]
-    review: pending
+    review: "PI 2026-10-04"
   report:
     branch: data
     definition: "a human-readable write-up of what was done, found and left open"
     ok: ["RESULT.md style step report", "final answer document"]
     not: ["a QC checklist", "a data table"]
-    review: pending
+    review: "PI 2026-10-04"
   sequence_reads:
     branch: data
     definition: "unaligned reads as they come from a sequencer, with or without qualities"
     ok: ["paired FASTQ files of a sequencing run"]
     not: ["an assembled contig", "aligned reads"]
-    review: pending
+    review: "PI 2026-10-04"
   sequence:
     branch: data
     definition: "one or more biological sequences that are not raw reads"
     ok: ["protein sequences of a gene family", "a reference contig"]
     not: ["sequencing reads", "an alignment"]
-    review: pending
+    review: "PI 2026-10-04"
   alignment:
     branch: data
     definition: "sequences or reads placed against each other or against a reference"
     ok: ["read alignments to a genome", "a multiple sequence alignment"]
     not: ["unaligned reads", "a variant list"]
-    review: pending
+    review: "PI 2026-10-04"
   variants:
     branch: data
     definition: "positions where samples differ from a reference, with alleles and calls"
     ok: ["germline SNV and indel calls"]
     not: ["read alignments", "gene annotation"]
-    review: pending
+    review: "PI 2026-10-04"
   assembly:
     branch: data
     definition: "contigs or scaffolds built from reads"
     ok: ["de novo plastome assembly"]
     not: ["a reference download", "read alignments"]
-    review: pending
-  features:
+    review: "PI 2026-10-04"
+  genomic_features:
     branch: data
-    definition: "annotated regions on a sequence, such as genes, exons or peaks"
-    ok: ["gene annotation of an assembled genome", "peak calls"]
-    not: ["the sequence itself", "variant calls"]
-    review: pending
+    definition: "genomic intervals representing genes, transcripts, exons or called peaks"
+    ok: ["gene models in GFF3 or GTF", "called peaks in BED"]
+    not: ["the sequence itself", "variant calls", "variant consequence annotations"]
+    review: "PI 2026-10-04"
+  variant_annotations:
+    branch: data
+    definition: "annotations linked to variants, such as overlapping genes, predicted consequences or known clinical interpretations"
+    ok: ["VEP or SnpEff consequence annotations", "variant annotation table with gene and consequence columns"]
+    not: ["variant calls without annotations", "gene models in GFF3 or GTF"]
+    review: "PI 2026-10-04"
   protein_structure:
     branch: data
     definition: "three-dimensional coordinates of a protein or complex"
     ok: ["PDB entry or predicted model coordinates"]
     not: ["a protein sequence", "a picture of a structure"]
-    review: pending
+    review: "PI 2026-10-04"
   plot:
     branch: data
     definition: "a figure made from data for people to look at"
     ok: ["volcano plot", "QC histogram"]
     not: ["the table behind the figure"]
-    review: pending
+    review: "PI 2026-10-04"
   table:
     branch: data
     definition: "tabular data that fits none of the more specific data keys"
     ok: ["summary statistics table of a small dataset"]
     not: ["a count matrix", "a DE result table"]
-    review: pending
+    review: "PI 2026-10-04"
 
   fastq:
     branch: format
     definition: "FASTQ text with sequence and quality lines"
     extensions: [".fastq", ".fq"]
-    review: pending
+    review: "PI 2026-10-04"
   fasta:
     branch: format
     definition: "FASTA text with header and sequence lines"
     extensions: [".fasta", ".fa", ".fna", ".faa"]
-    review: pending
+    review: "PI 2026-10-04"
   bam:
     branch: format
     definition: "binary SAM alignment file"
     extensions: [".bam"]
-    review: pending
+    review: "PI 2026-10-04"
   vcf:
     branch: format
     definition: "variant call format text"
     extensions: [".vcf"]
-    review: pending
+    review: "PI 2026-10-04"
   bed:
     branch: format
     definition: "BED interval text"
     extensions: [".bed"]
-    review: pending
+    review: "PI 2026-10-04"
   gff3:
     branch: format
     definition: "GFF version 3 feature text; a bare .gff is not inferred because it may be GFF2"
     extensions: [".gff3"]
-    review: pending
+    review: "PI 2026-10-04"
   genbank:
     branch: format
     definition: "GenBank flat file"
     extensions: [".gb", ".gbk"]
-    review: pending
+    review: "PI 2026-10-04"
   tsv:
     branch: format
     definition: "tab-separated values"
     extensions: [".tsv"]
-    review: pending
+    review: "PI 2026-10-04"
   csv:
     branch: format
     definition: "comma-separated values"
     extensions: [".csv"]
-    review: pending
+    review: "PI 2026-10-04"
   json:
     branch: format
     definition: "JSON text"
     extensions: [".json"]
-    review: pending
+    review: "PI 2026-10-04"
   markdown:
     branch: format
     definition: "Markdown text"
     extensions: [".md"]
-    review: pending
+    review: "PI 2026-10-04"
   pdf:
     branch: format
     definition: "PDF document"
     extensions: [".pdf"]
-    review: pending
+    review: "PI 2026-10-04"
   png:
     branch: format
     definition: "PNG image"
     extensions: [".png"]
-    review: pending
+    review: "PI 2026-10-04"
   h5ad:
     branch: format
     definition: "AnnData HDF5 file"
     extensions: [".h5ad"]
-    review: pending
+    review: "PI 2026-10-04"
 
   statistical_analysis:
     branch: operation
     definition: "a statistical test or model fit on data"
-    review: pending
+    review: "PI 2026-10-04"
   de_analysis:
     branch: operation
-    definition: "testing features for differences between groups"
-    review: pending
+    definition: "estimating and statistically testing expression differences for genes or transcripts across specified conditions or contrasts"
+    ok: ["gene-level differential expression analysis with DESeq2 or limma"]
+    not: ["functional enrichment analysis alone", "variant association testing", "differential peak accessibility analysis"]
+    review: "PI 2026-10-04"
   enrichment_analysis:
     branch: operation
-    definition: "testing gene sets or terms for enrichment"
-    review: pending
+    definition: "testing gene lists or ranked genes for enrichment of biological functions, pathways or other gene sets"
+    ok: ["GO over-representation analysis", "rank-based GSEA"]
+    not: ["per-gene differential expression testing", "assigning functional annotations without enrichment tests"]
+    review: "PI 2026-10-04"
   read_mapping:
     branch: operation
     definition: "aligning reads to a reference"
-    review: pending
+    review: "PI 2026-10-04"
   variant_calling:
     branch: operation
     definition: "calling variants from alignments"
-    review: pending
+    review: "PI 2026-10-04"
   data_retrieval:
     branch: operation
     definition: "fetching data from a public or local source"
-    review: pending
+    review: "PI 2026-10-04"

@@ -8,12 +8,12 @@ source:
   license: https://creativecommons.org/licenses/by-sa/4.0
 generator:
   script: scripts/edam_subset.py
-  script_sha256: 64b8c8ac7c21f57ebc0feb05bfda6d85928107fc98ec3222838899fbfab398a1
-  map_sha256: 51cc8c429781d1694a33c4754f65c3aadcc7011cc7d08e03abedf1cd86e3b08c
+  script_sha256: e888ca4473a7563b862bbff33091ab8ecbf4eb1f6026c44c5ae802b434fa8b47
+  map_sha256: 5caf91c3a4acd4541a08276f7e9a815fffd466f1fbc3caf0349896a33aaf220c
 counts:
-  keys: 38
+  keys: 41
   edam_terms: 31
-  unknown: 6
+  unknown: 7
 terms:
   raw_counts:
     branch: data
@@ -24,6 +24,22 @@ terms:
     - data_2082
     - data_2603
   normalized_counts:
+    branch: data
+    id: data_3112
+    label: Gene expression matrix
+    ancestors:
+    - data_0006
+    - data_2082
+    - data_2603
+  normalized_expression:
+    branch: data
+    id: data_3112
+    label: Gene expression matrix
+    ancestors:
+    - data_0006
+    - data_2082
+    - data_2603
+  transformed_expression:
     branch: data
     id: data_3112
     label: Gene expression matrix
@@ -106,12 +122,17 @@ terms:
     - data_0006
     - data_0850
     - data_1234
-  features:
+  genomic_features:
     branch: data
     id: data_1255
     label: Sequence features
     ancestors:
     - data_0006
+  variant_annotations:
+    branch: data
+    id: unknown
+    reason: no_candidate
+    candidate: null
   protein_structure:
     branch: data
     id: data_1460

@@ -35,6 +35,21 @@ def test_fit_mismatch_and_missing_declaration_are_counted_per_step():
     assert fit.evaluate(plan(None)) == {"fit": 0, "mismatch": 0, "unknown": 2}
 
 
+def test_pi_reviewed_input_fit_rules_are_loaded_exactly():
+    table = fit.relation_table(current())
+    assert table is not None
+    rules = table["operations"]
+    assert {"normalized_expression", "transformed_expression"} <= rules["statistical_analysis"]["fit"]
+    assert rules["de_analysis"]["fit"] == frozenset({"raw_counts", "normalized_counts", "transformed_expression"})
+    assert "normalized_expression" not in rules["de_analysis"]["fit"] | rules["de_analysis"]["mismatch"]
+    assert {"normalized_expression", "transformed_expression"} <= rules["enrichment_analysis"]["mismatch"]
+    for operation in ("statistical_analysis", "de_analysis", "read_mapping", "variant_calling"):
+        assert "genomic_features" in rules[operation]["mismatch"]
+        assert "features" not in rules[operation]["mismatch"]
+    for operation in ("read_mapping", "variant_calling", "de_analysis"):
+        assert "variant_annotations" in rules[operation]["mismatch"]
+
+
 def test_a_declaration_under_another_vocabulary_version_is_unknown():
     assert fit.evaluate(plan("sequence_reads", version="b" * 64)) == {"fit": 0, "mismatch": 0, "unknown": 2}
     assert fit.evaluate(plan("raw_counts", version="b" * 64)) == {"fit": 0, "mismatch": 0, "unknown": 2}
