@@ -7,3 +7,6 @@ rows:
   at: 2026-10-04 04:30
   text: PI 어휘 검토로 뜻이 바뀐 normalized_counts를 semantics fixture와 독립 baseline에서 vocab_changed로
     고정했다.
+- sha: df487b0
+  at: 2026-10-04 04:41
+  text: 'main 병합: README 분리 판을 받고, 어휘 키 수(41개, EDAM 연결 34개)를 README·매뉴얼에 맞췄다'
