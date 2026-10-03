@@ -35,6 +35,8 @@ from ..models import AgentSpec, Task
 INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv limits, cost)
 # A direct run lists at most this many files: the shadow hashes no more per request (HASH_MAX_FILES, #221).
 OUTPUT_SCAN_MAX_FILES = 200
+TOOL_USE_MATCH_WINDOW_NS = 5_000_000_000
+WRITE_TOOLS = frozenset({"Write", "Edit", "Bash", "PowerShell"})
 
 
 def _utf8_name(name: str) -> bool:
@@ -370,3 +372,50 @@ class TaskWorkspace:
         data = self._manifest()
         data.setdefault("runs", {}).setdefault(task_id, {}).update(fields)
         write_owned(self.dir, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+    def run_tool_uses(self, task_id: str) -> list[dict[str, Any]]:
+        run = (self._manifest().get("runs") or {}).get(task_id) or {}
+        rows = run.get("tool_uses") if isinstance(run, dict) else None
+        return [dict(row) for row in rows or [] if isinstance(row, dict)]
+
+
+def record_tool_use(workdir: Path, task_id: str, tool_use_id: str, tool_name: str, time_ns: int) -> None:
+    """Append one bounded Claude PostToolUse receipt to this run's manifest."""
+    root = Path(workdir)
+    text = read_owned(root, "manifest.json")
+    data = json.loads(text) if text is not None else {}
+    if not isinstance(data, dict):
+        raise ValueError("manifest is not an object")
+    runs = data.setdefault("runs", {})
+    if not isinstance(runs, dict):
+        raise ValueError("manifest runs is not an object")
+    run = runs.setdefault(task_id, {})
+    if not isinstance(run, dict):
+        raise ValueError("manifest run is not an object")
+    rows = run.setdefault("tool_uses", [])
+    if not isinstance(rows, list):
+        raise ValueError("manifest tool_uses is not a list")
+    rows.append({"tool_use_id": tool_use_id[:200], "tool_name": tool_name, "time_ns": int(time_ns)})
+    del rows[:-4096]
+    write_owned(root, "manifest.json", json.dumps(data, indent=2, ensure_ascii=False, default=str))
+
+
+def nearest_tool_use_id(mtime_ns: Any, rows: list[dict[str, Any]], observed_at_ns: int) -> str | None:
+    """Unique write receipt nearest a file mtime; distant or tied receipts are not attributed."""
+    if not isinstance(mtime_ns, int):
+        return None
+    candidates: list[tuple[int, str]] = []
+    for row in rows:
+        tool_use_id, tool_name, time_ns = row.get("tool_use_id"), row.get("tool_name"), row.get("time_ns")
+        if (not isinstance(tool_use_id, str) or not tool_use_id or tool_name not in WRITE_TOOLS
+                or not isinstance(time_ns, int) or time_ns > observed_at_ns):
+            continue
+        distance = abs(time_ns - mtime_ns)
+        if distance <= TOOL_USE_MATCH_WINDOW_NS:
+            candidates.append((distance, tool_use_id))
+    if not candidates:
+        return None
+    candidates.sort()
+    if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+        return None
+    return candidates[0][1]

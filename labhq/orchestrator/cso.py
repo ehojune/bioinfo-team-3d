@@ -2103,6 +2103,10 @@ class Orchestrator:
                     "context": ""})
             async with sem:
                 outcome = await self.run_step(task)
+                if decision and previous and previous.tool_errors:
+                    outcome = outcome.model_copy(update={"tool_errors": list(dict.fromkeys([
+                        *previous.tool_errors, *outcome.tool_errors,
+                    ]))})
                 if not research_plan:
                     return attach_general_result(outcome)
                 if not outcome.ok or blocking_question(outcome):

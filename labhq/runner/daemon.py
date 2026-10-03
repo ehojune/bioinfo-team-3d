@@ -53,7 +53,7 @@ from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .system_ca import CA_ENV, system_ca_pem
-from .workspace import TaskWorkspace, restricted_zones
+from .workspace import TaskWorkspace, nearest_tool_use_id, restricted_zones
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -801,7 +801,7 @@ class Runner:
                                   "(read-only policy)"})
 
     def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
-        """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
+        """Keep the two Python CA variables paired, or point both at the OS trust store (9th mock trial).
 
         The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
         folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
@@ -810,7 +810,12 @@ class Runner:
         if not self.s.runner.system_ca_bundle:
             return {}
         engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
-        if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
+        configured = {name: engine_env.get(name) or os.environ.get(name) for name in CA_ENV}
+        chosen = {name: value for name, value in configured.items() if value}
+        if len(chosen) == 1:
+            missing = next(name for name in CA_ENV if name not in chosen)
+            return {missing: next(iter(chosen.values()))}
+        if chosen:
             return {}
         pem = system_ca_pem()
         if not pem:
@@ -1040,9 +1045,12 @@ class Runner:
                     self.s.runner.reference_scan_max_depth, self.s.runner.output_hash_max_bytes)
                 if note:
                     output_scan_notes.append(note)
+                observed_at_ns = time.time_ns()
+                tool_uses = ws.run_tool_uses(task.id) if agent.engine == Engine.claude_code else []
                 observed_outputs = [
                     {**{k: v for k, v in row.items() if k not in IDENTITY_ONLY},
-                     "task_id": task.id, "agent_id": agent.id}
+                     "task_id": task.id, "agent_id": agent.id,
+                     "tool_use_id": nearest_tool_use_id(row.get("mtime_ns"), tool_uses, observed_at_ns)}
                     for row in output_records
                     if output_before.get(row["path"]) != output_identity(row)
                 ]
@@ -1050,6 +1058,13 @@ class Runner:
                 ws.update_run(task.id, observed_outputs=observed_outputs,
                               **({"observed_outputs_incomplete": incomplete} if incomplete else {}))
 
+            engine_settings = claude_deny_private(claude_deny_links(claude_read_only(
+                claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
+                private.paths, open_reads=private.open_reads)
+            if agent.engine == Engine.claude_code and not read_only:
+                from ..hooks.tool_use import add_claude_hook
+
+                engine_settings = add_claude_hook(engine_settings)
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # A read-only task answers once from existing work; it does not ask anyone in turn, and gets no
@@ -1059,9 +1074,7 @@ class Runner:
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs,
                 # Other engines never read these rules; only paths a rule can name go in (#177).
-                claude_settings=claude_deny_private(claude_deny_links(claude_read_only(
-                    claude_settings(self.s.policy), [d for d in read_dirs if claude_rule_ready(d)]), denied_links),
-                    private.paths, open_reads=private.open_reads),
+                claude_settings=engine_settings,
                 private_labels=list(private.labels),
                 private_paths=list(private.paths),
                 private_enabled=private.enabled,
@@ -1153,6 +1166,8 @@ class Runner:
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
+        result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
+                                      if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs if row["path"] not in collected)
         if result.unreported_outputs:
