@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# runner 소프트웨어 요약: 직원이 쓰는 python을 검사 (#376 후속)
+
+**결론:** #376의 runner 요약이 `sys.executable`(labhq 자체 venv, pandas 없음)을 검사해서, T3 재실행에서 CSO가 "numpy/pandas도 없다"며 설치를 물었습니다. 직원 셸은 PATH의 Python 3.12(pandas 있음)를 씁니다. 이제 PATH의 `python3` → `python` → `py`를 검사하고, PATH에 없을 때만 labhq interpreter로 돌아갑니다.
+
+**검증:** 새 test 2개(PATH 우선·없으면 labhq interpreter, runner가 staff_python을 씀), 관련 test 217 passed.
+
 # labhq v0.25: PI가 공개 데이터로 시험하는 판
 
 **통과 기준:** PI의 공개 데이터 요청 5건 중 4건 이상이 개발자 손 없이 보고서까지 가고, 요청당 승인 카드가 3장 이하여야 합니다(설치·예산 질문 제외).

@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:59 | [`96170e0`](https://github.com/ehojune/bioinfo-team-3d/pull/380/commits/96170e0) | 매뉴얼에 runner 요약이 검사하는 python의 순서(python3, python, py)와 예외를 적었다. |
+| 05:37 | [`814da29`](https://github.com/ehojune/bioinfo-team-3d/pull/380/commits/814da29) | runner의 로컬 소프트웨어 요약이 labhq 자체 venv 대신 직원이 쓰는 PATH python을 검사한다. |
 | 05:20 | [`14f54f6`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/14f54f6) | 리뷰 수정이 실패해 첫 결과를 지킨 단계는 실패로 세지 않고 재계획하지 않는다(기존 설계 유지). |
 | 04:58 | [`a2deec9`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/a2deec9) | 버전을 0.25.0으로 올리고 README 제목을 v0.25로 바꿨다. |
 | 04:58 | [`e1f6e98`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/e1f6e98) | README에 "무엇이 다른가"(다른 회사 리뷰어의 문헌 원문 확인, 근거 등급, 근거 검증, PI 결정, 데이터 보호, 긴 작업)와 어노테이션·시맨틱·온톨로지 세 층 표, labhq open 안내를 넣었다. |
