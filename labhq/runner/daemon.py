@@ -14,6 +14,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -51,6 +52,7 @@ from .approvals import Broker
 from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
+from .system_ca import CA_ENV, system_ca_pem
 from .workspace import TaskWorkspace, restricted_zones
 
 log = logging.getLogger("labhq.runner")
@@ -798,6 +800,43 @@ class Runner:
             "ok": False, "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
                                   "(read-only policy)"})
 
+    def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
+        """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
+
+        The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
+        folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
+        spawn the store is read again and the file rewritten when it differs: a CA one task planted is never trusted
+        by the next, and a root the institution replaced reaches staff without a runner restart (PR #359 review)."""
+        if not self.s.runner.system_ca_bundle:
+            return {}
+        engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
+        if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
+            return {}
+        pem = system_ca_pem()
+        if not pem:
+            return {}
+        target = self.ws_root / ".labhq-system-ca.pem"
+        expected = pem.encode("ascii")
+        try:
+            if not is_link(target) and target.is_file() and target.read_bytes() == expected:
+                return {name: str(target) for name in CA_ENV}
+        except OSError:
+            pass
+        tmp = None
+        try:
+            self.ws_root.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self.ws_root, prefix=".labhq-system-ca.", suffix=".tmp")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(expected)
+            os.replace(tmp, target)  # replaces a link itself, never the file it points at
+        except OSError:
+            log.warning("system CA bundle not written", exc_info=True)
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            return {}
+        return {name: str(target) for name in CA_ENV}
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
@@ -969,6 +1008,7 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            env.update(self._system_ca_env(agent))
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
