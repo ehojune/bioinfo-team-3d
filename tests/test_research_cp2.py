@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research.contract import plan_sha256, salvage_research_result
+from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
@@ -313,6 +313,61 @@ async def test_two_failed_corrections_salvage_inference_support_into_cp2_and_rep
     receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
     assert receipt["refused_rows"] == card["refused_rows"]
     assert "계약에 맞지 않아 뺀 근거" in hub.requests["r"]["report"]
+
+
+def test_a_missing_slot_is_reported_with_the_field_errors_and_names_the_fix():
+    """9th mock trial: slot binding was checked only after the fields parsed, so the missing slots surfaced after
+    the last correction. The rows were named after their slots with no "slots" field."""
+    plan, result = _standalone_result()
+    del result["evidence"][0]["assessment_reason"]
+    del result["evidence"][0]["slots"]
+    problems = research_result_errors(result, plan=plan)
+    assert any("assessment_reason" in problem for problem in problems)
+    assert any(problem.startswith("required evidence slot e1 of step s1 has no evidence row")
+               and 'add "slots": ["e1"]' in problem for problem in problems)
+
+
+@pytest.mark.parametrize("field, value", [("claims", 1), ("evidence", True), ("evidence", [1, "x"]),
+                                          ("claims", None)])
+def test_a_scalar_ledger_is_a_correction_not_a_crash(field, value):
+    """PR #360 review: reading binding from raw JSON must not raise on a malformed ledger."""
+    plan, result = _standalone_result()
+    result[field] = value
+    assert research_result_errors(result, plan=plan)
+
+
+@pytest.mark.asyncio
+async def test_the_first_correction_asks_for_the_slot_with_the_field_error():
+    settings = _settings()
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        result = _cp2_result(hub, task)
+        if task.meta["kind"] == "step":
+            del result["evidence"][0]["assessment_reason"]
+            del result["evidence"][0]["slots"]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[path] if task.meta["kind"] == "step" else [], workdir="runs/s1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    prompt = hub.calls[2].prompt
+    assert "assessment_reason" in prompt and "required evidence slot e1" in prompt
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
 
 
 def test_normal_result_needs_no_salvage():

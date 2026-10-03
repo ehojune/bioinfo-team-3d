@@ -563,14 +563,39 @@ def validate_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any])
 
 
 def research_result_errors(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> list[str]:
-    """Every readable result-contract problem for the one correction turn."""
+    """Every readable result-contract problem for the one correction turn.
+
+    Step binding (claim ids, evidence slots) is read from the raw JSON too, so a correction learns it with the field
+    errors: checked only after the model parsed, a missing slot surfaced after the last correction (9th mock trial)."""
     try:
         validate_research_result(value, plan=plan)
     except ValidationError as error:
-        return schema_error_lines(error)
+        problems = schema_error_lines(error)
     except (TypeError, ValueError) as error:
-        return [part for part in (item.strip() for item in str(error).split(";")) if part]
-    return []
+        problems = [part for part in (item.strip() for item in str(error).split(";")) if part]
+    else:
+        return []
+    return list(dict.fromkeys([*problems, *_raw_binding_errors(value, plan)]))
+
+
+def _raw_binding_errors(value: Any, plan: ResearchPlan | dict[str, Any]) -> list[str]:
+    """step_binding_errors on result JSON that does not parse yet."""
+    if not isinstance(value, dict):
+        return []
+    try:
+        parsed = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    except ValidationError:
+        return []
+    step = next((step for step in parsed.steps if step.id == value.get("step_id")), None)
+    claim_rows, evidence_rows = value.get("claims"), value.get("evidence")
+    # A scalar ledger is a schema error already; iterating it would raise instead of asking for a correction.
+    if step is None or not isinstance(claim_rows, list) or not isinstance(evidence_rows, list):
+        return []
+    claims = [str(row["id"]) for row in claim_rows if isinstance(row, dict) and row.get("id")]
+    rows = [(str(row.get("id")), [slot for slot in row["slots"] if isinstance(slot, str)]
+             if isinstance(row.get("slots"), list) else [])
+            for row in evidence_rows if isinstance(row, dict)]
+    return _binding_errors(claims, rows, step)
 
 
 def _row_id(row_type: str, row: Any, index: int) -> str:
@@ -805,17 +830,26 @@ def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], 
 
 def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
     """What the step declared is what its result answers: only its claims, and every required slot addressed."""
-    errors = [f"claim {claim.id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"
-              for claim in result.claims if claim.id not in step.claim_ids]
+    return _binding_errors([claim.id for claim in result.claims], [(row.id, row.slots) for row in result.evidence],
+                           step)
+
+
+def _binding_errors(claim_ids: list[str], rows: list[tuple[str, list[str]]], step: ResearchStep) -> list[str]:
+    errors = [f"claim {claim_id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+              for claim_id in claim_ids if claim_id not in step.claim_ids]
     declared = {slot.id for slot in step.evidence_slots}
     filled: set[str] = set()
-    for row in result.evidence:
-        for slot in row.slots:
+    for row_id, slots in rows:
+        for slot in slots:
             if slot not in declared:
-                errors.append(f"evidence {row.id} fills slot {slot} that step {step.id} does not declare")
+                errors.append(f"evidence {row_id} fills slot {slot} that step {step.id} does not declare")
             filled.add(slot)
+    row_ids = {row_id for row_id, _ in rows}
+    # 9th mock trial: rows named after their slots, with no "slots" field, three turns in a row.
     errors += [f"required evidence slot {slot.id} of step {step.id} has no evidence row; list it in evidence.slots "
-               "of the row that tried it, even when the attempt failed or found nothing"
+               "of the row that tried it, even when the attempt failed or found nothing" +
+               (f' (evidence row {slot.id} is named after the slot but lists no "slots": add "slots": ["{slot.id}"])'
+                if slot.id in row_ids else "")
                for slot in step.evidence_slots if slot.required and slot.id not in filled]
     return errors
 
