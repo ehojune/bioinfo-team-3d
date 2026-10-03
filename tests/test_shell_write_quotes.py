@@ -271,5 +271,21 @@ def test_git_bash_drive_paths_are_read_as_windows_paths(command, action):
 
 def test_a_posix_runner_keeps_slash_c_as_a_posix_folder():
     policy = PolicySettings()
-    assert evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, ["/work"]).action == "ask"
-    assert evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, ["/c/work"]).action == "allow"
+    for roots, action in ((["/work"], "ask"), (["/c/work"], "allow")):
+        decision = evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, roots, windows=False)
+        assert decision.action == action
+
+
+def test_a_git_bash_path_into_a_restricted_zone_is_still_refused():
+    """PR #364 review: converting only the write target let `cp /c/<zone>/raw /c/<root>/out` through."""
+    policy = PolicySettings(data_zones=[DataZone(path="C:/work/restricted", level="restricted")])
+    decision = evaluate_tool("Bash", {"command": "cp /c/work/restricted/raw.txt /c/work/out.txt"}, policy,
+                             ["C:/work"])
+    assert decision.action != "allow" and "restricted" in decision.reason
+
+
+def test_a_git_bash_path_into_a_private_folder_is_still_refused():
+    decision = evaluate_tool("Bash", {"command": "cat /c/Users/pi/.ssh/id_rsa > /c/work/key.txt"}, PolicySettings(),
+                             ["C:/work"], workdir="C:/work", private_paths=["C:/Users/pi/.ssh"],
+                             private_enabled=True, home="C:/Users/pi")
+    assert decision.action != "allow"

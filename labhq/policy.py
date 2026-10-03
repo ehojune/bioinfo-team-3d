@@ -1040,10 +1040,13 @@ def evaluate_tool(
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
-    decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
+    # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
+    # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
+    checked = git_bash_command(tool_name, judged, allowed_roots, windows)
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, judged, private_paths, workdir, home, environ, list(private_open_reads))
+    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
@@ -1051,6 +1054,26 @@ def evaluate_tool(
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+# `/c/` where a path starts: after a space, quote, `=`, `>`, `(` ... and never inside a word, URL or other path.
+_GIT_BASH_DRIVE_TEXT = re.compile(r"(?<![\w.\-/\\:~$])/([A-Za-z])(?=/)")
+
+
+def git_bash_command(tool_name: str, tool_input: dict[str, Any], roots: Iterable[str],
+                     windows: bool | None = None) -> dict[str, Any]:
+    """A Bash input with Git Bash drive paths (`/c/Users/...`) spelled `C:/Users/...`, for the checks only.
+
+    Claude's Bash on Windows is Git Bash. Windows is the `windows` flag, else this host or a drive-letter root."""
+    command = tool_input.get("command")
+    if tool_name != "Bash" or not isinstance(command, str):
+        return tool_input
+    if windows is None:
+        windows = os.name == "nt" or any(re.match(r"^[A-Za-z]:[/\\]", str(root)) for root in roots)
+    if not windows:
+        return tool_input
+    spelled = _GIT_BASH_DRIVE_TEXT.sub(lambda m: m.group(1).upper() + ":", command)
+    return tool_input if spelled == command else {**tool_input, "command": spelled}
 
 
 _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
