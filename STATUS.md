@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# runner 요약: 직원이 쓸 python 명령까지 고른다 (#380 후속)
+
+**결론:** #380은 PATH의 `python3`를 먼저 골랐는데, 이 PC에서 `python3`는 분석 패키지가 없는 3.14(WindowsApps 별칭)이고 `python`이 pandas가 있는 3.12였습니다. 이제 세 명령을 모두 검사해 분석 패키지가 가장 많은 것을 고르고(동률이면 python3·python·py 순), CSO 능력 줄에 `Python=3.12.10 run as \`python\``처럼 명령까지 알립니다.
+
+**검증:** 이 PC 실측 `python` 3.12.10 선택. 새 test 2개(패키지 많은 쪽 선택·후보 없음 fallback, 능력 줄에 알려진 명령만 표시), 관련 test 219 passed.
+
 # runner 소프트웨어 요약: 직원이 쓰는 python을 검사 (#376 후속)
 
 **결론:** #376의 runner 요약이 `sys.executable`(labhq 자체 venv, pandas 없음)을 검사해서, T3 재실행에서 CSO가 "numpy/pandas도 없다"며 설치를 물었습니다. 직원 셸은 PATH의 Python 3.12(pandas 있음)를 씁니다. 이제 PATH의 `python3` → `python` → `py`를 검사하고, PATH에 없을 때만 labhq interpreter로 돌아갑니다.

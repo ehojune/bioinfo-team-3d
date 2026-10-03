@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:14 | [`3c992bd`](https://github.com/ehojune/bioinfo-team-3d/pull/381/commits/3c992bd) | runner 요약이 PATH의 python3·python·py를 모두 검사해 분석 패키지가 가장 많은 interpreter와 그 명령을 CSO에 알린다. |
 | 05:59 | [`96170e0`](https://github.com/ehojune/bioinfo-team-3d/pull/380/commits/96170e0) | 매뉴얼에 runner 요약이 검사하는 python의 순서(python3, python, py)와 예외를 적었다. |
 | 05:37 | [`814da29`](https://github.com/ehojune/bioinfo-team-3d/pull/380/commits/814da29) | runner의 로컬 소프트웨어 요약이 labhq 자체 venv 대신 직원이 쓰는 PATH python을 검사한다. |
 | 05:20 | [`14f54f6`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/14f54f6) | 리뷰 수정이 실패해 첫 결과를 지킨 단계는 실패로 세지 않고 재계획하지 않는다(기존 설계 유지). |
