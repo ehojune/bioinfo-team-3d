@@ -3,3 +3,6 @@ rows:
 - sha: cec160d
   at: 2026-10-03 22:57
   text: 'README 로드맵 v0.5: 10차 시운전이 연구 lane을 보고서까지 완주(verify exit 0), 남은 것은 두 번째 완주·revise 이어 가기. HANDOFF 큐 갱신'
+- sha: 2f002b2
+  at: 2026-10-03 23:00
+  text: 'README 로드맵 v0.25 행도 모의 시운전 2~11차 반영, 남은 것은 PI 시운전과 Claude 직원 폴더 로그인(봇 P2)'
