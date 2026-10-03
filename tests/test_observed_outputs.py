@@ -13,17 +13,20 @@ from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
 
-def _runner(tmp_path: Path, monkeypatch, write, *, hash_max_bytes=512 * 1024 * 1024) -> Runner:
+def _runner(tmp_path: Path, monkeypatch, write, *, hash_max_bytes=512 * 1024 * 1024,
+            engine=Engine.claude_code, seen=None) -> Runner:
     settings = Settings()
     settings.runner.output_hash_max_bytes = hash_max_bytes
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
     runner = Runner(settings)
-    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code, builtin_mcp=[])
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=engine, builtin_mcp=[])
     monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
 
     class FakeCli:
         async def run(self, ctx):
+            if seen is not None:
+                seen["claude_settings"] = ctx.claude_settings
             refused = ctx.before_spawn() if ctx.before_spawn else None
             if refused:
                 return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error=refused)
@@ -71,6 +74,57 @@ async def test_manifest_hashes_declared_and_unreported_fake_cli_outputs(tmp_path
     warnings = [event["data"].get("text", "") for event in runner.store.pending()
                 if event["type"] == "agent.log" and event["data"].get("level") == "warn"]
     assert any("outputs/extra.tsv" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
+async def test_claude_post_tool_hook_ids_the_nearest_observed_output_write(tmp_path, monkeypatch):
+    from labhq.hooks.tool_use import record_post_tool_use
+
+    def write(workdir):
+        env = {"LABHQ_WORKDIR": str(workdir), "LABHQ_TASK_ID": "task-o"}
+        assert record_post_tool_use({"tool_use_id": "toolu_first", "tool_name": "Write"}, env, now_ns=1_000_000_000)
+        assert record_post_tool_use({"tool_use_id": "toolu_last", "tool_name": "Edit"}, env, now_ns=2_000_000_000)
+        _write(workdir, "outputs/table.tsv", b"last\n")
+        os.utime(workdir / "outputs" / "table.tsv", ns=(2_100_000_000, 2_100_000_000))
+
+    seen = {}
+    result = await _runner(tmp_path, monkeypatch, write, seen=seen).run_task(_task())
+
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    [row] = manifest["runs"][result.task_id]["observed_outputs"]
+    assert row["tool_use_id"] == "toolu_last"
+    assert result.output_tool_use_ids == {"outputs/table.tsv": "toolu_last"}
+    [hook] = seen["claude_settings"]["hooks"]["PostToolUse"]
+    assert hook["matcher"] == "Write|Edit|Bash|PowerShell" and "labhq.hooks.tool_use" in hook["hooks"][0]["command"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("calls", [[], [("toolu_a", 2_000_000_000), ("toolu_b", 2_000_000_000)]])
+async def test_observed_output_leaves_tool_use_id_empty_without_a_unique_write(tmp_path, monkeypatch, calls):
+    from labhq.hooks.tool_use import record_post_tool_use
+
+    def write(workdir):
+        env = {"LABHQ_WORKDIR": str(workdir), "LABHQ_TASK_ID": "task-o"}
+        for tool_use_id, time_ns in calls:
+            assert record_post_tool_use({"tool_use_id": tool_use_id, "tool_name": "Bash"}, env, now_ns=time_ns)
+        _write(workdir, "outputs/table.tsv", b"ambiguous\n")
+        os.utime(workdir / "outputs" / "table.tsv", ns=(2_100_000_000, 2_100_000_000))
+
+    result = await _runner(tmp_path, monkeypatch, write).run_task(_task())
+
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    [row] = manifest["runs"][result.task_id]["observed_outputs"]
+    assert row["tool_use_id"] is None
+    assert result.output_tool_use_ids == {}
+
+
+@pytest.mark.asyncio
+async def test_codex_observed_output_has_no_tool_use_id(tmp_path, monkeypatch):
+    result = await _runner(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", b"codex\n"),
+                           engine=Engine.codex).run_task(_task())
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    [row] = manifest["runs"][result.task_id]["observed_outputs"]
+    assert row["tool_use_id"] is None and result.output_tool_use_ids == {}
 
 
 @pytest.mark.asyncio

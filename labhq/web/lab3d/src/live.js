@@ -30,6 +30,15 @@ export function startLiveOffice(onState) {
     } catch (error) { notice(`전문을 불러오지 못했어요: ${error.message}`); }
     finally { loadingAnswers.delete(rid); render(); }
   }
+  async function downloadAuditBundle(rid) {
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`,
+        {headers:{Authorization:`Bearer ${token}`}});
+      if (!response.ok) throw new Error(String(response.status));
+      const url = URL.createObjectURL(await response.blob()), link = document.createElement('a');
+      link.href = url; link.download = `labhq-audit-${rid}.zip`; link.click(); URL.revokeObjectURL(url);
+    } catch (error) { notice(`감사 번들을 받지 못했어요: ${error.message}`); }
+  }
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
@@ -59,6 +68,9 @@ export function startLiveOffice(onState) {
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
       text(row, 'strong', q.text || q.id);
       text(row, 'p', `${q.status} · ${q.phase}`);
+      const audit = text(row, 'a', '감사 번들');
+      audit.href = `/api/requests/${encodeURIComponent(q.id)}/audit-bundle`;
+      audit.onclick = event => { event.preventDefault(); downloadAuditBundle(q.id); };
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
