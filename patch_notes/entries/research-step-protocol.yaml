@@ -1,0 +1,5 @@
+pr: 358
+rows:
+- sha: 9c00cda
+  at: 2026-10-03 18:57
+  text: '연구 단계 프롬프트에 동결 protocol(제외 기준·분석 단위·통계)을 넣고 이탈은 method_changes에 적게(8차 시운전 리뷰 P1)'
