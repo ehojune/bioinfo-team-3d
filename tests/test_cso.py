@@ -2297,6 +2297,24 @@ async def test_a_finish_turn_that_runs_out_too_is_wrapped_up_without_lifting_the
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pending", [{"pending_jobs": ["job-1"]}, {"pending_asks": ["ask-1"]}])
+async def test_a_turn_still_waiting_on_jobs_or_questions_gets_no_finish_turn(pending):
+    """The runner ties a job or question to the turn that made it, so a finish turn with a new task id would never
+    wait for it and could pass the step on to CP2 before the job ends (PR #355 review)."""
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", **pending)
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                          meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert [t.meta["kind"] for t in hub.calls] == ["step", "wrap_up"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("meta", [{"kind": "step"}, {"kind": "result_correction", "finish_turns": 1}])
 async def test_only_a_step_asked_to_finish_gets_a_finish_turn(meta):
     async def dispatch(task):

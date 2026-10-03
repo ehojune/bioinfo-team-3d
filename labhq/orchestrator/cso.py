@@ -1713,10 +1713,12 @@ class Orchestrator:
         read_only = is_read_only_task(task.meta)
         turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
         # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
-        # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out).
+        # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
+        # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
+        # (PR #355 review).
         finishes = int(task.meta.get("finish_turns") or 0) if task.meta.get("kind") == "step" else 0
         while (finishes > 0 and not res.ok and res.error_kind == "error_max_turns" and res.session_id
-               and not read_only and self.hub.supports_resume(task.agent_id)):
+               and not read_only and not waiting(res) and self.hub.supports_resume(task.agent_id)):
             finishes -= 1
             finish = Task(agent_id=task.agent_id, request_id=rid, output_schema=task.output_schema,
                           prompt=continuation_prompt(task, FINISH_PROMPT, resumable=True, previous_result=res,
