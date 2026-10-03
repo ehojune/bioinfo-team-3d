@@ -340,3 +340,29 @@ def test_local_software_summary_is_platform_neutral_and_does_not_expose_paths(mo
         "tools": {"docker": True, "nextflow": False, "java": True, "wsl": False},
     }
     assert "private-user" not in json.dumps(summary)
+
+
+def test_staff_python_is_the_path_interpreter_not_labhqs_own(monkeypatch):
+    """2026-10-04 T3 rerun: the runner summarized labhq's venv (no pandas) and the CSO asked to install pandas,
+    while staff shells ran the PATH Python 3.12 that has it."""
+    found = {"python": "/usr/local/bin/python"}
+    seen = []
+
+    def which(name, path=None):
+        seen.append((name, path))
+        return found.get(name)
+
+    monkeypatch.setattr(doctor.shutil, "which", which)
+    assert doctor.staff_python({"PATH": "/usr/local/bin"}) == "/usr/local/bin/python"
+    assert seen[0] == ("python3", "/usr/local/bin")  # python3 is tried first, on the staff PATH given
+    found.clear()
+    assert doctor.staff_python({"PATH": "/nowhere"}) == doctor.sys.executable
+
+
+def test_runner_probes_the_staff_python(monkeypatch):
+    from labhq.runner import daemon
+
+    from pathlib import Path
+
+    src = Path(daemon.__file__).read_text(encoding="utf-8")
+    assert "local_software_summary, staff_python()" in src and "local_software_summary, sys.executable" not in src

@@ -7,8 +7,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -298,6 +300,19 @@ def _import_available(python_executable: str, import_name: str) -> bool:
         dict(os.environ), timeout=3,
     )
     return code == 0
+
+
+def staff_python(environ: Mapping[str, str] | None = None) -> str:
+    """The interpreter a staff shell gets for `python3`/`python`/`py` on PATH, not labhq's own venv.
+
+    The 2026-10-04 rerun summarized labhq's venv (no pandas) while staff ran the PATH Python 3.12 that has it, so
+    the CSO asked to install numpy and pandas. Falls back to labhq's interpreter only when PATH has none."""
+    path = (environ if environ is not None else os.environ).get("PATH")
+    for name in ("python3", "python", "py"):
+        found = shutil.which(name, path=path)
+        if found:
+            return found
+    return sys.executable
 
 
 def local_software_summary(python_executable: str) -> dict:
