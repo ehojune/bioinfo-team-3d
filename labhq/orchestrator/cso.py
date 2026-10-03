@@ -396,6 +396,13 @@ Job scripts and logs are under jobs/ in your workspace ({workdir}). Check exit s
 continue your step and report as instructed."""
 
 WRAP_PROMPT = "Your turn limit was reached. Save any partial results under outputs/ and write outputs/PARTIAL_STATUS.md with what is done and what remains unfinished."
+# Saving files, writing the status note and answering take more than two turns: a 2-turn wrap-up stopped at its
+# third turn with nothing saved (7th mock trial, 2026-10-03).
+WRAP_TURNS = 4
+
+FINISH_PROMPT = """Your turn limit was reached before this step finished. Continue the same step in this session:
+do not redo work that is already done. Finish only what remains, write the declared outputs, and give your final
+answer in the required format."""
 
 ASK_WAKE_PROMPT = """A blocking question from your previous turn has been answered:
 Your earlier blocking question and the PI's answer:
@@ -446,6 +453,18 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
     return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
             f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
             f"\n\nContinuation updates:\n{updates}")
+
+
+def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
+    """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
+    are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
+    limit, keeps no stale digest (PR #355 review). Files the step wrote without reporting them stay listed."""
+    return later.model_copy(update={
+        "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
+                                     - set(later.outputs)),
+        "workdir": later.workdir or first.workdir,
+        "workdir_id": later.workdir_id or first.workdir_id,
+    })
 
 
 def reference_meta(request: dict | None) -> dict[str, list[str]]:
@@ -1692,6 +1711,29 @@ class Orchestrator:
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
         read_only = is_read_only_task(task.meta)
+        turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
+        # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
+        # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
+        # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
+        # (PR #355 review).
+        finishes = int(task.meta.get("finish_turns") or 0) if task.meta.get("kind") == "step" else 0
+        while (finishes > 0 and not res.ok and res.error_kind == "error_max_turns" and res.session_id
+               and not read_only and not waiting(res) and self.hub.supports_resume(task.agent_id)):
+            finishes -= 1
+            finish = Task(agent_id=task.agent_id, request_id=rid, output_schema=task.output_schema,
+                          prompt=continuation_prompt(task, FINISH_PROMPT, resumable=True, previous_result=res,
+                                                     context_chars=self.cfg.context_chars_per_step),
+                          resume_session_id=res.session_id,
+                          meta={**task.meta, "parent_task": res.task_id,
+                                "title": f"{task.meta.get('step_id') or task.id}: 턴 상한 뒤 마무리",
+                                **({"workdir": res.workdir} if res.workdir else {}),
+                                **({"agent_overrides": {**overrides, "max_turns": max(turn_limit // 2,
+                                                                                      min(turn_limit, 10))}}
+                                   if turn_limit else {})})
+            try:
+                res = merged_turn(res, await dispatch_turn(finish, max_attempts=1))
+            except BudgetExceeded:
+                break
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
@@ -1699,7 +1741,8 @@ class Orchestrator:
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
+                              "workdir": res.workdir,
+                              "agent_overrides": {**overrides, "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
                               "outputs": ["PARTIAL_STATUS.md"],
                               "collect_direct_outputs": task.meta.get("kind") == "direct"})
             try:
@@ -1911,6 +1954,7 @@ class Orchestrator:
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
                                **self._type_meta(step),
+                               **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),
                                **({"workdir": workdir} if workdir else {})})
             if updates:
                 task = task.model_copy(update={
