@@ -784,12 +784,11 @@ def _absent_below(token: str, folder: str, listings: dict[str, set[str] | None])
     each also before an NTFS stream (`name:stream`). The shell may still rewrite a bare word (glob, brace, escape)
     but not quoted text, which is what a word with whitespace is; expansions work in both, and an 8.3 short name
     (`~`) is the filesystem's own spelling. `.` and `..` name the folder or its parent. (PR #371 review)"""
-    path = token
-    while path[:2] in ("./", ".\\"):
-        path = path[2:]
-    slash = path.split("/", 1)[0]
-    either = re.split(r"[/\\]", path, maxsplit=1)[0]
-    if slash in ("", ".", "..") or either in ("", ".", ".."):
+    if any(part in (".", "..") for part in re.split(r"[/\\]", token)):
+        return False  # Windows drops `missing/..` before it looks anything up (PR #371 review)
+    slash = token.split("/", 1)[0]
+    either = re.split(r"[/\\]", token, maxsplit=1)[0]
+    if not slash or not either:
         return False
     shell = "$%`!" if any(char.isspace() for char in slash) else "*?[]{}^\\$%`!"
     if any(char in slash for char in shell) or "~" in slash:

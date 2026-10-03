@@ -1056,7 +1056,8 @@ def test_a_word_is_absent_only_when_no_volume_could_match_it_to_an_entry(tmp_pat
     listings = {}
     for token in ("alias/key.txt", "ALIAS", "alias./key.txt", "Alias /key.txt", "café/x", "CAFÉ",
                   # quoted Windows path with a space, an NTFS stream, a backslash in a bare word, an 8.3 name
-                  "folder name\\alias\\key", "alias:stream", "Alias\\key", "ALIAS~1/key", "folder name:s/x"):
+                  "folder name\\alias\\key", "alias:stream", "Alias\\key", "ALIAS~1/key", "folder name:s/x",
+                  "missing/../alias/key", "missing\..\Alias", "./missing/./../alias"):
         assert not _absent_below(token, str(tmp_path), listings), token
     for token in ("nothing/x", "aliasx", "cafe/x"):
         assert _absent_below(token, str(tmp_path), listings), token
