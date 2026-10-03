@@ -141,6 +141,8 @@ labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1�
 - **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
 - 오른쪽(폰에서는 하단 탭): **결정** 탭(결정할 일·메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
 - 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 같은 CSO 세션(direct 요청이면 그 직원)이 같은 작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
+
+**실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. CLI는 `labhq note <request_id> "text"`입니다.
 - CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다
 - 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지. 폰에서는 **직원 보기**로 펼칩니다.
 - 아래 입력창: CSO에게(팀 전체) 또는 특정 직원에게 직접. 데스크톱에서는 노란 **메모를 책상에 끌어다 놓으면** 그 직원에게 맡김
@@ -161,6 +163,7 @@ labhq send --agent analyst "outputs/의 DE 결과로 volcano plot"             #
 labhq send --ref scverse/scanpy --ref doi:10.1038/nature12373 "같은 방식으로 재현"  # 참고 자료 포인터(여러 번)
 labhq send --plan-only "같은 roster로 분석 계획만 작성"                   # 실행·과학 리뷰 전에 종료
 labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교"     # 이 요청의 CSO 모델만 변경
+labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
 labhq watch                  # 실시간 이벤트
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
@@ -215,8 +218,9 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` | 파견직 | 입구에 새 병아리, 명패에 만료일 |
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
+| `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
 
-REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`), `GET /api/requests/{id}`, `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
+REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
@@ -441,6 +445,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 
 - **상태** (`gateway.state_dir`, `runner.state_dir`): 기본 `~/.labhq/state`. SQLite WAL에 요청·비용·승인·잡을 저장합니다. 재개 승인 뒤 필요한 runner를 기다리되(`gateway.resume_wait_s`, 기본 300초), 수락된 task 완료에는 연결 대기 제한을 적용하지 않습니다. 완료된 direct 요청·DAG·제어 단계와 리뷰 수정 횟수를 이어서 처리합니다. 불확실 task는 같은 runner 세대에만 재전송하고, 추적 중인 HPC job은 재제출 없이 wake로 잇습니다. 재개 뒤 다시 route된 질의는 runner 재접속을 기다려 그 질의의 상담을 이어받고, 이어받을 수 없으면 새 session·workdir에서 다시 묻습니다(#93). CSO 계획·최종 보고서와 이어 묻기는 같은 session·workdir를 쥔 이전 task(재시작으로 답을 잃은 상담, interrupted가 된 이어 묻기)가 지금 runner 세대에서 도는 동안 기다렸다가 그 turn에서 잇고, 끝났는지 모르면 새 session·workdir로 엽니다(#112, #144).
 - **랩 범위** (`lab.scope`, #36): 일반 요청의 범위 판정에 쓰는 한 줄 설명입니다. 비우면 "one-PI bioinformatics lab"과 주요 분야 목록을 씁니다. CSO가 계획과 함께 범위를 in·borderline·out으로 판정하고, out이면 단계를 실행하기 전에 **범위 확인** 카드로 진행·중단을 묻습니다. 중단하면 실행 비용 없이 끝나고(브리핑·계획 비용만), borderline은 실행하되 보고서에 한 줄을 남깁니다.
+- **재계획** (`orchestrator.max_failure_replans`, 기본 1; `max_replans`, 기본 0): 앞 값은 단계 실패, 뒤 값은 리뷰 revise의 남은 DAG 재계획 상한입니다. 예전 설정처럼 `max_replans`만 적으면 두 경로에 같은 값을 씁니다.
 - **HPC** (`hpc:`): `scheduler: sge | pbs | slurm`. SGE는 PE 이름(`smp`/`threads`…), 메모리 리소스(`h_vmem`는 보통 슬롯당이라
   총 메모리를 코어 수로 나눔), `h_rt`. PBS는 Torque(`nodes=1:ppn=…`)와 PBS Pro(`select=1:ncpus=…`, `pro: true`)를 템플릿으로.
   Slurm은 `sbatch --parsable`로 제출하고 `squeue`(실행 중)·`sacct`(끝난 뒤)로 상태를, `scancel`로 취소합니다. 옵션은 `slurm.sbatch_args`

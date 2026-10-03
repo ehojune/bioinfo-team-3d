@@ -30,7 +30,8 @@ test('the 2.5D request view asks follow-ups through the gateway', () => {
   assert.match(html, /followup: \(rid, text\) => post\(`\/api\/requests\/\$\{encodeURIComponent\(rid\)\}\/followup`, \{ text \}\)/);
   assert.match(html, /id="fu-text"/);
   assert.match(html, /id="fu-send"/);
-  assert.match(html, /q\.costKnown, q\.references, q\.followups\]/, 'a follow-up event re-renders the request view');
+  // #373: PI notes join the render key so a note event refreshes the same request card as follow-ups.
+  assert.match(html, /q\.costKnown, q\.references, q\.followups, q\.piNotes\]/, 'a follow-up or note event re-renders the request view');
   // A draft belongs to its request: switching requests must not move it to another session (Codex review P2).
   assert.match(html, /id="fu-text" data-rid="\$\{esc\(q\.id\)\}"/);
   assert.match(html, /fuDrafts\.get\(q\.id\)/);

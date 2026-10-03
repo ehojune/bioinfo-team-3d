@@ -1548,7 +1548,7 @@ def replan_plan(steps, drop=(), questions=(), notes="re-plan"):
             "notes": notes}
 
 
-def replan_hub(original, on_step, on_replan, *, max_replans=1, on_review=None):
+def replan_hub(original, on_step, on_replan, *, max_replans=1, max_failure_replans=None, on_review=None):
     """A FakeHub whose CSO plans ``original`` once and answers every re-plan with ``on_replan``."""
     async def dispatch(task):
         kind = task.meta["kind"]
@@ -1565,6 +1565,8 @@ def replan_hub(original, on_step, on_replan, *, max_replans=1, on_review=None):
 
     hub = FakeHub(dispatch)
     hub.s.orchestrator.max_replans = max_replans
+    hub.s.orchestrator.max_failure_replans = (max_replans if max_failure_replans is None
+                                               else max_failure_replans)
     if on_review is None:
         hub.s.orchestrator.reviewer_agent = None
     return hub
@@ -1579,15 +1581,105 @@ def step_ids(hub):
 
 
 @pytest.mark.asyncio
-async def test_replan_is_off_by_default_and_failure_report_is_unchanged():
-    assert Settings().orchestrator.max_replans == 0
+async def test_failure_replan_can_be_disabled_and_failure_report_is_unchanged():
+    assert Settings().orchestrator.max_failure_replans == 1
     hub = replan_hub([{"id": "A", "agent_id": "worker", "instruction": "a", "depends_on": []}],
                      lambda task: result(task, ok=False, error="tool unavailable"),
-                     lambda task: pytest.fail("re-plan must stay off by default"), max_replans=0)
+                     lambda task: pytest.fail("failure re-plan must stay off"),
+                     max_replans=1, max_failure_replans=0)
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
     assert req["status"] == "failed" and not kinds(hub, "replan")
     assert "replan_progress" not in req and "Re-plan" not in req["report"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_path_using_the_same_declared_filename_is_not_incomplete():
+    original = [{"id": "fetch", "agent_id": "worker", "instruction": "fetch raw counts; use RPKM if unavailable",
+                 "outputs": ["outputs/expression_matrix.tsv.gz"], "depends_on": []},
+                {"id": "analyze", "agent_id": "worker", "instruction": "analyze counts",
+                 "depends_on": ["fetch"]}]
+    fallback_text = """## Findings
+RPKM data were downloaded.
+## Evidence
+- `outputs/expression_matrix.tsv.gz`
+## Not established
+Raw counts were unavailable.
+## Method changes
+Used RPKM instead of raw counts.
+"""
+
+    def on_step(task):
+        if task.meta["step_id"] == "fetch":
+            return result(task, text=fallback_text, outputs=["outputs/expression_matrix.tsv.gz"])
+        assert task.meta["step_id"] == "analyze"
+        return result(task, text="analysis complete", outputs=["outputs/analysis.md"])
+
+    def on_replan(task):
+        pytest.fail("the fallback used the declared filename, so no failure re-plan is needed")
+
+    hub = replan_hub(original, on_step, on_replan, max_replans=0, max_failure_replans=1)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["fetch", "analyze"]
+    assert req["results"]["fetch"]["status"] == "done"
+    assert "replan_history" not in req
+
+
+@pytest.mark.asyncio
+async def test_review_replan_uses_max_replans_not_failure_cap():
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+                "issues": [{"step_id": "analysis", "problem": "method", "request": "revise in place"}]
+                if revise else []}
+
+    hub = replan_hub(original, lambda task: result(task, text="analysis done"),
+                     lambda task: pytest.fail("review revise must not use the failure cap"),
+                     max_replans=0, max_failure_replans=1, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done"
+    assert not kinds(hub, "replan")
+    assert step_ids(hub) == ["analysis", "analysis"]
+
+
+@pytest.mark.asyncio
+async def test_failed_in_place_revision_keeps_its_result_and_does_not_failure_replan():
+    """PR #378 review: a failed in-place revision keeps the step's last good result (revision_failed), so it is
+    not a step failure and spends no failure re-plan; the request goes on to the next review."""
+    original = [{"id": "analysis", "agent_id": "worker", "instruction": "analyze", "depends_on": []}]
+
+    def on_step(task):
+        sid = task.meta["step_id"]
+        if sid == "analysis" and task.meta["revision"]:
+            return result(task, ok=False, error="revision broke")
+        return result(task, text=f"{sid} done")
+
+    def on_review(task):
+        revise = task.meta["revision"] == 0
+        return {"verdict": "revise" if revise else "accept",
+                "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4},
+                "issues": [{"step_id": "analysis", "problem": "method", "request": "revise in place"}]
+                if revise else []}
+
+    def on_replan(task):
+        raise AssertionError("a failed in-place revision must not trigger a failure re-plan")
+
+    hub = replan_hub(original, on_step, on_replan, max_replans=0, max_failure_replans=1,
+                     on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "done", req.get("report")
+    assert step_ids(hub) == ["analysis", "analysis"]
+    assert "revision broke" in req["results"]["analysis"]["revision_failed"]
+    assert not req.get("replan_history")
 
 
 @pytest.mark.asyncio
@@ -2112,10 +2204,22 @@ async def test_finish_keeps_bench_result_block_last_after_labhq_metadata():
 
 
 def test_cso_plan_prompt_states_the_outputs_rule():
-    from labhq.orchestrator.cso import PLAN_PROMPT
+    from labhq.orchestrator.cso import PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 
     assert "outputs/<name>" in PLAN_PROMPT and "outputs/answer.md" in PLAN_PROMPT
     assert "workspace root" in PLAN_PROMPT and "absolute" in PLAN_PROMPT
+    rule = "same filename"
+    assert all(rule in prompt for prompt in (PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT))
+
+
+def test_legacy_max_replans_still_sets_both_caps_when_loading_config():
+    from labhq.settings import OrchestratorSettings
+
+    assert OrchestratorSettings().max_replans == 0
+    assert OrchestratorSettings().max_failure_replans == 1
+    assert OrchestratorSettings.model_validate({"max_replans": 2}).max_failure_replans == 2
+    explicit = OrchestratorSettings.model_validate({"max_replans": 2, "max_failure_replans": 3})
+    assert explicit.max_replans == 2 and explicit.max_failure_replans == 3
 
 
 @pytest.mark.asyncio

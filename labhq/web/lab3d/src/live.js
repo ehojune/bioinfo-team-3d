@@ -62,7 +62,7 @@ export function startLiveOffice(onState) {
     const rows = [];
     if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
     for (const q of [...S.requests.values()].reverse()) {
-      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.review, q.error, q.followups, loadingAnswers.has(q.id)]);
+      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.review, q.error, q.followups, q.piNotes, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
@@ -74,6 +74,10 @@ export function startLiveOffice(onState) {
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
+      for (const note of q.piNotes || []) {
+        const sent = new Date(Number(note.at || 0) * 1000).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+        text(row, 'p', `실행 중 메모 · ${sent} · ${note.text}`);
+      }
       for (const f of q.followups || []) {  // asked from the 2.5D request view; the shared reducer tracks them
         text(row, 'p', `이어 묻기: ${f.text} → ${f.status === 'done' ? f.answer + (f.answer_truncated ? '…' : '') : f.status === 'running' ? '답 기다리는 중' : f.error || '답하지 못함'}`);
         if (f.status === 'done' && f.answer_truncated) {
