@@ -420,6 +420,21 @@ async def test_research_step_prompt_lists_validator_only_field_rules():
 
 
 @pytest.mark.asyncio
+async def test_research_step_prompt_carries_the_frozen_protocol():
+    """8th mock trial: the DE step was told "after the low-expression filter" and invented a filter that dropped
+    two positive controls, because the frozen exclusion criteria never reached it. The reviewer had to catch it."""
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    await Orchestrator(hub).run_request("r")
+
+    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    plan = hub.requests["r"]["plan"]
+    for text in (plan["brief"]["question"], *plan["protocol"]["exclusion_criteria"],
+                 plan["protocol"]["statistics"]["multiple_testing"], "method_changes",
+                 "never describe the result as following the pre-specified rule"):
+        assert text in prompt
+
+
+@pytest.mark.asyncio
 async def test_restart_recovers_the_step_and_its_correction_without_dispatching_them_twice(tmp_path):
     from labhq.gateway.server import Hub, SavedResults
     from labhq.models import Task
