@@ -10,10 +10,6 @@ sources:
     revision: "2026-10-03"
     license: repository-local protocol; no external text copied
 fields:
-  - name: sample_unit
-    description: Definition of one sample and one patient as the biological unit.
-    required: true
-    value_type: string
   - name: pairing
     description: Whether the two conditions have no, partial, or complete patient pairing.
     required: true
@@ -45,26 +41,18 @@ fields:
     description: Differential-expression threshold including FDR and absolute log2 fold change.
     required: true
     value_type: string
-  - name: multiple_testing
-    description: Multiple-testing correction fixed before approval.
-    required: true
-    value_type: string
   - name: positive_controls
     description: Semicolon-separated GENE|direction|PMID rows; direction is up_in_first_condition or down_in_first_condition.
     required: true
     value_type: string
     pattern: '^(?:[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)(?:;[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)*$'
-  - name: sensitivity_analyses
-    description: Sensitivity analyses fixed before approval.
-    required: true
-    value_type: string
 validators:
   - id: bulk_tumor_normal.pairing_definition
-    requirement: Pairing and its metadata evidence must be fixed without inferring pairs from expression.
-    required_fields: [sample_unit, pairing, pairing_evidence, primary_model, model_rule]
+    requirement: Pairing and its metadata evidence must be fixed without inferring pairs from expression; the core protocol owns the analysis unit.
+    required_fields: [pairing, pairing_evidence, primary_model, model_rule]
   - id: bulk_tumor_normal.de_contract
-    requirement: Expression scale, low-expression filter, DE threshold, and multiplicity must be fixed before approval.
-    required_fields: [expression_scale, low_expression_filter, de_threshold, multiple_testing, sensitivity_analyses]
+    requirement: Expression scale, low-expression filter, and DE threshold must be fixed here; core statistics owns multiplicity and sensitivity analyses.
+    required_fields: [expression_scale, low_expression_filter, de_threshold]
   - id: bulk_tumor_normal.positive_control_rows
     requirement: Every positive-control row must name a gene, expected direction, and PMID source.
     required_fields: [positive_controls]
@@ -78,67 +66,54 @@ fixtures:
   - id: filter_undefined
     purpose: Reject a plan that leaves the low-expression filter undefined.
 rules:
-  - id: bulk_tumor_normal.none_unpaired_model
-    description: Unpaired samples require an unpaired model, with a count likelihood for raw counts.
-    when:
-      field: pairing
-      value: none
+  - id: bulk_tumor_normal.core_statistics_applicable
+    description: An applied bulk differential-expression pack requires the core statistics contract.
     require:
-      field: primary_model
-      in: [unpaired, count_glm_negative_binomial]
-  - id: bulk_tumor_normal.partial_mixed_model
-    description: Partial pairing on a non-count scale requires a mixed model that retains paired and unpaired samples.
-    when:
-      - field: pairing
-        value: partial
-      - field: expression_scale
-        not_in: [raw_counts]
+      field: protocol.statistics.applicable
+      value: true
+  - id: bulk_tumor_normal.core_estimand
+    description: The core statistics contract must name the estimand.
     require:
-      field: primary_model
-      value: mixed_model
-  - id: bulk_tumor_normal.partial_count_model
-    description: Partial pairing with raw counts requires a count model that represents subject pairing.
-    when:
-      - field: pairing
-        value: partial
-      - field: expression_scale
-        value: raw_counts
+      field: protocol.statistics.estimand
+      present: true
+  - id: bulk_tumor_normal.core_analysis_unit
+    description: The core statistics contract must name the analysis unit.
     require:
-      field: primary_model
-      value: paired_count_glm
-  - id: bulk_tumor_normal.complete_paired_model
-    description: Complete pairing on a non-count scale requires a paired t-test or mixed model.
-    when:
-      - field: pairing
-        value: complete
-      - field: expression_scale
-        not_in: [raw_counts]
+      field: protocol.statistics.analysis_unit
+      present: true
+  - id: bulk_tumor_normal.core_comparison_groups
+    description: The core statistics contract must name both comparison groups.
     require:
-      field: primary_model
-      in: [paired_t, mixed_model]
-  - id: bulk_tumor_normal.complete_count_model
-    description: Complete pairing with raw counts requires a count model that represents subject pairing.
-    when:
-      - field: pairing
-        value: complete
-      - field: expression_scale
-        value: raw_counts
+      field: protocol.statistics.comparison_groups
+      present: true
+  - id: bulk_tumor_normal.core_primary_outcomes
+    description: The core statistics contract must name the primary outcomes.
     require:
-      field: primary_model
-      value: paired_count_glm
-  - id: bulk_tumor_normal.raw_counts_count_model
-    description: Raw counts require a count-likelihood model.
-    when:
-      field: expression_scale
-      value: raw_counts
+      field: protocol.statistics.primary_outcomes
+      present: true
+  - id: bulk_tumor_normal.core_multiple_testing
+    description: The core statistics contract is the sole source for the multiple-testing method.
     require:
-      field: primary_model
-      in: [count_glm_negative_binomial, paired_count_glm]
-  - id: bulk_tumor_normal.log2_normalized_non_count_model
-    description: Count-likelihood models must not consume log2-normalized expression.
-    when:
-      field: expression_scale
-      value: log2_normalized
-    forbid:
-      field: primary_model
-      in: [count_glm_negative_binomial, paired_count_glm]
+      field: protocol.statistics.multiple_testing
+      present: true
+  - id: bulk_tumor_normal.core_sensitivity_analyses
+    description: The core statistics contract is the sole source for sensitivity analyses.
+    require:
+      field: protocol.statistics.sensitivity_analyses
+      present: true
+  - id: bulk_tumor_normal.model_compatibility
+    description: The closed table is authoritative for expression scale, pairing, and primary model compatibility.
+    allowed_combinations:
+      fields: [expression_scale, pairing, primary_model]
+      rows:
+        - [raw_counts, none, count_glm_negative_binomial]
+        - [raw_counts, partial, paired_count_glm]
+        - [raw_counts, complete, paired_count_glm]
+        - [log2_normalized, none, unpaired]
+        - [log2_normalized, partial, mixed_model]
+        - [log2_normalized, complete, paired_t]
+        - [log2_normalized, complete, mixed_model]
+        - [other, none, unpaired]
+        - [other, partial, mixed_model]
+        - [other, complete, paired_t]
+        - [other, complete, mixed_model]

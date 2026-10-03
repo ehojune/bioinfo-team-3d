@@ -63,12 +63,13 @@ class PackPredicate(StrictModel):
     value: Any = None
     in_: list[Any] | None = Field(default=None, alias="in", min_length=1)
     not_in: list[Any] | None = Field(default=None, min_length=1)
+    present: bool | None = None
 
     @model_validator(mode="after")
     def exactly_one_operator(self) -> "PackPredicate":
-        operators = {"value", "in_", "not_in"} & self.model_fields_set
+        operators = {"value", "in_", "not_in", "present"} & self.model_fields_set
         if len(operators) != 1:
-            raise ValueError("pack predicate requires exactly one operator: value, in, or not_in")
+            raise ValueError("pack predicate requires exactly one operator: value, in, not_in, or present")
         return self
 
     @model_serializer(mode="plain")
@@ -78,9 +79,28 @@ class PackPredicate(StrictModel):
             result["value"] = self.value
         elif "in_" in self.model_fields_set:
             result["in"] = self.in_
-        else:
+        elif "not_in" in self.model_fields_set:
             result["not_in"] = self.not_in
+        else:
+            result["present"] = self.present
         return result
+
+
+class PackAllowedCombinations(StrictModel):
+    fields: list[str] = Field(min_length=2)
+    rows: list[list[str | int | bool | None]] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def rectangular_unique_table(self) -> "PackAllowedCombinations":
+        if len(self.fields) != len(set(self.fields)):
+            raise ValueError("pack allowed_combinations fields must be unique")
+        wrong = [index for index, row in enumerate(self.rows) if len(row) != len(self.fields)]
+        if wrong:
+            raise ValueError(f"pack allowed_combinations rows must have {len(self.fields)} cells; bad rows: {wrong}")
+        encoded = [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in self.rows]
+        if len(encoded) != len(set(encoded)):
+            raise ValueError("pack allowed_combinations rows must be unique")
+        return self
 
 
 class PackRule(StrictModel):
@@ -90,14 +110,23 @@ class PackRule(StrictModel):
     when: PackPredicate | list[PackPredicate] | None = None
     require: PackPredicate | None = None
     forbid: PackPredicate | None = None
+    allowed_combinations: PackAllowedCombinations | None = None
 
     @model_validator(mode="after")
     def exactly_one_outcome(self) -> "PackRule":
-        if (self.require is None) == (self.forbid is None):
-            raise ValueError("pack rule requires exactly one of require or forbid")
+        outcomes = sum(item is not None for item in (self.require, self.forbid, self.allowed_combinations))
+        if outcomes != 1:
+            raise ValueError("pack rule requires exactly one of require, forbid, or allowed_combinations")
         if isinstance(self.when, list) and not self.when:
             raise ValueError("pack rule when list requires at least one predicate")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_rule(self, handler: Any) -> dict[str, Any]:
+        result = handler(self)
+        if self.allowed_combinations is None:
+            result.pop("allowed_combinations", None)
+        return result
 
     @property
     def conditions(self) -> list[PackPredicate]:
@@ -111,8 +140,10 @@ _PLAN_RULE_FIELDS = {
     "brief.question", "brief.purpose", "brief.subject", "brief.scope", "brief.study_type",
     "brief.primary_hypothesis", "protocol.revision", "protocol.analysis_unit",
     "protocol.statistics.applicable", "protocol.statistics.reason", "protocol.statistics.estimand",
-    "protocol.statistics.analysis_unit", "protocol.statistics.multiple_testing",
+    "protocol.statistics.analysis_unit", "protocol.statistics.comparison_groups",
+    "protocol.statistics.primary_outcomes", "protocol.statistics.multiple_testing",
     "protocol.statistics.missing_and_exclusions", "protocol.statistics.effect_size_and_interval",
+    "protocol.statistics.sensitivity_analyses",
     "notes",
 }
 
@@ -163,6 +194,17 @@ class DomainRulePack(StrictModel):
                     continue
                 if predicate.field not in known and predicate.field not in _PLAN_RULE_FIELDS:
                     raise ValueError(f"domain pack rule {rule.id}: unknown rule field {predicate.field!r}")
+            if rule.allowed_combinations is not None:
+                for name in rule.allowed_combinations.fields:
+                    if name not in known and name not in _PLAN_RULE_FIELDS:
+                        raise ValueError(f"domain pack rule {rule.id}: unknown combination field {name!r}")
+                declared = {field.name: field for field in self.fields}
+                for row in rule.allowed_combinations.rows:
+                    for name, value in zip(rule.allowed_combinations.fields, row):
+                        field = declared.get(name)
+                        if field and field.allowed_values and value not in field.allowed_values:
+                            raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
+                                             f"allowed for {name}")
         return self
 
     @property

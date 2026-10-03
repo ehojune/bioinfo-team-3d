@@ -357,20 +357,39 @@ def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = No
 
 
 def _present(value: Any) -> bool:
-    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, dict, set)):
+        return bool(value)
+    return True
+
+
+_MISSING = object()
+
+
+def _pack_rule_value(field: str, pack_fields: dict[str, Any], plan_values: dict[str, Any]) -> Any:
+    if field in pack_fields:
+        return pack_fields[field]
+    if field in plan_values:
+        return plan_values[field]
+    if "." not in field:
+        return _MISSING
+    current: Any = plan_values
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return _MISSING
+        current = current[part]
+    return current
 
 
 def _pack_predicate_matches(predicate: Any, pack_fields: dict[str, Any], plan_values: dict[str, Any]) -> bool:
-    if predicate.field in pack_fields:
-        current = pack_fields[predicate.field]
-    elif predicate.field in plan_values:
-        current = plan_values[predicate.field]
-    elif "." not in predicate.field:
+    current = _pack_rule_value(predicate.field, pack_fields, plan_values)
+    if "present" in predicate.model_fields_set:
+        return _present(None if current is _MISSING else current) is predicate.present
+    if current is _MISSING:
         return False
-    else:
-        current: Any = plan_values
-        for part in predicate.field.split("."):
-            current = current[part]
     if "value" in predicate.model_fields_set:
         return current == predicate.value
     if "in_" in predicate.model_fields_set:
@@ -455,9 +474,20 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
     if fields is not None and plan_values is not None:
         for rule in pack.rules:
             predicates = [*rule.conditions, rule.require or rule.forbid]
-            if any(predicate.field in declared and predicate.field in invalid_fields for predicate in predicates):
+            rule_fields = [predicate.field for predicate in predicates if predicate is not None]
+            if rule.allowed_combinations is not None:
+                rule_fields += rule.allowed_combinations.fields
+            if any(name in declared and name in invalid_fields for name in rule_fields):
                 continue  # only a rule whose own input is broken must wait for the corrected draft
             if not all(_pack_predicate_matches(condition, fields, plan_values) for condition in rule.conditions):
+                continue
+            if rule.allowed_combinations is not None:
+                current = [_pack_rule_value(name, fields, plan_values)
+                           for name in rule.allowed_combinations.fields]
+                passed = current in rule.allowed_combinations.rows
+                if not passed:
+                    names = ", ".join(rule.allowed_combinations.fields)
+                    errors.append(f"pack rule {rule.id} failed: allowed combination of {names}")
                 continue
             if rule.require is not None:
                 passed = _pack_predicate_matches(rule.require, fields, plan_values)

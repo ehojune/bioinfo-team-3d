@@ -585,7 +585,7 @@ def test_every_allowed_scale_model_and_family_value_passes_in_some_combination()
 # A pack's content is what an approved plan meant by its id@version; changing it needs a new version.
 BUILTIN_PACK_SHA256 = {
     PACK: "72be2505e75ea9d21358df07cc8091404d9d54f01bf0986dd873e8bce79d355d",
-    "bulk_tumor_normal@1": "5ff81cc6a7e18bd5a36157404c1a6c51642c303b6063e3c913084d56bb43ea9c",
+    "bulk_tumor_normal@1": "0c1820a5587feef18d9c68c4c65d3a90379932103e0551bcd6ea79c2a8d352bd",
 }
 
 

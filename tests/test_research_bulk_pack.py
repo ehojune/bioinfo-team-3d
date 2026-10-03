@@ -1,4 +1,5 @@
 import copy
+import itertools
 import json
 from pathlib import Path
 
@@ -16,13 +17,26 @@ from tests.test_research_protocol import MiniHub, valid_plan
 
 
 BULK_PACK = "bulk_tumor_normal@1"
+MODEL_FIELDS = ("expression_scale", "pairing", "primary_model")
+ALLOWED_MODEL_COMBINATIONS = {
+    ("raw_counts", "none", "count_glm_negative_binomial"),
+    ("raw_counts", "partial", "paired_count_glm"),
+    ("raw_counts", "complete", "paired_count_glm"),
+    ("log2_normalized", "none", "unpaired"),
+    ("log2_normalized", "partial", "mixed_model"),
+    ("log2_normalized", "complete", "paired_t"),
+    ("log2_normalized", "complete", "mixed_model"),
+    ("other", "none", "unpaired"),
+    ("other", "partial", "mixed_model"),
+    ("other", "complete", "paired_t"),
+    ("other", "complete", "mixed_model"),
+}
 
 
 def valid_bulk_values():
     return {
         BULK_PACK: {
             "fields": {
-                "sample_unit": "one tissue sample from one patient",
                 "pairing": "complete",
                 "pairing_evidence": "metadata.patient_id and tissue_type",
                 "primary_model": "mixed_model",
@@ -30,23 +44,22 @@ def valid_bulk_values():
                 "expression_scale": "log2_normalized",
                 "low_expression_filter": "remove probes below log2 intensity 5 in more than 80% of samples",
                 "de_threshold": "FDR < 0.05 and absolute log2FC >= 1",
-                "multiple_testing": "Benjamini-Hochberg FDR",
                 "positive_controls": "EPCAM|up_in_first_condition|PMID:22028643",
-                "sensitivity_analyses": "repeat with all labeled samples and with the paired subset only",
             },
             "validators": {
                 "bulk_tumor_normal.pairing_definition": "Pairing uses patient metadata, never expression similarity.",
-                "bulk_tumor_normal.de_contract": "Scale, filter, threshold, and multiplicity are fixed before CP1.",
+                "bulk_tumor_normal.de_contract": "Scale, filter, and threshold are fixed before CP1.",
                 "bulk_tumor_normal.positive_control_rows": "Every control names a gene, direction, and PMID.",
             },
             "acceptance": {
-                "bulk_tumor_normal.none_unpaired_model": "Not active because pairing is complete.",
-                "bulk_tumor_normal.partial_mixed_model": "Not active because pairing is complete.",
-                "bulk_tumor_normal.partial_count_model": "Not active because pairing is complete.",
-                "bulk_tumor_normal.complete_paired_model": "The mixed model preserves complete pairing.",
-                "bulk_tumor_normal.complete_count_model": "Not active because input is log2 normalized.",
-                "bulk_tumor_normal.raw_counts_count_model": "Not active because input is log2 normalized.",
-                "bulk_tumor_normal.log2_normalized_non_count_model": "The mixed model uses normalized values.",
+                "bulk_tumor_normal.core_statistics_applicable": "The comparison uses the core statistics contract.",
+                "bulk_tumor_normal.core_estimand": "The core protocol names the condition effect.",
+                "bulk_tumor_normal.core_analysis_unit": "The core protocol names the donor analysis unit.",
+                "bulk_tumor_normal.core_comparison_groups": "The core protocol names case and control.",
+                "bulk_tumor_normal.core_primary_outcomes": "The core protocol names expression.",
+                "bulk_tumor_normal.core_multiple_testing": "The core protocol owns the FDR method.",
+                "bulk_tumor_normal.core_sensitivity_analyses": "The core protocol owns sensitivity analyses.",
+                "bulk_tumor_normal.model_compatibility": "The scale, pairing, and model row is allowed.",
             },
         }
     }
@@ -73,14 +86,88 @@ def _validate(plan, selected):
                                   pack_definitions=selected)
 
 
+def test_bulk_pack_uses_core_statistics_as_the_only_source_for_overlapping_decisions():
+    pack = _selected(BULK_PACK)[BULK_PACK].pack
+    names = {field.name for field in pack.fields}
+    assert not names & {"sample_unit", "multiple_testing", "sensitivity_analyses"}
+
+
+@pytest.mark.parametrize("field", ["sample_unit", "multiple_testing", "sensitivity_analyses"])
+def test_bulk_pack_rejects_legacy_duplicates_of_core_protocol_fields(field):
+    plan, selected = _bulk_plan()
+    plan["pack_values"][BULK_PACK]["fields"][field] = "conflicts with the core protocol"
+    with pytest.raises(ValueError, match="undeclared fields"):
+        _validate(plan, selected)
+
+
+def test_bulk_pack_requires_applicable_core_statistics():
+    plan, selected = _bulk_plan()
+    plan["protocol"]["statistics"] = {
+        "applicable": False,
+        "reason": "incorrectly treated as descriptive",
+        "estimand": None,
+        "analysis_unit": None,
+        "comparison_groups": [],
+        "primary_outcomes": [],
+        "multiple_testing": None,
+        "missing_and_exclusions": None,
+        "effect_size_and_interval": None,
+        "sensitivity_analyses": [],
+        "not_applicable": {},
+    }
+    with pytest.raises(ValueError, match="bulk_tumor_normal.core_statistics_applicable"):
+        _validate(plan, selected)
+
+
+@pytest.mark.parametrize(
+    ("field", "empty", "waiver", "rule_id"),
+    [
+        ("comparison_groups", [], True, "bulk_tumor_normal.core_comparison_groups"),
+        ("multiple_testing", None, True, "bulk_tumor_normal.core_multiple_testing"),
+        ("sensitivity_analyses", [], False, "bulk_tumor_normal.core_sensitivity_analyses"),
+    ],
+)
+def test_bulk_pack_requires_core_statistical_decisions_even_when_core_allows_a_waiver(
+        field, empty, waiver, rule_id):
+    plan, selected = _bulk_plan()
+    plan["protocol"]["statistics"][field] = empty
+    if waiver:
+        plan["protocol"]["statistics"].setdefault("not_applicable", {})[field] = "waived in the generic core"
+    with pytest.raises(ValueError, match=rule_id):
+        _validate(plan, selected)
+
+
+def test_bulk_model_choices_are_one_closed_decision_table():
+    rules = {rule.id: rule for rule in _selected(BULK_PACK)[BULK_PACK].pack.rules}
+    table = rules["bulk_tumor_normal.model_compatibility"].allowed_combinations
+    assert tuple(table.fields) == MODEL_FIELDS
+    assert {tuple(row) for row in table.rows} == ALLOWED_MODEL_COMBINATIONS
+
+
+@pytest.mark.parametrize(
+    "combination",
+    list(itertools.product(
+        ("raw_counts", "log2_normalized", "other"),
+        ("none", "partial", "complete"),
+        ("paired_t", "mixed_model", "unpaired", "count_glm_negative_binomial", "paired_count_glm"),
+    )),
+)
+def test_every_bulk_scale_pairing_model_cell_is_accepted_or_rejected_by_the_closed_table(combination):
+    plan, selected = _bulk_plan(**dict(zip(MODEL_FIELDS, combination)))
+    if combination in ALLOWED_MODEL_COMBINATIONS:
+        _validate(plan, selected)
+    else:
+        with pytest.raises(ValueError):
+            _validate(plan, selected)
+
+
 def test_bulk_pack_loads_with_schema_review_questions_and_failure_fixtures():
     selected = _selected(BULK_PACK)
     pack = selected[BULK_PACK].pack
     assert pack.key == BULK_PACK
     assert [field.name for field in pack.fields] == [
-        "sample_unit", "pairing", "pairing_evidence", "primary_model", "model_rule",
-        "expression_scale", "low_expression_filter", "de_threshold", "multiple_testing",
-        "positive_controls", "sensitivity_analyses",
+        "pairing", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
+        "low_expression_filter", "de_threshold", "positive_controls",
     ]
     assert [fixture.id for fixture in pack.fixtures] == ["paired_but_unpaired", "filter_undefined"]
     assert len(pack.reviewer_questions) == 3
@@ -93,22 +180,22 @@ def test_bulk_pack_loads_with_schema_review_questions_and_failure_fixtures():
         ({"pairing": "partial", "primary_model": "mixed_model"}, None),
         ({"pairing": "complete", "primary_model": "paired_t"}, None),
         ({"pairing": "partial", "primary_model": "unpaired"},
-         "bulk_tumor_normal.partial_mixed_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"pairing": "complete", "primary_model": "unpaired"},
-         "bulk_tumor_normal.complete_paired_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"pairing": "none", "primary_model": "paired_t"},
-         "bulk_tumor_normal.none_unpaired_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"pairing": "none", "primary_model": "mixed_model"},
-         "bulk_tumor_normal.none_unpaired_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"pairing": "none", "primary_model": "unpaired"}, None),
         ({"expression_scale": "raw_counts", "primary_model": "paired_count_glm"}, None),
         ({"expression_scale": "raw_counts", "primary_model": "paired_t"},
-         "bulk_tumor_normal.raw_counts_count_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"expression_scale": "log2_normalized", "primary_model": "paired_count_glm"},
-         "bulk_tumor_normal.log2_normalized_non_count_model"),
+         "bulk_tumor_normal.model_compatibility"),
         ({"pairing": "partial", "expression_scale": "raw_counts", "primary_model": "paired_count_glm"}, None),
         ({"pairing": "partial", "expression_scale": "raw_counts", "primary_model": "count_glm_negative_binomial"},
-         "bulk_tumor_normal.partial_count_model"),
+         "bulk_tumor_normal.model_compatibility"),
     ],
 )
 def test_bulk_pairing_and_expression_scale_rules(fields, failure):
@@ -207,18 +294,18 @@ def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
     row = rows[BULK_PACK]
     assert "bulk" in row["applies_when"].lower()
     assert row["pack_values_keys"]["fields"] == [
-        "sample_unit", "pairing", "pairing_evidence", "primary_model", "model_rule",
-        "expression_scale", "low_expression_filter", "de_threshold", "multiple_testing",
-        "positive_controls", "sensitivity_analyses",
+        "pairing", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
+        "low_expression_filter", "de_threshold", "positive_controls",
     ]
     assert row["pack_values_keys"]["acceptance"] == [
-        "bulk_tumor_normal.none_unpaired_model",
-        "bulk_tumor_normal.partial_mixed_model",
-        "bulk_tumor_normal.partial_count_model",
-        "bulk_tumor_normal.complete_paired_model",
-        "bulk_tumor_normal.complete_count_model",
-        "bulk_tumor_normal.raw_counts_count_model",
-        "bulk_tumor_normal.log2_normalized_non_count_model",
+        "bulk_tumor_normal.core_statistics_applicable",
+        "bulk_tumor_normal.core_estimand",
+        "bulk_tumor_normal.core_analysis_unit",
+        "bulk_tumor_normal.core_comparison_groups",
+        "bulk_tumor_normal.core_primary_outcomes",
+        "bulk_tumor_normal.core_multiple_testing",
+        "bulk_tumor_normal.core_sensitivity_analyses",
+        "bulk_tumor_normal.model_compatibility",
     ]
 
 
