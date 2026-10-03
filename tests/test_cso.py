@@ -8,7 +8,7 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import (BudgetExceeded, Orchestrator, failure_kind, valid_review,
+from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind, valid_review,
                                     format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -1123,7 +1123,7 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     async def dispatch(task):
         if task.meta["kind"] == "wrap_up":
             assert task.resume_session_id == "session-1"
-            assert task.meta["agent_overrides"]["max_turns"] == 2
+            assert task.meta["agent_overrides"]["max_turns"] == 4
             assert task.meta["workdir"] == "runs/A"
             return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
@@ -2240,6 +2240,70 @@ async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuati
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
                                                 meta={"kind": "step", "step_id": "A"}))
     assert res.output_sha256 == {"outputs/keep.tsv": "b" * 64, "outputs/PARTIAL_STATUS.md": "c" * 64}
+
+
+@pytest.mark.asyncio
+async def test_a_step_with_finish_turns_finishes_in_its_session_under_half_the_limit(continuations):
+    """A research step that ran out of turns had already done the work (7th mock trial: QC had reproduced every
+    number). It finishes in the same session; a file the finish turn did not touch keeps the first turn's hash."""
+    async def dispatch(task):
+        if task.resume_session_id:
+            return result(task, text="done", session_id="session-1", workdir="runs/A",
+                          outputs=["outputs/table.tsv", "outputs/report.md"],
+                          output_sha256={"outputs/report.md": "c" * 64})
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", outputs=["outputs/table.tsv"], output_sha256={"outputs/table.tsv": "a" * 64})
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    hub.agents["worker"]["max_turns"] = 40
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert res.ok and [t.meta["kind"] for t in hub.calls] == ["step", "step"]
+    finish = hub.calls[1]
+    assert finish.resume_session_id == "session-1" and finish.meta["parent_task"] == hub.calls[0].id
+    assert finish.meta["workdir"] == "runs/A" and finish.meta["agent_overrides"] == {"max_turns": 20}
+    assert continuations[0]["updates"] == FINISH_PROMPT and finish.prompt == continuations[0]["prompt"]
+    assert res.outputs == ["outputs/table.tsv", "outputs/report.md"]
+    assert res.output_sha256 == {"outputs/table.tsv": "a" * 64, "outputs/report.md": "c" * 64}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit, finish_turns, wrap_turns", [(40, 20, 4), (8, 8, 4), (3, 3, 3)])
+async def test_a_finish_turn_that_runs_out_too_is_wrapped_up_without_lifting_the_limit(limit, finish_turns,
+                                                                                         wrap_turns):
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
+                      session_id=f"session-{len(hub.calls)}", workdir="runs/A")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    hub.agents["worker"]["max_turns"] = limit
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert not res.ok and res.partial_results
+    assert [t.meta["kind"] for t in hub.calls] == ["step", "step", "wrap_up"]
+    assert hub.calls[1].meta["agent_overrides"]["max_turns"] == finish_turns
+    assert hub.calls[2].resume_session_id == "session-2"  # the finish turn's session, not the first one
+    assert hub.calls[2].meta["agent_overrides"]["max_turns"] == wrap_turns
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [{"kind": "step"}, {"kind": "result_correction", "finish_turns": 1}])
+async def test_only_a_step_asked_to_finish_gets_a_finish_turn(meta):
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                          meta={**meta, "step_id": "A"}))
+    assert [t.meta["kind"] for t in hub.calls] == [meta["kind"], "wrap_up"]
 
 
 def test_plan_prompts_ask_for_one_environment_step():

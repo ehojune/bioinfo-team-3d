@@ -354,6 +354,54 @@ async def test_invalid_correction_or_zero_limit_keeps_the_existing_failure(corre
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("finish_turns, kinds, outcome", [
+    (1, ["plan", "step", "step"], "evidence_approved"),
+    (0, ["plan", "step", "wrap_up"], "research_failed"),
+])
+async def test_a_research_step_past_its_turn_limit_finishes_in_its_session(finish_turns, kinds, outcome):
+    """7th mock trial (2026-10-03): QC ran out of its 40 turns after reproducing every number, and the frozen plan
+    failed. The step now finishes once in the same session; with the setting at 0 it fails as before."""
+    settings = _settings()
+    settings.research.finish_turns = finish_turns
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        if task.meta["kind"] == "wrap_up":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="saved", workdir="runs/s1",
+                              outputs=["outputs/PARTIAL_STATUS.md"])
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        if not task.resume_session_id:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="error_max_turns",
+                              error_kind="error_max_turns", session_id="session-1", workdir="runs/s1",
+                              outputs=[path], output_sha256={path: "a" * 64})
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_cp2_result(hub, task),
+                          outputs=[path], workdir="runs/s1", session_id="session-1")
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    hub.supports_resume = lambda agent_id: True
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == kinds
+    assert hub.calls[1].meta["finish_turns"] == finish_turns
+    assert hub.requests["r"]["outcome"] == outcome
+    if finish_turns:
+        assert hub.calls[2].resume_session_id == "session-1"
+        receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+        assert receipt["refused_evidence"] == []  # the first turn's hash still binds the evidence artifact
+
+
+@pytest.mark.asyncio
 async def test_research_step_prompt_lists_validator_only_field_rules():
     hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
     await Orchestrator(hub).run_request("r")
