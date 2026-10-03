@@ -455,6 +455,23 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
             f"\n\nContinuation updates:\n{updates}")
 
 
+def step_ancestors(steps: list[dict]) -> dict[str, set[str]]:
+    """Every step a plan step waits on, directly or through other steps."""
+    by_id = {s["id"]: s for s in steps}
+    ancestors: dict[str, set[str]] = {}
+    for sid in by_id:
+        pending = list(by_id[sid]["depends_on"])
+        found: set[str] = set()
+        while pending:
+            ancestor = pending.pop()
+            if ancestor in found:
+                continue
+            found.add(ancestor)
+            pending.extend(by_id[ancestor]["depends_on"])
+        ancestors[sid] = found
+    return ancestors
+
+
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
     are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
@@ -1857,17 +1874,7 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
-        ancestors: dict[str, set[str]] = {}
-        for sid in by_id:
-            pending = list(by_id[sid]["depends_on"])
-            found: set[str] = set()
-            while pending:
-                ancestor = pending.pop()
-                if ancestor in found:
-                    continue
-                found.add(ancestor)
-                pending.extend(by_id[ancestor]["depends_on"])
-            ancestors[sid] = found
+        ancestors = step_ancestors(steps)
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
@@ -2188,6 +2195,7 @@ class Orchestrator:
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
+        ancestors = step_ancestors(steps)
         refused: list[dict[str, str]] = []
         refused_rows: list[dict[str, str]] = []
         unsupported: list[dict[str, str]] = []
@@ -2202,9 +2210,12 @@ class Orchestrator:
                         for row in step_refused if row.get("row_type") == "evidence"]
             unsupported += [{"step_id": step["id"], **row}
                             for row in salvaged.get("unsupported_claims") or []]
+            # Any ancestor's collected output is verified: an interpretation step reads the analyses its QC
+            # step checked, not only the QC verdict (8th mock trial: 6 of 8 refusals cited a grandparent's file).
             upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs),
                          dict(results[d].output_sha256))
-                        for d in step["depends_on"] if d in results and results[d].ok]
+                        for d in (s["id"] for s in steps if s["id"] in ancestors[step["id"]])
+                        if d in results and results[d].ok]
             bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
                                            outputs=list(result.outputs), upstream=upstream,
                                            output_sha256=dict(result.output_sha256))

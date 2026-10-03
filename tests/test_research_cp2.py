@@ -117,6 +117,49 @@ async def test_cp2_records_bound_artifact_hash_and_unreported_outputs():
     assert receipt["artifact_sha256"] == expected
 
 
+@pytest.mark.asyncio
+async def test_cp2_binds_an_ancestors_output_but_not_an_unrelated_steps():
+    """8th mock trial: the interpretation step depends only on the QC step, yet reads the analyses QC checked.
+    Six of eight refusals cited a grandparent's collected, hashed file. Any ancestor binds; a step outside the
+    chain still does not."""
+    plan = valid_plan(steps=4)
+    plan["steps"][1]["depends_on"] = ["s1"]
+    plan["steps"][2]["depends_on"] = ["s2"]  # s3 -> s2 -> s1; s4 stands alone
+    cites = {"s1": "outputs/result1.tsv", "s2": "outputs/result2.tsv", "s3": "w1/outputs/result1.tsv",
+             "s4": "w1/outputs/result1.tsv"}
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=copy.deepcopy(plan))
+        sid = task.meta["step_id"]
+        n = sid[1:]
+        result = _cp2_result(hub, task)
+        result["claims"][0]["id"] = result["links"][0]["claim_id"] = f"c{n}"
+        result["evidence"][0]["slots"] = [f"e{n}"]
+        result["artifact_refs"][0]["path"] = cites[sid]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                          outputs=[f"outputs/result{n}.tsv"], output_sha256={f"outputs/result{n}.tsv": n * 64},
+                          workdir=f"runs/w{n}", workdir_id=f"w{n}")
+
+    hub = holder["hub"] = MiniHub(_settings(), reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    card = hub.approvals[1]["detail"]
+    assert [(row["step_id"], row["evidence_id"]) for row in card["refused_evidence"]] == [("s4", "e1")]
+    assert card["artifact_sha256"]["s3/a1"] == "1" * 64  # bound to s1's hash, read through s2
+    assert "s4/a1" not in card["artifact_sha256"]
+
+
 def test_artifact_refs_bind_only_to_own_or_verified_upstream_outputs():
     from labhq.research.contract import bind_result_artifacts
 
