@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · trial3-fixes — 사용 불가 직원 배정·배경 실행 뒤 종료 차단
+
+- 결론: adapter preflight에 실패한 직원은 계획 대상에서 빠지고, Claude 직원은 배경 작업 없이 명령 결과를 확인한 뒤 turn을 끝낸다.
+- 바뀐 것: runner roster가 doctor와 같은 preflight를 쓰며, 일반·연구·재계획의 직원 판정을 맞췄다. Claude env 기본값과 쓰기 직원 공통 규칙도 추가했다.
+- 실행한 것: 새 회귀 5건은 수정 전 실패했고 수정 후 통과했다. 관련 pytest 302건과 공개 저장소 검사가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/adapters/__init__.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/base.py`, `tests/test_cso.py`, `tests/test_role_footer.py`.
+
 ## 2026-10-03 · #346 후속 — 범위 판정 보존, bench, CI
 
 - 결론: 뒤 계획에 범위 판정이 없으면 첫 판정을 쓰고, bench는 범위 카드를 진행으로 답하며, 범위 카드 Node test를 CI에서 돌린다.
