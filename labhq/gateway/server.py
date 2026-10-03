@@ -1588,6 +1588,17 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         return hub.requests[rid]
 
+    @app.get("/api/requests/{rid}/audit-bundle", dependencies=[Depends(auth)])
+    async def audit_bundle(rid: str) -> Response:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        from ..evidence.audit import bundle_bytes, verify_request
+
+        report = await asyncio.to_thread(verify_request, hub.requests[rid], settings)
+        payload = await asyncio.to_thread(bundle_bytes, report, hub.requests[rid])
+        return Response(payload, media_type="application/zip",
+                        headers={"Content-Disposition": 'attachment; filename="labhq-audit.zip"'})
+
     @app.get("/api/approvals", dependencies=[Depends(auth)])
     async def approvals() -> list[dict]:
         return [e["approval"] for e in hub.approvals.values()]

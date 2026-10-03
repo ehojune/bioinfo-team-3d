@@ -715,6 +715,8 @@ function followupHTML(q) {
 const reportHTML = q => !q.report ? '' : `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
     api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}</details>`;
+const auditHTML = q => api?.auditBundle
+  ? `<p><a class="btn audit-bundle" href="/api/requests/${encodeURIComponent(q.id)}/audit-bundle" data-rid="${esc(q.id)}" download>감사 번들</a></p>` : '';
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
@@ -732,7 +734,7 @@ function renderRequest() {
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
-  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${reportHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
+  ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${reportHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
     onCancel: api?.cancel ? id => api.cancel(id).then(() => toast('취소 요청을 보냈어요')).catch(err => toast(`취소하지 못했어요: ${err.message}`)) : null,
@@ -862,6 +864,15 @@ $('#approvals').addEventListener('click', async e => {
 $('#request').addEventListener('change', e => { if (e.target.id === 'req-sel') { S.current = e.target.value; schedule(); } });
 $('#request').addEventListener('input', e => { if (e.target.id === 'fu-text') fuDrafts.set(e.target.dataset.rid, e.target.value); });
 $('#request').addEventListener('click', async e => {
+  if (e.target.classList?.contains('audit-bundle')) {
+    e.preventDefault();
+    try {
+      const blob = await api.auditBundle(e.target.dataset.rid);
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href = url; link.download = `labhq-audit-${e.target.dataset.rid}.zip`; link.click(); URL.revokeObjectURL(url);
+    } catch (err) { toast(`감사 번들을 받지 못했어요: ${err.message}`); }
+    return;
+  }
   if (e.target.classList?.contains('fu-full') || e.target.classList?.contains('report-full')) {
     const rid = e.target.dataset.rid;
     if (fuLoading.has(rid)) return;
@@ -965,11 +976,17 @@ function startLive() {
     if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
     return r.json();
   };
+  const getBlob = async path => {
+    const r = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 120)}`);
+    return r.blob();
+  };
   let ws = null, backoff = 1000;
   api = {
     request: body => post('/api/requests', body),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
+    auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
     approve: async (id, ok, note = '', choice = null) => {
       const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
       if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'approval.resolve', id, ...decision }));
