@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from ..models import Engine
+from pathlib import Path
+
+from ..models import AgentSpec, Engine, Task
 from ..settings import Settings
 from .base import AgentAdapter, RunContext
 from .antigravity import AntigravityAdapter
@@ -25,6 +27,15 @@ def get_adapter(engine: Engine, settings: Settings) -> AgentAdapter:
     return _ADAPTERS[Engine(engine)](settings)
 
 
+def adapter_preflight_error(settings: Settings, agent: AgentSpec, workdir: Path | None = None) -> str | None:
+    """The adapter refusal used by doctor, the runner roster and the actual staff launch."""
+    ctx = RunContext(task=Task(agent_id=agent.id, prompt=""), agent=agent,
+                     workdir=Path(workdir or settings.path(settings.runner.workspace_root)), settings=settings,
+                     mcp_servers=[], env={}, emit=lambda *_: None, prompt="")
+    adapter = get_adapter(agent.engine, settings)
+    return adapter.preflight_error(ctx, adapter.staff_env(ctx))
+
+
 def enforces_read_only(engine: Engine | str | None) -> bool:
     """Whether a read-only task (consult, follow-up) stays read-only on this engine. The gateway, the
     orchestrator and the runner all decide with this, so no path trusts a prompt to keep an agent from writing."""
@@ -43,5 +54,5 @@ def read_only_refusal(agent_id: str, engine: Engine | str | None) -> str | None:
             "없습니다. 이어 묻기·상담은 claude_code·codex 직원에게 하세요 (read-only policy)")
 
 
-__all__ = ["get_adapter", "enforces_read_only", "read_only_refusal", "read_only_profile", "is_read_only_task",
-           "READ_ONLY_OVERRIDES", "AgentAdapter", "RunContext"]
+__all__ = ["get_adapter", "adapter_preflight_error", "enforces_read_only", "read_only_refusal",
+           "read_only_profile", "is_read_only_task", "READ_ONLY_OVERRIDES", "AgentAdapter", "RunContext"]

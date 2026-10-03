@@ -505,6 +505,24 @@ class PlanOutputsError(ValueError):
     """A declared step output that no normalization can bring under the step's outputs/ folder (#220)."""
 
 
+class PlanAgentError(ValueError):
+    """A plan assigned work to staff outside the current worker roster."""
+
+
+def unavailable_plan_agents(steps: Any, known: set[str], excluded: frozenset[str] | set[str]) -> list[str]:
+    """Agent ids a worker plan cannot dispatch: absent from this roster or reserved for orchestration."""
+    if not isinstance(steps, list):
+        return []
+    bad = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        agent = step.get("agent_id")
+        if not isinstance(agent, str) or agent not in known or agent in excluded:
+            bad.append(str(agent))
+    return sorted(set(bad))
+
+
 def _append_report_metadata(report: str, sections: list[str]) -> str:
     """Add LabHQ audit text without moving a sole trailing benchmark result block from last place (#229)."""
     if not sections:
@@ -789,12 +807,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if reject_excess and len(raw) > max_steps:
         raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}; "
                          "raise orchestrator.max_steps to resume it")
+    bad_agents = unavailable_plan_agents(raw[:max_steps], known, excluded)
+    if bad_agents:
+        raise PlanAgentError(f"plan uses unavailable or orchestration agents: {bad_agents}; "
+                             f"use roster ids {sorted(known - set(excluded))}")
     warnings, steps, seen = [], [], set()
     raw_types: dict[str, Any] = {}
     for i, s in enumerate(raw[:max_steps]):
-        if s.get("agent_id") in excluded:
-            warnings.append(f"step {s.get('id') or i + 1}: orchestration role removed")
-            continue
         sid = str(s.get("id") or f"s{i + 1}")
         if sid in seen:
             sid = f"{sid}_{i}"
@@ -840,9 +859,6 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                 continue
             s["depends_on"].append(other["id"])
             warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
-    for s in steps:
-        if s["agent_id"] not in known:
-            warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
     if vocab is not None:  # after _contain_outputs, so names pair with the outputs the runner will collect
         for s in steps:
             entries, issues = output_types.normalize_entries(s["outputs"], raw_types.get(s["id"]), vocab)
@@ -2629,10 +2645,7 @@ class Orchestrator:
                         except (ValueError, TypeError) as error:
                             problems = [str(error)]
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
-                        # A non-string agent_id is already a schema problem; only ids are compared with the roster.
-                        drafted_ids = [step.get("agent_id") for step in drafted if isinstance(step, dict)
-                                       and isinstance(step.get("agent_id"), str)] if isinstance(drafted, list) else []
-                        bad_agents = [agent for agent in drafted_ids if agent not in known or agent in orchestration]
+                        bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
                                             f"use roster ids {workers}")
@@ -2685,7 +2698,7 @@ class Orchestrator:
                             steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                              orchestration, vocab=vocab, stats=type_stats)
                             break
-                        except PlanOutputsError as error:
+                        except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
                                 raise ValueError(f"plan invalid after correction: {error}") from error
                             # Before any step runs: one corrected plan, as the research lane does (#220).
@@ -2896,8 +2909,7 @@ class Orchestrator:
                     if not set(drop) <= set(flagged):
                         raise ValueError(f"re-plan may drop only reviewer-flagged completed steps {flagged}; "
                                          f"got {drop}")
-                    bad_agents = sorted({str(step.get("agent_id")) for step in raw
-                                         if step.get("agent_id") not in known - orchestration})
+                    bad_agents = unavailable_plan_agents(raw, known, orchestration)
                     if bad_agents:
                         raise ValueError(f"re-plan uses unavailable or orchestration agents: {bad_agents}")
                     retired = set(unfinished) | set(drop)
