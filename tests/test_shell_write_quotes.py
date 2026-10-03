@@ -256,3 +256,20 @@ def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
 ])
 def test_a_write_named_after_a_flag_or_through_tee_still_asks(tool, command):
     assert _decide(tool, command).action == "ask"
+
+
+# 12th mock trial: Claude's Bash on Windows is Git Bash, and /c/... is the C: drive.
+@pytest.mark.parametrize("command, action", [
+    ("head -c 400 x.tsv > /c/work/.tmp/header_dump.txt", "allow"),   # the staff member's own folder
+    ("cp a.txt /C/work/outputs/a.txt", "allow"),
+    ("echo x > /c/elsewhere/out.txt", "ask"),                        # still outside the roots
+    ("echo x > /d/work/out.txt", "ask"),                             # another drive
+])
+def test_git_bash_drive_paths_are_read_as_windows_paths(command, action):
+    assert _decide("Bash", command).action == action
+
+
+def test_a_posix_runner_keeps_slash_c_as_a_posix_folder():
+    policy = PolicySettings()
+    assert evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, ["/work"]).action == "ask"
+    assert evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, ["/c/work"]).action == "allow"

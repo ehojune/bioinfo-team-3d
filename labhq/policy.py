@@ -1209,7 +1209,12 @@ def _evaluate_tool(
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
         roots = [_norm(r) for r in allowed_roots if r]
+        # Claude's Bash on Windows is Git Bash: /c/Users/... is C:/Users/..., the folder the roots name (12th mock
+        # trial: a write into the staff member's own .tmp asked the PI). A path it cannot map stays as written.
+        git_bash = tool_name == "Bash" and any(re.match(r"^[a-z]:/", root) for root in roots)
         for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
+            if git_bash and _absolute(target) and not _drive_relative(target):
+                target = _git_bash_path(target, os.environ) or target
             if _drive_relative(target):
                 return Decision("ask", f"drive-relative shell write destination: {target}")
             if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):
