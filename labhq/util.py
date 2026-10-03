@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -142,6 +143,134 @@ def extract_json(text: str | None, *, strict: bool = True) -> Any | None:
         if isinstance(obj, dict) and (best is None or end > best[1]):
             best = (obj, end)
     return best[0] if best else None
+
+
+def _allows_null(schema: dict[str, Any]) -> bool:
+    typ = schema.get("type")
+    if typ == "null" or isinstance(typ, list) and "null" in typ:
+        return True
+    return any(isinstance(choice, dict) and _allows_null(choice)
+               for key in ("anyOf", "oneOf") for choice in schema.get(key, []))
+
+
+def _nullable_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if _allows_null(schema):
+        return schema
+    if "$ref" in schema:
+        return {"anyOf": [schema, {"type": "null"}]}
+    typ = schema.get("type")
+    if isinstance(typ, str):
+        return {**schema, "type": [typ, "null"]}
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a strict Structured Outputs schema without changing the application's contract.
+
+    OpenAI requires every object property in ``required`` and forbids additional properties. Fields that the
+    application contract leaves optional become nullable only in this transport copy; the original schema stays
+    available for validation and stable hashes.
+    """
+    out = copy.deepcopy(schema)
+
+    def visit(node: Any) -> None:
+        if isinstance(node, list):
+            for item in node:
+                visit(item)
+            return
+        if not isinstance(node, dict):
+            return
+        # Structured Outputs rejects annotation defaults; optionality is represented by null instead.
+        node.pop("default", None)
+        properties = node.get("properties")
+        original_required = set(node.get("required", []))
+        if isinstance(properties, dict):
+            for key, child in list(properties.items()):
+                visit(child)
+                if key not in original_required:
+                    properties[key] = _nullable_schema(child)
+            node["required"] = list(properties)
+            node["additionalProperties"] = False
+        elif node.get("type") == "object" or (
+                isinstance(node.get("type"), list) and "object" in node["type"]):
+            # Pydantic's dict[K, V] is an object with only an ``additionalProperties`` schema. Strict Structured
+            # Outputs cannot generate arbitrary keys, so its transport form is the empty object (or null when the
+            # application field was optional). Keep an explicit properties map for the strict validator.
+            node["properties"] = {}
+            node["required"] = []
+            node["additionalProperties"] = False
+        for key, child in node.items():
+            if key != "properties":
+                visit(child)
+
+    visit(out)
+    return out
+
+
+def strip_optional_nulls(value: Any, schema: dict[str, Any]) -> Any:
+    """Drop transport-only nulls for fields optional in ``schema``; preserve required nulls for validation."""
+    root = schema
+
+    def dereference(node: Any) -> Any:
+        seen: set[str] = set()
+        while isinstance(node, dict) and isinstance(node.get("$ref"), str):
+            ref = node["$ref"]
+            if ref in seen or not ref.startswith("#/"):
+                break
+            seen.add(ref)
+            target: Any = root
+            for part in ref[2:].split("/"):
+                target = target[part.replace("~1", "/").replace("~0", "~")]
+            node = target
+        return node
+
+    def matches(candidate: Any, current: Any) -> bool:
+        candidate = dereference(candidate)
+        if not isinstance(candidate, dict):
+            return False
+        typ = candidate.get("type")
+        types = set(typ) if isinstance(typ, list) else {typ}
+        if current is None:
+            return "null" in types
+        if isinstance(current, dict):
+            return "object" in types or "properties" in candidate
+        if isinstance(current, list):
+            return "array" in types
+        if isinstance(current, bool):
+            return "boolean" in types
+        if isinstance(current, str):
+            return "string" in types
+        if isinstance(current, int):
+            return "integer" in types or "number" in types
+        if isinstance(current, float):
+            return "number" in types
+        return False
+
+    def shape(node: Any, current: Any) -> Any:
+        node = dereference(node)
+        if not isinstance(node, dict):
+            return node
+        choices = node.get("anyOf") or node.get("oneOf")
+        if isinstance(choices, list):
+            return next((shape(choice, current) for choice in choices if matches(choice, current)), node)
+        return node
+
+    def clean(current: Any, node: Any) -> Any:
+        node = shape(node, current)
+        if isinstance(current, dict) and isinstance(node, dict):
+            properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+            required = set(node.get("required", []))
+            cleaned = {}
+            for key, child in current.items():
+                if child is None and key in properties and key not in required:
+                    continue
+                cleaned[key] = clean(child, properties.get(key, {}))
+            return cleaned
+        if isinstance(current, list) and isinstance(node, dict):
+            return [clean(item, node.get("items", {})) for item in current]
+        return copy.deepcopy(current)
+
+    return clean(value, schema)
 
 
 def free_port() -> int:

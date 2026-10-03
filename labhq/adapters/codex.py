@@ -15,7 +15,7 @@ import json
 import os
 from pathlib import Path
 
-from ..util import short
+from ..util import openai_strict_schema, short, strip_optional_nulls
 from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env,
                    record_model_id, wrap_cwd)
 from .owned import read_owned, write_owned
@@ -74,7 +74,7 @@ class CodexAdapter(AgentAdapter):
     def prepare(self, ctx: RunContext) -> None:
         write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
         if ctx.task.output_schema:
-            ctx.write_meta("output_schema.json", json.dumps(ctx.task.output_schema))
+            ctx.write_meta("output_schema.json", json.dumps(openai_strict_schema(ctx.task.output_schema)))
 
     def staff_env(self, ctx: RunContext) -> dict[str, str]:
         env = super().staff_env(ctx)
@@ -262,4 +262,9 @@ class CodexAdapter(AgentAdapter):
             # process, the file never appears. Its final answer is the turn's last agent message, not every message
             # joined (#330 review).
             st.final_text = st.last_message
-        return super().finalize(st, ctx, returncode)
+        result = super().finalize(st, ctx, returncode)
+        if result.structured is not None and ctx.task.output_schema:
+            result = result.model_copy(update={
+                "structured": strip_optional_nulls(result.structured, ctx.task.output_schema),
+            })
+        return result
