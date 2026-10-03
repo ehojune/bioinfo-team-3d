@@ -262,3 +262,32 @@ async def test_review_verdict_follows_p1_issues(review, kinds, outcome):
     req = hub.requests["r"]
     assert _kinds(hub) == kinds and req["outcome"] == outcome
     assert req["research_contract"]["review"]["reviewer_verdict"] == review["verdict"]
+
+
+# ---------- a short lead-in before the report's first heading is dropped (10th mock trial) ----------
+
+LEAD_IN = "최종 보고서를 작성 중입니다. 필요한 내용은 과제 파일에서 모두 확인했습니다.\n\n---\n\n"
+
+
+@pytest.mark.asyncio
+async def test_a_lead_in_before_the_first_heading_is_not_part_of_the_report():
+    body = "# 보고서\n\n" + REPORT
+    hub = _hub(report=LEAD_IN + body)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    assert req["report"].startswith(body) and "작성 중입니다" not in req["report"]
+    assert "no preamble" in hub.calls[3].prompt
+
+
+@pytest.mark.parametrize("text", [
+    REPORT,                                            # no heading at all
+    "# 보고서\n\n" + REPORT,                           # starts with its heading
+    "결론 [[claim:s1/c1]].\n\n# 근거\n\nmore",         # the lead carries an anchor: it is report text
+    "예시:\n```\n# 예시 제목\n```\n\n" + REPORT,       # the "heading" sits inside a code block (PR #361 review)
+    ("긴 서문 " * 120) + "\n\n# 보고서\n\n" + REPORT,   # too long to be a lead-in
+])
+def test_report_text_that_is_not_a_short_lead_in_is_kept(text):
+    from labhq.orchestrator.cso import report_body
+    assert report_body(text) == text
