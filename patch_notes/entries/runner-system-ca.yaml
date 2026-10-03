@@ -9,3 +9,6 @@ rows:
 - sha: a8b12aa
   at: 2026-10-03 20:12
   text: 'OS 신뢰 저장소를 매 spawn 때 다시 읽어 기관 루트 교체가 runner 재시작 없이 반영됨(봇 P2)'
+- sha: b9e23d2
+  at: 2026-10-03 20:24
+  text: 'README: Windows 러너가 직원 Python에 OS 신뢰 저장소 CA 묶음을 주는 방식과 끄는 법'
