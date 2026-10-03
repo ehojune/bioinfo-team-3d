@@ -26,11 +26,15 @@
 | Python 3.10 | 여러 줄 f-string 치환식, `fromisoformat("...Z")`는 3.10에서 깨진다. 3.12 CI만 보면 놓친다 |
 | Windows 직원 CLI | 표준 npm `.cmd` shim은 JS entrypoint와 Node로 풀어서 실행하고, 인식하지 못한 batch만 거부한다. npm이 아닌 Codex 앱 exe는 업데이트마다 폴더가 바뀐다(#73) |
 | Codex 직원 | 개인 `~/.codex/AGENTS.md`가 있는 PC는 직원 전용 `CODEX_HOME`에 로그인해야 preflight를 통과한다. 개인 skill 폴더는 여전히 읽히는데 PI는 괜찮다고 했다(#55) |
+| 문서 나눔 | `README.md`는 처음 써 보는 사람(웹으로 시작, 10KB 안팎), `docs/manual.md`는 깊이 보려는 사람, `docs/pi-qa.md`는 PI 질문·결정이다. 동작을 바꾸면 manual의 해당 절을 고치고 README에는 쌓지 않는다 |
+| 연결된 도구 표·배지 | 직원 설정을 바꾸면 `python scripts/integrations.py --write`로 README 배지와 manual의 표를 갱신하고 `--check`로 확인한다. 배지는 같은 설정과 `pyproject.toml`·`labhq/settings.py`·`.github/workflows`에서 만든다 |
+| 느린 test | 90초 MCP 실측은 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`. CI에서는 별도 job(`pytest-slow`)이 돌린다 |
+| 실측 fixture | Windows 11 실측 스트림은 `tests/fixtures/real/`에 있다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact` |
 | PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
 
 ## 작업 큐 (2026-10-03 갱신)
 
-README §11의 버전 순서를 따릅니다. 병합된 PR은 뺐습니다.
+[매뉴얼 로드맵](docs/manual.md#로드맵)의 버전 순서를 따릅니다. 병합된 PR은 뺐습니다.
 
 | 버전 | 상태 | issue / PR | 내용 |
 |---|---|---|---|
@@ -55,8 +59,8 @@ README §11의 버전 순서를 따릅니다. 병합된 PR은 뺐습니다.
 
 | 날짜 | 결정 | 기록 |
 |---|---|---|
-| 2026-10-03 | 로드맵 ⑥ 나: 버전마다 통과 기준, v0.75(HPC 공개 데이터)·v0.9(통제 데이터)로 나눔, v1 앞에 v0.95(다른 사람의 설치·온보딩) | README §11, #298 |
-| 2026-10-03 | 버전 정의 v0.25·v0.5·v0.75·v1·v1.25. 작업 큐는 이 순서를 따른다 | README §11 |
+| 2026-10-03 | 로드맵 ⑥ 나: 버전마다 통과 기준, v0.75(HPC 공개 데이터)·v0.9(통제 데이터)로 나눔, v1 앞에 v0.95(다른 사람의 설치·온보딩) | manual 로드맵, #298 |
+| 2026-10-03 | 버전 정의 v0.25·v0.5·v0.75·v1·v1.25. 작업 큐는 이 순서를 따른다 | manual 로드맵 |
 | 2026-10-03 | 실행 계정: 별도 계정 대신 PI와 같은 계정 + 개인 경로 차단(`policy.private_paths`) | #298 ③, PR #324 |
 | 2026-10-02 | 계산 backend: 지금은 기존 HPC 유지(A). Colab(E)은 나중. GBox·Bio-Express(C·D)는 API 계획이 없어 안 할 수 있다. Scheduler 일반화(B)는 두 번째 backend가 생길 때 | #273 |
 | 2026-10-02 | 신약개발 사업부는 지금 만들지 않는다(A). #90·#58을 끝낸 뒤 다시 본다 | #275 |
@@ -90,10 +94,10 @@ README §11의 버전 순서를 따릅니다. 병합된 PR은 뺐습니다.
 | GitHub·기록 | `labhq/integrations/github.py`, `rounds.py` | 프로젝트 보고, 공개 가드, 개발 라운드 기록 |
 | 점검 | `labhq/doctor.py` | 실행 전 점검과 capability manifest |
 | 웹 | `labhq/web/index.html`, `state.js`, `ui/`, `lab3d/` | 공유 reducer, 2.5D·3D 사무실, 결정·작업판·메신저 탭 |
-| 직원 | `agents/core/*.yaml` | 정규직 11명(엔진·모델·도구·프롬프트), 역할 기준은 README §2 |
+| 직원 | `agents/core/*.yaml` | 정규직 11명(엔진·모델·도구·프롬프트), 역할 기준은 manual '직원과 도구' |
 | 패치노트 | `patch_notes/entries/`, `docs/status/`, `scripts/notes_index.py` | PR별 기록과 공유 목차 자동 생성 |
 
-이벤트 프로토콜과 설정은 `README.md` §7–8, 알려진 한계는 §10을 보세요.
+이벤트 프로토콜과 설정은 `docs/manual.md`의 '구조와 이벤트'·'설정 포인트', 알려진 한계는 '알려진 한계'를 보세요.
 
 ## 개발 라운드 기록 (#69)
 
