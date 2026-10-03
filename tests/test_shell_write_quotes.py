@@ -256,3 +256,36 @@ def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
 ])
 def test_a_write_named_after_a_flag_or_through_tee_still_asks(tool, command):
     assert _decide(tool, command).action == "ask"
+
+
+# 12th mock trial: Claude's Bash on Windows is Git Bash, and /c/... is the C: drive.
+@pytest.mark.parametrize("command, action", [
+    ("head -c 400 x.tsv > /c/work/.tmp/header_dump.txt", "allow"),   # the staff member's own folder
+    ("cp a.txt /C/work/outputs/a.txt", "allow"),
+    ("echo x > /c/elsewhere/out.txt", "ask"),                        # still outside the roots
+    ("echo x > /d/work/out.txt", "ask"),                             # another drive
+])
+def test_git_bash_drive_paths_are_read_as_windows_paths(command, action):
+    assert _decide("Bash", command).action == action
+
+
+def test_a_posix_runner_keeps_slash_c_as_a_posix_folder():
+    policy = PolicySettings()
+    for roots, action in ((["/work"], "ask"), (["/c/work"], "allow")):
+        decision = evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, roots, windows=False)
+        assert decision.action == action
+
+
+def test_a_git_bash_path_into_a_restricted_zone_is_still_refused():
+    """PR #364 review: converting only the write target let `cp /c/<zone>/raw /c/<root>/out` through."""
+    policy = PolicySettings(data_zones=[DataZone(path="C:/work/restricted", level="restricted")])
+    decision = evaluate_tool("Bash", {"command": "cp /c/work/restricted/raw.txt /c/work/out.txt"}, policy,
+                             ["C:/work"])
+    assert decision.action != "allow" and "restricted" in decision.reason
+
+
+def test_a_git_bash_path_into_a_private_folder_is_still_refused():
+    decision = evaluate_tool("Bash", {"command": "cat /c/Users/pi/.ssh/id_rsa > /c/work/key.txt"}, PolicySettings(),
+                             ["C:/work"], workdir="C:/work", private_paths=["C:/Users/pi/.ssh"],
+                             private_enabled=True, home="C:/Users/pi")
+    assert decision.action != "allow"
