@@ -1,0 +1,5 @@
+pr: 370
+rows:
+- sha: 881a843
+  at: 2026-10-04 02:47
+  text: 폐쇄형 intake로 pack 적용을 판정하고 pairing 근거 유형과 조합표 셀 타입을 검증
