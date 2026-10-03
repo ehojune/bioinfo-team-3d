@@ -1221,12 +1221,15 @@ def _cd_reaches_private(cmd: str, private_paths: list[str], workdir: str | None,
     # Words are read lexically from a cd target, so without `..` they name only what is below it. A target with no
     # private path below it (the task's own workdir) needs no word check: `cd <workdir> && python -c "…"` splits into
     # hundreds of script words and went to the PI (13th mock trial). Links are still followed below for every target.
-    escapes = any(part == ".." for t in tokens for part in re.split(r"[/\\]", t))
-    lexical = [b for b in bases if escapes or not os.path.isabs(b) or _holds_private(b, private_paths)]
-    if lexical and len(tokens) > MAX_RESOLVED_CANDIDATES:
+    # A word with a `..` part (Windows also drops trailing dots and spaces, so `.. ` and `...` count) can leave the
+    # target, so those words are always checked. One `../upstream` beside an inline script used to switch the check on
+    # for every script word and hit the cap (bench A, 2026-10-04).
+    climbing = [t for t in tokens if any(".." in part and not part.rstrip(". ") for part in re.split(r"[/\\]", t))]
+    lexical = [b for b in bases if not os.path.isabs(b) or _holds_private(b, private_paths)]
+    if len(tokens if lexical else climbing) > MAX_RESOLVED_CANDIDATES:
         return True
     for base in bases:
-        spelled = [base, *(path_field_text(t, base) for t in tokens)] if base in lexical else [base]
+        spelled = [base, *(path_field_text(t, base) for t in (tokens if base in lexical else climbing))]
         if mentioned_private_path("\n".join(spelled), private_paths, home, environ):
             return True
         if os.path.isabs(base) and touches_resolved({"command": cmd}, private_paths, workdir=base):

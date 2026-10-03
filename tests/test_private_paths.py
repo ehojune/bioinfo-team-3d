@@ -777,6 +777,9 @@ def test_a_long_inline_script_after_cd_into_the_workdir_does_not_go_to_the_pi(tm
     inline = f"python3 -c \"\nimport csv\n{script}\nopen('outputs/x.tsv')\n\""
     assert gate(f'cd "{ws}" && {inline}').action == "allow"
     assert gate(f"cd outputs && {inline}").action == "allow"
+    # bench A (2026-10-04): an upstream workdir named with `../` beside the script no longer re-checks every word.
+    (tmp_path / "upstream").mkdir()
+    assert gate(f'cd "{ws}" && {inline} && python outputs/run.py ../upstream .').action == "allow"
     for command in (f'cd "{fake_home}" && {inline} && cat .sec/key.txt',
                     f'cd "{fake_home}" && {inline} && cat .se*/key.txt',
                     f'cd "{ws}" && {inline} && cat ../fh/.sec/key.txt',
