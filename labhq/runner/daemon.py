@@ -14,6 +14,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -51,6 +52,7 @@ from .approvals import Broker
 from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
+from .system_ca import CA_ENV, system_ca_pem
 from .workspace import TaskWorkspace, restricted_zones
 
 log = logging.getLogger("labhq.runner")
@@ -178,6 +180,7 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
+        self.system_ca_file: str | None = None  # written once on first use; '' when there is none
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
@@ -798,6 +801,36 @@ class Runner:
             "ok": False, "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
                                   "(read-only policy)"})
 
+    def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
+        """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
+
+        The PEM sits in the workspace root, which only the runner writes: a task folder could hold a link an
+        earlier run left, and the runner state folder may be closed to the Codex sandbox."""
+        if not self.s.runner.system_ca_bundle:
+            return {}
+        engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
+        if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
+            return {}
+        if self.system_ca_file is None:
+            self.system_ca_file = ""
+            pem = system_ca_pem()
+            if pem:
+                target = self.ws_root / ".labhq-system-ca.pem"
+                tmp = None
+                try:
+                    self.ws_root.mkdir(parents=True, exist_ok=True)
+                    fd, tmp = tempfile.mkstemp(dir=self.ws_root, prefix=".labhq-system-ca.", suffix=".tmp")
+                    with os.fdopen(fd, "w", encoding="ascii") as handle:
+                        handle.write(pem)
+                    os.replace(tmp, target)
+                    self.system_ca_file = str(target)
+                except OSError:
+                    log.warning("system CA bundle not written", exc_info=True)
+                    if tmp:
+                        with contextlib.suppress(OSError):
+                            os.unlink(tmp)
+        return {name: self.system_ca_file for name in CA_ENV} if self.system_ca_file else {}
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
@@ -969,6 +1002,7 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            env.update(self._system_ca_env(agent))
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
