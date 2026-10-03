@@ -10,10 +10,49 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-04
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:20 | [`2e4d95c`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/2e4d95c) | Evidence의 inline code는 outputs/ 경로일 때만 근거 경로로 읽음(봇 P1), 재시도가 성공해도 앞선 시도의 실패한 조회를 보고서에 남김(봇 P2) |
+| 00:18 | [`03f22b5`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/03f22b5) | 게이트: Git Bash 경로를 통제 구역·개인 경로·쓰기 검사 전에 Windows 표기로 바꿔 /c/<구역> 복사가 통과하지 않음(봇 P1) |
+| 00:11 | [`a9368cf`](https://github.com/ehojune/bioinfo-team-3d/pull/364/commits/a9368cf) | 게이트: Windows Claude의 Bash(Git Bash) 쓰기 경로 /c/...를 C:/...로 읽어 자기 작업 폴더 쓰기를 묻지 않음(12차 시운전, 같은 단계 카드 3장) |
+| 00:10 | [`21c88d6`](https://github.com/ehojune/bioinfo-team-3d/pull/363/commits/21c88d6) | 일반 단계 결과 블록을 파싱하고 미수집 Evidence 경로·실패한 도구 호출을 최종 보고서 경고로 남겼다. 연구 result v2는 유지했다. |
+
 ## 2026-10-03
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:00 | [`2f002b2`](https://github.com/ehojune/bioinfo-team-3d/pull/362/commits/2f002b2) | README 로드맵 v0.25 행도 모의 시운전 2~11차 반영, 남은 것은 PI 시운전과 Claude 직원 폴더 로그인(봇 P2) |
+| 22:57 | [`cec160d`](https://github.com/ehojune/bioinfo-team-3d/pull/362/commits/cec160d) | README 로드맵 v0.5: 10차 시운전이 연구 lane을 보고서까지 완주(verify exit 0), 남은 것은 두 번째 완주·revise 이어 가기. HANDOFF 큐 갱신 |
+| 21:57 | [`bb90116`](https://github.com/ehojune/bioinfo-team-3d/pull/361/commits/bb90116) | 보고서 첫 제목 앞에 코드 펜스가 있으면 그 제목이 코드 안일 수 있어 군말로 빼지 않음(봇 P2) |
+| 21:53 | [`455e671`](https://github.com/ehojune/bioinfo-team-3d/pull/361/commits/455e671) | 연구 최종 보고서 첫 제목 앞의 짧은 군말("작성 중입니다…")은 보고서에서 빼고, 프롬프트에 서문 없이 쓰라고 적음(10차 시운전) |
+| 20:24 | [`b9e23d2`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/b9e23d2) | README: Windows 러너가 직원 Python에 OS 신뢰 저장소 CA 묶음을 주는 방식과 끄는 법 |
+| 20:12 | [`a8b12aa`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/a8b12aa) | OS 신뢰 저장소를 매 spawn 때 다시 읽어 기관 루트 교체가 runner 재시작 없이 반영됨(봇 P2) |
+| 20:04 | [`d44f51a`](https://github.com/ehojune/bioinfo-team-3d/pull/360/commits/d44f51a) | 원본 JSON 결합 검사는 claims·evidence가 list일 때만 해 scalar ledger에서 예외 대신 교정을 받음(봇 P1) |
+| 20:00 | [`57f7929`](https://github.com/ehojune/bioinfo-team-3d/pull/360/commits/57f7929) | 결과 계약의 슬롯·claim 결합 문제를 필드 오류와 함께 첫 교정에 알림(9차 시운전: 슬롯 누락이 마지막 검증에서야 드러나 단계 실패) |
+| 20:00 | [`6fff2a8`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/6fff2a8) | CA 묶음을 매 spawn 전에 메모리 사본과 비교해 바뀌었으면 다시 씀(봇 P1), 읽기 전용 실행도 REQUESTS_CA_BUNDLE 유지(봇 P2) |
+| 19:43 | [`a2bbedf`](https://github.com/ehojune/bioinfo-team-3d/pull/359/commits/a2bbedf) | Windows에서 직원 Python이 OS 신뢰 저장소도 믿게: certifi+OS 저장소 PEM을 SSL_CERT_FILE·REQUESTS_CA_BUNDLE로(9차 시운전 기관 TLS 검사) |
+| 19:08 | [`37722ed`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/37722ed) | 동결 protocol은 단계·리뷰·보고서 프롬프트 어디서도 자르지 않고, 길면 단계 목록만 자름(봇 P1) |
+| 18:57 | [`9c00cda`](https://github.com/ehojune/bioinfo-team-3d/pull/358/commits/9c00cda) | 연구 단계 프롬프트에 동결 protocol(제외 기준·분석 단위·통계)을 넣고 이탈은 method_changes에 적게(8차 시운전 리뷰 P1) |
+| 18:49 | [`83f0c58`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/83f0c58) | README: CP2 근거 결합은 조상 단계 산출도 인정, 실제 CLI로 CP2·리뷰까지 확인(8차) |
+| 18:48 | [`395a2f1`](https://github.com/ehojune/bioinfo-team-3d/pull/357/commits/395a2f1) | CP2 근거 결합: 조상 단계 전체의 수집·hash된 산출물을 검증된 artifact로 인정(8차 시운전 거부 8건 중 6건) |
+| 17:34 | [`e0ca434`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/e0ca434) | 게이트: -Path를 이름으로 준 쓰기 cmdlet의 위치 인자는 -Value로 보고 목적지로 묻지 않음(봇 P2) |
+| 17:28 | [`9953cbd`](https://github.com/ehojune/bioinfo-team-3d/pull/356/commits/9953cbd) | 게이트: 플래그 뒤에 쓴 경로·tee·sc·Export-Csv도 쓰기 목적지로 읽고, Get-FileHash 옆 따옴표 행은 텍스트로(8차 시운전 오탐과 놓친 쓰기) |
+| 16:52 | [`aef9a6e`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/aef9a6e) | 기다릴 HPC job·질의가 남은 turn에는 마무리 turn을 붙이지 않음(봇 P1) |
+| 16:47 | [`9c80c43`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/9c80c43) | 마무리 turn 뒤 산출물은 그 turn 뒤 runner가 본 목록·hash로, 지우거나 hash 못 한 파일의 옛 hash를 남기지 않음(봇 P1) |
+| 16:42 | [`63f41e1`](https://github.com/ehojune/bioinfo-team-3d/pull/355/commits/63f41e1) | 연구 단계가 턴 상한에 걸리면 같은 세션에서 절반 상한으로 한 번 마무리, 수습 turn 2→4턴(7차 시운전 QC 실패) |
+| 16:08 | [`c82a305`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/c82a305) | 게이트: 경로에 붙은 숫자를 스트림 번호로 보지 않음(봇 P1) |
+| 16:04 | [`ce35d46`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/ce35d46) | 게이트: 명령 단어를 나누기 전에 리다이렉트를 빼서 cp 목적지를 /dev/null로 읽지 않음(7차 시운전 오탐) |
+| 16:04 | [`a0211d8`](https://github.com/ehojune/bioinfo-team-3d/pull/354/commits/a0211d8) | README: 리다이렉트는 명령 목적지로 읽지 않음 |
+| 15:08 | [`68e1c86`](https://github.com/ehojune/bioinfo-team-3d/pull/353/commits/68e1c86) | 결과 살리기: 마지막 교정이 PI 질문을 내면 살리지 않음, 중복 link는 그 link만 뗌(봇 지적) |
+| 15:02 | [`48c30cf`](https://github.com/ehojune/bioinfo-team-3d/pull/353/commits/48c30cf) | 교정 뒤 남은 행 단위 계약 위반을 파생 행·link와 함께 분리하고 CP2·receipt·보고서에 남겼다. |
+| 14:16 | [`2fa931a`](https://github.com/ehojune/bioinfo-team-3d/pull/352/commits/2fa931a) | 결과 교정 turn이 산출 파일을 바꾸면 단계를 실패시킴(봇 P1) |
+| 14:10 | [`46973c9`](https://github.com/ehojune/bioinfo-team-3d/pull/352/commits/46973c9) | 연구 단계 결과 JSON이 계약 검증에 실패하면 같은 세션·workdir에서 설정 횟수만큼 교정하고, validator 전용 필드 규칙을 prompt에 명시했다. |
+| 13:31 | [`03d6cb5`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/03d6cb5) | Codex strict schema에서 사전을 왕복하고 지원하지 않는 제약과 중첩 nullable array를 호환 형태로 바꿨다. |
+| 12:45 | [`57d529b`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/57d529b) | README에 Codex strict schema 변환과 optional null 정리 동작을 한 줄로 기록했다. |
+| 12:43 | [`1a9c5a2`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/1a9c5a2) | Codex 직원 output schema를 OpenAI strict 형식으로 바꾸고 optional null을 원래 계약에 맞게 정리했다. |
+| 11:56 | [`470664f`](https://github.com/ehojune/bioinfo-team-3d/pull/350/commits/470664f) | adapter preflight에 실패한 직원을 runner roster에서 빼고 계획 재검증과 Claude 배경 작업 차단을 추가했다. |
 | 10:16 | [`16a20a6`](https://github.com/ehojune/bioinfo-team-3d/pull/348/commits/16a20a6) | 범위 확인 후속: 첫 판정 유지, bench는 범위 카드에 진행, web_scope_card를 CI에(#346 봇 지적) |
 | 10:13 | [`66ccd34`](https://github.com/ehojune/bioinfo-team-3d/pull/347/commits/66ccd34) | 로드맵 ⑥: 버전마다 통과 기준, v0.75(HPC 공개)·v0.9(통제 데이터)·v0.95(온보딩), HANDOFF 작업 큐 정리 |
 | 09:50 | [`53b759d`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/53b759d) | 범위 밖 일반 요청은 실행 전에 PI에게 묻기: 계획에 scope 판정(in·borderline·out), 설정 lab.scope, out이면 범위 확인 카드, 중단하면 단계 없이 끝남(#36) |

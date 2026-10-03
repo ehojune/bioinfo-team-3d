@@ -14,6 +14,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -22,7 +23,8 @@ from typing import Any
 import websockets
 import yaml
 
-from ..adapters import get_adapter, is_read_only_task, read_only_profile, read_only_refusal
+from ..adapters import (adapter_preflight_error, get_adapter, is_read_only_task, read_only_profile,
+                        read_only_refusal)
 from ..adapters.base import RunContext
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
@@ -50,6 +52,7 @@ from .approvals import Broker
 from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
+from .system_ca import CA_ENV, system_ca_pem
 from .workspace import TaskWorkspace, restricted_zones
 
 log = logging.getLogger("labhq.runner")
@@ -333,12 +336,23 @@ class Runner:
                    "agents": self.roster(), "capabilities": self.capabilities()})
 
     def roster(self) -> list[dict]:
-        agents = self.registry.roster()
-        if self.s.runner.force_engine:
-            agents = [{**a, "engine": self.s.runner.force_engine} for a in agents]
-        return [{**a, "hpc_tools": ("hpc" in a.get("builtin_mcp", []) and
-                                     self.s.hpc.scheduler != "none") or "labhq_hpc" in a.get("mcp", [])}
-                for a in agents]
+        agents = []
+        for registered in self.registry.agents.values():
+            agent = registered
+            if self.s.runner.force_engine:
+                agent = agent.model_copy(update={"engine": Engine(self.s.runner.force_engine)})
+            try:
+                refused = adapter_preflight_error(self.s, agent, self.ws_root)
+            except OSError:
+                refused = "adapter preflight files inaccessible"
+            if refused:
+                log.warning("runner %s omits unavailable staff %s: %s", self.s.runner.id, agent.id, refused)
+                continue
+            summary = agent.summary()
+            agents.append({**summary, "hpc_tools": ("hpc" in summary.get("builtin_mcp", []) and
+                                                      self.s.hpc.scheduler != "none") or
+                                                     "labhq_hpc" in summary.get("mcp", [])})
+        return agents
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
@@ -786,6 +800,43 @@ class Runner:
             "ok": False, "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
                                   "(read-only policy)"})
 
+    def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
+        """SSL_CERT_FILE and REQUESTS_CA_BUNDLE at the OS trust store when the PI set neither (9th mock trial).
+
+        The PEM sits in the workspace root: a task folder could hold a link an earlier run left, and the runner state
+        folder may be closed to the Codex sandbox. Staff run as the same account and can rewrite it, so before every
+        spawn the store is read again and the file rewritten when it differs: a CA one task planted is never trusted
+        by the next, and a root the institution replaced reaches staff without a runner restart (PR #359 review)."""
+        if not self.s.runner.system_ca_bundle:
+            return {}
+        engine_env = getattr(getattr(self.s.engines, agent.engine.value, None), "env", None) or {}
+        if any(os.environ.get(name) or engine_env.get(name) for name in CA_ENV):
+            return {}
+        pem = system_ca_pem()
+        if not pem:
+            return {}
+        target = self.ws_root / ".labhq-system-ca.pem"
+        expected = pem.encode("ascii")
+        try:
+            if not is_link(target) and target.is_file() and target.read_bytes() == expected:
+                return {name: str(target) for name in CA_ENV}
+        except OSError:
+            pass
+        tmp = None
+        try:
+            self.ws_root.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self.ws_root, prefix=".labhq-system-ca.", suffix=".tmp")
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(expected)
+            os.replace(tmp, target)  # replaces a link itself, never the file it points at
+        except OSError:
+            log.warning("system CA bundle not written", exc_info=True)
+            if tmp:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+            return {}
+        return {name: str(target) for name in CA_ENV}
+
     async def run_task(self, task: Task, workdir_override: Path | None = None) -> TaskResult:
         agent = self._resolve_agent(task)
         read_only = is_read_only_task(task.meta)
@@ -811,7 +862,12 @@ class Runner:
             self.workspaces[task.id] = ws
             self.task_req[task.id] = task.request_id
 
+        tool_errors: list[str] = []
+
         async def emit(typ: str, data: dict) -> None:
+            if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
+                first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
+                tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
 
         await emit("agent.status", {"state": "queued"})
@@ -957,6 +1013,7 @@ class Runner:
             }
             if staff_config:
                 env["LABHQ_CONFIG"] = staff_config
+            env.update(self._system_ca_env(agent))
             output_before: dict[str, tuple] | None = None
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
@@ -1136,6 +1193,8 @@ class Runner:
                       usage=result.usage, usage_known=result.usage_known,
                       session_id=result.session_id, pending_jobs=pending)
         result.provenance = ws.provenance()
+        if tool_errors:
+            result.tool_errors = [*result.tool_errors, *tool_errors]
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")

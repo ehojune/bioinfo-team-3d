@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
@@ -28,7 +29,8 @@ from ..quota import is_quota_error, received_quota_wait
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
-                                 validate_research_plan, validate_research_result, with_pack_refs)
+                                 research_result_errors, salvage_research_result, validate_research_plan,
+                                 validate_research_result, with_pack_refs)
 from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
@@ -238,7 +240,7 @@ RESEARCH_CP2_PLAN_PROMPT = RESEARCH_PLAN_PROMPT.replace(RESEARCH_CP1_ONLY_RULE, 
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
 CP2_MAX_ASKS = 3
 
-STEP_PROMPT = """Overall request (context only): {request}
+RESEARCH_STEP_PROMPT = """Overall request (context only): {request}
 
 Your step ({step_id}): {instruction}
 
@@ -249,9 +251,69 @@ return JSON with "blocking_decision": "the specific question and choices", writt
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
 with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work."""
 
+STEP_PROMPT = RESEARCH_STEP_PROMPT + """
+
+Unless you are returning blocking_decision, end the answer with these exact headings, in this order:
+## Findings
+## Evidence
+## Not established
+## Method changes
+Before making a factual claim, save it to a file and cite its exact workspace path under ## Evidence. A failed
+lookup is neither evidence nor proof of absence. Under ## Method changes, state any weaker method you used and why;
+write None when there was no change. Keep a heading even when its section is empty."""
+
+GENERAL_SECTION_KEYS = {
+    "Findings": "findings",
+    "Evidence": "evidence",
+    "Not established": "not_established",
+    "Method changes": "method_changes",
+}
+_SECOND_LEVEL_HEADING = re.compile(r"^##[ \t]+([^\r\n#]+?)[ \t]*$", re.MULTILINE)
+_PLAIN_OUTPUT_PATH = re.compile(r"(?<![A-Za-z0-9_.-])(?:\./)?outputs[\\/][^\s`\"'<>()\[\]{}]+")
+
+
+def parse_general_result(text: str) -> dict[str, str]:
+    """Read the optional ordinary-step result block. Legacy free text remains unstructured."""
+    matches = list(_SECOND_LEVEL_HEADING.finditer(text or ""))
+    if not any(match.group(1).strip() in GENERAL_SECTION_KEYS for match in matches):
+        return {}
+    sections = {key: "" for key in GENERAL_SECTION_KEYS.values()}
+    for index, match in enumerate(matches):
+        key = GENERAL_SECTION_KEYS.get(match.group(1).strip())
+        if key:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            sections[key] = text[match.end():end].strip()
+    return sections
+
+
+def _general_evidence_paths(text: str) -> list[str]:
+    """Workspace output paths cited in Evidence, in first-seen order."""
+    # Inline code is a path only when it names one (`outputs/x.tsv`): `pandas 2.2` or `GSE123` is not (PR #363 review).
+    quoted = [code for code in re.findall(r"`([^`\r\n]+)`", text or "") if re.match(r"(?:\./)?outputs/", code.strip())]
+    candidates = quoted + _PLAIN_OUTPUT_PATH.findall(text or "")
+    found = []
+    for candidate in candidates:
+        candidate = candidate.rstrip(".,;:")
+        relative = output_relpath(candidate)
+        if relative and relative.startswith("outputs/") and relative not in found:
+            found.append(relative)
+    return found
+
+
+def attach_general_result(result: TaskResult) -> TaskResult:
+    """Attach the lightweight contract and warn, but never reject, when Evidence names an uncollected path."""
+    sections = parse_general_result(result.text)
+    if not sections:
+        return result
+    collected = {path for raw in [*result.outputs, *result.output_sha256] if (path := output_relpath(raw))}
+    missing = [path for path in _general_evidence_paths(sections["evidence"]) if path not in collected]
+    return result.model_copy(update={"general_sections": sections, "evidence_path_warnings": missing})
+
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
                      "labhq collects only these: {paths}")
+
+RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
 
 REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
@@ -297,6 +359,9 @@ Team results so far:
 SYNTH_PROMPT = """Write the final report for the PI.
 Structure: 1) answer / recommendation, 2) evidence by step (with file paths), 3) reviewer concerns and how
 they were addressed, 4) what would change the conclusion, 5) next steps (including any proposed contract hires).
+Do not turn a failed lookup into evidence or proof of absence. LabHQ appends the warning section itself; do not
+copy it into your report. Warning preview ("(none)" means there is no warning section):
+{warnings}
 
 Request: {request}
 
@@ -364,7 +429,7 @@ Claim anchors (labhq checks them by machine):
   anchors. A failed or empty lookup is neither evidence nor proof of absence.
 - Report the reviewer's P1 and P2 issues as limitations.
 Structure: 1) answer, 2) evidence by claim (with anchors and file paths), 3) 확립되지 않은 것, 4) limitations,
-5) what would change the conclusion, and next steps.
+5) what would change the conclusion, and next steps. Start with the report's first heading: no preamble.
 
 Request: {request}
 
@@ -392,6 +457,13 @@ Job scripts and logs are under jobs/ in your workspace ({workdir}). Check exit s
 continue your step and report as instructed."""
 
 WRAP_PROMPT = "Your turn limit was reached. Save any partial results under outputs/ and write outputs/PARTIAL_STATUS.md with what is done and what remains unfinished."
+# Saving files, writing the status note and answering take more than two turns: a 2-turn wrap-up stopped at its
+# third turn with nothing saved (7th mock trial, 2026-10-03).
+WRAP_TURNS = 4
+
+FINISH_PROMPT = """Your turn limit was reached before this step finished. Continue the same step in this session:
+do not redo work that is already done. Finish only what remains, write the declared outputs, and give your final
+answer in the required format."""
 
 ASK_WAKE_PROMPT = """A blocking question from your previous turn has been answered:
 Your earlier blocking question and the PI's answer:
@@ -442,6 +514,52 @@ def continuation_prompt(task: Task, updates: str, *, resumable: bool,
     return (f"Original instruction:\n{task.prompt}\n\nOriginal context:\n{task.context or '(none)'}"
             f"\n\nPrevious turn:\n{clip(previous, context_chars) or '(none)'}"
             f"\n\nContinuation updates:\n{updates}")
+
+
+_HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
+
+
+def report_body(text: str) -> str:
+    """The report from its first heading: a short lead-in before it ("Writing the report now... ---") is talk to the
+    lab, not part of the report (10th mock trial). Text with an anchor or longer than a few lines is kept."""
+    heading = _HEADING.search(text or "")
+    if not heading or heading.start() == 0:
+        return text
+    lead = text[:heading.start()]
+    # A fence before the "heading" means it may sit inside a code block (PR #361 review).
+    if "[[claim:" in lead or "```" in lead or "~~~" in lead or len(lead.strip()) > 400:
+        return text
+    return text[heading.start():]
+
+
+def step_ancestors(steps: list[dict]) -> dict[str, set[str]]:
+    """Every step a plan step waits on, directly or through other steps."""
+    by_id = {s["id"]: s for s in steps}
+    ancestors: dict[str, set[str]] = {}
+    for sid in by_id:
+        pending = list(by_id[sid]["depends_on"])
+        found: set[str] = set()
+        while pending:
+            ancestor = pending.pop()
+            if ancestor in found:
+                continue
+            found.add(ancestor)
+            pending.extend(by_id[ancestor]["depends_on"])
+        ancestors[sid] = found
+    return ancestors
+
+
+def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
+    """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
+    are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
+    limit, keeps no stale digest (PR #355 review). Files the step wrote without reporting them stay listed."""
+    return later.model_copy(update={
+        "unreported_outputs": sorted((set(first.unreported_outputs) | set(later.unreported_outputs))
+                                     - set(later.outputs)),
+        "tool_errors": [*first.tool_errors, *later.tool_errors],
+        "workdir": later.workdir or first.workdir,
+        "workdir_id": later.workdir_id or first.workdir_id,
+    })
 
 
 def reference_meta(request: dict | None) -> dict[str, list[str]]:
@@ -505,6 +623,24 @@ class PlanOutputsError(ValueError):
     """A declared step output that no normalization can bring under the step's outputs/ folder (#220)."""
 
 
+class PlanAgentError(ValueError):
+    """A plan assigned work to staff outside the current worker roster."""
+
+
+def unavailable_plan_agents(steps: Any, known: set[str], excluded: frozenset[str] | set[str]) -> list[str]:
+    """Agent ids a worker plan cannot dispatch: absent from this roster or reserved for orchestration."""
+    if not isinstance(steps, list):
+        return []
+    bad = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        agent = step.get("agent_id")
+        if not isinstance(agent, str) or agent not in known or agent in excluded:
+            bad.append(str(agent))
+    return sorted(set(bad))
+
+
 def _append_report_metadata(report: str, sections: list[str]) -> str:
     """Add LabHQ audit text without moving a sole trailing benchmark result block from last place (#229)."""
     if not sections:
@@ -518,14 +654,49 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
     return report.rstrip() + "\n\n" + metadata
 
 
+def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict]) -> str:
+    """Short deterministic warnings for ordinary reports; tool payloads never pass their first bounded line."""
+    lines = []
+    for step in steps:
+        sid = step["id"]
+        result = results.get(sid)
+        if result is None:
+            continue
+        paths = (result.evidence_path_warnings if isinstance(result, TaskResult)
+                 else result.get("evidence_path_warnings") or [])
+        if paths:
+            shown = ", ".join(str(path) for path in paths[:5])
+            suffix = f" (+{len(paths) - 5}개)" if len(paths) > 5 else ""
+            lines.append(f"- {sid}: Evidence 경로 불일치 {len(paths)}건: {shown}{suffix}")
+        errors = result.tool_errors if isinstance(result, TaskResult) else result.get("tool_errors") or []
+        if errors:
+            first = str(errors[0]).splitlines()[0].strip() or "tool failed"
+            lines.append(f"- {sid}: {FAILED_LOOKUP_TITLE} {len(errors)}건; 첫 줄: {short(first, 160)}")
+    return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
+
+
 def _research_plan_digest(plan: dict) -> str:
-    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps."""
+    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps.
+    Only the step list is clipped: a real plan runs past 20,000 characters, and clipping the whole JSON cut the
+    middle of the protocol the reviewer judges against (PR #358 review)."""
     steps = [{key: step.get(key) for key in ("id", "agent_id", "phase", "instruction", "claim_ids", "outputs",
                                              "evidence_slots", "depends_on")} for step in plan.get("steps") or []]
-    digest = {"brief": plan.get("brief"),
+    frozen = {"brief": plan.get("brief"),
               "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
-              "pack_values": plan.get("pack_values") or {}, "steps": steps}
-    return clip(json.dumps(digest, ensure_ascii=False), 8000)
+              "pack_values": plan.get("pack_values") or {}}
+    return (json.dumps(frozen, ensure_ascii=False) + "\nSteps: " +
+            clip(json.dumps(steps, ensure_ascii=False), 8000))
+
+
+def _research_protocol_digest(plan: dict) -> str:
+    """The frozen question and protocol a research step must follow, whole: a clipped middle could drop the very
+    criterion the step needs (PR #358 review). A step instruction names a rule ("after the low-expression filter")
+    without its criteria (8th mock trial: the analyst invented its own filter)."""
+    brief = plan.get("brief") or {}
+    digest = {"question": brief.get("question"), "scope": brief.get("scope"),
+              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
+              "pack_values": plan.get("pack_values") or {}}
+    return json.dumps(digest, ensure_ascii=False)
 
 
 def _research_issue_lines(issues: list[dict]) -> list[str]:
@@ -789,12 +960,13 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
     if reject_excess and len(raw) > max_steps:
         raise ValueError(f"stored plan has {len(raw)} steps; maximum is {max_steps}; "
                          "raise orchestrator.max_steps to resume it")
+    bad_agents = unavailable_plan_agents(raw[:max_steps], known, excluded)
+    if bad_agents:
+        raise PlanAgentError(f"plan uses unavailable or orchestration agents: {bad_agents}; "
+                             f"use roster ids {sorted(known - set(excluded))}")
     warnings, steps, seen = [], [], set()
     raw_types: dict[str, Any] = {}
     for i, s in enumerate(raw[:max_steps]):
-        if s.get("agent_id") in excluded:
-            warnings.append(f"step {s.get('id') or i + 1}: orchestration role removed")
-            continue
         sid = str(s.get("id") or f"s{i + 1}")
         if sid in seen:
             sid = f"{sid}_{i}"
@@ -840,9 +1012,6 @@ def validate_steps(raw: list[dict], known: set[str], max_steps: int,
                 continue
             s["depends_on"].append(other["id"])
             warnings.append(f"step {s['id']}: added dependency on {other['id']} referenced in instruction")
-    for s in steps:
-        if s["agent_id"] not in known:
-            warnings.append(f"step {s['id']}: unknown agent {s['agent_id']!r}")
     if vocab is not None:  # after _contain_outputs, so names pair with the outputs the runner will collect
         for s in steps:
             entries, issues = output_types.normalize_entries(s["outputs"], raw_types.get(s["id"]), vocab)
@@ -909,6 +1078,16 @@ def plan_correction(problems: list[str]) -> str:
     return "\n".join(["The previous research PLAN failed validation. Fix every problem below and return one complete "
                       "corrected PLAN. Do not remove steps by truncation. labhq writes protocol.packs.",
                       *_problem_lines(problems, "1.")])
+
+
+def result_correction(problems: list[str]) -> str:
+    """Ask for ledger JSON only: the completed analysis and its files must not run again."""
+    return "\n".join([
+        "The previous research result JSON failed contract validation. Fix every problem below and return only one "
+        "complete corrected result JSON object.",
+        "Do not recreate or modify output files, rerun the analysis, or change the method. Fix the result JSON only.",
+        *_problem_lines(problems, "1."),
+    ])
 
 
 def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
@@ -1544,6 +1723,7 @@ class Orchestrator:
             previous_session = current.resume_session_id
             previous_result = None
             retry_answers = []
+            tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
                 await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
@@ -1584,6 +1764,10 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                if res.tool_errors:
+                    tool_errors.extend(res.tool_errors)
+                if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
+                    res = res.model_copy(update={"tool_errors": list(tool_errors)})
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
                 answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
@@ -1623,6 +1807,7 @@ class Orchestrator:
             """Every turn of the step, wake and wrap-up included, parks on a subscription quota and resumes."""
             current = turn
             res = await dispatch_with_retry(current, max_attempts, start)
+            tool_errors = list(res.tool_errors)
             while True:
                 quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
                                                                  default_wait_s=self.cfg.quota_default_wait_s)
@@ -1657,11 +1842,36 @@ class Orchestrator:
                                      **({"workdir": res.workdir} if res.workdir else {})},
                                resume_session_id=res.session_id if can_resume else None)
                 res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
+                tool_errors.extend(res.tool_errors)
+                res = res.model_copy(update={"tool_errors": list(tool_errors)})
 
         res = await dispatch_turn(task, start=initial_attempt)
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
         read_only = is_read_only_task(task.meta)
+        turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
+        # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
+        # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
+        # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
+        # (PR #355 review).
+        finishes = int(task.meta.get("finish_turns") or 0) if task.meta.get("kind") == "step" else 0
+        while (finishes > 0 and not res.ok and res.error_kind == "error_max_turns" and res.session_id
+               and not read_only and not waiting(res) and self.hub.supports_resume(task.agent_id)):
+            finishes -= 1
+            finish = Task(agent_id=task.agent_id, request_id=rid, output_schema=task.output_schema,
+                          prompt=continuation_prompt(task, FINISH_PROMPT, resumable=True, previous_result=res,
+                                                     context_chars=self.cfg.context_chars_per_step),
+                          resume_session_id=res.session_id,
+                          meta={**task.meta, "parent_task": res.task_id,
+                                "title": f"{task.meta.get('step_id') or task.id}: 턴 상한 뒤 마무리",
+                                **({"workdir": res.workdir} if res.workdir else {}),
+                                **({"agent_overrides": {**overrides, "max_turns": max(turn_limit // 2,
+                                                                                      min(turn_limit, 10))}}
+                                   if turn_limit else {})})
+            try:
+                res = merged_turn(res, await dispatch_turn(finish, max_attempts=1))
+            except BudgetExceeded:
+                break
         if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
@@ -1669,7 +1879,8 @@ class Orchestrator:
                                                    previous_result=res, context_chars=self.cfg.context_chars_per_step),
                         resume_session_id=res.session_id,
                         meta={**task.meta, "kind": "wrap_up", "parent_task": res.task_id,
-                              "workdir": res.workdir, "agent_overrides": {**overrides, "max_turns": 2},
+                              "workdir": res.workdir,
+                              "agent_overrides": {**overrides, "max_turns": min(WRAP_TURNS, turn_limit or WRAP_TURNS)},
                               "outputs": ["PARTIAL_STATUS.md"],
                               "collect_direct_outputs": task.meta.get("kind") == "direct"})
             try:
@@ -1684,6 +1895,7 @@ class Orchestrator:
                                              "output_sha256": {**{path: digest for path, digest in
                                                                   res.output_sha256.items() if path not in rewritten},
                                                                **partial.output_sha256},
+                                             "tool_errors": [*res.tool_errors, *partial.tool_errors],
                                              "error": f"{res.error or 'error_max_turns'}; wrap-up: {note}"})
             except BudgetExceeded:
                 pass
@@ -1714,7 +1926,7 @@ class Orchestrator:
                                            previous_result=res, context_chars=self.cfg.context_chars_per_step),
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
-            res = await dispatch_turn(wake)
+            res = merged_turn(res, await dispatch_turn(wake))
         if res.ok and waiting(res):
             res = res.model_copy(update={
                 "ok": False, "error_kind": "wake_limit",
@@ -1784,17 +1996,7 @@ class Orchestrator:
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
-        ancestors: dict[str, set[str]] = {}
-        for sid in by_id:
-            pending = list(by_id[sid]["depends_on"])
-            found: set[str] = set()
-            while pending:
-                ancestor = pending.pop()
-                if ancestor in found:
-                    continue
-                found.add(ancestor)
-                pending.extend(by_id[ancestor]["depends_on"])
-            ancestors[sid] = found
+        ancestors = step_ancestors(steps)
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
@@ -1826,7 +2028,8 @@ class Orchestrator:
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
-            prompt = STEP_PROMPT.format(request=request, step_id=step["id"], instruction=step["instruction"])
+            template = RESEARCH_STEP_PROMPT if research_plan else STEP_PROMPT
+            prompt = template.format(request=request, step_id=step["id"], instruction=step["instruction"])
             if research_plan:
                 contract = ((req_state or {}).get("research_contract") or {})
                 prompt += ("\n\nReturn the structured research result contract required by the output schema. "
@@ -1836,7 +2039,14 @@ class Orchestrator:
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
                            "If you cannot proceed without a PI decision, return the same schema with every list "
-                           "empty and the question with its choices in blocking_decision; you re-run with the answer.")
+                           "empty and the question with its choices in blocking_decision; you re-run with the answer."
+                           "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
+                           RESEARCH_RESULT_FIELD_RULES +
+                           "\n\nFrozen protocol, approved by the PI at CP1:\n" + _research_protocol_digest(research_plan) +
+                           "\nApply its selection and exclusion criteria, analysis unit and statistics exactly as "
+                           "written. If the data force a different rule, use the closest workable one, record it in "
+                           "method_changes (field, planned, actual, reason, affects_conclusion), and never describe "
+                           "the result as following the pre-specified rule.")
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -1878,7 +2088,9 @@ class Orchestrator:
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
                                "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
+                               **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
+                               **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),
                                **({"workdir": workdir} if workdir else {})})
             if updates:
                 task = task.model_copy(update={
@@ -1887,7 +2099,105 @@ class Orchestrator:
                                                    context_chars=self.cfg.context_chars_per_step),
                     "context": ""})
             async with sem:
-                return await self.run_step(task)
+                outcome = await self.run_step(task)
+                if not research_plan:
+                    return attach_general_result(outcome)
+                if not outcome.ok or blocking_question(outcome):
+                    return outcome
+                if step.get("outputs"):
+                    missing = [name for name in step["outputs"] if output_relpath(name) not in outcome.outputs]
+                    if missing:
+                        return outcome.model_copy(update={"ok": False, "missing_outputs": missing,
+                                                          "error": f"incomplete: missing outputs: {', '.join(missing)}"})
+
+                original = outcome
+                current = outcome
+                limit = self.hub.s.research.result_corrections
+
+                def save_salvage(refused_rows: list[dict], unsupported_claims: list[dict]) -> None:
+                    if req_state is None:
+                        return
+                    contract = req_state.get("research_contract") or {}
+                    salvage = contract.setdefault("result_salvage", {})
+                    if refused_rows or unsupported_claims:
+                        salvage[step["id"]] = {"refused_rows": refused_rows,
+                                               "unsupported_claims": unsupported_claims}
+                    else:
+                        salvage.pop(step["id"], None)
+                        if not salvage:
+                            contract.pop("result_salvage", None)
+                    self.hub.save_request(rid)
+
+                for correction in range(limit + 1):
+                    asked = blocking_question(current)
+                    structured = (current.structured if isinstance(current.structured, dict)
+                                  else extract_json(current.text))
+                    if isinstance(structured, dict):  # the step schema's empty question field is not ledger
+                        structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
+                    problems = (["a result correction cannot ask a new blocking_decision; return corrected JSON"]
+                                if asked else research_result_errors(structured, plan=research_plan))
+                    validated_result = None
+                    if not problems:
+                        validated_result = validate_research_result(structured, plan=research_plan)
+                        if validated_result.step_id != step["id"]:
+                            problems = [f"research result step_id {validated_result.step_id} does not match {step['id']}"]
+                    if not problems and validated_result is not None:
+                        save_salvage([], [])
+                        return original.model_copy(update={
+                            "structured": validated_result.model_dump(mode="json"),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
+                    if correction == limit:
+                        # A result that still asks the PI a blocking question is never salvaged into CP2: the
+                        # employee said it cannot go on without that decision (PR #353 review).
+                        salvaged, refused_rows, unsupported_claims, salvage_problems = (
+                            (None, [], [], []) if asked else
+                            salvage_research_result(structured, plan=research_plan, expected_step_id=step["id"]))
+                        if salvaged is not None and refused_rows:
+                            save_salvage(refused_rows, unsupported_claims)
+                            return original.model_copy(update={
+                                "structured": salvaged.model_dump(mode="json"),
+                                "session_id": current.session_id or original.session_id,
+                                "workdir": current.workdir or original.workdir,
+                            })
+                        return original.model_copy(update={
+                            "ok": False, "error": "invalid research result contract: " +
+                            "; ".join(dict.fromkeys([*problems, *salvage_problems])),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
+
+                    can_resume_correction = bool(current.session_id and self.hub.supports_resume(step["agent_id"]))
+                    correction_task = Task(
+                        agent_id=step["agent_id"], request_id=rid, output_schema=RESEARCH_STEP_SCHEMA,
+                        resume_session_id=current.session_id if can_resume_correction else None,
+                        prompt=continuation_prompt(task, result_correction(problems),
+                                                   resumable=can_resume_correction, previous_result=current,
+                                                   context_chars=self.cfg.context_chars_per_step),
+                        meta={**task.meta, "kind": "result_correction", "parse_attempt": correction + 1,
+                              "parent_task": current.task_id, "outputs": [],
+                              "title": f"{step['id']}: 결과 계약 교정 #{correction + 1}",
+                              **({"workdir": current.workdir} if current.workdir else {})},
+                    )
+                    current = await self.run_step(correction_task)
+                    if not current.ok:
+                        return current.model_copy(update={
+                            "outputs": original.outputs, "output_sha256": original.output_sha256,
+                            "unreported_outputs": original.unreported_outputs,
+                            "workdir": current.workdir or original.workdir,
+                            "workdir_id": current.workdir_id or original.workdir_id,
+                        })
+                    if current.unreported_outputs:
+                        # A correction only rewrites the result JSON. A file it changed would no longer match the
+                        # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
+                        return original.model_copy(update={
+                            "ok": False,
+                            "error": "invalid research result contract: the result correction changed output files "
+                                     "it must not touch: " + ", ".join(current.unreported_outputs),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
 
         while todo or running:
             # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
@@ -1932,19 +2242,6 @@ class Orchestrator:
                         if missing:
                             outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
-                    if outcome.ok and not asked and research_plan:
-                        structured = (outcome.structured if isinstance(outcome.structured, dict)
-                                      else extract_json(outcome.text))
-                        if isinstance(structured, dict):  # the step schema's empty question field is not ledger
-                            structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
-                        try:
-                            validated_result = validate_research_result(structured, plan=research_plan)
-                            if validated_result.step_id != sid:
-                                raise ValueError(f"research result step_id {validated_result.step_id} does not match {sid}")
-                            outcome = outcome.model_copy(update={"structured": validated_result.model_dump(mode="json")})
-                        except (TypeError, ValueError) as error:
-                            outcome = outcome.model_copy(update={"ok": False,
-                                "error": f"invalid research result contract: {error}"})
                     previous = results.get(sid)
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
                             and outcome.error_kind not in {"ask_rejected", "wake_limit"}):
@@ -2029,15 +2326,27 @@ class Orchestrator:
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
+        ancestors = step_ancestors(steps)
         refused: list[dict[str, str]] = []
+        refused_rows: list[dict[str, str]] = []
         unsupported: list[dict[str, str]] = []
         artifact_sha256: dict[str, str | None] = {}
         unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
         for step in steps:
             result = results[step["id"]]
+            salvaged = (contract.get("result_salvage") or {}).get(step["id"]) or {}
+            step_refused = [{"step_id": step["id"], **row} for row in salvaged.get("refused_rows") or []]
+            refused_rows += step_refused
+            refused += [{"step_id": step["id"], "evidence_id": row["row_id"], "reason": row["reason"]}
+                        for row in step_refused if row.get("row_type") == "evidence"]
+            unsupported += [{"step_id": step["id"], **row}
+                            for row in salvaged.get("unsupported_claims") or []]
+            # Any ancestor's collected output is verified: an interpretation step reads the analyses its QC
+            # step checked, not only the QC verdict (8th mock trial: 6 of 8 refusals cited a grandparent's file).
             upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs),
                          dict(results[d].output_sha256))
-                        for d in step["depends_on"] if d in results and results[d].ok]
+                        for d in (s["id"] for s in steps if s["id"] in ancestors[step["id"]])
+                        if d in results and results[d].ok]
             bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
                                            outputs=list(result.outputs), upstream=upstream,
                                            output_sha256=dict(result.output_sha256))
@@ -2048,10 +2357,12 @@ class Orchestrator:
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
-                   (f", {len(refused)} refused" if refused else "") + ". Choose approve, revise or deny.")
+                   (f", {len(refused_rows) or len(refused)} refused" if refused_rows or refused else "") +
+                   ". Choose approve, revise or deny.")
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
-                  "choices": list(EVIDENCE_CHOICES),
-                  **({"refused_evidence": refused} if refused else {}),
+                   "choices": list(EVIDENCE_CHOICES),
+                   **({"refused_rows": refused_rows} if refused_rows else {}),
+                   **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                   "results": ledgers}
@@ -2060,6 +2371,7 @@ class Orchestrator:
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
             decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
             refused = recorded.get("refused_evidence") or []
+            refused_rows = recorded.get("refused_rows") or []
             unsupported = recorded.get("unsupported_claims") or []
         else:
             cp2: str | None = None
@@ -2078,11 +2390,16 @@ class Orchestrator:
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
+                **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
+            contract.pop("result_salvage", None)
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         audit = f"CP2 evidence review: {decided}."
+        if refused_rows:
+            audit += "\n계약에 맞지 않아 뺀 근거:\n" + "\n".join(
+                f"- {row['step_id']}/{row['row_type']} {row['row_id']}: {row['reason']}" for row in refused_rows)
         if refused:
             audit += "\nRefused evidence (not approved at CP2):\n" + "\n".join(
                 f"- {row['step_id']}/{row['evidence_id']}: {row['reason']}" for row in refused)
@@ -2203,12 +2520,13 @@ class Orchestrator:
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
-        check = check_report(final.text, ledgers, unsupported=unsupported, refused=refused,
+        body = report_body(final.text)
+        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
-        report = _append_report_metadata(final.text, [*claim_check, cp2_audit])
+        report = _append_report_metadata(body, [*claim_check, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
@@ -2629,10 +2947,7 @@ class Orchestrator:
                         except (ValueError, TypeError) as error:
                             problems = [str(error)]
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
-                        # A non-string agent_id is already a schema problem; only ids are compared with the roster.
-                        drafted_ids = [step.get("agent_id") for step in drafted if isinstance(step, dict)
-                                       and isinstance(step.get("agent_id"), str)] if isinstance(drafted, list) else []
-                        bad_agents = [agent for agent in drafted_ids if agent not in known or agent in orchestration]
+                        bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
                                             f"use roster ids {workers}")
@@ -2685,7 +3000,7 @@ class Orchestrator:
                             steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                              orchestration, vocab=vocab, stats=type_stats)
                             break
-                        except PlanOutputsError as error:
+                        except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
                                 raise ValueError(f"plan invalid after correction: {error}") from error
                             # Before any step runs: one corrected plan, as the research lane does (#220).
@@ -2896,8 +3211,7 @@ class Orchestrator:
                     if not set(drop) <= set(flagged):
                         raise ValueError(f"re-plan may drop only reviewer-flagged completed steps {flagged}; "
                                          f"got {drop}")
-                    bad_agents = sorted({str(step.get("agent_id")) for step in raw
-                                         if step.get("agent_id") not in known - orchestration})
+                    bad_agents = unavailable_plan_agents(raw, known, orchestration)
                     if bad_agents:
                         raise ValueError(f"re-plan uses unavailable or orchestration agents: {bad_agents}")
                     retired = set(unfinished) | set(drop)
@@ -3079,7 +3393,9 @@ class Orchestrator:
             synthesis = Task(
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
-                                           review=short(review, 3000)) + replan_history_note(req) +
+                                           review=short(review, 3000),
+                                           warnings=general_report_warnings(steps, results) or "(none)") +
+                       replan_history_note(req) +
                        (UNRESOLVED_REVIEW_NOTE if unresolved else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})})
@@ -3129,6 +3445,10 @@ class Orchestrator:
         req = self.hub.requests[rid]
         metadata = []
         if req.get("plan", {}).get("steps") and results:
+            if not req.get("research_contract"):
+                warnings = general_report_warnings(req["plan"]["steps"], results)
+                if warnings:
+                    metadata.append(warnings)
             audit = []
             for step in req["plan"]["steps"]:
                 entry = results.get(step["id"], {})

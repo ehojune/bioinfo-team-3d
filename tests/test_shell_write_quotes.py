@@ -185,3 +185,107 @@ def test_real_redirects_are_still_found(tool, command, target):
 ])
 def test_redirects_the_blanking_must_not_hide(tool, command):
     assert _decide(tool, command).action == "ask"
+
+
+@pytest.mark.parametrize("tool, command, expected", [
+    # 7th mock trial: the stream redirect's target was read as the copy destination.
+    ("Bash", "cp .tmp/preprocess.py outputs/ 2>/dev/null; ls outputs", ["outputs/"]),
+    ("Bash", "awk -F'\t' '{print $1}' outputs/t.tsv; cp .tmp/x.py outputs/ 2>/dev/null", ["outputs/"]),
+    ("Bash", "cp a.txt b.txt 2>&1", ["b.txt"]),
+    ("Bash", "mv a.txt b.txt < in.txt", ["b.txt"]),
+    ("PowerShell", "Copy-Item a.txt -Destination b.txt 2>$null", ["b.txt"]),
+])
+def test_a_redirect_is_not_read_as_a_command_word(tool, command, expected):
+    targets = list(_shell_write_targets(command, powershell=tool == "PowerShell"))
+    assert "/dev/null" not in targets and "$null" not in targets and "&1" not in targets and "1" not in targets
+    assert set(targets) == set(expected)
+
+
+def test_a_real_redirect_next_to_a_copy_is_still_a_target():
+    assert set(_shell_write_targets("cp a outputs/ 2>/elsewhere/log")) == {"outputs/", "/elsewhere/log"}
+
+
+@pytest.mark.parametrize("command, target", [
+    ("cp a /work2>/dev/null", "/work2"),          # the 2 belongs to the path; only `>/dev/null` is a redirect
+    ("cp a out1>/dev/null", "out1"),
+    ("cp a /elsewhere/x9 2>/dev/null", "/elsewhere/x9"),
+])
+def test_a_digit_glued_to_a_path_is_not_a_stream_number(command, target):
+    assert target in set(_shell_write_targets(command))
+
+
+def test_a_path_ending_in_a_digit_outside_the_roots_still_asks():
+    assert _decide("Bash", "cp a /work2>/dev/null").action == "ask"
+
+
+# 8th mock trial: a hash next to a quoted manifest row, all inside the staff member's own folder.
+TRIAL8_POWERSHELL = (
+    "$h = (Get-FileHash outputs/raw/cel_header_scan_dates.tsv -Algorithm SHA256).Hash.ToLower(); "
+    "$len=(Get-Item outputs/raw/cel_header_scan_dates.tsv).Length; "
+    'Add-Content -Encoding utf8 outputs/data_manifest.tsv "outputs/raw/cel_header_scan_dates.tsv`t'
+    "https://ftp.ncbi.nlm.nih.gov/geo/samples/GSM254nnn/<GSM>/suppl/<GSM>.CEL.gz (107 URLs, per-row in file)`t$h`t"
+    '$len`t2026-10-03`t1`tDerived table: scan date from CEL DatHeader (header bytes only streamed)"; '
+    "Get-Content outputs/data_manifest.tsv")
+
+
+@pytest.mark.parametrize("command", [
+    TRIAL8_POWERSHELL,
+    'Add-Content -Path outputs/m.tsv -Value "/suppl/<GSM>.CEL.gz"',  # a text parameter is not a destination
+    "Set-Content outputs/x.txt -Encoding utf8 -Value C:/data/row",
+    "Set-Content -Path outputs/x.txt C:/data/row",  # with -Path named, the positional word is the value
+    "Out-File -FilePath:outputs/x.txt -Encoding utf8 C:/data/row",
+])
+def test_quoted_rows_written_inside_the_folder_do_not_ask(command):
+    assert _decide("PowerShell", command).action == "allow"
+
+
+@pytest.mark.parametrize("tool, command", [
+    ("PowerShell", "Set-Content -Encoding utf8 C:/elsewhere/x.txt a"),  # the path after a flag was never read
+    ("PowerShell", "Add-Content -NoNewline -Encoding utf8 C:/elsewhere/x.txt a"),
+    ("PowerShell", "Out-File -Encoding utf8 C:/elsewhere/x.txt -InputObject a"),
+    ("PowerShell", "Set-Content -Pa C:/elsewhere/x.txt -Value a"),  # a prefix of -Path
+    ("PowerShell", "Set-Content -Path:C:/elsewhere/x.txt -Value a"),
+    ("PowerShell", "Set-Content -Fo C:/elsewhere/x.txt a"),  # a prefix of the -Force switch
+    ("PowerShell", "Set-Content -Path C:/elsewhere/x.txt outputs/row"),
+    ("PowerShell", "sc C:/elsewhere/x.txt a"),
+    ("PowerShell", "New-Item -ItemType File C:/elsewhere/x.txt"),
+    ("PowerShell", "Get-Process | Export-Csv -NoTypeInformation C:/elsewhere/p.csv"),
+    ("PowerShell", "Get-Date | Tee-Object C:/elsewhere/t.txt"),
+    ("Bash", "echo x | tee /elsewhere/x"),
+    ("Bash", "echo x | tee -a outputs/log /elsewhere/x"),
+])
+def test_a_write_named_after_a_flag_or_through_tee_still_asks(tool, command):
+    assert _decide(tool, command).action == "ask"
+
+
+# 12th mock trial: Claude's Bash on Windows is Git Bash, and /c/... is the C: drive.
+@pytest.mark.parametrize("command, action", [
+    ("head -c 400 x.tsv > /c/work/.tmp/header_dump.txt", "allow"),   # the staff member's own folder
+    ("cp a.txt /C/work/outputs/a.txt", "allow"),
+    ("echo x > /c/elsewhere/out.txt", "ask"),                        # still outside the roots
+    ("echo x > /d/work/out.txt", "ask"),                             # another drive
+])
+def test_git_bash_drive_paths_are_read_as_windows_paths(command, action):
+    assert _decide("Bash", command).action == action
+
+
+def test_a_posix_runner_keeps_slash_c_as_a_posix_folder():
+    policy = PolicySettings()
+    for roots, action in ((["/work"], "ask"), (["/c/work"], "allow")):
+        decision = evaluate_tool("Bash", {"command": "echo x > /c/work/out.txt"}, policy, roots, windows=False)
+        assert decision.action == action
+
+
+def test_a_git_bash_path_into_a_restricted_zone_is_still_refused():
+    """PR #364 review: converting only the write target let `cp /c/<zone>/raw /c/<root>/out` through."""
+    policy = PolicySettings(data_zones=[DataZone(path="C:/work/restricted", level="restricted")])
+    decision = evaluate_tool("Bash", {"command": "cp /c/work/restricted/raw.txt /c/work/out.txt"}, policy,
+                             ["C:/work"])
+    assert decision.action != "allow" and "restricted" in decision.reason
+
+
+def test_a_git_bash_path_into_a_private_folder_is_still_refused():
+    decision = evaluate_tool("Bash", {"command": "cat /c/Users/pi/.ssh/id_rsa > /c/work/key.txt"}, PolicySettings(),
+                             ["C:/work"], workdir="C:/work", private_paths=["C:/Users/pi/.ssh"],
+                             private_enabled=True, home="C:/Users/pi")
+    assert decision.action != "allow"

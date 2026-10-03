@@ -168,6 +168,11 @@ class ClaudeCodeAdapter(AgentAdapter):
     engine = "claude_code"
     enforces_read_only = True  # plan mode, --tools Read,Glob,Grep, no settings file, disableAllHooks, no plugin
 
+    def engine_env(self) -> dict[str, str]:
+        # Claude Code documents this as disabling run_in_background, automatic backgrounding and Ctrl+B.
+        # A PI-supplied engines.claude_code.env value remains authoritative.
+        return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", **super().engine_env()}
+
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
 

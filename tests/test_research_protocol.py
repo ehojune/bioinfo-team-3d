@@ -14,6 +14,7 @@ from labhq.research.contract import (RESEARCH_PLAN_SCHEMA, ResearchResult, class
                                      freeze_plan, refresh_plan_approval, validate_research_plan)
 from labhq.research.packs import configured_packs, load_pack_catalog, pack_snapshot, select_packs
 from labhq.settings import Settings
+from labhq.util import openai_strict_schema, strip_optional_nulls
 
 PACK = "single_cell_de@2"
 
@@ -207,6 +208,32 @@ def test_active_pack_requires_fields_validators_and_acceptance_before_cp1():
         broken["pack_values"][PACK][section] = {}
         with pytest.raises(ValueError, match=section):
             validate_research_plan(broken, max_steps=2, active_packs=snapshot, pack_definitions=selected)
+
+
+def test_active_pack_plan_round_trips_strict_dictionary_transport():
+    settings = Settings()
+    settings.research.active_packs = [PACK]
+    selected = configured_packs(settings)
+    refs = [{"id": loaded.pack.id, "version": loaded.pack.version, "sha256": loaded.sha256}
+            for loaded in selected.values()]
+    snapshot = pack_snapshot(selected)
+    plan = valid_plan(refs, pack_values=valid_pack_values())
+    pack = plan["pack_values"][PACK]
+    response = copy.deepcopy(plan)
+    response["protocol"]["not_applicable"] = []
+    response["protocol"]["statistics"]["not_applicable"] = None
+    response["pack_values"] = [{"key": PACK, "value": {
+        "fields": [{"key": key, "value": value} for key, value in pack["fields"].items()],
+        "validators": [{"key": key, "value": value} for key, value in pack["validators"].items()],
+        "acceptance": [{"key": key, "value": value} for key, value in pack["acceptance"].items()],
+    }}]
+
+    converted = openai_strict_schema(RESEARCH_PLAN_SCHEMA)
+    cleaned = strip_optional_nulls(response, RESEARCH_PLAN_SCHEMA)
+
+    assert converted["properties"]["pack_values"]["type"] == "array"
+    assert cleaned == plan
+    validate_research_plan(cleaned, max_steps=2, active_packs=snapshot, pack_definitions=selected)
 
 
 def test_confounded_single_cell_plan_cannot_claim_a_condition_effect():

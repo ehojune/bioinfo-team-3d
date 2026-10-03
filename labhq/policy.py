@@ -40,6 +40,11 @@ NULL_DEVICES = frozenset({"/dev/null", "nul", "nul:", "$null", "\\\\.\\nul", "//
 
 _REDIRECT_OP = re.compile(r">{1,2}")
 _BARE_WORD = re.compile(r"[^\s|;&<>]+")
+# A whole redirection with its stream number and target (`2>/dev/null`, `2>&1`, `*> log`, `< in.txt`). Its target is
+# judged by the redirect pass; left in a command's words, `cp a b 2>/dev/null` read /dev/null as the copy
+# destination (7th mock trial, 2026-10-03).
+# A stream number counts only as its own token: in `cp a /work2>/dev/null` the 2 belongs to the path (PR #354 review).
+_REDIRECTION_SPAN = re.compile(r'''(?:(?<![^\s|;&()])(?:\d+|&|\*))?(?:>{1,2}&?|<)\s*(?:"[^"]*"|'[^']*'|[^\s|;&<>]+)''')
 _PS_SINGLE = "'\u2018\u2019\u201a\u201b"  # PowerShell also quotes with typographic marks
 _PS_DOUBLE = '"\u201c\u201d\u201e'
 _PS_SINGLE_AT = re.compile(f"[{_PS_SINGLE}]")
@@ -56,7 +61,17 @@ _PS_DATA_COMMANDS = frozenset({
     "join-path", "split-path", "resolve-path", "get-location", "pwd", "set-location", "cd", "sl", "copy-item", "copy",
     "cp", "cpi", "move-item", "move", "mv", "mi", "get-date", "select-object", "select", "sort-object",
     "measure-object", "format-table", "format-list", "out-string", "out-null", "convertto-json", "convertfrom-json",
-    "new-object"})
+    "new-object", "get-filehash", "import-csv", "export-csv"})  # 8th mock trial: Get-FileHash next to a quoted row
+# Writers whose first positional argument is the destination (with the PowerShell 5.1 aliases sc, ac, ni, epcsv).
+_PS_WRITERS = frozenset({"set-content", "sc", "add-content", "ac", "out-file", "new-item", "ni", "export-csv",
+                         "epcsv", "export-clixml", "tee-object"})
+_PS_PATH_FLAGS = frozenset({"-path", "-literalpath", "-filepath", "-pspath", "-lp"})
+_PS_SWITCHES = frozenset({"-force", "-nonewline", "-append", "-noclobber", "-passthru", "-whatif", "-confirm",
+                          "-asbytestream", "-notypeinformation", "-includetypeinformation", "-useculture",
+                          "-noenumerate"})
+# Parameters whose value is text, never a path, so a quoted row such as "...<GSM>/suppl/..." is not a destination.
+_PS_TEXT_FLAGS = frozenset({"-value", "-inputobject", "-encoding", "-width", "-delimiter", "-itemtype", "-stream",
+                            "-depth"})
 # String and file methods. InvokeScript, Create, Start, Invoke and the like may run their argument.
 _PS_DATA_METHODS = frozenset({
     "replace", "split", "join", "trim", "trimstart", "trimend", "substring", "contains", "startswith", "endswith",
@@ -391,21 +406,50 @@ def _quoted_text_is_data(command: str, skeleton: str, powershell: bool) -> bool:
     return not (inline and _PROCESS_CALL.search(command))
 
 
+def _ps_writer_targets(args: list[str]) -> Iterator[str]:
+    """A PowerShell writer's destination: a flag's value, else its first positional argument.
+
+    `Set-Content -Encoding utf8 C:/x/out.txt` names its path after a flag (8th mock trial review). PowerShell takes
+    any prefix of a parameter name (-Pa, -Enc), so the next word after any flag that is not a switch or a known text
+    parameter also counts as a destination: unsure words are reported, never skipped.
+    """
+    i, named = 0, False
+    while i < len(args):
+        word = args[i]
+        if not (word.startswith("-") and len(word) > 1):
+            if not named:  # with the path named, the first positional argument binds to -Value (PR #356 review)
+                yield word
+            return
+        flag, colon, value = word.casefold().partition(":")
+        named = named or flag in _PS_PATH_FLAGS
+        if flag in _PS_SWITCHES:
+            i += 1
+        elif colon:  # -Path:C:/x
+            if flag not in _PS_TEXT_FLAGS:
+                yield word[len(flag) + 1:]
+            i += 1
+        else:
+            if flag not in _PS_TEXT_FLAGS and i + 1 < len(args):
+                yield args[i + 1]
+            i += 2
+
+
 def _named_write_targets(words: list[str]) -> Iterator[str]:
     if not words:
         return
     name = words[0].casefold()
-    if name not in {"set-content", "out-file", "add-content", "new-item",
-                    "copy-item", "move-item", "cp", "mv"}:
+    if name == "tee":  # bash tee writes every file argument; in PowerShell tee is Tee-Object
+        yield from (word for word in words[1:] if not word.startswith("-"))
         return
-    for flag in ("-literalpath", "-path", "-filepath", "-destination"):
-        for i, word in enumerate(words[:-1]):
-            if word.casefold() == flag and (flag == "-destination" or name not in {"copy-item", "move-item"}):
-                yield words[i + 1]
-    if name in {"copy-item", "move-item", "cp", "mv"}:
-        yield words[-1]
-    elif len(words) > 1 and not words[1].startswith("-"):
-        yield words[1]
+    if name in _PS_WRITERS:
+        yield from _ps_writer_targets(words[1:])
+        return
+    if name not in {"copy-item", "move-item", "cp", "mv"}:
+        return
+    for i, word in enumerate(words[:-1]):
+        if word.casefold() == "-destination":
+            yield words[i + 1]
+    yield words[-1]
 
 
 def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str]:
@@ -423,13 +467,17 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         target = match.group(1).strip("\"'") if match else ""
         if target and target.casefold() not in NULL_DEVICES:
             yield target
+    def unredirected(value: str) -> str:  # same length, so positions in the blanked text still hold
+        return _REDIRECTION_SPAN.sub(lambda m: " " * len(m.group()), value)
+
     if text is None:
         segments = [[m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
-                    for segment in re.split(r"[|;&\n]", command)]
+                    for segment in re.split(r"[|;&\n]", unredirected(command))]
     else:
+        words_text = unredirected(text)
         segments = [[command[m.start():m.end()].strip("\"'")
-                     for m in _BARE_WORD.finditer(text, seg.start(), seg.end())]
-                    for seg in re.finditer(r"[^|;&\n]+", text)]
+                     for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
+                    for seg in re.finditer(r"[^|;&\n]+", words_text)]
     for words in segments:
         yield from _named_write_targets(words)
 
@@ -992,10 +1040,13 @@ def evaluate_tool(
 ) -> Decision:
     allowed_roots = list(allowed_roots)
     judged = claude_write_input(tool_name, tool_input, workdir, allowed_roots, windows=windows, environ=environ)
-    decision = _evaluate_tool(tool_name, judged, policy, allowed_roots, workdir)
+    # Every check reads a Git Bash command with its drive paths spelled the Windows way, zones and private paths
+    # included: converting only the write targets let `cp /c/<zone>/raw /c/<root>/out` through (PR #364 review).
+    checked = git_bash_command(tool_name, judged, allowed_roots, windows)
+    decision = _evaluate_tool(tool_name, checked, policy, allowed_roots, workdir)
     # On with no active path (PR #327) still runs the registry check; a non-empty list alone also means on.
     private_paths = list(private_paths)
-    private = (_private_decision(tool_name, judged, private_paths, workdir, home, environ, list(private_open_reads))
+    private = (_private_decision(tool_name, checked, private_paths, workdir, home, environ, list(private_open_reads))
                if private_enabled or private_paths else None)
     # Only ever stricter: a deny stays a deny, and an ask is not turned into an allow.
     if private and decision.action != "deny" and (private.action == "deny" or decision.action == "allow"):
@@ -1003,6 +1054,26 @@ def evaluate_tool(
     if judged is not tool_input:
         decision.updated_input = judged
     return decision
+
+
+# `/c/` where a path starts: after a space, quote, `=`, `>`, `(` ... and never inside a word, URL or other path.
+_GIT_BASH_DRIVE_TEXT = re.compile(r"(?<![\w.\-/\\:~$])/([A-Za-z])(?=/)")
+
+
+def git_bash_command(tool_name: str, tool_input: dict[str, Any], roots: Iterable[str],
+                     windows: bool | None = None) -> dict[str, Any]:
+    """A Bash input with Git Bash drive paths (`/c/Users/...`) spelled `C:/Users/...`, for the checks only.
+
+    Claude's Bash on Windows is Git Bash. Windows is the `windows` flag, else this host or a drive-letter root."""
+    command = tool_input.get("command")
+    if tool_name != "Bash" or not isinstance(command, str):
+        return tool_input
+    if windows is None:
+        windows = os.name == "nt" or any(re.match(r"^[A-Za-z]:[/\\]", str(root)) for root in roots)
+    if not windows:
+        return tool_input
+    spelled = _GIT_BASH_DRIVE_TEXT.sub(lambda m: m.group(1).upper() + ":", command)
+    return tool_input if spelled == command else {**tool_input, "command": spelled}
 
 
 _PRIVATE_PATH_KEYS = ("file_path", "notebook_path", "path")
@@ -1161,7 +1232,12 @@ def _evaluate_tool(
             if re.search(pat, cmd, re.IGNORECASE):
                 return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
         roots = [_norm(r) for r in allowed_roots if r]
+        # Claude's Bash on Windows is Git Bash: /c/Users/... is C:/Users/..., the folder the roots name (12th mock
+        # trial: a write into the staff member's own .tmp asked the PI). A path it cannot map stays as written.
+        git_bash = tool_name == "Bash" and any(re.match(r"^[a-z]:/", root) for root in roots)
         for target in _shell_write_targets(cmd, powershell=tool_name == "PowerShell"):
+            if git_bash and _absolute(target) and not _drive_relative(target):
+                target = _git_bash_path(target, os.environ) or target
             if _drive_relative(target):
                 return Decision("ask", f"drive-relative shell write destination: {target}")
             if _absolute(target) and not any(_inside(_norm(target), root) for root in roots):

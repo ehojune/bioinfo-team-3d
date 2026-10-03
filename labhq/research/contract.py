@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -208,7 +209,9 @@ class RecruitProposal(StrictModel):
 
 
 class PackPlanValue(StrictModel):
-    fields: dict[str, Any]
+    # Domain pack declarations support only these scalar value types; keeping that in the core schema also gives
+    # Structured Outputs a concrete lossless value schema for arbitrary field names.
+    fields: dict[str, str | int | bool]
     validators: dict[str, str]
     acceptance: dict[str, str]
 
@@ -559,19 +562,294 @@ def validate_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any])
     return result
 
 
+def research_result_errors(value: Any, *, plan: ResearchPlan | dict[str, Any]) -> list[str]:
+    """Every readable result-contract problem for the one correction turn.
+
+    Step binding (claim ids, evidence slots) is read from the raw JSON too, so a correction learns it with the field
+    errors: checked only after the model parsed, a missing slot surfaced after the last correction (9th mock trial)."""
+    try:
+        validate_research_result(value, plan=plan)
+    except ValidationError as error:
+        problems = schema_error_lines(error)
+    except (TypeError, ValueError) as error:
+        problems = [part for part in (item.strip() for item in str(error).split(";")) if part]
+    else:
+        return []
+    return list(dict.fromkeys([*problems, *_raw_binding_errors(value, plan)]))
+
+
+def _raw_binding_errors(value: Any, plan: ResearchPlan | dict[str, Any]) -> list[str]:
+    """step_binding_errors on result JSON that does not parse yet."""
+    if not isinstance(value, dict):
+        return []
+    try:
+        parsed = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    except ValidationError:
+        return []
+    step = next((step for step in parsed.steps if step.id == value.get("step_id")), None)
+    claim_rows, evidence_rows = value.get("claims"), value.get("evidence")
+    # A scalar ledger is a schema error already; iterating it would raise instead of asking for a correction.
+    if step is None or not isinstance(claim_rows, list) or not isinstance(evidence_rows, list):
+        return []
+    claims = [str(row["id"]) for row in claim_rows if isinstance(row, dict) and row.get("id")]
+    rows = [(str(row.get("id")), [slot for slot in row["slots"] if isinstance(slot, str)]
+             if isinstance(row.get("slots"), list) else [])
+            for row in evidence_rows if isinstance(row, dict)]
+    return _binding_errors(claims, rows, step)
+
+
+def _row_id(row_type: str, row: Any, index: int) -> str:
+    if not isinstance(row, dict):
+        return f"{row_type}[{index}]"
+    if row_type in {"claim", "evidence"}:
+        return str(row.get("id") or f"{row_type}[{index}]")
+    return (f"{row.get('claim_id') or '?'}@{row.get('claim_revision') or '?'}->"
+            f"{row.get('evidence_id') or '?'}:{row.get('relation') or '?'}")
+
+
+def _root_salvage_targets(problem: str, value: dict[str, Any]) -> list[tuple[str, int]] | None:
+    """Map one cross-row validator message to the row(s) that can be refused safely."""
+    evidence = value.get("evidence") or []
+    claims = value.get("claims") or []
+    links = value.get("links") or []
+
+    # Before the generic evidence pattern below, which would refuse the whole row (PR #353 review).
+    duplicate = re.match(r"evidence (\S+) is linked to claim (\S+) more than once", problem)
+    if duplicate:
+        evidence_id, claim_id = duplicate.groups()
+        matches = [index for index, row in enumerate(links) if isinstance(row, dict)
+                   and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
+        return [("link", index) for index in matches[1:]]
+    same_source = re.match(r"evidence (\S+) and (\S+) cite the same source", problem)
+    if same_source:
+        row_id = same_source.group(2)
+        return [("evidence", index) for index, row in enumerate(evidence)
+                if isinstance(row, dict) and row.get("id") == row_id]
+    row_problem = re.match(r"(?:evidence|(?:inference|hypothesis) row) (\S+)", problem)
+    if row_problem:
+        row_id = row_problem.group(1)
+        return [("evidence", index) for index, row in enumerate(evidence)
+                if isinstance(row, dict) and row.get("id") == row_id]
+    claim_problem = re.match(r"claim ([A-Za-z][A-Za-z0-9_.:-]{0,79})(?:@\d+)?", problem)
+    if claim_problem:
+        claim_id = claim_problem.group(1)
+        return [("claim", index) for index, row in enumerate(claims)
+                if isinstance(row, dict) and row.get("id") == claim_id]
+    unknown_claim = re.match(r"link to unknown claim (\S+)", problem)
+    if unknown_claim:
+        claim_id = unknown_claim.group(1)
+        return [("link", index) for index, row in enumerate(links)
+                if isinstance(row, dict) and row.get("claim_id") == claim_id]
+    link_problem = re.match(r"link ([^@\s]+)(?:@\d+)?->([^\s]+)", problem)
+    if link_problem:
+        claim_id, evidence_id = link_problem.groups()
+        return [("link", index) for index, row in enumerate(links) if isinstance(row, dict)
+                and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
+    return None
+
+
+def _validation_salvage_targets(error: ValidationError, value: dict[str, Any]) \
+        -> list[tuple[str, int, str]] | None:
+    targets: list[tuple[str, int, str]] = []
+    names = {"claims": "claim", "evidence": "evidence", "links": "link"}
+    for item in error.errors():
+        loc = tuple(item.get("loc") or ())
+        message = str(item.get("msg") or "invalid value")
+        if message.startswith("Value error, "):
+            message = message[len("Value error, "):]
+        where = ".".join(str(part) for part in loc) or "result"
+        reason = f"{where}: {message}"
+        if len(loc) >= 2 and loc[0] in names and isinstance(loc[1], int):
+            targets.append((names[loc[0]], loc[1], reason))
+            continue
+        if loc:
+            return None
+        for problem in (part.strip() for part in message.split(";") if part.strip()):
+            if problem in {"link it as context or record it as a claim",
+                           "use partially_supported or contradicted"}:
+                continue  # continuation of the preceding row-local error
+            mapped = _root_salvage_targets(problem, value)
+            if not mapped:
+                return None
+            targets.extend((row_type, index, problem) for row_type, index in mapped)
+    return targets or None
+
+
+def salvage_research_result(value: Any, *, plan: ResearchPlan | dict[str, Any], expected_step_id: str) \
+        -> tuple[ResearchResult | None, list[dict[str, str]], list[dict[str, str]], list[str]]:
+    """Refuse row-local contract defects after correction turns, without weakening structural validation.
+
+    Evidence refusals cascade through ``derived_from`` and links. A claim that loses its only relation required by
+    its status is removed from the valid ledger and recorded as unsupported for CP2. The frozen plan identity,
+    result envelope, step binding and required evidence slots are never salvaged.
+    """
+    problems = research_result_errors(value, plan=plan)
+    if not problems:
+        result = validate_research_result(value, plan=plan)
+        if result.step_id != expected_step_id:
+            return None, [], [], [f"research result step_id {result.step_id} does not match {expected_step_id}"]
+        return result, [], [], []
+    if not isinstance(value, dict):
+        return None, [], [], problems
+    parsed_plan = plan if isinstance(plan, ResearchPlan) else ResearchPlan.model_validate(plan)
+    required = {name for name, field in ResearchResult.model_fields.items() if field.is_required()}
+    list_fields = {"claims", "evidence", "links", "artifact_refs", "not_established", "failures", "method_changes"}
+    structural = []
+    structural += [f"research result is missing required field {name}" for name in sorted(required - set(value))]
+    structural += [f"research result has unknown field {name}" for name in sorted(set(value) - set(ResearchResult.model_fields))]
+    if value.get("schema_version") != 2:
+        structural.append("research result schema_version must be 2")
+    if value.get("plan_sha256") != plan_sha256(parsed_plan):
+        structural.append("research result plan_sha256 does not match the frozen plan")
+    if value.get("step_id") != expected_step_id:
+        structural.append(f"research result step_id {value.get('step_id')} does not match {expected_step_id}")
+    if not any(step.id == expected_step_id for step in parsed_plan.steps):
+        structural.append(f"research result step_id {expected_step_id} is not in the frozen plan")
+    structural += [f"research result {name} must be a list" for name in sorted(list_fields)
+                   if name in value and not isinstance(value[name], list)]
+    if structural:
+        return None, [], [], structural
+
+    candidate = copy.deepcopy(value)
+    refused: list[dict[str, str]] = []
+    unsupported: list[dict[str, str]] = []
+    refused_index: dict[tuple[str, str], int] = {}
+
+    def refuse(row_type: str, row_id: str, reason: str) -> None:
+        key = row_type, row_id
+        if key in refused_index:
+            old = refused[refused_index[key]]["reason"]
+            if reason not in old:
+                refused[refused_index[key]]["reason"] = old + "; " + reason
+            return
+        refused_index[key] = len(refused)
+        refused.append({"row_type": row_type, "row_id": row_id, "reason": reason})
+
+    limit = sum(len(candidate.get(name) or []) for name in ("claims", "evidence", "links")) + 1
+    for _ in range(limit):
+        try:
+            result = validate_research_result(candidate, plan=parsed_plan)
+        except ValidationError as error:
+            targets = _validation_salvage_targets(error, candidate)
+            if not targets:
+                return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+        except (TypeError, ValueError):
+            # These are frozen-plan/step binding failures, including a required slot lost during refusal.
+            return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+        else:
+            if result.step_id != expected_step_id:
+                return None, [], [], [f"research result step_id {result.step_id} does not match {expected_step_id}"]
+            return result, refused, unsupported, []
+
+        evidence_rows = candidate.get("evidence") or []
+        claim_rows = candidate.get("claims") or []
+        link_rows = candidate.get("links") or []
+        evidence_targets = {index: reason for kind, index, reason in targets if kind == "evidence"}
+        claim_targets = {index: reason for kind, index, reason in targets if kind == "claim"}
+        link_targets = {index: reason for kind, index, reason in targets if kind == "link"}
+        removed_evidence: dict[str, str] = {}
+        for index, reason in evidence_targets.items():
+            if 0 <= index < len(evidence_rows):
+                row_id = _row_id("evidence", evidence_rows[index], index)
+                removed_evidence[row_id] = reason
+        changed = True
+        while changed:
+            changed = False
+            for index, row in enumerate(evidence_rows):
+                if not isinstance(row, dict):
+                    continue
+                row_id = _row_id("evidence", row, index)
+                parents = [str(parent) for parent in row.get("derived_from") or [] if str(parent) in removed_evidence]
+                if row_id not in removed_evidence and parents:
+                    removed_evidence[row_id] = f"derived from contract-refused evidence {', '.join(sorted(parents))}"
+                    changed = True
+        for index, row in enumerate(evidence_rows):
+            row_id = _row_id("evidence", row, index)
+            if row_id in removed_evidence:
+                refuse("evidence", row_id, removed_evidence[row_id])
+
+        removed_claims: dict[str, str] = {}
+        for index, reason in claim_targets.items():
+            if 0 <= index < len(claim_rows):
+                claim_id = _row_id("claim", claim_rows[index], index)
+                removed_claims[claim_id] = reason
+                unsupported.append({"claim_id": claim_id, "reason": reason})
+
+        removed_link_indexes = set(index for index in link_targets if 0 <= index < len(link_rows))
+        for index, link in enumerate(link_rows):
+            if not isinstance(link, dict):
+                continue
+            if str(link.get("evidence_id")) in removed_evidence or str(link.get("claim_id")) in removed_claims:
+                removed_link_indexes.add(index)
+
+        remaining_links = [row for index, row in enumerate(link_rows) if index not in removed_link_indexes]
+        for index, claim in enumerate(claim_rows):
+            if not isinstance(claim, dict):
+                continue
+            claim_id = _row_id("claim", claim, index)
+            if claim_id in removed_claims:
+                continue
+            needed = STATUS_NEEDS.get(claim.get("status"))
+            if needed and not any(isinstance(link, dict) and link.get("claim_id") == claim_id
+                                  and link.get("relation") == needed for link in remaining_links):
+                lost = sorted({str(link.get("evidence_id")) for index, link in enumerate(link_rows)
+                               if index in removed_link_indexes and isinstance(link, dict)
+                               and link.get("claim_id") == claim_id and link.get("relation") == needed})
+                reason = (f"{claim.get('status')} rests only on contract-refused evidence {', '.join(lost)}"
+                          if lost else f"{claim.get('status')} has no remaining valid {needed} link after contract salvage")
+                removed_claims[claim_id] = reason
+                unsupported.append({"claim_id": claim_id, "reason": reason})
+                for link_index, link in enumerate(link_rows):
+                    if isinstance(link, dict) and link.get("claim_id") == claim_id:
+                        removed_link_indexes.add(link_index)
+
+        for index in sorted(removed_link_indexes):
+            link = link_rows[index]
+            reason = link_targets.get(index)
+            if reason is None and isinstance(link, dict) and str(link.get("evidence_id")) in removed_evidence:
+                reason = f"points to contract-refused evidence {link.get('evidence_id')}"
+            if reason is None:
+                reason = f"points to contract-refused claim {link.get('claim_id') if isinstance(link, dict) else '?'}"
+            refuse("link", _row_id("link", link, index), reason)
+        for index, claim in enumerate(claim_rows):
+            claim_id = _row_id("claim", claim, index)
+            if claim_id in removed_claims:
+                refuse("claim", claim_id, removed_claims[claim_id])
+
+        before = (len(evidence_rows), len(claim_rows), len(link_rows))
+        candidate["evidence"] = [row for index, row in enumerate(evidence_rows)
+                                 if _row_id("evidence", row, index) not in removed_evidence]
+        candidate["claims"] = [row for index, row in enumerate(claim_rows)
+                               if _row_id("claim", row, index) not in removed_claims]
+        candidate["links"] = [row for index, row in enumerate(link_rows) if index not in removed_link_indexes]
+        after = (len(candidate["evidence"]), len(candidate["claims"]), len(candidate["links"]))
+        if before == after:
+            return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+    return None, [], [], research_result_errors(candidate, plan=parsed_plan)
+
+
 def step_binding_errors(result: ResearchResult, step: ResearchStep) -> list[str]:
     """What the step declared is what its result answers: only its claims, and every required slot addressed."""
-    errors = [f"claim {claim.id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"
-              for claim in result.claims if claim.id not in step.claim_ids]
+    return _binding_errors([claim.id for claim in result.claims], [(row.id, row.slots) for row in result.evidence],
+                           step)
+
+
+def _binding_errors(claim_ids: list[str], rows: list[tuple[str, list[str]]], step: ResearchStep) -> list[str]:
+    errors = [f"claim {claim_id} is outside the claim_ids {step.claim_ids} that step {step.id} declared"
+              for claim_id in claim_ids if claim_id not in step.claim_ids]
     declared = {slot.id for slot in step.evidence_slots}
     filled: set[str] = set()
-    for row in result.evidence:
-        for slot in row.slots:
+    for row_id, slots in rows:
+        for slot in slots:
             if slot not in declared:
-                errors.append(f"evidence {row.id} fills slot {slot} that step {step.id} does not declare")
+                errors.append(f"evidence {row_id} fills slot {slot} that step {step.id} does not declare")
             filled.add(slot)
+    row_ids = {row_id for row_id, _ in rows}
+    # 9th mock trial: rows named after their slots, with no "slots" field, three turns in a row.
     errors += [f"required evidence slot {slot.id} of step {step.id} has no evidence row; list it in evidence.slots "
-               "of the row that tried it, even when the attempt failed or found nothing"
+               "of the row that tried it, even when the attempt failed or found nothing" +
+               (f' (evidence row {slot.id} is named after the slot but lists no "slots": add "slots": ["{slot.id}"])'
+                if slot.id in row_ids else "")
                for slot in step.evidence_slots if slot.required and slot.id not in filled]
     return errors
 

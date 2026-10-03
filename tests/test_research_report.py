@@ -26,7 +26,8 @@ FAILED_LOOKUP = {"id": "e2", "kind": "database_annotation", "observation": "GEO 
                  "assessment_reason": "a replication cohort would test the effect"}
 
 
-def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=False, synthesis_usd=None):
+def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=False, synthesis_usd=None,
+         contract_violation=False):
     settings = _settings()
     settings.orchestrator.reviewer_agent = "sci_reviewer"
     holder = {}
@@ -36,14 +37,23 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
         kind = task.meta["kind"]
         if kind == "plan":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
-        if kind == "step":
+        if kind in {"step", "result_correction"}:
             path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
             result = _cp2_result(hub, task)
             if artifact_path is not None:
                 result["artifact_refs"][0]["path"] = artifact_path
             if failed_lookup:
                 result["evidence"].append(dict(FAILED_LOOKUP))
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path],
+            if contract_violation:
+                result["evidence"].append({
+                    "id": "bad_date", "kind": "observation", "observation": "lookup",
+                    "status": "observed", "source": {"uri": "https://example.org", "accessed_at": "2026/10/03",
+                                                       "locator": "row 1"},
+                    "directness": "indirect", "source_level": "primary", "independence_group": "lookup",
+                    "assessment_reason": "cross-check", "slots": [],
+                })
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result,
+                              outputs=[path] if kind == "step" else [],
                               output_sha256={path: "a" * 64})
         if kind == "review":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=review)
@@ -89,6 +99,17 @@ async def test_approved_evidence_is_reviewed_and_reported_with_checked_anchors()
     synthesis = hub.calls[3].prompt
     assert "[[claim:s1/c1]]" in synthesis and "no external cohort" in synthesis
     assert req["research_contract"]["review"]["verdict"] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_contract_refusal_is_kept_in_the_final_report_metadata():
+    hub = _hub(contract_violation=True)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
+    assert "계약에 맞지 않아 뺀 근거" in req["report"] and "bad_date" in req["report"]
 
 
 @pytest.mark.asyncio
@@ -241,3 +262,32 @@ async def test_review_verdict_follows_p1_issues(review, kinds, outcome):
     req = hub.requests["r"]
     assert _kinds(hub) == kinds and req["outcome"] == outcome
     assert req["research_contract"]["review"]["reviewer_verdict"] == review["verdict"]
+
+
+# ---------- a short lead-in before the report's first heading is dropped (10th mock trial) ----------
+
+LEAD_IN = "최종 보고서를 작성 중입니다. 필요한 내용은 과제 파일에서 모두 확인했습니다.\n\n---\n\n"
+
+
+@pytest.mark.asyncio
+async def test_a_lead_in_before_the_first_heading_is_not_part_of_the_report():
+    body = "# 보고서\n\n" + REPORT
+    hub = _hub(report=LEAD_IN + body)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    assert req["report"].startswith(body) and "작성 중입니다" not in req["report"]
+    assert "no preamble" in hub.calls[3].prompt
+
+
+@pytest.mark.parametrize("text", [
+    REPORT,                                            # no heading at all
+    "# 보고서\n\n" + REPORT,                           # starts with its heading
+    "결론 [[claim:s1/c1]].\n\n# 근거\n\nmore",         # the lead carries an anchor: it is report text
+    "예시:\n```\n# 예시 제목\n```\n\n" + REPORT,       # the "heading" sits inside a code block (PR #361 review)
+    ("긴 서문 " * 120) + "\n\n# 보고서\n\n" + REPORT,   # too long to be a lead-in
+])
+def test_report_text_that_is_not_a_short_lead_in_is_kept(text):
+    from labhq.orchestrator.cso import report_body
+    assert report_body(text) == text

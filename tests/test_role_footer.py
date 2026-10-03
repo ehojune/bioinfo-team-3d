@@ -2,7 +2,7 @@
 
 import pytest
 
-from labhq.adapters.base import ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer
+from labhq.adapters.base import GENERAL_RESULT_RULES, ROLE_FOOTER, WORKSPACE_WRITE_RULES, RunContext, role_footer
 from labhq.adapters.claude_code import ClaudeCodeAdapter
 from labhq.adapters.codex import CodexAdapter
 from labhq.models import AgentSpec, Engine, Task
@@ -10,13 +10,16 @@ from labhq.settings import Settings
 
 TEMP_RULE = "Put temporary files and scripts under ./.tmp/ in your workspace"
 PATH_RULE = "write paths relative to your workspace, not built from shell variables"
+WAIT_RULE = "Wait for every command to finish and verify its result before ending your turn"
 
 
-def _ctx(tmp_path, engine, read_only):
+def _ctx(tmp_path, engine, read_only, *, general=False):
     agent = AgentSpec(id="worker", name="Worker", role="test", engine=engine, system_prompt="ROLE")
     workdir = tmp_path / ("ro" if read_only else "rw")
     workdir.mkdir(parents=True, exist_ok=True)
-    return RunContext(task=Task(agent_id="worker", prompt="go"), agent=agent, workdir=workdir, settings=Settings(),
+    return RunContext(task=Task(agent_id="worker", prompt="go",
+                                meta={"general_result_contract": True} if general else {}),
+                      agent=agent, workdir=workdir, settings=Settings(),
                       mcp_servers=[], env={}, emit=None, prompt="go", read_only=read_only)
 
 
@@ -25,13 +28,15 @@ def test_writing_staff_get_the_temp_folder_and_relative_path_rules(tmp_path):
     footer = role_footer(_ctx(tmp_path, Engine.codex, read_only=False))
     assert TEMP_RULE in footer and "/tmp or %TEMP%" in footer and "needs PI approval" in footer
     assert PATH_RULE in footer and "approval gate" in footer
-    assert footer == ROLE_FOOTER + WORKSPACE_WRITE_RULES  # nothing else configured: only the two lines are added
+    assert WAIT_RULE in footer and "ending the turn stops background work" in footer
+    assert "labhq_hpc" in footer and "ask the PI" in footer
+    assert footer == ROLE_FOOTER + WORKSPACE_WRITE_RULES  # nothing else is configured
 
 
 def test_read_only_staff_do_not_get_the_write_rules(tmp_path):
     footer = role_footer(_ctx(tmp_path, Engine.codex, read_only=True))
     assert footer == ROLE_FOOTER
-    assert TEMP_RULE not in footer and PATH_RULE not in footer
+    assert TEMP_RULE not in footer and PATH_RULE not in footer and WAIT_RULE not in footer
 
 
 @pytest.mark.parametrize("engine,adapter,read", [
@@ -57,8 +62,29 @@ def test_every_staff_footer_covers_failed_and_empty_lookups_and_weaker_methods(t
     assert "부재 증명" not in ROLE_FOOTER  # the built-in tool failure line (#339) stays on the tool error only
 
 
+@pytest.mark.parametrize("read_only", [False, True])
+def test_only_ordinary_steps_get_the_lightweight_result_rule(tmp_path, read_only):
+    general = role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only, general=True))
+    research = role_footer(_ctx(tmp_path, Engine.codex, read_only=read_only))
+    assert "Save a factual claim to a file before stating it" in general
+    assert "cite that path under ## Evidence" in general
+    assert GENERAL_RESULT_RULES not in research
+
+
 def test_writing_staff_get_the_environment_rule():
     from labhq.adapters.base import WORKSPACE_WRITE_RULES
 
     assert "If the plan has an environment step, run packages from its interpreter" in WORKSPACE_WRITE_RULES
     assert "--target ./.pylib" in WORKSPACE_WRITE_RULES and "never write into another step's workspace" in WORKSPACE_WRITE_RULES
+
+
+def test_claude_staff_disables_background_tasks_by_default_and_respects_pi_value(tmp_path):
+    default = ClaudeCodeAdapter(Settings())
+    assert default.staff_env(_ctx(tmp_path, Engine.claude_code, read_only=False))[
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+
+    configured = Settings.model_validate({"engines": {"claude_code": {
+        "bin": "claude", "env": {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0"}}}})
+    overridden = ClaudeCodeAdapter(configured)
+    assert overridden.staff_env(_ctx(tmp_path, Engine.claude_code, read_only=False))[
+        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "0"

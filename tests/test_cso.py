@@ -8,7 +8,7 @@ import pytest
 
 from labhq.gateway.server import Hub
 from labhq.models import RunnerUnavailable, Task, TaskResult
-from labhq.orchestrator.cso import (BudgetExceeded, Orchestrator, failure_kind, valid_review,
+from labhq.orchestrator.cso import (FINISH_PROMPT, BudgetExceeded, Orchestrator, failure_kind, valid_review,
                                     format_roster, validate_steps)
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -332,10 +332,12 @@ def test_roster_and_dependencies():
     raw = [{"id": "A", "agent_id": "worker", "instruction": "produce", "outputs": ["table.tsv"], "depends_on": []},
            {"id": "B", "agent_id": "worker", "instruction": "Use table.tsv from A", "depends_on": []},
            {"id": "R", "agent_id": "sci_reviewer", "instruction": "review", "depends_on": []}]
-    steps, warnings = validate_steps(raw, {"worker", "sci_reviewer"}, 10)
+    steps, warnings = validate_steps(raw[:2], {"worker"}, 10)
     assert [s["id"] for s in steps] == ["A", "B"]
     assert steps[1]["depends_on"] == ["A"]
-    assert len(warnings) == 3
+    assert len(warnings) == 2
+    with pytest.raises(ValueError, match="unavailable or orchestration agents"):
+        validate_steps(raw, {"worker", "sci_reviewer"}, 10)
     with pytest.raises(ValueError, match="invalid dependencies"):
         validate_steps([{**raw[0], "depends_on": ["missing"]}], {"worker"}, 10)
     with pytest.raises(ValueError, match="cycle"):
@@ -415,8 +417,79 @@ def test_configured_orchestration_agents_are_not_workers():
 
     raw = [{"id": "s1", "agent_id": "boss", "instruction": "plan more", "outputs": []},
            {"id": "s2", "agent_id": "worker", "instruction": "work", "outputs": []}]
-    steps, warnings = validate_steps(raw, {"boss", "worker"}, 10, {"boss"})
-    assert [s["id"] for s in steps] == ["s2"] and any("orchestration role removed" in w for w in warnings)
+    with pytest.raises(ValueError, match="unavailable or orchestration agents"):
+        validate_steps(raw, {"boss", "worker"}, 10, {"boss"})
+
+
+@pytest.mark.asyncio
+async def test_runner_preflight_removes_staff_from_plan_roster(tmp_path, monkeypatch):
+    agents = tmp_path / "agents" / "core"
+    agents.mkdir(parents=True)
+    (agents / "cso.yaml").write_text(
+        "id: cso\nname: CSO\nrole: plan\nengine: mock\n", encoding="utf-8")
+    (agents / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: analysis\nengine: claude_code\n"
+        "plugin_dirs: ['${MISSING_STAFF_PLUGIN}']\n", encoding="utf-8")
+    settings = Settings.model_validate({
+        "runner": {"state_dir": str(tmp_path / "state"), "workspace_root": str(tmp_path / "runs"),
+                   "agents_dir": str(agents.parent)},
+        "gateway": {"state_dir": str(tmp_path / "gateway")},
+    })
+    monkeypatch.delenv("MISSING_STAFF_PLUGIN", raising=False)
+    runner = Runner(settings)
+    runner.registry.load()
+    roster = runner.roster()
+    assert [agent["id"] for agent in roster] == ["cso"]
+
+    plugin = tmp_path / "plugin"
+    (plugin / ".claude-plugin").mkdir(parents=True)
+    (plugin / ".claude-plugin" / "plugin.json").write_text(
+        '{"name":"available-again","version":"1"}', encoding="utf-8")
+    monkeypatch.setenv("MISSING_STAFF_PLUGIN", str(plugin))
+    restarted = Runner(settings)
+    restarted.registry.load()
+    assert [agent["id"] for agent in restarted.roster()] == ["cso", "worker"]
+
+    planned = []
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            planned.append(task)
+            return result(task, structured={"steps": []})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.agents = {agent["id"]: agent for agent in roster}
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+    assert len(planned) == 1
+    assert planned[0].meta["roster"] == []
+    assert "worker: Worker" not in planned[0].prompt
+    assert "No workers available" in planned[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_general_plan_rejects_unavailable_staff_and_replans():
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if task.meta["kind"] == "plan":
+            agent = "missing-worker" if len([t for t in calls if t.meta["kind"] == "plan"]) == 1 else "worker"
+            return result(task, structured={"steps": [{
+                "id": "A", "agent_id": agent, "instruction": "analyze", "outputs": [], "depends_on": []}]})
+        if task.meta["kind"] == "step":
+            assert task.agent_id == "worker"
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+
+    plans = [task for task in calls if task.meta["kind"] == "plan"]
+    assert len(plans) == 2
+    assert "unavailable or orchestration agents" in plans[1].prompt
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("report")
 
 
 @pytest.mark.asyncio
@@ -456,11 +529,15 @@ def test_resume_uses_adapter_flag(tmp_path):
 
 def test_runner_reports_effective_compute_capabilities():
     from types import SimpleNamespace
+    from labhq.models import AgentSpec
+
     runner = object.__new__(Runner)
     runner.s = Settings()
     runner.s.hpc.scheduler = "none"
     runner.s.runner.force_engine = "mock"
-    runner.registry = SimpleNamespace(roster=lambda: [{"id": "analyst", "engine": "claude_code"}])
+    agent = AgentSpec(id="analyst", name="Analyst", role="analysis")
+    runner.registry = SimpleNamespace(agents={agent.id: agent}, roster=lambda: [agent.summary()])
+    runner.ws_root = Path(".")
     runner.incarnation = "test"
     runner.engine_versions = {"mock": "unreported"}
     hello = runner.hello()
@@ -1046,7 +1123,7 @@ async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     async def dispatch(task):
         if task.meta["kind"] == "wrap_up":
             assert task.resume_session_id == "session-1"
-            assert task.meta["agent_overrides"]["max_turns"] == 2
+            assert task.meta["agent_overrides"]["max_turns"] == 4
             assert task.meta["workdir"] == "runs/A"
             return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
         return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
@@ -2116,7 +2193,7 @@ async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_i
     results = {k: TaskResult.model_validate(v) for k, v in req["results"].items()}
     expected = SYNTH_PROMPT.format(
         request="question", results=orch.format_results(req["plan"]["steps"], results, orch.cfg.context_chars_per_step),
-        review=short(req["review"], 3000)) + replan_history_note(req)
+        review=short(req["review"], 3000), warnings="(none)") + replan_history_note(req)
     assert kinds(accepted, "synthesis")[0].prompt == expected
 
 
@@ -2163,6 +2240,94 @@ async def test_wrap_up_drops_the_first_runs_hash_of_a_file_it_rewrote(continuati
     res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
                                                 meta={"kind": "step", "step_id": "A"}))
     assert res.output_sha256 == {"outputs/keep.tsv": "b" * 64, "outputs/PARTIAL_STATUS.md": "c" * 64}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outputs, hashes", [
+    (["outputs/table.tsv", "outputs/report.md"], {"outputs/table.tsv": "a" * 64, "outputs/report.md": "c" * 64}),
+    (["outputs/report.md"], {"outputs/report.md": "c" * 64}),  # the finish turn removed table.tsv
+    (["outputs/table.tsv", "outputs/report.md"], {"outputs/report.md": "c" * 64}),  # grew past the hash limit
+])
+async def test_a_step_with_finish_turns_finishes_in_its_session_under_half_the_limit(continuations, outputs, hashes):
+    """A research step that ran out of turns had already done the work (7th mock trial: QC had reproduced every
+    number). It finishes in the same session, and the outputs are as the runner saw them after that turn: a removed
+    or unhashable file keeps no hash from the first turn (PR #355 review)."""
+    async def dispatch(task):
+        if task.resume_session_id:
+            return result(task, text="done", session_id="session-1", workdir="runs/A", outputs=outputs,
+                          output_sha256=hashes)
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", outputs=["outputs/table.tsv"], output_sha256={"outputs/table.tsv": "0" * 64},
+                      unreported_outputs=["outputs/scratch.tsv"])
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    hub.agents["worker"]["max_turns"] = 40
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert res.ok and [t.meta["kind"] for t in hub.calls] == ["step", "step"]
+    finish = hub.calls[1]
+    assert finish.resume_session_id == "session-1" and finish.meta["parent_task"] == hub.calls[0].id
+    assert finish.meta["workdir"] == "runs/A" and finish.meta["agent_overrides"] == {"max_turns": 20}
+    assert continuations[0]["updates"] == FINISH_PROMPT and finish.prompt == continuations[0]["prompt"]
+    assert res.outputs == outputs and res.output_sha256 == hashes
+    assert res.unreported_outputs == ["outputs/scratch.tsv"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit, finish_turns, wrap_turns", [(40, 20, 4), (8, 8, 4), (3, 3, 3)])
+async def test_a_finish_turn_that_runs_out_too_is_wrapped_up_without_lifting_the_limit(limit, finish_turns,
+                                                                                         wrap_turns):
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns",
+                      session_id=f"session-{len(hub.calls)}", workdir="runs/A")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    hub.agents["worker"]["max_turns"] = limit
+    res = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                                meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert not res.ok and res.partial_results
+    assert [t.meta["kind"] for t in hub.calls] == ["step", "step", "wrap_up"]
+    assert hub.calls[1].meta["agent_overrides"]["max_turns"] == finish_turns
+    assert hub.calls[2].resume_session_id == "session-2"  # the finish turn's session, not the first one
+    assert hub.calls[2].meta["agent_overrides"]["max_turns"] == wrap_turns
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending", [{"pending_jobs": ["job-1"]}, {"pending_asks": ["ask-1"]}])
+async def test_a_turn_still_waiting_on_jobs_or_questions_gets_no_finish_turn(pending):
+    """The runner ties a job or question to the turn that made it, so a finish turn with a new task id would never
+    wait for it and could pass the step on to CP2 before the job ends (PR #355 review)."""
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A", **pending)
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                          meta={"kind": "step", "step_id": "A", "finish_turns": 1}))
+    assert [t.meta["kind"] for t in hub.calls] == ["step", "wrap_up"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("meta", [{"kind": "step"}, {"kind": "result_correction", "finish_turns": 1}])
+async def test_only_a_step_asked_to_finish_gets_a_finish_turn(meta):
+    async def dispatch(task):
+        if task.meta["kind"] == "wrap_up":
+            return result(task, text="saved", workdir="runs/A", outputs=["outputs/PARTIAL_STATUS.md"])
+        return result(task, ok=False, error="turn limit", error_kind="error_max_turns", session_id="session-1",
+                      workdir="runs/A")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="analyze",
+                                          meta={**meta, "step_id": "A"}))
+    assert [t.meta["kind"] for t in hub.calls] == [meta["kind"], "wrap_up"]
 
 
 def test_plan_prompts_ask_for_one_environment_step():

@@ -141,7 +141,7 @@ async def test_writable_step_wrap_up_keeps_its_other_overrides():
     await Orchestrator(hub).run_step(task)
     wrap = hub.calls[-1]
     assert wrap.meta["kind"] == "wrap_up"
-    assert wrap.meta["agent_overrides"] == {"tools": ["Read"], "max_turns": 2}
+    assert wrap.meta["agent_overrides"] == {"tools": ["Read"], "max_turns": 4}
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,126 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-04 · 게이트 — Git Bash 경로
+
+- 결론: 12차 모의 시운전(일반 lane, v0.25 사전 점검)에서 data_steward가 자기 작업 폴더 `.tmp`에 쓸 때마다 게이트가 PI에게 물었다(같은 단계 3장). Claude의 Bash는 Windows에서 Git Bash라 경로를 `/c/Users/...`로 쓰는데, 허용 루트는 `C:/Users/...`여서 비교가 안 됐다.
+- 바뀐 것: `labhq/policy.py` `_evaluate_tool` — Bash이고 루트가 Windows 드라이브 경로면 셸 쓰기 대상을 `_git_bash_path`로 바꿔 비교한다(Claude 쓰기 도구가 이미 쓰는 변환). 바꿀 수 없는 경로는 그대로 둬 묻는다. POSIX 러너의 `/c/...`는 POSIX 폴더 그대로다.
+- 실행한 것: 관련 test 478 passed. 새 test 2건은 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_shell_write_quotes.py::test_git_bash_drive_paths_are_read_as_windows_paths`.
+
+## 2026-10-04 · #58 ①④ — 일반 단계 결과 계약과 보고서 경고
+
+- 결론: 일반 단계 답을 네 블록으로 보존하고, 모으지 않은 Evidence 경로와 실패한 도구 호출은 요청을 거부하지 않고 최종 보고서 경고로 올린다.
+- 바뀐 것: 일반 STEP·직원 규칙, `TaskResult` 파싱 필드, runner의 도구 오류 첫 줄 수집, SYNTH·`_finish` 경고 절. 연구 result v2·CP2 프롬프트는 그대로다.
+- 실행한 것: 새 회귀는 수정 전 import 실패. 수정 뒤 관련 pytest 417 passed·1 skipped, 공개 저장소·목차·diff 검사 통과.
+- 미해결: #58의 tool_use_id와 웹 감사 번들 다운로드는 다음 PR 범위다.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/runner/daemon.py`, `labhq/models.py`, `tests/test_general_evidence.py`.
+
+## 2026-10-03 · 문서 — v0.5 진행 상태
+
+- 결론: README §11 v0.5 행과 HANDOFF 작업 큐를 오늘 시운전 결과에 맞췄다. 10차가 연구 lane을 claim 앵커 보고서까지 완주했고(`labhq verify` exit 0), 8차·11차는 리뷰 P1으로 revise였다.
+- 바뀐 것: README v0.5 "지금"·"남은 것", HANDOFF v0.25 시운전 행(완료), v0.5 행(1/2, 남은 것에 revise 이어 가기), 병합된 #346 행 삭제.
+- 실행한 것: patch-notes·public 검사.
+- 미해결: 없음.
+- 근거: #298 시운전 보고 댓글.
+
+## 2026-10-03 · 연구 최종 보고서 — 앞 군말 제거
+
+- 결론: 10차 모의 시운전이 연구 lane을 처음 끝까지 통과했다(research_reported, 앵커 58·문제 0, verify exit 0). 보고서가 "최종 보고서를 작성 중입니다… ---"로 시작하는 작은 결함이 있어 고쳤다.
+- 바뀐 것: `labhq/orchestrator/cso.py` `report_body()` — 첫 markdown 제목 앞의 짧은 글(앵커 없음, 400자 이하)을 빼고 그 뒤를 검사·저장한다. RESEARCH_SYNTH_PROMPT에 "서문 없이 첫 제목부터".
+- 실행한 것: 전체 test 3552 passed. 새 test는 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_research_report.py::test_a_lead_in_before_the_first_heading_is_not_part_of_the_report`.
+
+## 2026-10-03 · 결과 계약 — 결합 문제를 첫 교정에
+
+- 결론: 9차 모의 시운전이 `research_failed`로 끝났다. biologist 단계(s05)가 근거 행 id를 슬롯 이름으로 붙이고 `slots` 필드를 빠뜨렸는데, 결합 검사가 필드 검증 통과 뒤에만 돌아 슬롯 누락이 교정 2회가 끝난 뒤에야 드러났다. 하류 6단계가 skip됐다.
+- 바뀐 것: `labhq/research/contract.py` — `research_result_errors`가 필드 오류가 있어도 원본 JSON으로 claim·슬롯 결합 문제를 함께 낸다(`_raw_binding_errors`). 슬롯 이름을 단 행이 `slots`를 안 적었으면 `add "slots": ["<slot>"]`를 덧붙인다. salvage는 그대로다(필수 슬롯 누락은 건지지 않음).
+- 실행한 것: 전체 test 3534 passed. 새 test 2건은 수정 전 실패.
+- 미해결: 10차 시운전으로 확인.
+- 근거: `tests/test_research_cp2.py::test_a_missing_slot_is_reported_with_the_field_errors_and_names_the_fix`, `::test_the_first_correction_asks_for_the_slot_with_the_field_error`.
+
+## 2026-10-03 · runner — Windows OS 신뢰 저장소를 직원 Python에
+
+- 결론: 9차 모의 시운전에서 Codex engineer가 Enrichr 접속 TLS 검증 실패로 멈췄다. 원인은 기관 TLS 검사 장비(발급자 SOOSAN INT)의 루트가 Windows 저장소에만 있고 certifi에는 없는 것이다. runner가 두 쪽을 합친 CA 묶음을 직원 env에 넣는다. 검증은 끄지 않는다.
+- 바뀐 것: `labhq/runner/system_ca.py`(certifi + Windows ROOT·CA 저장소 PEM), `Runner._system_ca_env` — workspace 루트에 `.labhq-system-ca.pem`을 한 번 쓰고 `SSL_CERT_FILE`·`REQUESTS_CA_BUNDLE`을 지정한다. PI가 runner 환경이나 `engines.*.env`에 둘 중 하나를 정했으면 건드리지 않는다. `runner.system_ca_bundle`(기본 true, Windows에서만 동작).
+- 실행한 것: 전체 test 3539 passed. 새 runner test 6건은 수정 전 실패. 이 PC에서 내보낸 묶음으로 maayanlab.cloud·data.broadinstitute.org·string-db.org 검증 통과를 직접 확인했다.
+- 미해결: 없음.
+- 근거: `tests/test_system_ca.py`.
+
+## 2026-10-03 · 연구 단계 — 동결 protocol을 단계 프롬프트에
+
+- 결론: 8차 모의 시운전 리뷰가 P1로 revise했다. DE 단계가 동결 protocol과 다른 저발현 필터를 쓰고(양성 대조 NEK2·TTK 탈락) 이를 적지 않았다. 원인은 단계 프롬프트에 protocol이 들어가지 않은 것이다. 지시는 "저발현 필터 뒤"뿐이었다.
+- 바뀐 것: `labhq/orchestrator/cso.py` `_research_protocol_digest()` — 연구 단계 프롬프트에 질문·범위·protocol·pack 값을 자르지 않고 넣는다. 리뷰·보고서용 계획 digest도 protocol은 그대로 두고 단계 목록만 자른다(봇 P1). 이탈하면 method_changes에 적고 사전 규칙을 지켰다고 쓰지 않게 한다.
+- 실행한 것: 전체 test 3530 passed. 새 test는 수정 전 실패.
+- 미해결: 9차 시운전으로 리뷰 통과 → claim 앵커 보고서까지 확인.
+- 근거: `tests/test_research_cp2.py::test_research_step_prompt_carries_the_frozen_protocol`.
+
+## 2026-10-03 · CP2 근거 결합 — 조상 단계 산출물 인정
+
+- 결론: 8차 모의 시운전 CP2에서 거부된 근거 8건 중 6건은 해석·보고 단계가 조상(직접 상류가 아닌) 단계의 선언·hash된 산출물을 인용한 경우였다. 결합 규칙을 조상 전체로 넓혔다.
+- 바뀐 것: `labhq/orchestrator/cso.py` — `step_ancestors()`(run_dag의 조상 계산을 함수로 뺌), CP2 결합의 upstream을 조상 전체로. 계획 사슬 밖 단계는 여전히 거부한다.
+- 실행한 것: 전체 test 3530 passed. 새 test는 수정 전 실패(조부모 인용이 거부됨).
+- 미해결: 상류 단계의 미선언 파일 인용(나머지 2건)은 설계대로 거부한다.
+- 근거: `tests/test_research_cp2.py::test_cp2_binds_an_ancestors_output_but_not_an_unrelated_steps`.
+
+## 2026-10-03 · 게이트 — 플래그 뒤 경로와 tee, Get-FileHash 옆 따옴표 행
+
+- 결론: 8차 모의 시운전 오탐(Get-FileHash 옆 manifest 행의 `<GSM>/suppl/`을 리다이렉트로 읽음)을 고쳤다. 같이 찾은 놓친 쓰기도 막았다. `Set-Content -Encoding utf8 C:/밖/x`처럼 플래그가 경로보다 앞이거나, bash `tee`, `sc`·`Export-Csv`·`Tee-Object`로 작업 폴더 밖에 쓰는 경우다.
+- 바뀐 것: `labhq/policy.py` `_named_write_targets`·`_ps_writer_targets`. 모르는 플래그(접두 약어 포함)의 다음 단어도 목적지로 보고(과보고 쪽), `-Value`·`-Encoding` 같은 텍스트 인자만 뺀다. Get-FileHash·Import-Csv·Export-Csv를 데이터 명령에 넣었다.
+- 실행한 것: 전체 test 3526 passed. 새 test 15건 중 13건은 수정 전 실패(나머지 2건은 과보고 방지 확인).
+- 미해결: 변수·splatting·별칭 전부는 여전히 읽지 않는다(문서화된 한계, 경로 가드는 sandbox가 아님).
+- 근거: `tests/test_shell_write_quotes.py`.
+
+## 2026-10-03 · 연구 단계 턴 상한 — 같은 세션에서 한 번 마무리
+
+- 결론: 7차 모의 시운전에서 qc_reviewer가 상류 수치를 모두 재현한 뒤 40턴이 끝나 요청 전체가 research_failed가 됐다. 이제 연구 단계는 같은 세션에서 절반 상한으로 한 번 마무리하고, 수습 turn은 2턴에서 4턴으로 올렸다(2턴 수습은 세 번째 턴에서 멈춰 아무것도 저장하지 못했다).
+- 바뀐 것: `research.finish_turns`(기본 1) — `run_step`이 연구 단계(`kind: step`)의 error_max_turns 뒤 마무리 turn을 부른다. 마무리 turn이 건드리지 않은 파일은 첫 turn의 hash를 유지해 CP2 근거 결합이 깨지지 않는다. 일반 lane·교정 turn은 그대로다. 수습 turn은 원래 상한보다 높이지 않는다.
+- 실행한 것: 전체 test 3507 passed. 새 test는 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_cso.py`(finish 3종), `tests/test_research_cp2.py::test_a_research_step_past_its_turn_limit_finishes_in_its_session`.
+
+## 2026-10-03 · 게이트 오탐 — 리다이렉트 대상을 명령 목적지로 읽음
+
+- 결론: `cp a outputs/ 2>/dev/null`의 /dev/null을 cp 목적지로 읽던 오탐을 고쳤다(7차 모의 시운전). PowerShell `Copy-Item ... 2>$null`도 같다.
+- 바뀐 것: `labhq/policy.py` `_shell_write_targets`가 명령 이름 기반 검사 전에 리다이렉트 구간을 지운다. 리다이렉트 대상은 기존 리다이렉트 검사가 그대로 판정한다.
+- 실행한 것: 관련 test 451건 통과, 새 test 6건은 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_shell_write_quotes.py`.
+
+## 2026-10-03 · PR 준비 — 연구 결과 계약 위반 행 분리(#90, #298)
+
+- 결론: 교정 뒤에도 남은 행 단위 위반은 해당 행·파생 행·link만 빼고 CP2로 넘긴다. 구조 위반은 계속 단계를 실패시킨다.
+- 바뀐 것: 결과 교정 기본값을 2회로 올리고, 거부 행과 unsupported claim을 CP2 카드·receipt·최종 보고서·감사 번들에 남겼다.
+- 실행한 것: 새 회귀는 수정 전 실패했다. 관련 pytest 378건·Node 4건, schema·prompt hash, 공개 저장소·diff 검사가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/research/contract.py`, `labhq/orchestrator/cso.py`, `labhq/evidence/audit.py`, `labhq/web/ui/decide.js`, `tests/test_research_cp2.py`, `tests/test_research_report.py`.
+
+## 2026-10-03 · PR 준비 — 연구 결과 계약 교정 turn(#90, #298)
+
+- 결론: 연구 단계 결과 JSON이 계약 검증에 걸리면 원 분석을 다시 돌리지 않고 한 번 고쳐 받아, 통과하면 요청을 계속한다.
+- 바뀐 것: `research.result_corrections`(기본 1), 같은 session·workdir의 결과 교정 turn, validator 전용 필드 규칙 prompt를 추가했다. 일반 lane과 `evidence_checkpoint: false` 흐름은 그대로다.
+- 실행한 것: 새 회귀 5건이 수정 전 실패했다. 수정 뒤 관련 pytest 365건, 공개 저장소 검사, diff 검사가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/orchestrator/cso.py`, `labhq/evidence/claims.py`, `labhq/research/contract.py`, `labhq/settings.py`, `tests/test_research_cp2.py`, `tests/test_step_prompt_rules.py`.
+
+## 2026-10-03 · Codex 직원 output schema strict 변환
+
+- 결론: 전체 연구 schema에서 나던 `invalid_json_schema` 400을 고쳤다. 원본 계약과 hash는 그대로다.
+- 바뀐 것: arbitrary-key 사전은 `{key,value}` 배열로 왕복한다. Codex가 거부한 type 제약은 transport schema에서 빼고, 중첩 nullable array는 `anyOf(array, null)`로 바꾼다. 응답은 원래 형태로 되돌린 뒤 기존 검증으로 보낸다.
+- 실행한 것: 이분 탐색에서 type 제약과 `Claim.comparisons[].assumptions`의 nullable array 구조를 확인했다. 실제 gpt-5.6-luna로 STEP·pack 연구 계획·PLAN·REPLAN·REVIEW·연구 리뷰가 모두 기존 검증을 통과했고, 관련 pytest 109건과 공개 검사가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/util.py`, `labhq/research/contract.py`, `tests/test_openai_strict_schema.py`, `tests/test_research_protocol.py`.
+
+## 2026-10-03 · trial3-fixes — 사용 불가 직원 배정·배경 실행 뒤 종료 차단
+
+- 결론: adapter preflight에 실패한 직원은 계획 대상에서 빠지고, Claude 직원은 배경 작업 없이 명령 결과를 확인한 뒤 turn을 끝낸다.
+- 바뀐 것: runner roster가 doctor와 같은 preflight를 쓰며, 일반·연구·재계획의 직원 판정을 맞췄다. Claude env 기본값과 쓰기 직원 공통 규칙도 추가했다.
+- 실행한 것: 새 회귀 5건은 수정 전 실패했고 수정 후 통과했다. 관련 pytest 302건과 공개 저장소 검사가 통과했다.
+- 미해결: 없음.
+- 근거: `labhq/adapters/__init__.py`, `labhq/runner/daemon.py`, `labhq/orchestrator/cso.py`, `labhq/adapters/claude_code.py`, `labhq/adapters/base.py`, `tests/test_cso.py`, `tests/test_role_footer.py`.
+
 ## 2026-10-03 · #346 후속 — 범위 판정 보존, bench, CI
 
 - 결론: 뒤 계획에 범위 판정이 없으면 첫 판정을 쓰고, bench는 범위 카드를 진행으로 답하며, 범위 카드 Node test를 CI에서 돌린다.

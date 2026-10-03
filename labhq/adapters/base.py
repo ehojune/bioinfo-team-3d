@@ -226,6 +226,10 @@ ROLE_FOOTER = """
   of the PR, and not again while a review is still running.
 """
 
+GENERAL_RESULT_RULES = (
+    "- Save a factual claim to a file before stating it, and cite that path under ## Evidence.\n"
+)
+
 
 # The rest of the lab rules for staff that write (not read-only tasks). Writes outside the workspace and paths
 # built from shell variables each raised a PI approval card in the 2nd mock trial (2026-10-03).
@@ -234,6 +238,9 @@ WORKSPACE_WRITE_RULES = (
     "approval.\n"
     "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
     "cannot resolve a variable path and asks the PI.\n"
+    "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
+    "background work and finishes the step with only the outputs present then. Use labhq_hpc tools for long-running "
+    "compute, or ask the PI before proceeding.\n"
     "- If the plan has an environment step, run packages from its interpreter, by the path it reported. For an extra "
     "package the PI "
     "approved, install it into ./.pylib in your own workspace (python -m pip install --target ./.pylib ...) and put "
@@ -261,7 +268,8 @@ def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open
 
 def role_footer(ctx: "RunContext") -> str:
     """ROLE_FOOTER, the write rules unless the task is read-only, and this task's personal-path section."""
-    return (ROLE_FOOTER + ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
+    return (ROLE_FOOTER + (GENERAL_RESULT_RULES if ctx.task.meta.get("general_result_contract") else "") +
+            ("" if ctx.read_only else WORKSPACE_WRITE_RULES) +
             private_paths_section(ctx.private_labels, bool(ctx.private_open_reads)))
 
 

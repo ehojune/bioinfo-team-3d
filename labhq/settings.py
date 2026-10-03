@@ -49,6 +49,8 @@ class RunnerSettings(BaseModel):
     reference_scan_max_entries: int = Field(default=20000, ge=1)
     reference_scan_max_depth: int = Field(default=16, ge=0)
     output_hash_max_bytes: int = Field(default=512 * 1024 * 1024, ge=0)
+    # Windows: staff Python trusts the OS store too, so an institution's TLS inspection root works (9th mock trial).
+    system_ca_bundle: bool = True
     # A consult or follow-up lists every entry it could write to (workspace, writable project/upstream/reference
     # folders) before and after the run; past this many it is refused rather than run unchecked (#36).
     read_only_check_max_entries: int = Field(default=50000, ge=1)
@@ -379,6 +381,8 @@ class ResearchSettings(BaseModel):
 
     enabled: bool = False
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
+    result_corrections: int = Field(default=2, ge=0)  # retry only invalid result JSON; never rerun the step
+    finish_turns: int = Field(default=1, ge=0)  # a step past its turn limit continues once with half the limit
     pack_dirs: list[str] = []
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
