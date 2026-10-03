@@ -577,13 +577,27 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
 
 
 def _research_plan_digest(plan: dict) -> str:
-    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps."""
+    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps.
+    Only the step list is clipped: a real plan runs past 20,000 characters, and clipping the whole JSON cut the
+    middle of the protocol the reviewer judges against (PR #358 review)."""
     steps = [{key: step.get(key) for key in ("id", "agent_id", "phase", "instruction", "claim_ids", "outputs",
                                              "evidence_slots", "depends_on")} for step in plan.get("steps") or []]
-    digest = {"brief": plan.get("brief"),
+    frozen = {"brief": plan.get("brief"),
               "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
-              "pack_values": plan.get("pack_values") or {}, "steps": steps}
-    return clip(json.dumps(digest, ensure_ascii=False), 8000)
+              "pack_values": plan.get("pack_values") or {}}
+    return (json.dumps(frozen, ensure_ascii=False) + "\nSteps: " +
+            clip(json.dumps(steps, ensure_ascii=False), 8000))
+
+
+def _research_protocol_digest(plan: dict) -> str:
+    """The frozen question and protocol a research step must follow, whole: a clipped middle could drop the very
+    criterion the step needs (PR #358 review). A step instruction names a rule ("after the low-expression filter")
+    without its criteria (8th mock trial: the analyst invented its own filter)."""
+    brief = plan.get("brief") or {}
+    digest = {"question": brief.get("question"), "scope": brief.get("scope"),
+              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
+              "pack_values": plan.get("pack_values") or {}}
+    return json.dumps(digest, ensure_ascii=False)
 
 
 def _research_issue_lines(issues: list[dict]) -> list[str]:
@@ -1918,7 +1932,12 @@ class Orchestrator:
                            "If you cannot proceed without a PI decision, return the same schema with every list "
                            "empty and the question with its choices in blocking_decision; you re-run with the answer."
                            "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
-                           RESEARCH_RESULT_FIELD_RULES)
+                           RESEARCH_RESULT_FIELD_RULES +
+                           "\n\nFrozen protocol, approved by the PI at CP1:\n" + _research_protocol_digest(research_plan) +
+                           "\nApply its selection and exclusion criteria, analysis unit and statistics exactly as "
+                           "written. If the data force a different rule, use the closest workable one, record it in "
+                           "method_changes (field, planned, actual, reason, affects_conclusion), and never describe "
+                           "the result as following the pre-specified rule.")
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
