@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import cost_detail, format_cost, task_cost_item
+from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
@@ -28,7 +29,8 @@ from ..quota import is_quota_error, received_quota_wait
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
-                                 validate_research_plan, validate_research_result, with_pack_refs)
+                                 research_result_errors, validate_research_plan, validate_research_result,
+                                 with_pack_refs)
 from ..research.packs import configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
@@ -252,6 +254,8 @@ with "- ". Inside the JSON string write each line break as \\n. Do not proceed w
 
 STEP_OUTPUTS_RULE = ("\n\nDeclared outputs: save each at exactly this path in your workspace; "
                      "labhq collects only these: {paths}")
+
+RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_FIELD_RULES)
 
 REVIEW_PROMPT = """You are the scientific reviewer. Evaluate the team's work on the request below with three
 criteria scored 1–5: addresses_question, evidence (how well conclusions are supported), thoroughness.
@@ -925,6 +929,16 @@ def plan_correction(problems: list[str]) -> str:
     return "\n".join(["The previous research PLAN failed validation. Fix every problem below and return one complete "
                       "corrected PLAN. Do not remove steps by truncation. labhq writes protocol.packs.",
                       *_problem_lines(problems, "1.")])
+
+
+def result_correction(problems: list[str]) -> str:
+    """Ask for ledger JSON only: the completed analysis and its files must not run again."""
+    return "\n".join([
+        "The previous research result JSON failed contract validation. Fix every problem below and return only one "
+        "complete corrected result JSON object.",
+        "Do not recreate or modify output files, rerun the analysis, or change the method. Fix the result JSON only.",
+        *_problem_lines(problems, "1."),
+    ])
 
 
 def plan_invalid_report(problems: list[str], packs: dict[str, Any]) -> str:
@@ -1852,7 +1866,9 @@ class Orchestrator:
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
                            "If you cannot proceed without a PI decision, return the same schema with every list "
-                           "empty and the question with its choices in blocking_decision; you re-run with the answer.")
+                           "empty and the question with its choices in blocking_decision; you re-run with the answer."
+                           "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
+                           RESEARCH_RESULT_FIELD_RULES)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -1903,7 +1919,74 @@ class Orchestrator:
                                                    context_chars=self.cfg.context_chars_per_step),
                     "context": ""})
             async with sem:
-                return await self.run_step(task)
+                outcome = await self.run_step(task)
+                if not research_plan or not outcome.ok or blocking_question(outcome):
+                    return outcome
+                if step.get("outputs"):
+                    missing = [name for name in step["outputs"] if output_relpath(name) not in outcome.outputs]
+                    if missing:
+                        return outcome.model_copy(update={"ok": False, "missing_outputs": missing,
+                                                          "error": f"incomplete: missing outputs: {', '.join(missing)}"})
+
+                original = outcome
+                current = outcome
+                limit = self.hub.s.research.result_corrections
+                for correction in range(limit + 1):
+                    asked = blocking_question(current)
+                    structured = (current.structured if isinstance(current.structured, dict)
+                                  else extract_json(current.text))
+                    if isinstance(structured, dict):  # the step schema's empty question field is not ledger
+                        structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
+                    problems = (["a result correction cannot ask a new blocking_decision; return corrected JSON"]
+                                if asked else research_result_errors(structured, plan=research_plan))
+                    validated_result = None
+                    if not problems:
+                        validated_result = validate_research_result(structured, plan=research_plan)
+                        if validated_result.step_id != step["id"]:
+                            problems = [f"research result step_id {validated_result.step_id} does not match {step['id']}"]
+                    if not problems and validated_result is not None:
+                        return original.model_copy(update={
+                            "structured": validated_result.model_dump(mode="json"),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
+                    if correction == limit:
+                        return original.model_copy(update={
+                            "ok": False, "error": "invalid research result contract: " + "; ".join(problems),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
+
+                    can_resume_correction = bool(current.session_id and self.hub.supports_resume(step["agent_id"]))
+                    correction_task = Task(
+                        agent_id=step["agent_id"], request_id=rid, output_schema=RESEARCH_STEP_SCHEMA,
+                        resume_session_id=current.session_id if can_resume_correction else None,
+                        prompt=continuation_prompt(task, result_correction(problems),
+                                                   resumable=can_resume_correction, previous_result=current,
+                                                   context_chars=self.cfg.context_chars_per_step),
+                        meta={**task.meta, "kind": "result_correction", "parse_attempt": correction + 1,
+                              "parent_task": current.task_id, "outputs": [],
+                              "title": f"{step['id']}: 결과 계약 교정 #{correction + 1}",
+                              **({"workdir": current.workdir} if current.workdir else {})},
+                    )
+                    current = await self.run_step(correction_task)
+                    if not current.ok:
+                        return current.model_copy(update={
+                            "outputs": original.outputs, "output_sha256": original.output_sha256,
+                            "unreported_outputs": original.unreported_outputs,
+                            "workdir": current.workdir or original.workdir,
+                            "workdir_id": current.workdir_id or original.workdir_id,
+                        })
+                    if current.unreported_outputs:
+                        # A correction only rewrites the result JSON. A file it changed would no longer match the
+                        # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
+                        return original.model_copy(update={
+                            "ok": False,
+                            "error": "invalid research result contract: the result correction changed output files "
+                                     "it must not touch: " + ", ".join(current.unreported_outputs),
+                            "session_id": current.session_id or original.session_id,
+                            "workdir": current.workdir or original.workdir,
+                        })
 
         while todo or running:
             # An unchanged bridge outside `only` still connects a revision to an earlier revised ancestor. Waiting
@@ -1948,19 +2031,6 @@ class Orchestrator:
                         if missing:
                             outcome = outcome.model_copy(update={"ok": False, "missing_outputs": missing,
                                                                  "error": f"incomplete: missing outputs: {', '.join(missing)}"})
-                    if outcome.ok and not asked and research_plan:
-                        structured = (outcome.structured if isinstance(outcome.structured, dict)
-                                      else extract_json(outcome.text))
-                        if isinstance(structured, dict):  # the step schema's empty question field is not ledger
-                            structured = {k: v for k, v in structured.items() if k != "blocking_decision"}
-                        try:
-                            validated_result = validate_research_result(structured, plan=research_plan)
-                            if validated_result.step_id != sid:
-                                raise ValueError(f"research result step_id {validated_result.step_id} does not match {sid}")
-                            outcome = outcome.model_copy(update={"structured": validated_result.model_dump(mode="json")})
-                        except (TypeError, ValueError) as error:
-                            outcome = outcome.model_copy(update={"ok": False,
-                                "error": f"invalid research result contract: {error}"})
                     previous = results.get(sid)
                     if (feedback and sid in feedback and previous and previous.ok and not outcome.ok
                             and outcome.error_kind not in {"ask_rejected", "wake_limit"}):

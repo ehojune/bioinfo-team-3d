@@ -379,6 +379,7 @@ class ResearchSettings(BaseModel):
 
     enabled: bool = False
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
+    result_corrections: int = Field(default=1, ge=0)  # retry only invalid result JSON; never rerun the step
     pack_dirs: list[str] = []
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 

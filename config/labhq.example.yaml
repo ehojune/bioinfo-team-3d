@@ -151,6 +151,7 @@ pi_profile:
 research:
   enabled: false              # pilot을 켜려면 true 한 줄로 변경
   evidence_checkpoint: false  # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
+  result_corrections: 1       # 결과 JSON 계약 오류만 다시 받는 횟수(분석·산출 파일은 재실행하지 않음)
   active_packs: []            # 예: [single_cell_de@2]
 
 # 의미 모델 그림자 기록(#150): off | shadow. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
