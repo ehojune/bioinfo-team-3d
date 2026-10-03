@@ -230,8 +230,9 @@ function updateCard(row, item, options) {
   p.note.placeholder = value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
   const evidence = item.type === 'approval' && value.kind === 'research_evidence';
-  p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' ? '답하고 진행' : '승인';
-  p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : '거절';
+  const scope = item.type === 'approval' && value.kind === 'scope';  // out-of-scope request: run it or stop (#36)
+  p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' ? '답하고 진행' : scope ? '진행' : '승인';
+  p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
   p.revise.textContent = '수정 요청'; p.revise.hidden = !evidence;
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
   p.revise.dataset.act = 'revise';

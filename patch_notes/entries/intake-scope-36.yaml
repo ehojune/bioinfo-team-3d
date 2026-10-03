@@ -1,0 +1,13 @@
+pr: 346
+rows:
+- sha: 53b759d
+  at: 2026-10-03 09:50
+  text: '범위 밖 일반 요청은 실행 전에 PI에게 묻기: 계획에 scope 판정(in·borderline·out), 설정 lab.scope,
+    out이면 범위 확인 카드, 중단하면 단계 없이 끝남(#36)'
+- sha: 6dcdc84
+  at: 2026-10-03 09:50
+  text: 웹 결정 카드가 범위 확인 종류를 알아보고 진행·중단 버튼을 보여 줌(답 입력 불필요)
+- sha: 9ac336b
+  at: 2026-10-03 09:50
+  text: mock CSO 계획이 scope를 채우고, 요청에 [out-of-scope]·[borderline]을 넣으면 모의 시험에서 범위 카드를
+    띄움

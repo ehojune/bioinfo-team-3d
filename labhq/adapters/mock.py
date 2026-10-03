@@ -78,7 +78,9 @@ class MockAdapter(AgentAdapter):
             questions = [{"question": "Which sample group should be analyzed?",
                           "options": ["cases", "controls", "both"], "allow_free_text": True, "depth": 60}] if (
                 "[question]" in request and "PI clarification (questions and answer):" not in request) else []
-            structured = {"clarifying_questions": questions, "steps": steps, "recruit": recruit, "notes": "mock plan"}
+            verdict = "out" if "[out-of-scope]" in request else "borderline" if "[borderline]" in request else "in"
+            structured = {"scope": {"verdict": verdict, "reason": f"mock: {verdict} of lab scope"},
+                          "clarifying_questions": questions, "steps": steps, "recruit": recruit, "notes": "mock plan"}
         elif kind == "review":
             revise = "[revise]" in request and t.meta.get("revision", 0) == 0
             m = re.search(r"### (\S+) · analyst", t.prompt)

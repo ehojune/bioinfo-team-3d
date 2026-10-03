@@ -367,6 +367,13 @@ class PiProfileSettings(BaseModel):
     references: list[Reference] = Field(default_factory=list, max_length=20)
 
 
+class LabSettings(BaseModel):
+    """The lab itself. ``scope`` is what the CSO judges each general request against (#36); empty uses the
+    one-PI bioinformatics default in ``labhq.orchestrator.cso.DEFAULT_LAB_SCOPE``."""
+
+    scope: str | None = None
+
+
 class ResearchSettings(BaseModel):
     """Opt-in research contract pilot."""
 
@@ -420,6 +427,7 @@ class Settings(BaseModel):
     recruit: RecruitSettings = RecruitSettings()
     orchestrator: OrchestratorSettings = OrchestratorSettings()
     plan: PlanSettings = PlanSettings()
+    lab: LabSettings = LabSettings()
     research: ResearchSettings = ResearchSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()

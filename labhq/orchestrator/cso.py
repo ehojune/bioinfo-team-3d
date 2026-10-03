@@ -37,9 +37,21 @@ from ..vocab import declare as output_types
 if TYPE_CHECKING:
     from ..gateway.server import Hub
 
+# The CSO's judgment of a general request against lab.scope (#36 PI decision 2026-10-01, option C): "out" waits for
+# the PI's go-ahead before any step runs, "borderline" runs with one report line, "in" runs as before.
+SCOPE_VERDICTS = ("in", "borderline", "out")
+SCOPE_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False,
+    "properties": {"verdict": {"type": "string", "enum": list(SCOPE_VERDICTS)}, "reason": {"type": "string"}},
+    "required": ["verdict", "reason"],
+}
+DEFAULT_LAB_SCOPE = ("one-PI bioinformatics lab: genomics, transcriptomics, epigenomics, proteomics, single-cell, "
+                     "population and clinical genetics, related literature and methods")
+
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
+        "scope": SCOPE_SCHEMA,
         "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
@@ -55,7 +67,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "required": ["paper", "repo", "focus", "reason"]}},
         "notes": {"type": "string"},
     },
-    "required": ["clarifying_questions", "steps", "recruit", "notes"],
+    "required": ["scope", "clarifying_questions", "steps", "recruit", "notes"],
 }
 
 
@@ -69,11 +81,22 @@ def plan_schema(declare: bool) -> dict[str, Any]:
 
 
 def replan_schema(declare: bool) -> dict[str, Any]:
-    """A PLAN of new steps plus ``drop``: completed reviewer-flagged steps to retire (#271)."""
+    """A PLAN of new steps plus ``drop``: completed reviewer-flagged steps to retire (#271).
+
+    Scope is judged once, on the first plan; a re-plan neither returns nor re-asks it (#36)."""
     schema = json.loads(json.dumps(plan_schema(declare)))
+    schema["properties"].pop("scope")
     schema["properties"]["drop"] = {"type": "array", "items": {"type": "string"}}
-    schema["required"] = [*schema["required"], "drop"]
+    schema["required"] = [*(key for key in schema["required"] if key != "scope"), "drop"]
     return schema
+
+
+def scope_verdict(plan: Any) -> dict[str, str] | None:
+    """The CSO's scope verdict from a general plan (#36), or None when it is missing or malformed."""
+    scope = plan.get("scope") if isinstance(plan, dict) else None
+    if not isinstance(scope, dict) or scope.get("verdict") not in SCOPE_VERDICTS:
+        return None
+    return {"verdict": scope["verdict"], "reason": short(str(scope.get("reason") or "").strip(), 500)}
 
 REVIEW_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
@@ -152,6 +175,10 @@ Rules:
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
+- Judge the request against the lab's scope ({lab_scope}) in `scope`: verdict "in" when it fits, "borderline"
+  when it is adjacent work the lab can still do, "out" when it is outside the lab's field; reason is one sentence.
+  Plan the steps whatever the verdict (for "out" the PI decides whether they run), and do not ask about scope in
+  clarifying_questions.
 
 PI's request: {request}"""
 
@@ -1050,6 +1077,43 @@ class Orchestrator:
         """The vocabulary when plan.declare_output_types is on and it loads; None means today's plan, unchanged."""
         plan = getattr(self.hub.s, "plan", None)
         return output_vocab.current() if getattr(plan, "declare_output_types", False) else None
+
+    def _lab_scope(self) -> str:
+        scope = str(getattr(getattr(self.hub.s, "lab", None), "scope", None) or "").strip()
+        return scope or DEFAULT_LAB_SCOPE
+
+    async def _scope_gate(self, rid: str, req: dict) -> bool:
+        """Hold an "out" general request until the PI says to proceed (#36, option C). False: the request ended.
+
+        The plan is saved before the card, so "proceed" runs that plan without re-planning. After a gateway restart
+        the card is gone and the request resumes here: a saved decision is used, a pending one is asked again from
+        the stored plan, and no step has run either way. Without wait_for_clarification nothing waits for the PI,
+        so the verdict is only recorded, as with clarifying questions."""
+        check = req.get("scope_check") or {}
+        if check.get("verdict") != "out" or check.get("decision") in ("proceed", "not_asked"):
+            return True
+        if check.get("decision") not in ("declined", "timed_out"):
+            if not self.cfg.wait_for_clarification:
+                check["decision"] = "not_asked"
+                self.hub.save_request(rid)
+                return True
+            check["decision"] = "pending"
+            self.hub.save_request(rid)  # the plan and the pending card survive a restart together
+            reason = check.get("reason", "").rstrip(" .") or "사유 없음"
+            decision = await self.hub.request_approval(
+                kind="scope", request_id=rid, summary=short(f"이 요청은 랩 범위 밖으로 보입니다: {reason}. 진행할까요?", 700),
+                detail={"gate": "scope", "verdict": "out", "reason": check.get("reason", ""),
+                        "steps": len((req.get("plan") or {}).get("steps") or [])})
+            check["decision"] = ("proceed" if decision.get("approved") else
+                                 "timed_out" if decision.get("state") == "timed_out" else "declined")
+            self.hub.save_request(rid)
+            if check["decision"] == "proceed":
+                return True
+        req["outcome"] = "out_of_scope_declined"
+        why = "the approval timed out" if check["decision"] == "timed_out" else "the PI declined it"
+        self._finish(rid, f"Out-of-scope request stopped: {why}; no step was dispatched.", {}, ok=False,
+                     error="범위 밖 요청이라 실행하지 않았습니다")
+        return False
 
     def _request_identity(self, rid: str | None, agent_id: str | None) -> dict[str, str] | None:
         """The engine and model a request-local ``cso_model`` gives `agent_id` in request `rid` (#272), or None.
@@ -2407,6 +2471,8 @@ class Orchestrator:
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 self.hub.save_request(rid)
+                if not research_lane and not await self._scope_gate(rid, req):  # a card the restart closed (#36)
+                    return
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(req.get("results") or {})
                 pending_revisions = req.get("pending_revisions") or {}
@@ -2455,6 +2521,7 @@ class Orchestrator:
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
+                                                    lab_scope=self._lab_scope(),
                                                     output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
@@ -2643,6 +2710,9 @@ class Orchestrator:
                     req["plan"] = {**plan, "steps": steps, "warnings": warnings}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
+                    scope = scope_verdict(plan)  # the verdict of the plan that runs, recorded in every mode (#36)
+                    if scope:
+                        req["scope_check"] = scope
                 await self._emit(rid, "request.plan", req["plan"])
                 for rec in plan.get("recruit") or []:
                     if rec.get("repo") or rec.get("paper"):
@@ -2656,6 +2726,8 @@ class Orchestrator:
                 elif req["mode"] == "plan_only":
                     req["outcome"] = "plan_only"
                     self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True)
+                    return
+                elif not await self._scope_gate(rid, req):
                     return
                 results = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(results)
@@ -3073,6 +3145,10 @@ class Orchestrator:
                 f"- {question}" for question in req["pending_questions"]))
         if req.get("replan_history"):  # only with orchestrator.max_replans on (#271)
             metadata.append("Re-plan history:\n" + "\n".join(replan_history_lines(req["replan_history"])))
+        scope = req.get("scope_check") or {}
+        if scope.get("verdict") in ("borderline", "out"):  # "in" adds nothing (#36)
+            decision = f" PI decision: {scope['decision']}." if scope.get("decision") else ""
+            metadata.append(f"Scope verdict: {scope['verdict']}; {scope.get('reason') or '-'}{decision}")
         cost_summary = req.get("cost_summary")
         if cost_summary and (cost_summary.get("unknown_count") or cost_summary.get("estimated_usd")
                              or cost_summary.get("warnings")):
