@@ -150,9 +150,52 @@ PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
 ENV_STEP_RULE = ("If the work needs packages the runner does not have, plan one environment step first: it creates a "
-                 "virtual environment in its own workspace, installs only packages the PI approved, and saves "
+                 "virtual environment in its own workspace, installs only packages the PI approved with "
+                 "`pip install --only-binary=:all:`, and saves "
                  "outputs/env/requirements.lock.txt with the interpreter's path. Later steps depend on it and run "
-                 "that interpreter by path instead of building their own.")
+                 "that interpreter by path instead of building their own. For every package that may need compilation, "
+                 "put an alternative in the plan. If wheel installation or a build fails, do not ask the PI for build "
+                 "tools: use the alternative and record the change under outputs/env/. Ask only when no alternative exists.")
+
+LOCAL_PACKAGE_NAMES = ("pandas", "numpy", "scipy", "matplotlib", "statsmodels", "scikit-learn", "gseapy", "pydeseq2")
+LOCAL_TOOL_NAMES = ("docker", "nextflow", "java", "wsl")
+
+
+def _capability_version(value: object) -> str:
+    match = re.fullmatch(r"v?\d+\.\d+(?:\.\d+)?(?:[-.][A-Za-z0-9]+)*", str(value or ""))
+    return match.group(0) if match else "unknown"
+
+
+def _availability(values: object, name: str) -> str:
+    if not isinstance(values, dict) or name not in values:
+        return "unknown"
+    return "yes" if values[name] is True else "no"
+
+
+def _format_local_software(summary: object) -> str:
+    if not isinstance(summary, dict) or not summary:
+        return "unknown"
+    r = summary.get("r") if isinstance(summary.get("r"), dict) else {}
+    python = summary.get("python") if isinstance(summary.get("python"), dict) else {}
+    r_label = _capability_version(r.get("version")) if r.get("available") is True else "missing"
+    packages = ", ".join(f"{name}={_availability(python.get('packages'), name)}"
+                         for name in LOCAL_PACKAGE_NAMES)
+    tools = ", ".join(f"{name}={_availability(summary.get('tools'), name)}" for name in LOCAL_TOOL_NAMES)
+    return f"R={r_label}; Python={_capability_version(python.get('version'))}; packages[{packages}]; tools[{tools}]"
+
+
+def format_capabilities(roster: list[dict], runner_capabilities: dict | None = None) -> str:
+    lines = [
+        f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
+        f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
+        f"other compute={', '.join(a.get('compute_backends') or ['local CLI'])}"
+        for a in roster
+    ]
+    capabilities = runner_capabilities if isinstance(runner_capabilities, dict) else {}
+    for runner_id in sorted({a.get("runner_id") for a in roster if a.get("runner_id")}):
+        runner = capabilities.get(runner_id) if isinstance(capabilities.get(runner_id), dict) else {}
+        lines.append(f"- runner {runner_id} local software: {_format_local_software(runner.get('local_software'))}")
+    return "\n".join(lines)
 
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
@@ -2730,11 +2773,8 @@ class Orchestrator:
             configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
-            capabilities = "\n".join(  # the first plan and a re-plan after resume (#271) both need it
-                f"- {a['id']}: scheduler={a.get('scheduler', 'none')}, "
-                f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}, "
-                f"other compute={', '.join(a.get('compute_backends') or ['local CLI'])}"
-                for a in roster)
+            # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
+            capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None))
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
                 stored = req.get("research_contract") or {}

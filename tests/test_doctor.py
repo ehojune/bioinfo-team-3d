@@ -310,3 +310,33 @@ def test_doctor_warns_when_the_runner_config_holds_the_client_token(tmp_path, mo
     settings.gateway.client_token = ""
     names = [r["name"] for r in doctor.collect(settings)["checks"]]
     assert "runner config holds client token" not in names and "default client token" not in names
+
+
+@pytest.mark.parametrize("rscript,python", [
+    (r"C:\Program Files\R\bin\Rscript.exe", r"C:\Users\private-user\venv\Scripts\python.exe"),
+    ("/opt/R/bin/Rscript", "/home/private-user/venv/bin/python"),
+])
+def test_local_software_summary_is_platform_neutral_and_does_not_expose_paths(monkeypatch, rscript, python):
+    commands = {"Rscript": rscript, "docker": "/tools/docker", "java": "/tools/java"}
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: commands.get(name))
+
+    def probe(argv, env, timeout=5):
+        assert timeout <= 5
+        if argv == [rscript, "--version"]:
+            return 0, "Rscript (R) version 4.4.1"
+        if argv == [python, "--version"]:
+            return 0, "Python 3.12.7"
+        return (1, "") if "gseapy" in argv[-1] else (0, "")
+
+    monkeypatch.setattr(doctor, "_probe", probe)
+    summary = doctor.local_software_summary(python)
+
+    assert summary == {
+        "r": {"available": True, "version": "4.4.1"},
+        "python": {"version": "3.12.7", "packages": {
+            "pandas": True, "numpy": True, "scipy": True, "matplotlib": True,
+            "statsmodels": True, "scikit-learn": True, "gseapy": False, "pydeseq2": True,
+        }},
+        "tools": {"docker": True, "nextflow": False, "java": True, "wsl": False},
+    }
+    assert "private-user" not in json.dumps(summary)
