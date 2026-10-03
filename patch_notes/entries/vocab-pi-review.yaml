@@ -3,3 +3,7 @@ rows:
 - sha: dc012d7
   at: 2026-10-04 04:05
   text: PI가 검토한 출력 데이터 종류 41키와 정규화 셋 구분, genomic_features 이름, 입력 적합성, EDAM 연결을 반영했다.
+- sha: 75d4c60
+  at: 2026-10-04 04:30
+  text: PI 어휘 검토로 뜻이 바뀐 normalized_counts를 semantics fixture와 독립 baseline에서 vocab_changed로
+    고정했다.
