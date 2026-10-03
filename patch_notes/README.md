@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:50 | [`53b759d`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/53b759d) | 범위 밖 일반 요청은 실행 전에 PI에게 묻기: 계획에 scope 판정(in·borderline·out), 설정 lab.scope, out이면 범위 확인 카드, 중단하면 단계 없이 끝남(#36) |
+| 09:50 | [`6dcdc84`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/6dcdc84) | 웹 결정 카드가 범위 확인 종류를 알아보고 진행·중단 버튼을 보여 줌(답 입력 불필요) |
+| 09:50 | [`9ac336b`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/9ac336b) | mock CSO 계획이 scope를 채우고, 요청에 [out-of-scope]·[borderline]을 넣으면 모의 시험에서 범위 카드를 띄움 |
 | 09:29 | [`bb9cded`](https://github.com/ehojune/bioinfo-team-3d/pull/345/commits/bb9cded) | PI 질문: 구조화된 결과가 있으면 text 안 예시 JSON을 질문으로 읽지 않음, 재계획에도 환경 단계 규칙(#344 봇 지적) |
 | 09:29 | [`0c4ece4`](https://github.com/ehojune/bioinfo-team-3d/pull/345/commits/0c4ece4) | README: v0.5 행에 요청마다 환경 단계 하나 |
 | 09:18 | [`4daf1a6`](https://github.com/ehojune/bioinfo-team-3d/pull/344/commits/4daf1a6) | 분석 환경은 요청마다 환경 단계 하나로(계획·직원 규칙), PI 질문은 blocking_decision 객체를 우선해 읽음 |
