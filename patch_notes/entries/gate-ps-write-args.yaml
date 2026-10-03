@@ -3,3 +3,6 @@ rows:
 - sha: 9953cbd
   at: 2026-10-03 17:28
   text: '게이트: 플래그 뒤에 쓴 경로·tee·sc·Export-Csv도 쓰기 목적지로 읽고, Get-FileHash 옆 따옴표 행은 텍스트로(8차 시운전 오탐과 놓친 쓰기)'
+- sha: e0ca434
+  at: 2026-10-03 17:34
+  text: '게이트: -Path를 이름으로 준 쓰기 cmdlet의 위치 인자는 -Value로 보고 목적지로 묻지 않음(봇 P2)'
