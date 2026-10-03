@@ -6,3 +6,6 @@ rows:
 - sha: f13c400
   at: 2026-10-04 01:04
   text: 모든 active pack의 명시적 응답과 pairing별 count·non-count 모형 규칙을 추가
+- sha: b6ad693
+  at: 2026-10-04 01:31
+  text: core 통계 정본과 폐쇄형 scale·pairing·model 조합표를 추가
