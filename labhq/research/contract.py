@@ -587,12 +587,14 @@ def _raw_binding_errors(value: Any, plan: ResearchPlan | dict[str, Any]) -> list
     except ValidationError:
         return []
     step = next((step for step in parsed.steps if step.id == value.get("step_id")), None)
-    if step is None:
+    claim_rows, evidence_rows = value.get("claims"), value.get("evidence")
+    # A scalar ledger is a schema error already; iterating it would raise instead of asking for a correction.
+    if step is None or not isinstance(claim_rows, list) or not isinstance(evidence_rows, list):
         return []
-    claims = [str(row["id"]) for row in value.get("claims") or [] if isinstance(row, dict) and row.get("id")]
-    rows = [(str(row.get("id")), [slot for slot in row.get("slots") or [] if isinstance(slot, str)]
+    claims = [str(row["id"]) for row in claim_rows if isinstance(row, dict) and row.get("id")]
+    rows = [(str(row.get("id")), [slot for slot in row["slots"] if isinstance(slot, str)]
              if isinstance(row.get("slots"), list) else [])
-            for row in value.get("evidence") or [] if isinstance(row, dict)]
+            for row in evidence_rows if isinstance(row, dict)]
     return _binding_errors(claims, rows, step)
 
 

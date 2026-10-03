@@ -327,6 +327,15 @@ def test_a_missing_slot_is_reported_with_the_field_errors_and_names_the_fix():
                and 'add "slots": ["e1"]' in problem for problem in problems)
 
 
+@pytest.mark.parametrize("field, value", [("claims", 1), ("evidence", True), ("evidence", [1, "x"]),
+                                          ("claims", None)])
+def test_a_scalar_ledger_is_a_correction_not_a_crash(field, value):
+    """PR #360 review: reading binding from raw JSON must not raise on a malformed ledger."""
+    plan, result = _standalone_result()
+    result[field] = value
+    assert research_result_errors(result, plan=plan)
+
+
 @pytest.mark.asyncio
 async def test_the_first_correction_asks_for_the_slot_with_the_field_error():
     settings = _settings()
