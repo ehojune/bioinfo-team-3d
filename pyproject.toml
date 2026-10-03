@@ -1,6 +1,6 @@
 [project]
 name = "labhq"
-version = "0.2.1"
+version = "0.25.0"
 description = "Bio lab HQ: run a team of CLI coding agents (Claude Code, Codex, Gemini CLI) as a bioinformatics research lab"
 readme = "README.md"
 requires-python = ">=3.10"

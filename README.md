@@ -1,4 +1,4 @@
-# labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.2)
+# labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.25)
 
 <!-- badges:start -->
 [![Claude Code: 직원 8명 · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=%EC%A7%81%EC%9B%90%208%EB%AA%85%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
