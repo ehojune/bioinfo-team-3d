@@ -15,6 +15,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 05:20 | [`14f54f6`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/14f54f6) | 리뷰 수정이 실패해 첫 결과를 지킨 단계는 실패로 세지 않고 재계획하지 않는다(기존 설계 유지). |
+| 04:58 | [`a2deec9`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/a2deec9) | 버전을 0.25.0으로 올리고 README 제목을 v0.25로 바꿨다. |
+| 04:58 | [`e1f6e98`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/e1f6e98) | README에 "무엇이 다른가"(다른 회사 리뷰어의 문헌 원문 확인, 근거 등급, 근거 검증, PI 결정, 데이터 보호, 긴 작업)와 어노테이션·시맨틱·온톨로지 세 층 표, labhq open 안내를 넣었다. |
+| 04:58 | [`a07bf84`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/a07bf84) | main 병합: README는 세 층 표를 유지하고 매뉴얼 어휘 줄은 main(PI 검토 41키)을 따랐다. |
+| 04:58 | [`18e9811`](https://github.com/ehojune/bioinfo-team-3d/pull/379/commits/18e9811) | v0.25 선언을 HANDOFF 결정표와 매뉴얼 로드맵에 적었다(리허설 근거, 벤치마킹 안 A, 어휘 결정). |
 | 04:57 | [`e7a3b64`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/e7a3b64) | 모든 대체 경로가 같은 선언 파일명을 쓰게 하고 리뷰 수정 실패도 failure re-plan을 거치게 함 |
 | 04:57 | [`2d0f329`](https://github.com/ehojune/bioinfo-team-3d/pull/377/commits/2d0f329) | 계획 전 메모를 plan과 replan에 전달하고 direct 요청 메모는 이어 묻기로 안내한다 |
 | 04:49 | [`9655afe`](https://github.com/ehojune/bioinfo-team-3d/pull/378/commits/9655afe) | 단계 실패 재계획을 리뷰 revise와 분리해 기본 1회 허용하고, 선언 산출은 모든 실행 경로에서 생기는 파일로 제한 |
