@@ -4,6 +4,33 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 일반 lane 리뷰 지적 우선순위 (#373)
+
+## 단계
+P1 — 결론을 바꾸는 지적만 일반 lane의 수정과 실패를 부릅니다.
+
+## 한 일
+- 일반 리뷰 schema·prompt에 P1·P2·P3를 추가하고, P1이 있을 때만 `revise`로 판정합니다.
+- 재계획과 수정 feedback에는 P1만 보내며, 상한 뒤 P2·P3만 남으면 완료합니다.
+- P2 원문을 보고서 `리뷰 참고`에 붙이고, 우선순위가 없는 저장 리뷰는 P1로 이어 갑니다.
+- 동작 설명과 모의 reviewer fixture를 갱신했습니다.
+
+## 테스트 결과
+- [x] 선행 회귀 2 failed → 수정 뒤 2 passed
+- [x] 관련·모의 e2e 253 passed
+- [x] `pytest -q`: 3708 passed, 53 skipped
+- [x] `scripts/check_public.sh` 통과
+- [x] UI 변경 없음
+
+## 바꾼 파일
+`labhq/orchestrator/cso.py`, `labhq/adapters/mock.py`, `tests/test_cso.py`, `tests/test_state.py`, `tests/test_research_report.py`, `docs/manual.md`
+
+## 막힌 점
+없음.
+
+## PI·Claude에게 물을 것
+없음.
+
 # runner 요약: 직원이 쓸 python 명령까지 고른다 (#380 후속)
 
 **결론:** #380은 PATH의 `python3`를 먼저 골랐는데, 이 PC에서 `python3`는 분석 패키지가 없는 3.14(WindowsApps 별칭)이고 `python`이 pandas가 있는 3.12였습니다. 이제 세 명령을 모두 검사해 분석 패키지가 가장 많은 것을 고르고(동률이면 python3·python·py 순), CSO 능력 줄에 `Python=3.12.10 run as \`python\``처럼 명령까지 알립니다.
