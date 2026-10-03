@@ -22,8 +22,8 @@
   <text class="title" x="32" y="38">요청이 흐르는 길</text>
 
   <!-- revise loop -->
-  <path d="M748,96 L748,70 L424,70 L424,94" fill="none" stroke="#7C3AED" stroke-width="2" marker-end="url(#arrowp)"/>
-  <text class="loop" x="586" y="62" text-anchor="middle">revise면 CSO가 다시 계획하고 그 단계와 하류를 재실행 (기본 1회)</text>
+  <path d="M748,96 L748,70 L586,70 L586,94" fill="none" stroke="#7C3AED" stroke-width="2" marker-end="url(#arrowp)"/>
+  <text class="loop" x="667" y="62" text-anchor="middle">revise면 지적된 단계와 하류를 리뷰 메모로 다시 실행 (기본 1회)</text>
 
   <!-- stages -->
   <g>
