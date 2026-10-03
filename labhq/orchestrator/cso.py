@@ -121,6 +121,12 @@ Request: {request}"""
 # Plan and re-plan questions of the general lane go to the PI's phone card. Nothing validates their length, so
 # both prompts carry the same rule.
 PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
+# One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
+# a later step could not add a package to another step's environment.
+ENV_STEP_RULE = ("If the work needs packages the runner does not have, plan one environment step first: it creates a "
+                 "virtual environment in its own workspace, installs only packages the PI approved, and saves "
+                 "outputs/env/requirements.lock.txt with the interpreter's path. Later steps depend on it and run "
+                 "that interpreter by path instead of building their own.")
 
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
@@ -142,6 +148,7 @@ Rules:
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
   Local CLI is available for light work. If a step needs unavailable compute, ask the PI in
   clarifying_questions before planning execution. Put a QC step after any data generation.
+- """ + ENV_STEP_RULE + """
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
@@ -178,6 +185,7 @@ Contract rules:
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
 - Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
+- """ + ENV_STEP_RULE + """
 - For every configured pack, fill top-level `pack_values[key]` with exactly the keys in its `pack_values_keys`:
   a value for each field, a non-empty explanation for each validator id, and a non-empty outcome for each
   acceptance id. Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
@@ -914,6 +922,19 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
     return matches(value, schema)
 
 
+def _object_with_key(text: str, key: str) -> dict | None:
+    """The largest JSON object in ``text`` that has ``key`` at its top level, read leniently, else None."""
+    decoder, best = json.JSONDecoder(strict=False), None
+    for start in (i for i, ch in enumerate(text) if ch == "{"):
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and key in obj and (best is None or end > best[1]):
+            best = (obj, end)
+    return best[0] if best else None
+
+
 def blocking_question(result: TaskResult) -> str | None:
     """The PI decision a step stopped for (STEP_PROMPT), from the runner field or its JSON, else None.
 
@@ -922,6 +943,9 @@ def blocking_question(result: TaskResult) -> str | None:
     """
     structured = (result.structured if isinstance(result.structured, dict)
                   else extract_json(result.text, strict=False))
+    if not (isinstance(structured, dict) and "blocking_decision" in structured) and result.text:
+        # A larger unrelated object (with a raw newline, read leniently) must not hide the question (PR #343 review).
+        structured = _object_with_key(result.text, "blocking_decision") or structured
     question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)
                                             else None)
     return question.strip() if isinstance(question, str) and question.strip() else None

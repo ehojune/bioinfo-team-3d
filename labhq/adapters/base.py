@@ -233,7 +233,10 @@ WORKSPACE_WRITE_RULES = (
     "- Put temporary files and scripts under ./.tmp/ in your workspace; writing to /tmp or %TEMP% outside it needs PI "
     "approval.\n"
     "- In shell commands, write paths relative to your workspace, not built from shell variables; the approval gate "
-    "cannot resolve a variable path and asks the PI.\n")
+    "cannot resolve a variable path and asks the PI.\n"
+    "- Run packages from the environment step's interpreter, by the path it reported. For an extra package the PI "
+    "approved, install it into ./.pylib in your own workspace (python -m pip install --target ./.pylib ...) and put "
+    "./.pylib first on PYTHONPATH; never write into another step's workspace.\n")
 
 
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
