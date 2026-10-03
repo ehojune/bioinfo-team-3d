@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 08:27 | [`98a37a2`](https://github.com/ehojune/bioinfo-team-3d/pull/385/commits/98a37a2) | 매뉴얼에 cd 뒤 상대 경로 대조 규칙('..' 단어만, 개인 경로가 아래면 전체)과 256 후보 상한을 적었다. |
+| 07:42 | [`2d03644`](https://github.com/ehojune/bioinfo-team-3d/pull/385/commits/2d03644) | 게이트가 '..'가 든 단어만 따로 대조해, 상류 폴더를 ../로 가리키는 긴 인라인 스크립트가 PI에게 묻지 않는다. |
 | 07:10 | [`9df2eec`](https://github.com/ehojune/bioinfo-team-3d/pull/384/commits/9df2eec) | 최종 보고서의 실행 기록을 부록으로 모으고 분석 script와 reference를 outputs에 보존 |
 | 06:37 | [`8083b82`](https://github.com/ehojune/bioinfo-team-3d/pull/383/commits/8083b82) | 일반 lane 리뷰에 P1·P2·P3를 구분해 P1만 수정·실패로 처리하고 P2는 보고서 참고로 남김 |
 | 06:14 | [`3c992bd`](https://github.com/ehojune/bioinfo-team-3d/pull/381/commits/3c992bd) | runner 요약이 PATH의 python3·python·py를 모두 검사해 분석 패키지가 가장 많은 interpreter와 그 명령을 CSO에 알린다. |
