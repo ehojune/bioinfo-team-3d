@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-03 · #346 후속 — 범위 판정 보존, bench, CI
+
+- 결론: 뒤 계획에 범위 판정이 없으면 첫 판정을 쓰고, bench는 범위 카드를 진행으로 답하며, 범위 카드 Node test를 CI에서 돌린다.
+- 바뀐 것: `labhq/orchestrator/cso.py`(`scope_first`), `labhq/bench.py`, `tests/test_web_3d.py`.
+- 실행한 것: 관련 test 87건 통과, 새 test 2건은 수정 전 실패.
+- 미해결: 없음.
+- 근거: `tests/test_scope_gate.py`.
+
 ## 2026-10-03 · 로드맵 ⑥ — 통과 기준과 버전 나누기
 
 - 결론: PI 결정 ⑥ 나(#298). 버전마다 통과 기준을 붙이고, v0.75는 HPC에서 공개 데이터, v0.9는 통제 데이터, v1 앞에 v0.95(다른 사람의 설치·온보딩)를 넣었다.

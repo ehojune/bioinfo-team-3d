@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:16 | [`16a20a6`](https://github.com/ehojune/bioinfo-team-3d/pull/348/commits/16a20a6) | 범위 확인 후속: 첫 판정 유지, bench는 범위 카드에 진행, web_scope_card를 CI에(#346 봇 지적) |
 | 10:13 | [`66ccd34`](https://github.com/ehojune/bioinfo-team-3d/pull/347/commits/66ccd34) | 로드맵 ⑥: 버전마다 통과 기준, v0.75(HPC 공개)·v0.9(통제 데이터)·v0.95(온보딩), HANDOFF 작업 큐 정리 |
 | 09:50 | [`53b759d`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/53b759d) | 범위 밖 일반 요청은 실행 전에 PI에게 묻기: 계획에 scope 판정(in·borderline·out), 설정 lab.scope, out이면 범위 확인 카드, 중단하면 단계 없이 끝남(#36) |
 | 09:50 | [`6dcdc84`](https://github.com/ehojune/bioinfo-team-3d/pull/346/commits/6dcdc84) | 웹 결정 카드가 범위 확인 종류를 알아보고 진행·중단 버튼을 보여 줌(답 입력 불필요) |
