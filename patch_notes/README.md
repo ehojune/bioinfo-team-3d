@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:31 | [`03d6cb5`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/03d6cb5) | Codex strict schema에서 사전을 왕복하고 지원하지 않는 제약과 중첩 nullable array를 호환 형태로 바꿨다. |
+| 12:45 | [`57d529b`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/57d529b) | README에 Codex strict schema 변환과 optional null 정리 동작을 한 줄로 기록했다. |
+| 12:43 | [`1a9c5a2`](https://github.com/ehojune/bioinfo-team-3d/pull/351/commits/1a9c5a2) | Codex 직원 output schema를 OpenAI strict 형식으로 바꾸고 optional null을 원래 계약에 맞게 정리했다. |
 | 11:56 | [`470664f`](https://github.com/ehojune/bioinfo-team-3d/pull/350/commits/470664f) | adapter preflight에 실패한 직원을 runner roster에서 빼고 계획 재검증과 Claude 배경 작업 차단을 추가했다. |
 | 10:16 | [`16a20a6`](https://github.com/ehojune/bioinfo-team-3d/pull/348/commits/16a20a6) | 범위 확인 후속: 첫 판정 유지, bench는 범위 카드에 진행, web_scope_card를 CI에(#346 봇 지적) |
 | 10:13 | [`66ccd34`](https://github.com/ehojune/bioinfo-team-3d/pull/347/commits/66ccd34) | 로드맵 ⑥: 버전마다 통과 기준, v0.75(HPC 공개)·v0.9(통제 데이터)·v0.95(온보딩), HANDOFF 작업 큐 정리 |
