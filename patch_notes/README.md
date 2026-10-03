@@ -15,9 +15,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 02:16 | [`b7c803b`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/b7c803b) | 일반 보고서는 heading 앞의 답을 지우지 않도록 군말 떼기를 빼고 프롬프트 지시만 남긴다. |
+| 02:10 | [`8e9371b`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/8e9371b) | pack 규칙에 min_items를 넣어 bulk 비교군을 서로 다른 두 개 이상으로 요구하고, 빈 문자열만 든 목록은 값 없음으로 본다. |
 | 02:09 | [`07b9964`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/07b9964) | 라운드 중 재시작 뒤에도 이어 가는 수정 단계가 현재 upstream 결과를 받는다. |
 | 01:57 | [`4a91448`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/4a91448) | 일반 보고서는 '---'로 닫힌 서두만 떼고 첫 heading 앞의 짧은 답은 남긴다. |
+| 01:53 | [`4f641c4`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/4f641c4) | 패키지에 든 설정 예시를 저장소 예시와 맞췄다(CI 템플릿 일치 검사). |
 | 01:46 | [`6425ee8`](https://github.com/ehojune/bioinfo-team-3d/pull/368/commits/6425ee8) | 리뷰 수정 라운드에서 다시 계산된 위 단계 결과를 지적받은 아래 단계에도 넘기고, 수정 답은 전체 결과로 받으며, 일반 보고서 앞 군말을 뗀다. |
+| 01:31 | [`b6ad693`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/b6ad693) | core 통계 정본과 폐쇄형 scale·pairing·model 조합표를 추가 |
+| 01:04 | [`f13c400`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/f13c400) | 모든 active pack의 명시적 응답과 pairing별 count·non-count 모형 규칙을 추가 |
+| 00:51 | [`0f3bda7`](https://github.com/ehojune/bioinfo-team-3d/pull/366/commits/0f3bda7) | 벌크 두 조건 차등발현 pack과 적용 조건별 CP1 판정을 추가 |
 | 00:51 | [`1e64413`](https://github.com/ehojune/bioinfo-team-3d/pull/367/commits/1e64413) | Claude 쓰기 호출을 관찰 산출물에 연결하고 인증된 웹 감사 번들을 추가 |
 | 00:51 | [`33adaed`](https://github.com/ehojune/bioinfo-team-3d/pull/367/commits/33adaed) | README와 HANDOFF에 #58 증거 계층 완료 상태와 검증 경로를 기록 |
 | 00:44 | [`ea1ff0c`](https://github.com/ehojune/bioinfo-team-3d/pull/365/commits/ea1ff0c) | Bash process substitution을 인자로 남기고 내부 redirect만 검사 |
