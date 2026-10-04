@@ -24,10 +24,11 @@ CANARY = "CANARY-research-91c2"
 # when every configured pack began requiring either full values or an explicit not_applicable reason (PR #366).
 # #373 changed only the prompt: binary wheels, planned fallbacks, and no PI question when a fallback exists. PR #378
 # review requires every permitted path to write the same declared filename. #373 bench A now declares analysis
-# scripts and result-determining references under outputs/, so this fixed prompt hash changes again.
+# scripts and result-determining references under outputs/. #373 direction 2 adds the shared three-category question
+# rule and records research choices in protocol, so this fixed prompt hash changes again.
 RESEARCH_PLAN_SCHEMA_SHA = "3c9a69dad6e52fbb5a2a67593561f1c14441e2847fd8b00af1fabaa3dfc47130"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "47498e3990f41b5cb4afdfbf31e8c730cd0bbb6fa770acf7bb90f1a90eb84c30"
+RESEARCH_PROMPT_SHA = "027fe861d619adbe6cd63f67b3e16cea4994682b05058cc1c16f8844f176da0c"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
 
 

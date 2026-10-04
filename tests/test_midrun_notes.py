@@ -170,6 +170,7 @@ async def test_review_and_synthesis_get_notes_and_research_keeps_the_frozen_plan
     assert "one line per PI note" in synthesis
     assert "whether it was incorporated" in synthesis
     assert "what new request is needed" in synthesis
+    assert "list the choice that was actually used" in synthesis  # a note that changed an assumption (PR #387)
 
 
 def test_note_cli_posts_to_the_note_endpoint(monkeypatch, capsys):

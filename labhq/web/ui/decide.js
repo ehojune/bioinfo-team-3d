@@ -101,6 +101,21 @@ function renderQuestions(container, approval) {
   });
 }
 
+function renderAssumptions(container, approval) {
+  const assumptions = approval?.kind === 'clarify' && Array.isArray(approval.detail?.assumptions)
+    ? approval.detail.assumptions.filter(value => typeof value === 'string' && value.trim()).slice(0, 8) : [];
+  const signature = JSON.stringify(assumptions);
+  if (container._assumptionSignature === signature) return;
+  container._assumptionSignature = signature;
+  container.replaceChildren();
+  container.hidden = assumptions.length === 0;
+  if (!assumptions.length) return;
+  add(container, 'strong', '가정');
+  const list = add(container, 'ul');
+  for (const value of assumptions) add(list, 'li', value.trim());
+  add(container, 'p', '바꾸려면 실행 중 메모로 알려 주세요.', 'empty-note');
+}
+
 // The note to send: for structured questions every question needs a choice or text, otherwise ''.
 export function decisionNote(row, approved = true) {
   const parts = row?._decisionParts;
@@ -134,7 +149,7 @@ function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
     kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'plan_sha256', 'results'] : [];
-  const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions'] :
+  const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
     [...preferred.filter(key => Object.hasOwn(detail, key)), ...Object.keys(detail).filter(key => !preferred.includes(key) && !shown.includes(key))]
@@ -172,6 +187,8 @@ function createCard(item, options) {
   const detail = add(body, 'div', '', 'why');
   const questions = add(body, 'div', '', 'clarify');
   questions.hidden = true;
+  const assumptions = add(body, 'div', '', 'plan-assumptions');
+  assumptions.hidden = true;
   const timing = add(body, 'p', '', 'decision-meta');
   const note = add(body, 'textarea', '', 'ans');
   note.rows = item.value.kind === 'clarify' ? 3 : 2;
@@ -182,7 +199,7 @@ function createCard(item, options) {
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, summary, detail, questions, timing, note, approve, revise, deny };
+  row._decisionParts = { title, who, summary, detail, questions, assumptions, timing, note, approve, revise, deny };
   return row;
 }
 
@@ -227,6 +244,7 @@ function updateCard(row, item, options) {
   p.summary.textContent = item.type === 'suggestion' ? value.repo || value.paper || value.id : value.summary || value.id;
   renderDetail(p.detail, value.kind, item.type === 'suggestion' ? value.reason : value.detail);
   renderQuestions(p.questions, item.type === 'approval' ? value : null);
+  renderAssumptions(p.assumptions, item.type === 'approval' ? value : null);
   p.timing.textContent = item.type === 'approval' ? timingText(value, options) : '';
   p.note.placeholder = value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';

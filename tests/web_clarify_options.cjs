@@ -23,13 +23,16 @@ const COHORT={question:'Which cohort <b>?',options:['cases','controls'],allow_fr
 const GENOME={question:'Which genome build?',options:['GRCh38','GRCh37','T2T'],allow_free_text:false};
 const FREE={question:'Anything else?',options:[],allow_free_text:true};
 const approval={id:'q1',kind:'clarify',summary:'Please answer before work begins',created_at:1,
-  detail:{questions:[COHORT,GENOME,FREE]}};
+  detail:{questions:[COHORT,GENOME,FREE],assumptions:['GSE10072 선택 — 짝 자료가 요청에 맞음']}};
 
 test('structured questions render as option buttons, free inputs and a depth label',async()=>{
   const decide=await modulePromise,container=new Element();
   const decisions=[];
   const [row]=decide.syncDecisionCards(container,[approval],[],{onDecision:(a,ok,note)=>decisions.push([ok,note])});
   const parts=row._decisionParts;
+  assert.match(parts.assumptions.textContent,/가정/);
+  assert.match(parts.assumptions.textContent,/GSE10072 선택/);
+  assert.match(parts.assumptions.textContent,/실행 중 메모/);
   assert.equal(parts.detail.hidden,true,'questions are not dumped as raw JSON detail');
   const blocks=parts.questions.children;
   assert.equal(blocks.length,3);

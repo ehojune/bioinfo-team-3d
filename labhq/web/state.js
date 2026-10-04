@@ -88,6 +88,7 @@ function req(rid) {
     Object.defineProperty(q, 'references', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'piNotes', { value: [], writable: true, enumerable: false });
+    Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     S.requests.set(rid, q);
@@ -101,6 +102,7 @@ function stepDetail(rid, sid) {
 }
 function setPlan(q, plan) {
   q.plan = (plan.steps || []).map(s => ({ ...s, depends_on: s.depends_on || [] }));
+  q.assumptions = Array.isArray(plan.assumptions) ? plan.assumptions.filter(value => typeof value === 'string' && value.trim()).slice(0, 8) : [];
   for (const s of q.plan) if (!q.steps[s.id]) q.steps[s.id] = 'pending';
 }
 function logTo(a, text, ts) { a.log.push({ ts, text: short(text, 240) }); if (a.log.length > 40) a.log.shift(); }

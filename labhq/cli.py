@@ -86,7 +86,11 @@ def render(ev: dict) -> None:
     elif t == "request.plan":
         rows = [f"   {s['id']} → {ICON.get(s['agent_id'], '·')} {s['agent_id']:<13} deps={s['depends_on']}  {s['instruction']}"
                 for s in d.get("steps", [])]
-        line = "📋 CSO 계획\n" + "\n".join(rows) + "".join(f"\n   ⚠ {w}" for w in d.get("warnings", []))
+        assumptions = [value for value in d.get("assumptions", []) if isinstance(value, str) and value.strip()]
+        shown = "" if not assumptions else ("\n   가정\n" + "\n".join(f"   - {value}" for value in assumptions) +
+                                             f'\n   바꾸려면: labhq note {ev.get("request_id") or "<request_id>"} "바꿀 내용"')
+        line = ("📋 CSO 계획\n" + "\n".join(rows) + shown +
+                "".join(f"\n   ⚠ {w}" for w in d.get("warnings", [])))
     elif t == "recruit.suggested":
         line = f"🧾 CSO 채용 제안: {d.get('repo') or d.get('paper')} — {d.get('reason')}"
     elif t == "request.review":

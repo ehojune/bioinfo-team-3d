@@ -2490,7 +2490,7 @@ async def test_unresolved_synthesis_prompt_lists_open_issues_and_accept_prompt_i
     results = {k: TaskResult.model_validate(v) for k, v in req["results"].items()}
     expected = SYNTH_PROMPT.format(
         request="question", results=orch.format_results(req["plan"]["steps"], results, orch.cfg.context_chars_per_step),
-        review=short(req["review"], 3000), warnings="(none)") + replan_history_note(req)
+        review=short(req["review"], 3000), warnings="(none)", assumptions="(none recorded)") + replan_history_note(req)
     assert kinds(accepted, "synthesis")[0].prompt == expected
 
 

@@ -132,7 +132,8 @@ async def test_a_card_question_with_real_newlines_reaches_the_pi_and_the_step_re
 
 def test_replan_questions_follow_the_same_phone_card_rule_as_the_plan():
     args = dict(roster="ROSTER", capabilities="CAPS", trigger="WHY", retired="none", drop_rule="DROP", used="A",
-                max_steps=3, output_types_rule="", empty_rule="EMPTY", request="REQ", plan="[]", results="")
+                max_steps=3, output_types_rule="", empty_rule="EMPTY", request="REQ", plan="[]", results="",
+                question_rule=QUESTION_RULE)
     text = cso.REPLAN_PROMPT.format(**args)
     assert ("ask in clarifying_questions and do not plan the blocked work. " + cso.PI_CARD_QUESTION_RULE) in text
     assert cso.PI_CARD_QUESTION_RULE in cso.PLAN_PROMPT
