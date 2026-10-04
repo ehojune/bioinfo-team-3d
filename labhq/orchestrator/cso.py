@@ -1922,7 +1922,8 @@ class Orchestrator:
         """Resume the request's CSO (or direct agent) session in its workspace; the request stays finished."""
         req = self.hub.requests[rid]
         entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
-        agent, direct = entry["agent_id"], req.get("mode") == "direct"
+        agent = entry["agent_id"]
+        direct = req.get("mode") == "direct" or req.get("followup_agent_id") == agent
         try:
             refusal = read_only_refusal(agent, self._engine(rid, agent))
         except ValueError as error:  # its request's CSO model cannot be honored: never resume as another model
@@ -3108,6 +3109,7 @@ class Orchestrator:
         paths = ", ".join(f"{result.workdir_id or 'unknown-workdir'}/{path}" for path in result.outputs)
         report = _append_report_metadata(report, [f"처리 방식: 단독 ({agent})", f"단독 턴 비용: {cost}",
                                                    f"산출 경로: {paths or 'none'}"])
+        req["followup_agent_id"] = agent
         self._finish(rid, report, {"direct": result.model_dump(mode="json")}, ok=True, review=review)
         return True
 

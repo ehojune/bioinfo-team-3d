@@ -175,6 +175,47 @@ async def test_direct_request_followup_resumes_that_agents_last_session(tmp_path
     assert "cso_session_id" not in hub.requests["r"]
 
 
+@pytest.mark.asyncio
+async def test_solo_request_followup_uses_solo_session_when_cso_is_offline(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agents = {"solo": {"id": "solo", "engine": "codex"}}
+    hub.requests["r"] = {"id": "r", "text": "Summarize it", "mode": "orchestrate", "status": "done",
+                         "report": "summary", "followup_agent_id": "solo", "followups": []}
+    workdir = str(tmp_path / "solo")
+    hub.store.put("task", "t1", {"request_id": "r", "kind": "direct", "dispatched_at": 1,
+                                  "completed": True, "payload": {"agent_id": "solo"},
+                                  "result": {"session_id": "solo-1", "workdir": workdir}})
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="Because it matched",
+                          session_id="solo-2", workdir=workdir)
+
+    hub.dispatch = dispatch
+    entry = hub.start_followup("r", "Why?")
+    await asyncio.sleep(0)
+    for _ in range(50):
+        if entry["status"] != "running":
+            break
+        await asyncio.sleep(0.01)
+    assert entry["agent_id"] == "solo" and entry["status"] == "done"
+    assert calls[0].resume_session_id == "solo-1" and calls[0].meta["workdir"] == workdir
+
+
+def test_team_fallback_followup_still_requires_cso(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agents = {"solo": {"id": "solo", "engine": "codex"}}
+    hub.requests["r"] = {"id": "r", "text": "Team result", "mode": "orchestrate", "status": "done",
+                         "route_decision": {"mode": "team", "fallback": True}, "followups": []}
+    with pytest.raises(ValueError, match="cso.*not on any connected runner"):
+        hub.start_followup("r", "Why?")
+
+
 def test_followup_endpoint_validates_state(tmp_path):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")

@@ -145,6 +145,8 @@ class CodexAdapter(AgentAdapter):
                 flags += ["--disable", feature]
         if a.model:
             flags += ["-m", a.model]
+        if a.effort:
+            flags += ["-c", f'model_reasoning_effort="{a.effort}"']
         web_search = "live" if any(t.split("(")[0] in WEB_TOOLS for t in a.tools) else "disabled"
         flags += ["-c", f'web_search="{web_search}"']
         for d in ctx.extra_dirs:
