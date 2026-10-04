@@ -2465,7 +2465,11 @@ class Orchestrator:
                 recovered = getattr(self.hub, "login_recovered", None)
                 if recovered is not None:
                     await recovered(engine)
-                clear_login_window()
+                # The window is per request and engine: a parallel turn that is still parked on this engine keeps
+                # it, so its 24 h limit is not restarted by another turn's ending (PR #398 review).
+                if not any(entry.get("engine") == engine
+                           for entry in (self.hub.requests.get(rid, {}).get("login_waits") or {}).values()):
+                    clear_login_window()
                 quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
                                                                  default_wait_s=self.cfg.quota_default_wait_s)
                 if quota is None:

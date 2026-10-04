@@ -230,8 +230,7 @@ class Hub:
         self.login_events: dict[str, asyncio.Event] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
-        self.login_notices = {str(entry.get("engine") or "") for req in self.requests.values()
-                              for entry in (req.get("login_waits") or {}).values()}
+        self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
@@ -262,6 +261,11 @@ class Hub:
             if not is_active_request(req.get("status")) and req.get("login_waits"):
                 req.pop("login_waits")
                 self.save_request(rid)
+        # Only waits that survived the cleanup above hold an engine notice; a finished request's interrupted
+        # follow-up must not keep the next request from getting its first login notice (PR #398 review).
+        self.login_notices = {str(entry.get("engine") or "") for req in self.requests.values()
+                              for entry in (req.get("login_waits") or {}).values()}
+        for rid, req in self.requests.items():
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
                 for a in self.approvals.values()
@@ -328,7 +332,7 @@ class Hub:
                 if candidate in self.runner_capabilities:
                     capabilities = self.runner_capabilities[candidate]
                     break
-        return login_command(engine, self.s, capabilities)
+        return login_command(engine, self.s, capabilities, runner_known=capabilities is not None)
 
     def _sync_hold_status(self, req: dict) -> None:
         if not is_active_request(req.get("status")):
