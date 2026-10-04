@@ -39,10 +39,11 @@ def subset_for(local_dir, overrides=None):
 def test_packaged_vocabulary_loads_with_counts_under_the_cap():
     v = vocab.load()
     counts = v.counts()
-    assert vocab.MAX_KEYS == 45
-    assert counts["keys"] == 41
-    assert counts["keys"] <= vocab.MAX_KEYS and counts["edam_terms"] <= vocab.MAX_KEYS
-    assert (counts["data"], counts["format"], counts["operation"]) == (21, 14, 6)
+    assert vocab.BRANCH_LIMITS == {"data": 36, "format": 32, "operation": 24, "topic": 24}
+    assert vocab.MAX_EDAM_TERMS == 116
+    assert counts["keys"] == 100
+    assert counts["edam_terms"] <= vocab.MAX_EDAM_TERMS
+    assert (counts["data"], counts["format"], counts["operation"], counts["topic"]) == (30, 28, 22, 20)
     reviewed = {"genomic_features", "normalized_expression", "transformed_expression", "variant_annotations"}
     assert reviewed <= set(v.keys("data"))
     assert "features" not in v.terms
@@ -80,11 +81,16 @@ def test_bad_local_file_is_refused(vdir, mutate, match):
         vocab.load(vdir)
 
 
-def test_more_than_forty_five_keys_is_refused(vdir):
+@pytest.mark.parametrize("branch", ["data", "format", "operation", "topic"])
+def test_more_than_the_branch_cap_is_refused(vdir, branch):
     path = vdir / vocab.LOCAL_FILE
-    extra = "".join(f"  extra_{i}:\n    branch: data\n    definition: x\n" for i in range(5))
+    current = vocab.load(vdir).counts()[branch]
+    extra = "".join(
+        f"  extra_{branch}_{i}:\n    branch: {branch}\n    definition: x\n"
+        for i in range(vocab.BRANCH_LIMITS[branch] - current + 1)
+    )
     path.write_text(path.read_text(encoding="utf-8") + extra, encoding="utf-8")
-    with pytest.raises(vocab.VocabError, match="1 to 45"):
+    with pytest.raises(vocab.VocabError, match=rf"{branch}.*at most {vocab.BRANCH_LIMITS[branch]}"):
         vocab.load(vdir)
 
 
@@ -177,7 +183,7 @@ def test_subset_io_error_is_isolated_from_local_keys(vdir, monkeypatch, caplog):
 
 @pytest.mark.parametrize("name, key", [
     ("outputs/reads_R1.fastq.gz", "fastq"), ("outputs/x.FQ", "fastq"), ("outputs/genome.fa", "fasta"),
-    ("outputs/t.TSV", "tsv"), ("outputs/a.gff3", "gff3"), ("outputs/a.gff", None), ("outputs/a.txt", None),
+    ("outputs/t.TSV", "tsv"), ("outputs/a.gff3", "gff3"), ("outputs/a.gff", "gff"), ("outputs/a.txt", None),
     ("outputs/run.log", None), ("outputs/x.py", None), ("outputs/x.tar.gz", None), ("outputs/noext", None),
     ("outputs\\win\\answer.md", "markdown"),
 ])

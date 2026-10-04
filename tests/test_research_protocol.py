@@ -59,9 +59,10 @@ def valid_pack_values():
     }
 
 
-def valid_plan(packs=None, steps=1, pack_values=None):
+def valid_plan(packs=None, steps=1, pack_values=None, topics=None):
     return {
         "schema_version": 2,
+        "topics": ["single_cell_rna_seq"] if topics is None else topics,
         "intake": {"work_kind": "research", "reason": "PI specified work_kind=research",
                    "scope_status": "in_scope", "confidence": "clear", "source": "explicit"},
         "brief": {"question": "Does condition change expression?", "purpose": "Choose the next assay",
@@ -585,7 +586,7 @@ def test_every_allowed_scale_model_and_family_value_passes_in_some_combination()
 # A pack's content is what an approved plan meant by its id@version; changing it needs a new version.
 BUILTIN_PACK_SHA256 = {
     PACK: "72be2505e75ea9d21358df07cc8091404d9d54f01bf0986dd873e8bce79d355d",
-    "bulk_tumor_normal@1": "fe42d8e8734b507da27f855fad87e0c09e994f0b34cd78230eb8704c502665b7",
+    "bulk_tumor_normal@1": "6e5cb3c4a5f97ea2d5a03d7f3ae18e3cb00260aed28714114cede6ae42566747",
 }
 
 

@@ -15,7 +15,7 @@ from labhq.orchestrator.cso import Orchestrator
 from labhq.research import contract as rc
 from labhq.research.packs import configured_packs
 from labhq.settings import Settings
-from labhq.vocab import declare
+from labhq.vocab import declare, topics
 from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid_plan
 
 V = vocab.load()
@@ -26,10 +26,10 @@ CANARY = "CANARY-research-91c2"
 # review requires every permitted path to write the same declared filename. #373 bench A now declares analysis
 # scripts and result-determining references under outputs/. #373 direction 2 adds the shared three-category question
 # rule and records research choices in protocol, so this fixed prompt hash changes again.
-RESEARCH_PLAN_SCHEMA_SHA = "3c9a69dad6e52fbb5a2a67593561f1c14441e2847fd8b00af1fabaa3dfc47130"
+RESEARCH_PLAN_SCHEMA_SHA = "0e137b57dcf8adeba97220a343523916a7fc8417d5c891d3952da85d6ec354c4"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "027fe861d619adbe6cd63f67b3e16cea4994682b05058cc1c16f8844f176da0c"
-VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"  # plan_sha256(valid_plan())
+RESEARCH_PROMPT_SHA = "c8c6bec5dcb7959c87ee4e0c9d9b44731d994a5e8dae297d8acaf462274360a0"
+VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
 def raw_sha(value):
@@ -47,7 +47,7 @@ def test_engine_schemas_and_prompt_off_are_those_of_main():
     assert raw_sha(rc.RESEARCH_RESULT_SCHEMA) == RESEARCH_RESULT_SCHEMA_SHA
     assert rc.research_plan_schema(False) is rc.RESEARCH_PLAN_SCHEMA
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS")
+                question_rule=QUESTION_RULE, intake="INTAKE", packs="PACKS", topics_rule=topics.prompt_rule(V))
     assert raw_sha(cso.RESEARCH_PLAN_PROMPT.format(**args, output_types_rule="")) == RESEARCH_PROMPT_SHA
 
 
@@ -60,6 +60,7 @@ def test_on_schema_offers_optional_entries_without_the_version_field():
 
 def test_plans_approved_before_221_keep_their_canonical_json_and_hash():
     plan = valid_plan()
+    plan.pop("topics")
     assert rc.plan_sha256(plan) == VALID_PLAN_SHA
     assert rc.plan_sha256(declared(plan, [])) == VALID_PLAN_SHA
     assert "output_types" not in json.loads(rc.canonical_plan_json(plan))["steps"][0]
@@ -117,6 +118,7 @@ async def test_off_removes_declarations_and_freezes_the_plan_of_main():
     assert "output_types" not in req["plan"]["steps"][0] and "output_types_stats" not in req
     expected = plan_with([])(req["plan"]["protocol"]["packs"])
     expected["steps"][0]["outputs"] = ["outputs/result1.tsv"]
+    expected["pack_applicability"] = req["plan"]["pack_applicability"]
     undeclared = rc.plan_sha256(expected)
     assert req["research_contract"]["plan_sha256"] == undeclared
 

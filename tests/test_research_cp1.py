@@ -160,7 +160,7 @@ def _write_agents(root: Path) -> Path:
     return root / "agents"
 
 
-@pytest.mark.parametrize("command_limit", [None, 20_000], ids=["inline", "over-command-line-limit"])
+@pytest.mark.parametrize("command_limit", [None, 25_000], ids=["default-limit", "over-command-line-limit"])
 async def test_public_research_request_reaches_cp1_card_through_the_claude_schema_path(tmp_path, monkeypatch,
                                                                                       command_limit):
     # The live rerun's CSO re-plan was 33,091 characters, past the Windows limit; a lowered limit takes that path.
@@ -233,7 +233,9 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
                        .read_text(encoding="utf-8").splitlines()]
             assert len(carried) >= plan_calls
             pointer = [prompt.startswith("Read TASK") for prompt in carried[-plan_calls:]]
-            assert pointer == [bool(command_limit)] * plan_calls, carried
+            expected_pointer = ([True] * plan_calls if command_limit else
+                                ([False] if plan_calls == 1 else [False, True]))
+            assert pointer == expected_pointer, carried
     finally:
         runner.stop()
         server.should_exit = True

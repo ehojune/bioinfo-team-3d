@@ -92,6 +92,7 @@ def _plan(prompt: str, *, mistakes: bool) -> dict:
                 values["fields"]["count_scale"] = "normalized_counts"
     return {
         "schema_version": 2,
+        "topics": ["single_cell_rna_seq"],
         "intake": intake,
         "brief": {"question": "Do CD14+ monocytes change expression after IFN-beta in GSE96583?",
                   "purpose": "Fix a donor-level pseudobulk DE contract on public data",

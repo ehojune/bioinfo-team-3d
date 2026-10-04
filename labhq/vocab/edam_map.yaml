@@ -45,3 +45,62 @@ candidates:
   read_mapping: Read mapping
   variant_calling: Variant calling
   data_retrieval: Data retrieval
+  abundance_table: Matrix
+  cell_feature_matrix: Count matrix
+  coverage_track: Annotation track
+  methylation_profile: null
+  taxonomic_profile: Taxonomic classification
+  phylogenetic_tree: Phylogenetic tree
+  splicing_table: null
+  copy_number_profile: null
+  spatial_annotations: null
+  html: HTML
+  cram: CRAM
+  bigwig: bigWig
+  bedgraph: bedgraph
+  gtf: GTF
+  gff: GFF
+  hdf5: HDF5
+  mtx: null
+  newick: newick
+  rds: R file format
+  encode_peak: null
+  qiime2_artifact: null
+  parquet: null
+  tiff: null
+  quality_control: Sequencing quality control
+  read_preprocessing: null
+  quantification: Quantification
+  normalization: Standardisation and normalisation
+  genome_assembly: Genome assembly
+  transcriptome_assembly: Transcriptome assembly
+  sequence_annotation: Sequence annotation
+  peak_calling: Peak calling
+  differential_abundance_analysis: null
+  methylation_calling: Methylation calling
+  taxonomic_profiling: Taxonomic classification
+  splicing_analysis: Splicing analysis
+  variant_annotation: Variant effect prediction
+  phasing: Phasing
+  consensus_generation: null
+  cell_segmentation: null
+  bulk_rna_seq: RNA-Seq
+  single_cell_rna_seq: Single-cell sequencing
+  spatial_transcriptomics: null
+  atac_seq: ATAC-seq
+  chip_seq: ChIP-seq
+  cut_and_run: null
+  dna_methylation: DNA methylation
+  germline_wgs_wes: null
+  somatic_wgs_wes: null
+  rare_disease_genomics: Rare diseases
+  ont_long_read: null
+  pacbio_long_read: null
+  long_read_transcriptomics: null
+  metagenome_assembly: Metagenomics
+  metagenomic_taxonomy: null
+  amplicon_sequencing: null
+  viral_genomics: Virology
+  bacterial_genome_assembly: null
+  alternative_splicing: RNA splicing
+  microarray_expression: Gene expression and microarray

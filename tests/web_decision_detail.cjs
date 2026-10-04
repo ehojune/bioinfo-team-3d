@@ -72,13 +72,15 @@ test('other approval kinds preserve every key/value and legacy detail strings',a
 });
 
 test('research plan card shows the full canonical PLAN in readable sections',async()=>{
-  const plan={schema_version:2,intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
+  const plan={schema_version:2,topics:[],intake:{scope_status:'in_scope'},brief:{question:'Does condition change expression?',
     primary_hypothesis:'Condition changes expression',null_or_alternatives:['batch explains the change'],
     completion_conditions:['QC and effect interval reported']},protocol:{revision:1,
     stop_conditions:['design not identifiable'],resource_limits:['one local planning call'],
     data_boundaries:['public counts only'],packs:[{id:'single_cell_de',version:'1',sha256:'a'.repeat(64)}]},
     pack_values:{'single_cell_de@1':{fields:{donor_id:'metadata.donor_id',batch:'library_batch',count_scale:'raw_counts'},
       validators:{'single_cell_de.donor_unit':'donor-level pseudobulk'},acceptance:{'single_cell_de.donor_model':'accepted'}}},
+    pack_applicability:{'bulk_tumor_normal@1':{applied:false,topics_any:['bulk_rna_seq'],matched_topics:[],reason:'topics_empty'}},
+    warnings:['topics is empty; topic-conditioned packs were not applied'],
     clarifying_questions:[],steps:[{id:'s1'}],recruit:[],notes:'frozen'};
   // Use Python-compatible recursively sorted canonical JSON for the approval payload.
   const sortValue=value=>Array.isArray(value)?value.map(sortValue):value&&typeof value==='object'?
@@ -87,7 +89,7 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
   const sha=crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex');
   const c=await card('research_plan',{gate:'research_plan',target_sha256:sha,plan_canonical:canonicalPlan});
   assert.equal(crypto.createHash('sha256').update(canonicalPlan,'utf8').digest('hex'),sha);
-  for (const label of ['질문','가설','완료 조건','중단 조건','자원 상한','data boundary','pack 값','동결 PLAN 전체'])
+  for (const label of ['질문','가설','완료 조건','중단 조건','자원 상한','data boundary','topics','pack 적용 판정','경고','pack 값','동결 PLAN 전체'])
     assert.ok(c.detail.textContent.includes(label),label+' must be visible');
   for (const value of ['Does condition change expression?','Condition changes expression','design not identifiable',
     'public counts only','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');

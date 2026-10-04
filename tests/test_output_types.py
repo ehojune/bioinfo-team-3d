@@ -14,7 +14,7 @@ from labhq.orchestrator import cso
 from labhq.orchestrator.cso import Orchestrator, validate_steps
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
-from labhq.vocab import declare
+from labhq.vocab import declare, topics
 from tests.test_cso import PENGUINS_PLAN, penguins_hub
 
 V = vocab.load()
@@ -26,10 +26,10 @@ CANARY = "CANARY-7f3a-secret"
 # requires every permitted path to write the same declared filename. #373 bench A now declares analysis scripts and
 # result-determining references under outputs/. #373 direction 2 adds optional assumptions and the three-category
 # question rule. Off still adds nothing related to output types.
-PLAN_SCHEMA_SHA = "70966143ac744fdce6184b271d04b5f288e9c55444832c2f697a5f56cdfe4b8c"
-PLAN_PROMPT_SHA = "ce579077173589cdffafcb7eadaaaf00a903ff39e7d5c9fb36d8f24df20d2b3e"
+PLAN_SCHEMA_SHA = "7e754567d3aec5396591e32fb9b0719ea94e22427455a09d9054519e613197cd"
+PLAN_PROMPT_SHA = "096890abf046d4966ead2d15e8985e60ff7b7b088908b4705cf4df6e4bc0d99c"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                   question_rule=QUESTION_RULE, lab_scope="LAB")
+                   question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
 
 def sha(value):

@@ -8,8 +8,8 @@ import pytest
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.research.contract import validate_research_plan
-from labhq.research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog,
-                                  select_applied_packs)
+from labhq.research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
+                                  render_pack_catalog, select_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -75,7 +75,7 @@ def _bulk_plan(**fields):
     selected = _selected(BULK_PACK)
     values = valid_bulk_values()
     values[BULK_PACK]["fields"].update(fields)
-    plan = valid_plan(pack_values=values)
+    plan = valid_plan(pack_values=values, topics=["bulk_rna_seq"])
     plan["brief"]["subject"] = "bulk tumor and normal tissue expression"
     return plan, selected
 
@@ -232,56 +232,58 @@ def test_bulk_required_methods_and_positive_control_rows_are_rejected(field, val
         _validate(plan, selected)
 
 
-def test_only_the_pack_matching_applies_when_is_frozen_when_both_are_configured():
-    configured = _selected(SINGLE_CELL_PACK, BULK_PACK)
+@pytest.mark.parametrize("topics", [["bulk_rna_seq"], ["microarray_expression"],
+                                      ["single_cell_rna_seq", "microarray_expression"]])
+def test_bulk_pack_applies_only_when_a_bulk_expression_topic_matches(topics):
+    configured = _selected(BULK_PACK)
+    expected = bool({"bulk_rna_seq", "microarray_expression"} & set(topics))
+    values = valid_bulk_values() if expected else {}
+    applied = select_applied_packs(configured, values, topics=topics)
+    assert bool(applied) is expected
 
-    bulk_values = valid_bulk_values()
-    bulk_values[SINGLE_CELL_PACK] = {"not_applicable": "The request uses bulk, not single-cell, expression."}
-    bulk_plan = valid_plan(pack_values=bulk_values)
-    bulk = select_applied_packs(configured, bulk_plan["pack_values"])
-    assert list(bulk) == [BULK_PACK]
-    _validate(bulk_plan, bulk)
 
-    single_values = valid_single_cell_values()
-    single_values[BULK_PACK] = {"not_applicable": "The request uses single-cell, not bulk, expression."}
-    single_plan = valid_plan(pack_values=single_values)
-    single = select_applied_packs(configured, single_plan["pack_values"])
-    assert list(single) == [SINGLE_CELL_PACK]
-    _validate(single_plan, single)
+def test_empty_topics_do_not_apply_conditional_pack_and_warn():
+    configured = _selected(BULK_PACK)
+    applied, decisions, warnings = assess_pack_applicability(configured, [])
+    assert applied == {}
+    assert decisions[BULK_PACK]["matched_topics"] == []
+    assert warnings == ["topics is empty; topic-conditioned packs were not applied"]
+
+
+def test_legacy_string_applies_when_pack_is_unconditional(tmp_path):
+    source = Path("labhq/research/packs/bulk_tumor_normal.yaml")
+    raw = source.read_text(encoding="utf-8").replace(
+        "applies_when:\n  description: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.\n  topics_any: [bulk_rna_seq, microarray_expression]",
+        "applies_when: Legacy human-readable condition.",
+    )
+    legacy = tmp_path / "legacy.yaml"
+    legacy.write_text(raw, encoding="utf-8")
+    from labhq.research.packs import load_pack
+    loaded = load_pack(legacy)
+    applied, decisions, warnings = assess_pack_applicability({loaded.pack.key: loaded}, [])
+    assert list(applied) == [loaded.pack.key]
+    assert decisions[loaded.pack.key]["reason"] == "no_topic_condition"
+    assert warnings == []
 
 
 def test_every_configured_pack_requires_values_or_a_not_applicable_reason():
-    configured = _selected(SINGLE_CELL_PACK, BULK_PACK)
-    with pytest.raises(ValueError, match=f"missing.*{SINGLE_CELL_PACK}"):
-        select_applied_packs(configured, valid_bulk_values())
-
-    no_reason = valid_bulk_values()
-    no_reason[SINGLE_CELL_PACK] = {"not_applicable": ""}
-    with pytest.raises(ValueError, match="non-empty not_applicable reason"):
-        select_applied_packs(configured, no_reason)
+    configured = _selected(BULK_PACK)
+    with pytest.raises(ValueError, match=f"missing.*{BULK_PACK}"):
+        select_applied_packs(configured, {}, topics=["bulk_rna_seq"])
 
 
-async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_one():
+async def test_cso_uses_topics_to_freeze_the_matching_pack_and_its_basis():
     settings = Settings()
     settings.research.enabled = True
-    settings.research.active_packs = [SINGLE_CELL_PACK, BULK_PACK]
+    settings.research.active_packs = [BULK_PACK]
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
 
-    missing = valid_bulk_values()
-    answered = valid_bulk_values()
-    reason = "The request compares bulk tissue and has no single-cell measurements."
-    answered[SINGLE_CELL_PACK] = {"not_applicable": reason}
-    replies = [missing, answered]
-
     async def reply(task):
-        assert "every configured pack" in task.prompt
-        assert f'"key": "{SINGLE_CELL_PACK}"' in task.prompt
+        assert "applied packs only" in task.prompt
         assert f'"key": "{BULK_PACK}"' in task.prompt
-        if len(replies) == 1:
-            assert f"pack_values is missing configured packs: ['{SINGLE_CELL_PACK}']" in task.prompt
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
-                          structured=valid_plan(pack_values=replies.pop(0)))
+                          structured=valid_plan(pack_values=valid_bulk_values(), topics=["microarray_expression"]))
 
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
                   text="Compare bulk tumor and normal expression")
@@ -289,19 +291,42 @@ async def test_cso_prompt_exposes_both_packs_but_cp1_freezes_only_the_matching_o
 
     request = hub.requests["r"]
     assert request.get("outcome") == "plan_approved", json.dumps(request, default=str, indent=2)
-    assert len(hub.calls) == 2
-    assert request["plan"]["pack_values"][SINGLE_CELL_PACK] == {"not_applicable": reason}
+    assert len(hub.calls) == 1
     assert [row["id"] for row in request["plan"]["protocol"]["packs"]] == ["bulk_tumor_normal"]
     assert list(request["research_contract"]["pack_snapshot"]) == [BULK_PACK]
-    assert json.loads(hub.approvals[0]["detail"]["plan_canonical"])["pack_values"][SINGLE_CELL_PACK] == {
-        "not_applicable": reason,
-    }
+    decision = request["plan"]["pack_applicability"][BULK_PACK]
+    assert decision["applied"] and decision["matched_topics"] == ["microarray_expression"]
+    assert request["research_contract"]["pack_applicability"] == request["plan"]["pack_applicability"]
+
+
+async def test_empty_topics_warning_is_frozen_and_visible_on_the_cp1_card():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=valid_plan(pack_values={}, topics=[]))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="Inspect expression data")
+    await Orchestrator(hub).run_request("r")
+    warning = "topics is empty; topic-conditioned packs were not applied"
+    assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert hub.requests["r"]["plan"]["warnings"] == [warning]
+    detail = hub.approvals[0]["detail"]
+    assert detail["warnings"] == [warning]
+    assert json.loads(detail["plan_canonical"])["warnings"] == [warning]
 
 
 def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
     rows = {row["key"]: row for row in map(json.loads, render_pack_catalog(_selected(BULK_PACK)).splitlines())}
     row = rows[BULK_PACK]
-    assert "bulk" in row["applies_when"].lower()
+    assert row["applies_when"] == {
+        "description": "Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.",
+        "topics_any": ["bulk_rna_seq", "microarray_expression"],
+    }
     assert row["pack_values_keys"]["fields"] == [
         "pairing", "pairing_evidence", "primary_model", "model_rule", "expression_scale",
         "low_expression_filter", "de_threshold", "positive_controls",

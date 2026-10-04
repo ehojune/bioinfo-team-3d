@@ -152,13 +152,25 @@ _PLAN_RULE_FIELDS = {
 }
 
 
+class PackApplicability(StrictModel):
+    description: str = Field(min_length=1)
+    topics_any: list[str] = Field(min_length=1, max_length=24)
+
+    @field_validator("topics_any")
+    @classmethod
+    def sorted_unique(cls, value: list[str]) -> list[str]:
+        if not all(isinstance(item, str) and item for item in value):
+            raise ValueError("topics_any must contain non-empty topic keys")
+        return sorted(set(value))
+
+
 class DomainRulePack(StrictModel):
     schema_version: Literal[1]
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     version: str = Field(min_length=1)
     title: str = Field(min_length=1)
     core_contract: Literal["extend_only"]
-    applies_when: str = Field(min_length=1)
+    applies_when: str | PackApplicability
     sources: list[PackSource] = Field(min_length=1)
     fields: list[PackField] = Field(min_length=1)
     validators: list[PackValidator] = Field(min_length=1)
@@ -168,6 +180,8 @@ class DomainRulePack(StrictModel):
 
     @model_validator(mode="after")
     def declarative_rules_are_well_formed(self) -> "DomainRulePack":
+        if isinstance(self.applies_when, str) and not self.applies_when.strip():
+            raise ValueError("domain pack legacy applies_when must not be blank")
         field_names = [field.name for field in self.fields]
         if len(field_names) != len(set(field_names)):
             raise ValueError("domain pack field names must be unique")
@@ -230,6 +244,15 @@ def pack_sha256(pack: DomainRulePack) -> str:
 def load_pack(path: Path) -> LoadedPack:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     pack = DomainRulePack.model_validate(raw)
+    if isinstance(pack.applies_when, PackApplicability):
+        from .. import vocab as output_vocab
+
+        loaded = output_vocab.current()
+        if loaded is None:
+            raise ValueError(f"domain pack {pack.key}: topic vocabulary is unavailable")
+        unknown = sorted(set(pack.applies_when.topics_any) - set(loaded.keys("topic")))
+        if unknown:
+            raise ValueError(f"domain pack {pack.key}: unknown topics_any keys {unknown}")
     return LoadedPack(pack=pack, sha256=pack_sha256(pack))
 
 
@@ -273,26 +296,50 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
     return selected
 
 
-def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
-    """Require an explicit answer for every configured pack, then return the applicable ones."""
-    if not isinstance(pack_values, dict):
-        raise ValueError("research plan must answer every configured pack in pack_values")
-    unknown = sorted(set(pack_values) - set(configured))
-    if unknown:
-        raise ValueError(f"research plan selected unconfigured packs: {unknown}")
-    missing = sorted(set(configured) - set(pack_values))
-    if missing:
-        raise ValueError(f"research plan pack_values is missing configured packs: {missing}; provide values or "
-                         f'{{"not_applicable": "<reason>"}} for each one')
+def assess_pack_applicability(configured: dict[str, LoadedPack], topics: Any) \
+        -> tuple[dict[str, LoadedPack], dict[str, dict[str, Any]], list[str]]:
+    """Select packs from normalized topics and return an auditable decision for every configured pack."""
+    selected_topics = sorted(set(item for item in topics or [] if isinstance(item, str)))
     applied: dict[str, LoadedPack] = {}
+    decisions: dict[str, dict[str, Any]] = {}
+    conditioned = False
     for key, loaded in configured.items():
+        condition = loaded.pack.applies_when
+        if isinstance(condition, str):
+            applied[key] = loaded
+            decisions[key] = {"applied": True, "topics_any": [], "matched_topics": [],
+                              "reason": "no_topic_condition"}
+            continue
+        conditioned = True
+        expected = list(condition.topics_any)
+        matched = sorted(set(expected) & set(selected_topics))
+        is_applied = bool(matched)
+        if is_applied:
+            applied[key] = loaded
+        decisions[key] = {"applied": is_applied, "topics_any": expected, "matched_topics": matched,
+                          "reason": "topic_match" if matched else
+                                    "topics_empty" if not selected_topics else "no_topic_match"}
+    warnings = (["topics is empty; topic-conditioned packs were not applied"]
+                if conditioned and not selected_topics else [])
+    return applied, decisions, warnings
+
+
+def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *, topics: Any) \
+        -> dict[str, LoadedPack]:
+    """Require values for topic-selected packs only; applicability is not a CSO free-text choice."""
+    applied, _decisions, _warnings = assess_pack_applicability(configured, topics)
+    if not isinstance(pack_values, dict):
+        raise ValueError("research plan pack_values must be an object")
+    unknown = sorted(set(pack_values) - set(applied))
+    if unknown:
+        raise ValueError(f"research plan supplied values for packs that do not apply: {unknown}")
+    missing = sorted(set(applied) - set(pack_values))
+    if missing:
+        raise ValueError(f"research plan pack_values is missing applied packs: {missing}")
+    for key in applied:
         value = pack_values[key]
         if isinstance(value, dict) and "not_applicable" in value:
-            reason = value.get("not_applicable")
-            if set(value) != {"not_applicable"} or not isinstance(reason, str) or not reason.strip():
-                raise ValueError(f"research plan pack_values[{key}] requires one non-empty not_applicable reason")
-            continue
-        applied[key] = loaded
+            raise ValueError(f"research plan pack_values[{key}] cannot be not_applicable after topic selection")
     return applied
 
 
@@ -330,7 +377,8 @@ def render_pack_catalog(packs: dict[str, LoadedPack]) -> str:
     for key, loaded in sorted(packs.items()):
         pack = loaded.pack
         rows.append(json.dumps({"key": key, "sha256": loaded.sha256,
-                                "applies_when": pack.applies_when,
+                                "applies_when": (pack.applies_when if isinstance(pack.applies_when, str)
+                                                 else pack.applies_when.model_dump(mode="json")),
                                 # The exact keys of pack_values[key]: acceptance ids are the rule ids (#222).
                                 "pack_values_keys": {"fields": [field.name for field in pack.fields],
                                                      "validators": [v.id for v in pack.validators],

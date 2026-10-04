@@ -39,7 +39,9 @@ def _load(vocab: Vocab) -> dict[str, Any]:
         raise ValueError("input_fit_shape")
     operation_keys = set(vocab.keys("operation"))
     data_keys = set(vocab.keys("data"))
-    if set(operations) != operation_keys or any(value not in operation_keys for value in (*packs.values(), *agents.values())):
+    # New approved operation keys stay unknown until this separate PI-reviewed relation table names them.
+    if not set(operations) <= operation_keys or any(value not in operation_keys
+                                                     for value in (*packs.values(), *agents.values())):
         raise ValueError("input_fit_operation")
     checked: dict[str, dict[str, Any]] = {}
     for operation, body in operations.items():
