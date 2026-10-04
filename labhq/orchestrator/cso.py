@@ -805,6 +805,18 @@ def _split_report_appendix(report: str) -> tuple[str, str]:
     return body.strip(), (EXECUTION_APPENDIX_TITLE + ("\n\n" + appendix if appendix else ""))
 
 
+def _terminal_reports(rid: str, report: str, report_appendix: str) -> dict[str, Any]:
+    """Bound terminal copies while pointing every truncated field at the durable request."""
+    data = {}
+    for field, value in (("report", report), ("report_appendix", report_appendix)):
+        data[field] = clip(value, 20000)
+        if len(value) > 20000:
+            data[f"{field}_truncated"] = True
+            data[f"{field}_chars"] = len(value)
+            data[f"{field}_api"] = f"/api/requests/{rid}"
+    return data
+
+
 def _execution_warning_summary(report: str) -> str:
     """Ensure a warning moved out of the PI report still leaves one visible limitation line."""
     if "실행 기록 참고" in report:
@@ -2744,7 +2756,7 @@ class Orchestrator:
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
-        body = report_body(final.text)
+        body, model_appendix = _split_report_appendix(report_body(final.text))
         check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
         contract["report_check"] = check
@@ -2755,7 +2767,7 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and "## 리뷰 참고" not in body:
             body = body.rstrip() + "\n\n" + body_reference
-        report = _append_report_metadata(body, [*claim_check, cp2_audit])
+        report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix, [*claim_check, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
@@ -3708,8 +3720,8 @@ class Orchestrator:
                              "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 오류가 있습니다. 실행 기록 참고.")
             req["report_appendix"] = _appendix_sections("", [req["error"], *execution])
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
-            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000),
-                      "report_appendix": clip(req.get("report_appendix") or "", 20000),
+            failed = {"error": req["error"],
+                      **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
             if hasattr(self.hub, "commit_terminal"):
@@ -3777,8 +3789,7 @@ class Orchestrator:
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
                    cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
-        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
-                "report_appendix": clip(report_appendix, 20000),
+        data = {"ok": ok, **_terminal_reports(rid, report, report_appendix), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

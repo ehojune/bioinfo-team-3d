@@ -29,3 +29,11 @@ def test_open_3d_and_a_browser_that_does_not_open():
 def test_terminal_output_keeps_the_pi_report_and_labels_the_execution_record():
     output = _terminal_report({"report": "PI body", "report_appendix": "step status"})
     assert output == "PI body\n\n--- 실행 기록 ---\nstep status"
+
+
+def test_terminal_output_explains_where_to_fetch_a_truncated_appendix():
+    output = _terminal_report({"report": "PI body", "report_appendix": "step status",
+                               "report_appendix_truncated": True, "report_appendix_chars": 22_000,
+                               "report_appendix_api": "/api/requests/r"})
+    assert "실행 기록 잘림 · 전체 22000자" in output
+    assert "전문: GET /api/requests/r" in output

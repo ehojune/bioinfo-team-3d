@@ -2234,6 +2234,25 @@ async def test_finish_groups_status_and_warnings_under_one_execution_appendix():
     assert "Step status and output paths" in appendix
 
 
+def test_finish_preserves_a_long_appendix_and_marks_the_terminal_copy_as_truncated():
+    async def dispatch(task):
+        return result(task, text="unused")
+
+    hub = FakeHub(dispatch)
+    terminal = []
+    hub.commit_terminal = lambda rid, typ, data: terminal.append((rid, typ, data))
+    full = "기록" * 11_000
+    Orchestrator(hub)._finish("r", "PI body\n\n## 부록: 실행 기록\n\n" + full, {}, ok=True)
+
+    stored = hub.requests["r"]["report_appendix"]
+    data = terminal[0][2]
+    assert full in stored and len(stored) > 20_000
+    assert len(data["report_appendix"]) <= 20_000 and data["report_appendix"] != stored
+    assert data["report_appendix_truncated"] is True
+    assert data["report_appendix_chars"] == len(stored)
+    assert data["report_appendix_api"] == "/api/requests/r"
+
+
 def test_cso_plan_prompt_states_the_outputs_rule():
     from labhq.orchestrator.cso import PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 

@@ -540,6 +540,33 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
     assert saved_report["appendix_path"].endswith("-r_appendix.md")
 
 
+@pytest.mark.asyncio
+async def test_committed_github_appendix_uses_the_stored_request_not_the_truncated_event(tmp_path):
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p", commit_reports=True)])
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s, github_transport=fake_github(calls))
+    full = "긴 실행 기록\n" + "x" * 21_000 + "\n전문 끝"
+    hub.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done",
+                         "finished_at": 1_700_000_000, "report": "full PI report",
+                         "report_appendix": full}
+    hub.reporter.issues["r"] = 7
+
+    await hub.reporter.handle({"type": "request.completed", "request_id": "r", "seq": 9,
+                               "data": {"ok": True, "report": "event report",
+                                        "report_appendix": full[:20_000],
+                                        "report_appendix_truncated": True,
+                                        "report_appendix_chars": len(full),
+                                        "report_appendix_api": "/api/requests/r"}})
+
+    uploads = {path: base64.b64decode(body["content"]).decode("utf-8")
+               for method, path, body in calls if method == "PUT" and "/contents/" in path}
+    appendix = next(text for path, text in uploads.items() if "_appendix.md" in path)
+    report = next(text for path, text in uploads.items() if "_appendix.md" not in path)
+    assert "전문 끝" in appendix and full in appendix
+    assert "full PI report" in report and "event report" not in report
+
+
 async def test_unparsed_review_posts_failure_comment(tmp_path):
     calls = []
     s = Settings(projects=[ProjectSettings(id="demo", repo="o/p")])

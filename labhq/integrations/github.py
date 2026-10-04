@@ -615,8 +615,8 @@ class ProjectReporter:
                                      f"🐥 파견직 합류: **{a.get('name')}** (`{a.get('id')}`) — "
                                      f"수습 통과={d.get('passed_probation')}", "recruit")
         elif typ in ("request.completed", "request.failed"):
-            report = d.get("report") or req.get("report") or d.get("error") or ""
-            appendix = d.get("report_appendix") or req.get("report_appendix") or ""
+            report = req.get("report") or d.get("report") or d.get("error") or ""
+            appendix = req.get("report_appendix") or d.get("report_appendix") or ""
             report_url = None
             if typ == "request.completed" and proj.commit_reports:
                 saved = self._action(ev, "report") or {}

@@ -3,6 +3,7 @@ and a machine check of those claim anchors."""
 
 import pytest
 
+from labhq.evidence.audit import rerun_report_check
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from tests.test_research_cp2 import CP1, _interrupt, _settings
@@ -164,6 +165,37 @@ async def test_research_claim_check_and_execution_status_share_the_appendix():
     assert "실행 기록 참고" in report
     assert appendix.startswith("## 부록: 실행 기록")
     assert "Claim check:" in appendix and "Step status and output paths" in appendix
+
+
+@pytest.mark.asyncio
+async def test_research_claim_check_ignores_an_anchor_found_only_in_the_model_appendix():
+    model_report = ("## 결론과 권고\n본문에는 claim anchor가 없습니다.\n\n"
+                    "## 부록: 실행 기록\n모델 기록 [[claim:s1/c1]].")
+    hub = _hub(report=model_report)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    recorded = req["research_contract"]["report_check"]
+    rerun = rerun_report_check(req)
+    assert req["outcome"] == "report_incomplete" and req["status"] == "failed"
+    assert recorded["anchors"] == 0 and any("anchors no claim" in line for line in recorded["problems"])
+    assert "[[claim:s1/c1]]" not in req["report"] and "[[claim:s1/c1]]" in req["report_appendix"]
+    assert rerun and rerun["same"] is True and rerun["rerun"] == recorded
+
+
+@pytest.mark.asyncio
+async def test_research_claim_check_ignores_a_bad_anchor_in_the_model_appendix():
+    model_report = (REPORT + "\n\n## 부록: 실행 기록\n잘못된 기록 [[claim:s1/c9]].")
+    hub = _hub(report=model_report)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    recorded = req["research_contract"]["report_check"]
+    rerun = rerun_report_check(req)
+    assert req["outcome"] == "research_reported" and req["status"] == "done"
+    assert recorded == {"anchors": 1, "problems": []}
+    assert "[[claim:s1/c9]]" not in req["report"] and "[[claim:s1/c9]]" in req["report_appendix"]
+    assert rerun and rerun["same"] is True and rerun["rerun"] == recorded
 
 
 @pytest.mark.asyncio

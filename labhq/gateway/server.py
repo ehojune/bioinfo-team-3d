@@ -69,7 +69,9 @@ def snapshot_event(event: dict) -> dict:
             if isinstance(value, str) and len(value) > SNAPSHOT_REPORT_CHARS:
                 shortened[field] = value[:SNAPSHOT_REPORT_CHARS]
                 shortened[f"{field}_truncated"] = True
-                shortened[f"{field}_chars"] = len(value)
+                shortened.setdefault(f"{field}_chars", len(value))
+                if event.get("request_id"):
+                    shortened.setdefault(f"{field}_api", f"/api/requests/{event['request_id']}")
                 changed = True
         if changed:
             return {**event, "data": shortened}
@@ -86,7 +88,7 @@ def snapshot_reports(request: dict) -> dict:
             if isinstance(request.get(key), str)}
     if not data:
         return {}
-    return snapshot_event({"type": "request.completed", "data": data})["data"]
+    return snapshot_event({"type": "request.completed", "request_id": request.get("id"), "data": data})["data"]
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import

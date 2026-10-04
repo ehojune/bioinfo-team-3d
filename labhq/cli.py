@@ -145,6 +145,12 @@ def _terminal_report(data: dict) -> str:
     """PI report first, then the separately labelled execution record for watch/send."""
     body = str(data.get("report") or data.get("error") or "")
     appendix = str(data.get("report_appendix") or "")
+    if data.get("report_truncated"):
+        body += (f"\n\n[… 본문 잘림 · 전체 {data.get('report_chars', '?')}자 · "
+                 f"전문: GET {data.get('report_api', '-')}]")
+    if appendix and data.get("report_appendix_truncated"):
+        appendix += (f"\n\n[… 실행 기록 잘림 · 전체 {data.get('report_appendix_chars', '?')}자 · "
+                     f"전문: GET {data.get('report_appendix_api', '-')}]")
     return body + (("\n\n--- 실행 기록 ---\n" + appendix) if appendix else "")
 
 
