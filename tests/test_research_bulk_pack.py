@@ -546,7 +546,8 @@ FLAG = {"name": "flag", "description": "Optional flag.", "value_type": "boolean"
     ([MIN_PAIRS], "min_pairs", 2, "min_pairs must be at least 3"),
     ([FLAG], "flag", 1, "flag must be boolean"),
     ([], "positive_controls", "TP53", "positive_controls must match"),
-    ([], "pairing_evidence", None, "pairing_evidence is required"),
+    ([], "pairing_evidence", None, "pairing_evidence cannot be null"),
+    ([FLAG], "flag", None, "flag cannot be null"),
     ([], "primary_model", "paired", "primary_model must be one of"),
 ])
 def test_combination_cells_no_valid_answer_can_match_are_rejected_at_load(extra, column, cell, detail):
@@ -557,4 +558,4 @@ def test_combination_cells_no_valid_answer_can_match_are_rejected_at_load(extra,
 
 def test_combination_cells_that_a_valid_answer_can_match_still_load():
     assert DomainRulePack.model_validate(_bulk_pack_with_table([MIN_PAIRS], "min_pairs", [3, 4]))
-    assert DomainRulePack.model_validate(_bulk_pack_with_table([FLAG], "flag", [None, True, False]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([FLAG], "flag", [True, False]))

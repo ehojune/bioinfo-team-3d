@@ -237,9 +237,10 @@ class DomainRulePack(StrictModel):
                 for row in rule.allowed_combinations.rows:
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
-                        if field is None or (value is None and not field.required):
+                        if field is None:
                             continue
-                        problem = ("is required" if value is None else field_value_problem(field, value))
+                        # An omitted answer never equals null and an explicit null fails the type check.
+                        problem = ("cannot be null" if value is None else field_value_problem(field, value))
                         if problem:
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
                                              f"allowed for {name} ({name} {problem})")
