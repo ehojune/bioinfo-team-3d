@@ -3564,10 +3564,15 @@ class Orchestrator:
                     a short while to come back (so its cost is recorded), then cancel and reap the job."""
                     if precedent_job is None:
                         return
-                    runner = getattr(self.hub, "task_runner", {}).get(precedent_task.id)
-                    if runner and not precedent_job.done():
+                    if not precedent_job.done():
+                        cancel = getattr(self.hub, "cancel_task", None)
+                        runner = getattr(self.hub, "task_runner", {}).get(precedent_task.id)
                         try:
-                            await self.hub.send_runner(runner, {"type": "task.cancel", "task_id": precedent_task.id})
+                            if cancel is not None:  # kept until the turn ends, resent if its runner reconnects
+                                await cancel(precedent_task.id)
+                            elif runner:
+                                await self.hub.send_runner(runner, {"type": "task.cancel",
+                                                                    "task_id": precedent_task.id})
                         except Exception:  # an unreachable runner cannot run it either; the job is reaped below
                             pass
                     await asyncio.wait([precedent_job], timeout=PRECEDENT_CANCEL_GRACE_S)
