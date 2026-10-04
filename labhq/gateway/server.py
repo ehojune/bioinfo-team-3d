@@ -835,6 +835,35 @@ class Hub:
                 await self.send_runner(runner_id, {"type": "approval.resolved", "id": aid,
                                                    "approved": entry["approved"], "note": entry["note"]})
 
+    async def cancel_task(self, tid: str) -> bool:
+        """Ask the task's runner to stop it and keep the ask until the task ends (PR #396 review).
+
+        A runner that was away when the cancel went out gets it again when it reconnects (flush_task_cancels), so
+        a turn the gateway gave up on cannot keep spending on that runner. False means the task is unknown."""
+        entry = self.store.get("task", tid)
+        runner_id = self.task_runner.get(tid) or (entry or {}).get("runner_id")
+        if not runner_id:
+            return False
+        if entry and entry.get("completed"):
+            return True
+        self.store.put("task_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
+        try:
+            await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
+        except RunnerUnavailable:
+            pass  # kept: sent again when that runner reconnects
+        return True
+
+    async def flush_task_cancels(self, runner_id: str) -> None:
+        """Resend kept cancels to a reconnected runner; drop those whose task already ended or was abandoned."""
+        for tid, entry in self.store.all("task_cancel").items():
+            if entry.get("runner_id") != runner_id:
+                continue
+            task = self.store.get("task", tid)
+            if not task or task.get("completed"):
+                self.store.delete("task_cancel", tid)
+                continue
+            await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
+
     async def flush_ask_answers(self, runner_id: str) -> None:
         for ask_id, entry in self.store.all("ask").items():
             if (entry.get("origin") == runner_id and entry.get("state") == "resolved"
@@ -976,6 +1005,8 @@ class Hub:
             tid = msg.get("task_id") or ""
             task = self.store.get("task", tid) if tid else None
             result = TaskResult.model_validate(msg["data"])
+            if tid:
+                self.store.delete("task_cancel", tid)  # the task ended: a kept cancel has nothing left to stop
             if (result.pipeline_submission is not None and self.s.policy.bioinfo_agent.pipeline_pr
                     and result.ok and not waiting(result)):
                 self.store.put("pipeline_submission", tid, {
@@ -1697,6 +1728,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                                 hello.get("capabilities"))
             await hub.flush_decisions(runner_id)
             await hub.flush_ask_answers(runner_id)
+            await hub.flush_task_cancels(runner_id)
             await hub.publish({"type": "runner.online", "ts": time.time(),
                                "data": {"runner_id": runner_id, "agents": len(hello.get("agents", []))}})
             while True:
@@ -1847,10 +1879,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.post("/api/tasks/{tid}/cancel", dependencies=[Depends(auth)])
     async def cancel(tid: str) -> dict:
-        rid = hub.task_runner.get(tid)
-        if not rid:
+        if not await hub.cancel_task(tid):
             raise HTTPException(404)
-        await hub.send_runner(rid, {"type": "task.cancel", "task_id": tid})
         return {"ok": True}
 
     @app.post("/api/requests/{rid}/steps/{step_id}/resume-quota", dependencies=[Depends(auth)])
