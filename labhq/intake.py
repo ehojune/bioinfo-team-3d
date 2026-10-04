@@ -41,10 +41,17 @@ CLARIFYING_QUESTION_SCHEMA: dict[str, Any] = {
     "required": ["question", "options", "allow_free_text"],
 }
 
-QUESTION_RULE = ("Ask clarifying_questions only if an answer would change the plan: at most 4, each an object with "
-                 "the question, 2-4 short options (shown as a/b/c/d buttons), allow_free_text (true when none of "
-                 "the options may fit), and depth (about 30, 60 or 90 minutes of work) only when the question is "
-                 "how deep to go.")
+QUESTION_RULE = (
+    "Ask clarifying_questions only in these three categories: (1) authority, cost, or data access, such as "
+    "installation, budget, controlled data, or HPC; (2) a choice that would substantially change the result and "
+    "only the PI knows, such as the disease, cohort, or specimen scope itself; or (3) depth. For depth, put the "
+    "recommended option first, mark it `(권장)`, give an approximate time and cost for every option, and plan on "
+    "the recommended option. Do not ask about scientific design choices such as public dataset selection, "
+    "statistical models, filters or thresholds, comparators, or methods; decide them as the CSO. At most 4 "
+    "questions, each an object with the question, 2-4 short options (shown as a/b/c/d buttons), allow_free_text "
+    "(true when none of the options may fit), and depth (about 30, 60 or 90 minutes of work) only when the question "
+    "is how deep to go."
+)
 
 
 class ClarifyingQuestion(BaseModel):

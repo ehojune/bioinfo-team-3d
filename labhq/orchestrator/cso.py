@@ -56,6 +56,8 @@ PLAN_SCHEMA: dict[str, Any] = {
     "properties": {
         "scope": SCOPE_SCHEMA,
         "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
+        "assumptions": {"type": "array", "maxItems": 8,
+                        "items": {"type": "string", "maxLength": 300}},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
@@ -72,6 +74,35 @@ PLAN_SCHEMA: dict[str, Any] = {
     },
     "required": ["scope", "clarifying_questions", "steps", "recruit", "notes"],
 }
+
+ASSUMPTIONS_RULE = ("Record each scientific design choice you made instead of asking in `assumptions`. Use at most "
+                    "8 short strings, each formatted `what was decided — one-line reason`.")
+
+
+def normalize_assumptions(raw: Any) -> list[str]:
+    """Keep a fresh general plan's short string assumptions, following its bounded-list convention."""
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() for item in raw if isinstance(item, str) and item.strip()][:8]
+
+
+def _carry_assumptions(previous: Any, candidate: Any) -> Any:
+    """Carry general-lane design choices across clarification, correction, and re-planning."""
+    if not isinstance(candidate, dict):
+        return candidate
+    old_has = isinstance(previous, dict) and "assumptions" in previous
+    if "assumptions" not in candidate and not old_has:
+        return candidate
+    combined = [
+        *normalize_assumptions(previous.get("assumptions") if isinstance(previous, dict) else None),
+        *normalize_assumptions(candidate.get("assumptions")),
+    ]
+    return {**candidate, "assumptions": list(dict.fromkeys(combined))[:8]}
+
+
+def _assumptions_prompt(plan: Any) -> str:
+    assumptions = normalize_assumptions(plan.get("assumptions") if isinstance(plan, dict) else None)
+    return "\n".join(f"- {value}" for value in assumptions) if assumptions else "(none recorded)"
 
 
 def plan_schema(declare: bool) -> dict[str, Any]:
@@ -239,6 +270,7 @@ Rules:
 - If no roster member covers a required method, add a contract hire to `recruit` (paper + code repo +
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
+- """ + ASSUMPTIONS_RULE + """
 - Judge the request against the lab's scope ({lab_scope}) in `scope`: verdict "in" when it fits, "borderline"
   when it is adjacent work the lab can still do, "out" when it is outside the lab's field; reason is one sentence.
   Plan the steps whatever the verdict (for "out" the PI decides whether they run), and do not ask about scope in
@@ -276,7 +308,8 @@ Contract rules:
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
-- Put QC after data generation. {question_rule} Each question is at most 500 characters (a longer one fails plan
+- Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
+  than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
 - Answer every configured pack in top-level `pack_values`. If its `applies_when` matches, fill `pack_values[key]`
@@ -418,6 +451,8 @@ Rules:
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
+- {question_rule}
+- """ + ASSUMPTIONS_RULE + """
 - """ + ENV_STEP_RULE + """ If the plan already has an environment step, new steps depend on it instead.
 - {empty_rule}
 
@@ -438,6 +473,10 @@ details in the separate execution record; do not copy their details into the bod
 "(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
 Warning preview ("(none)" means there is no warning section):
 {warnings}
+
+Scientific design assumptions: {assumptions}
+Under "방법 요약", add a subsection titled "가정" and list these choices with their reasons. If none were recorded,
+do not invent any.
 
 Request: {request}
 
@@ -3021,6 +3060,7 @@ class Orchestrator:
                     self._finish(rid, "Plan completed.", {}, ok=True)
                     return
                 else:
+                    req["plan"] = _carry_assumptions(None, req["plan"])
                     type_stats: dict = {}
                     vocab = self._output_vocab()
                     steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
@@ -3101,7 +3141,9 @@ class Orchestrator:
                 if rid in self.budget_denials:
                     self._finish(rid, "계획 뒤 예산 승인 거부", {"plan": plan_res.model_dump(mode="json")}, ok=False)
                     return
-                plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                plan = _carry_assumptions(
+                    None, plan_res.structured if isinstance(plan_res.structured, dict)
+                    else extract_json(plan_res.text) or {})
                 if scope_verdict(plan) and "scope_first" not in req:
                     # Kept for a later plan (clarification, correction, A/B) that comes back without a verdict from an
                     # engine that does not enforce the schema: an out request must not run unasked (#346 review).
@@ -3139,8 +3181,9 @@ class Orchestrator:
                                 self._finish(rid, "A/B 재계획 뒤 예산 승인 거부",
                                              {"plan": plan_res.model_dump(mode="json")}, ok=False)
                                 return
-                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
-                                    else extract_json(plan_res.text) or {})
+                            plan = _carry_assumptions(
+                                plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                                else extract_json(plan_res.text) or {})
                 # semantics-shadow: end
                 details = normalize_questions(plan.get("clarifying_questions"))
                 questions = [q["question"] for q in details]
@@ -3152,9 +3195,12 @@ class Orchestrator:
                     await self._emit(rid, "request.questions", {"questions": questions, "details": details})
                     if self.cfg.wait_for_clarification:
                         # The card shows options as buttons and returns the composed answer as the note (#34).
+                        detail = {"questions": details}
+                        assumptions = normalize_assumptions(plan.get("assumptions"))
+                        if assumptions:
+                            detail["assumptions"] = assumptions
                         dec = await self.hub.request_approval(kind="clarify", request_id=rid,
-                                                              summary=questions_summary(details),
-                                                              detail={"questions": details})
+                                                              summary=questions_summary(details), detail=detail)
                         if not dec.get("approved") or not str(dec.get("note") or "").strip():
                             self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
                             return
@@ -3170,7 +3216,9 @@ class Orchestrator:
                         if not plan_res.ok:
                             self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
                             return
-                        plan = plan_res.structured if isinstance(plan_res.structured, dict) else extract_json(plan_res.text) or {}
+                        plan = _carry_assumptions(
+                            plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                            else extract_json(plan_res.text) or {})
                         still = normalize_questions(plan.get("clarifying_questions"))
                         if still:
                             req["pending_questions"] = [q["question"] for q in still]
@@ -3241,8 +3289,9 @@ class Orchestrator:
                             self._finish(rid, "교정 계획 뒤 예산 승인 거부",
                                          {"plan": plan_res.model_dump(mode="json")}, ok=False)
                             return
-                        plan = (plan_res.structured if isinstance(plan_res.structured, dict)
-                                else extract_json(plan_res.text) or {})
+                        plan = _carry_assumptions(
+                            plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                            else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
@@ -3269,8 +3318,9 @@ class Orchestrator:
                                 self._finish(rid, "교정 계획 뒤 예산 승인 거부",
                                              {"plan": plan_res.model_dump(mode="json")}, ok=False)
                                 return
-                            plan = (plan_res.structured if isinstance(plan_res.structured, dict)
-                                    else extract_json(plan_res.text) or {})
+                            plan = _carry_assumptions(
+                                plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                                else extract_json(plan_res.text) or {})
                             still = normalize_questions(plan.get("clarifying_questions"))
                             if still:
                                 req["pending_questions"] = [q["question"] for q in still]
@@ -3406,7 +3456,8 @@ class Orchestrator:
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
-                            empty_rule=empty_rule, request=text, plan=json.dumps(steps, ensure_ascii=False),
+                            empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
+                            plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
@@ -3427,7 +3478,7 @@ class Orchestrator:
                     return candidate
 
                 try:
-                    candidate = await ask_cso(1)
+                    candidate = _carry_assumptions(req.get("plan"), await ask_cso(1))
                     details = normalize_questions(candidate.get("clarifying_questions"))
                     if details:  # a changed scope, cost or approval goes back through the clarify gate
                         req["pending_questions"] = [q["question"] for q in details]
@@ -3437,9 +3488,13 @@ class Orchestrator:
                         await self._emit(rid, "request.questions",
                                          {"questions": req["pending_questions"], "details": details})
                         if self.cfg.wait_for_clarification:
+                            detail = {"questions": details}
+                            assumptions = normalize_assumptions(candidate.get("assumptions"))
+                            if assumptions:
+                                detail["assumptions"] = assumptions
                             decision = await self.hub.request_approval(
                                 kind="clarify", request_id=rid, summary=questions_summary(details),
-                                detail={"questions": details})
+                                detail=detail)
                             if not decision.get("approved") or not str(decision.get("note") or "").strip():
                                 return record("failed", attempt,
                                               reason="re-plan needs PI clarification that was denied or unanswered")
@@ -3451,7 +3506,7 @@ class Orchestrator:
                             req.pop("pending_question_details", None)
                             text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
                             self.hub.save_request(rid)
-                            candidate = await ask_cso(2)
+                            candidate = _carry_assumptions(candidate, await ask_cso(2))
                             still = normalize_questions(candidate.get("clarifying_questions"))
                             if still:
                                 req["pending_questions"] = [q["question"] for q in still]
@@ -3509,7 +3564,10 @@ class Orchestrator:
                     (req.get("step_decisions") or {}).pop(sid, None)
                     (req.get("pending_revisions") or {}).pop(sid, None)
                 steps = merged
-                req["plan"] = {**(req.get("plan") or {}), "steps": steps,
+                req["plan"] = {**(req.get("plan") or {}),
+                               **({"assumptions": normalize_assumptions(candidate.get("assumptions"))}
+                                  if "assumptions" in candidate else {}),
+                               "steps": steps,
                                "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings]}
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
@@ -3668,7 +3726,8 @@ class Orchestrator:
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000),
-                                           warnings=general_report_warnings(steps, results) or "(none)") +
+                                           warnings=general_report_warnings(steps, results) or "(none)",
+                                           assumptions=_assumptions_prompt(req.get("plan"))) +
                        replan_history_note(req) +
                        (UNRESOLVED_REVIEW_NOTE if unresolved else "") +
                        (REVIEW_REFERENCE_NOTE if reference_issues else ""),

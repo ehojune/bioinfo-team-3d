@@ -24,9 +24,10 @@ CANARY = "CANARY-7f3a-secret"
 # one-environment-step rule (ENV_STEP_RULE); #36 added the scope verdict (schema, was 62d09433…) and the lab scope
 # rule (prompt, was f0053d96…); #373 restricted installs to wheels and required planned fallbacks. PR #378 review
 # requires every permitted path to write the same declared filename. #373 bench A now declares analysis scripts and
-# result-determining references under outputs/, so the fixed prompt hash changes again. Off still adds nothing.
-PLAN_SCHEMA_SHA = "f8f30b831ff2aa79018ceed6185184a82c959d4885ca71a8a0fe678c10ee4eb9"
-PLAN_PROMPT_SHA = "b9c9628b9565dc45ac1edbf579670a01763c3ea9b3d78e3fb0220b24d35a684f"
+# result-determining references under outputs/. #373 direction 2 adds optional assumptions and the three-category
+# question rule. Off still adds nothing related to output types.
+PLAN_SCHEMA_SHA = "92cf5fcaaa9b0c915ba02fdb48e9b4e8518d633ab4c6b4d4cd56b5b4d1de17e2"
+PLAN_PROMPT_SHA = "184a023d055dd7d6e4386b131e82273a84c11eaf7b6dc425c3619e7e9b7123cf"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB")
 
