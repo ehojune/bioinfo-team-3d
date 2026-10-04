@@ -533,3 +533,55 @@ async def test_a_parallel_turn_ending_keeps_the_waiting_turns_login_window(tmp_p
     assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
     a.cancel()
     await asyncio.gather(a, return_exceptions=True)
+
+
+def test_login_command_never_borrows_another_runners_host(tmp_path):
+    # PR #398 review: the waiting turn's runner pc-a has not reconnected; pc-b (another OS) hosts the same engine.
+    hub = _hub(tmp_path)
+    hub.agents["other"] = {"id": "other", "engine": "claude_code"}
+    hub.agent_runner["other"] = "pc-b"
+    hub.runner_capabilities = {"pc-b": {"platform": "linux", "environment": {"HOME": "/home/b"}}}
+    shown = hub._login_command("claude_code", "pc-a")
+    assert "설정의 engines.claude_code.env.CLAUDE_CONFIG_DIR" in shown and "CLAUDE_CONFIG_DIR='" not in shown
+    # Unnamed: one host is used; two hosts are ambiguous.
+    hub.agents = {"other": hub.agents["other"]}
+    assert hub._login_command("claude_code").startswith("CLAUDE_CONFIG_DIR='")  # pc-b is the only host
+    hub.agents["worker"] = {"id": "worker", "engine": "claude_code"}
+    hub.runner_capabilities["runner"] = {"platform": "win32", "environment": {"USERPROFILE": "C:/Users/runner"}}
+    assert "설정의 engines.claude_code.env.CLAUDE_CONFIG_DIR" in hub._login_command("claude_code")
+
+
+@pytest.mark.asyncio
+async def test_parallel_retries_woken_together_keep_the_window_until_the_last_ends(tmp_path):
+    # PR #398 review: release_login wakes both parked turns and clears their durable waits before they retry; the
+    # first to succeed must not drop the window while the other is still recovering. Turn a fails first and parks;
+    # turn b joins the engine hold before its first send (both are window turns). After the release a succeeds, b
+    # fails again and re-parks: it must re-park on the same window, not start a fresh 24 h limit.
+    hub = _hub(tmp_path, retry=100, maximum=200)
+
+    async def dispatch(task):
+        if task.meta.get("step_id") == "a" and task.meta.get("parent_task"):
+            return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="a done")
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+
+    hub.dispatch = dispatch
+    orchestrator = Orchestrator(hub)
+    tasks = [asyncio.create_task(orchestrator.run_step(
+        Task(agent_id="worker", request_id="r", prompt=s, meta={"kind": "step", "step_id": s}))) for s in "ab"]
+    for _ in range(200):
+        if len(hub.requests["r"].get("login_waits") or {}) == 2:
+            break
+        await asyncio.sleep(0.01)
+    window = dict(hub.requests["r"]["login_windows"]["claude_code"])
+    assert sorted(window["turns"]) == ["a", "b"]
+    await hub.release_login("claude_code", manual=True)
+    assert (await asyncio.wait_for(tasks[0], 2)).ok
+    for _ in range(200):  # b re-parks after its retry fails again
+        if (hub.requests["r"].get("login_waits") or {}).get("b"):
+            break
+        await asyncio.sleep(0.01)
+    kept = hub.requests["r"]["login_windows"]["claude_code"]
+    assert kept["turns"] == ["b"]
+    assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
+    tasks[1].cancel()
+    await asyncio.gather(tasks[1], return_exceptions=True)

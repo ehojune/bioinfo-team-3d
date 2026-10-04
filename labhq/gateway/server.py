@@ -321,17 +321,19 @@ class Hub:
                 for engine, location in sorted(by_engine.items())]
 
     def _login_command(self, engine: str, runner_id: str | None = None) -> str:
-        """Build guidance for the runner that hosts this engine, falling back to the gateway host."""
-        capabilities = self.runner_capabilities.get(runner_id or "")
-        if capabilities is None:
+        """Build guidance for the runner whose turn waits, never for another host (PR #398 review).
+
+        A named runner gives only its own capabilities; until it reconnects the guidance names the config key.
+        Without a name, the engine's runner is used only when exactly one runner hosts that engine."""
+        if runner_id:
+            capabilities = self.runner_capabilities.get(runner_id)
+        else:
             wanted = "claude_code" if engine == "claude" else engine
-            for agent_id, agent in self.agents.items():
-                if str(agent.get("engine") or "") != wanted:
-                    continue
-                candidate = self.agent_runner.get(agent_id) or agent.get("runner_id")
-                if candidate in self.runner_capabilities:
-                    capabilities = self.runner_capabilities[candidate]
-                    break
+            hosts = {self.agent_runner.get(agent_id) or agent.get("runner_id")
+                     for agent_id, agent in self.agents.items() if str(agent.get("engine") or "") == wanted}
+            hosts.discard(None)
+            only = next(iter(hosts)) if len(hosts) == 1 else None
+            capabilities = self.runner_capabilities.get(only) if only else None
         return login_command(engine, self.s, capabilities, runner_known=capabilities is not None)
 
     def _sync_hold_status(self, req: dict) -> None:
