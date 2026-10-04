@@ -343,6 +343,28 @@ def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *,
     return applied
 
 
+def select_legacy_applied_packs(frozen: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
+    """Resume a contract frozen before topic selection (PR #390 review) by the rule it was approved under.
+
+    Its CP1 snapshot holds only the packs it applied, so a pack it answered ``not_applicable`` is absent from the
+    snapshot; that answer keeps the one-reason form. Every frozen pack still needs its values."""
+    if not isinstance(pack_values, dict):
+        raise ValueError("research plan pack_values must be an object")
+    missing = sorted(set(frozen) - set(pack_values))
+    if missing:
+        raise ValueError(f"research plan pack_values is missing frozen packs: {missing}")
+    for key, value in pack_values.items():
+        waived = isinstance(value, dict) and "not_applicable" in value
+        if key in frozen:
+            if waived:
+                raise ValueError(f"research plan pack_values[{key}] cannot waive a pack frozen as applied")
+            continue
+        reason = value.get("not_applicable") if waived else None
+        if not waived or set(value) != {"not_applicable"} or not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"research plan supplied values for packs that do not apply: [{key!r}]")
+    return dict(frozen)
+
+
 def configured_packs(settings: Any, keys: list[str] | None = None) -> dict[str, LoadedPack]:
     builtin = Path(__file__).with_name("packs")
     directories = [builtin, *(settings.path(path) for path in settings.research.pack_dirs)]

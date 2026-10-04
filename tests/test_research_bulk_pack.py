@@ -9,7 +9,7 @@ from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.research.contract import freeze_plan, validate_research_plan
 from labhq.research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                                  render_pack_catalog, select_applied_packs)
+                                  render_pack_catalog, select_applied_packs, select_legacy_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -291,6 +291,63 @@ async def test_approved_v1_request_resumes_with_its_frozen_pack_not_configured_v
     assert hub.calls == []
     assert hub.requests["r"]["outcome"] == "plan_approved"
     assert hub.requests["r"]["research_contract"]["pack_snapshot"] == pack_snapshot(legacy)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("applied", [True, False], ids=["applied-and-waived", "waived-only"])
+async def test_pre_topic_contract_with_a_not_applicable_pack_resumes_by_its_own_rule(applied):
+    # PR #390 review: a CP1 snapshot made before topic selection lists only the packs the plan applied, so a pack it
+    # answered not_applicable is absent from the snapshot. The resume keeps that contract's rule and never gains the
+    # topic-era pack_applicability record, so a later restart takes the same path.
+    legacy = _selected(LEGACY_BULK_PACK) if applied else {}
+    pack_values = {SINGLE_CELL_PACK: {"not_applicable": "bulk tissue study, no single-cell data"}}
+    if applied:
+        pack_values.update(valid_bulk_values(LEGACY_BULK_PACK))
+    plan = valid_plan(pack_values=pack_values, topics=[])
+    plan.pop("topics")
+    plan["protocol"]["packs"] = pack_refs(legacy)
+    frozen = validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(legacy),
+                                    pack_definitions=legacy).model_dump(mode="json")
+    approval = freeze_plan(frozen, {"approved": True, "approval_id": "old-cp1", "decided_at": 1})
+
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def no_dispatch(task):
+        raise AssertionError(f"approved plan-only resume dispatched {task.meta.get('kind')}")
+
+    hub = MiniHub(settings, no_dispatch, mode="orchestrate", work_kind="research",
+                  text="Resume the approved bulk study")
+    hub.requests["r"].update(plan=frozen, research_contract={
+        "schema_version": 1, "work_kind": "research", "execution_enabled": False,
+        "plan_sha256": approval["target_sha256"], "pack_snapshot": pack_snapshot(legacy),
+        "approval": approval,
+    })
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert "pack_applicability" not in hub.requests["r"]["research_contract"]
+
+
+def test_legacy_pack_selection_keeps_the_one_reason_waiver_rule():
+    frozen = _selected(LEGACY_BULK_PACK)
+    values = valid_bulk_values(LEGACY_BULK_PACK)[LEGACY_BULK_PACK]
+    waiver = {"not_applicable": "not this study"}
+    assert set(select_legacy_applied_packs(frozen, {LEGACY_BULK_PACK: values, SINGLE_CELL_PACK: waiver})) == \
+        {LEGACY_BULK_PACK}
+    for bad, message in [
+        ({SINGLE_CELL_PACK: waiver}, "missing frozen packs"),
+        ({LEGACY_BULK_PACK: waiver}, "cannot waive a pack frozen as applied"),
+        ({LEGACY_BULK_PACK: values, SINGLE_CELL_PACK: {"fields": {}}}, "do not apply"),
+        ({LEGACY_BULK_PACK: values, SINGLE_CELL_PACK: {"not_applicable": " "}}, "do not apply"),
+        ({LEGACY_BULK_PACK: values, SINGLE_CELL_PACK: {"not_applicable": "x", "extra": 1}}, "do not apply"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            select_legacy_applied_packs(frozen, bad)
 
 
 def test_every_configured_pack_requires_values_or_a_not_applicable_reason():

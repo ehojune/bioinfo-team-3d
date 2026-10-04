@@ -33,7 +33,8 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
 from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                              packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs)
+                              packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs,
+                              select_legacy_applied_packs)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -90,16 +91,22 @@ def normalize_assumptions(raw: Any) -> list[str]:
     return [item.strip() for item in raw if isinstance(item, str) and item.strip()][:8]
 
 
+def plan_topics(raw: Any, vocab: output_vocab.Vocab, *, strict: bool) -> tuple[list[str], list[str]]:
+    """The one place that turns declared topics into (sorted approved keys, new warnings). Every path that saves a
+    plan uses it, so no path can keep the keys and drop the warning (PR #390 review)."""
+    normalized, unknown = topic_types.normalize(raw, vocab)
+    if strict and unknown:
+        raise ValueError(f"unknown research topics: {unknown}")
+    return normalized, ([f"topics ignored (unknown_key {len(unknown)})"] if unknown else [])
+
+
 def normalize_plan_topics(plan: Any, vocab: output_vocab.Vocab, *, strict: bool) -> Any:
     """Sort/deduplicate approved topics; research rejects unknowns, while general plans warn and drop them."""
     if not isinstance(plan, dict):
         return plan
-    normalized, unknown = topic_types.normalize(plan.get("topics"), vocab)
-    if strict and unknown:
-        raise ValueError(f"unknown research topics: {unknown}")
+    normalized, added = plan_topics(plan.get("topics"), vocab, strict=strict)
     warnings = list(plan.get("warnings") or []) if isinstance(plan.get("warnings"), list) else []
-    if unknown:
-        warnings.append(f"topics ignored (unknown_key {len(unknown)})")
+    warnings.extend(added)
     return {**plan, "topics": normalized, **({"warnings": warnings} if warnings else {})}
 
 
@@ -3179,6 +3186,10 @@ class Orchestrator:
             n = self.cfg.context_chars_per_step
             frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
                                     if resume and research_lane else None)
+            # A contract frozen before topic selection has no pack_applicability record: it resumes by the pack rule
+            # it was approved under and never gains the record, so a second restart takes the same path (#390 review).
+            legacy_pack_contract = (frozen_pack_snapshot is not None
+                                    and "pack_applicability" not in (req.get("research_contract") or {}))
             configured_pack_defs = (packs_for_snapshot(self.hub.s, frozen_pack_snapshot)
                                     if frozen_pack_snapshot is not None else
                                     configured_packs(self.hub.s) if research_lane else {})
@@ -3202,7 +3213,7 @@ class Orchestrator:
                     "execution_enabled": execution_enabled,
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
                     "pack_snapshot": active_pack_hashes,
-                    "pack_applicability": plan.get("pack_applicability") or {},
+                    **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
                 self.hub.save_request(rid)
@@ -3240,8 +3251,10 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
-                    packs = select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"),
-                                                 topics=req["plan"].get("topics"))
+                    packs = (select_legacy_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                             if legacy_pack_contract else
+                             select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"),
+                                                  topics=req["plan"].get("topics")))
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
@@ -3800,14 +3813,15 @@ class Orchestrator:
                 steps = merged
                 topic_vocab = output_vocab.current()
                 topic_source = candidate if "topics" in candidate else (req.get("plan") or {})
-                normalized_topics = (normalize_plan_topics(topic_source, topic_vocab, strict=False).get("topics", [])
-                                     if topic_vocab is not None else [])
+                normalized_topics, topic_warnings = (plan_topics(topic_source.get("topics"), topic_vocab, strict=False)
+                                                     if topic_vocab is not None else ([], []))
                 req["plan"] = {**(req.get("plan") or {}),
                                **({"assumptions": normalize_assumptions(candidate.get("assumptions"))}
                                   if "assumptions" in candidate else {}),
                                "steps": steps,
                                "topics": normalized_topics,
-                               "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings]}
+                               "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings,
+                                            *topic_warnings]}
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 if review_progress is not None:

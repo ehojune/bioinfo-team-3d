@@ -68,3 +68,34 @@ async def test_general_plan_keeps_topic_and_step_warnings_together():
     plan_event = next(event for event in hub.events if event["type"] == "request.plan")
     assert "topics ignored (unknown_key 1)" in plan_event["data"]["warnings"]
 
+
+
+@pytest.mark.asyncio
+async def test_failure_replan_keeps_its_unknown_topic_warning():
+    # PR #390 review: the re-plan save path took the normalized keys and dropped the warning.
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured={
+                "topics": ["bulk_rna_seq"],
+                "steps": [{"id": "A", "agent_id": "worker", "instruction": "analyze",
+                           "outputs": [], "depends_on": []}],
+                "clarifying_questions": [], "recruit": [], "notes": "",
+            })
+        if task.meta["kind"] == "replan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured={
+                "topics": ["bulk_rna_seq", "invented_topic"],
+                "steps": [{"id": "B", "agent_id": "worker", "instruction": "fallback",
+                           "outputs": [], "depends_on": []}],
+                "clarifying_questions": [], "recruit": [], "notes": "replace A", "drop": [],
+            })
+        if task.meta["kind"] == "step" and task.meta["step_id"] == "A":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="fixture failure")
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await Orchestrator(hub).run_request("r")
+
+    plan = hub.requests["r"]["plan"]
+    assert plan["topics"] == ["bulk_rna_seq"]
+    assert "topics ignored (unknown_key 1)" in plan["warnings"]
