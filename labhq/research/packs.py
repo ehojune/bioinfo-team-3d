@@ -40,6 +40,22 @@ class PackField(StrictModel):
         return result
 
 
+def field_value_problem(field: PackField, value: Any) -> str | None:
+    """Why ``value`` cannot answer ``field``, or None. Plan answers and allowed_combinations cells share it."""
+    valid_type = ((field.value_type == "string" and isinstance(value, str)) or
+                  (field.value_type == "integer" and isinstance(value, int) and not isinstance(value, bool)) or
+                  (field.value_type == "boolean" and isinstance(value, bool)))
+    if not valid_type:
+        return f"must be {field.value_type}"
+    if field.allowed_values and value not in field.allowed_values:
+        return f"must be one of {field.allowed_values}"
+    if field.minimum is not None and value < field.minimum:
+        return f"must be at least {field.minimum:g}"
+    if field.pattern is not None and re.fullmatch(field.pattern, value) is None:
+        return f"must match {field.pattern}"
+    return None
+
+
 class PackValidator(StrictModel):
     id: str = Field(pattern=r"^[a-z][a-z0-9_.]*$")
     requirement: str = Field(min_length=1)
@@ -217,12 +233,17 @@ class DomainRulePack(StrictModel):
                     if name not in known and name not in _PLAN_RULE_FIELDS:
                         raise ValueError(f"domain pack rule {rule.id}: unknown combination field {name!r}")
                 declared = {field.name: field for field in self.fields}
+                # A cell no valid answer can equal is a dead row (PR #366 review): check it like an answer.
                 for row in rule.allowed_combinations.rows:
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
-                        if field and field.allowed_values and value not in field.allowed_values:
+                        if field is None:
+                            continue
+                        # An omitted answer never equals null and an explicit null fails the type check.
+                        problem = ("cannot be null" if value is None else field_value_problem(field, value))
+                        if problem:
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
-                                             f"allowed for {name}")
+                                             f"allowed for {name} ({name} {problem})")
         return self
 
     @property

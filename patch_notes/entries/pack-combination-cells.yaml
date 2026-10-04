@@ -1,0 +1,11 @@
+pr: 403
+rows:
+- sha: 61754ac
+  at: 2026-10-05 04:18
+  text: pack 조합 표의 칸이 field type·최솟값·pattern을 어기면 load에서 거부하고, PLAN 답 검사와 같은 판정 함수를 쓴다
+- sha: dc9678b
+  at: 2026-10-05 04:18
+  text: 매뉴얼 연구 lane 절에 pack 조합 표 칸 검사를 적는다
+- sha: 31e9492
+  at: 2026-10-05 04:23
+  text: 조합 표의 null 칸은 생략한 답과도 명시한 null과도 맞지 않으므로 load에서 거부한다

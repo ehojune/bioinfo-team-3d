@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.research.contract import freeze_plan, validate_research_plan
-from labhq.research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                                  render_pack_catalog, select_applied_packs, select_legacy_applied_packs)
+from labhq.research.packs import (DomainRulePack, assess_pack_applicability, configured_packs, pack_refs,
+                                  pack_snapshot, render_pack_catalog, select_applied_packs, select_legacy_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -524,3 +525,37 @@ def test_single_cell_v3_keeps_v2_rules_and_v2_stays_for_resumes():
     assert v3.applies_when.description == v2.applies_when
     assert [rule.id for rule in v3.rules] == [rule.id for rule in v2.rules]
     assert [field.name for field in v3.fields] == [field.name for field in v2.fields]
+
+
+def _bulk_pack_with_table(extra_fields, column, cells):
+    raw = yaml.safe_load((Path("labhq/research/packs") / "bulk_tumor_normal_v2.yaml").read_text(encoding="utf-8"))
+    raw["fields"] += extra_fields
+    raw["rules"].append({"id": "bulk_tumor_normal.extra_table", "description": "Extra closed table.",
+                         "allowed_combinations": {"fields": ["pairing", column],
+                                                  "rows": [["none", cell] for cell in cells]}})
+    return raw
+
+
+MIN_PAIRS = {"name": "min_pairs", "description": "Pairs needed.", "value_type": "integer", "minimum": 3}
+FLAG = {"name": "flag", "description": "Optional flag.", "value_type": "boolean", "required": False}
+
+
+@pytest.mark.parametrize("extra, column, cell, detail", [
+    ([MIN_PAIRS], "min_pairs", "3", "min_pairs must be integer"),
+    ([MIN_PAIRS], "min_pairs", True, "min_pairs must be integer"),
+    ([MIN_PAIRS], "min_pairs", 2, "min_pairs must be at least 3"),
+    ([FLAG], "flag", 1, "flag must be boolean"),
+    ([], "positive_controls", "TP53", "positive_controls must match"),
+    ([], "pairing_evidence", None, "pairing_evidence cannot be null"),
+    ([FLAG], "flag", None, "flag cannot be null"),
+    ([], "primary_model", "paired", "primary_model must be one of"),
+])
+def test_combination_cells_no_valid_answer_can_match_are_rejected_at_load(extra, column, cell, detail):
+    # PR #366 review P2: a cell of the wrong type, pattern or minimum is a row no plan can ever pass.
+    with pytest.raises(ValueError, match=f"combination value .* is not allowed for {column} \({detail}"):
+        DomainRulePack.model_validate(_bulk_pack_with_table(extra, column, [cell]))
+
+
+def test_combination_cells_that_a_valid_answer_can_match_still_load():
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([MIN_PAIRS], "min_pairs", [3, 4]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([FLAG], "flag", [True, False]))
