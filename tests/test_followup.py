@@ -619,3 +619,126 @@ async def test_followup_after_restart_isolates_when_the_interrupted_outcome_is_u
         assert hub.requests["r"]["cso_session_id"] == "fresh"
     finally:
         hub.store.close()
+
+
+def _hub_with_solo_session(tmp_path, *, origin, current):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agents = {"solo": {"id": "solo", "engine": "codex"}}
+    hub.agent_runner = {"solo": current}
+    hub.requests["r"] = {"id": "r", "text": "Summarize it", "mode": "orchestrate", "status": "done",
+                         "report": "summary", "followup_agent_id": "solo", "followups": []}
+    hub.store.put("task", "t1", {"request_id": "r", "kind": "direct", "dispatched_at": 1, "completed": True,
+                                 "runner_id": origin, "payload": {"agent_id": "solo"},
+                                 "result": {"session_id": "solo-1", "workdir": str(tmp_path / "solo")}})
+    return hub
+
+
+async def _ask_and_wait(hub, text="Why?"):
+    entry = hub.start_followup("r", text)
+    for _ in range(50):
+        if entry["status"] != "running":
+            break
+        await asyncio.sleep(0.01)
+    return entry
+
+
+@pytest.mark.asyncio
+async def test_followup_is_refused_when_another_runner_now_hosts_the_agent(tmp_path):
+    # PR #391 review: dispatch goes to whichever runner registered the agent id last; resuming there would open
+    # runner A's session id and absolute workdir on runner B's PC.
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-b")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    entry = await _ask_and_wait(hub)
+    assert calls == []
+    assert entry["status"] == "failed" and "runner pc-a" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_followup_resumes_on_the_runner_that_made_the_session(tmp_path):
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-a")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer", session_id="solo-2",
+                          workdir=str(tmp_path / "solo"))
+
+    hub.dispatch = dispatch
+    entry = await _ask_and_wait(hub)
+    assert entry["status"] == "done" and calls[0].resume_session_id == "solo-1"
+    assert calls[0].meta["session_runner"] == "pc-a"  # pinned for the dispatch-time check
+
+
+def test_foreign_session_check_is_off_without_a_known_origin(tmp_path):
+    hub = _hub_with_solo_session(tmp_path, origin=None, current="pc-b")
+    orchestrator = Orchestrator(hub)
+    assert orchestrator._foreign_session_runner("r", "solo", "solo-1") is None
+    hub.store.put("task", "t1", {**hub.store.get("task", "t1"), "runner_id": "pc-a"})
+    assert orchestrator._foreign_session_runner("r", "solo", "solo-1") == "pc-a"
+    assert orchestrator._foreign_session_runner("r", "solo", None) is None
+    assert orchestrator._foreign_session_runner("r", "solo", "other-session") is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_a_session_pinned_to_another_runner(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agent_runner = {"solo": "pc-b"}
+    task = Task(agent_id="solo", request_id="r", prompt="Why?", resume_session_id="solo-1",
+                meta={"kind": "followup", "session_runner": "pc-a"})
+    result = await hub.dispatch(task)
+    assert not result.ok and "runner pc-a" in result.error and result.cost_usd == 0.0
+    assert hub.store.get("task", task.id) is None  # nothing was sent
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_registers_after_the_check_does_not_get_the_session(tmp_path):
+    # PR #393 review: the early check passes while runner A hosts the agent; runner B registers the same id
+    # during the awaits before dispatch. The pin is checked where the target is chosen, so B never gets A's session.
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-a")
+
+    async def switch_runner_while_waiting(agent_id, session_id, workdir, **_):
+        hub.agent_runner[agent_id] = "pc-b"
+        return session_id, workdir
+
+    hub.wait_session_free = switch_runner_while_waiting
+    entry = await _ask_and_wait(hub)
+    assert entry["status"] == "failed" and "runner pc-a" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_resend_after_a_lost_runner_never_goes_to_another_runner(tmp_path):
+    # PR #393 review: the first send to pinned pc-a fails, pc-b takes the agent id through a roster update, and the
+    # reconnect branch picks a new target. The pin is checked there too; the outcome is uncertain delivery, not $0.
+    from labhq.gateway.server import RunnerUnavailable
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.orchestrator.runner_reconnect_timeout_s = 5
+    hub = Hub(settings)
+    hub.agent_runner = {"solo": "pc-a"}
+    sent = []
+
+    async def send_runner(runner_id, message):
+        sent.append(runner_id)
+        if runner_id == "pc-a":
+            raise RunnerUnavailable("runner pc-a is offline")
+
+    async def wait_agent_online(agent_id, timeout):
+        hub.agent_runner[agent_id] = "pc-b"
+        return True
+
+    hub.send_runner, hub.wait_agent_online = send_runner, wait_agent_online
+    task = Task(agent_id="solo", request_id="r", prompt="Why?", resume_session_id="solo-1",
+                meta={"kind": "followup", "session_runner": "pc-a"})
+    result = await asyncio.wait_for(hub.dispatch(task), 5)
+    assert sent == ["pc-a"]
+    assert not result.ok and "runner pc-a" in result.error and "uncertain" in result.error

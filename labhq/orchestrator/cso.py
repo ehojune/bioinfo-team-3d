@@ -1901,6 +1901,29 @@ class Orchestrator:
         _, session_id, workdir = max(candidates)
         return session_id, workdir
 
+    def _session_origin(self, request_id: str | None, agent_id: str, session_id: str | None) -> str | None:
+        """The runner whose task made this session, from the durable ledger; None when unknown (old ledger rows,
+        test hubs without a ledger)."""
+        store = getattr(self.hub, "store", None)
+        if not (session_id and store is not None):
+            return None
+        for entry in store.all("task").values():
+            result = entry.get("result") or {}
+            if (entry.get("request_id") == request_id and (entry.get("payload") or {}).get("agent_id") == agent_id
+                    and result.get("session_id") == session_id):
+                return entry.get("runner_id") or None
+        return None
+
+    def _foreign_session_runner(self, request_id: str | None, agent_id: str, session_id: str | None) -> str | None:
+        """The runner that made this session when another runner now hosts the agent id, else None.
+
+        Dispatch goes to whichever runner registered the agent id last, so resuming there would open the first
+        runner's session id and absolute workdir on another PC (PR #391 review). This early check gives the PI a
+        clear refusal; the binding guard is the ``session_runner`` pin that Hub.dispatch checks (PR #393 review)."""
+        origin = self._session_origin(request_id, agent_id, session_id)
+        current = getattr(self.hub, "agent_runner", {}).get(agent_id)
+        return origin if origin and current and origin != current else None
+
     def _ask_scope(self, body: dict) -> tuple:
         """Recover a stable step identity from the durable task ledger, including old asks."""
         rid, tid = body.get("request_id"), body.get("task_id")
@@ -2087,8 +2110,11 @@ class Orchestrator:
                 if routed == self.cfg.cso_agent:
                     session_id = request.get("cso_session_id") or session_id
                     workdir = request.get("cso_workdir") or workdir
-                if prior or self._consult_resource_busy(routed, session_id, workdir):
+                # A consult does not need the old workspace, so another runner's session is not refused: it opens fresh.
+                if (prior or self._consult_resource_busy(routed, session_id, workdir)
+                        or self._foreign_session_runner(ask.request_id, routed, session_id)):
                     session_id, workdir = None, None
+                origin = self._session_origin(ask.request_id, routed, session_id)
                 consult = Task(
                     agent_id=routed, request_id=ask.request_id, prompt=prompt,
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
@@ -2096,7 +2122,8 @@ class Orchestrator:
                           "agent_overrides": overrides,
                           **({**({"source_workdir": source_workdir} if source_workdir else {}),
                               "consult_refs": refs} if refs else {}),
-                          **({"workdir": workdir} if workdir else {})},
+                          **({"workdir": workdir} if workdir else {}),
+                          **({"session_runner": origin} if origin and (session_id or workdir) else {})},
                 )
                 result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
                                 else self.run_step(consult))
@@ -2117,29 +2144,40 @@ class Orchestrator:
         entry = next(f for f in req.get("followups") or [] if f.get("id") == fid)
         agent = entry["agent_id"]
         direct = req.get("mode") == "direct" or req.get("followup_agent_id") == agent
+        async def refuse(reason: str, outcome: str) -> None:
+            entry.update(status="failed", answer="", error=reason, answered_at=time.time())
+            self.hub.save_request(rid)
+            if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
+                self.hub.semantics_shadow.after_followup(rid, fid, "ended", outcome)  # semantics-hook: actions
+            await self._emit(rid, "request.followup_done", {
+                "id": fid, "ok": False, "answer": "", "error": reason,
+                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
+                **_cost_summary_field(req)})
+
         try:
             refusal = read_only_refusal(agent, self._engine(rid, agent))
         except ValueError as error:  # its request's CSO model cannot be honored: never resume as another model
             refusal = str(error)
         if refusal:  # the same workspace and session, with an engine that would not keep it read-only
-            entry.update(status="failed", answer="", error=refusal, answered_at=time.time())
-            self.hub.save_request(rid)
-            if getattr(self.hub, "semantics_shadow", None) is not None:  # semantics-hook: actions
-                self.hub.semantics_shadow.after_followup(rid, fid, "ended", "refused_read_only")  # semantics-hook: actions
-            await self._emit(rid, "request.followup_done", {
-                "id": fid, "ok": False, "answer": "", "error": refusal,
-                "cost_usd": float(req.get("cost_usd") or 0), "cost_known": req.get("cost_known", True),
-                **_cost_summary_field(req)})
+            await refuse(refusal, "refused_read_only")
             return
         if direct:
             session_id, workdir = self._last_agent_session(rid, agent)
         else:
             session_id, workdir = req.get("cso_session_id"), req.get("cso_workdir")
+        foreign = self._foreign_session_runner(rid, agent, session_id)
+        if foreign:  # the workspace it would read is on that runner's PC
+            await refuse(f"이 요청의 작업 세션은 runner {foreign}에 있는데, 지금 {agent}는 다른 runner에 연결돼 "
+                         f"있어요. runner {foreign}가 연결된 뒤 다시 물어 주세요.", "failed")
+            return
         await self._emit(rid, "request.followup", {"id": fid, "text": entry["text"], "agent_id": agent,
                                                    "status": "running"})
         # A restart marks the running follow-up interrupted, but its runner may still answer it in this
         # session and workdir (#144).
+        origin = self._session_origin(rid, agent, session_id)
         session_id, workdir = await self._free_session(agent, session_id, workdir, rid=rid, step="followup")
+        # Whatever is still resumed (session or absolute workdir) is pinned to its runner at dispatch time.
+        pin = {"session_runner": origin} if origin and (session_id or workdir) else {}
         resumable = bool(session_id and self.hub.supports_resume(agent))
         earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
         history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
@@ -2154,7 +2192,7 @@ class Orchestrator:
                     meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
                           "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
                           "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
-                          **({"workdir": workdir} if workdir else {})})
+                          **({"workdir": workdir} if workdir else {}), **pin})
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
         self._seed_cost(rid, req)
         try:
