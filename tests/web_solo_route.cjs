@@ -31,3 +31,4 @@ assert.match(html, /route: \$\('#team-only'\)\.checked \? 'team' : 'auto'/);
 assert.match(html, /처리: 단독 실패 → 팀/);
 const live3d = fs.readFileSync(path.join(root, 'labhq/web/lab3d/src/live.js'), 'utf8');
 assert.match(live3d, /처리: 단독/);
+console.log('solo route web tests passed');

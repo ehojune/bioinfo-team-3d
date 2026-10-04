@@ -24,3 +24,4 @@ const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /가정/);
 assert.match(html, /q\.assumptions/);
 assert.match(html, /실행 중 메모/);
+console.log('assumptions web tests passed');

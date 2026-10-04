@@ -136,6 +136,12 @@ def test_package_data_includes_office_assets():
     ('web_ask.cjs', 'web_ask: ask/answer feed, refusal, targets and replay passed'),
     ('web_issue106.cjs', 'snapshot task priority, cancellation and hibernating label: OK'),
     ('web_issue87.cjs', 'snapshot restores an active step after a 200-event replay gap: OK'),
+    # Node files written after this list existed ran only by hand; CI runs node through this test alone.
+    ('web_issue58.cjs', 'web issue58 tests passed'),
+    ('web_assumptions.cjs', 'assumptions web tests passed'),
+    ('web_solo_route.cjs', 'solo route web tests passed'),
+    ('web_request_bundle.cjs', 'request bundle web tests passed'),
+    ('web_display_followups.cjs', 'display follow-up web tests passed'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')
@@ -145,3 +151,10 @@ def test_office_in_node(filename, marker):
     result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding='utf-8', timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert marker in result.stdout, result.stdout + result.stderr
+
+
+def test_every_node_web_test_runs_in_ci():
+    # A .cjs file outside the list above never runs in CI (five did not, found 2026-10-04).
+    listed = {name for name, _marker in test_office_in_node.pytestmark[0].args[1]}
+    on_disk = {path.name for path in Path(__file__).parent.glob('web_*.cjs')}
+    assert on_disk <= listed, sorted(on_disk - listed)

@@ -1,0 +1,33 @@
+// PR #387 and #389 follow-ups: the 3D request panel shows plan assumptions and the request bundle, and both views
+// mark an incomplete bundle next to its path.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const root = path.resolve(__dirname, '..', 'labhq/web');
+const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+const live3d = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8');
+
+// 2.5D: run the real bundleHTML from the page source.
+const start = html.indexOf('const bundleHTML = ');
+const end = html.indexOf('\nlet reqKey', start);
+assert.ok(start > 0 && end > start, 'bundleHTML source found');
+const context = vm.createContext({esc: value => String(value).replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`)});
+vm.runInContext(`${html.slice(start, end)}\nthis.bundleHTML = bundleHTML;`, context);
+const complete = context.bundleHTML({bundlePath: 'C:\\runs\\r1', bundleStatus: 'complete'});
+assert.match(complete, /요청 묶음: <code>C:\\runs\\r1<\/code>/);
+assert.doesNotMatch(complete, /불완전/);
+const incomplete = context.bundleHTML({bundlePath: 'C:\\runs\\r1', bundleStatus: 'incomplete'});
+assert.match(incomplete, /요청 묶음\(불완전\)/);
+assert.match(incomplete, /MANIFEST\.tsv/);
+assert.match(context.bundleHTML({bundleWarning: 'disk full'}), /요청 묶음 경고: disk full/);
+assert.equal(context.bundleHTML({}), '');
+assert.match(html, /q\.bundlePath, q\.bundleStatus, q\.bundleWarning/, '2.5D re-renders when only the status changes');
+
+// 3D: same information, re-rendered when it changes.
+assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleWarning/);
+assert.match(live3d, /text\(row, 'h4', '가정'\)/);
+assert.match(live3d, /요청 묶음\(불완전\)/);
+assert.match(live3d, /요청 묶음 경고: /);
+console.log('display follow-up web tests passed');
