@@ -26,7 +26,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator, holds_session, valid_review
+from ..orchestrator.cso import Orchestrator, holds_session, solo_phase
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -564,14 +564,18 @@ class Hub:
             if self.s.orchestrator.chief_of_staff_agent:
                 needed.add(self.s.orchestrator.chief_of_staff_agent)
             return needed
-        route = req.get("route_decision") or {}
-        if route.get("mode") == "solo" and not route.get("fallback"):
-            if not isinstance(req.get("solo_result"), dict):
-                return {route["agent_id"]} if route.get("agent_id") else set()
-            if self.s.orchestrator.solo_review and not valid_review(req.get("solo_review")):
-                reviewer = self.s.orchestrator.reviewer_agent
-                return {reviewer} if reviewer else set()
+        phase = solo_phase(req, self.s.orchestrator)
+        if phase == "solo":
+            agent = (req.get("route_decision") or {}).get("agent_id")
+            return {agent} if agent else set()
+        if phase == "review":
+            reviewer = self.s.orchestrator.reviewer_agent
+            return {reviewer} if reviewer else set()
+        if phase == "done":
             return set()
+        return self._team_resume_agents(req)
+
+    def _team_resume_agents(self, req: dict) -> set[str]:
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}

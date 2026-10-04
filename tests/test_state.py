@@ -1284,6 +1284,35 @@ async def test_solo_resume_waits_for_the_solo_runner_before_fallback(tmp_path, o
 
 
 @pytest.mark.asyncio
+async def test_failed_solo_restart_waits_for_team_runners_before_fallback_dispatch(tmp_path):
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0
+    s.orchestrator.solo_review = True
+    hub = Hub(s)
+    hub.requests["r"] = {
+        "id": "r", "mode": "orchestrate", "text": "small task", "status": "interrupted",
+        "plan": {"steps": [{"id": "A", "agent_id": "worker", "instruction": "team fallback",
+                              "depends_on": []}]},
+        "route_decision": {"mode": "solo", "agent_id": "solo"},
+        "solo_result": TaskResult(task_id="failed", agent_id="solo", ok=False,
+                                  error="crashed").model_dump(mode="json"),
+    }
+    hub.register_runner("online", CaptureSocket(), [{"id": "solo"}, {"id": "sci_reviewer"}])
+    calls = []
+
+    async def resumed(rid, resume=False):
+        calls.append((rid, resume))
+
+    hub.orchestrator.run_request = resumed
+    await hub.resume_when_ready("r")
+
+    assert calls == []
+    assert hub.requests["r"]["status"] == "interrupted"
+    timeout = next(event for event in hub.events if event["type"] == "request.resume_timeout")
+    assert timeout["data"]["missing_agents"] == ["cso", "worker"]
+
+
+@pytest.mark.asyncio
 async def test_replaced_runner_socket_cannot_advance_new_incarnation_cursor(tmp_path):
     hub = Hub(settings(tmp_path))
 

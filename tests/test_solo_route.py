@@ -6,9 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from labhq import cli
-from labhq.gateway.server import RequestIn
+from labhq.gateway.server import Hub, RequestIn
 from labhq.models import TaskResult
-from labhq.orchestrator.cso import Orchestrator, PLAN_PROMPT, PLAN_SCHEMA, route_decision
+from labhq.orchestrator.cso import Orchestrator, PLAN_PROMPT, PLAN_SCHEMA, route_decision, solo_phase
 from labhq.settings import Settings
 
 
@@ -52,6 +52,10 @@ class SoloHub:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=self.planned)
         if kind == "direct":
             return self.solo.model_copy(update={"task_id": task.id, "agent_id": task.agent_id})
+        if kind == "review":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"verdict": "accept", "scores": {
+                                  "addresses_question": 4, "evidence": 4, "thoroughness": 4}, "issues": []})
         if kind == "step":
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="team result",
                               outputs=["outputs/team.tsv"], workdir_id="task_team")
@@ -211,6 +215,7 @@ async def test_solo_budget_denial_finishes_failed_before_review_or_success(solo_
     assert hub.requests["r"]["error"] == denial
     assert hub.requests["r"]["report"] == "짧은 결론"
     assert hub.requests["r"]["route_decision"]["mode"] == "solo"
+    assert solo_phase(hub.requests["r"], hub.s.orchestrator) == "done"
 
 
 @pytest.mark.asyncio
@@ -230,6 +235,43 @@ async def test_saved_valid_solo_review_is_reused_after_restart():
     assert hub.calls == []
     assert hub.requests["r"]["status"] == "done"
     assert hub.requests["r"]["review"] == review
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "phase,solo_review,stored_result,expected_resume,expected_dispatch,ended",
+    [
+        ("solo", False, None, {"solo"}, ["solo"], True),
+        ("review", True, "success", {"reviewer"}, ["reviewer"], True),
+        ("fallback", True, "failure", {"worker", "cso", "reviewer"}, [], False),
+        ("done", False, "success", set(), [], True),
+    ],
+)
+async def test_solo_restart_phase_aligns_resume_agents_and_execution(
+        phase, solo_review, stored_result, expected_resume, expected_dispatch, ended):
+    hub = SoloHub()
+    hub.s.orchestrator.solo_review = solo_review
+    hub.s.orchestrator.reviewer_agent = "reviewer" if solo_review else None
+    if solo_review:
+        hub.agents["reviewer"] = {"id": "reviewer", "name": "reviewer", "role": "test", "engine": "mock"}
+    req = hub.requests["r"]
+    req.update(plan=plan(), route_decision={"mode": "solo", "agent_id": "solo"}, solo_started_at=1)
+    if stored_result == "success":
+        req["solo_result"] = hub.solo.model_dump(mode="json")
+    elif stored_result == "failure":
+        req["solo_result"] = TaskResult(
+            task_id="failed", agent_id="solo", ok=False, error="crashed").model_dump(mode="json")
+
+    gateway = object.__new__(Hub)
+    gateway.requests = {"r": req}
+    gateway.s = hub.s
+    assert solo_phase(req, hub.s.orchestrator) == phase
+    assert gateway.resume_agents("r") == expected_resume
+
+    assert await Orchestrator(hub)._run_solo("r", "원 요청", {}) is ended
+    assert [task.agent_id for task in hub.calls] == expected_dispatch
+    if phase == "fallback":
+        assert req["route_decision"]["fallback"] is True
 
 
 def test_plan_schema_prompt_settings_and_api_route_contract():

@@ -14,7 +14,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
@@ -26,6 +26,7 @@ from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, 
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..quota import is_quota_error, received_quota_wait
+from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
@@ -1425,6 +1426,44 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
         return False
 
     return matches(value, schema)
+
+
+SoloPhase = Literal["solo", "review", "fallback", "done"]
+
+
+def _solo_result_problem(result: TaskResult) -> str:
+    if not result.ok:
+        return result.error or "task failed"
+    if not result.text.strip():
+        return "empty answer"
+    if not result.outputs:
+        return "no outputs"
+    return ""
+
+
+def solo_phase(req: dict, cfg: Any) -> SoloPhase | None:
+    """Choose the next stored solo-route phase; ``None`` is the ordinary team route."""
+    route = req.get("route_decision") or {}
+    if is_terminal_request(req.get("status")):
+        return "done" if route.get("mode") == "solo" or route.get("fallback") else None
+    if route.get("fallback"):
+        return "fallback"
+    if route.get("mode") != "solo":
+        return None
+    stored = req.get("solo_result")
+    if not isinstance(stored, dict):
+        return "solo"
+    result = TaskResult.model_validate(stored)
+    if _solo_result_problem(result):
+        return "fallback"
+    if not cfg.solo_review:
+        return "done"
+    stored_review = req.get("solo_review")
+    if valid_review(stored_review):
+        return "done" if with_p1_verdict(stored_review).get("verdict") == "accept" else "fallback"
+    if isinstance(stored_review, dict) and stored_review.get("status") == "review_unparsed":
+        return "fallback"
+    return "review"
 
 
 def _object_with_key(text: str, key: str) -> dict | None:
@@ -2994,12 +3033,14 @@ class Orchestrator:
         """Run or recover the planned single employee turn. True means the request ended; False falls back to DAG."""
         req = self.hub.requests[rid]
         decision = req.get("route_decision") or {}
-        if decision.get("mode") != "solo" or decision.get("fallback"):
+        phase = solo_phase(req, self.cfg)
+        if phase is None:
             return False
         agent = decision["agent_id"]
-        stored = req.get("solo_result")
-        result = TaskResult.model_validate(stored) if isinstance(stored, dict) else None
-        if result is None:
+        result = None
+        review = None
+
+        if phase == "solo":
             req.setdefault("solo_started_at", time.time())
             self.hub.save_request(rid)
             result = await self.run_step(Task(
@@ -3009,51 +3050,55 @@ class Orchestrator:
                       "project_dirs": req.get("project_dirs", []), "max_attempts": 1}))
             req["solo_result"] = result.model_dump(mode="json")
             self.hub.save_request(rid)
+            phase = solo_phase(req, self.cfg)
+            if rid in self.budget_denials:
+                self._finish(rid, result.text or result.error or "task failed",
+                             {"direct": result.model_dump(mode="json")}, ok=False,
+                             error=self.budget_denials[rid])
+                return True
 
-        if rid in self.budget_denials:
-            self._finish(rid, result.text or result.error or "task failed",
-                         {"direct": result.model_dump(mode="json")}, ok=False,
-                         error=self.budget_denials[rid])
-            return True
-
-        reason = (result.error or "task failed") if not result.ok else (
-            "empty answer" if not result.text.strip() else "no outputs" if not result.outputs else "")
-        review = None
-        if not reason and self.cfg.solo_review:
-            stored_review = req.get("solo_review")
-            if valid_review(stored_review):
-                review = with_p1_verdict(stored_review)
-            else:
-                reviewer = self.cfg.reviewer_agent
-                if not reviewer or reviewer not in self.hub.agents:
-                    reason = "solo science reviewer unavailable"
-                else:
-                    reviewed = await self.run_step(Task(
-                        agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
-                        prompt=REVIEW_PROMPT.format(request=text, results=result.text),
-                        meta={**refs, "kind": "review", "revision": 0, "request": text,
-                              "title": "단독 결과 과학 리뷰"}))
-                    parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
-                    review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
-                        "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
-                    req["solo_review"] = review
-                    self.hub.save_request(rid)
-                    await self._emit(rid, "request.review", {"revision": 0, **review})
+        stored = req.get("solo_result")
+        result = TaskResult.model_validate(stored) if isinstance(stored, dict) else None
+        if phase == "review" and result is not None:
+            reviewer = self.cfg.reviewer_agent
+            if not reviewer or reviewer not in self.hub.agents:
+                req["route_decision"] = {**decision, "mode": "team", "fallback": True,
+                                         "reason": "solo science reviewer unavailable"}
+                self.hub.save_request(rid)
+                await self._emit(rid, "request.route", req["route_decision"])
+                return False
+            reviewed = await self.run_step(Task(
+                agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
+                prompt=REVIEW_PROMPT.format(request=text, results=result.text),
+                meta={**refs, "kind": "review", "revision": 0, "request": text,
+                      "title": "단독 결과 과학 리뷰"}))
+            parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
+            review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
+                "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
+            req["solo_review"] = review
+            self.hub.save_request(rid)
+            await self._emit(rid, "request.review", {"revision": 0, **review})
+            phase = solo_phase(req, self.cfg)
             if rid in self.budget_denials:
                 self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
                              review=review, error=self.budget_denials[rid])
                 return True
-            if review and review.get("verdict") != "accept":
-                reason = "solo science review did not accept the result"
 
-        if reason:
+        if phase == "fallback":
+            reason = decision.get("reason") or (_solo_result_problem(result) if result else "")
+            reason = reason or "solo science review did not accept the result"
             req["route_decision"] = {**decision, "mode": "team", "fallback": True, "reason": reason}
             self.hub.save_request(rid)
             await self._emit(rid, "request.route", req["route_decision"])
             return False
 
+        if phase == "done" and result is None:
+            return True
+
         report = result.text.strip()
+        stored_review = req.get("solo_review")
+        review = with_p1_verdict(stored_review) if valid_review(stored_review) else review
         late_notes = self._solo_notes(req)
         if late_notes:
             report += "\n\n단독 턴이 시작된 뒤 온 메모는 반영되지 않았다.\n" + "\n".join(
