@@ -3786,7 +3786,9 @@ class Orchestrator:
                       **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
-            if hasattr(self.hub, "commit_terminal"):
+            if hasattr(self.hub, "schedule_terminal"):
+                self.hub.schedule_terminal(rid, "request.failed", failed)
+            elif hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
             else:
                 await self._emit(rid, "request.failed", failed)
@@ -3857,7 +3859,9 @@ class Orchestrator:
                 "usage_known": req.get("usage_known", True)}
         if error:  # one readable office-feed line; `labhq send` prints report first, or error when report is absent
             req["error"] = data["error"] = error
-        if hasattr(self.hub, "commit_terminal"):
+        if hasattr(self.hub, "schedule_terminal"):
+            self.hub.schedule_terminal(rid, "request.completed", data)
+        elif hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.
             self.hub.save_request(rid)

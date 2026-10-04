@@ -6,11 +6,13 @@ Run it on a tiny VM or at home behind Tailscale. State stays on the gateway host
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import mimetypes
 import time
 from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -216,6 +218,7 @@ class Hub:
         self.ask_waiters: dict[str, asyncio.Future] = {}
         self.ask_tasks: dict[str, asyncio.Task] = {}
         self.terminal_queued: set[int] = set()
+        self.terminal_tasks: dict[str, asyncio.Task] = {}
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
@@ -440,19 +443,76 @@ class Hub:
                     self.store.delete("jobs_done", tid)
                     self.jobs_done.pop(tid, None)
 
-    def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
-        # The portable bundle is a best-effort copy. Failure never changes the request outcome, and terminal
-        # requests loaded after a restart do not pass this checkpoint again.
+    def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None) -> dict:
+        """Build against a terminal snapshot; safe to call in a worker thread."""
         try:
-            from ..request_bundle import build_request_bundle
+            from ..request_bundle import RemoteRunnerBundle, build_request_bundle
 
-            bundled = build_request_bundle(self.requests[rid], self.s, self.store.all("task"))
+            bundled = build_request_bundle(
+                copy.deepcopy(self.requests[rid]) if request is None else request,
+                self.s,
+                copy.deepcopy(self.store.all("task")) if tasks is None else tasks,
+            )
+            return {"bundle": bundled}
+        except RemoteRunnerBundle:
+            return {"warning": "runner가 다른 PC라 묶음을 만들지 않음", "appendix": True}
+        except Exception as exc:
+            return {"warning": f"요청 묶음을 만들지 못했습니다: {exc}"}
+
+    def _apply_bundle_outcome(self, rid: str, data: dict, outcome: dict) -> None:
+        bundled = outcome.get("bundle")
+        if bundled:
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid].pop("bundle_warning", None)
-        except Exception as exc:
-            warning = f"요청 묶음을 만들지 못했습니다: {exc}"
-            self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
-            log.warning("request bundle failed for %s: %s", rid, exc)
+            return
+        warning = str(outcome["warning"])
+        if outcome.get("appendix"):
+            appendix = str(self.requests[rid].get("report_appendix") or "")
+            if warning not in appendix:
+                appendix = appendix.rstrip() + ("\n\n" if appendix.strip() else "") + warning
+                self.requests[rid]["report_appendix"] = appendix
+                if isinstance(data.get("report_appendix"), str) and not data.get("report_appendix_truncated"):
+                    data["report_appendix"] = appendix
+        self.requests[rid].pop("bundle_path", None)
+        data.pop("bundle_path", None)
+        self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
+        log.warning("request bundle unavailable for %s: %s", rid, warning)
+
+    def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
+        """Synchronous checkpoint used by direct callers and tests."""
+        self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
+        self._commit_terminal_record(rid, typ, data)
+
+    def schedule_terminal(self, rid: str, typ: str, data: dict) -> asyncio.Task | None:
+        """Create a terminal bundle off the gateway event loop, once per request."""
+        results = (self.requests[rid].get("results") or {}).values()
+        if not any(isinstance(result, Mapping) and isinstance(result.get("workdir_id"), str)
+                   and result["workdir_id"] for result in results):
+            self.commit_terminal(rid, typ, data)
+            return None
+        prior = self.terminal_tasks.get(rid)
+        if prior is not None:
+            return prior
+        task = asyncio.get_running_loop().create_task(self._commit_terminal_async(rid, typ, data))
+        self.terminal_tasks[rid] = task
+        task.add_done_callback(self._terminal_task_done)
+        return task
+
+    @staticmethod
+    def _terminal_task_done(task: asyncio.Task) -> None:
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            log.error("terminal checkpoint failed: %s", exc)
+
+    async def _commit_terminal_async(self, rid: str, typ: str, data: dict) -> None:
+        request = copy.deepcopy(self.requests[rid])
+        tasks = copy.deepcopy(self.store.all("task"))
+        outcome = await asyncio.to_thread(self._bundle_outcome, rid, request, tasks)
+        self._apply_bundle_outcome(rid, data, outcome)
+        self._commit_terminal_record(rid, typ, data)
+
+    def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
+        # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
+        # checkpoint again.
         event = self.store.commit_terminal(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
                                            self.s.gateway.event_buffer)
@@ -1363,7 +1423,7 @@ class Hub:
         if a.get("kind") == "resume" and not approved:
             rid = a["request_id"]
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
-            self.commit_terminal(rid, "request.failed", {"error": "resume declined"})
+            self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
@@ -1522,6 +1582,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
+        loop = asyncio.get_running_loop()
+        local_tasks = [task for task in hub.terminal_tasks.values() if task.get_loop() is loop]
+        if local_tasks:
+            await asyncio.gather(*local_tasks, return_exceptions=True)
         running = [r["id"] for r in hub.requests.values() if is_active_request(r.get("status"))]
         if running:
             log.warning("gateway shutdown with running requests: %s", ", ".join(running))

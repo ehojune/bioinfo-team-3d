@@ -188,7 +188,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 ### 요청 묶음
 
-요청이 끝나면 성공 여부와 lane에 관계없이 `runner.workspace_root/requests/<request_id>/`를 만듭니다. 생성 오류는 요청 결과를 바꾸지 않고 웹·CLI에 경고만 남깁니다. 끝난 요청은 gateway를 다시 켜도 다시 묶지 않습니다.
+요청이 끝나면 성공 여부와 lane에 관계없이 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 하나도 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 생성 오류는 요청 결과를 바꾸지 않으며, 끝난 요청은 gateway를 다시 켜도 다시 묶지 않습니다.
 
 | 경로 | 내용 |
 |---|---|
@@ -197,7 +197,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
 | `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
 
-묶음 안의 작은 텍스트 파일은 이 요청의 단계 작업 폴더만 상대경로로 바꿉니다. 다른 절대경로는 그대로 두고 manifest와 부록에 남깁니다. `runner.bundle_max_file_mb`(기본 50)를 넘는 파일은 복사하지 않으며 manifest에 `not copied: size`로 기록합니다. 수정 전 판은 넣지 않고 부록의 `대체됨` 목록에 적습니다. 원본은 건드리지 않으므로 `labhq verify`, 감사 번들, claim anchor 검사는 지금처럼 원래 작업 폴더를 기준으로 합니다. 프로젝트 GitHub에는 두 보고서만 올라가며 요청 묶음은 커밋하지 않습니다.
+코드의 단계 경로는 묶음 루트 기준으로 바꾸고 README 명령도 그 루트에서 실행합니다. Markdown 링크는 문서 기준 상대경로를 유지합니다. 다른 절대경로는 manifest와 부록에 남깁니다. 파일은 link를 따라가지 않는 descriptor로 검사·hash·복사하며, `runner.bundle_max_file_mb`(기본 50)를 넘으면 읽지 않고 `not copied: size`로 기록합니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다. 원본은 건드리지 않으며 프로젝트 GitHub에는 두 보고서만 올립니다.
 
 ```mermaid
 flowchart LR

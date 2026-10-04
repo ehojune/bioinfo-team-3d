@@ -1,8 +1,12 @@
+import asyncio
 import csv
 import hashlib
+import json
+import platform
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -13,6 +17,7 @@ from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
 from labhq.settings import Settings
+import labhq.request_bundle as request_bundle_module
 
 
 def digest(path: Path) -> str:
@@ -41,13 +46,15 @@ def request_fixture(tmp_path: Path):
     old = root / "2026-10-04" / "task_old_analyst"
     upstream = first / "outputs" / "data" / "input.tsv"
     write(upstream, "value\n7\n")
+    write(first / "manifest.json", json.dumps({"host": platform.node()}))
     write(first / "outputs" / "scripts" / "make.py", "print('make')\n")
     outside = tmp_path / "outside" / "keep.tsv"
     write(outside, "outside\n")
     script = second / "outputs" / "scripts" / "analyze.py"
+    write(second / "manifest.json", json.dumps({"host": platform.node()}))
     write(script, "\n".join([
         "from pathlib import Path",
-        f'UPSTREAM = Path(__file__).parent / r"{upstream}"',
+        f'UPSTREAM = Path(r"{upstream}")',
         f'OTHER = r"{outside}"',
         'Path(__file__).with_name("rerun.txt").write_text(UPSTREAM.read_text(encoding="utf-8"), encoding="utf-8")',
         "",
@@ -129,7 +136,9 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
 
     moved = tmp_path / "moved-bundle"
     shutil.copytree(bundle, moved)
-    subprocess.run([sys.executable, str(moved / "steps/s2/scripts/analyze.py")], check=True, cwd=tmp_path)
+    assert "steps/s1/data/input.tsv" in bundled_script
+    assert "묶음의 루트에서 실행" in (bundle / "README.md").read_text(encoding="utf-8")
+    subprocess.run([sys.executable, "steps/s2/scripts/analyze.py"], check=True, cwd=moved)
     assert (moved / "steps/s2/scripts/rerun.txt").read_text(encoding="utf-8") == "value\n7\n"
 
     first_snapshot = {p.relative_to(bundle).as_posix(): digest(p) for p in bundle.rglob("*") if p.is_file()}
@@ -138,6 +147,136 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     assert rebuilt == built and second_snapshot == first_snapshot
     assert (Path(request["results"]["s2"]["workdir"]) / "outputs/scripts/analyze.py").read_bytes() == original_script
     assert verify_request(request, settings)["exit_code"] == 0  # verify still reads the originals
+
+
+def test_markdown_links_stay_document_relative(tmp_path):
+    settings, request, tasks, upstream, _outside, _old = request_fixture(tmp_path)
+    workdir = Path(request["results"]["s2"]["workdir"])
+    note = workdir / "outputs/docs/note.md"
+    write(note, f"[input]({upstream})\n")
+    request["results"]["s2"]["outputs"].append("outputs/docs/note.md")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    assert "[input](../../s1/data/input.tsv)" in (bundle / "steps/s2/docs/note.md").read_text(encoding="utf-8")
+
+
+def test_size_limit_skips_open_file_hash_and_copy(tmp_path, monkeypatch):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    copied = []
+    real_copy = request_bundle_module._copy_held
+
+    def record_copy(stream, info, destination):
+        copied.append(destination.name)
+        assert destination.name != "large.bin"
+        return real_copy(stream, info, destination)
+
+    monkeypatch.setattr(request_bundle_module, "_copy_held", record_copy)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
+        row = next(row for row in csv.DictReader(handle, delimiter="\t")
+                   if row["relative_path"] == "steps/s2/large.bin")
+    assert row["status"] == "not copied: size" and row["sha256"] == ""
+    assert "large.bin" not in copied
+
+
+def test_no_located_workdir_is_not_recorded_as_success(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "missing", "report": "body", "report_appendix": "", "plan": {"steps": [{"id": "s1"}]},
+               "results": {"s1": {"workdir": str(tmp_path / "gone"), "workdir_id": "task_gone",
+                                    "outputs": ["outputs/result.txt"]}}}
+
+    with pytest.raises(OSError, match="단계 작업 폴더를 하나도 찾지 못했습니다"):
+        build_request_bundle(request, settings)
+    assert not (Path(settings.runner.workspace_root) / "requests/missing").exists()
+
+
+def test_parent_swap_never_reads_the_replacement(tmp_path, monkeypatch):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    workdir = root / "2026-10-04" / "task_race"
+    source_dir = workdir / "outputs/data"
+    outside = tmp_path / "outside"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(source_dir / "safe.txt", "safe\n")
+    write(outside / "safe.txt", "SECRET\n")
+    request = {"id": "race", "report": "ok", "report_appendix": "", "plan": {"steps": [{"id": "s1"}]},
+               "results": {"s1": {"workdir": str(workdir), "workdir_id": workdir.name,
+                                    "outputs": ["outputs/data/safe.txt"]}}}
+    real_child = request_bundle_module.HeldDir.child
+    attempted = False
+
+    def swap_before_open(self, name, expect=None):
+        nonlocal attempted
+        if name == "data" and not attempted:
+            attempted = True
+            try:
+                source_dir.rename(workdir / "outputs/data-original")
+                source_dir.symlink_to(outside, target_is_directory=True)
+            except OSError:  # Windows held parent handles deny the replacement itself.
+                pass
+        return real_child(self, name, expect)
+
+    monkeypatch.setattr(request_bundle_module.HeldDir, "child", swap_before_open)
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    copied = bundle / "steps/s1/data/safe.txt"
+    assert not copied.exists() or copied.read_text(encoding="utf-8") == "safe\n"
+    assert all(b"SECRET" not in path.read_bytes() for path in bundle.rglob("*") if path.is_file())
+
+
+@pytest.mark.asyncio
+async def test_remote_runner_records_warning_without_gateway_path(tmp_path):
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-04" / "task_remote"
+    write(workdir / "manifest.json", json.dumps({"host": "another-host"}))
+    write(workdir / "outputs/answer.txt", "answer\n")
+    hub = Hub(settings)
+    hub.requests["remote"] = {"id": "remote", "mode": "direct", "status": "done", "report": "body",
+                              "report_appendix": "appendix", "results": {"direct": {
+                                  "workdir": str(workdir), "workdir_id": workdir.name,
+                                  "outputs": ["outputs/answer.txt"]}}, "plan": {"steps": []}}
+    data = {"ok": True, "report": "body", "report_appendix": "appendix"}
+
+    task = hub.schedule_terminal("remote", "request.completed", data)
+    await asyncio.wait_for(task, 2)
+
+    note = "runner가 다른 PC라 묶음을 만들지 않음"
+    assert data["bundle_warning"] == note and "bundle_path" not in data
+    assert note in hub.requests["remote"]["report_appendix"]
+    assert hub.events[-1]["data"]["bundle_warning"] == note
+    await asyncio.sleep(0)
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_bundle_uses_one_worker_without_blocking_loop(tmp_path, monkeypatch):
+    settings = configured(tmp_path)
+    hub = Hub(settings)
+    hub.requests["worker"] = {"id": "worker", "mode": "direct", "status": "done",
+                              "results": {"direct": {"workdir_id": "task_worker"}},
+                              "plan": {"steps": []}, "report": "body", "report_appendix": ""}
+    started = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    calls = []
+
+    def slow_bundle(*_args):
+        calls.append(threading.get_ident())
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(5)
+        return {"path": str(tmp_path / "bundle")}
+
+    monkeypatch.setattr(request_bundle_module, "build_request_bundle", slow_bundle)
+    data = {"ok": True}
+    task = hub.schedule_terminal("worker", "request.completed", data)
+    assert hub.schedule_terminal("worker", "request.completed", data) is task
+    await asyncio.wait_for(started.wait(), 2)
+    await asyncio.sleep(0)  # the event loop remains available while the worker is blocked
+    release.set()
+    await asyncio.wait_for(task, 2)
+    assert len(calls) == 1 and calls[0] != threading.get_ident()
+    assert data["bundle_path"] == str(tmp_path / "bundle")
+    hub.store.close()
 
 
 @pytest.mark.asyncio
@@ -151,6 +290,7 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
     workdir = Path(settings.runner.workspace_root) / "2026-10-04" / f"task_{mode}_{research}"
     output = workdir / "outputs" / "answer.txt"
     write(output, "answer\n")
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
     rid = f"req_{mode}_{research}_{terminal}"
     result = {"task_id": rid, "agent_id": "analyst", "ok": terminal == "request.completed",
               "workdir": str(workdir), "workdir_id": workdir.name, "outputs": ["outputs/answer.txt"]}
