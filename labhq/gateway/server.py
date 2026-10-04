@@ -1103,6 +1103,13 @@ class Hub:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=f"no runner hosts agent {task.agent_id!r}")
+        pinned = task.meta.get("session_runner")
+        if pinned and pinned != rid:
+            # A resumed session and its absolute workdir live on the runner that made them. Checked here, where the
+            # target is chosen, so a runner that registers the agent id between the caller's check and this
+            # dispatch cannot receive them (PR #393 review). Nothing was sent: a real $0.
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                              error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {rid}")
         if task.agent_id == "bioinfo-agent" and self.s.policy.bioinfo_agent.pipeline_pr:
             # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
             task.meta["pipeline_pr"] = True

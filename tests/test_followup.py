@@ -674,6 +674,7 @@ async def test_followup_resumes_on_the_runner_that_made_the_session(tmp_path):
     hub.dispatch = dispatch
     entry = await _ask_and_wait(hub)
     assert entry["status"] == "done" and calls[0].resume_session_id == "solo-1"
+    assert calls[0].meta["session_runner"] == "pc-a"  # pinned for the dispatch-time check
 
 
 def test_foreign_session_check_is_off_without_a_known_origin(tmp_path):
@@ -684,3 +685,31 @@ def test_foreign_session_check_is_off_without_a_known_origin(tmp_path):
     assert orchestrator._foreign_session_runner("r", "solo", "solo-1") == "pc-a"
     assert orchestrator._foreign_session_runner("r", "solo", None) is None
     assert orchestrator._foreign_session_runner("r", "solo", "other-session") is None
+
+
+@pytest.mark.asyncio
+async def test_dispatch_refuses_a_session_pinned_to_another_runner(tmp_path):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agent_runner = {"solo": "pc-b"}
+    task = Task(agent_id="solo", request_id="r", prompt="Why?", resume_session_id="solo-1",
+                meta={"kind": "followup", "session_runner": "pc-a"})
+    result = await hub.dispatch(task)
+    assert not result.ok and "runner pc-a" in result.error and result.cost_usd == 0.0
+    assert hub.store.get("task", task.id) is None  # nothing was sent
+
+
+@pytest.mark.asyncio
+async def test_a_runner_that_registers_after_the_check_does_not_get_the_session(tmp_path):
+    # PR #393 review: the early check passes while runner A hosts the agent; runner B registers the same id
+    # during the awaits before dispatch. The pin is checked where the target is chosen, so B never gets A's session.
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-a")
+
+    async def switch_runner_while_waiting(agent_id, session_id, workdir, **_):
+        hub.agent_runner[agent_id] = "pc-b"
+        return session_id, workdir
+
+    hub.wait_session_free = switch_runner_while_waiting
+    entry = await _ask_and_wait(hub)
+    assert entry["status"] == "failed" and "runner pc-a" in entry["error"]

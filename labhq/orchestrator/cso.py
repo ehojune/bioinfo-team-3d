@@ -1734,22 +1734,28 @@ class Orchestrator:
         _, session_id, workdir = max(candidates)
         return session_id, workdir
 
-    def _foreign_session_runner(self, request_id: str | None, agent_id: str, session_id: str | None) -> str | None:
-        """The runner that made this session when another runner now hosts the agent id, else None.
-
-        Dispatch goes to whichever runner registered the agent id last, so resuming there would open the first
-        runner's session id and absolute workdir on another PC (PR #391 review). An unknown origin (old ledger
-        rows, test hubs without a ledger) is not treated as foreign."""
-        store, current = getattr(self.hub, "store", None), getattr(self.hub, "agent_runner", {}).get(agent_id)
-        if not (session_id and store is not None and current):
+    def _session_origin(self, request_id: str | None, agent_id: str, session_id: str | None) -> str | None:
+        """The runner whose task made this session, from the durable ledger; None when unknown (old ledger rows,
+        test hubs without a ledger)."""
+        store = getattr(self.hub, "store", None)
+        if not (session_id and store is not None):
             return None
         for entry in store.all("task").values():
             result = entry.get("result") or {}
             if (entry.get("request_id") == request_id and (entry.get("payload") or {}).get("agent_id") == agent_id
                     and result.get("session_id") == session_id):
-                origin = entry.get("runner_id")
-                return origin if origin and origin != current else None
+                return entry.get("runner_id") or None
         return None
+
+    def _foreign_session_runner(self, request_id: str | None, agent_id: str, session_id: str | None) -> str | None:
+        """The runner that made this session when another runner now hosts the agent id, else None.
+
+        Dispatch goes to whichever runner registered the agent id last, so resuming there would open the first
+        runner's session id and absolute workdir on another PC (PR #391 review). This early check gives the PI a
+        clear refusal; the binding guard is the ``session_runner`` pin that Hub.dispatch checks (PR #393 review)."""
+        origin = self._session_origin(request_id, agent_id, session_id)
+        current = getattr(self.hub, "agent_runner", {}).get(agent_id)
+        return origin if origin and current and origin != current else None
 
     def _ask_scope(self, body: dict) -> tuple:
         """Recover a stable step identity from the durable task ledger, including old asks."""
@@ -1941,6 +1947,7 @@ class Orchestrator:
                 if (prior or self._consult_resource_busy(routed, session_id, workdir)
                         or self._foreign_session_runner(ask.request_id, routed, session_id)):
                     session_id, workdir = None, None
+                origin = self._session_origin(ask.request_id, routed, session_id)
                 consult = Task(
                     agent_id=routed, request_id=ask.request_id, prompt=prompt,
                     resume_session_id=session_id if self.hub.supports_resume(routed) else None,
@@ -1948,7 +1955,8 @@ class Orchestrator:
                           "agent_overrides": overrides,
                           **({**({"source_workdir": source_workdir} if source_workdir else {}),
                               "consult_refs": refs} if refs else {}),
-                          **({"workdir": workdir} if workdir else {})},
+                          **({"workdir": workdir} if workdir else {}),
+                          **({"session_runner": origin} if origin and (session_id or workdir) else {})},
                 )
                 result = await (self.run_step(consult, first_attempt=first_attempt) if first_attempt > 1
                                 else self.run_step(consult))
@@ -1999,7 +2007,10 @@ class Orchestrator:
                                                    "status": "running"})
         # A restart marks the running follow-up interrupted, but its runner may still answer it in this
         # session and workdir (#144).
+        origin = self._session_origin(rid, agent, session_id)
         session_id, workdir = await self._free_session(agent, session_id, workdir, rid=rid, step="followup")
+        # Whatever is still resumed (session or absolute workdir) is pinned to its runner at dispatch time.
+        pin = {"session_runner": origin} if origin and (session_id or workdir) else {}
         resumable = bool(session_id and self.hub.supports_resume(agent))
         earlier = [f for f in req.get("followups") or [] if f.get("id") != fid and f.get("status") == "done"][-3:]
         history = "".join(f"\nEarlier follow-up: {f.get('text')}\nYour answer: {clip(f.get('answer') or '', 1500)}\n"
@@ -2014,7 +2025,7 @@ class Orchestrator:
                     meta={**reference_meta(req), "kind": "followup", "followup_id": fid,
                           "title": f"이어 묻기: {entry['text'][:80]}", "request": req.get("text") or "",
                           "agent_overrides": dict(READ_ONLY_OVERRIDES), "upstream_dirs": list(dict.fromkeys(outputs)),
-                          **({"workdir": workdir} if workdir else {})})
+                          **({"workdir": workdir} if workdir else {}), **pin})
         self.cost[rid] = max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0))
         self._seed_cost(rid, req)
         try:
