@@ -128,7 +128,7 @@ predicate는 `field`와 `value`, `in`, `not_in`, `present`, `min_items` 중 하�
 
 active pack 중 `applies_when`이 맞는 것만 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값·pattern을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다. 교정 prompt에는 schema·pack 문제를 한 번에 모두 넣는다. 교정 뒤에도 실패하면 요청을 `plan_invalid`로 끝내고 남은 문제를 보고서와 `plan_validation`에 남긴다(#222).
 
-예시는 `single_cell_de@2`와 `bulk_tumor_normal@2`다. 전자는 donor·scale·model을, 후자는 벌크 두 조건의 pairing·저발현 filter·DE 기준·양성 대조 방향과 PMID를 CP1 전에 고정한다. 설정 예시는 `active_packs: [single_cell_de@2, bulk_tumor_normal@2]`이며, CSO는 `applies_when`이 맞는 pack만 계획에 넣는다. 기존 `bulk_tumor_normal@1` 승인 요청은 저장된 version과 hash로 재개한다.
+예시는 `single_cell_de@3`과 `bulk_tumor_normal@2`다. 전자는 donor·scale·model을, 후자는 벌크 두 조건의 pairing·저발현 filter·DE 기준·양성 대조 방향과 PMID를 CP1 전에 고정한다. 설정 예시는 `active_packs: [single_cell_de@3, bulk_tumor_normal@2]`이며, 두 pack 모두 요청 topic으로 적용된다. 기존 `bulk_tumor_normal@1`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개한다.
 
 | `model` | `model_family` | 허용 `count_scale` |
 |---|---|---|

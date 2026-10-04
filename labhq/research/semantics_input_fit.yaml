@@ -4,6 +4,7 @@
 version: 1
 pack_operations:
   single_cell_de@2: de_analysis
+  single_cell_de@3: de_analysis
 agent_operations:
   data_steward: data_retrieval
 operations:
