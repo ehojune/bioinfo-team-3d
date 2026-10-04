@@ -6,3 +6,6 @@ rows:
 - sha: 37c4b9a
   at: 2026-10-04 20:10
   text: 어휘 100키와 topic 판정의 구현·검증 상태를 기록했습니다.
+- sha: f094a7c
+  at: 2026-10-04 20:49
+  text: 기존 bulk pack을 보존하고 topic 기반 v2·재개 snapshot 검증·일반 경고 병합을 추가했습니다.
