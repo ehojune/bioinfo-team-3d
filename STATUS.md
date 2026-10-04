@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #369 — pack 조합 표의 core PLAN field 칸도 schema로 검사
+
+- 결론: PR #403 봇 P2. 조합 표에 core PLAN field(`brief.study_type`, `protocol.statistics.applicable` 등)가 들어가면 그 칸은 검사 없이 load됐다. PLAN schema에 없는 값(`"bogus"`, bool 자리의 `1`, list field의 문자열)은 어떤 PLAN과도 맞지 않는 행이다. 이제 load에서 거부한다.
+- 바뀐 것: `plan_field_problem()`이 칸의 path를 `ResearchPlan` schema로 따라가 그 field type에 strict하게 맞는지 본다. `contract.py`가 `packs.py`를 import하므로 schema는 검사할 때 늦게 가져온다. 선택(`| None`) field의 `null`은 PLAN dump의 값과 같아 허용한다. 문서: `docs/research_protocol.md` 6절, 매뉴얼 연구 lane 절.
+- 실행한 것: 새 test 6건 중 거부 5건이 옛 검사에서 실패하고 이 branch에서 통과했다. 남은 1건은 맞는 칸이 계속 load되는지 확인한다. 전체 pytest 3912 passed·54 skipped, `scripts/check_public.sh`.
+- 봇 P2: Field 제약(`ge=1`, `min_length=1`)은 annotation이 아니라 metadata에 있어 함께 검사한다. `protocol.revision: 0`, `brief.subject: ""` test가 수정 전 실패, 수정 뒤 통과.
+- 미해결: 없음.
+- 근거: `labhq/research/packs.py`, `tests/test_research_bulk_pack.py`.
+
 ## 2026-10-05 · #373 — 로그인 대기의 turn 키를 상담 ask마다 따로
 
 - 결론: 같은 request에서 서로 다른 직원에게 보낸 상담은 병렬로 돌지만 둘 다 `kind="consult"`라 한 turn으로 묶였다. 먼저 끝난 상담이 로그인 창을 지워 남은 상담이 24시간 상한을 새로 시작했고, 두 대기 기록도 서로 덮어썼다. PR #401 봇 3차 P1로, 병합 때 남긴 것이다.
