@@ -1,0 +1,5 @@
+pr: 386
+rows:
+- sha: c462e11
+  at: 2026-10-04 10:44
+  text: PI용 report와 실행 기록 report_appendix를 나누고 API·CLI·웹·GitHub·감사 번들에서 함께 보존한다.
