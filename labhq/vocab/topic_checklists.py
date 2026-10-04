@@ -73,12 +73,15 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
 
 
 def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
-    """Show all currently curated topic lists because the CSO declares topics in the same response."""
+    """Show all currently curated topic lists because the CSO declares topics in the same response.
+
+    Only the checks: every plan prompt carries the whole catalog, so the reasons go to the reviewer, who sees
+    them for the declared topics only (plan_review_context)."""
     lines = ["\n\nTopic checklists:"]
     for topic, items in checklists.items():
         if items:
             lines.append(f"- {topic}:")
-            lines.extend(f"  - {item.id}: {item.check} Why: {item.why}" for item in items)
+            lines.extend(f"  - {item.id}: {item.check}" for item in items)
     lines += [
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
         "`step:<step id>`, `assumption: <one line>`, or `not_applicable: <reason>`.",
