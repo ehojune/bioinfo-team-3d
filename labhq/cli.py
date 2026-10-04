@@ -97,6 +97,10 @@ def render(ev: dict) -> None:
     elif t == "request.route":
         line = ("↪ 처리: 단독 실패 → 팀" if d.get("fallback") else
                 f"↪ 처리: 단독({d.get('agent_id')})" if d.get("mode") == "solo" else "↪ 처리: 팀")
+    elif t == "engine.login_wait":
+        line = f"🔐 {d.get('engine')} 로그인 대기\n   {d.get('command', '')}"
+    elif t == "engine.login_resumed":
+        line = f"🔓 {d.get('engine')} 로그인 대기 해제"
     elif t == "recruit.suggested":
         line = f"🧾 CSO 채용 제안: {d.get('repo') or d.get('paper')} — {d.get('reason')}"
     elif t == "request.review":
@@ -565,6 +569,9 @@ def main(argv: list[str] | None = None) -> None:
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
     note.add_argument("text")
+    resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
+    resume.add_argument("request_id")
+    resume.add_argument("step_id")
     sub.add_parser("watch")
     sub.add_parser("projects", help="list projects and their GitHub repos")
     cr = sub.add_parser("codex-review", help="ask Codex to review a PR in a project repo (posts '@codex review')")
@@ -783,6 +790,8 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_send_and_wait(s, body))
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
+    elif args.cmd == "resume":
+        print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":
         asyncio.run(_watch(s))
     elif args.cmd == "projects":

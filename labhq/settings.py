@@ -341,6 +341,8 @@ class OrchestratorSettings(BaseModel):
     runner_reconnect_timeout_s: float = Field(default=30, ge=0)
     quota_default_wait_s: float = Field(default=3600, ge=1)
     quota_max_wait_s: float = Field(default=7 * 86400, ge=1)
+    login_retry_s: float = Field(default=600, gt=0)
+    login_wait_max_s: float = Field(default=86400, gt=0)
 
     @model_validator(mode="before")
     @classmethod
