@@ -17,6 +17,7 @@ live.apply({type: 'roster.updated', data: {agents: [{id: 'engineer', engine: 'co
 assert.equal(live.S.agents.get('engineer').capabilities.effort, 'medium', 'a roster update replaces the card');
 
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
-for (const label of ['권한', '추론 강도', '이어 묻기', '읽기 전용 상담', 'MCP']) assert.match(html, new RegExp(`'${label}'`));
+for (const label of ['권한', '추론 강도', '이어 묻기·상담', 'MCP']) assert.match(html, new RegExp(`'${label}'`));
 assert.match(html, /a\.capabilities/);
+assert.match(html, /!cap\.read_only \? '안 됨/, 'an engine without read-only enforcement offers no follow-up');
 console.log('agent capability web tests passed');

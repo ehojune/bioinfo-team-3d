@@ -1124,7 +1124,17 @@ class Hub:
                 "effort": agent.get("effort"),
                 "permission": agent.get("sandbox") if agent.get("engine") == "codex" else agent.get("permission_mode"),
                 "max_turns": agent.get("max_turns"),
-                "mcp": [*agent.get("mcp", []), *(f"labhq_{name}" for name in agent.get("builtin_mcp", []))]}
+                "mcp": self._agent_mcp(agent)}
+
+    @staticmethod
+    def _agent_mcp(agent: dict) -> list[str]:
+        """The servers the runner wires (`RunnerDaemon._mcp_servers`, PR #410 review): HPC only with a scheduler,
+        labhq_ask for every engine but Antigravity, then the agent's own servers."""
+        builtin = agent.get("builtin_mcp", [])
+        return [*(["labhq_approval"] if "approval" in builtin else []),
+                *(["labhq_hpc"] if "hpc" in builtin and agent.get("scheduler", "none") != "none" else []),
+                *(["labhq_ask"] if agent.get("engine") != "antigravity" else []),
+                *agent.get("mcp", [])]
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:
