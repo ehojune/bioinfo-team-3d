@@ -26,7 +26,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator, holds_session
+from ..orchestrator.cso import Orchestrator, holds_session, solo_phase
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -114,6 +114,7 @@ class RequestIn(BaseModel):
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
     cso_model: str | None = None  # request-local; checked against orchestrator.cso_models
+    route: Literal["auto", "team"] = "auto"
     meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
 
 
@@ -563,6 +564,18 @@ class Hub:
             if self.s.orchestrator.chief_of_staff_agent:
                 needed.add(self.s.orchestrator.chief_of_staff_agent)
             return needed
+        phase = solo_phase(req, self.s.orchestrator)
+        if phase == "solo":
+            agent = (req.get("route_decision") or {}).get("agent_id")
+            return {agent} if agent else set()
+        if phase == "review":
+            reviewer = self.s.orchestrator.reviewer_agent
+            return {reviewer} if reviewer else set()
+        if phase == "done":
+            return set()
+        return self._team_resume_agents(req)
+
+    def _team_resume_agents(self, req: dict) -> set[str]:
         steps = req.get("plan", {}).get("steps") or []
         done = set(req.get("results") or {})
         needed = {s["agent_id"] for s in steps if s["id"] not in done}
@@ -1354,6 +1367,8 @@ class Hub:
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
+        if body.mode == "direct" and body.route == "team":
+            raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
             raise ValueError("cso_model is only valid for orchestrate or plan_only requests")
         if body.cso_model and body.cso_model not in self.s.orchestrator.cso_models:
@@ -1419,7 +1434,8 @@ class Hub:
     async def _start_request(self, rid: str) -> None:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
-                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
+                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
+                                                           "route")}})
         await self.orchestrator.run_request(rid)
 
     def pipeline_prs(self) -> dict[str, dict]:
@@ -1450,7 +1466,7 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
-                                                                  "references", "pi_notes")},
+                                                                  "references", "pi_notes", "route", "route_decision")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],

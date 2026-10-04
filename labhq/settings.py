@@ -319,6 +319,8 @@ class OrchestratorSettings(BaseModel):
     cso_agent: str = "cso"
     chief_of_staff_agent: str | None = "chief_of_staff"
     reviewer_agent: str | None = "sci_reviewer"
+    solo_agent: str | None = None
+    solo_review: bool = False
     # Per-request CSO overrides may select only one of these models. Fable is excluded because its
     # professional-biology policy makes it unsuitable for this role (#272).
     cso_models: list[str] = ["opus", "gpt-6-astra"]

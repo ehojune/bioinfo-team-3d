@@ -14,7 +14,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
@@ -26,6 +26,7 @@ from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, 
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..quota import is_quota_error, received_quota_wait
+from ..request_status import is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
@@ -58,6 +59,7 @@ PLAN_SCHEMA: dict[str, Any] = {
         "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "assumptions": {"type": "array", "maxItems": 8,
                         "items": {"type": "string", "maxLength": 300}},
+        "route": {"type": "string", "enum": ["team", "solo"]},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}, "agent_id": {"type": "string"},
@@ -84,6 +86,17 @@ def normalize_assumptions(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [item.strip() for item in raw if isinstance(item, str) and item.strip()][:8]
+
+
+def route_decision(plan: Any, solo_agent: str | None, roster: list[dict], *, requested: str = "auto",
+                   research: bool = False) -> dict[str, Any]:
+    """Resolve an optional general-plan hint to a durable execution mode; every uncertain case stays team."""
+    planned = plan.get("route") if isinstance(plan, dict) else None
+    roster_ids = {agent.get("id") for agent in roster if isinstance(agent, dict)}
+    solo = bool(not research and requested != "team" and planned == "solo" and solo_agent in roster_ids)
+    return {"mode": "solo" if solo else "team", "planned": planned if planned in {"team", "solo"} else "team",
+            "requested": requested if requested in {"auto", "team"} else "auto",
+            **({"agent_id": solo_agent} if solo else {})}
 
 
 def _carry_assumptions(previous: Any, candidate: Any) -> Any:
@@ -243,6 +256,27 @@ ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
     "Every analysis step declares the scripts it runs under outputs/scripts/ (for example "
     "outputs/scripts/analyze.py), as well as result-determining intermediate artifacts under outputs/reference/.")
 
+ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
+                   "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
+                   "when the work needs analysis design choices that benefit from independent review, several "
+                   "dependent stages, HPC, or controlled data. When in doubt, use team. Plan the steps either way: "
+                   "they are the fallback.")
+
+SOLO_PROMPT = """Complete this request by yourself in one turn.
+
+Original request:
+{request}
+
+Planning assumptions:
+{assumptions}
+
+Rules:
+- Lead with the conclusion and write a short report, about 2,000 Korean characters or less.
+- Save every deliverable under outputs/ using relative paths.
+- Save analysis code under outputs/scripts/ and use only relative paths inside it.
+- In the limitations, give one line for each thing you could not do and each assumption you had to make.
+"""
+
 
 PLAN_PROMPT = """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
@@ -271,6 +305,7 @@ Rules:
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
 - """ + ASSUMPTIONS_RULE + """
+- """ + ROUTE_PLAN_RULE + """
 - Judge the request against the lab's scope ({lab_scope}) in `scope`: verdict "in" when it fits, "borderline"
   when it is adjacent work the lab can still do, "out" when it is outside the lab's field; reason is one sentence.
   Plan the steps whatever the verdict (for "out" the PI decides whether they run), and do not ask about scope in
@@ -1393,6 +1428,44 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
     return matches(value, schema)
 
 
+SoloPhase = Literal["solo", "review", "fallback", "done"]
+
+
+def _solo_result_problem(result: TaskResult) -> str:
+    if not result.ok:
+        return result.error or "task failed"
+    if not result.text.strip():
+        return "empty answer"
+    if not result.outputs:
+        return "no outputs"
+    return ""
+
+
+def solo_phase(req: dict, cfg: Any) -> SoloPhase | None:
+    """Choose the next stored solo-route phase; ``None`` is the ordinary team route."""
+    route = req.get("route_decision") or {}
+    if is_terminal_request(req.get("status")):
+        return "done" if route.get("mode") == "solo" or route.get("fallback") else None
+    if route.get("fallback"):
+        return "fallback"
+    if route.get("mode") != "solo":
+        return None
+    stored = req.get("solo_result")
+    if not isinstance(stored, dict):
+        return "solo"
+    result = TaskResult.model_validate(stored)
+    if _solo_result_problem(result):
+        return "fallback"
+    if not cfg.solo_review:
+        return "done"
+    stored_review = req.get("solo_review")
+    if valid_review(stored_review):
+        return "done" if with_p1_verdict(stored_review).get("verdict") == "accept" else "fallback"
+    if isinstance(stored_review, dict) and stored_review.get("status") == "review_unparsed":
+        return "fallback"
+    return "review"
+
+
 def _object_with_key(text: str, key: str) -> dict | None:
     """The largest JSON object in ``text`` that has ``key`` at its top level, read leniently, else None."""
     decoder, best = json.JSONDecoder(strict=False), None
@@ -2110,7 +2183,7 @@ class Orchestrator:
                 tool_errors.extend(res.tool_errors)
                 res = res.model_copy(update={"tool_errors": list(tool_errors)})
 
-        res = await dispatch_turn(task, start=initial_attempt)
+        res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
         read_only = is_read_only_task(task.meta)
@@ -2940,6 +3013,104 @@ class Orchestrator:
         out.append("Full instructions, outputs and errors per step: the request's round records and work folders.")
         return "\n\n".join(out)
 
+    def _ensure_route_decision(self, req: dict, roster: list[dict], *, research: bool) -> tuple[dict, bool]:
+        """Keep a decision made before a restart; research and malformed stored values stay on the team path."""
+        stored = req.get("route_decision")
+        if (not research and isinstance(stored, dict) and stored.get("mode") in {"team", "solo"}
+                and (stored.get("mode") != "solo" or stored.get("agent_id"))):
+            return stored, False
+        decision = route_decision(req.get("plan"), self.cfg.solo_agent, roster,
+                                  requested=req.get("route", "auto"), research=research)
+        req["route_decision"] = decision
+        return decision, True
+
+    @staticmethod
+    def _solo_notes(req: dict) -> list[dict]:
+        started = float(req.get("solo_started_at") or 0)
+        return [note for note in req.get("pi_notes") or [] if float(note.get("at") or 0) > started]
+
+    async def _run_solo(self, rid: str, text: str, refs: dict) -> bool:
+        """Run or recover the planned single employee turn. True means the request ended; False falls back to DAG."""
+        req = self.hub.requests[rid]
+        decision = req.get("route_decision") or {}
+        phase = solo_phase(req, self.cfg)
+        if phase is None:
+            return False
+        agent = decision["agent_id"]
+        result = None
+        review = None
+
+        if phase == "solo":
+            req.setdefault("solo_started_at", time.time())
+            self.hub.save_request(rid)
+            result = await self.run_step(Task(
+                agent_id=agent, request_id=rid, budget_usd=req.get("budget_usd"),
+                prompt=SOLO_PROMPT.format(request=text, assumptions=_assumptions_prompt(req.get("plan"))),
+                meta={**refs, "kind": "direct", "title": f"단독 처리: {req.get('text', '')[:80]}",
+                      "project_dirs": req.get("project_dirs", []), "max_attempts": 1}))
+            req["solo_result"] = result.model_dump(mode="json")
+            self.hub.save_request(rid)
+            phase = solo_phase(req, self.cfg)
+            if rid in self.budget_denials:
+                self._finish(rid, result.text or result.error or "task failed",
+                             {"direct": result.model_dump(mode="json")}, ok=False,
+                             error=self.budget_denials[rid])
+                return True
+
+        stored = req.get("solo_result")
+        result = TaskResult.model_validate(stored) if isinstance(stored, dict) else None
+        if phase == "review" and result is not None:
+            reviewer = self.cfg.reviewer_agent
+            if not reviewer or reviewer not in self.hub.agents:
+                req["route_decision"] = {**decision, "mode": "team", "fallback": True,
+                                         "reason": "solo science reviewer unavailable"}
+                self.hub.save_request(rid)
+                await self._emit(rid, "request.route", req["route_decision"])
+                return False
+            reviewed = await self.run_step(Task(
+                agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
+                prompt=REVIEW_PROMPT.format(request=text, results=result.text),
+                meta={**refs, "kind": "review", "revision": 0, "request": text,
+                      "title": "단독 결과 과학 리뷰"}))
+            parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
+            review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
+                "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
+            req["solo_review"] = review
+            self.hub.save_request(rid)
+            await self._emit(rid, "request.review", {"revision": 0, **review})
+            phase = solo_phase(req, self.cfg)
+            if rid in self.budget_denials:
+                self._finish(rid, result.text or result.error or "task failed",
+                             {"direct": result.model_dump(mode="json")}, ok=False,
+                             review=review, error=self.budget_denials[rid])
+                return True
+
+        if phase == "fallback":
+            reason = decision.get("reason") or (_solo_result_problem(result) if result else "")
+            reason = reason or "solo science review did not accept the result"
+            req["route_decision"] = {**decision, "mode": "team", "fallback": True, "reason": reason}
+            self.hub.save_request(rid)
+            await self._emit(rid, "request.route", req["route_decision"])
+            return False
+
+        if phase == "done" and result is None:
+            return True
+
+        report = result.text.strip()
+        stored_review = req.get("solo_review")
+        review = with_p1_verdict(stored_review) if valid_review(stored_review) else review
+        late_notes = self._solo_notes(req)
+        if late_notes:
+            report += "\n\n단독 턴이 시작된 뒤 온 메모는 반영되지 않았다.\n" + "\n".join(
+                f"- {note.get('id') or 'note'}: {note.get('text') or ''}" for note in late_notes)
+        cost = (f"${float(result.cost_usd):.2f}" if result.cost_known and result.cost_usd is not None
+                else "비용 미집계")
+        paths = ", ".join(f"{result.workdir_id or 'unknown-workdir'}/{path}" for path in result.outputs)
+        report = _append_report_metadata(report, [f"처리 방식: 단독 ({agent})", f"단독 턴 비용: {cost}",
+                                                   f"산출 경로: {paths or 'none'}"])
+        self._finish(rid, report, {"direct": result.model_dump(mode="json")}, ok=True, review=review)
+        return True
+
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False) -> None:
         req = self.hub.requests[rid]
@@ -3071,8 +3242,13 @@ class Orchestrator:
                     req["plan"] = {**req["plan"], "steps": steps, "warnings": warnings}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
+                decision, created = self._ensure_route_decision(req, roster, research=research_lane)
                 self.hub.save_request(rid)
+                if created:
+                    await self._emit(rid, "request.route", decision)
                 if not research_lane and not await self._scope_gate(rid, req):  # a card the restart closed (#36)
+                    return
+                if not research_lane and await self._run_solo(rid, text, refs):
                     return
                 results: dict[str, TaskResult] = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(req.get("results") or {})
@@ -3341,7 +3517,11 @@ class Orchestrator:
                     scope = scope_verdict(plan) or req.get("scope_first")
                     if scope:
                         req["scope_check"] = scope
-                await self._emit(rid, "request.plan", req["plan"])
+                decision, created = self._ensure_route_decision(req, roster, research=research_lane)
+                self.hub.save_request(rid)
+                if created:
+                    await self._emit(rid, "request.route", decision)
+                await self._emit(rid, "request.plan", {**req["plan"], "processing": decision})
                 for rec in plan.get("recruit") or []:
                     if rec.get("repo") or rec.get("paper"):
                         await self._emit(rid, "recruit.suggested", rec)  # UI shows a 채용 제안 card → POST /api/recruit
@@ -3356,6 +3536,8 @@ class Orchestrator:
                     self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True)
                     return
                 elif not await self._scope_gate(rid, req):
+                    return
+                elif await self._run_solo(rid, text, refs):
                     return
                 results = self.hub.result_map(rid)
                 remaining = {s["id"] for s in steps} - set(results)
@@ -3801,6 +3983,10 @@ class Orchestrator:
                       "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 경고가 있습니다. 실행 기록 참고.")
         report = _with_review_reference(report, review)
         metadata = []
+        route = req.get("route_decision") or {}
+        if route.get("fallback"):
+            metadata.append("처리 방식: 단독 실패 → 팀" +
+                            (f"; 원인: {route['reason']}" if route.get("reason") else ""))
         if req.get("plan", {}).get("steps") and results:
             if not req.get("research_contract"):
                 warnings = general_report_warnings(req["plan"]["steps"], results)
