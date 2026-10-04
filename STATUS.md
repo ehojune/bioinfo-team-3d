@@ -25,6 +25,51 @@ P1 — 직원별 추론 강도와 단독 처리 담당 세션 보존을 구현�
 ## 막힌 점
 없음.
 
+# 요청 묶음 4차 P1 구조 수정 (#373)
+
+## 단계
+P1 — 산출 폴더 순회를 없애고 runner 기록만 복사하도록 단순화했습니다.
+
+## 한 일
+- `outputs ∩ output_sha256` 파일만 no-follow handle로 열어 hash를 확인하고 복사합니다.
+- 누락·변경·상한 제외를 모두 manifest에 적고 묶음과 이벤트를 `incomplete`로 표시합니다.
+- workdir 치환은 경로 경계에서만 적용하고 POSIX 대소문자를 구분합니다.
+- 공용 runner walker는 main 상태로 되돌렸습니다.
+
+## 테스트 결과
+- [x] 수정 전 회귀 5건 실패, 수정 후 통과
+- [x] 관련 test 53 passed, 4 skipped
+- [x] `pytest -q`: 3756 passed, 54 skipped
+- [x] Node CJS 20개와 `scripts/check_public.sh` 통과
+
+## 기존 테스트 변경
+기존 runner test 기대값은 그대로 두고, 이 PR의 요청 묶음 test만 기록 산출 구조에 맞췄습니다.
+
+## 막힌 점
+없음.
+
+# 요청 묶음 2차 P1 보강 (#373)
+
+## 단계
+P1 — runner와 묶음의 순회 판정을 합치고 재실행 명령·요청별 상한을 보강했습니다.
+
+## 한 일
+- 묶음이 runner의 held-descriptor walker를 써서 link·junction·mount·device 변경·통제 구역을 제외합니다.
+- 안전한 이름의 script만 DAG 위상 순서로 README 명령에 싣습니다.
+- 요청별 2,048MB·5,000파일 상한을 두고 첫 제외 파일을 manifest와 부록에 기록합니다.
+
+## 테스트 결과
+- [x] 수정 전 회귀 5건 실패, 수정 후 통과
+- [x] 관련 test 85 passed, 21 skipped
+- [x] `pytest -q`: 3749 passed, 53 skipped
+- [x] Node CJS 20개와 `scripts/check_public.sh` 통과
+
+## 기존 테스트 변경
+없음.
+
+## 막힌 점
+없음.
+
 # 작은 요청 단독 처리와 팀 폴백 (#373 안 A)
 
 ## 단계
@@ -51,6 +96,30 @@ P1 — 일반 lane의 작은 요청을 설정한 직원 한 명에게 보내는 
 ## 기존 테스트 변경
 - 일반 계획 schema·prompt 고정 hash를 새 계약으로 갱신했습니다.
 - `route` 선택 필드와 처리 방식 렌더 키를 기존 엄격성 기대값에 반영했습니다.
+
+## 막힌 점
+없음.
+
+# 요청 묶음과 상대경로 재작성 (#373 벤치 B)
+
+## 단계
+P1 — 끝난 요청의 최종 산출물과 재실행 자료를 한 폴더에 모았습니다.
+
+## 한 일
+- 성공·부분 실패·direct·연구 요청에 `requests/<request_id>/` 묶음을 만듭니다.
+- 최종 단계 산출물과 스크립트를 복사하고 요청 workdir 경로만 상대경로로 바꿉니다.
+- 같은 PC의 runner workdir만 묶고, 파일은 held descriptor에서 검사·hash·복사합니다.
+- 코드 경로와 재실행 cwd를 묶음 루트로 맞추고 생성 작업은 worker thread에서 한 번만 실행합니다.
+- 크기 초과·남은 절대경로·대체 판을 manifest와 부록에 기록합니다.
+- 웹·CLI에 묶음 경로나 생성 경고를 표시합니다.
+
+## 테스트 결과
+- [x] 수정 전 새 회귀 테스트 실패 확인
+- [x] `pytest -q`: 3744 passed, 53 skipped
+- [x] Node CJS 20개 통과
+
+## 기존 테스트 변경
+- 일반·연구 단계 prompt 고정 hash 3곳을 새 경로 변수 규칙에 맞췄습니다.
 
 ## 막힌 점
 없음.

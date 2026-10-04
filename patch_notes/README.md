@@ -14,9 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:05 | [`1c78b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/1c78b0d) | main의 단독 라우팅(#388)을 병합하고 요청 상태 필드에 route와 묶음 필드를 함께 둔다 |
 | 21:05 | [`d42ed3c`](https://github.com/ehojune/bioinfo-team-3d/pull/391/commits/d42ed3c) | 직원별 추론 강도를 엔진 명령줄에 적용하고 단독 처리 뒤 이어 묻기를 맡았던 직원의 세션으로 보냅니다. |
+| 20:41 | [`fe035b4`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/fe035b4) | 요청 묶음이 runner 기록 산출만 hash 검증해 복사하고 누락을 incomplete로 기록하도록 단순화 |
+| 20:06 | [`53b9b2a`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/53b9b2a) | 요청 terminal을 먼저 저장하고 단계별 outputs 구조와 runner Python 명령으로 묶음 재실행 경로를 바로잡음 |
+| 19:38 | [`04b6000`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/04b6000) | runner와 같은 안전 순회, DAG 재실행 순서, 요청별 누적 상한으로 요청 묶음 2차 P1을 보강 |
 | 19:10 | [`7c16b7a`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/7c16b7a) | 단독 재시작의 다음 단계를 한 함수로 판정해 폴백 전에 필요한 팀 runner를 기다리게 했다. |
+| 19:03 | [`44fe4d6`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/44fe4d6) | 다른 runner host 차단, descriptor 기반 복사, 루트 기준 경로 재작성과 비동기 생성을 보강했습니다. |
 | 18:48 | [`5e1c789`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/5e1c789) | 단독 결과의 예산 거부를 우선하고 재시작 때 담당 runner와 저장된 리뷰를 이어 쓰게 했다. |
+| 18:32 | [`f94b281`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/f94b281) | 요청별 최종 산출물 묶음과 단계 경로 상대화 기능을 추가했습니다. |
 | 18:32 | [`40dd720`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/40dd720) | 작은 일반 요청을 직원 한 명에게 자동 라우팅하고 실패하면 저장된 팀 계획으로 이어가게 했다. |
 | 12:11 | [`ba41267`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ba41267) | 재계획이 낸 가정 목록이 이전 목록을 대체하고, 메모로 바뀐 가정은 보고서에 실제 쓴 선택으로 적는다 |
 | 11:55 | [`ed5d0e2`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ed5d0e2) | CSO 질문을 세 범주로 제한하고 일반 계획의 과학 설계 가정을 저장·표시·보고한다 |
