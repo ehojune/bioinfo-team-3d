@@ -244,6 +244,8 @@ class ResearchPlan(StrictModel):
     # LabHQ writes these after the CSO draft. They enter the CP1 hash and audit record.
     pack_applicability: dict[str, PackApplicabilityRecord] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    checklist: dict[str, str] = Field(default_factory=dict)
+    suggested_next: list[str] = Field(default_factory=list, max_length=8)
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
@@ -268,7 +270,7 @@ class ResearchPlan(StrictModel):
     def _drop_empty_topic_metadata(self, handler: Any) -> dict[str, Any]:
         # Plans frozen before topic routing must keep their canonical JSON and plan hash.
         data = handler(self)
-        for field in ("topics", "pack_applicability", "warnings"):
+        for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next"):
             if not data.get(field):
                 data.pop(field, None)
         return data

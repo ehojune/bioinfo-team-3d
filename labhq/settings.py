@@ -321,6 +321,7 @@ class OrchestratorSettings(BaseModel):
     wait_for_clarification: bool = True
     cso_agent: str = "cso"
     chief_of_staff_agent: str | None = "chief_of_staff"
+    precedent_agent: str | None = "lit_scout"
     reviewer_agent: str | None = "sci_reviewer"
     solo_agent: str | None = None
     solo_review: bool = False

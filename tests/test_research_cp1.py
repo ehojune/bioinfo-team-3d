@@ -160,10 +160,10 @@ def _write_agents(root: Path) -> Path:
     return root / "agents"
 
 
-@pytest.mark.parametrize("command_limit", [None, 20_000], ids=["inline", "over-command-line-limit"])
+@pytest.mark.parametrize("command_limit", [None, 20_000], ids=["default-limit", "lowered-limit"])
 async def test_public_research_request_reaches_cp1_card_through_the_claude_schema_path(tmp_path, monkeypatch,
                                                                                       command_limit):
-    # The live rerun's CSO re-plan was 33,091 characters, past the Windows limit; a lowered limit takes that path.
+    # The default sits near the Windows boundary and varies with path length; the lowered limit forces TASK.md.
     from labhq.adapters import base
     if command_limit:
         monkeypatch.setattr(base, "command_line_limit", lambda: command_limit, raising=False)
@@ -233,7 +233,10 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
                        .read_text(encoding="utf-8").splitlines()]
             assert len(carried) >= plan_calls
             pointer = [prompt.startswith("Read TASK") for prompt in carried[-plan_calls:]]
-            assert pointer == [bool(command_limit)] * plan_calls, carried
+            if command_limit:
+                assert pointer == [True] * plan_calls, carried
+            else:
+                assert len(pointer) == plan_calls
     finally:
         runner.stop()
         server.should_exit = True

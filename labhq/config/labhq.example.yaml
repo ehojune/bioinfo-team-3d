@@ -127,6 +127,7 @@ projects:                        # 프로젝트마다 GitHub 저장소 하나. �
 orchestrator:
   cso_agent: cso
   chief_of_staff_agent: chief_of_staff
+  precedent_agent: lit_scout            # null이면 선행 연구 필수·권장 분석 조사를 생략
   reviewer_agent: sci_reviewer
   # solo_agent: analyst                 # roster agent id; 없으면 모든 요청을 팀으로 처리
   # solo_review: false                  # true면 단독 결과도 과학 리뷰 1회

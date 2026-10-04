@@ -26,9 +26,9 @@ CANARY = "CANARY-research-91c2"
 # review requires every permitted path to write the same declared filename. #373 bench A now declares analysis
 # scripts and result-determining references under outputs/. #373 direction 2 adds the shared three-category question
 # rule and records research choices in protocol, so this fixed prompt hash changes again.
-RESEARCH_PLAN_SCHEMA_SHA = "0e137b57dcf8adeba97220a343523916a7fc8417d5c891d3952da85d6ec354c4"
+RESEARCH_PLAN_SCHEMA_SHA = "de530d0fc5159c651f82b326df197635b4a114a043ebdcf3b46d9726906c06a9"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "ee3592194798e1607a90951b3b7c55dfbbefea04f2386ff03f3290ffc50511a6"  # sentence-condition pack rule (PR #390 review)
+RESEARCH_PROMPT_SHA = "8b371e182b944229e7db575ce9c93c9794470c4ec81fb0c5e260461bd6b48900"
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
@@ -61,6 +61,8 @@ def test_on_schema_offers_optional_entries_without_the_version_field():
 def test_plans_approved_before_221_keep_their_canonical_json_and_hash():
     plan = valid_plan()
     plan.pop("topics")
+    plan.pop("checklist")
+    plan.pop("suggested_next")
     assert rc.plan_sha256(plan) == VALID_PLAN_SHA
     assert rc.plan_sha256(declared(plan, [])) == VALID_PLAN_SHA
     assert "output_types" not in json.loads(rc.canonical_plan_json(plan))["steps"][0]
@@ -119,6 +121,7 @@ async def test_off_removes_declarations_and_freezes_the_plan_of_main():
     expected = plan_with([])(req["plan"]["protocol"]["packs"])
     expected["steps"][0]["outputs"] = ["outputs/result1.tsv"]
     expected["pack_applicability"] = req["plan"]["pack_applicability"]
+    expected["warnings"] = req["plan"].get("warnings", [])
     undeclared = rc.plan_sha256(expected)
     assert req["research_contract"]["plan_sha256"] == undeclared
 

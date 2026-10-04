@@ -76,8 +76,9 @@ def test_scope_verdict_is_strict_in_the_plan_schema_and_absent_from_the_replan()
         assert scope["properties"]["reason"]["type"] == "string"
         replan = cso.replan_schema(declare)  # a re-plan does not judge scope again
         assert "scope" not in replan["properties"] and "scope" not in replan["required"]
-        # #373 keeps route and assumptions optional so old plans and mock adapters remain valid.
-        assert set(replan["required"]) == set(replan["properties"]) - {"assumptions", "route"}
+        # #373 keeps these additive fields optional so old plans and mock adapters remain valid.
+        optional = {"assumptions", "route", "checklist", "suggested_next"}
+        assert set(replan["required"]) == set(replan["properties"]) - optional
 
 
 @pytest.mark.asyncio

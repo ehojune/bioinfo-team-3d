@@ -672,6 +672,8 @@ class Hub:
             needed = {self.s.orchestrator.cso_agent}
             if self.s.orchestrator.chief_of_staff_agent:
                 needed.add(self.s.orchestrator.chief_of_staff_agent)
+            if self.s.orchestrator.precedent_agent and "analysis_precedents" not in req:
+                needed.add(self.s.orchestrator.precedent_agent)
             return needed
         phase = solo_phase(req, self.s.orchestrator)
         if phase == "solo":
@@ -694,6 +696,8 @@ class Hub:
             needed.add(self.s.orchestrator.reviewer_agent)
         if not steps and self.s.orchestrator.chief_of_staff_agent:
             needed.add(self.s.orchestrator.chief_of_staff_agent)
+        if not steps and self.s.orchestrator.precedent_agent and "analysis_precedents" not in req:
+            needed.add(self.s.orchestrator.precedent_agent)
         return needed
 
     def completed_direct_result(self, rid: str) -> TaskResult | None:
