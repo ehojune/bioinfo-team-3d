@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:25 | [`7f60b9a`](https://github.com/ehojune/bioinfo-team-3d/pull/393/commits/7f60b9a) | 세션 runner 고정을 재전송과 복구 재전송에도 적용하고 바뀐 대상에는 보내지 않는다 |
 | 00:51 | [`585707b`](https://github.com/ehojune/bioinfo-team-3d/pull/395/commits/585707b) | topic 점검표와 선행 연구 필수·권장 분석을 계획·리뷰·보고서에 연결 |
 
 ## 2026-10-04
@@ -21,7 +22,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 23:58 | [`7a30598`](https://github.com/ehojune/bioinfo-team-3d/pull/394/commits/7a30598) | README에 질문 세 범주와 가정, 요청 묶음 재현, topic으로 pack 적용을 더한다 |
+| 23:55 | [`7c58580`](https://github.com/ehojune/bioinfo-team-3d/pull/393/commits/7c58580) | 이어 쓰는 세션의 runner를 dispatch 시점에 고정해 검사 뒤 등록한 runner로 가지 않게 한다 |
 | 23:40 | [`99c5a32`](https://github.com/ehojune/bioinfo-team-3d/pull/392/commits/99c5a32) | 3D 화면에 계획 가정과 요청 묶음을 보이고 불완전한 묶음을 표시하며, 모든 node 웹 test를 CI에서 돌린다 |
+| 23:30 | [`bb81a54`](https://github.com/ehojune/bioinfo-team-3d/pull/393/commits/bb81a54) | 이어 묻기는 세션을 만든 runner에서만 잇고, 다른 runner가 직원을 맡았으면 이유를 밝히고 거절한다 |
 | 21:55 | [`a7a44ac`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/a7a44ac) | topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다 |
 | 21:50 | [`070f372`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/070f372) | 고정된 연구 계약은 재개 때 CP1 snapshot을 따르고 면제한 pack은 사유만 받는다 |
 | 21:35 | [`096445e`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/096445e) | topic 이전 연구 계약을 승인 당시 pack 규칙으로 재개하고 재계획의 모르는 topic 경고를 남긴다 |
