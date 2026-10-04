@@ -108,8 +108,12 @@ def _posix_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def login_command(engine: str, settings, capabilities: dict | None = None) -> str:
-    """Return a display-only command for the configured staff account; never include credentials."""
+def login_command(engine: str, settings, capabilities: dict | None = None, *, runner_known: bool = True) -> str:
+    """Return a display-only command for the configured staff account; never include credentials.
+
+    ``runner_known=False`` (the runner's OS and environment are not known, e.g. right after a gateway restart
+    before it reconnects) gives the config-key guidance instead of a command built for the gateway's own host
+    (PR #398 review)."""
     name = str(engine or "").casefold()
     if name in {"claude", "claude_code"}:
         name, key, executable, suffix = "claude_code", "CLAUDE_CONFIG_DIR", "claude", "\n/login"
@@ -120,7 +124,7 @@ def login_command(engine: str, settings, capabilities: dict | None = None) -> st
     raw = getattr(settings.engines, name).env.get(key)
     if not raw:
         return executable + suffix
-    path = _expanded_path(str(raw), capabilities)
+    path = _expanded_path(str(raw), capabilities) if runner_known else None
     if path is None:
         return f"설정의 engines.{name}.env.{key} 경로로 로그인하세요\n원래 값: {raw}"
     if _runner_windows(capabilities):

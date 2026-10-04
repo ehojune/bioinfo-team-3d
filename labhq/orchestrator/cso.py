@@ -2292,7 +2292,9 @@ class Orchestrator:
             return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
                               error_kind="quota_wait_limit", error=reason)
 
-        def login_deadline() -> float:
+        def login_deadline(current: Task) -> float:
+            """The request's window for this engine, joined by the turn about to park on it (every login park
+            goes through here, so leave_login_window sees every recovering turn)."""
             req = self.hub.requests[rid]
             windows = req.setdefault("login_windows", {})
             if engine not in windows:
@@ -2302,17 +2304,35 @@ class Orchestrator:
                                    "deadline_at": (float(hold["deadline_at"]) if hold else
                                                    started + self.cfg.login_wait_max_s)}
                 self.hub.save_request(rid)
-            return float(windows[engine]["deadline_at"])
-
-        def clear_login_window() -> None:
-            req = self.hub.requests.get(rid) or {}
-            if (req.get("login_windows") or {}).pop(engine, None) is not None:
-                if not req.get("login_windows"):
-                    req.pop("login_windows", None)
+            window = windows[engine]
+            if turn_key(current) not in (window.get("turns") or []):
+                window["turns"] = [*(window.get("turns") or []), turn_key(current)]
                 self.hub.save_request(rid)
+            return float(window["deadline_at"])
+
+        def turn_key(current: Task) -> str:
+            return str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+
+        def leave_login_window(current: Task) -> None:
+            """The window is per request and engine and lives while any of its turns is recovering, parked or
+            retrying (PR #398 review): a turn removes only itself, and the last one out drops the window."""
+            req = self.hub.requests.get(rid) or {}
+            window = (req.get("login_windows") or {}).get(engine)
+            if window is None:
+                return
+            turns = [key for key in window.get("turns") or [] if key != turn_key(current)]
+            if turns:
+                if turns != window.get("turns"):
+                    window["turns"] = turns
+                    self.hub.save_request(rid)
+                return
+            req["login_windows"].pop(engine, None)
+            if not req.get("login_windows"):
+                req.pop("login_windows", None)
+            self.hub.save_request(rid)
 
         async def login_failure(current: Task, reason: str) -> TaskResult:
-            clear_login_window()
+            leave_login_window(current)
             finished = getattr(self.hub, "login_recovered", None)
             if finished is not None:
                 await finished(engine, reason="expired")
@@ -2334,7 +2354,7 @@ class Orchestrator:
                 await self._check_budget(rid)
                 login_hold = getattr(self.hub, "login_hold", lambda _engine: None)(engine)
                 if login_hold:
-                    deadline = login_deadline()
+                    deadline = login_deadline(current)
                     if not await self.hub.wait_login(rid, key, engine,
                                                      resume_at=float(login_hold["resume_at"]),
                                                      deadline_at=deadline,
@@ -2429,7 +2449,7 @@ class Orchestrator:
             while True:
                 login = not res.ok and is_login_error(engine, res.error)
                 if login:
-                    deadline = login_deadline()
+                    deadline = login_deadline(current)
                     window = self.hub.requests[rid]["login_windows"][engine]
                     if window.get("task_id") == res.task_id:
                         resume_at = float(window["resume_at"])
@@ -2465,7 +2485,7 @@ class Orchestrator:
                 recovered = getattr(self.hub, "login_recovered", None)
                 if recovered is not None:
                     await recovered(engine)
-                clear_login_window()
+                leave_login_window(current)
                 quota = None if res.ok else received_quota_wait(engine, res.error, res.quota_reset_at,
                                                                  default_wait_s=self.cfg.quota_default_wait_s)
                 if quota is None:
