@@ -3,3 +3,6 @@ rows:
 - sha: bb81a54
   at: 2026-10-04 23:30
   text: 이어 묻기는 세션을 만든 runner에서만 잇고, 다른 runner가 직원을 맡았으면 이유를 밝히고 거절한다
+- sha: 7c58580
+  at: 2026-10-05 00:05
+  text: 이어 쓰는 세션의 runner를 dispatch 시점에 고정해 검사 뒤 등록한 runner로 가지 않게 한다
