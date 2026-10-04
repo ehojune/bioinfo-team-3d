@@ -149,6 +149,7 @@ class AgentSpec(BaseModel):
             "builtin_tools": self.builtin_tools,
             "permission_mode": self.permission_mode,
             "max_turns": self.max_turns,
+            "effort": self.effort,
             "cli_resume": bool(self.cli and self.cli.resume_args),
             "tags": self.tags,
         }
