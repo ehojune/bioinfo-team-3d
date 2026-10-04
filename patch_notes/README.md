@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:23 | [`31e9492`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/31e9492) | 조합 표의 null 칸은 생략한 답과도 명시한 null과도 맞지 않으므로 load에서 거부한다 |
+| 04:18 | [`61754ac`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/61754ac) | pack 조합 표의 칸이 field type·최솟값·pattern을 어기면 load에서 거부하고, PLAN 답 검사와 같은 판정 함수를 쓴다 |
+| 04:18 | [`dc9678b`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/dc9678b) | 매뉴얼 연구 lane 절에 pack 조합 표 칸 검사를 적는다 |
 | 03:34 | [`6c7576d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/6c7576d) | 로그인 창은 복구 중인 turn이 모두 끝날 때 지우고 재로그인 명령은 대상 runner 정보로만 만든다 |
 | 03:20 | [`797717d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/797717d) | 로그인 대기 후속으로 runner를 모르면 설정 키 안내, 재시작 뒤 알림 상태 재계산, 대기 turn이 남으면 로그인 창 유지 |
 | 03:07 | [`112f1dc`](https://github.com/ehojune/bioinfo-team-3d/pull/400/commits/112f1dc) | 계획 프롬프트의 topic 점검표는 점검 문장만 싣고 이유는 리뷰 문맥에만 둔다 |
