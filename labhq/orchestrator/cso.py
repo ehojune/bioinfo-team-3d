@@ -369,8 +369,10 @@ Contract rules:
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
-- LabHQ applies a pack when its structured `applies_when.topics_any` intersects top-level `topics`; a legacy string
-  `applies_when` has no topic condition and is always applied. Fill `pack_values[key]` for applied packs only.
+- LabHQ applies a pack when its structured `applies_when.topics_any` intersects top-level `topics`; fill
+  `pack_values[key]` for applied packs only and add nothing for topic packs that do not match. A pack whose `applies_when` is
+  a plain sentence has no topic condition: answer it with values, or `{{"not_applicable": "<reason>"}}` when it does
+  not fit this request.
   Each applied value must contain exactly the keys in its `pack_values_keys`: a value for each field, a non-empty
   explanation for each validator
   id, and a non-empty outcome for each acceptance id. Do not add values for packs that do not apply.
@@ -3476,7 +3478,8 @@ class Orchestrator:
                                 raise ValueError("research topics vocabulary is unavailable")
                             plan = normalize_plan_topics(plan, topic_vocab, strict=True)
                             candidate_packs, applicability, topic_warnings = assess_pack_applicability(
-                                configured_pack_defs, plan.get("topics"))
+                                configured_pack_defs, plan.get("topics"),
+                                plan.get("pack_values") if isinstance(plan, dict) else None)
                             candidate_packs = select_applied_packs(
                                 configured_pack_defs,
                                 plan.get("pack_values") if isinstance(plan, dict) else None,

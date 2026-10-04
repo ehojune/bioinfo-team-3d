@@ -28,7 +28,7 @@ CANARY = "CANARY-research-91c2"
 # rule and records research choices in protocol, so this fixed prompt hash changes again.
 RESEARCH_PLAN_SCHEMA_SHA = "0e137b57dcf8adeba97220a343523916a7fc8417d5c891d3952da85d6ec354c4"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "c8c6bec5dcb7959c87ee4e0c9d9b44731d994a5e8dae297d8acaf462274360a0"
+RESEARCH_PROMPT_SHA = "ee3592194798e1607a90951b3b7c55dfbbefea04f2386ff03f3290ffc50511a6"  # sentence-condition pack rule (PR #390 review)
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 

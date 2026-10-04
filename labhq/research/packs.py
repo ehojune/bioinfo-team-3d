@@ -296,19 +296,32 @@ def select_packs(catalog: dict[str, LoadedPack], keys: list[str]) -> dict[str, L
     return selected
 
 
-def assess_pack_applicability(configured: dict[str, LoadedPack], topics: Any) \
+def _waiver(value: Any) -> bool:
+    """A ``{"not_applicable": "<reason>"}`` answer: exactly that key and a non-blank reason."""
+    return (isinstance(value, dict) and set(value) == {"not_applicable"}
+            and isinstance(value["not_applicable"], str) and bool(value["not_applicable"].strip()))
+
+
+def assess_pack_applicability(configured: dict[str, LoadedPack], topics: Any, pack_values: Any = None) \
         -> tuple[dict[str, LoadedPack], dict[str, dict[str, Any]], list[str]]:
-    """Select packs from normalized topics and return an auditable decision for every configured pack."""
+    """Select packs from normalized topics and return an auditable decision for every configured pack.
+
+    A pack whose ``applies_when`` is a legacy string has no topic condition, so topics cannot decide it: it keeps
+    the pre-topic rule and the plan answers it with values or a ``not_applicable`` reason (PR #390 review: forcing
+    it on would freeze single-cell rules into a bulk study)."""
     selected_topics = sorted(set(item for item in topics or [] if isinstance(item, str)))
+    supplied = pack_values if isinstance(pack_values, dict) else {}
     applied: dict[str, LoadedPack] = {}
     decisions: dict[str, dict[str, Any]] = {}
     conditioned = False
     for key, loaded in configured.items():
         condition = loaded.pack.applies_when
         if isinstance(condition, str):
-            applied[key] = loaded
-            decisions[key] = {"applied": True, "topics_any": [], "matched_topics": [],
-                              "reason": "no_topic_condition"}
+            waived = _waiver(supplied.get(key))
+            if not waived:
+                applied[key] = loaded
+            decisions[key] = {"applied": not waived, "topics_any": [], "matched_topics": [],
+                              "reason": "not_applicable" if waived else "no_topic_condition"}
             continue
         conditioned = True
         expected = list(condition.topics_any)
@@ -326,20 +339,25 @@ def assess_pack_applicability(configured: dict[str, LoadedPack], topics: Any) \
 
 def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *, topics: Any) \
         -> dict[str, LoadedPack]:
-    """Require values for topic-selected packs only; applicability is not a CSO free-text choice."""
-    applied, _decisions, _warnings = assess_pack_applicability(configured, topics)
+    """Topic-conditioned packs apply by topics alone; a legacy string-condition pack keeps the pre-topic answer
+    (values, or one ``not_applicable`` reason)."""
     if not isinstance(pack_values, dict):
         raise ValueError("research plan pack_values must be an object")
-    unknown = sorted(set(pack_values) - set(applied))
+    applied, _decisions, _warnings = assess_pack_applicability(configured, topics, pack_values)
+    legacy = {key for key, loaded in configured.items() if isinstance(loaded.pack.applies_when, str)}
+    unknown = sorted(set(pack_values) - set(applied) - legacy)
     if unknown:
         raise ValueError(f"research plan supplied values for packs that do not apply: {unknown}")
-    missing = sorted(set(applied) - set(pack_values))
+    missing = sorted((set(applied) | legacy) - set(pack_values))
     if missing:
-        raise ValueError(f"research plan pack_values is missing applied packs: {missing}")
+        raise ValueError(f"research plan pack_values is missing applied packs: {missing}; a pack without a topic "
+                         'condition needs values or {"not_applicable": "<reason>"}')
     for key in applied:
         value = pack_values[key]
         if isinstance(value, dict) and "not_applicable" in value:
-            raise ValueError(f"research plan pack_values[{key}] cannot be not_applicable after topic selection")
+            raise ValueError(f"research plan pack_values[{key}] requires one non-empty not_applicable reason"
+                             if key in legacy else
+                             f"research plan pack_values[{key}] cannot be not_applicable after topic selection")
     return applied
 
 

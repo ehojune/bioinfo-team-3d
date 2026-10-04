@@ -231,7 +231,7 @@ class PackApplicabilityRecord(StrictModel):
     applied: bool
     topics_any: list[str]
     matched_topics: list[str]
-    reason: Literal["topic_match", "no_topic_match", "topics_empty", "no_topic_condition"]
+    reason: Literal["topic_match", "no_topic_match", "topics_empty", "no_topic_condition", "not_applicable"]
 
 
 class ResearchPlan(StrictModel):

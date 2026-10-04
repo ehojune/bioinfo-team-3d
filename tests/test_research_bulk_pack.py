@@ -251,6 +251,29 @@ def test_empty_topics_do_not_apply_conditional_pack_and_warn():
     assert warnings == ["topics is empty; topic-conditioned packs were not applied"]
 
 
+def test_a_pack_without_a_topic_condition_keeps_values_or_a_not_applicable_reason():
+    # PR #390 review: with the documented pair [single_cell_de@2, bulk_tumor_normal@2], a bulk study must not be
+    # forced to fill and freeze single-cell rules; a sentence-condition pack keeps the pre-topic answer.
+    configured = _selected(SINGLE_CELL_PACK, BULK_PACK)
+    bulk = valid_bulk_values(BULK_PACK)
+    waiver = {SINGLE_CELL_PACK: {"not_applicable": "bulk tissue study, no single-cell data"}}
+
+    applied = select_applied_packs(configured, {**bulk, **waiver}, topics=["bulk_rna_seq"])
+    assert set(applied) == {BULK_PACK}
+    _applied, decisions, _ = assess_pack_applicability(configured, ["bulk_rna_seq"], {**bulk, **waiver})
+    assert decisions[SINGLE_CELL_PACK] == {"applied": False, "topics_any": [], "matched_topics": [],
+                                           "reason": "not_applicable"}
+
+    both = select_applied_packs(configured, {**bulk, **valid_single_cell_values()}, topics=["bulk_rna_seq"])
+    assert set(both) == {BULK_PACK, SINGLE_CELL_PACK}
+    with pytest.raises(ValueError, match="missing applied packs"):
+        select_applied_packs(configured, bulk, topics=["bulk_rna_seq"])
+    with pytest.raises(ValueError, match="one non-empty not_applicable reason"):
+        select_applied_packs(configured, {**bulk, SINGLE_CELL_PACK: {"not_applicable": " "}}, topics=["bulk_rna_seq"])
+    with pytest.raises(ValueError, match="cannot be not_applicable after topic selection"):
+        select_applied_packs(configured, {BULK_PACK: {"not_applicable": "x"}, **waiver}, topics=["bulk_rna_seq"])
+
+
 def test_v1_hash_matches_main_and_legacy_condition_is_unconditional():
     loaded = _selected(LEGACY_BULK_PACK)[LEGACY_BULK_PACK]
     assert loaded.sha256 == "fe42d8e8734b507da27f855fad87e0c09e994f0b34cd78230eb8704c502665b7"
