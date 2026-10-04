@@ -580,3 +580,49 @@ def test_core_plan_field_cells_a_plan_can_hold_still_load():
     assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.study_type", ["comparative", "technical"]))
     assert DomainRulePack.model_validate(_bulk_pack_with_table([], "protocol.statistics.applicable", [True, False]))
     assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.primary_hypothesis", [None, "H1"]))
+
+
+BULK_V3 = "bulk_tumor_normal@3"
+
+
+def _bulk_v3_plan(**fields):
+    selected = _selected(BULK_V3)
+    values = valid_bulk_values(BULK_V3)
+    values[BULK_V3]["fields"].update({"pairing_evidence": "geo_characteristics;sample_title", **fields})
+    values[BULK_V3]["acceptance"]["bulk_tumor_normal.pairing_from_metadata"] = "Pairing names a metadata source."
+    plan = valid_plan(pack_values=values, topics=["bulk_rna_seq"])
+    plan["brief"]["subject"] = "bulk tumor and normal tissue expression"
+    return plan, selected
+
+
+@pytest.mark.parametrize("fields, failure", [
+    ({}, None),
+    ({"pairing_evidence": "supplementary_table"}, None),
+    ({"pairing": "none", "primary_model": "unpaired", "pairing_evidence": "none"}, None),
+    ({"pairing": "none", "primary_model": "unpaired", "pairing_evidence": "sample_title"}, None),
+    ({"pairing_evidence": "metadata.patient_id and tissue_type"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "expression_correlation"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "none;sample_title"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "none"}, "bulk_tumor_normal.pairing_from_metadata"),
+    ({"pairing": "partial", "pairing_evidence": "none"}, "bulk_tumor_normal.pairing_from_metadata"),
+])
+def test_bulk_v3_pairing_evidence_is_a_closed_metadata_source_list(fields, failure):
+    # #369 2: pairing evidence named expression similarity in free text passed v2; v3 takes only metadata sources,
+    # and partial or complete pairing must name one.
+    plan, selected = _bulk_v3_plan(**fields)
+    if failure is None:
+        _validate(plan, selected)
+    else:
+        with pytest.raises(ValueError, match=failure):
+            _validate(plan, selected)
+
+
+def test_bulk_v3_keeps_v2_rules_and_topics_and_v2_stays_for_resumes():
+    catalog = configured_packs(Settings(), [BULK_PACK, BULK_V3])
+    v2, v3 = catalog[BULK_PACK].pack, catalog[BULK_V3].pack
+    assert v3.applies_when.topics_any == v2.applies_when.topics_any
+    assert [rule.id for rule in v3.rules] == [*(rule.id for rule in v2.rules[:-1]),
+                                              "bulk_tumor_normal.pairing_from_metadata", v2.rules[-1].id]
+    assert [field.name for field in v3.fields] == [field.name for field in v2.fields]
+    v2_evidence = next(field for field in v2.fields if field.name == "pairing_evidence")
+    assert v2_evidence.pattern is None  # approved @2 contracts resume with the free-text field
