@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Annotated, Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
@@ -71,13 +71,16 @@ def plan_field_problem(path: str, value: Any) -> str | None:
 
     model: type[BaseModel] | None = ResearchPlan
     annotation: Any = None
+    metadata: list[Any] = []
     for part in path.split("."):
         if model is None or part not in model.model_fields:
             return None
-        annotation = model.model_fields[part].annotation
+        annotation, metadata = model.model_fields[part].annotation, model.model_fields[part].metadata
         model = _model_in(annotation)
+    # The Field constraints (ge=1, min_length=1) live in the metadata, not the annotation (PR #406 review).
+    schema = Annotated[(annotation, *metadata)] if metadata else annotation
     try:
-        TypeAdapter(annotation).validate_python(value, strict=True)
+        TypeAdapter(schema).validate_python(value, strict=True)
     except ValidationError:
         return f"does not fit the PLAN schema type {annotation!r}"
     return None

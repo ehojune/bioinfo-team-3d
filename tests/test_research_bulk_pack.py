@@ -567,6 +567,8 @@ def test_combination_cells_that_a_valid_answer_can_match_still_load():
     ("protocol.revision", True),
     ("protocol.statistics.comparison_groups", "tumor"),
     ("brief.subject", None),
+    ("brief.subject", ""),
+    ("protocol.revision", 0),
 ])
 def test_core_plan_field_cells_outside_the_plan_schema_are_rejected_at_load(column, cell):
     # PR #403 review P2: a core PLAN field's cell is checked against the PLAN schema type, not skipped.
