@@ -362,10 +362,11 @@ def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *,
 
 
 def select_legacy_applied_packs(frozen: dict[str, LoadedPack], pack_values: Any) -> dict[str, LoadedPack]:
-    """Resume a contract frozen before topic selection (PR #390 review) by the rule it was approved under.
+    """Resume a frozen contract by its CP1 snapshot instead of a fresh applicability decision (PR #390 review).
 
-    Its CP1 snapshot holds only the packs it applied, so a pack it answered ``not_applicable`` is absent from the
-    snapshot; that answer keeps the one-reason form. Every frozen pack still needs its values."""
+    The snapshot holds only the packs it applied, so a pack it answered ``not_applicable`` (before topics, or a
+    sentence-condition pack after them) is absent; that answer keeps the one-reason form. Every frozen pack still
+    needs its values."""
     if not isinstance(pack_values, dict):
         raise ValueError("research plan pack_values must be an object")
     missing = sorted(set(frozen) - set(pack_values))

@@ -3253,8 +3253,11 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
+                    # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
+                    # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
+                    # condition pack after topics) is absent from it (PR #390 review, both eras).
                     packs = (select_legacy_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
-                             if legacy_pack_contract else
+                             if frozen_pack_snapshot is not None else
                              select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"),
                                                   topics=req["plan"].get("topics")))
                     active_pack_hashes = pack_snapshot(packs)

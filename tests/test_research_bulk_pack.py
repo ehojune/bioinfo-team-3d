@@ -356,6 +356,43 @@ async def test_pre_topic_contract_with_a_not_applicable_pack_resumes_by_its_own_
     assert "pack_applicability" not in hub.requests["r"]["research_contract"]
 
 
+@pytest.mark.asyncio
+async def test_topic_era_contract_with_a_waived_sentence_pack_resumes_by_its_snapshot():
+    # PR #390 review: a contract made after topics that waived a sentence-condition pack froze only the applied
+    # bulk pack; the resume must follow that snapshot instead of deciding applicability again.
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [SINGLE_CELL_PACK, BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    values = {**valid_bulk_values(BULK_PACK),
+              SINGLE_CELL_PACK: {"not_applicable": "bulk tissue study, no single-cell data"}}
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured=valid_plan(pack_values=values, topics=["bulk_rna_seq"]))
+
+    first = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="Compare bulk expression")
+    await Orchestrator(first).run_request("r")
+    planned = first.requests["r"]
+    assert planned.get("outcome") == "plan_approved", json.dumps(planned, default=str, indent=2)
+    assert list(planned["research_contract"]["pack_snapshot"]) == [BULK_PACK]
+    assert planned["research_contract"]["pack_applicability"][SINGLE_CELL_PACK]["reason"] == "not_applicable"
+
+    async def no_dispatch(task):
+        raise AssertionError(f"approved plan-only resume dispatched {task.meta.get('kind')}")
+
+    hub = MiniHub(settings, no_dispatch, mode="orchestrate", work_kind="research", text="Compare bulk expression")
+    hub.requests["r"].update(plan=copy.deepcopy(planned["plan"]),
+                             research_contract=copy.deepcopy(planned["research_contract"]))
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert hub.requests["r"]["research_contract"]["pack_applicability"] == \
+        planned["research_contract"]["pack_applicability"]
+
+
 def test_legacy_pack_selection_keeps_the_one_reason_waiver_rule():
     frozen = _selected(LEGACY_BULK_PACK)
     values = valid_bulk_values(LEGACY_BULK_PACK)[LEGACY_BULK_PACK]
