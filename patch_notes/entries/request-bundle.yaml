@@ -12,3 +12,6 @@ rows:
 - sha: 53b9b2a
   at: 2026-10-04 20:06
   text: 요청 terminal을 먼저 저장하고 단계별 outputs 구조와 runner Python 명령으로 묶음 재실행 경로를 바로잡음
+- sha: fe035b4
+  at: 2026-10-04 20:41
+  text: 요청 묶음이 runner 기록 산출만 hash 검증해 복사하고 누락을 incomplete로 기록하도록 단순화
