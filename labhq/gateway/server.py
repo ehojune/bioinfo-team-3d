@@ -1073,6 +1073,17 @@ class Hub:
             await self.send_runner(runner_id, {"type": "runner.ack", "runner_seq": runner_seq})
 
     # ----- tasks -----
+    @staticmethod
+    def _session_pin_refusal(task: Task, target: str) -> TaskResult | None:
+        """A resumed session and its absolute workdir live on the runner that made them (task meta
+        ``session_runner``). Every place that picks a send target asks this, the first send and the re-send after a
+        lost runner alike, so no target chosen later can receive them (PR #393 review). Nothing is sent: a real $0."""
+        pinned = task.meta.get("session_runner")
+        if not pinned or pinned == target:
+            return None
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                          error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
+
     async def dispatch(self, task: Task) -> TaskResult:
         sid = task.meta.get("step_id") or task.meta.get("kind")
         if sid and task.request_id in self.recovery_steps:
@@ -1103,13 +1114,9 @@ class Hub:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error=f"no runner hosts agent {task.agent_id!r}")
-        pinned = task.meta.get("session_runner")
-        if pinned and pinned != rid:
-            # A resumed session and its absolute workdir live on the runner that made them. Checked here, where the
-            # target is chosen, so a runner that registers the agent id between the caller's check and this
-            # dispatch cannot receive them (PR #393 review). Nothing was sent: a real $0.
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
-                              error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {rid}")
+        refused = self._session_pin_refusal(task, rid)
+        if refused:
+            return refused
         if task.agent_id == "bioinfo-agent" and self.s.policy.bioinfo_agent.pipeline_pr:
             # Off by default (#300). The gateway's one setting decides; a runner sends pipeline files only when asked.
             task.meta["pipeline_pr"] = True
@@ -1155,6 +1162,17 @@ class Hub:
                 if fut.done():
                     break
                 target = self.agent_runner[task.agent_id]
+                refused = self._session_pin_refusal(task, target)
+                if refused:  # the agent id moved to another runner while the pinned one was away: never re-send there
+                    # The first frame may have reached the pinned runner, so this is the uncertain-delivery outcome,
+                    # not a certain $0 (same bookkeeping as the timeout above).
+                    self.futures.pop(task.id, None)
+                    self.task_runner.pop(task.id, None)
+                    result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                                        error=f"{refused.error}; delivery to runner "
+                                              f"{task.meta.get('session_runner')} uncertain")
+                    self._record_task_cost(task.request_id, task.id, result, outcome_unknown=True)
+                    return result
                 try:
                     await self.send_runner(target, {"type": "task.dispatch", "task": task.model_dump(mode="json")})
                 except RunnerUnavailable:
@@ -1178,7 +1196,9 @@ class Hub:
         try:
             if not entry.get("accepted") and entry.get("payload"):
                 runner_id = self.agent_runner.get(agent_id)
-                if runner_id:
+                pinned = ((entry["payload"].get("meta") or {}).get("session_runner")
+                          if isinstance(entry["payload"], dict) else None)
+                if runner_id and (not pinned or pinned == runner_id):  # a pinned session never goes elsewhere
                     try:
                         await self.send_runner(runner_id, {"type": "task.dispatch", "task": entry["payload"]})
                     except RunnerUnavailable:

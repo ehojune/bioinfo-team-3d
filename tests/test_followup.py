@@ -713,3 +713,32 @@ async def test_a_runner_that_registers_after_the_check_does_not_get_the_session(
     hub.wait_session_free = switch_runner_while_waiting
     entry = await _ask_and_wait(hub)
     assert entry["status"] == "failed" and "runner pc-a" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_resend_after_a_lost_runner_never_goes_to_another_runner(tmp_path):
+    # PR #393 review: the first send to pinned pc-a fails, pc-b takes the agent id through a roster update, and the
+    # reconnect branch picks a new target. The pin is checked there too; the outcome is uncertain delivery, not $0.
+    from labhq.gateway.server import RunnerUnavailable
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.orchestrator.runner_reconnect_timeout_s = 5
+    hub = Hub(settings)
+    hub.agent_runner = {"solo": "pc-a"}
+    sent = []
+
+    async def send_runner(runner_id, message):
+        sent.append(runner_id)
+        if runner_id == "pc-a":
+            raise RunnerUnavailable("runner pc-a is offline")
+
+    async def wait_agent_online(agent_id, timeout):
+        hub.agent_runner[agent_id] = "pc-b"
+        return True
+
+    hub.send_runner, hub.wait_agent_online = send_runner, wait_agent_online
+    task = Task(agent_id="solo", request_id="r", prompt="Why?", resume_session_id="solo-1",
+                meta={"kind": "followup", "session_runner": "pc-a"})
+    result = await asyncio.wait_for(hub.dispatch(task), 5)
+    assert sent == ["pc-a"]
+    assert not result.ok and "runner pc-a" in result.error and "uncertain" in result.error
