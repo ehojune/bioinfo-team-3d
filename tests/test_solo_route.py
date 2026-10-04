@@ -185,6 +185,53 @@ async def test_saved_solo_result_is_reused_after_restart():
     assert hub.requests["r"]["status"] == "done" and hub.requests["r"]["report"] == "짧은 결론"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("solo_review", [False, True])
+async def test_solo_budget_denial_finishes_failed_before_review_or_success(solo_review):
+    hub = SoloHub()
+    hub.s.orchestrator.solo_review = solo_review
+    if solo_review:
+        hub.s.orchestrator.reviewer_agent = "reviewer"
+        hub.agents["reviewer"] = {"id": "reviewer", "name": "reviewer", "role": "test", "engine": "mock"}
+    orchestrator = Orchestrator(hub)
+    original = hub.dispatch
+    denial = "budget exceeded ($0.40 > $0.10); approval denied"
+
+    async def dispatch(task):
+        result = await original(task)
+        if task.meta.get("kind") == "direct":
+            orchestrator.budget_denials["r"] = denial
+        return result
+
+    hub.dispatch = dispatch
+    await orchestrator.run_request("r")
+
+    assert [task.meta.get("kind") for task in hub.calls] == ["plan", "direct"]
+    assert hub.requests["r"]["status"] == "failed"
+    assert hub.requests["r"]["error"] == denial
+    assert hub.requests["r"]["report"] == "짧은 결론"
+    assert hub.requests["r"]["route_decision"]["mode"] == "solo"
+
+
+@pytest.mark.asyncio
+async def test_saved_valid_solo_review_is_reused_after_restart():
+    hub = SoloHub()
+    hub.s.orchestrator.solo_review = True
+    hub.s.orchestrator.reviewer_agent = "reviewer"
+    hub.agents["reviewer"] = {"id": "reviewer", "name": "reviewer", "role": "test", "engine": "mock"}
+    review = {"verdict": "accept",
+              "scores": {"addresses_question": 4, "evidence": 4, "thoroughness": 4}, "issues": []}
+    hub.requests["r"].update(plan=plan(), route_decision={"mode": "solo", "agent_id": "solo"},
+                             solo_started_at=1, solo_result=hub.solo.model_dump(mode="json"),
+                             solo_review=review)
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["status"] == "done"
+    assert hub.requests["r"]["review"] == review
+
+
 def test_plan_schema_prompt_settings_and_api_route_contract():
     assert PLAN_SCHEMA["properties"]["route"]["enum"] == ["team", "solo"]
     assert "route" not in PLAN_SCHEMA["required"]

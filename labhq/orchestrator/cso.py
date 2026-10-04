@@ -3010,33 +3010,44 @@ class Orchestrator:
             req["solo_result"] = result.model_dump(mode="json")
             self.hub.save_request(rid)
 
+        if rid in self.budget_denials:
+            self._finish(rid, result.text or result.error or "task failed",
+                         {"direct": result.model_dump(mode="json")}, ok=False,
+                         error=self.budget_denials[rid])
+            return True
+
         reason = (result.error or "task failed") if not result.ok else (
             "empty answer" if not result.text.strip() else "no outputs" if not result.outputs else "")
         review = None
         if not reason and self.cfg.solo_review:
-            reviewer = self.cfg.reviewer_agent
-            if not reviewer or reviewer not in self.hub.agents:
-                reason = "solo science reviewer unavailable"
+            stored_review = req.get("solo_review")
+            if valid_review(stored_review):
+                review = with_p1_verdict(stored_review)
             else:
-                reviewed = await self.run_step(Task(
-                    agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
-                    prompt=REVIEW_PROMPT.format(request=text, results=result.text),
-                    meta={**refs, "kind": "review", "revision": 0, "request": text,
-                          "title": "단독 결과 과학 리뷰"}))
-                parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
-                review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
-                    "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
-                req["solo_review"] = review
-                self.hub.save_request(rid)
-                await self._emit(rid, "request.review", {"revision": 0, **review})
-                if review.get("verdict") != "accept":
-                    reason = "solo science review did not accept the result"
-
-        if reason:
+                reviewer = self.cfg.reviewer_agent
+                if not reviewer or reviewer not in self.hub.agents:
+                    reason = "solo science reviewer unavailable"
+                else:
+                    reviewed = await self.run_step(Task(
+                        agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
+                        prompt=REVIEW_PROMPT.format(request=text, results=result.text),
+                        meta={**refs, "kind": "review", "revision": 0, "request": text,
+                              "title": "단독 결과 과학 리뷰"}))
+                    parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
+                    review = with_p1_verdict(parsed) if reviewed.ok and valid_review(parsed) else {
+                        "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
+                    req["solo_review"] = review
+                    self.hub.save_request(rid)
+                    await self._emit(rid, "request.review", {"revision": 0, **review})
             if rid in self.budget_denials:
-                self._finish(rid, result.text or reason, {"direct": result.model_dump(mode="json")}, ok=False,
+                self._finish(rid, result.text or result.error or "task failed",
+                             {"direct": result.model_dump(mode="json")}, ok=False,
                              review=review, error=self.budget_denials[rid])
                 return True
+            if review and review.get("verdict") != "accept":
+                reason = "solo science review did not accept the result"
+
+        if reason:
             req["route_decision"] = {**decision, "mode": "team", "fallback": True, "reason": reason}
             self.hub.save_request(rid)
             await self._emit(rid, "request.route", req["route_decision"])
