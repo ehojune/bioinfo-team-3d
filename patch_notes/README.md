@@ -15,6 +15,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 06:15 | [`74eee3b`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/74eee3b) | main 병합: #410과 겹친 매뉴얼 2.5D 절과 CI web test 목록을 둘 다 살림 |
+| 06:14 | [`b0cbd2a`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/b0cbd2a) | 숫자 sha 안내는 원문 표기 그대로(0으로 시작해도) |
+| 06:06 | [`a47b501`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/a47b501) | 패치노트 검사: 숫자로 읽힌 sha를 짚어 알려 줌 |
 | 06:02 | [`7999708`](https://github.com/ehojune/bioinfo-team-3d/pull/410/commits/7999708) | capability card가 읽기 전용을 못 지키는 엔진의 이어 묻기·상담을 안 됨으로 보이고 MCP는 runner가 실제로 붙이는 목록만 보인다 |
 | 06:01 | [`e975c77`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/e975c77) | 사무실 칠판·HPC 랙·문이 작업판·HPC·메신저 탭을 열고 결정이 기다리면 칠판이 깜박이며 결정 탭으로 안내한다 |
 | 05:58 | [`292afe5`](https://github.com/ehojune/bioinfo-team-3d/pull/410/commits/292afe5) | 직원 상세 시트가 권한·추론 강도·이어 쓰기·읽기 전용 상담·MCP를 gateway가 보낸 capability card로 보여 준다 |
