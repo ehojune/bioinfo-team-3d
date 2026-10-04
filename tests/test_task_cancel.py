@@ -85,3 +85,23 @@ def test_cancel_endpoint_finds_a_task_from_the_ledger_after_a_restart(tmp_path):
     assert client.post("/api/tasks/t1/cancel", headers=headers).json() == {"ok": True}
     assert sent == [("pc-a", "t1")]
     assert client.post("/api/tasks/nope/cancel", headers=headers).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_failed_briefing_keeps_the_scout_cancel_for_an_away_runner(monkeypatch):
+    # PR #396 review: the scout's runner dropped right after accepting; the early-finish cancel must be kept and
+    # resent on reconnect instead of being lost with the first RunnerUnavailable.
+    from labhq.orchestrator import cso
+    from tests.test_topic_checklists_precedents import EarlyEndHub
+    monkeypatch.setattr(cso, "PRECEDENT_CANCEL_GRACE_S", 0.05)
+    hub = EarlyEndHub(runner_answers_cancel=False)
+    kept = []
+
+    async def cancel_task(tid):
+        kept.append(tid)
+        return True
+
+    hub.cancel_task = cancel_task
+    await cso.Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "failed"
+    assert len(kept) == 1 and hub.scout_reaped
