@@ -12,3 +12,6 @@ rows:
 - sha: 096445e
   at: 2026-10-04 21:35
   text: topic 이전 연구 계약을 승인 당시 pack 규칙으로 재개하고 재계획의 모르는 topic 경고를 남긴다
+- sha: a7a44ac
+  at: 2026-10-04 21:55
+  text: topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다
