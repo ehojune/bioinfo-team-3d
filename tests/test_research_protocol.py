@@ -599,6 +599,7 @@ BUILTIN_PACK_SHA256 = {
     PACK: "72be2505e75ea9d21358df07cc8091404d9d54f01bf0986dd873e8bce79d355d",
     "bulk_tumor_normal@1": "fe42d8e8734b507da27f855fad87e0c09e994f0b34cd78230eb8704c502665b7",
     "bulk_tumor_normal@2": "163f3474b7fb6ec6140bfdf920fb1546ec9a499c7e9a3fd14dd22bb9a7031272",
+    "single_cell_de@3": "e07893c4c1f6c5da41ae90a16942f1e3590ee280bc256bb0b88ecbea61b32459",
 }
 
 
@@ -609,7 +610,7 @@ def test_builtin_pack_content_is_pinned_per_version():
 
 def test_a_retired_pack_version_names_the_available_one():
     catalog = load_pack_catalog([Path("labhq/research/packs")])
-    retired = r"unknown research packs: \['single_cell_de@1'\] \(available: single_cell_de@2\)"
+    retired = r"unknown research packs: \['single_cell_de@1'\] \(available: single_cell_de@2, single_cell_de@3\)"
     with pytest.raises(ValueError, match=retired):
         select_packs(catalog, ["single_cell_de@1"])
 

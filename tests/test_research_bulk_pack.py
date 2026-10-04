@@ -492,3 +492,35 @@ def test_pack_files_are_read_as_utf8_on_every_platform():
     for name in ("bulk_tumor_normal.yaml", "bulk_tumor_normal_v2.yaml"):
         text = (Path("labhq/research/packs") / name).read_text(encoding="utf-8")
         assert "tumor" in text and "PMID" in text
+
+
+SINGLE_CELL_V3 = "single_cell_de@3"
+
+
+def _single_cell_v3_values():
+    return {SINGLE_CELL_V3: valid_single_cell_values()[SINGLE_CELL_PACK]}
+
+
+@pytest.mark.parametrize("topics, expected", [
+    (["single_cell_rna_seq"], {SINGLE_CELL_V3}),
+    (["bulk_rna_seq"], {BULK_PACK}),
+    (["single_cell_rna_seq", "bulk_rna_seq"], {SINGLE_CELL_V3, BULK_PACK}),
+    ([], set()),
+])
+def test_single_cell_v3_and_bulk_v2_apply_by_topic_without_waivers(topics, expected):
+    # #370: a single-cell request gets the single-cell rules and a bulk one does not, with no not_applicable
+    # answers to write, because both current versions carry a topic condition.
+    configured = _selected(SINGLE_CELL_V3, BULK_PACK)
+    values = {**(_single_cell_v3_values() if SINGLE_CELL_V3 in expected else {}),
+              **(valid_bulk_values(BULK_PACK) if BULK_PACK in expected else {})}
+    assert set(select_applied_packs(configured, values, topics=topics)) == expected
+
+
+def test_single_cell_v3_keeps_v2_rules_and_v2_stays_for_resumes():
+    catalog = configured_packs(Settings(), [SINGLE_CELL_PACK, SINGLE_CELL_V3])
+    v2, v3 = catalog[SINGLE_CELL_PACK].pack, catalog[SINGLE_CELL_V3].pack
+    assert isinstance(v2.applies_when, str)  # approved @2 contracts resume unchanged
+    assert v3.applies_when.topics_any == ["single_cell_rna_seq"]
+    assert v3.applies_when.description == v2.applies_when
+    assert [rule.id for rule in v3.rules] == [rule.id for rule in v2.rules]
+    assert [field.name for field in v3.fields] == [field.name for field in v2.fields]
