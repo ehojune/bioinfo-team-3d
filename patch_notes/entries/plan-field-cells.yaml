@@ -3,3 +3,6 @@ rows:
 - sha: 78c9996
   at: 2026-10-05 04:44
   text: pack 조합 표에 든 core PLAN field 칸이 PLAN schema type에 맞지 않으면 load에서 거부한다
+- sha: 31878a9
+  at: 2026-10-05 04:47
+  text: PLAN field 칸 검사에 ge·min_length 같은 Field 제약도 넣는다
