@@ -89,8 +89,14 @@ def render(ev: dict) -> None:
         assumptions = [value for value in d.get("assumptions", []) if isinstance(value, str) and value.strip()]
         shown = "" if not assumptions else ("\n   가정\n" + "\n".join(f"   - {value}" for value in assumptions) +
                                              f'\n   바꾸려면: labhq note {ev.get("request_id") or "<request_id>"} "바꿀 내용"')
-        line = ("📋 CSO 계획\n" + "\n".join(rows) + shown +
+        processing = d.get("processing") or {}
+        route = (f" · 처리: 단독({processing.get('agent_id')})" if processing.get("mode") == "solo" else
+                 " · 처리: 단독 실패 → 팀" if processing.get("fallback") else " · 처리: 팀")
+        line = ("📋 CSO 계획" + route + "\n" + "\n".join(rows) + shown +
                 "".join(f"\n   ⚠ {w}" for w in d.get("warnings", [])))
+    elif t == "request.route":
+        line = ("↪ 처리: 단독 실패 → 팀" if d.get("fallback") else
+                f"↪ 처리: 단독({d.get('agent_id')})" if d.get("mode") == "solo" else "↪ 처리: 팀")
     elif t == "recruit.suggested":
         line = f"🧾 CSO 채용 제안: {d.get('repo') or d.get('paper')} — {d.get('reason')}"
     elif t == "request.review":
@@ -545,6 +551,7 @@ def main(argv: list[str] | None = None) -> None:
     sp = sub.add_parser("send")
     sp.add_argument("text")
     sp.add_argument("--agent", help="direct mode: send to one agent")
+    sp.add_argument("--team", action="store_true", help="force the CSO plan to use the team path")
     sp.add_argument("--project-dir", action="append", default=[])
     sp.add_argument("--budget", type=float)
     sp.add_argument("--project", help="project id → updates go to that project's GitHub repo")
@@ -764,10 +771,10 @@ def main(argv: list[str] | None = None) -> None:
             if reference is None:
                 p.error(f"--ref {raw!r}: kind unclear; prefix one of github: doi: pmid: url: path:")
             references.append(reference)
-        if args.agent and (args.plan_only or args.cso_model):
-            p.error("--agent cannot be used with --plan-only or --cso-model")
+        if args.agent and (args.plan_only or args.cso_model or args.team):
+            p.error("--agent cannot be used with --plan-only, --cso-model or --team")
         body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",
-                "agent_id": args.agent, "cso_model": args.cso_model,
+                "agent_id": args.agent, "cso_model": args.cso_model, "route": "team" if args.team else "auto",
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
                 "references": references, "default_references": not args.no_default_refs}
         if args.no_wait:

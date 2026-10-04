@@ -128,6 +128,8 @@ orchestrator:
   cso_agent: cso
   chief_of_staff_agent: chief_of_staff
   reviewer_agent: sci_reviewer
+  # solo_agent: analyst                 # roster agent id; 없으면 모든 요청을 팀으로 처리
+  # solo_review: false                  # true면 단독 결과도 과학 리뷰 1회
   cso_models: [opus, gpt-6-astra]       # --cso-model 허용 목록; Fable은 허용되지 않음
   max_revisions: 1
   max_replans: 0                     # 리뷰 revise 뒤 남은 DAG 재계획 상한

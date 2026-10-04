@@ -26,8 +26,8 @@ CANARY = "CANARY-7f3a-secret"
 # requires every permitted path to write the same declared filename. #373 bench A now declares analysis scripts and
 # result-determining references under outputs/. #373 direction 2 adds optional assumptions and the three-category
 # question rule. Off still adds nothing related to output types.
-PLAN_SCHEMA_SHA = "92cf5fcaaa9b0c915ba02fdb48e9b4e8518d633ab4c6b4d4cd56b5b4d1de17e2"
-PLAN_PROMPT_SHA = "184a023d055dd7d6e4386b131e82273a84c11eaf7b6dc425c3619e7e9b7123cf"
+PLAN_SCHEMA_SHA = "70966143ac744fdce6184b271d04b5f288e9c55444832c2f697a5f56cdfe4b8c"
+PLAN_PROMPT_SHA = "ce579077173589cdffafcb7eadaaaf00a903ff39e7d5c9fb36d8f24df20d2b3e"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB")
 

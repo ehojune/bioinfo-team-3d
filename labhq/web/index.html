@@ -257,6 +257,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 @media (max-width:620px){.memo{display:none}}
 #ask{flex:1;min-width:0;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:8px 12px}
 .composer select{flex:none;max-width:30%;min-height:44px;border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:0 6px}
+.team-toggle{display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:13px}.team-toggle input{width:18px;height:18px}
 .composer .btn{min-height:44px}
 .ref-panel{position:absolute;left:0;right:0;bottom:100%;background:var(--paper);border-top:1px solid var(--line);padding:8px 12px;box-shadow:0 -6px 18px rgba(20,35,50,.08)}
 .ref-panel[hidden]{display:none}
@@ -401,6 +402,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <select id="send-mode" hidden><option value="note">이 요청에 메모</option><option value="request">새 요청</option></select>
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
+    <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
     <label class="sr" for="project">프로젝트</label>
     <select id="project" hidden></select>
     <button class="btn" id="ref-toggle" type="button" aria-controls="ref-panel" aria-expanded="false">참고</button>
@@ -635,14 +637,19 @@ function phaseList(q) {
   const idx = q.phase === 'done' ? PHASES.length : PHASES.findIndex(p => p[0] === q.phase);
   return `<ul class="phases">${PHASES.map(([, label], i) => `<li class="${i < idx ? 'on' : i === idx ? 'now' : ''}">${label}</li>`).join('')}</ul>`;
 }
+function processingLabel(q) {
+  const p = q.processing || {};
+  return p.fallback ? '처리: 단독 실패 → 팀' : p.mode === 'solo' ? `처리: 단독(${p.agent_id})`
+    : p.mode === 'team' ? '처리: 팀' : '처리: 결정 중';
+}
 function renderBoard() {
   const q = S.requests.get(S.current), el = $('#board');
-  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text]) : 'none';
+  const key = q ? JSON.stringify([q.id, q.phase, q.steps, q.text, q.processing]) : 'none';
   if (el.dataset.key === key) return;
   el.dataset.key = key;
   if (!q) { el.innerHTML = '<p class="board-empty">오늘의 할 일을 기다리는 중</p>'; return; }
   const chips = q.plan.map(s => `<span class="chip st-${q.steps[s.id] || 'pending'}" title="${esc(s.instruction)}">${esc(s.id)} ${esc(nick(s.agent_id))}</span>`).join('');
-  el.innerHTML = `<p class="board-title">${esc(short(q.text, 70))}</p>${phaseList(q)}<div class="chips">${chips}</div>`;
+  el.innerHTML = `<p class="board-title">${esc(short(q.text, 70))} · ${esc(processingLabel(q))}</p>${phaseList(q)}<div class="chips">${chips}</div>`;
 }
 function renderRack() {
   const jobs = [...S.jobs.values()].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 8);
@@ -734,7 +741,7 @@ let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -745,7 +752,7 @@ function renderRequest() {
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
+  el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta"><span>${esc(processingLabel(q))}</span></p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
@@ -787,7 +794,7 @@ function renderTargets() {
   if (key === targetsKey) return;
   targetsKey = key;
   const sel = $('#target'), cur = sel.value;
-  sel.innerHTML = '<option value="">CSO에게 (팀 전체)</option>' + list.map(a => `<option value="${esc(a.id)}">${esc(nick(a.id))}에게 직접</option>`).join('');
+  sel.innerHTML = '<option value="">CSO에게 (자동)</option>' + list.map(a => `<option value="${esc(a.id)}">${esc(nick(a.id))}에게 직접</option>`).join('');
   if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
   const ps = $('#project'), pcur = ps.value;
   ps.hidden = !S.projects.length;
@@ -803,6 +810,7 @@ function renderComposerMode() {
   if (!active) composerRid = null;
   const noteMode = active && mode.value === 'note';
   $('#target').hidden = noteMode;
+  $('#team-only-label').hidden = noteMode;
   $('#project').hidden = noteMode || !S.projects.length;
   $('#ref-toggle').hidden = noteMode;
   $('#ask').placeholder = noteMode ? '이 요청의 다음 단계에 전할 메모' : '무엇을 알아볼까요?';
@@ -861,11 +869,13 @@ async function send() {
     catch (e) { toast(`메모를 보내지 못했어요: ${e.message}`); }
     return;
   }
+  if (target && $('#team-only').checked) { toast('직원에게 직접 맡기기와 팀으로 보내기를 함께 고를 수 없어요'); return; }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
+    route: $('#team-only').checked ? 'team' : 'auto',
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
     await api.request(body);
-    input.value = ''; refs.items = []; showRefs(false); renderRefs();
+    input.value = ''; refs.items = []; $('#team-only').checked = false; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }

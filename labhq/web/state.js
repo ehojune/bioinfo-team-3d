@@ -89,6 +89,7 @@ function req(rid) {
     Object.defineProperty(q, 'followups', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'piNotes', { value: [], writable: true, enumerable: false });
     Object.defineProperty(q, 'assumptions', { value: [], writable: true, enumerable: false });
+    Object.defineProperty(q, 'processing', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'costSummary', { value: null, writable: true, enumerable: false });  // #270
     Object.defineProperty(q, 'pipelinePr', { value: null, writable: true, enumerable: false });
     Object.defineProperty(q, 'bundlePath', { value: '', writable: true, enumerable: false });
@@ -106,6 +107,7 @@ function stepDetail(rid, sid) {
 function setPlan(q, plan) {
   q.plan = (plan.steps || []).map(s => ({ ...s, depends_on: s.depends_on || [] }));
   q.assumptions = Array.isArray(plan.assumptions) ? plan.assumptions.filter(value => typeof value === 'string' && value.trim()).slice(0, 8) : [];
+  if (plan.processing && typeof plan.processing === 'object') q.processing = { ...plan.processing };
   for (const s of q.plan) if (!q.steps[s.id]) q.steps[s.id] = 'pending';
 }
 function logTo(a, text, ts) { a.log.push({ ts, text: short(text, 240) }); if (a.log.length > 40) a.log.shift(); }
@@ -176,6 +178,7 @@ function apply(ev, replay = false) {
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
+        if (r.route_decision && typeof r.route_decision === 'object') q.processing = { ...r.route_decision };
         if (typeof r.report === 'string') q.report = r.report;
         if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
         q.bundlePath = r.bundle_path || ''; q.bundleStatus = r.bundle_status || ''; q.bundleWarning = r.bundle_warning || '';
@@ -307,6 +310,12 @@ function apply(ev, replay = false) {
     case 'request.plan': {
       const q = req(rid); setPlan(q, d); q.phase = 'execute';
       feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
+      break;
+    }
+    case 'request.route': {
+      const q = req(rid); q.processing = { ...d };
+      feed({ who: 'cso', text: d.fallback ? '단독 처리가 끝나지 않아 팀 계획으로 이어가요'
+        : d.mode === 'solo' ? `처리: 단독(${d.agent_id})` : '처리: 팀' }, ts, rid);
       break;
     }
     case 'request.step_attempt': {
