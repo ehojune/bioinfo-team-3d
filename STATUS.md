@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #373 — 로그인 대기의 turn 키를 상담 ask마다 따로
+
+- 결론: 같은 request에서 서로 다른 직원에게 보낸 상담은 병렬로 돌지만 둘 다 `kind="consult"`라 한 turn으로 묶였다. 먼저 끝난 상담이 로그인 창을 지워 남은 상담이 24시간 상한을 새로 시작했고, 두 대기 기록도 서로 덮어썼다. PR #401 봇 3차 P1로, 병합 때 남긴 것이다.
+- 바뀐 것: `turn_key()` 하나가 turn을 가리킨다. 단계는 `step_id`, 그 밖은 `kind`이고, 상담은 `kind:ask_id`다. 로그인 창의 turn 목록, 로그인·한도 대기 기록, 시도 횟수가 모두 이 키를 쓴다. 전에는 세 곳이 각자 식을 썼다.
+- 실행한 것: 새 test(두 직원 상담이 같은 엔진 로그인을 기다림)가 옛 키에서 실패(대기 기록이 `consult` 하나로 덮임)하고 이 branch에서 통과했다. 로그인 대기 test 44건, 전체 pytest 3898 passed·54 skipped, `scripts/check_public.sh`.
+- 봇 P2(업그레이드 때 대기 중이던 상담): 옛 창에 남은 `consult` 키는 그 상담이 빠질 때 함께 지운다. 새 test가 수정 전 실패, 수정 뒤 통과.
+- 미해결: 없음.
+- 근거: `labhq/orchestrator/cso.py`(`turn_key`), `tests/test_login_wait.py`.
+
 ## 2026-10-05 · #369 — pack 조합 표의 칸을 PLAN 답과 같은 규칙으로 검사
 
 - 결론: pack의 `allowed_combinations` 칸이 field의 type·`minimum`·`pattern`을 어기면 그 행은 어떤 PLAN도 통과할 수 없다. 이제 load에서 거부한다. PR #366 봇 P2(#369 남은 지적)다.

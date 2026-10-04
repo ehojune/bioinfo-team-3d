@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:46 | [`ce14536`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/ce14536) | 업그레이드 전에 저장된 로그인 창의 옛 consult 키는 상담 turn이 빠질 때 함께 지운다 |
+| 04:34 | [`dc67700`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/dc67700) | 매뉴얼 로그인 대기 절에 마감이 복구 중인 turn 전부를 기다린다는 것을 적는다 |
+| 04:33 | [`a0b572b`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/a0b572b) | 로그인·한도 대기의 turn 키를 함수 하나로 모으고, 병렬 상담은 ask마다 따로 센다 |
 | 04:23 | [`31e9492`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/31e9492) | 조합 표의 null 칸은 생략한 답과도 명시한 null과도 맞지 않으므로 load에서 거부한다 |
 | 04:18 | [`61754ac`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/61754ac) | pack 조합 표의 칸이 field type·최솟값·pattern을 어기면 load에서 거부하고, PLAN 답 검사와 같은 판정 함수를 쓴다 |
 | 04:18 | [`dc9678b`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/dc9678b) | 매뉴얼 연구 lane 절에 pack 조합 표 칸 검사를 적는다 |
