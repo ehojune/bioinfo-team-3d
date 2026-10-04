@@ -23,9 +23,11 @@ def normalize(raw: Any, vocab: Vocab) -> tuple[list[str], list[str]]:
     return sorted(known), sorted(unknown)
 
 
-def prompt_rule(vocab: Vocab) -> str:
-    """A compact key-and-definition catalog shared by the general and research planning prompts."""
-    entries = "; ".join(f"{key} — {vocab.terms[key].definition}" for key in sorted(vocab.keys("topic")))
+def prompt_rule(vocab: Vocab, *, include_definitions: bool = True) -> str:
+    """Render topic choices; research prompts use keys only to stay below CLI argument limits."""
+    keys = sorted(vocab.keys("topic"))
+    entries = ("; ".join(f"{key} — {vocab.terms[key].definition}" for key in keys)
+               if include_definitions else ", ".join(keys))
     return ("\n- Set top-level `topics` to the approved assay/modality or domain keys that describe the request; "
             "use multiple keys when needed and [] when none is known. LabHQ sorts and deduplicates them. "
             "topics do not replace data, format, or operation declarations. Approved topics: " + entries)

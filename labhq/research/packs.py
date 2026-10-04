@@ -343,10 +343,22 @@ def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *,
     return applied
 
 
-def configured_packs(settings: Any) -> dict[str, LoadedPack]:
+def configured_packs(settings: Any, keys: list[str] | None = None) -> dict[str, LoadedPack]:
     builtin = Path(__file__).with_name("packs")
     directories = [builtin, *(settings.path(path) for path in settings.research.pack_dirs)]
-    return select_packs(load_pack_catalog(directories), settings.research.active_packs)
+    return select_packs(load_pack_catalog(directories), settings.research.active_packs if keys is None else keys)
+
+
+def packs_for_snapshot(settings: Any, snapshot: Any) -> dict[str, LoadedPack]:
+    """Load the exact pack versions frozen at CP1 and reject any content drift."""
+    if not isinstance(snapshot, dict) or not all(isinstance(key, str) and isinstance(value, str)
+                                                 for key, value in snapshot.items()):
+        raise ValueError("invalid frozen research pack snapshot")
+    selected = configured_packs(settings, sorted(snapshot))
+    actual = pack_snapshot(selected)
+    if actual != snapshot:
+        raise ValueError("frozen research pack snapshot does not match the installed definitions")
+    return selected
 
 
 def check_configured_packs(settings: Any) -> None:

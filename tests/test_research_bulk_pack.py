@@ -7,7 +7,7 @@ import pytest
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research.contract import validate_research_plan
+from labhq.research.contract import freeze_plan, validate_research_plan
 from labhq.research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
                                   render_pack_catalog, select_applied_packs)
 from labhq.settings import Settings
@@ -16,7 +16,8 @@ from tests.test_research_protocol import valid_pack_values as valid_single_cell_
 from tests.test_research_protocol import MiniHub, valid_plan
 
 
-BULK_PACK = "bulk_tumor_normal@1"
+LEGACY_BULK_PACK = "bulk_tumor_normal@1"
+BULK_PACK = "bulk_tumor_normal@2"
 MODEL_FIELDS = ("expression_scale", "pairing", "primary_model")
 ALLOWED_MODEL_COMBINATIONS = {
     ("raw_counts", "none", "count_glm_negative_binomial"),
@@ -33,9 +34,9 @@ ALLOWED_MODEL_COMBINATIONS = {
 }
 
 
-def valid_bulk_values():
+def valid_bulk_values(pack_key=BULK_PACK):
     return {
-        BULK_PACK: {
+        pack_key: {
             "fields": {
                 "pairing": "complete",
                 "pairing_evidence": "metadata.patient_id and tissue_type",
@@ -250,20 +251,46 @@ def test_empty_topics_do_not_apply_conditional_pack_and_warn():
     assert warnings == ["topics is empty; topic-conditioned packs were not applied"]
 
 
-def test_legacy_string_applies_when_pack_is_unconditional(tmp_path):
-    source = Path("labhq/research/packs/bulk_tumor_normal.yaml")
-    raw = source.read_text(encoding="utf-8").replace(
-        "applies_when:\n  description: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.\n  topics_any: [bulk_rna_seq, microarray_expression]",
-        "applies_when: Legacy human-readable condition.",
-    )
-    legacy = tmp_path / "legacy.yaml"
-    legacy.write_text(raw, encoding="utf-8")
-    from labhq.research.packs import load_pack
-    loaded = load_pack(legacy)
+def test_v1_hash_matches_main_and_legacy_condition_is_unconditional():
+    loaded = _selected(LEGACY_BULK_PACK)[LEGACY_BULK_PACK]
+    assert loaded.sha256 == "fe42d8e8734b507da27f855fad87e0c09e994f0b34cd78230eb8704c502665b7"
     applied, decisions, warnings = assess_pack_applicability({loaded.pack.key: loaded}, [])
     assert list(applied) == [loaded.pack.key]
     assert decisions[loaded.pack.key]["reason"] == "no_topic_condition"
     assert warnings == []
+
+
+@pytest.mark.asyncio
+async def test_approved_v1_request_resumes_with_its_frozen_pack_not_configured_v2():
+    legacy = _selected(LEGACY_BULK_PACK)
+    plan = valid_plan(pack_values=valid_bulk_values(LEGACY_BULK_PACK), topics=[])
+    plan.pop("topics")  # Plans approved before topic routing did not carry this field.
+    plan["protocol"]["packs"] = pack_refs(legacy)
+    frozen = validate_research_plan(plan, max_steps=2, active_packs=pack_snapshot(legacy),
+                                    pack_definitions=legacy).model_dump(mode="json")
+    approval = freeze_plan(frozen, {"approved": True, "approval_id": "old-cp1", "decided_at": 1})
+
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def no_dispatch(task):
+        raise AssertionError(f"approved plan-only resume dispatched {task.meta.get('kind')}")
+
+    hub = MiniHub(settings, no_dispatch, mode="orchestrate", work_kind="research",
+                  text="Resume the approved bulk study")
+    hub.requests["r"].update(plan=frozen, research_contract={
+        "schema_version": 1, "work_kind": "research", "execution_enabled": False,
+        "plan_sha256": approval["target_sha256"], "pack_snapshot": pack_snapshot(legacy),
+        "approval": approval,
+    })
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.calls == []
+    assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert hub.requests["r"]["research_contract"]["pack_snapshot"] == pack_snapshot(legacy)
 
 
 def test_every_configured_pack_requires_values_or_a_not_applicable_reason():
@@ -344,6 +371,6 @@ def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():
 
 
 def test_pack_files_are_read_as_utf8_on_every_platform():
-    source = Path("labhq/research/packs/bulk_tumor_normal.yaml")
-    text = source.read_text(encoding="utf-8")
-    assert "tumor" in text and "PMID" in text
+    for name in ("bulk_tumor_normal.yaml", "bulk_tumor_normal_v2.yaml"):
+        text = (Path("labhq/research/packs") / name).read_text(encoding="utf-8")
+        assert "tumor" in text and "PMID" in text

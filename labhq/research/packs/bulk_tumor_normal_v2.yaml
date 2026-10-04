@@ -1,9 +1,11 @@
 schema_version: 1
 id: bulk_tumor_normal
-version: "1"
+version: "2"
 title: Bulk expression differential analysis between two tissues or conditions
 core_contract: extend_only
-applies_when: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.
+applies_when:
+  description: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.
+  topics_any: [bulk_rna_seq, microarray_expression]
 sources:
   - title: labhq mock research runs 8 through 11
     url: docs/research_protocol.md

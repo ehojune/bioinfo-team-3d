@@ -33,7 +33,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
 from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                              render_pack_catalog, render_pack_review, select_applied_packs)
+                              packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -3177,7 +3177,11 @@ class Orchestrator:
                                                                    self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
-            configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
+            frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
+                                    if resume and research_lane else None)
+            configured_pack_defs = (packs_for_snapshot(self.hub.s, frozen_pack_snapshot)
+                                    if frozen_pack_snapshot is not None else
+                                    configured_packs(self.hub.s) if research_lane else {})
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
@@ -3262,7 +3266,8 @@ class Orchestrator:
                     steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
                                                      orchestration, vocab=vocab, stats=type_stats,
                                                      reject_excess=True)
-                    req["plan"] = {**req["plan"], "steps": steps, "warnings": warnings}
+                    req["plan"] = {**req["plan"], "steps": steps,
+                                   "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 decision, created = self._ensure_route_decision(req, roster, research=research_lane)
@@ -3314,7 +3319,8 @@ class Orchestrator:
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
                             packs=render_pack_catalog(configured_pack_defs), question_rule=QUESTION_RULE,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
-                            topics_rule=topic_types.prompt_rule(topic_vocab) if topic_vocab else "")
+                            topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
+                                         if topic_vocab else ""))
                         prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
@@ -3521,8 +3527,9 @@ class Orchestrator:
                         try:
                             if topic_vocab is not None:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
-                            steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
-                                                             orchestration, vocab=vocab, stats=type_stats)
+                            steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
+                                                                  orchestration, vocab=vocab, stats=type_stats)
+                            warnings = [*(plan.get("warnings") or []), *step_warnings]
                             break
                         except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
