@@ -97,6 +97,10 @@ def entry_shas(rev: str, cwd: Path | None = None) -> tuple[set[str], list[str]]:
                 sha = row.get("sha") if isinstance(row, dict) else None
                 if isinstance(sha, str):
                     shas.add(sha)
+                elif isinstance(sha, int) and not isinstance(sha, bool):
+                    # An all-digit short sha is a YAML integer: say so instead of reporting the commit missing.
+                    problems.append(f"{path}: sha {sha}가 숫자로 읽힙니다. 숫자로만 된 sha는 따옴표로 감싸세요"
+                                    f" (sha: '{sha}')")
         except (subprocess.CalledProcessError, ValueError, yaml.YAMLError) as exc:
             problems.append(f"{path}을 읽을 수 없습니다: {exc}")
     return shas, problems

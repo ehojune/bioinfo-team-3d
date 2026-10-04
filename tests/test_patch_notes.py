@@ -190,3 +190,15 @@ def test_generated_only_main_commits_do_not_count_toward_readme_limit(repo):
     commit(repo, {"STATUS.md": "generated 1\n"}, "index 1")
     commit(repo, {"patch_notes/README.md": "generated 2\n"}, "index 2")
     assert pn.counted_main_commits(last, "main", repo) == 0
+
+
+def test_an_all_digit_sha_read_as_a_yaml_integer_is_named(repo):
+    # PR #410: a hand-written row `sha: 7999708` loads as an int; the check names that, not a missing commit.
+    run(repo, "checkout", "-q", "-b", "feature")
+    note = "pr: 7\nrows:\n- sha: 7999708\n  at: 2026-10-05 06:02\n  text: note\n"
+    commit(repo, {"patch_notes/entries/feature.yaml": note}, "패치노트")
+    _, problems = pn.entry_shas("HEAD", repo)
+    assert problems == ["patch_notes/entries/feature.yaml: sha 7999708가 숫자로 읽힙니다. 숫자로만 된 sha는 따옴표로 "
+                        "감싸세요 (sha: '7999708')"]
+    # The rows command quotes such a sha itself, so it round-trips as text.
+    assert yaml.safe_load(yaml.safe_dump([{"sha": "7999708"}])) == [{"sha": "7999708"}]
