@@ -585,3 +585,42 @@ async def test_parallel_retries_woken_together_keep_the_window_until_the_last_en
     assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
     tasks[1].cancel()
     await asyncio.gather(tasks[1], return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_parallel_consults_to_two_agents_are_separate_login_turns(tmp_path):
+    # PR #401 review: consults to different agents run in parallel under kind "consult" without a step id. Each ask
+    # is its own turn, so the first to succeed must not drop the window the other is still recovering on, and the
+    # two durable waits must not overwrite each other.
+    hub = _hub(tmp_path, retry=100, maximum=200)
+    hub.agents["other"] = {"id": "other", "engine": "claude_code"}
+    hub.agent_runner["other"] = "runner"
+
+    async def dispatch(task):
+        if task.meta.get("ask_id") == "ask_a" and task.meta.get("parent_task"):
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="a done")
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=CLAUDE_EXPIRED)
+
+    hub.dispatch = dispatch
+    orchestrator = Orchestrator(hub)
+    tasks = [asyncio.create_task(orchestrator.run_step(
+        Task(agent_id=agent, request_id="r", prompt=ask, meta={"kind": "consult", "ask_id": ask})))
+        for agent, ask in (("worker", "ask_a"), ("other", "ask_b"))]
+    for _ in range(200):
+        if len(hub.requests["r"].get("login_waits") or {}) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert sorted(hub.requests["r"]["login_waits"]) == ["consult:ask_a", "consult:ask_b"]
+    window = dict(hub.requests["r"]["login_windows"]["claude_code"])
+    assert sorted(window["turns"]) == ["consult:ask_a", "consult:ask_b"]
+    await hub.release_login("claude_code", manual=True)
+    assert (await asyncio.wait_for(tasks[0], 2)).ok
+    for _ in range(200):  # ask b re-parks after its retry fails again
+        if (hub.requests["r"].get("login_waits") or {}).get("consult:ask_b"):
+            break
+        await asyncio.sleep(0.01)
+    kept = hub.requests["r"]["login_windows"]["claude_code"]
+    assert kept["turns"] == ["consult:ask_b"]
+    assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
+    tasks[1].cancel()
+    await asyncio.gather(tasks[1], return_exceptions=True)

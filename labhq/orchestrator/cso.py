@@ -2311,7 +2311,11 @@ class Orchestrator:
             return float(window["deadline_at"])
 
         def turn_key(current: Task) -> str:
-            return str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+            """One logical turn, the same through its retries and wake turns (they copy the meta). Consults to
+            different agents run in parallel under one kind, so each ask is its own turn (PR #401 review)."""
+            base = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+            ask_id = current.meta.get("ask_id") if not current.meta.get("step_id") else None
+            return f"{base}:{ask_id}" if ask_id else base
 
         def leave_login_window(current: Task) -> None:
             """The window is per request and engine and lives while any of its turns is recovering, parked or
@@ -2341,7 +2345,7 @@ class Orchestrator:
 
         async def dispatch_with_retry(current: Task, max_attempts: int | None = None,
                                       start: int = 1) -> TaskResult:
-            key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+            key = turn_key(current)
             limit = max_attempts or self.cfg.step_max_attempts
             first_attempt = min(max(getattr(self.hub, "recovery_attempt", lambda _task: 1)(current), start),
                                 limit)
@@ -2460,7 +2464,7 @@ class Orchestrator:
                     if resume_at > deadline:
                         return await login_failure(current, "engine login wait exceeded the configured maximum; "
                                                    f"retry={resume_at:.0f}, deadline={deadline:.0f}")
-                    key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+                    key = turn_key(current)
                     if not await self.hub.wait_login(rid, key, engine, resume_at=resume_at,
                                                      deadline_at=deadline,
                                                      reason=res.error or "engine login required",
@@ -2502,7 +2506,7 @@ class Orchestrator:
                 if resume_at > deadline:
                     return quota_failure(current, f"subscription quota reset exceeds the configured maximum; "
                                                   f"reset={resume_at:.0f}, deadline={deadline:.0f}")
-                key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
+                key = turn_key(current)
                 if not await self.hub.wait_quota(rid, key, engine, resume_at=resume_at,
                                                  deadline_at=deadline, reason=res.error or "subscription quota"):
                     return quota_failure(current, "subscription quota wait exceeded the configured maximum")
