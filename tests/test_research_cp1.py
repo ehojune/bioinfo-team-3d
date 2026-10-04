@@ -236,15 +236,14 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
             if command_limit:
                 assert pointer == [True] * plan_calls, carried
             else:
-                # Near the Windows boundary either transport can be right, so the default case checks that the one
-                # chosen carried the whole PLAN prompt; the lowered limit above pins the TASK.md choice (PR #395 review).
-                for task, prompt in zip(plans, carried[-plan_calls:]):
-                    full = task["payload"]["prompt"]
-                    if prompt.startswith("Read TASK"):
-                        task_files = list(Path(task["result"]["workdir"]).rglob("TASK*.md"))
-                        assert any(full in path.read_text(encoding="utf-8") for path in task_files), task_files
-                    else:
-                        assert full in prompt
+                # Near the Windows boundary either transport can be right (POSIX has no such limit), so the default
+                # case checks that the one chosen carried the whole PLAN prompt to the CLI; the lowered limit above
+                # pins the TASK.md choice (PR #395, #396 review).
+                resolved = [json.loads(line) for task in plans for line in
+                            (Path(task["result"]["workdir"]) / ".labhq" / "fake_cli_resolved_prompts.jsonl")
+                            .read_text(encoding="utf-8").splitlines()]
+                for task, seen_prompt in zip(plans, resolved[-plan_calls:]):
+                    assert task["payload"]["prompt"] in seen_prompt
     finally:
         runner.stop()
         server.should_exit = True
