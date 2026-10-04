@@ -314,3 +314,14 @@ async def test_a_failed_briefing_reaps_a_scout_whose_runner_never_answers(monkey
     await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
     assert hub.requests["r"]["status"] == "failed"
     assert hub.cancel_sent == [] and hub.scout_reaped
+
+
+def test_plan_prompt_carries_checks_and_the_review_carries_reasons():
+    # The plan prompt lists every topic's items, so it leaves out the reasons; the reviewer gets them for the
+    # declared topics only.
+    catalog = topic_checklists.load()
+    rule = topic_checklists.prompt_rule(catalog)
+    item = catalog["bulk_rna_seq"][0]
+    assert item.check in rule and item.why not in rule and "Why:" not in rule
+    review = cso.plan_review_context(general_plan(checklist=bulk_answers()), catalog, None)
+    assert f"{item.check} Why: {item.why}" in review
