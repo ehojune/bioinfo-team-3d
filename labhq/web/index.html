@@ -214,6 +214,7 @@ a{color:var(--sleep-ink)}
 details.report{margin-top:8px}
 details.report summary{cursor:pointer;font-weight:500}
 details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}
+.pi-report{margin-top:8px}.pi-report h3{margin:0 0 6px}.pi-report>pre,.report-appendix pre{white-space:pre-wrap;font:14px/1.65 var(--ui);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:340px;overflow:auto}.report-appendix{margin-top:8px}.report-appendix summary{cursor:pointer;font-weight:500}
 .msg{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:2px 8px;align-items:start;padding:7px 0;border-bottom:1px solid var(--line)}
 .msg .av svg,.glyph{width:28px;height:28px;display:block}
 .glyph{display:grid;place-items:center;border-radius:50%;background:var(--wall);font:600 10px var(--ui);color:var(--muted)}
@@ -716,9 +717,11 @@ function followupHTML(q) {
 <button class="btn" id="fu-send" type="button"${busy ? ' disabled' : ''}>이어 묻기</button></div>` : '';
   return list || form ? `<section class="followups" aria-label="이어 묻기">${list ? `<ol>${list}</ol>` : ''}${form}</section>` : '';
 }
-const reportHTML = q => !q.report ? '' : `<details class="report"><summary>최종 보고서</summary><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
+const reportHTML = q => !q.report ? '' : `<section class="pi-report"><h3>PI용 보고서</h3><pre>${esc(q.report)}${q.report_truncated ? '…' : ''}</pre>${
   q.report_truncated ? `<p class="fu-more">앞 ${[...q.report].length.toLocaleString()}자만 보여요${q.report_chars ? ` (전체 ${Number(q.report_chars).toLocaleString()}자)` : ''}${
-    api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}</details>`;
+    api?.requestDetail ? ` <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button>` : ''}</p>` : ''}${q.report_appendix ?
+    `<details class="report-appendix"><summary>실행 기록</summary><pre>${esc(q.report_appendix)}${q.report_appendix_truncated ? '…' : ''}</pre>${q.report_appendix_truncated && api?.requestDetail ?
+      `<p class="fu-more">앞 ${[...q.report_appendix].length.toLocaleString()}자만 보여요 <button class="btn report-full" type="button" data-rid="${esc(q.id)}"${fuLoading.has(q.id) ? ' disabled' : ''}>전문 보기</button></p>` : ''}</details>` : ''}</section>`;
 const auditHTML = q => api?.auditBundle
   ? `<p><a class="btn audit-bundle" href="/api/requests/${encodeURIComponent(q.id)}/audit-bundle" data-rid="${esc(q.id)}" download>감사 번들</a></p>` : '';
 const notesHTML = q => !(q.piNotes || []).length ? '' : `<section class="pi-notes" aria-label="실행 중 메모"><h3>실행 중 메모</h3><ol>${q.piNotes.map(note =>
@@ -727,7 +730,7 @@ let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, !!q.report, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }

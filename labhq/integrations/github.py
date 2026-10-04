@@ -616,20 +616,38 @@ class ProjectReporter:
                                      f"수습 통과={d.get('passed_probation')}", "recruit")
         elif typ in ("request.completed", "request.failed"):
             report = d.get("report") or req.get("report") or d.get("error") or ""
+            appendix = d.get("report_appendix") or req.get("report_appendix") or ""
             report_url = None
             if typ == "request.completed" and proj.commit_reports:
                 saved = self._action(ev, "report") or {}
                 path = saved.get("path") or (f"{proj.reports_dir.strip('/')}/"
                                              f"{time.strftime('%Y-%m-%d', time.localtime(req.get('finished_at') or time.time()))}-{rid}.md")
+                appendix_path = saved.get("appendix_path") or path.removesuffix(".md") + "_appendix.md"
                 if not saved:
-                    self._save_action(ev, "report", {"path": path, "done": False})
+                    self._save_action(ev, "report", {"path": path, "appendix_path": appendix_path,
+                                                     "body_done": False, "appendix_done": False, "done": False})
                 if saved.get("done"):
                     report_url = saved.get("url")
                 else:
-                    res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
-                                            f"labhq: report for {rid}", proj.branch)
-                    report_url = (res.get("content") or {}).get("html_url")
-                    self._save_action(ev, "report", {"path": path, "done": True, "url": report_url})
+                    state = {"path": path, "appendix_path": appendix_path,
+                             "body_done": bool(saved.get("body_done")),
+                             "appendix_done": bool(saved.get("appendix_done")), "done": False,
+                             **({"url": saved.get("url")} if saved.get("url") else {})}
+                    if not state["body_done"]:
+                        res = await gh.put_file(proj.repo, path, self._clean(self._report_md(rid, req, report)),
+                                                f"labhq: report for {rid}", proj.branch)
+                        state.update(body_done=True, url=(res.get("content") or {}).get("html_url"))
+                        self._save_action(ev, "report", state)
+                    if not state["appendix_done"]:
+                        res = await gh.put_file(proj.repo, appendix_path,
+                                                self._clean(self._report_appendix_md(rid, req, appendix)),
+                                                f"labhq: execution record for {rid}", proj.branch)
+                        state.update(appendix_done=True,
+                                     appendix_url=(res.get("content") or {}).get("html_url"))
+                        self._save_action(ev, "report", state)
+                    state["done"] = True
+                    report_url = state.get("url")
+                    self._save_action(ev, "report", state)
                     await self._posted(rid, "report", report_url, None)
             if num:
                 ok = typ == "request.completed" and d.get("ok", True)
@@ -693,3 +711,7 @@ class ProjectReporter:
         cost = _cost_line(req.get("cost_usd"), req.get("cost_known", True), req.get("cost_summary"))
         return (f"# {short(self._clean(req.get('text', '')), 120)}\n\n- request: `{rid}`\n- 생성: labhq CSO\n"
                 f"- 비용: {cost}\n\n{report}\n")
+
+    def _report_appendix_md(self, rid: str, req: dict, appendix: str) -> str:
+        return (f"# 실행 기록 · {short(self._clean(req.get('text', '')), 100)}\n\n"
+                f"- request: `{rid}`\n- 생성: labhq CSO\n\n{appendix}\n")

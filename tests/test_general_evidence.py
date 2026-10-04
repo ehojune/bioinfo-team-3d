@@ -95,12 +95,15 @@ async def test_general_report_warns_without_copying_long_tool_output():
                                      "second failure should only affect the count"])
     Orchestrator(hub)._finish("r", "Narrative", {"A": {**result.model_dump(mode="json"), "status": "done"}}, ok=True)
     report = hub.requests["r"]["report"]
+    appendix = hub.requests["r"]["report_appendix"]
 
-    assert "## 보고서 경고" in report
-    assert "A: Evidence 경로 불일치 1건: outputs/missing.tsv" in report
-    assert "A: 실패한 조회 — 증거도 부재 증명도 아님 2건" in report
-    assert "fixture lookup failed" in report
-    assert "PRIVATE" not in report and "second failure should only affect the count" not in report
+    assert "실행 기록 참고" in report
+    assert "## 보고서 경고" not in report
+    assert "## 보고서 경고" in appendix
+    assert "A: Evidence 경로 불일치 1건: outputs/missing.tsv" in appendix
+    assert "A: 실패한 조회 — 증거도 부재 증명도 아님 2건" in appendix
+    assert "fixture lookup failed" in appendix
+    assert "PRIVATE" not in appendix and "second failure should only affect the count" not in appendix
 
 
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():

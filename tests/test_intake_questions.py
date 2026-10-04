@@ -148,7 +148,8 @@ async def test_replan_that_still_asks_records_question_text_not_objects():
     req = hub.requests["r"]
     assert req["status"] == "failed"
     assert req["pending_questions"] == ["Which cohort?"]
-    assert "- Which cohort?" in req["report"] and "{'question'" not in req["report"]
+    assert "- Which cohort?" not in req["report"]
+    assert "- Which cohort?" in req["report_appendix"] and "{'question'" not in req["report_appendix"]
 
 
 def test_qa_text_for_structured_and_legacy_entries():

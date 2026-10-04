@@ -278,7 +278,7 @@ async def test_full_reporter_flow_guards_every_outbound_string(tmp_path):
                 yield from strings(item)
 
     payloads = [json.loads(req.content) for req in sent if req.content]
-    assert [req.method for req in sent if req.method in ("POST", "PUT", "PATCH")].count("PUT") == 1
+    assert [req.method for req in sent if req.method in ("POST", "PUT", "PATCH")].count("PUT") == 2
     report = next(p for p in payloads if "content" in p)
     outbound = [req.url.path for req in sent] + list(strings(payloads))
     outbound.append(base64.b64decode(report["content"]).decode("utf-8"))
@@ -515,7 +515,8 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
     first.reporter.issues["r"] = 7
     first.store.put("github_issue", "r", {"number": 7})
     event = {"type": "request.completed", "request_id": "r", "seq": 9,
-             "data": {"ok": True, "report": "final report", "cost_usd": 1.0}}
+             "data": {"ok": True, "report": "final report", "report_appendix": "execution record",
+                      "cost_usd": 1.0}}
     original_put = first.store.put
 
     def crash_after_external_call(kind, key, body):
@@ -530,10 +531,13 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
 
     restored = Hub(s, github_transport=transport)
     await restored.reporter.handle(event)
-    assert (remote["puts"], remote["posts"], remote["patches"]) == (1, 1, 1)
+    assert (remote["puts"], remote["posts"], remote["patches"]) == (2, 1, 1)
     assert "<!-- labhq terminal r 9 -->" in remote["comments"][0]["body"]
     assert all(restored.store.get("github_action", f"r:9:{action}")["done"]
                for action in ("report", "comment", "close"))
+    saved_report = restored.store.get("github_action", "r:9:report")
+    assert saved_report["path"].endswith("-r.md")
+    assert saved_report["appendix_path"].endswith("-r_appendix.md")
 
 
 async def test_unparsed_review_posts_failure_comment(tmp_path):

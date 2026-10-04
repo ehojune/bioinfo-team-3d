@@ -193,12 +193,14 @@ def test_research_report_anchors_are_checked_again(tmp_path, monkeypatch, capsys
     assert any(problem.startswith("보고서 앵커:") for problem in report["problems"])
 
 
-async def test_bundle_holds_three_records_and_no_output_file(tmp_path, monkeypatch, capsys):
+async def test_bundle_holds_reports_and_audit_records_but_no_output_file(tmp_path, monkeypatch, capsys):
     secret = b"cohort-row-must-not-leave\n"
     settings, result = await _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", secret))
     out_zip = tmp_path / "audit.zip"
 
-    code, out = _verify(monkeypatch, capsys, settings, _request(result), "--bundle", str(out_zip))
+    code, out = _verify(monkeypatch, capsys, settings,
+                        _request(result, report="final report", report_appendix="execution record"),
+                        "--bundle", str(out_zip))
     assert code == 0 and str(out_zip) in out
     with zipfile.ZipFile(out_zip) as bundle:
         assert sorted(bundle.namelist()) == sorted(BUNDLE_FILES)
@@ -210,6 +212,7 @@ async def test_bundle_holds_three_records_and_no_output_file(tmp_path, monkeypat
     assert artifact["path"] == "outputs/table.tsv" and artifact["sha256"] == hashlib.sha256(secret).hexdigest()
     assert artifact["agent_id"] == "analyst" and artifact["task_id"] == "task-v" and artifact["size"] == len(secret)
     assert set(json.loads(contents["claims.json"])) >= {"ledgers", "artifact_sha256", "report_check"}
+    assert contents["report.md"].decode() == "final report"
 
 
 async def test_verify_table_and_bundle_show_tool_use_id(tmp_path, monkeypatch, capsys):

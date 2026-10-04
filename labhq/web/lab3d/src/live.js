@@ -62,7 +62,9 @@ export function startLiveOffice(onState) {
     const rows = [];
     if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
     for (const q of [...S.requests.values()].reverse()) {
-      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.review, q.error, q.followups, q.piNotes, loadingAnswers.has(q.id)]);
+      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.review, q.error, q.report,
+        q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
+        loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
@@ -74,6 +76,23 @@ export function startLiveOffice(onState) {
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
+      if (q.report) {
+        text(row, 'h4', 'PI용 보고서');
+        text(row, 'pre', q.report + (q.report_truncated ? '…' : ''));
+        if (q.report_truncated) {
+          const more = text(row, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
+      }
+      if (q.report_appendix) {
+        const details = text(row, 'details', ''), summary = text(details, 'summary', '실행 기록');
+        summary.textContent = '실행 기록';
+        text(details, 'pre', q.report_appendix + (q.report_appendix_truncated ? '…' : ''));
+        if (q.report_appendix_truncated) {
+          const more = text(details, 'button', '전문 보기'); more.type = 'button';
+          more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
+        }
+      }
       for (const note of q.piNotes || []) {
         const sent = new Date(Number(note.at || 0) * 1000).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
         text(row, 'p', `실행 중 메모 · ${sent} · ${note.text}`);

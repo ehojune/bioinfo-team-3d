@@ -62,16 +62,31 @@ def snapshot_event(event: dict) -> dict:
         return event
     if event.get("type") == "request.followup_done":
         return {**event, "data": snapshot_followup(data)}
-    report = data.get("report")
-    if event.get("type") in {"request.completed", "request.failed"} \
-            and isinstance(report, str) and len(report) > SNAPSHOT_REPORT_CHARS:
-        return {**event, "data": {**data, "report": report[:SNAPSHOT_REPORT_CHARS],
-                                  "report_truncated": True, "report_chars": len(report)}}
+    if event.get("type") in {"request.completed", "request.failed"}:
+        shortened, changed = dict(data), False
+        for field in ("report", "report_appendix"):
+            value = data.get(field)
+            if isinstance(value, str) and len(value) > SNAPSHOT_REPORT_CHARS:
+                shortened[field] = value[:SNAPSHOT_REPORT_CHARS]
+                shortened[f"{field}_truncated"] = True
+                shortened[f"{field}_chars"] = len(value)
+                changed = True
+        if changed:
+            return {**event, "data": shortened}
     text = data.get("text")
     if event.get("type") == "task.result" and isinstance(text, str) and len(text) > SNAPSHOT_RESULT_CHARS:
         return {**event, "data": {**data, "text": text[:SNAPSHOT_RESULT_CHARS], "text_truncated": True,
                                   "text_chars": len(text)}}
     return event
+
+
+def snapshot_reports(request: dict) -> dict:
+    """Stored terminal reports for snapshots, bounded exactly like replayed terminal events."""
+    data = {key: request[key] for key in ("report", "report_appendix")
+            if isinstance(request.get(key), str)}
+    if not data:
+        return {}
+    return snapshot_event({"type": "request.completed", "data": data})["data"]
 
 
 def _semantics_wanted(raw: Any) -> bool:  # semantics-hook: off in any spelling, options or not, skips the import
@@ -1420,6 +1435,11 @@ class Hub:
 
     def snapshot(self) -> dict[str, Any]:
         pipeline_prs = self.pipeline_prs()
+        recent_events = list(self.events)[-200:]
+        recent_terminals = {
+            event.get("request_id") for event in recent_events
+            if event.get("type") in {"request.completed", "request.failed"}
+        }
         return {"type": "snapshot", "schema_version": 1, "seq": self.store.event_bounds()[1],
                 "ts": time.time(), "data": {
             "agents": list(self.agents.values()),
@@ -1433,6 +1453,7 @@ class Hub:
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],
                           "step_details": self.request_step_details(r.get("id", ""), r),
+                          **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
                          for r in self.requests.values()],
@@ -1440,7 +1461,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
-            "recent_events": [snapshot_event(e) for e in list(self.events)[-200:]],
+            "recent_events": [snapshot_event(e) for e in recent_events],
         }}
 
     def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:
