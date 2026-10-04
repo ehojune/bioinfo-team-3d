@@ -428,13 +428,14 @@ class Hub:
                                 "data": {"engine": engine, "manual": manual}})
         return released
 
-    async def login_recovered(self, engine: str) -> None:
-        """Clear the one account notice only after a retry no longer reports a login error."""
+    async def login_recovered(self, engine: str, *, reason: str | None = None) -> None:
+        """End one account notice when no request is still held for that engine."""
         if engine not in self.login_notices or self.login_hold(engine) is not None:
             return
         self.login_notices.discard(engine)
         await self.publish({"type": "engine.login_resumed", "ts": time.time(),
-                            "data": {"engine": engine, "manual": False}})
+                            "data": {"engine": engine, "manual": False,
+                                     **({"reason": reason} if reason else {})}})
 
     async def wait_login(self, rid: str, step_id: str, engine: str, *, resume_at: float,
                          deadline_at: float, reason: str, agent_id: str | None = None) -> bool:

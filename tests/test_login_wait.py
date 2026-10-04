@@ -190,6 +190,58 @@ async def test_login_wait_automatically_retries_the_same_turn(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_login_retry_preserves_direct_task_budget_schema_and_fields(tmp_path):
+    hub = _hub(tmp_path)
+    calls = []
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done")
+
+    hub.dispatch = dispatch
+    original = Task(agent_id="worker", request_id="r", prompt="direct", context="kept context",
+                    output_schema=schema, budget_usd=1.25,
+                    meta={"kind": "direct", "custom": "kept"})
+    result = await asyncio.wait_for(Orchestrator(hub).run_step(original), 1)
+
+    assert result.ok and len(calls) == 2
+    assert calls[1].id != calls[0].id
+    assert calls[1].budget_usd == calls[0].budget_usd == 1.25
+    assert calls[1].output_schema == calls[0].output_schema == schema
+    assert calls[1].context == calls[0].context == "kept context"
+    assert calls[1].meta["custom"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_solo_login_retry_preserves_request_budget_and_schema(tmp_path):
+    hub = _hub(tmp_path)
+    hub.s.orchestrator.solo_agent = "worker"
+    hub.requests["r"].update(
+        mode="orchestrate", route="auto", budget_usd=0.75, project_dirs=[], references=[],
+        plan={"assumptions": [], "steps": []},
+        route_decision={"mode": "solo", "agent_id": "worker"},
+    )
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done",
+                          outputs=["answer.md"], workdir_id="task_solo", cost_usd=0.0)
+
+    hub.dispatch = dispatch
+    assert await asyncio.wait_for(Orchestrator(hub)._run_solo("r", "work", {}), 5)
+
+    assert len(calls) == 2
+    assert calls[1].budget_usd == calls[0].budget_usd == 0.75
+    assert calls[1].output_schema == calls[0].output_schema is None
+
+
+@pytest.mark.asyncio
 async def test_two_requests_share_one_engine_notice(tmp_path):
     hub = _hub(tmp_path, retry=100, maximum=200)
     hub.requests["other"] = {"id": "other", "status": "running"}
@@ -272,6 +324,70 @@ async def test_login_wait_deadline_becomes_terminal_failure_with_reason(tmp_path
     assert not result.ok and result.error_kind == "login_wait_limit"
     assert "login wait exceeded" in result.error and calls == 1
     assert "login_waits" not in hub.requests["r"]
+
+
+@pytest.mark.asyncio
+async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tmp_path):
+    hub = _hub(tmp_path, retry=0.05, maximum=0.2)
+    calls = 0
+
+    async def dispatch(task):
+        nonlocal calls
+        calls += 1
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+
+    hub.dispatch = dispatch
+    result = await Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="report", meta={"kind": "synthesis"}))
+
+    assert not result.ok and result.error_kind == "login_wait_limit" and calls >= 2
+    assert "claude_code" not in hub.login_notices
+    ended = [event for event in hub.events if event["type"] == "engine.login_resumed"]
+    assert len(ended) == 1 and ended[0]["data"]["reason"] == "expired"
+    first_notice_count = len([event for event in hub.events if event["type"] == "engine.login_wait"])
+
+    hub.s.orchestrator.login_retry_s = 100
+    hub.s.orchestrator.login_wait_max_s = 200
+    parked = asyncio.Event()
+    original_publish = hub.publish
+
+    async def publish(event, *args, **kwargs):
+        await original_publish(event, *args, **kwargs)
+        if event["type"] == "engine.login_wait":
+            parked.set()
+
+    hub.publish = publish
+    again = asyncio.create_task(Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="again", meta={"kind": "direct"})))
+    await asyncio.wait_for(parked.wait(), 1)
+    assert len([event for event in hub.events if event["type"] == "engine.login_wait"]) == first_notice_count + 1
+    again.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await again
+
+
+@pytest.mark.asyncio
+async def test_login_expiry_keeps_engine_notice_while_another_request_waits(tmp_path):
+    hub = _hub(tmp_path, retry=1, maximum=10)
+    hub.requests["r"]["login_windows"] = {
+        "claude_code": {"started_at": time.time() - 2, "deadline_at": time.time() - 1}}
+    hub.requests["other"] = {"id": "other", "status": "waiting_login", "login_waits": {
+        "review": {"engine": "claude_code", "resume_at": time.time() + 100,
+                   "deadline_at": time.time() + 200, "reason": CLAUDE_EXPIRED,
+                   "waiting_since": time.time()}}}
+    hub.login_notices.add("claude_code")
+
+    async def dispatch(task):
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, error=CLAUDE_EXPIRED)
+
+    hub.dispatch = dispatch
+    result = await Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="report", meta={"kind": "synthesis"}))
+
+    assert not result.ok and result.error_kind == "login_wait_limit"
+    assert "claude_code" in hub.login_notices
+    assert hub.login_hold("claude_code") is not None
+    assert not [event for event in hub.events if event["type"] == "engine.login_resumed"]
 
 
 @pytest.mark.asyncio

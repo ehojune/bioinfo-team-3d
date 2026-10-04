@@ -2305,8 +2305,11 @@ class Orchestrator:
                     req.pop("login_windows", None)
                 self.hub.save_request(rid)
 
-        def login_failure(current: Task, reason: str) -> TaskResult:
+        async def login_failure(current: Task, reason: str) -> TaskResult:
             clear_login_window()
+            finished = getattr(self.hub, "login_recovered", None)
+            if finished is not None:
+                await finished(engine, reason="expired")
             return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
                               error_kind="login_wait_limit", error=reason)
 
@@ -2331,7 +2334,7 @@ class Orchestrator:
                                                      deadline_at=deadline,
                                                      reason="same engine account is waiting for login",
                                                      agent_id=current.agent_id):
-                        return login_failure(current, "engine login wait exceeded the configured maximum")
+                        return await login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
                 if hold:
@@ -2429,25 +2432,26 @@ class Orchestrator:
                         window.update(task_id=res.task_id, resume_at=resume_at)
                         self.hub.save_request(rid)
                     if resume_at > deadline:
-                        return login_failure(current, "engine login wait exceeded the configured maximum; "
-                                             f"retry={resume_at:.0f}, deadline={deadline:.0f}")
+                        return await login_failure(current, "engine login wait exceeded the configured maximum; "
+                                                   f"retry={resume_at:.0f}, deadline={deadline:.0f}")
                     key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
                     if not await self.hub.wait_login(rid, key, engine, resume_at=resume_at,
                                                      deadline_at=deadline,
                                                      reason=res.error or "engine login required",
                                                      agent_id=current.agent_id):
-                        return login_failure(current, "engine login wait exceeded the configured maximum")
+                        return await login_failure(current, "engine login wait exceeded the configured maximum")
                     can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
-                    current = Task(agent_id=current.agent_id, request_id=current.request_id,
-                                   output_schema=current.output_schema,
-                                   prompt=continuation_prompt(turn, "The engine account is signed in again. "
-                                                                    "Continue the same task.",
-                                                              resumable=can_resume, previous_result=res,
-                                                              context_chars=self.cfg.context_chars_per_step),
-                                   meta={**current.meta, "kind": current.meta.get("kind", "step"),
-                                         "parent_task": res.task_id,
-                                         **({"workdir": res.workdir} if res.workdir else {})},
-                                   resume_session_id=res.session_id if can_resume else None)
+                    current = current.model_copy(update={
+                        "id": new_id("task"),
+                        "prompt": continuation_prompt(turn, "The engine account is signed in again. "
+                                                               "Continue the same task.",
+                                                          resumable=can_resume, previous_result=res,
+                                                          context_chars=self.cfg.context_chars_per_step),
+                        "meta": {**current.meta, "kind": current.meta.get("kind", "step"),
+                                 "parent_task": res.task_id,
+                                 **({"workdir": res.workdir} if res.workdir else {})},
+                        "resume_session_id": res.session_id if can_resume else None,
+                    })
                     res = await dispatch_with_retry(current, max_attempts)
                     tool_errors.extend(res.tool_errors)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
@@ -2478,16 +2482,17 @@ class Orchestrator:
                     return quota_failure(current, "subscription quota wait exceeded the configured maximum")
                 can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
                 # The turn that hit the quota is the base, so a wake turn keeps its job results and ask answers.
-                current = Task(agent_id=current.agent_id, request_id=current.request_id,
-                               output_schema=current.output_schema,
-                               prompt=continuation_prompt(turn, "The subscription quota has reset. "
-                                                                "Continue the same task.",
-                                                          resumable=can_resume, previous_result=res,
-                                                          context_chars=self.cfg.context_chars_per_step),
-                               meta={**current.meta, "kind": current.meta.get("kind", "step"),
-                                     "parent_task": res.task_id,
-                                     **({"workdir": res.workdir} if res.workdir else {})},
-                               resume_session_id=res.session_id if can_resume else None)
+                current = current.model_copy(update={
+                    "id": new_id("task"),
+                    "prompt": continuation_prompt(turn, "The subscription quota has reset. "
+                                                           "Continue the same task.",
+                                                     resumable=can_resume, previous_result=res,
+                                                     context_chars=self.cfg.context_chars_per_step),
+                    "meta": {**current.meta, "kind": current.meta.get("kind", "step"),
+                             "parent_task": res.task_id,
+                             **({"workdir": res.workdir} if res.workdir else {})},
+                    "resume_session_id": res.session_id if can_resume else None,
+                })
                 res = await dispatch_with_retry(current, max_attempts)  # its first gate rechecks the budget
                 tool_errors.extend(res.tool_errors)
                 res = res.model_copy(update={"tool_errors": list(tool_errors)})
