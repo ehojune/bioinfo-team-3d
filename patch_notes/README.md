@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:40 | [`99c5a32`](https://github.com/ehojune/bioinfo-team-3d/pull/392/commits/99c5a32) | 3D 화면에 계획 가정과 요청 묶음을 보이고 불완전한 묶음을 표시하며, 모든 node 웹 test를 CI에서 돌린다 |
 | 21:55 | [`a7a44ac`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/a7a44ac) | topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다 |
 | 21:50 | [`070f372`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/070f372) | 고정된 연구 계약은 재개 때 CP1 snapshot을 따르고 면제한 pack은 사유만 받는다 |
 | 21:35 | [`096445e`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/096445e) | topic 이전 연구 계약을 승인 당시 pack 규칙으로 재개하고 재계획의 모르는 topic 경고를 남긴다 |
