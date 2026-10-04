@@ -114,6 +114,7 @@ class RequestIn(BaseModel):
     budget_usd: float | None = None
     project_id: str | None = None  # → updates go to that project's GitHub repo
     cso_model: str | None = None  # request-local; checked against orchestrator.cso_models
+    route: Literal["auto", "team"] = "auto"
     meta: dict[str, str] = {}  # benchmark case id 등 요청 출처
 
 
@@ -1354,6 +1355,8 @@ class Hub:
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
+        if body.mode == "direct" and body.route == "team":
+            raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
             raise ValueError("cso_model is only valid for orchestrate or plan_only requests")
         if body.cso_model and body.cso_model not in self.s.orchestrator.cso_models:
@@ -1419,7 +1422,8 @@ class Hub:
     async def _start_request(self, rid: str) -> None:
         r = self.requests[rid]
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
-                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references")}})
+                            "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
+                                                           "route")}})
         await self.orchestrator.run_request(rid)
 
     def pipeline_prs(self) -> dict[str, dict]:
@@ -1450,7 +1454,7 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
-                                                                  "references", "pi_notes")},
+                                                                  "references", "pi_notes", "route", "route_decision")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],
