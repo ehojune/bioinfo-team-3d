@@ -24,7 +24,7 @@ TEXT_SUFFIXES = frozenset({
     ".py", ".r", ".sh", ".md", ".tsv", ".csv", ".json", ".txt", ".yaml", ".yml",
     ".toml", ".ini", ".cfg", ".xml", ".html", ".js", ".cjs", ".mjs", ".sql",
 })
-SCRIPT_COMMANDS = {".py": "python", ".r": "Rscript", ".sh": "bash"}
+SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash"}
 DOCUMENT_SUFFIXES = frozenset({".md"})
 MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",
@@ -147,10 +147,16 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, li
     bundle_root = next((parent for parent in path.parents if (parent / "steps").is_dir()), None)
     if bundle_root is None:
         return 0, _absolute_paths(text)
-    # Commands run at the bundle root. Markdown links remain relative to the document that contains them.
-    destination = path.parent if path.suffix.casefold() in DOCUMENT_SUFFIXES else bundle_root
+    # Commands run in their step folder. Markdown links remain relative to the document that contains them.
+    relative_path = path.relative_to(bundle_root)
+    if path.suffix.casefold() in DOCUMENT_SUFFIXES:
+        destination = path.parent
+    elif len(relative_path.parts) >= 3 and relative_path.parts[0] == "steps":
+        destination = bundle_root / "steps" / relative_path.parts[1]
+    else:
+        destination = bundle_root
     for step_id, workdir in workdirs:
-        target = bundle_root / "steps" / step_id
+        target = bundle_root / "steps" / step_id / "outputs"
         relative = os.path.relpath(target, destination).replace("\\", "/")
 
         def replace(match: re.Match[str]) -> str:
@@ -213,11 +219,22 @@ def _safe_script_path(path: PurePosixPath) -> bool:
     return all(_SAFE_SCRIPT_COMPONENT.fullmatch(part) for part in path.parts)
 
 
+def _runner_python_command(result: Mapping[str, Any], tasks: Mapping[str, Any],
+                           runner_capabilities: Mapping[str, Any]) -> str | None:
+    task = tasks.get(str(result.get("task_id") or ""))
+    runner_id = task.get("runner_id") if isinstance(task, Mapping) else None
+    capabilities = runner_capabilities.get(str(runner_id)) if runner_id else None
+    local = capabilities.get("local_software") if isinstance(capabilities, Mapping) else None
+    python = local.get("python") if isinstance(local, Mapping) else None
+    command = python.get("command") if isinstance(python, Mapping) else None
+    return command if command in {"python3", "python", "py"} else None
+
+
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
-            unsafe_scripts: list[str]) -> str:
+            unsafe_scripts: list[str], python_unknown: bool) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
-        "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 최종 단계 산출물과 스크립트",
+        "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치", "",
         "## 단계 순서", "",
     ]
@@ -227,15 +244,18 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
             lines.append(f"- `{step.get('id')}` (의존: {deps})")
     else:
         lines.append("- 선언된 단계 없음")
-    lines += ["", "## 다시 실행", "", "아래 명령은 이 묶음의 루트에서 실행합니다.", ""]
+    lines += ["", "## 다시 실행", "", "아래 명령은 묶음 루트에서 시작해 각 단계 폴더에서 실행합니다.", ""]
     lines += [f"- `{command}`" for command in scripts] if scripts else ["- 실행 스크립트 없음"]
     lines += [f"- 이름이 안전하지 않아 명령을 만들지 않음: `{path}`" for path in unsafe_scripts]
+    if python_unknown:
+        lines.append("- runner가 쓴 python 명령을 확인하지 못함: `python`을 사용")
     lines += ["", "묶음은 원본의 사본입니다. `labhq verify`와 claim anchor 검사는 원래 작업 폴더를 기준으로 합니다.", ""]
     return "\n".join(lines)
 
 
 def build_request_bundle(req: Mapping[str, Any], settings: Any,
-                         tasks: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                         tasks: Mapping[str, Any] | None = None,
+                         runner_capabilities: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Build ``<workspace_root>/requests/<request_id>`` from the request's final stored results."""
     rid = str(req.get("id") or "")
     if not _SAFE_ID.fullmatch(rid):
@@ -254,6 +274,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     workdirs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
+    python_unknown = False
+    tasks = tasks or {}
+    runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
     ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
@@ -292,6 +315,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                  "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
                 roots = _candidate_roots(result)
+                python_command = _runner_python_command(result, tasks, runner_capabilities)
 
                 def selected(path: PurePosixPath, _entry: Any, _depth: int) -> bool:
                     output_rel = PurePosixPath(*path.parts[1:])
@@ -299,10 +323,10 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
                 def copy_file(path: PurePosixPath, _entry: Any, stream: Any,
                               info: os.stat_result | None) -> str | None:
-                    nonlocal copied_bytes, copied_files, total_limit_hit
+                    nonlocal copied_bytes, copied_files, total_limit_hit, python_unknown
                     assert stream is not None and info is not None
                     output_rel = PurePosixPath(*path.parts[1:])
-                    rel = PurePosixPath("steps", step_id, *output_rel.parts)
+                    rel = PurePosixPath("steps", step_id, *path.parts)
                     source = workdir / "outputs" / Path(*output_rel.parts)
                     row = {"relative_path": rel.as_posix(), "size": info.st_size, "sha256": "",
                            "step_id": step_id, "original_path": str(source), "status": "copied",
@@ -318,11 +342,17 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                         row["sha256"] = _copy_held(stream, info, destination)
                         copied_files += 1
                         copied_bytes += info.st_size
-                        command = SCRIPT_COMMANDS.get(destination.suffix.casefold())
+                        suffix = destination.suffix.casefold()
+                        command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
+                        if suffix == ".py" and command is None:
+                            command = "python"
+                            python_unknown = True
                         if command and "scripts" in output_rel.parts:
                             if _safe_script_path(rel):
+                                script_path = PurePosixPath("outputs", *output_rel.parts)
                                 script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
-                                    (command, rel.as_posix()))
+                                    ("cd", f"steps/{step_id}")) + " && " + shlex.join(
+                                        (command, script_path.as_posix()))
                             else:
                                 unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
                     rows.append(row)
@@ -340,7 +370,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
         report = str(req.get("report") or "")
         appendix = str(req.get("report_appendix") or "")
-        replaced = _superseded(req, tasks or {})
+        replaced = _superseded(req, tasks)
         if replaced:
             appendix += ("\n\n## 요청 묶음: 대체됨\n\n" +
                          "\n".join(f"- {item}" for item in replaced))
@@ -353,7 +383,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         commands = [command for step_id in ordered_ids
                     for _path, command in sorted(script_commands.get(step_id, {}).items())]
         unsafe = [path for step_id in ordered_ids for path in sorted(unsafe_scripts.get(step_id, set()))]
-        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe),
+        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0

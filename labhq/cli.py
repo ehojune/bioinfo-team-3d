@@ -110,6 +110,9 @@ def render(ev: dict) -> None:
             line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
+    elif t == "request.bundle":
+        line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
+                f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
     if t in {"request.completed", "request.failed"} and line:
         if d.get("bundle_path"):
             line += f"\n   요청 묶음: {d['bundle_path']}"

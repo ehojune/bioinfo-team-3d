@@ -5,7 +5,6 @@ import json
 import platform
 import shutil
 import subprocess
-import sys
 import threading
 from pathlib import Path
 
@@ -52,12 +51,16 @@ def request_fixture(tmp_path: Path):
     outside = tmp_path / "outside" / "keep.tsv"
     write(outside, "outside\n")
     script = second / "outputs" / "scripts" / "analyze.py"
+    reference = second / "outputs" / "reference" / "genes.tsv"
     write(second / "manifest.json", json.dumps({"host": platform.node()}))
+    write(reference, "gene\nTP53\n")
     write(script, "\n".join([
         "from pathlib import Path",
         f'UPSTREAM = Path(r"{upstream}")',
         f'OTHER = r"{outside}"',
-        'Path(__file__).with_name("rerun.txt").write_text(UPSTREAM.read_text(encoding="utf-8"), encoding="utf-8")',
+        'LOCAL = Path("outputs/reference/genes.tsv")',
+        'Path("outputs/result.tsv").write_text(',
+        '    UPSTREAM.read_text(encoding="utf-8") + LOCAL.read_text(encoding="utf-8"), encoding="utf-8")',
         "",
     ]))
     write(second / "outputs" / "final.txt", f"source={upstream.as_posix()}\n")
@@ -74,9 +77,11 @@ def request_fixture(tmp_path: Path):
         "s2": {
             "task_id": "t-second", "agent_id": "analyst", "ok": True, "status": "done",
             "workdir": str(second), "workdir_id": second.name,
-            "outputs": ["outputs/scripts/analyze.py", "outputs/final.txt", "outputs/large.bin"],
+            "outputs": ["outputs/scripts/analyze.py", "outputs/reference/genes.tsv",
+                        "outputs/final.txt", "outputs/large.bin"],
             "output_sha256": {
                 "outputs/scripts/analyze.py": digest(script),
+                "outputs/reference/genes.tsv": digest(reference),
                 "outputs/final.txt": digest(second / "outputs" / "final.txt"),
                 "outputs/large.bin": digest(large),
             },
@@ -113,13 +118,14 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     bundle = Path(built["path"])
     assert bundle == Path(settings.runner.workspace_root) / "requests" / request["id"]
     assert built["rewritten_files"] == 3
-    assert (bundle / "steps/s1/data/input.tsv").is_file()
-    assert (bundle / "steps/s1/scripts/make.py").is_file()  # scripts are copied even when undeclared
-    assert not (bundle / "steps/s2/large.bin").exists()
-    assert not (bundle / "steps/s1/obsolete.txt").exists()
-    assert not (bundle / "steps/old/obsolete.txt").exists()
+    assert (bundle / "steps/s1/outputs/data/input.tsv").is_file()
+    assert (bundle / "steps/s1/outputs/scripts/make.py").is_file()  # scripts are copied even when undeclared
+    assert (bundle / "steps/s2/outputs/reference/genes.tsv").is_file()
+    assert not (bundle / "steps/s2/outputs/large.bin").exists()
+    assert not (bundle / "steps/s1/outputs/obsolete.txt").exists()
+    assert not (bundle / "steps/old/outputs/obsolete.txt").exists()
 
-    bundled_script = (bundle / "steps/s2/scripts/analyze.py").read_text(encoding="utf-8")
+    bundled_script = (bundle / "steps/s2/outputs/scripts/analyze.py").read_text(encoding="utf-8")
     assert str(upstream) not in bundled_script and upstream.as_posix() not in bundled_script
     assert str(outside) in bundled_script  # a path outside this request's step workdirs is untouched
     assert "대체됨" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
@@ -127,7 +133,7 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
 
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle, delimiter="\t"))
-    large_row = next(row for row in rows if row["relative_path"] == "steps/s2/large.bin")
+    large_row = next(row for row in rows if row["relative_path"] == "steps/s2/outputs/large.bin")
     assert large_row["status"] == "not copied: size"
     assert large_row["original_path"].endswith("outputs\\large.bin") or large_row["original_path"].endswith("outputs/large.bin")
     summary = next(row for row in rows if row["relative_path"] == ".")
@@ -137,10 +143,15 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
 
     moved = tmp_path / "moved-bundle"
     shutil.copytree(bundle, moved)
-    assert "steps/s1/data/input.tsv" in bundled_script
-    assert "묶음의 루트에서 실행" in (bundle / "README.md").read_text(encoding="utf-8")
-    subprocess.run([sys.executable, "steps/s2/scripts/analyze.py"], check=True, cwd=moved)
-    assert (moved / "steps/s2/scripts/rerun.txt").read_text(encoding="utf-8") == "value\n7\n"
+    assert "../s1/outputs/data/input.tsv" in bundled_script
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+    assert "각 단계 폴더에서 실행" in readme
+    commands = [line[3:-1] for line in readme.splitlines()
+                if line.startswith("- `cd steps/") and line.endswith("`")]
+    assert commands
+    for command in commands:
+        subprocess.run(command, check=True, cwd=moved, shell=True)
+    assert (moved / "steps/s2/outputs/result.tsv").read_text(encoding="utf-8") == "value\n7\ngene\nTP53\n"
 
     first_snapshot = {p.relative_to(bundle).as_posix(): digest(p) for p in bundle.rglob("*") if p.is_file()}
     rebuilt = build_request_bundle(request, settings, tasks)
@@ -159,7 +170,8 @@ def test_markdown_links_stay_document_relative(tmp_path):
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
 
-    assert "[input](../../s1/data/input.tsv)" in (bundle / "steps/s2/docs/note.md").read_text(encoding="utf-8")
+    assert "[input](../../../s1/outputs/data/input.tsv)" in (
+        bundle / "steps/s2/outputs/docs/note.md").read_text(encoding="utf-8")
 
 
 def test_size_limit_skips_open_file_hash_and_copy(tmp_path, monkeypatch):
@@ -176,7 +188,7 @@ def test_size_limit_skips_open_file_hash_and_copy(tmp_path, monkeypatch):
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         row = next(row for row in csv.DictReader(handle, delimiter="\t")
-                   if row["relative_path"] == "steps/s2/large.bin")
+                   if row["relative_path"] == "steps/s2/outputs/large.bin")
     assert row["status"] == "not copied: size" and row["sha256"] == ""
     assert "large.bin" not in copied
 
@@ -220,7 +232,7 @@ def test_parent_swap_never_reads_the_replacement(tmp_path, monkeypatch):
 
     monkeypatch.setattr(request_bundle_module.HeldDir, "child", swap_before_open)
     bundle = Path(build_request_bundle(request, settings)["path"])
-    copied = bundle / "steps/s1/data/safe.txt"
+    copied = bundle / "steps/s1/outputs/data/safe.txt"
     assert not copied.exists() or copied.read_text(encoding="utf-8") == "safe\n"
     assert all(b"SECRET" not in path.read_bytes() for path in bundle.rglob("*") if path.is_file())
 
@@ -244,8 +256,8 @@ def test_bundle_uses_runner_walker_for_restricted_zone_and_mount(tmp_path, monke
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
 
-    assert not (bundle / "steps/s1/restricted/secret.txt").exists()
-    assert not (bundle / "steps/s1/mounted/secret.txt").exists()
+    assert not (bundle / "steps/s1/outputs/restricted/secret.txt").exists()
+    assert not (bundle / "steps/s1/outputs/mounted/secret.txt").exists()
 
 
 def test_unsafe_script_name_is_listed_without_a_command(tmp_path):
@@ -256,7 +268,7 @@ def test_unsafe_script_name_is_listed_without_a_command(tmp_path):
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
     readme = (bundle / "README.md").read_text(encoding="utf-8")
-    relative = "steps/s1/scripts/unsafe; echo PWN.py"
+    relative = "steps/s1/outputs/scripts/unsafe; echo PWN.py"
 
     assert (bundle / relative).is_file()
     assert f"이름이 안전하지 않아 명령을 만들지 않음: `{relative}`" in readme
@@ -287,8 +299,36 @@ def test_script_commands_follow_plan_topology_before_command_name(tmp_path):
     bundle = Path(build_request_bundle(request, settings)["path"])
     readme = (bundle / "README.md").read_text(encoding="utf-8")
 
-    assert readme.index("python steps/up/scripts/prepare.py") < readme.index(
-        "Rscript steps/down/scripts/finish.R")
+    assert readme.index("cd steps/up && python outputs/scripts/prepare.py") < readme.index(
+        "cd steps/down && Rscript outputs/scripts/finish.R")
+
+
+def test_python_command_comes_from_the_step_runner_and_unknown_is_disclosed(tmp_path):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    results = {}
+    tasks = {}
+    for step_id, task_id, runner_id in (("known", "t-known", "runner-a"),
+                                        ("unknown", "t-unknown", "runner-b")):
+        workdir = root / "2026-10-04" / f"task_{step_id}"
+        write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+        write(workdir / "outputs/scripts/run.py", "print('ok')\n")
+        results[step_id] = {"task_id": task_id, "workdir": str(workdir),
+                            "workdir_id": workdir.name, "outputs": ["outputs/scripts/run.py"]}
+        tasks[task_id] = {"request_id": "python_command", "step_id": step_id,
+                          "runner_id": runner_id, "completed": True, "result": results[step_id]}
+    request = {"id": "python_command", "report": "ok", "report_appendix": "",
+               "plan": {"steps": [{"id": "known", "depends_on": []},
+                                   {"id": "unknown", "depends_on": ["known"]}]},
+               "results": results}
+    capabilities = {"runner-a": {"local_software": {"python": {"command": "py"}}}}
+
+    bundle = Path(build_request_bundle(request, settings, tasks, capabilities)["path"])
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+
+    assert "cd steps/known && py outputs/scripts/run.py" in readme
+    assert "cd steps/unknown && python outputs/scripts/run.py" in readme
+    assert "runner가 쓴 python 명령을 확인하지 못함" in readme
 
 
 @pytest.mark.parametrize("total_bytes,max_files", [(1024 * 1024, 1), (5, 10)])
@@ -315,9 +355,9 @@ def test_request_total_limits_record_first_omission_and_stop(tmp_path, total_byt
         rows = list(csv.DictReader(handle, delimiter="\t"))
     by_path = {row["relative_path"]: row for row in rows}
 
-    assert by_path["steps/s1/a.txt"]["status"] == "copied"
-    assert by_path["steps/s1/b.txt"]["status"] == "not copied: total limit"
-    assert "steps/s1/c.txt" not in by_path
+    assert by_path["steps/s1/outputs/a.txt"]["status"] == "copied"
+    assert by_path["steps/s1/outputs/b.txt"]["status"] == "not copied: total limit"
+    assert "steps/s1/outputs/c.txt" not in by_path
     assert "누적 상한에 도달해 첫 제외 파일에서 순회를 멈춤" in (
         bundle / "report_appendix.md").read_text(encoding="utf-8")
 
@@ -369,11 +409,22 @@ async def test_scheduled_bundle_uses_one_worker_without_blocking_loop(tmp_path, 
     task = hub.schedule_terminal("worker", "request.completed", data)
     assert hub.schedule_terminal("worker", "request.completed", data) is task
     await asyncio.wait_for(started.wait(), 2)
+    stored = hub.store.get("request", "worker")
+    assert stored["status"] == "done" and stored["report"] == "body"
+    assert any(event["type"] == "request.completed" for event in hub.store.events_since(0))
+
+    restored = Hub(settings)
+    assert restored.requests["worker"]["status"] == "done"
+    assert not any(entry["approval"].get("kind") == "resume" for entry in restored.approvals.values())
+    assert calls == [calls[0]]  # restart does not schedule another bundle build
+    restored.store.close()
+
     await asyncio.sleep(0)  # the event loop remains available while the worker is blocked
     release.set()
     await asyncio.wait_for(task, 2)
     assert len(calls) == 1 and calls[0] != threading.get_ident()
     assert data["bundle_path"] == str(tmp_path / "bundle")
+    assert [event["type"] for event in hub.store.events_since(0)].count("request.bundle") == 1
     hub.store.close()
 
 

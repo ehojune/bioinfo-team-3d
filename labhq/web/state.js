@@ -381,6 +381,11 @@ function apply(ev, replay = false) {
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
       break;
     }
+    case 'request.bundle': {
+      const q = req(rid);
+      q.bundlePath = d.bundle_path || ''; q.bundleWarning = d.bundle_warning || '';
+      break;
+    }
     case 'request.followup': {
       const q = req(rid), entry = { id: d.id, text: d.text, agent_id: d.agent_id, status: 'running', asked_at: ts };
       q.followups = [...q.followups.filter(f => f.id !== d.id), entry];

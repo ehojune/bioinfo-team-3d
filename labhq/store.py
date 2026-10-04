@@ -81,6 +81,13 @@ class StateStore:
                             (str(event["seq"]), json.dumps(event, ensure_ascii=False, default=str)))
         return event
 
+    def commit_request_event(self, rid: str, request: dict, event: dict, limit: int) -> dict:
+        """Checkpoint a request update and its single event in one transaction."""
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)",
+                            (rid, json.dumps(request, ensure_ascii=False, default=str)))
+            return self._insert_event(event, limit)
+
     def event_bounds(self) -> tuple[int, int]:
         row = self.db.execute("SELECT MIN(seq), MAX(seq) FROM events").fetchone()
         return row[0] or 0, row[1] or 0

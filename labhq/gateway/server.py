@@ -443,7 +443,8 @@ class Hub:
                     self.store.delete("jobs_done", tid)
                     self.jobs_done.pop(tid, None)
 
-    def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None) -> dict:
+    def _bundle_outcome(self, rid: str, request: dict | None = None, tasks: dict | None = None,
+                        runner_capabilities: dict | None = None) -> dict:
         """Build against a terminal snapshot; safe to call in a worker thread."""
         try:
             from ..request_bundle import RemoteRunnerBundle, build_request_bundle
@@ -452,6 +453,7 @@ class Hub:
                 copy.deepcopy(self.requests[rid]) if request is None else request,
                 self.s,
                 copy.deepcopy(self.store.all("task")) if tasks is None else tasks,
+                copy.deepcopy(self.runner_capabilities) if runner_capabilities is None else runner_capabilities,
             )
             return {"bundle": bundled}
         except RemoteRunnerBundle:
@@ -478,22 +480,52 @@ class Hub:
         self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
         log.warning("request bundle unavailable for %s: %s", rid, warning)
 
+    def _commit_bundle_record(self, rid: str, data: dict) -> None:
+        """Checkpoint the post-terminal bundle outcome with exactly one separate event."""
+        self.requests[rid]["updated_at"] = time.time()
+        event = self.store.commit_request_event(
+            rid, self.requests[rid],
+            {"type": "request.bundle", "ts": time.time(), "request_id": rid,
+             "data": {key: data[key] for key in ("bundle_path", "bundle_warning") if key in data}},
+            self.s.gateway.event_buffer,
+        )
+        self.events.append(event)
+        self.pending_committed.append((event, tuple(self.clients)))
+        asyncio.get_running_loop().create_task(self._send_committed_event())
+        try:
+            self.rounds.write(rid)
+        except OSError as exc:
+            log.warning("round record bundle update failed for %s: %s", rid, exc)
+
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
         """Synchronous checkpoint used by direct callers and tests."""
-        self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
+        if not self._has_bundle_workdir(rid):
+            self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
+            self._commit_terminal_record(rid, typ, data)
+            return
         self._commit_terminal_record(rid, typ, data)
+        self._apply_bundle_outcome(rid, data, self._bundle_outcome(rid))
+        self._commit_bundle_record(rid, data)
+
+    def _has_bundle_workdir(self, rid: str) -> bool:
+        results = (self.requests[rid].get("results") or {}).values()
+        return any(isinstance(result, Mapping) and isinstance(result.get("workdir_id"), str)
+                   and result["workdir_id"] for result in results)
 
     def schedule_terminal(self, rid: str, typ: str, data: dict) -> asyncio.Task | None:
         """Create a terminal bundle off the gateway event loop, once per request."""
-        results = (self.requests[rid].get("results") or {}).values()
-        if not any(isinstance(result, Mapping) and isinstance(result.get("workdir_id"), str)
-                   and result["workdir_id"] for result in results):
-            self.commit_terminal(rid, typ, data)
-            return None
         prior = self.terminal_tasks.get(rid)
         if prior is not None:
             return prior
-        task = asyncio.get_running_loop().create_task(self._commit_terminal_async(rid, typ, data))
+        if not self._has_bundle_workdir(rid):
+            self.commit_terminal(rid, typ, data)
+            return None
+        self._commit_terminal_record(rid, typ, data)
+        request = copy.deepcopy(self.requests[rid])
+        tasks = copy.deepcopy(self.store.all("task"))
+        runner_capabilities = copy.deepcopy(self.runner_capabilities)
+        task = asyncio.get_running_loop().create_task(
+            self._commit_terminal_async(rid, data, request, tasks, runner_capabilities))
         self.terminal_tasks[rid] = task
         task.add_done_callback(self._terminal_task_done)
         return task
@@ -503,18 +535,19 @@ class Hub:
         if not task.cancelled() and (exc := task.exception()) is not None:
             log.error("terminal checkpoint failed: %s", exc)
 
-    async def _commit_terminal_async(self, rid: str, typ: str, data: dict) -> None:
-        request = copy.deepcopy(self.requests[rid])
-        tasks = copy.deepcopy(self.store.all("task"))
-        outcome = await asyncio.to_thread(self._bundle_outcome, rid, request, tasks)
+    async def _commit_terminal_async(self, rid: str, data: dict, request: dict, tasks: dict,
+                                     runner_capabilities: dict) -> None:
+        outcome = await asyncio.to_thread(
+            self._bundle_outcome, rid, request, tasks, runner_capabilities)
         self._apply_bundle_outcome(rid, data, outcome)
-        self._commit_terminal_record(rid, typ, data)
+        self._commit_bundle_record(rid, data)
 
     def _commit_terminal_record(self, rid: str, typ: str, data: dict) -> None:
         # Failure never changes the request outcome, and terminal requests loaded after a restart do not pass this
         # checkpoint again.
         event = self.store.commit_terminal(rid, self.requests[rid],
-                                           {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
+                                           {"type": typ, "ts": time.time(), "request_id": rid,
+                                            "data": copy.deepcopy(data)},
                                            self.s.gateway.event_buffer)
         self.events.append(event)
         self._restart_request_asks(rid)

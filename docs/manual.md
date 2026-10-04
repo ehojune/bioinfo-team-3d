@@ -188,16 +188,16 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 ### 요청 묶음
 
-요청이 끝나면 성공 여부와 lane에 관계없이 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 하나도 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 생성 오류는 요청 결과를 바꾸지 않으며, 끝난 요청은 gateway를 다시 켜도 다시 묶지 않습니다.
+요청이 끝나면 terminal 상태와 보고서를 먼저 저장하고 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 생성 오류나 도중 재시작은 요청 결과를 바꾸지 않으며, 중단된 묶음은 자동 재시도하지 않습니다.
 
 | 경로 | 내용 |
 |---|---|
 | `report.md` · `report_appendix.md` | PI용 본문과 실행 기록 |
-| `steps/<step_id>/` | 최종 판의 선언 산출물과 `outputs/scripts/` 전체 |
+| `steps/<step_id>/outputs/` | 최종 판의 선언 산출물과 `outputs/scripts/` 전체 |
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
 | `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
 
-코드의 단계 경로는 묶음 루트 기준으로 바꾸고 README 명령도 그 루트에서 실행합니다. Markdown 링크는 문서 기준 상대경로를 유지합니다. 다른 절대경로는 manifest와 부록에 남깁니다. runner와 같은 walker가 link·junction·mount·device 변경·통제 구역을 빼고 descriptor로 검사·hash·복사합니다. `runner.bundle_max_file_mb`(기본 50), 요청별 `bundle_max_total_mb`(2048)·`bundle_max_files`(5000)를 넘긴 파일은 manifest에 남기고 순회를 멈춥니다. 재실행 명령은 안전한 이름만 계획 DAG 순서로 싣습니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다. 원본은 건드리지 않으며 프로젝트 GitHub에는 두 보고서만 올립니다.
+단계 폴더는 원래 workdir의 `outputs/` 구조를 유지합니다. README는 각 `steps/<step_id>/`에서 스크립트를 실행하고, 위 단계 절대경로는 그 폴더 기준 상대경로로 바꿉니다. Markdown 링크는 문서 기준입니다. Python은 runner가 보고한 명령을 쓰고, 모르면 `python`과 경고를 함께 적습니다. 다른 절대경로는 manifest와 부록에 남깁니다. runner와 같은 walker가 link·junction·mount·device 변경·통제 구역을 빼고 descriptor로 검사·hash·복사합니다. 파일·요청 상한을 넘기면 manifest에 남기고 순회를 멈춥니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다.
 
 ```mermaid
 flowchart LR
