@@ -609,7 +609,8 @@ async def test_research_step_failure_takes_its_own_path_even_with_replans_on():
     req = hub.requests["r"]
     assert req["outcome"] == "research_failed" and req["status"] == "failed"
     assert req["research_contract"]["failure"]["steps"] == ["s1"]
-    assert "a changed plan needs a new CP1 approval" in req["report"]
+    assert "a changed plan needs a new CP1 approval" not in req["report"]
+    assert "a changed plan needs a new CP1 approval" in req["report_appendix"]
     assert "replan_progress" not in req and "replan_history" not in req
 
 

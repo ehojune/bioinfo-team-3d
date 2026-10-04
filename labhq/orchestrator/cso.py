@@ -433,9 +433,9 @@ SYNTH_PROMPT = """Write the final report for the PI.
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
-Do not turn a failed lookup into evidence or proof of absence. LabHQ appends warnings, review records and execution
-details under "부록: 실행 기록"; do not copy their details into the body. When the warning preview is not "(none)",
-summarize its importance in one line under "한계" and link to [부록: 실행 기록](#부록-실행-기록).
+Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings, review records and execution
+details in the separate execution record; do not copy their details into the body. When the warning preview is not
+"(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
 Warning preview ("(none)" means there is no warning section):
 {warnings}
 
@@ -449,13 +449,13 @@ Reviewer: {review}"""
 # Appended to SYNTH_PROMPT only when the generic review loop ended with the verdict still "revise" (2nd mock
 # trial F5); the request still fails, but the PI gets the CSO's conclusion instead of a step dump.
 UNRESOLVED_REVIEW_NOTE = (
-    "\n\nThe reviewer still asked for revisions after the last revision labhq could run. List each of the "
-    "reviewer's remaining issues, one by one, in a section titled \"해결되지 않은 리뷰 지적\", and do not state any "
-    "conclusion those issues bear on as if it were settled.")
+    "\n\nThe reviewer still asked for revisions after the last revision labhq could run. Summarize the effect "
+    "on the conclusion under \"한계\", but do not copy the reviewer's original text into the PI report. LabHQ "
+    "stores every open issue verbatim in the separate execution record.")
 
 REVIEW_REFERENCE_NOTE = (
-    "\n\nThe remaining P2 issues do not change the conclusion. Include them in a section titled \"리뷰 참고\", "
-    "without presenting them as completed revisions.")
+    "\n\nThe remaining P2 and P3 issues do not change the conclusion. End with a section titled \"리뷰 참고\", "
+    "using one short line per issue without copying the review request or presenting it as completed work.")
 
 # The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
 RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
@@ -518,8 +518,8 @@ Claim anchors (labhq checks them by machine):
 - Anchor only the citable claims listed below, each with the anchor shown there. A claim that is not listed as
   citable is not established: do not state it as a conclusion.
 - A failed or empty lookup is neither evidence nor proof of absence. LabHQ appends its details, CP2 records and the
-  claim check under "부록: 실행 기록". Summarize an important warning in one line under "한계" and link to
-  [부록: 실행 기록](#부록-실행-기록), without copying the raw warning into the body.
+  claim check in the separate execution record. Summarize an important warning in one line under "한계" and
+  end that line with "실행 기록 참고", without copying the raw warning into the body.
 - Report the reviewer's P1 and P2 issues as limitations.
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim anchors and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
@@ -786,6 +786,94 @@ def _append_report_metadata(report: str, sections: list[str]) -> str:
     else:
         report = report.rstrip() + "\n\n" + EXECUTION_APPENDIX_TITLE + "\n\n" + metadata
     return report + (("\n\n" + benchmark) if benchmark else "")
+
+
+def _split_report_appendix(report: str) -> tuple[str, str]:
+    """Separate the PI report from the execution record, including old/model-written combined reports."""
+    report = str(report or "").strip()
+    if EXECUTION_APPENDIX_TITLE not in report:
+        return report, ""
+    body, raw = report.split(EXECUTION_APPENDIX_TITLE, 1)
+    appendix = raw.strip()
+    # #229 benchmark parsers require their machine block to remain the last part of the PI report.
+    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
+    blocks = list(marker.finditer(appendix))
+    if len(blocks) == 1 and not appendix[blocks[0].end():].strip():
+        benchmark = blocks[0].group(0)
+        appendix = appendix[:blocks[0].start()].rstrip()
+        body = body.rstrip() + "\n\n" + benchmark
+    return body.strip(), (EXECUTION_APPENDIX_TITLE + ("\n\n" + appendix if appendix else ""))
+
+
+def _terminal_reports(rid: str, report: str, report_appendix: str) -> dict[str, Any]:
+    """Bound terminal copies while pointing every truncated field at the durable request."""
+    data = {}
+    for field, value in (("report", report), ("report_appendix", report_appendix)):
+        data[field] = clip(value, 20000)
+        if len(value) > 20000:
+            data[f"{field}_truncated"] = True
+            data[f"{field}_chars"] = len(value)
+            data[f"{field}_api"] = f"/api/requests/{rid}"
+    return data
+
+
+def _execution_warning_summary(report: str) -> str:
+    """Ensure a warning moved out of the PI report still leaves one visible limitation line."""
+    if "실행 기록 참고" in report:
+        return report
+    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
+    blocks = list(marker.finditer(report))
+    benchmark = ""
+    if len(blocks) == 1 and not report[blocks[0].end():].strip():
+        benchmark = blocks[0].group(0)
+        report = report[:blocks[0].start()].rstrip()
+    line = "실행 경고가 있습니다. 실행 기록 참고."
+    limitations = re.search(r"(?m)^## 한계\s*$", report)
+    if not limitations:
+        report = report.rstrip() + "\n\n" + line
+    else:
+        following = re.search(r"(?m)^## ", report[limitations.end():])
+        end = limitations.end() + (following.start() if following else len(report[limitations.end():]))
+        report = report[:end].rstrip() + "\n\n" + line + "\n\n" + report[end:].lstrip()
+    return report + (("\n\n" + benchmark) if benchmark else "")
+
+
+def _review_reference(review: dict | None) -> str:
+    """One short PI-facing line per P2/P3 issue; requests and verbatim text stay in the appendix."""
+    rows = [issue for issue in (review or {}).get("issues") or []
+            if isinstance(issue, dict) and issue.get("priority") in {"P2", "P3"}]
+    if not rows:
+        return ""
+    return "## 리뷰 참고\n" + "\n".join(
+        f"- {issue['priority']} · {issue.get('step_id') or '-'}: {short(issue.get('problem') or '-', 180)}"
+        for issue in rows)
+
+
+def _with_review_reference(report: str, review: dict | None) -> str:
+    """Replace model-written review notes with bounded P2/P3 lines at the end of the PI report."""
+    reference = _review_reference(review)
+    if not reference:
+        return report
+    marker = re.compile(r"<!-- LABHQ_BENCH_RESULT -->.*?<!-- /LABHQ_BENCH_RESULT -->", re.DOTALL)
+    blocks = list(marker.finditer(report))
+    benchmark = ""
+    if len(blocks) == 1 and not report[blocks[0].end():].strip():
+        benchmark = blocks[0].group(0)
+        report = report[:blocks[0].start()].rstrip()
+    report = re.sub(r"(?ms)^## 리뷰 참고\s*$.*?(?=^## |\Z)", "", report).rstrip()
+    report = report + "\n\n" + reference
+    return report + (("\n\n" + benchmark) if benchmark else "")
+
+
+def _appendix_sections(existing: str, sections: list[str]) -> str:
+    """Add sections to an already separated execution record without duplicating its heading."""
+    parts = []
+    if existing:
+        _, tail = existing.split(EXECUTION_APPENDIX_TITLE, 1)
+        if tail.strip():
+            parts.append(tail.strip())
+    parts.extend(section.strip() for section in sections if section and section.strip())
+    return EXECUTION_APPENDIX_TITLE + (("\n\n" + "\n\n".join(parts)) if parts else "")
 
 
 def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict]) -> str:
@@ -2595,6 +2683,8 @@ class Orchestrator:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
             self.hub.save_request(rid)
+            if lookup_section:
+                report = _execution_warning_summary(report)
             self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review)
 
         def budget_denied(stage: str, review: dict | None) -> None:
@@ -2666,13 +2756,18 @@ class Orchestrator:
             return
         # A report that finished keeps its text and check even if the budget card after it was denied; the denial
         # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
-        body = report_body(final.text)
+        body, model_appendix = _split_report_appendix(report_body(final.text))
         check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
                              artifact_sha256=artifact_sha256)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
-        report = _append_report_metadata(body, [*claim_check, cp2_audit])
+        if check["problems"]:
+            body = _execution_warning_summary(body)
+        body_reference = _review_reference(review)
+        if body_reference and "## 리뷰 참고" not in body:
+            body = body.rstrip() + "\n\n" + body_reference
+        report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix, [*claim_check, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
@@ -3560,7 +3655,7 @@ class Orchestrator:
             # Still "revise" when revising stopped (F5): the CSO writes the report with the open issues in their own
             # section and the request stays failed. A failed or budget-denied synthesis ends with the step results.
             unresolved = review.get("verdict") == "revise"
-            p2_issues = issues_at_priority(review, "P2")
+            reference_issues = [*issues_at_priority(review, "P2"), *issues_at_priority(review, "P3")]
             if unresolved:
                 req["outcome"] = "review_unresolved"
                 self.hub.save_request(rid)
@@ -3576,7 +3671,7 @@ class Orchestrator:
                                            warnings=general_report_warnings(steps, results) or "(none)") +
                        replan_history_note(req) +
                        (UNRESOLVED_REVIEW_NOTE if unresolved else "") +
-                       (REVIEW_REFERENCE_NOTE if p2_issues else ""),
+                       (REVIEW_REFERENCE_NOTE if reference_issues else ""),
                 meta={**refs, "kind": "synthesis", "request": text, "title": "최종 보고서 작성",
                       **({"workdir": workdir} if workdir else {})})
             if unresolved:
@@ -3585,7 +3680,7 @@ class Orchestrator:
                 except BudgetExceeded as error:
                     final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
                 # The CSO sees the review clipped to 3,000 characters, so labhq appends every open issue itself:
-                # the report always carries the full list, whatever the synthesis left out (PR #338 review).
+                # the execution record always carries the full list, whatever synthesis left out (PR #338 review).
                 open_issues = "\n".join(
                     f"- {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
                     for issue in review.get("issues") or [])
@@ -3599,27 +3694,34 @@ class Orchestrator:
                              error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다")
                 return
             final = await self.run_step(synthesis)
-            p2_appendix = ("\n\n## 리뷰 참고\n남은 P2 지적 원문:\n" + "\n".join(
-                f"- P2 · {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
-                for issue in p2_issues)) if p2_issues else ""
+            review_appendix = ("남은 P2·P3 지적 원문:\n" + "\n".join(
+                f"- {issue.get('priority')} · {issue.get('step_id')}: {issue.get('problem')} → {issue.get('request')}"
+                for issue in reference_issues)) if reference_issues else ""
             body = (final.text if final.ok else self.report_results(steps, results, n) +
                     f"\n\nSynthesis failed: {final.error}")
-            report = _append_report_metadata(body, [p2_appendix]) if p2_appendix else body
+            reference = _review_reference(review)
+            if reference and "## 리뷰 참고" not in body:
+                body = body.rstrip() + "\n\n" + reference
+            report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
+            execution = []
             if req.get("plan", {}).get("steps"):
                 saved = {k: TaskResult.model_validate(v) for k, v in (req.get("results") or {}).items()}
-                req["report"] = self.report_results(req["plan"]["steps"], saved,
-                                                    self.cfg.context_chars_per_step)
-            else:
-                req["report"] = req["error"]
+                execution.append(self.report_results(req["plan"]["steps"], saved,
+                                                     self.cfg.context_chars_per_step))
             if req.get("pending_questions"):
-                req["report"] += "\n\nPending PI decisions/questions:\n" + "\n".join(
-                    f"- {question}" for question in req["pending_questions"])
+                execution.append("Pending PI decisions/questions:\n" + "\n".join(
+                    f"- {question}" for question in req["pending_questions"]))
+            req["report"] = ("## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
+                             "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
+                             "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 오류가 있습니다. 실행 기록 참고.")
+            req["report_appendix"] = _appendix_sections("", [req["error"], *execution])
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
-            failed = {"error": req["error"], "report": clip(req.get("report") or "", 20000),
+            failed = {"error": req["error"],
+                      **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
             if hasattr(self.hub, "commit_terminal"):
@@ -3630,12 +3732,20 @@ class Orchestrator:
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
+        report, report_appendix = _split_report_appendix(report)
+        if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
+            report_appendix = _appendix_sections(report_appendix, [report])
+            report = ("## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
+                      "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
+                      "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 경고가 있습니다. 실행 기록 참고.")
+        report = _with_review_reference(report, review)
         metadata = []
         if req.get("plan", {}).get("steps") and results:
             if not req.get("research_contract"):
                 warnings = general_report_warnings(req["plan"]["steps"], results)
                 if warnings:
                     metadata.append(warnings)
+                    report = _execution_warning_summary(report)
             audit = []
             for step in req["plan"]["steps"]:
                 entry = results.get(step["id"], {})
@@ -3675,10 +3785,11 @@ class Orchestrator:
             relation = ">" if outcome["spent_usd"] > outcome["limit_usd"] else "/"
             metadata.append(f"Budget: ${outcome['spent_usd']:.2f}{pending} {relation} "
                             f"${outcome['limit_usd']:.2f}; {decision}.")
-        report = _append_report_metadata(report, metadata)
-        req.update(status="done" if ok else "failed", report=report, results=results, review=review,
+        report_appendix = _appendix_sections(report_appendix, metadata)
+        req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
+                   results=results, review=review,
                    cost_usd=self.cost.get(rid, 0.0), finished_at=time.time())
-        data = {"ok": ok, "report": clip(report, 20000), "cost_usd": req["cost_usd"],
+        data = {"ok": ok, **_terminal_reports(rid, report, report_appendix), "cost_usd": req["cost_usd"],
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True)}

@@ -278,7 +278,7 @@ async def test_full_reporter_flow_guards_every_outbound_string(tmp_path):
                 yield from strings(item)
 
     payloads = [json.loads(req.content) for req in sent if req.content]
-    assert [req.method for req in sent if req.method in ("POST", "PUT", "PATCH")].count("PUT") == 1
+    assert [req.method for req in sent if req.method in ("POST", "PUT", "PATCH")].count("PUT") == 2
     report = next(p for p in payloads if "content" in p)
     outbound = [req.url.path for req in sent] + list(strings(payloads))
     outbound.append(base64.b64decode(report["content"]).decode("utf-8"))
@@ -515,7 +515,8 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
     first.reporter.issues["r"] = 7
     first.store.put("github_issue", "r", {"number": 7})
     event = {"type": "request.completed", "request_id": "r", "seq": 9,
-             "data": {"ok": True, "report": "final report", "cost_usd": 1.0}}
+             "data": {"ok": True, "report": "final report", "report_appendix": "execution record",
+                      "cost_usd": 1.0}}
     original_put = first.store.put
 
     def crash_after_external_call(kind, key, body):
@@ -530,10 +531,40 @@ async def test_terminal_report_replay_skips_completed_external_actions(tmp_path,
 
     restored = Hub(s, github_transport=transport)
     await restored.reporter.handle(event)
-    assert (remote["puts"], remote["posts"], remote["patches"]) == (1, 1, 1)
+    assert (remote["puts"], remote["posts"], remote["patches"]) == (2, 1, 1)
     assert "<!-- labhq terminal r 9 -->" in remote["comments"][0]["body"]
     assert all(restored.store.get("github_action", f"r:9:{action}")["done"]
                for action in ("report", "comment", "close"))
+    saved_report = restored.store.get("github_action", "r:9:report")
+    assert saved_report["path"].endswith("-r.md")
+    assert saved_report["appendix_path"].endswith("-r_appendix.md")
+
+
+@pytest.mark.asyncio
+async def test_committed_github_appendix_uses_the_stored_request_not_the_truncated_event(tmp_path):
+    calls = []
+    s = Settings(projects=[ProjectSettings(id="p", repo="o/p", commit_reports=True)])
+    s.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(s, github_transport=fake_github(calls))
+    full = "긴 실행 기록\n" + "x" * 21_000 + "\n전문 끝"
+    hub.requests["r"] = {"id": "r", "text": "study", "project_id": "p", "status": "done",
+                         "finished_at": 1_700_000_000, "report": "full PI report",
+                         "report_appendix": full}
+    hub.reporter.issues["r"] = 7
+
+    await hub.reporter.handle({"type": "request.completed", "request_id": "r", "seq": 9,
+                               "data": {"ok": True, "report": "event report",
+                                        "report_appendix": full[:20_000],
+                                        "report_appendix_truncated": True,
+                                        "report_appendix_chars": len(full),
+                                        "report_appendix_api": "/api/requests/r"}})
+
+    uploads = {path: base64.b64decode(body["content"]).decode("utf-8")
+               for method, path, body in calls if method == "PUT" and "/contents/" in path}
+    appendix = next(text for path, text in uploads.items() if "_appendix.md" in path)
+    report = next(text for path, text in uploads.items() if "_appendix.md" not in path)
+    assert "전문 끝" in appendix and full in appendix
+    assert "full PI report" in report and "event report" not in report
 
 
 async def test_unparsed_review_posts_failure_comment(tmp_path):

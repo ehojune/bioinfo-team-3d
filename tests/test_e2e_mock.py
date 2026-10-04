@@ -152,7 +152,8 @@ async def test_full_lab_flow_with_mock_agents(tmp_path):
         runs = req["results"][steward]["provenance"]["runs"]  # sent by the runner, not read off its disk
         assert runs and all("started_at" in r and "ended_at" in r for r in runs.values())
         assert hub.runner_capabilities and all("engine_cli_versions" in c for c in hub.runner_capabilities.values())
-        assert "outputs/artifact.txt" in req["report"]
+        assert "outputs/artifact.txt" not in req["report"]
+        assert "outputs/artifact.txt" in req["report_appendix"]
 
         # Resume을 지원하지 않는 엔진도 blocking 답을 같은 workdir의 새 세션에 전달한다.
         supports_resume = hub.supports_resume

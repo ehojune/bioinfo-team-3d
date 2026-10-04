@@ -1,0 +1,8 @@
+pr: 386
+rows:
+- sha: c462e11
+  at: 2026-10-04 10:44
+  text: PI용 report와 실행 기록 report_appendix를 나누고 API·CLI·웹·GitHub·감사 번들에서 함께 보존한다.
+- sha: 61f23df
+  at: 2026-10-04 10:57
+  text: 연구 보고서 본문만 claim 검사하고 긴 실행 기록 전문은 request·GitHub·감사 번들에 보존한다.

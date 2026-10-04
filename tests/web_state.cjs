@@ -59,6 +59,10 @@ assert.deepEqual(actual, golden, 'legacy state must match after every event, inc
 assert.equal(office.S.agents.size, 0);
 assert.equal(office.S.cost, 0);
 assert.equal(create().S.agents.size, 0, 'instances must not share state');
+const split = create({now:()=>1000});
+split.apply({type:'request.completed',request_id:'split',data:{ok:true,report:'Body',report_appendix:'Appendix'}});
+assert.equal(split.S.requests.get('split').report, 'Body');
+assert.equal(split.S.requests.get('split').report_appendix, 'Appendix');
 const fresh = create({now:()=>1000});
 fresh.apply({type:'roster.updated',data:{agents:[agent]}});
 assert.deepEqual(JSON.parse(JSON.stringify(fresh.apply({type:'agent.status',agent_id:'analyst',data:{state:'done'}}))),

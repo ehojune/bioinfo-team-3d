@@ -171,6 +171,11 @@ function apply(ev, replay = false) {
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
+        if (typeof r.report === 'string') q.report = r.report;
+        if (typeof r.report_appendix === 'string') q.report_appendix = r.report_appendix;
+        if (r.report_truncated) Object.assign(q, { report_truncated: true, report_chars: r.report_chars });
+        if (r.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
+          report_appendix_chars: r.report_appendix_chars });
         q.costSummary = null; applyCostSummary(q, r.cost_summary);
         if (r.plan) setPlan(q, r.plan);
         q.references = r.references || [];
@@ -360,8 +365,12 @@ function apply(ev, replay = false) {
       if (d.cost_known === false) q.costKnown = false;
       applyCostSummary(q, d.cost_summary);
       if (d.report) q.report = d.report;
+      if (d.report_appendix) q.report_appendix = d.report_appendix;
       delete q.report_truncated; delete q.report_chars;
+      delete q.report_appendix_truncated; delete q.report_appendix_chars;
       if (d.report_truncated) Object.assign(q, { report_truncated: true, report_chars: d.report_chars });
+      if (d.report_appendix_truncated) Object.assign(q, { report_appendix_truncated: true,
+        report_appendix_chars: d.report_appendix_chars });
       if (d.error) q.error = d.error;
       feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
       break;
@@ -426,6 +435,12 @@ function fillRequestDetail(rid, request) {
   if (q?.report_truncated && typeof request?.report === 'string') {
     q.report = request.report;
     delete q.report_truncated; delete q.report_chars;
+    filled++;
+  }
+  if (q && typeof request?.report_appendix === 'string' &&
+      (q.report_appendix_truncated || q.report_appendix !== request.report_appendix)) {
+    q.report_appendix = request.report_appendix;
+    delete q.report_appendix_truncated; delete q.report_appendix_chars;
     filled++;
   }
   return filled;

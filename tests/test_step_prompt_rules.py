@@ -76,8 +76,8 @@ def test_report_prompts_put_the_readable_body_before_the_execution_appendix():
         structure = prompt.split("Use these sections in this order:", 1)[1]
         headings = [structure.index(f'"{heading}"') for heading in ("결론과 권고", "결과", "방법 요약", "한계")]
         assert headings == sorted(headings)
-        assert "부록: 실행 기록" in prompt
-        assert "[부록: 실행 기록](#부록-실행-기록)" in prompt
+        assert "separate execution record" in prompt
+        assert "실행 기록 참고" in prompt
 
 
 def test_step_prompt_asks_for_escaped_line_breaks_inside_the_json_string():

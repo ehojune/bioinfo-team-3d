@@ -14,7 +14,7 @@ const snapshot = {type: 'snapshot', seq: 5, data: {agents: [{id: 'cso'}], approv
     report_truncated: true, report_chars: FULL_REPORT.length}},
     {type: 'request.followup_done', request_id: 'r1', data: {id: 'fu_long', ok: true, answer: HEAD,
       answer_truncated: true, answer_chars: FULL.length}}]}};
-const detail = {id: 'r1', report: FULL_REPORT,
+const detail = {id: 'r1', report: FULL_REPORT, report_appendix: 'Full execution record',
   followups: [{id: 'fu_long', answer: FULL}, {id: 'fu_short', answer: 'short'}]};
 
 // Shared reducer: the truncation mark survives the snapshot and the full request replaces it.
@@ -31,8 +31,9 @@ assert.equal(filled[1], shown[1], 'untouched entries keep their identity');
 assert.equal(office.fillFollowups('r1', detail), 0, 'filling twice is a no-op');
 assert.equal(office.S.requests.get('r1').report, REPORT_HEAD);
 assert.equal(office.S.requests.get('r1').report_truncated, true);
-assert.equal(office.fillRequestDetail('r1', detail), 1, 'the full terminal report is filled on demand');
+assert.equal(office.fillRequestDetail('r1', detail), 2, 'the full terminal report and appendix are filled on demand');
 assert.equal(office.S.requests.get('r1').report, FULL_REPORT);
+assert.equal(office.S.requests.get('r1').report_appendix, 'Full execution record');
 assert.equal('report_truncated' in office.S.requests.get('r1'), false);
 const live = global.LabHQState.createOfficeState({now: () => 10});
 live.apply({type: 'request.followup_done', request_id: 'r2', data: {id: 'fu', ok: true, answer: FULL}});
@@ -80,11 +81,12 @@ const source = fs.readFileSync(path.join(root, 'lab3d/src/live.js'), 'utf8').rep
   const line = () => nodes().find(n => n.tagName === 'P' && n.textContent.startsWith('이어 묻기: Long?')).textContent;
   assert.equal(line(), `이어 묻기: Long? → ${HEAD}…`);
   const buttons = nodes().filter(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기');
-  assert.equal(buttons.length, 1, 'only the shortened answer offers 전문 보기');
+  assert.equal(buttons.length, 2, 'the shortened report and answer both offer 전문 보기');
+  const answerButton = buttons.at(-1);
   intervals[0]();
-  assert.equal(nodes().find(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기'), buttons[0],
+  assert.equal(nodes().filter(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기').at(-1), answerButton,
     'the approval clock render keeps the request button node and its in-progress click');
-  await buttons[0].onclick();
+  await answerButton.onclick();
   assert.deepEqual(fetched, [['/api/requests/r1', 'Bearer test-client']]);
   assert.equal(line(), `이어 묻기: Long? → ${FULL}`);
   assert.equal(nodes().some(n => n.tagName === 'BUTTON' && n.textContent === '전문 보기'), false);

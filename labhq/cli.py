@@ -141,6 +141,19 @@ def _api(s: Settings, method: str, path: str, **kw):
     return r.json()
 
 
+def _terminal_report(data: dict) -> str:
+    """PI report first, then the separately labelled execution record for watch/send."""
+    body = str(data.get("report") or data.get("error") or "")
+    appendix = str(data.get("report_appendix") or "")
+    if data.get("report_truncated"):
+        body += (f"\n\n[… 본문 잘림 · 전체 {data.get('report_chars', '?')}자 · "
+                 f"전문: GET {data.get('report_api', '-')}]")
+    if appendix and data.get("report_appendix_truncated"):
+        appendix += (f"\n\n[… 실행 기록 잘림 · 전체 {data.get('report_appendix_chars', '?')}자 · "
+                     f"전문: GET {data.get('report_appendix_api', '-')}]")
+    return body + (("\n\n--- 실행 기록 ---\n" + appendix) if appendix else "")
+
+
 def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) -> int:
     """`labhq verify`: 0 when the outputs and report check hold, 1 with problems, 2 when it cannot check (#58 ⑥)."""
     import httpx
@@ -188,7 +201,7 @@ async def _watch(s: Settings, request_id: str | None = None) -> None:
                 continue
             render(ev)
             if request_id and ev.get("request_id") == request_id and ev["type"] in ("request.completed", "request.failed"):
-                print("\n" + (ev["data"].get("report") or ev["data"].get("error") or ""))
+                print("\n" + _terminal_report(ev["data"]))
                 return
 
 
@@ -206,7 +219,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
                 continue
             render(ev)
             if ev["type"] in ("request.completed", "request.failed"):
-                print("\n" + (ev["data"].get("report") or ev["data"].get("error") or ""))
+                print("\n" + _terminal_report(ev["data"]))
                 return
 
 
@@ -475,7 +488,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         rid = hub.create_request(RequestIn(
             text="공개 폐선암 scRNA-seq에서 CD276(B7-H3) 고발현 세포유형 찾고 QC까지 [hpc] [needs-approval] [revise] [recruit]"))
         await until(lambda: is_terminal_request(hub.requests[rid]["status"]), 60)
-        print("\n--- CSO 최종 보고 ---\n" + (hub.requests[rid].get("report") or ""))
+        print("\n--- CSO 최종 보고 ---\n" + _terminal_report(hub.requests[rid]))
 
         print("\n=== CSO 채용 제안을 PI가 승인 → 파견직 채용 (Paper2Agent) ===\n")
         await hub.send_runner(s.runner.id, {"type": "recruit.start", "repo": "https://github.com/scverse/scanpy",
@@ -485,7 +498,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
         rid2 = hub.create_request(RequestIn(text="scanpy 논문 방식으로 PBMC 전처리·클러스터링 계획 자문",
                                             mode="direct", agent_id="c_scanpy"))
         await until(lambda: is_terminal_request(hub.requests[rid2]["status"]), 30)
-        print("\n--- 파견직 응답 ---\n" + (hub.requests[rid2].get("report") or ""))
+        print("\n--- 파견직 응답 ---\n" + _terminal_report(hub.requests[rid2]))
         print(f"\n작업 폴더(실험노트): {tmp / 'runs'}\n인재풀: {tmp / 'talent'}")
     finally:
         runner.stop()
