@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:13 | [`4ebb282`](https://github.com/ehojune/bioinfo-team-3d/pull/407/commits/4ebb282) | 매뉴얼에 bulk @2로 승인된 요청도 저장된 version으로 재개한다고 적는다 |
+| 05:10 | [`a2a9f1e`](https://github.com/ehojune/bioinfo-team-3d/pull/407/commits/a2a9f1e) | bulk pack @3은 짝의 근거를 메타데이터 출처 목록에서만 받고 짝이 있으면 출처를 하나 이상 요구한다 |
 | 04:47 | [`31878a9`](https://github.com/ehojune/bioinfo-team-3d/pull/406/commits/31878a9) | PLAN field 칸 검사에 ge·min_length 같은 Field 제약도 넣는다 |
 | 04:46 | [`ce14536`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/ce14536) | 업그레이드 전에 저장된 로그인 창의 옛 consult 키는 상담 turn이 빠질 때 함께 지운다 |
 | 04:44 | [`78c9996`](https://github.com/ehojune/bioinfo-team-3d/pull/406/commits/78c9996) | pack 조합 표에 든 core PLAN field 칸이 PLAN schema type에 맞지 않으면 load에서 거부한다 |

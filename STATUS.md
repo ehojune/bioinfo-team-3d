@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #369 — bulk pack @3: 짝의 근거는 메타데이터 출처 목록에서만
+
+- 결론: #369 2번. `bulk_tumor_normal@2`의 `pairing_evidence`는 자유 문자열이라 "발현 상관으로 짝 추정"도 통과했다. `@3`은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면(`partial`·`complete`) 출처를 하나 이상 요구한다. #369의 세 항목(1번 #390, 2번 이 PR, P2 #403·#406)이 모두 닫힌다.
+- 바뀐 것: `labhq/research/packs/bulk_tumor_normal_v3.yaml`(v2 + `pairing_evidence` pattern, 규칙 `bulk_tumor_normal.pairing_from_metadata`, fixture 하나). `@1`·`@2`는 그대로라 승인된 요청은 저장된 version과 hash로 재개한다. 설정 예시·매뉴얼·`docs/research_protocol.md` 6절을 `@3`으로.
+- 실행한 것: `@3` test 9건(허용 4·pattern 거부 3·규칙 거부 2)과 `@2`의 자유 문자열 유지 test, 내장 pack hash 고정에 `@3` 추가. 전체 pytest 3926 passed·54 skipped, `scripts/check_public.sh`.
+- 미해결: 없음. 운영 설정의 `active_packs`는 비어 있어(연구 lane 꺼짐) 바꿀 것이 없다.
+- 근거: `labhq/research/packs/bulk_tumor_normal_v3.yaml`, `tests/test_research_bulk_pack.py`.
+
 ## 2026-10-05 · #369 — pack 조합 표의 core PLAN field 칸도 schema로 검사
 
 - 결론: PR #403 봇 P2. 조합 표에 core PLAN field(`brief.study_type`, `protocol.statistics.applicable` 등)가 들어가면 그 칸은 검사 없이 load됐다. PLAN schema에 없는 값(`"bogus"`, bool 자리의 `1`, list field의 문자열)은 어떤 PLAN과도 맞지 않는 행이다. 이제 load에서 거부한다.
