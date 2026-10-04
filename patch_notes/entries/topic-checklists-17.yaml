@@ -1,0 +1,5 @@
+pr: 402
+rows:
+- sha: 6a7a0ec
+  at: 2026-10-05 04:07
+  text: topic 점검표를 17개 topic 48개 항목으로 넓히고, 두 topic의 같은 id 점검은 버리지 않고 이어 붙인다
