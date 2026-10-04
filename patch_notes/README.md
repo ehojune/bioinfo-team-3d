@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:57 | [`61f23df`](https://github.com/ehojune/bioinfo-team-3d/pull/386/commits/61f23df) | 연구 보고서 본문만 claim 검사하고 긴 실행 기록 전문은 request·GitHub·감사 번들에 보존한다. |
+| 10:44 | [`c462e11`](https://github.com/ehojune/bioinfo-team-3d/pull/386/commits/c462e11) | PI용 report와 실행 기록 report_appendix를 나누고 API·CLI·웹·GitHub·감사 번들에서 함께 보존한다. |
 | 08:27 | [`98a37a2`](https://github.com/ehojune/bioinfo-team-3d/pull/385/commits/98a37a2) | 매뉴얼에 cd 뒤 상대 경로 대조 규칙('..' 단어만, 개인 경로가 아래면 전체)과 256 후보 상한을 적었다. |
 | 07:42 | [`2d03644`](https://github.com/ehojune/bioinfo-team-3d/pull/385/commits/2d03644) | 게이트가 '..'가 든 단어만 따로 대조해, 상류 폴더를 ../로 가리키는 긴 인라인 스크립트가 PI에게 묻지 않는다. |
 | 07:10 | [`9df2eec`](https://github.com/ehojune/bioinfo-team-3d/pull/384/commits/9df2eec) | 최종 보고서의 실행 기록을 부록으로 모으고 분석 script와 reference를 outputs에 보존 |
