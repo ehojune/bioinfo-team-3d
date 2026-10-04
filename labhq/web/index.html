@@ -83,6 +83,8 @@ a{color:var(--sleep-ink)}
 .chip.st-revise{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
 .chip.st-error,.chip.st-failed{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
 .rack,.door{flex:none;width:52px;height:auto;display:block}
+[data-tab-link]{cursor:pointer}[data-tab-link]:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.board.alert{border-color:var(--wait)}
 .rack-body{fill:#2B3642}.rack-slot{fill:#3A4652}
 .led{fill:#56616C}.led.queued{fill:var(--wait)}.led.running{fill:var(--working)}.led.completed{fill:#8FA0AF}.led.failed{fill:var(--error)}
 .door-frame{fill:var(--desk-front)}.door-gap{fill:#0E151B}.door-panel{fill:var(--desk-top)}.door-knob{fill:#E9D9A6}
@@ -125,6 +127,7 @@ a{color:var(--sleep-ink)}
 .m-bang circle{fill:var(--wait)}.m-bang text{font:600 12px var(--ui);fill:#fff}
 .m-check circle{fill:var(--working)}.m-check path{stroke:#fff}
 @media (prefers-reduced-motion:no-preference){
+  .board.alert{animation:boardBlink 1.6s ease-in-out infinite}
   .char,.paw,.paw-up,.m-bang,.m-z text,.code rect,.door-panel{transform-box:fill-box}
   .char{transform-origin:50% 100%}
   .st-idle .char{animation:breathe 3.4s ease-in-out infinite}
@@ -145,6 +148,7 @@ a{color:var(--sleep-ink)}
   .door-panel{transform-origin:0 50%;transition:transform .5s ease}
 }
 .door.open .door-panel{transform:scaleX(.28)}
+@keyframes boardBlink{50%{box-shadow:0 0 0 4px var(--wait)}}
 @keyframes breathe{50%{transform:translateY(-1px) scaleY(1.012)}}
 @keyframes bob{50%{transform:translateY(-1.6px)}}
 @keyframes type{50%{transform:translateY(-2.6px)}}
@@ -342,9 +346,9 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <main class="layout">
   <section class="office" id="office" aria-label="사무실">
     <div class="wall">
-      <div class="board" id="board" aria-live="off"></div>
-      <svg class="rack" id="rack" viewBox="0 0 52 104" role="img" aria-label="HPC 서버 랙"></svg>
-      <svg class="door" id="door" viewBox="0 0 52 104" role="img" aria-label="입구">
+      <div class="board" id="board" aria-live="off" data-tab-link="tasks" role="button" tabindex="0" title="작업판 열기"></div>
+      <svg class="rack" id="rack" viewBox="0 0 52 104" data-tab-link="jobs" role="button" tabindex="0" aria-label="HPC 서버 랙, HPC 탭 열기"></svg>
+      <svg class="door" id="door" viewBox="0 0 52 104" data-tab-link="feed" role="button" tabindex="0" aria-label="입구, 메신저 열기">
         <rect class="door-frame" x="4" y="8" width="44" height="96" rx="2"/>
         <rect class="door-gap" x="8" y="12" width="36" height="92"/>
         <g class="door-panel"><rect x="8" y="12" width="36" height="92" fill="currentColor" style="fill:var(--desk-top)"/><circle class="door-knob" cx="38" cy="60" r="2.4"/></g>
@@ -440,7 +444,18 @@ const store = {
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
-initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+// #57 ⑧: the office props are tab entrances — the board opens the task board (or 결정 while decisions wait),
+// the HPC rack opens HPC, the door opens the messenger.
+function openPropTab(e) {
+  const prop = e.target.closest('[data-tab-link]'); if (!prop) return;
+  if (e.type === 'keydown') { if (e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); }
+  showTab(prop.dataset.tabLink);
+  const cc = $('#command-center'), box = cc.getBoundingClientRect();
+  if (box.top < 0 || box.top > innerHeight - 80) cc.scrollIntoView({ block: 'start' });
+}
+$('#office .wall').addEventListener('click', openPropTab);
+$('#office .wall').addEventListener('keydown', openPropTab);
 let decisionHistory = [];
 
 /* ---------------- staff art: original chibi animals ---------------- */
@@ -666,7 +681,7 @@ function renderRack() {
     s += `<rect class="rack-slot" x="10" y="${y}" width="32" height="8" rx="1.5"/><circle class="led ${j ? esc(j.state) : ''}" cx="36" cy="${y + 4}" r="2.2"/>`;
   }
   el.innerHTML = s;
-  el.setAttribute('aria-label', `HPC 서버 랙, 실행 중 ${jobs.filter(j => j.state === 'running').length}건`);
+  el.setAttribute('aria-label', `HPC 서버 랙, 실행 중 ${jobs.filter(j => j.state === 'running').length}건, HPC 탭 열기`);
 }
 function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
 
@@ -674,6 +689,10 @@ function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
   const total = items.length + sugs.length + holds.length;
   $('#ap-count').textContent = total ? `${total}건` : '';
+  const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
+  board.classList.toggle('alert', total > 0);
+  board.dataset.tabLink = total ? 'decisions' : 'tasks';
+  board.title = total ? `결정 ${total}건 기다림, 결정 열기` : '작업판 열기';
   const holdRows = holds.map(hold => {
     const row = document.createElement('article'); row.className = 'ap'; row.dataset.engine = hold.engine;
     const body = document.createElement('div'); row.append(body);

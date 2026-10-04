@@ -141,6 +141,7 @@ def test_package_data_includes_office_assets():
     ('web_assumptions.cjs', 'assumptions web tests passed'),
     ('web_agent_trace.cjs', 'agent trace web tests passed'),
     ('web_agent_capabilities.cjs', 'agent capability web tests passed'),
+    ('web_office_props.cjs', 'office prop tab entrances: OK'),
     ('web_solo_route.cjs', 'solo route web tests passed'),
     ('web_request_bundle.cjs', 'request bundle web tests passed'),
     ('web_display_followups.cjs', 'display follow-up web tests passed'),
