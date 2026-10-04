@@ -15,3 +15,6 @@ rows:
 - sha: fe035b4
   at: 2026-10-04 20:41
   text: 요청 묶음이 runner 기록 산출만 hash 검증해 복사하고 누락을 incomplete로 기록하도록 단순화
+- sha: 1c78b0d
+  at: 2026-10-04 21:05
+  text: main의 단독 라우팅(#388)을 병합하고 요청 상태 필드에 route와 묶음 필드를 함께 둔다
