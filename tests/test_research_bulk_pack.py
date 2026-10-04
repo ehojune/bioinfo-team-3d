@@ -559,3 +559,24 @@ def test_combination_cells_no_valid_answer_can_match_are_rejected_at_load(extra,
 def test_combination_cells_that_a_valid_answer_can_match_still_load():
     assert DomainRulePack.model_validate(_bulk_pack_with_table([MIN_PAIRS], "min_pairs", [3, 4]))
     assert DomainRulePack.model_validate(_bulk_pack_with_table([FLAG], "flag", [True, False]))
+
+
+@pytest.mark.parametrize("column, cell", [
+    ("brief.study_type", "bogus"),
+    ("protocol.statistics.applicable", 1),
+    ("protocol.revision", True),
+    ("protocol.statistics.comparison_groups", "tumor"),
+    ("brief.subject", None),
+    ("brief.subject", ""),
+    ("protocol.revision", 0),
+])
+def test_core_plan_field_cells_outside_the_plan_schema_are_rejected_at_load(column, cell):
+    # PR #403 review P2: a core PLAN field's cell is checked against the PLAN schema type, not skipped.
+    with pytest.raises(ValueError, match=f"is not allowed for {column} \({column} does not fit the PLAN schema"):
+        DomainRulePack.model_validate(_bulk_pack_with_table([], column, [cell]))
+
+
+def test_core_plan_field_cells_a_plan_can_hold_still_load():
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.study_type", ["comparative", "technical"]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "protocol.statistics.applicable", [True, False]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.primary_hypothesis", [None, "H1"]))

@@ -114,7 +114,7 @@ receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 �
 
 ## 6. domain rule pack
 
-pack은 core 계약을 약화하지 않고 field·validator·review 질문·fixture·기계 판정 `rules`만 더한다. loader는 내용을 hash하고 같은 validator/rule ID의 상충 요구, 모르는 field·연산자를 거부한다. `allowed_combinations`의 칸은 PLAN 답과 같은 검사(type·`allowed_values`·`minimum`·`pattern`)를 통과해야 한다. 어떤 답도 맞출 수 없는 행은 load에서 거부한다. 빈칸(`null`)도 맞출 답이 없어 거부한다. core PLAN field의 칸은 아직 검사하지 않는다.
+pack은 core 계약을 약화하지 않고 field·validator·review 질문·fixture·기계 판정 `rules`만 더한다. loader는 내용을 hash하고 같은 validator/rule ID의 상충 요구, 모르는 field·연산자를 거부한다. `allowed_combinations`의 칸은 PLAN 답과 같은 검사(type·`allowed_values`·`minimum`·`pattern`)를 통과해야 한다. 어떤 답도 맞출 수 없는 행은 load에서 거부한다. 빈칸(`null`)도 맞출 답이 없어 거부한다. core PLAN field(`brief.study_type` 등)의 칸은 PLAN schema type(선택지·int·bool·list)에 맞아야 한다.
 
 ```yaml
 rules:
