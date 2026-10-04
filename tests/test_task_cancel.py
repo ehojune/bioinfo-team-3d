@@ -1,8 +1,10 @@
 """A task cancel is kept until the task ends, and resent when its runner reconnects (PR #396 review)."""
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
-from labhq.gateway.server import Hub, create_app
+from labhq.gateway.server import TASK_CANCEL_KEEP_S, Hub, create_app
 from labhq.models import RunnerUnavailable
 from labhq.settings import Settings
 
@@ -51,12 +53,35 @@ async def test_a_kept_cancel_ends_with_its_task(tmp_path):
                                                   "error": "cancelled"}}, None, None)
     assert hub.store.get("task_cancel", "t1") is None
 
-    # An abandoned or finished task drops a kept cancel on the next flush instead of resending it.
-    hub.store.put("task_cancel", "t2", {"runner_id": "pc-a", "requested_at": 1})
-    hub.store.put("task", "t2", {"request_id": "r", "runner_id": "pc-a", "completed": True, "abandoned": True})
+    # A task that reported its result drops a kept cancel on the next flush; so does one kept past its age limit.
+    now = time.time()
+    hub.store.put("task_cancel", "t2", {"runner_id": "pc-a", "requested_at": now})
+    hub.store.put("task", "t2", {"request_id": "r", "runner_id": "pc-a", "completed": True, "result": {}})
+    hub.store.put("task_cancel", "t4", {"runner_id": "pc-a", "requested_at": now - TASK_CANCEL_KEEP_S - 1})
+    hub.store.put("task", "t4", {"request_id": "r", "runner_id": "pc-a", "completed": True, "abandoned": True})
     sent.clear()
     await hub.flush_task_cancels("pc-a")
-    assert sent == [] and hub.store.get("task_cancel", "t2") is None
+    assert sent == [] and hub.store.get("task_cancel", "t2") is None and hub.store.get("task_cancel", "t4") is None
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_task_keeps_its_cancel_for_an_older_runner_process(tmp_path):
+    # PR #397 review: a newer process of runner pc-a marks the task abandoned while the older process may still run
+    # it and reconnect; the cancel must survive until a result arrives.
+    hub = _hub(tmp_path)
+    sent = []
+
+    async def send_runner(runner_id, message):
+        sent.append(message["task_id"])
+
+    hub.send_runner = send_runner
+    hub.store.put("task", "t1", {**hub.store.get("task", "t1"), "completed": True, "abandoned": True})
+    assert await hub.cancel_task("t1") is True  # the PI may cancel an abandoned task too
+    assert hub.store.get("task_cancel", "t1") is not None
+    sent.clear()
+    await hub.flush_task_cancels("pc-a")
+    await hub.flush_task_cancels("pc-a")
+    assert sent == ["t1", "t1"] and hub.store.get("task_cancel", "t1") is not None
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,8 @@ SNAPSHOT_REPORT_CHARS = 2000
 # A step card shows this much of a task's result text; a replayed task.result needs no more.
 SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
+# A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
+TASK_CANCEL_KEEP_S = 2 * 86400
 
 
 def snapshot_followup(entry: dict) -> dict:
@@ -844,8 +846,8 @@ class Hub:
         runner_id = self.task_runner.get(tid) or (entry or {}).get("runner_id")
         if not runner_id:
             return False
-        if entry and entry.get("completed"):
-            return True
+        if entry and entry.get("completed") and not entry.get("abandoned"):
+            return True  # it reported a result; an abandoned task may still be running in an older runner process
         self.store.put("task_cancel", tid, {"runner_id": runner_id, "requested_at": time.time()})
         try:
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
@@ -854,12 +856,18 @@ class Hub:
         return True
 
     async def flush_task_cancels(self, runner_id: str) -> None:
-        """Resend kept cancels to a reconnected runner; drop those whose task already ended or was abandoned."""
+        """Resend kept cancels to a reconnected runner.
+
+        A cancel ends only with the task's reported result (task.result) or after TASK_CANCEL_KEEP_S. An abandoned
+        task keeps its cancel: a newer process of the same runner id marks it abandoned while the older process may
+        still run it and reconnect (PR #397 review). A runner ignores a cancel for a task it does not hold."""
+        now = time.time()
         for tid, entry in self.store.all("task_cancel").items():
             if entry.get("runner_id") != runner_id:
                 continue
             task = self.store.get("task", tid)
-            if not task or task.get("completed"):
+            finished = bool(task and task.get("completed") and not task.get("abandoned"))
+            if not task or finished or now - float(entry.get("requested_at") or 0) > TASK_CANCEL_KEEP_S:
                 self.store.delete("task_cancel", tid)
                 continue
             await self.send_runner(runner_id, {"type": "task.cancel", "task_id": tid})
