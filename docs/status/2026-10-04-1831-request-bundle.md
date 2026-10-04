@@ -6,12 +6,14 @@ P1 — 끝난 요청의 최종 산출물과 재실행 자료를 한 폴더에 �
 ## 한 일
 - 성공·부분 실패·direct·연구 요청에 `requests/<request_id>/` 묶음을 만듭니다.
 - 최종 단계 산출물과 스크립트를 복사하고 요청 workdir 경로만 상대경로로 바꿉니다.
+- 같은 PC의 runner workdir만 묶고, 파일은 held descriptor에서 검사·hash·복사합니다.
+- 코드 경로와 재실행 cwd를 묶음 루트로 맞추고 생성 작업은 worker thread에서 한 번만 실행합니다.
 - 크기 초과·남은 절대경로·대체 판을 manifest와 부록에 기록합니다.
 - 웹·CLI에 묶음 경로나 생성 경고를 표시합니다.
 
 ## 테스트 결과
 - [x] 수정 전 새 회귀 테스트 실패 확인
-- [x] `pytest -q`: 3738 passed, 53 skipped
+- [x] `pytest -q`: 3744 passed, 53 skipped
 - [x] Node CJS 20개 통과
 
 ## 기존 테스트 변경
