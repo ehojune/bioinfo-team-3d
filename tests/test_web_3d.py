@@ -139,6 +139,7 @@ def test_package_data_includes_office_assets():
     # Node files written after this list existed ran only by hand; CI runs node through this test alone.
     ('web_issue58.cjs', 'web issue58 tests passed'),
     ('web_assumptions.cjs', 'assumptions web tests passed'),
+    ('web_agent_trace.cjs', 'agent trace web tests passed'),
     ('web_solo_route.cjs', 'solo route web tests passed'),
     ('web_request_bundle.cjs', 'request bundle web tests passed'),
     ('web_display_followups.cjs', 'display follow-up web tests passed'),

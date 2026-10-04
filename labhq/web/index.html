@@ -315,6 +315,8 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 .activity{list-style:none;margin:0 0 14px;padding:0;font-size:13px;max-height:200px;overflow:auto}
 .activity li{padding:4px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .activity time{color:var(--muted);margin-right:8px}
+.activity li.trace{color:var(--muted)}.activity li.trace b{font-weight:600;margin-right:4px}
+.log-view{display:flex;gap:6px;margin:0 0 6px}.log-view .btn{min-height:32px;font-size:13px}.log-view .btn[aria-pressed="true"]{border-color:var(--ink);font-weight:600}
 .toast{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;max-width:calc(100% - 32px)}
 .toast.show{opacity:1}
 </style>
@@ -559,7 +561,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -962,9 +964,24 @@ $('#staff-toggle').addEventListener('click', () => {
   $('#staff-toggle').textContent = open ? '직원 닫기' : '직원 보기';
 });
 
+// The trace view lists every kept line (the reducer keeps 60); render() refreshes an open sheet's list (#409 review).
+function sheetLogs(a, view) {
+  return view === 'trace'
+    ? (a.trace || []).slice().reverse().map(l => `<li class="trace"><time>${ago(l.ts)}</time><b>${l.level === 'thinking' ? '생각' : '디버그'}</b> ${esc(l.text)}</li>`).join('') || '<li>생각·디버그 기록이 없어요.</li>'
+    : a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>';
+}
+function renderSheetLogs() {
+  const dlg = $('#sheet'), a = dlg.open || dlg.hasAttribute('open') ? ag(dlg.dataset.agent) : null;
+  const list = a && $('#sheet-in ul.activity'); if (!list) return;
+  const html = sheetLogs(a, list.dataset.view);
+  if (list.innerHTML !== html) list.innerHTML = html;
+  const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
+}
 function openSheet(id) {
   const a = ag(id); if (!a) return;
   const dlg = $('#sheet'), vs = visual(a);
+  if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
+  const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
   const facts = [
     ['상태', STATE_KO[vs]], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
@@ -976,7 +993,8 @@ function openSheet(id) {
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-<ul class="activity">${a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>'}</ul>
+<div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
+<ul class="activity" data-view="${view}">${sheetLogs(a, view)}</ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
@@ -988,6 +1006,7 @@ $('#sheet').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]'); if (!btn) return;
   const id = d.dataset.agent, act = btn.dataset.act;
   if (act === 'close') return closeSheet();
+  if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
   try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
@@ -1093,6 +1112,7 @@ const Demo = (() => {
   const sleep = ms => new Promise(r => setTimeout(r, ms / SPEED));
   const E = (type, o = {}) => apply({ type, ts: now(), ...o });
   const say = (a, text, rid) => E('agent.log', { agent_id: a, request_id: rid, data: { text } });
+  const think = (a, text, rid) => E('agent.log', { agent_id: a, request_id: rid, data: { level: 'thinking', text } });
   const tool = (a, name, input, rid) => E('agent.tool', { agent_id: a, request_id: rid, data: { name, input } });
   const gh = (rid, kind, number = 12) => E('github.posted', { request_id: rid, data: { kind, number, url: `https://github.com/lab/demo-project/${kind === 'pr' || kind === 'codex_review' ? 'pull' : 'issues'}/${number}` } });
   const ROSTER = [
@@ -1179,6 +1199,8 @@ const Demo = (() => {
       say('bioinfo-agent', '표준 QC 12/12 통과, doublet 3.1% 제거했어요', rid); await sleep(600);
     });
     await step(rid, 's4', 'analyst', steps[3].instruction, async () => {
+      think('analyst', 'pseudobulk로 환자별 합친 뒤 비교해야 세포 수가 많은 환자가 결과를 끌지 않는다', rid);
+      think('analyst', 'fibroblast 하위군이 섞였을 수 있으니 marker로 먼저 확인', rid);
       tool('analyst', 'mcp__labhq_hpc__hpc_submit', 'pseudobulk_de', rid); await sleep(600);
       await hpc('analyst', rid, 'pseudobulk_de', 5200);
       say('analyst', 'fibroblast에서 CD276 log2FC 1.9 (FDR 3e-6), T세포에서는 감소', rid); await sleep(800);

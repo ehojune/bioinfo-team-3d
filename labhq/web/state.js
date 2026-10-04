@@ -81,6 +81,8 @@ function upsertAgent(a) {
   delete next.usage; delete next.toolCalls;
   Object.defineProperty(next, 'usage', { value: usage, writable: true, enumerable: false });
   Object.defineProperty(next, 'toolCalls', { value: toolCalls, writable: true, enumerable: false });
+  // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
+  Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
   S.agents.set(a.id, next);
 }
 function req(rid) {
@@ -112,6 +114,10 @@ function setPlan(q, plan) {
   for (const s of q.plan) if (!q.steps[s.id]) q.steps[s.id] = 'pending';
 }
 function logTo(a, text, ts) { a.log.push({ ts, text: short(text, 240) }); if (a.log.length > 40) a.log.shift(); }
+// #57 ⑥: thinking and debug lines stay out of the feed and activity, in their own ring buffer for the staff sheet.
+function traceTo(a, level, text, ts) {
+  a.trace.push({ ts, level, text: short(text, 400) }); if (a.trace.length > 60) a.trace.shift();
+}
 function feed(item, ts, rid) { S.feed.unshift({ ...item, ts: ts || now(), rid }); if (S.feed.length > 120) S.feed.length = 120; }
 function stripPrompt(p) {
   const m = /Your step \(([^)]+)\):\s*([\s\S]*?)(?:\n\n|$)/.exec(p || '');
@@ -237,8 +243,8 @@ function apply(ev, replay = false) {
     case 'agent.tool': { const a = ag(id); if (!a) break; a.tool = d.name; a.toolAt = ts; a.toolCalls = (a.toolCalls || 0) + 1; logTo(a, `도구 ${toolLabel(d.name)} ${short(d.input, 80)}`, ts); break; }
     case 'agent.tool_error': { const a = ag(id); if (a) logTo(a, `도구 오류: ${d.text}`, ts); break; }
     case 'agent.log': {
-      if (d.level === 'debug' || d.level === 'thinking') break;
       const a = ag(id); if (!a || !d.text) break;
+      if (d.level === 'debug' || d.level === 'thinking') { traceTo(a, d.level, d.text, ts); break; }
       a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
       // An alert (a read-only run changed files) always reaches the feed, never throttled with ordinary talk.
       if (d.level === 'alert') { feed({ who: id, text: short(d.text, 300), cls: 'alert' }, ts, rid); break; }
