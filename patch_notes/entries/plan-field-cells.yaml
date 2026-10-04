@@ -1,0 +1,5 @@
+pr: 406
+rows:
+- sha: 78c9996
+  at: 2026-10-05 04:44
+  text: pack 조합 표에 든 core PLAN field 칸이 PLAN schema type에 맞지 않으면 load에서 거부한다
