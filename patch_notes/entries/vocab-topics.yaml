@@ -15,3 +15,6 @@ rows:
 - sha: a7a44ac
   at: 2026-10-04 21:55
   text: topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다
+- sha: 070f372
+  at: 2026-10-04 21:50
+  text: 고정된 연구 계약은 재개 때 CP1 snapshot을 따르고 면제한 pack은 사유만 받는다
