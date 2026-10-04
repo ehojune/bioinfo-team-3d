@@ -14,8 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:53 | [`60bca43`](https://github.com/ehojune/bioinfo-team-3d/pull/398/commits/60bca43) | 로그인 재시도에서 원래 작업 필드를 보존하고 만료된 엔진 알림을 정리한다 |
 | 02:37 | [`779db10`](https://github.com/ehojune/bioinfo-team-3d/pull/399/commits/779db10) | 단일세포 pack도 topic(single_cell_rna_seq)으로 적용하는 single_cell_de@3을 더하고 @2는 재개용으로 둔다 |
+| 02:26 | [`60593fe`](https://github.com/ehojune/bioinfo-team-3d/pull/398/commits/60593fe) | runner OS와 펼친 직원 경로로 로그인 명령을 만들고 CLI 대기 안내와 취소 테스트를 안정화했다 |
 | 02:08 | [`826d950`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/826d950) | 버려진 task의 취소도 결과가 오거나 보관 기한(2일)이 지날 때까지 보관한다 |
+| 01:59 | [`d231dfd`](https://github.com/ehojune/bioinfo-team-3d/pull/398/commits/d231dfd) | 로그인 만료를 엔진별 대기로 주차하고 멈춘 turn부터 재개 |
 | 01:57 | [`29531d3`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/29531d3) | task 취소를 task가 끝날 때까지 보관하고 runner가 다시 붙으면 다시 보낸다 |
 | 01:57 | [`f315ce1`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/f315ce1) | 선행 연구 조기 종료 취소도 보관되는 task 취소를 쓴다 |
 | 01:34 | [`d499328`](https://github.com/ehojune/bioinfo-team-3d/pull/396/commits/d499328) | CP1 test가 가짜 CLI가 해석한 전체 prompt로 두 전달 방식을 모두 확인한다(POSIX inline 포함) |
