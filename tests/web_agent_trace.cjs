@@ -34,4 +34,6 @@ const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /data-view="trace"/);
 assert.match(html, /생각·디버그/);
 assert.match(html, /a\.trace/);
+assert.match(html, /renderRefs\(\); renderSheetLogs\(\);/, 'render() refreshes an open sheet');
+assert.doesNotMatch(html, /trace[^\n]*\.slice\(0, 30\)/, 'the sheet lists every kept trace line');
 console.log('agent trace web tests passed');

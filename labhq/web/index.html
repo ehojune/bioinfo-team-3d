@@ -561,7 +561,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -964,15 +964,24 @@ $('#staff-toggle').addEventListener('click', () => {
   $('#staff-toggle').textContent = open ? '직원 닫기' : '직원 보기';
 });
 
+// The trace view lists every kept line (the reducer keeps 60); render() refreshes an open sheet's list (#409 review).
+function sheetLogs(a, view) {
+  return view === 'trace'
+    ? (a.trace || []).slice().reverse().map(l => `<li class="trace"><time>${ago(l.ts)}</time><b>${l.level === 'thinking' ? '생각' : '디버그'}</b> ${esc(l.text)}</li>`).join('') || '<li>생각·디버그 기록이 없어요.</li>'
+    : a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>';
+}
+function renderSheetLogs() {
+  const dlg = $('#sheet'), a = dlg.open || dlg.hasAttribute('open') ? ag(dlg.dataset.agent) : null;
+  const list = a && $('#sheet-in ul.activity'); if (!list) return;
+  const html = sheetLogs(a, list.dataset.view);
+  if (list.innerHTML !== html) list.innerHTML = html;
+  const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
+}
 function openSheet(id) {
   const a = ag(id); if (!a) return;
   const dlg = $('#sheet'), vs = visual(a);
   if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
   const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
-  const trace = (a.trace || []).slice().reverse().slice(0, 30);
-  const logs = view === 'trace'
-    ? trace.map(l => `<li class="trace"><time>${ago(l.ts)}</time><b>${l.level === 'thinking' ? '생각' : '디버그'}</b> ${esc(l.text)}</li>`).join('') || '<li>생각·디버그 기록이 없어요.</li>'
-    : a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>';
   const facts = [
     ['상태', STATE_KO[vs]], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
@@ -984,8 +993,8 @@ function openSheet(id) {
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
 <dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-<div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 ${trace.length}</button></div>
-<ul class="activity" data-view="${view}">${logs}</ul>
+<div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
+<ul class="activity" data-view="${view}">${sheetLogs(a, view)}</ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
