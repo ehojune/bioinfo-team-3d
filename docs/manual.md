@@ -284,6 +284,7 @@ Claude Code나 Codex 로그인이 만료되면 요청은 `waiting_login`에서 �
 
 - 기본값: 600초마다 재시도, 86,400초 뒤 실패(`orchestrator.login_retry_s`, `login_wait_max_s`)
 - 즉시 재개: 웹의 `로그인했어요 · 다시 시도` 또는 `labhq resume <요청 ID> <단계 ID>`
+- CLI는 단계 대기와 새 `labhq watch`의 현재 대기에도 runner OS·펼친 직원 경로에 맞는 로그인 명령을 한 번 보여 줍니다.
 - 재시작해도 대기와 마감은 유지됩니다. 자격 증명은 저장하지 않습니다.
 
 ## 직원과 도구

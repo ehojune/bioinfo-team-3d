@@ -30,6 +30,7 @@ from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
+from ..login import LOGIN_PATH_ENV
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
@@ -369,7 +370,9 @@ class Runner:
                                             ([self.s.hpc.scheduler] if self.s.hpc.scheduler != "none" else []) +
                                             (["external labhq_hpc MCP"] if external_hpc else []),
                         "hpc_tools": self.s.hpc.scheduler != "none" or external_hpc,
-                        "engine_cli_versions": dict(self.engine_versions or {})}
+                        "engine_cli_versions": dict(self.engine_versions or {}),
+                        "platform": sys.platform,
+                        "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
         local_software = getattr(self, "local_software", None)
         if local_software is not None:
             capabilities["local_software"] = local_software

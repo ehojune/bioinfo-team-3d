@@ -2329,7 +2329,8 @@ class Orchestrator:
                     if not await self.hub.wait_login(rid, key, engine,
                                                      resume_at=float(login_hold["resume_at"]),
                                                      deadline_at=deadline,
-                                                     reason="same engine account is waiting for login"):
+                                                     reason="same engine account is waiting for login",
+                                                     agent_id=current.agent_id):
                         return login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
@@ -2433,7 +2434,8 @@ class Orchestrator:
                     key = str(current.meta.get("step_id") or current.meta.get("kind") or current.id)
                     if not await self.hub.wait_login(rid, key, engine, resume_at=resume_at,
                                                      deadline_at=deadline,
-                                                     reason=res.error or "engine login required"):
+                                                     reason=res.error or "engine login required",
+                                                     agent_id=current.agent_id):
                         return login_failure(current, "engine login wait exceeded the configured maximum")
                     can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
                     current = Task(agent_id=current.agent_id, request_id=current.request_id,

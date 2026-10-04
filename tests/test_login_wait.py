@@ -6,6 +6,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from labhq.cli import render, render_snapshot
 from labhq.gateway.server import Hub, create_app
 from labhq.login import is_login_error, login_command
 from labhq.models import Task, TaskResult
@@ -25,6 +26,10 @@ def _hub(tmp_path, *, retry=0.02, maximum=1.0):
     settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "C:/staff/claude"}
     hub = Hub(settings)
     hub.agents = {"worker": {"id": "worker", "engine": "claude_code"}}
+    hub.agent_runner = {"worker": "runner"}
+    hub.runner_capabilities = {
+        "runner": {"platform": "win32", "environment": {"USERPROFILE": "C:/Users/runner"}}
+    }
     hub.requests["r"] = {"id": "r", "text": "work", "mode": "team", "budget_usd": 10,
                          "status": "running"}
     hub.save_request("r")
@@ -63,12 +68,57 @@ def test_unknown_or_ambiguous_errors_are_not_login(engine, error):
     assert not is_login_error(engine, error)
 
 
-def test_login_commands_use_only_configured_account_paths():
+def test_login_commands_use_runner_os_and_expanded_configured_account_paths():
     settings = Settings()
-    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "C:/staff/claude"}
-    settings.engines.codex.env = {"CODEX_HOME": "C:/staff/codex"}
-    assert login_command("claude_code", settings) == '$env:CLAUDE_CONFIG_DIR="C:/staff/claude"; claude\n/login'
-    assert login_command("codex", settings) == '$env:CODEX_HOME="C:/staff/codex"; codex login'
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "${USERPROFILE}/.labhq/claude-staff"}
+    settings.engines.codex.env = {"CODEX_HOME": "~/.labhq/codex-staff"}
+    windows = {"platform": "win32", "environment": {"USERPROFILE": "C:/Users/runner"}}
+    posix = {"platform": "linux", "environment": {"HOME": "/home/runner"}}
+    assert login_command("claude_code", settings, windows) == (
+        '$env:CLAUDE_CONFIG_DIR="C:\\Users\\runner\\.labhq\\claude-staff"; claude\n/login')
+    assert login_command("codex", settings, posix) == (
+        "CODEX_HOME='/home/runner/.labhq/codex-staff' codex login")
+    assert login_command("codex", settings, windows) == (
+        '$env:CODEX_HOME="C:\\Users\\runner\\.labhq\\codex-staff"; codex login')
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "~/.labhq/claude-staff"}
+    assert login_command("claude_code", settings, posix) == (
+        "CLAUDE_CONFIG_DIR='/home/runner/.labhq/claude-staff' claude\n/login")
+
+
+@pytest.mark.parametrize("engine,key", [
+    ("claude_code", "CLAUDE_CONFIG_DIR"),
+    ("codex", "CODEX_HOME"),
+])
+def test_login_command_does_not_invent_an_unexpanded_path(engine, key):
+    settings = Settings()
+    getattr(settings.engines, engine).env = {key: "${MISSING}/staff"}
+    shown = login_command(engine, settings, {"platform": "linux", "environment": {"HOME": "/home/runner"}})
+    assert shown == f"설정의 engines.{engine}.env.{key} 경로로 로그인하세요\n원래 값: ${{MISSING}}/staff"
+
+
+def test_login_command_does_not_borrow_gateway_environment_for_a_runner():
+    settings = Settings()
+    settings.engines.claude_code.env = {"CLAUDE_CONFIG_DIR": "${USERPROFILE}/staff"}
+    shown = login_command("claude_code", settings, {"platform": "linux", "environment": {}})
+    assert "설정의 engines.claude_code.env.CLAUDE_CONFIG_DIR 경로" in shown
+    assert "${USERPROFILE}/staff" in shown
+
+
+def test_cli_login_guidance_covers_step_and_snapshot_without_repeating(capsys):
+    command = "CLAUDE_CONFIG_DIR='/home/runner/.labhq/claude-staff' claude\n/login"
+    seen = set()
+    render_snapshot({"type": "snapshot", "ts": 1, "data": {"engine_holds": [
+        {"engine": "claude_code", "command": command},
+    ]}}, seen)
+    render({"type": "request.step_login_wait", "ts": 2, "data": {
+        "engine": "claude_code", "command": command,
+    }}, seen)
+    render({"type": "engine.login_wait", "ts": 3, "data": {
+        "engine": "claude_code", "command": command,
+    }}, seen)
+    shown = capsys.readouterr().out
+    assert shown.count("claude-staff") == 1
+    assert shown.count("다시 로그인한 뒤 자동 재시도 또는 resume") == 1
 
 
 @pytest.mark.asyncio
@@ -98,14 +148,16 @@ async def test_briefing_login_failure_parks_not_finishes_and_notifies_once(tmp_p
     assert len(calls) == 1
     notices = [e for e in hub.events if e["type"] == "engine.login_wait"]
     assert len(notices) == 1
-    assert '$env:CLAUDE_CONFIG_DIR="C:/staff/claude"; claude' in notices[0]["data"]["command"]
+    assert '$env:CLAUDE_CONFIG_DIR="C:\\staff\\claude"; claude' in notices[0]["data"]["command"]
     assert "/login" in notices[0]["data"]["command"]
+    waits = [e for e in hub.events if e["type"] == "request.step_login_wait"]
+    assert waits[0]["data"]["command"] == notices[0]["data"]["command"]
     assert hub.snapshot()["data"]["engine_holds"] == [{
         "kind": "login", "engine": "claude_code", "command": notices[0]["data"]["command"],
         "request_id": "r", "step_id": "briefing",
     }]
 
-    await hub.force_quota_resume("r", "briefing")
+    assert not running.done()
     running.cancel()
     with pytest.raises(asyncio.CancelledError):
         await running

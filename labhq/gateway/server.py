@@ -304,13 +304,29 @@ class Hub:
 
     def engine_login_holds(self) -> list[dict]:
         """One web/CLI notice card per held engine, never one per waiting request."""
-        by_engine: dict[str, tuple[str, str]] = {}
+        by_engine: dict[str, tuple[str, str, str | None]] = {}
         for rid, req in self.requests.items():
             for step_id, entry in (req.get("login_waits") or {}).items():
-                by_engine.setdefault(str(entry.get("engine") or ""), (rid, step_id))
-        return [{"kind": "login", "engine": engine, "command": login_command(engine, self.s),
+                by_engine.setdefault(str(entry.get("engine") or ""),
+                                     (rid, step_id, entry.get("runner_id")))
+        return [{"kind": "login", "engine": engine,
+                 "command": self._login_command(engine, location[2]),
                  "request_id": location[0], "step_id": location[1]}
                 for engine, location in sorted(by_engine.items())]
+
+    def _login_command(self, engine: str, runner_id: str | None = None) -> str:
+        """Build guidance for the runner that hosts this engine, falling back to the gateway host."""
+        capabilities = self.runner_capabilities.get(runner_id or "")
+        if capabilities is None:
+            wanted = "claude_code" if engine == "claude" else engine
+            for agent_id, agent in self.agents.items():
+                if str(agent.get("engine") or "") != wanted:
+                    continue
+                candidate = self.agent_runner.get(agent_id) or agent.get("runner_id")
+                if candidate in self.runner_capabilities:
+                    capabilities = self.runner_capabilities[candidate]
+                    break
+        return login_command(engine, self.s, capabilities)
 
     def _sync_hold_status(self, req: dict) -> None:
         if not is_active_request(req.get("status")):
@@ -421,13 +437,16 @@ class Hub:
                             "data": {"engine": engine, "manual": False}})
 
     async def wait_login(self, rid: str, step_id: str, engine: str, *, resume_at: float,
-                         deadline_at: float, reason: str) -> bool:
+                         deadline_at: float, reason: str, agent_id: str | None = None) -> bool:
         """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
         req = self.requests[rid]
         first_notice = engine not in self.login_notices
         started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
+        runner_id = self.agent_runner.get(agent_id or "")
         entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
-                 "reason": short(reason, 500), "waiting_since": started}
+                 "reason": short(reason, 500), "waiting_since": started,
+                 **({"runner_id": runner_id} if runner_id else {})}
+        command = self._login_command(engine, runner_id)
         previous = (req.get("login_waits") or {}).get(step_id)
         req.setdefault("login_waits", {})[step_id] = entry
         self._sync_hold_status(req)
@@ -435,11 +454,12 @@ class Hub:
         if previous != entry:
             await self.publish({"type": "request.step_login_wait", "ts": time.time(), "request_id": rid,
                                 "data": {"step_id": step_id, "engine": engine, "resume_at": resume_at,
-                                         "deadline_at": deadline_at, "reason": short(reason, 500)}})
+                                         "deadline_at": deadline_at, "reason": short(reason, 500),
+                                         "command": command}})
         if first_notice:
             self.login_notices.add(engine)
             await self.publish({"type": "engine.login_wait", "ts": time.time(), "request_id": rid,
-                                "data": {"engine": engine, "command": login_command(engine, self.s),
+                                "data": {"engine": engine, "command": command,
                                          "request_id": rid, "step_id": step_id}})
         while True:
             hold = self.login_hold(engine)
