@@ -429,7 +429,8 @@ class Hub:
                                   "steps": states}, "cost_usd": req.get("cost_usd", 0),
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
-                "usage_known": req.get("usage_known", True)}
+                "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
+                "bundle_warning": req.get("bundle_warning")}
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -440,6 +441,18 @@ class Hub:
                     self.jobs_done.pop(tid, None)
 
     def commit_terminal(self, rid: str, typ: str, data: dict) -> None:
+        # The portable bundle is a best-effort copy. Failure never changes the request outcome, and terminal
+        # requests loaded after a restart do not pass this checkpoint again.
+        try:
+            from ..request_bundle import build_request_bundle
+
+            bundled = build_request_bundle(self.requests[rid], self.s, self.store.all("task"))
+            self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
+            self.requests[rid].pop("bundle_warning", None)
+        except Exception as exc:
+            warning = f"요청 묶음을 만들지 못했습니다: {exc}"
+            self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
+            log.warning("request bundle failed for %s: %s", rid, exc)
         event = self.store.commit_terminal(rid, self.requests[rid],
                                            {"type": typ, "ts": time.time(), "request_id": rid, "data": data},
                                            self.s.gateway.event_buffer)
@@ -1450,7 +1463,8 @@ class Hub:
             "requests": [{**{k: v for k, v in r.items() if k in ("id", "text", "status", "mode", "created_at",
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
-                                                                  "references", "pi_notes")},
+                                                                  "references", "pi_notes", "bundle_path",
+                                                                  "bundle_warning")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],

@@ -186,6 +186,19 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 최종 보고서는 `report`(결론과 권고 → 결과 → 방법 요약 → 한계)와 `report_appendix`(실행 기록)로 나뉩니다. 본문에는 중요한 경고만 한 줄과 "실행 기록 참고"를 남기고, 단계 상태·산출 경로·도구 실패·미해결 리뷰 원문·비용·claim check는 부록에 둡니다. API·이벤트·CLI는 두 필드를 보내고, 웹은 본문 아래 접힌 실행 기록을 보여 줍니다. GitHub 프로젝트 보고와 감사 번들은 `report.md`·`report_appendix.md`를 함께 남기며, claim anchor 검사는 `report`만 읽습니다. 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 방법 요약에는 seed와 도구·데이터 버전을 적습니다.
 
+### 요청 묶음
+
+요청이 끝나면 성공 여부와 lane에 관계없이 `runner.workspace_root/requests/<request_id>/`를 만듭니다. 생성 오류는 요청 결과를 바꾸지 않고 웹·CLI에 경고만 남깁니다. 끝난 요청은 gateway를 다시 켜도 다시 묶지 않습니다.
+
+| 경로 | 내용 |
+|---|---|
+| `report.md` · `report_appendix.md` | PI용 본문과 실행 기록 |
+| `steps/<step_id>/` | 최종 판의 선언 산출물과 `outputs/scripts/` 전체 |
+| `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
+| `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
+
+묶음 안의 작은 텍스트 파일은 이 요청의 단계 작업 폴더만 상대경로로 바꿉니다. 다른 절대경로는 그대로 두고 manifest와 부록에 남깁니다. `runner.bundle_max_file_mb`(기본 50)를 넘는 파일은 복사하지 않으며 manifest에 `not copied: size`로 기록합니다. 수정 전 판은 넣지 않고 부록의 `대체됨` 목록에 적습니다. 원본은 건드리지 않으므로 `labhq verify`, 감사 번들, claim anchor 검사는 지금처럼 원래 작업 폴더를 기준으로 합니다. 프로젝트 GitHub에는 두 보고서만 올라가며 요청 묶음은 커밋하지 않습니다.
+
 ```mermaid
 flowchart LR
   subgraph 클라이언트

@@ -110,6 +110,11 @@ def render(ev: dict) -> None:
             line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
+    if t in {"request.completed", "request.failed"} and line:
+        if d.get("bundle_path"):
+            line += f"\n   요청 묶음: {d['bundle_path']}"
+        if d.get("bundle_warning"):
+            line += f"\n   경고: {d['bundle_warning']}"
     elif t in ("runner.online", "runner.offline"):
         line = f"🔌 {t}: {d.get('runner_id')}"
     if line:
@@ -728,6 +733,17 @@ def main(argv: list[str] | None = None) -> None:
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
+        finished = [req for req in _api(s, "GET", "/api/requests?status=all&limit=20")
+                    if req.get("status") in {"done", "failed"} and
+                    (req.get("bundle_path") or req.get("bundle_warning"))]
+        if finished:
+            print(f"최근 완료 요청: {len(finished)}")
+            for req in finished:
+                print(f"  {req['id']} {req.get('status')}")
+                if req.get("bundle_path"):
+                    print(f"    요청 묶음: {req['bundle_path']}")
+                if req.get("bundle_warning"):
+                    print(f"    경고: {req['bundle_warning']}")
         approvals = _api(s, "GET", "/api/approvals")
         print(f"승인 대기: {len(approvals)}")
         for approval in approvals:

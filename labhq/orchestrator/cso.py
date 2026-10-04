@@ -352,6 +352,7 @@ with "- ". Inside the JSON string write each line break as \\n. Do not proceed w
 
 For reproducibility, save every analysis script under outputs/scripts/ and every result-determining reference or
 intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
+In a script that reads upstream step files, collect those paths in one variable block at the top of the script.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
