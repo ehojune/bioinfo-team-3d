@@ -14,9 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:55 | [`a7a44ac`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/a7a44ac) | topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다 |
+| 21:50 | [`070f372`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/070f372) | 고정된 연구 계약은 재개 때 CP1 snapshot을 따르고 면제한 pack은 사유만 받는다 |
+| 21:35 | [`096445e`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/096445e) | topic 이전 연구 계약을 승인 당시 pack 규칙으로 재개하고 재계획의 모르는 topic 경고를 남긴다 |
 | 21:05 | [`1c78b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/1c78b0d) | main의 단독 라우팅(#388)을 병합하고 요청 상태 필드에 route와 묶음 필드를 함께 둔다 |
 | 21:05 | [`d42ed3c`](https://github.com/ehojune/bioinfo-team-3d/pull/391/commits/d42ed3c) | 직원별 추론 강도를 엔진 명령줄에 적용하고 단독 처리 뒤 이어 묻기를 맡았던 직원의 세션으로 보냅니다. |
+| 20:49 | [`f094a7c`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/f094a7c) | 기존 bulk pack을 보존하고 topic 기반 v2·재개 snapshot 검증·일반 경고 병합을 추가했습니다. |
 | 20:41 | [`fe035b4`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/fe035b4) | 요청 묶음이 runner 기록 산출만 hash 검증해 복사하고 누락을 incomplete로 기록하도록 단순화 |
+| 20:10 | [`37c4b9a`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/37c4b9a) | 어휘 100키와 topic 판정의 구현·검증 상태를 기록했습니다. |
+| 20:09 | [`d9c59a1`](https://github.com/ehojune/bioinfo-team-3d/pull/390/commits/d9c59a1) | PI 승인 어휘를 100키로 확장하고 topic 기반 pack 적용 판정을 추가했습니다. |
 | 20:06 | [`53b9b2a`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/53b9b2a) | 요청 terminal을 먼저 저장하고 단계별 outputs 구조와 runner Python 명령으로 묶음 재실행 경로를 바로잡음 |
 | 19:38 | [`04b6000`](https://github.com/ehojune/bioinfo-team-3d/pull/389/commits/04b6000) | runner와 같은 안전 순회, DAG 재실행 순서, 요청별 누적 상한으로 요청 묶음 2차 P1을 보강 |
 | 19:10 | [`7c16b7a`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/7c16b7a) | 단독 재시작의 다음 단계를 한 함수로 판정해 폴백 전에 필요한 팀 runner를 기다리게 했다. |
