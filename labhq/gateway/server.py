@@ -28,7 +28,7 @@ from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
-from ..adapters import get_adapter, read_only_refusal
+from ..adapters import enforces_read_only, get_adapter, read_only_refusal
 from ..orchestrator.cso import Orchestrator, holds_session, solo_phase
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
@@ -1057,6 +1057,7 @@ class Hub:
                                                          [b for b in caps.get("compute_backends", [])
                                                           if b != "local CLI" and hpc_tools]),
                                     "hpc_tools": hpc_tools}
+            self.agents[a["id"]]["capabilities"] = self._agent_capabilities(self.agents[a["id"]])
             self.agent_runner[a["id"]] = runner_id
             if runner_id in self.runners:
                 self.agent_online.setdefault(a["id"], asyncio.Event()).set()
@@ -1103,15 +1104,27 @@ class Hub:
                 raise RunnerUnavailable(f"runner {runner_id} WebSocket send failed") from exc
 
     def supports_resume(self, agent_id: str) -> bool:
-        engine = self.agents.get(agent_id, {}).get("engine")
+        return self._agent_resumes(self.agents.get(agent_id, {}))
+
+    def _agent_resumes(self, agent: dict) -> bool:
+        engine = agent.get("engine")
         if not engine:
             return False
         if engine == "cli":
-            return bool(self.agents[agent_id].get("cli_resume"))
+            return bool(agent.get("cli_resume"))
         try:
             return get_adapter(engine, self.s).supports_resume
         except ValueError:
             return False
+
+    def _agent_capabilities(self, agent: dict) -> dict:
+        """The staff sheet's capability card (#57 ⑦): what the roster and the engine adapter say, nothing guessed."""
+        return {"resume": self._agent_resumes(agent),
+                "read_only": enforces_read_only(agent.get("engine")),
+                "effort": agent.get("effort"),
+                "permission": agent.get("sandbox") if agent.get("engine") == "codex" else agent.get("permission_mode"),
+                "max_turns": agent.get("max_turns"),
+                "mcp": [*agent.get("mcp", []), *(f"labhq_{name}" for name in agent.get("builtin_mcp", []))]}
 
     # ----- events -----
     async def publish(self, ev: dict, runner_id: str | None = None, runner_seq: int | None = None) -> None:

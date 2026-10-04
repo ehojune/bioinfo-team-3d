@@ -987,7 +987,14 @@ function openSheet(id) {
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
-  if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
+  const cap = a.capabilities;  // #57 ⑦: facts the gateway took from the roster and engine adapters
+  if (cap) {
+    facts.push(['권한', cap.permission || '—'], ['추론 강도', cap.effort || '기본'],
+      ['이어 묻기', cap.resume ? '같은 세션을 이어 씀' : '새 세션으로'],
+      ['읽기 전용 상담', cap.read_only ? '가능' : '불가(엔진이 쓰기를 막지 못함)'],
+      ['MCP', (cap.mcp || []).length ? cap.mcp.join(', ') : '없음']);
+    if (cap.max_turns) facts.push(['최대 턴', String(cap.max_turns)]);
+  } else if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
   const acts = ['<button type="button" class="btn primary" data-act="assign">이 직원에게 맡기기</button>'];
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
@@ -1122,7 +1129,10 @@ const Demo = (() => {
     ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
     ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
     ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
-  ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core' }));
+  ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core',
+    capabilities: { resume: engine !== 'cli', read_only: engine !== 'cli', effort: null, max_turns: null,
+      permission: engine === 'codex' ? 'workspace-write' : engine === 'cli' ? null : 'default',
+      mcp: engine === 'cli' ? [] : ['labhq_approval'] } }));
 
   async function work(agent, rid, meta, fn) {
     const task_id = `task_demo${++n}`;
