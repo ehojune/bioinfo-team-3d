@@ -20,6 +20,14 @@
 - 미해결: 배정 때 서류 애니메이션은 넣지 않았다.
 - 근거: `labhq/web/index.html`, `tests/web_office_props.cjs`.
 
+## 2026-10-05 · #373 — README에 분석 점검표·선행 연구
+
+- 결론: README "무엇이 다른가" 표에 topic 점검표와 선행 연구 기준(#395·#400)이 없었다. PI가 요청한 기능이라 한 행을 더했다.
+- 바뀐 것: `README.md` 한 행. 15,200 → 15,524자.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `README.md`.
+
 ## 2026-10-05 · #57 ⑦ — 직원 상세 시트의 capability card
 
 - 결론: 직원 시트가 엔진·모델·소속만 보여 줬다. 이제 권한, 추론 강도, 같은 세션 이어 쓰기, 읽기 전용 상담 가능 여부, 붙은 MCP를 보여 준다. 값은 gateway가 runner의 roster와 엔진 adapter에서 가져온 것이고 웹은 추측하지 않는다.

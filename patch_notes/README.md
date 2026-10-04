@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:31 | [`701afcc`](https://github.com/ehojune/bioinfo-team-3d/pull/413/commits/701afcc) | README: 분석 점검표와 선행 연구 기준 |
 | 06:15 | [`74eee3b`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/74eee3b) | main 병합: #410과 겹친 매뉴얼 2.5D 절과 CI web test 목록을 둘 다 살림 |
 | 06:14 | [`b0cbd2a`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/b0cbd2a) | 숫자 sha 안내는 원문 표기 그대로(0으로 시작해도) |
 | 06:06 | [`a47b501`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/a47b501) | 패치노트 검사: 숫자로 읽힌 sha를 짚어 알려 줌 |
