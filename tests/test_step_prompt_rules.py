@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #373 bench A: analysis code and result-determining references must survive under outputs/, not .tmp.
+    # #373 benches A/B: keep artifacts and make upstream paths bundle-rewritable in one block.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "631d9f13ea8b388558f853c2f8917c0cc2e3c4102bb412004f3d62474d85f92f")
+        "57fc95b4fc03cae17a17d6f009fa9ebae46a6196d2bbb71a64ff1f9795424f1a")
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -37,9 +37,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #373 bench A applies the same reproducibility rule to the frozen research lane.
+    # #373 benches A/B apply both reproducibility rules to the frozen research lane.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "9cd64d4c5c82e9db5526182227d4c29bd4e5f8a44ba067d17d65039dee0ed6d8")
+        "b72945de34d0adaa3edab2d6a75280ba985bcd3bce2189975b82586e64bfa25b")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():

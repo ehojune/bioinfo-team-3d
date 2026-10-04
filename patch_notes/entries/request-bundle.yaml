@@ -1,0 +1,20 @@
+pr: 389
+rows:
+- sha: f94b281
+  at: 2026-10-04 18:32
+  text: 요청별 최종 산출물 묶음과 단계 경로 상대화 기능을 추가했습니다.
+- sha: 44fe4d6
+  at: 2026-10-04 19:03
+  text: 다른 runner host 차단, descriptor 기반 복사, 루트 기준 경로 재작성과 비동기 생성을 보강했습니다.
+- sha: 04b6000
+  at: 2026-10-04 19:38
+  text: runner와 같은 안전 순회, DAG 재실행 순서, 요청별 누적 상한으로 요청 묶음 2차 P1을 보강
+- sha: 53b9b2a
+  at: 2026-10-04 20:06
+  text: 요청 terminal을 먼저 저장하고 단계별 outputs 구조와 runner Python 명령으로 묶음 재실행 경로를 바로잡음
+- sha: fe035b4
+  at: 2026-10-04 20:41
+  text: 요청 묶음이 runner 기록 산출만 hash 검증해 복사하고 누락을 incomplete로 기록하도록 단순화
+- sha: 1c78b0d
+  at: 2026-10-04 21:05
+  text: main의 단독 라우팅(#388)을 병합하고 요청 상태 필드에 route와 묶음 필드를 함께 둔다

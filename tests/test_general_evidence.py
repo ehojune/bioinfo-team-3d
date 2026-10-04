@@ -107,9 +107,9 @@ async def test_general_report_warns_without_copying_long_tool_output():
 
 
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():
-    # #373 bench A intentionally adds durable analysis-code/reference and version rules to this prompt.
+    # #373 benches A/B add durable artifacts and one-block upstream path variables to this prompt.
     assert hashlib.sha256(RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "9cd64d4c5c82e9db5526182227d4c29bd4e5f8a44ba067d17d65039dee0ed6d8")
+        "b72945de34d0adaa3edab2d6a75280ba985bcd3bce2189975b82586e64bfa25b")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
 

@@ -387,6 +387,7 @@ with "- ". Inside the JSON string write each line break as \\n. Do not proceed w
 
 For reproducibility, save every analysis script under outputs/scripts/ and every result-determining reference or
 intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
+In a script that reads upstream step files, collect those paths in one variable block at the top of the script.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
@@ -3969,7 +3970,9 @@ class Orchestrator:
                       **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
-            if hasattr(self.hub, "commit_terminal"):
+            if hasattr(self.hub, "schedule_terminal"):
+                self.hub.schedule_terminal(rid, "request.failed", failed)
+            elif hasattr(self.hub, "commit_terminal"):
                 self.hub.commit_terminal(rid, "request.failed", failed)
             else:
                 await self._emit(rid, "request.failed", failed)
@@ -4044,7 +4047,9 @@ class Orchestrator:
                 "usage_known": req.get("usage_known", True)}
         if error:  # one readable office-feed line; `labhq send` prints report first, or error when report is absent
             req["error"] = data["error"] = error
-        if hasattr(self.hub, "commit_terminal"):
+        if hasattr(self.hub, "schedule_terminal"):
+            self.hub.schedule_terminal(rid, "request.completed", data)
+        elif hasattr(self.hub, "commit_terminal"):
             self.hub.commit_terminal(rid, "request.completed", data)
         else:  # Lightweight orchestration test doubles do not persist state.
             self.hub.save_request(rid)

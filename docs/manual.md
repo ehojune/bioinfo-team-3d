@@ -210,6 +210,19 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 최종 보고서는 `report`(결론과 권고 → 결과 → 방법 요약 → 한계)와 `report_appendix`(실행 기록)로 나뉩니다. 본문에는 중요한 경고만 한 줄과 "실행 기록 참고"를 남기고, 단계 상태·산출 경로·도구 실패·미해결 리뷰 원문·비용·claim check는 부록에 둡니다. API·이벤트·CLI는 두 필드를 보내고, 웹은 본문 아래 접힌 실행 기록을 보여 줍니다. GitHub 프로젝트 보고와 감사 번들은 `report.md`·`report_appendix.md`를 함께 남기며, claim anchor 검사는 `report`만 읽습니다. 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 방법 요약에는 seed와 도구·데이터 버전을 적습니다.
 
+### 요청 묶음
+
+요청이 끝나면 terminal 상태와 보고서를 먼저 저장하고 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 생성 오류나 도중 재시작은 요청 결과를 바꾸지 않으며, 중단된 묶음은 자동 재시도하지 않습니다.
+
+| 경로 | 내용 |
+|---|---|
+| `report.md` · `report_appendix.md` | PI용 본문과 실행 기록 |
+| `steps/<step_id>/outputs/` | 최종 단계 결과에 경로와 sha256이 함께 기록된 산출물 |
+| `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
+| `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
+
+단계 폴더는 원래 workdir의 `outputs/` 구조를 유지합니다. 묶음은 폴더를 순회하지 않고 runner가 실행 때 기록하고 hash한 산출만 링크를 따르지 않는 handle로 엽니다. 현재 hash가 기록과 다르거나 파일 확인·상한 검사가 실패하면 복사하지 않고 `MANIFEST.tsv`에 이유를 남기며 묶음을 `incomplete`로 표시합니다. README는 각 `steps/<step_id>/`에서 스크립트를 실행하고, 위 단계 절대경로는 그 폴더 기준 상대경로로 바꿉니다. Markdown 링크는 문서 기준입니다. Python은 runner가 보고한 명령을 쓰고, 모르면 `python`과 경고를 함께 적습니다. 다른 절대경로는 manifest와 부록에 남깁니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다.
+
 ```mermaid
 flowchart LR
   subgraph 클라이언트

@@ -31,6 +31,9 @@ class RunnerSettings(BaseModel):
     max_parallel: int = 4
     consult_parallel: int = Field(default=2, ge=1)
     workspace_root: str = "~/.labhq/runs"
+    bundle_max_file_mb: float = Field(default=50, gt=0)
+    bundle_max_total_mb: float = Field(default=2048, gt=0)
+    bundle_max_files: int = Field(default=5000, ge=1)
     agents_dir: str = "./agents"
     talent_dir: str = "~/.labhq/talent"  # 인재풀: every contract ever hired, kept for rehire
     contract_dir: str | None = None  # active contract roster; default agents_dir/contract, per instance (#303)
