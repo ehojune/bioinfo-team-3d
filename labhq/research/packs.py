@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
@@ -53,6 +53,33 @@ def field_value_problem(field: PackField, value: Any) -> str | None:
         return f"must be at least {field.minimum:g}"
     if field.pattern is not None and re.fullmatch(field.pattern, value) is None:
         return f"must match {field.pattern}"
+    return None
+
+
+def _model_in(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return next((arg for arg in get_args(annotation) if isinstance(arg, type) and issubclass(arg, BaseModel)), None)
+
+
+def plan_field_problem(path: str, value: Any) -> str | None:
+    """Why ``value`` can never equal the core PLAN field at ``path``, or None (PR #403 review): a closed-table
+    cell outside the PLAN schema type (a Literal choice, int, bool, or a list field) is a dead row."""
+    from pydantic import TypeAdapter, ValidationError
+
+    from .contract import ResearchPlan  # contract imports this module, so the schema is looked up late
+
+    model: type[BaseModel] | None = ResearchPlan
+    annotation: Any = None
+    for part in path.split("."):
+        if model is None or part not in model.model_fields:
+            return None
+        annotation = model.model_fields[part].annotation
+        model = _model_in(annotation)
+    try:
+        TypeAdapter(annotation).validate_python(value, strict=True)
+    except ValidationError:
+        return f"does not fit the PLAN schema type {annotation!r}"
     return None
 
 
@@ -238,9 +265,10 @@ class DomainRulePack(StrictModel):
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
                         if field is None:
-                            continue
-                        # An omitted answer never equals null and an explicit null fails the type check.
-                        problem = ("cannot be null" if value is None else field_value_problem(field, value))
+                            problem = plan_field_problem(name, value)
+                        else:
+                            # An omitted answer never equals null and an explicit null fails the type check.
+                            problem = ("cannot be null" if value is None else field_value_problem(field, value))
                         if problem:
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
                                              f"allowed for {name} ({name} {problem})")
