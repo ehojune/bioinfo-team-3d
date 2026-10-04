@@ -123,20 +123,31 @@ async def test_clarify_card_carries_plan_assumptions_after_its_questions():
     assert hub.requests["r"]["status"] == "done"
 
 
+CHANGED = "GSE19804로 주 데이터셋을 바꿈 — GSE10072 내려받기가 실패함"
+
+
 @pytest.mark.asyncio
-async def test_replan_adds_new_scientific_choices_without_losing_old_ones():
-    initial = plan(assumptions=[ASSUMPTIONS[0]])
+@pytest.mark.parametrize("returned, expected", [
+    ([CHANGED, ASSUMPTIONS[1]], [CHANGED, ASSUMPTIONS[1]]),  # a stated list replaces: the changed choice is gone
+    (None, ASSUMPTIONS),  # an omitted field keeps the earlier list
+])
+async def test_replan_assumptions_replace_the_earlier_list_when_stated(returned, expected):
+    initial = plan(assumptions=ASSUMPTIONS)
     replanned = {
-        "clarifying_questions": [], "assumptions": [ASSUMPTIONS[1]],
+        "clarifying_questions": [],
         "steps": [{"id": "fallback", "agent_id": "worker", "instruction": "fallback",
                    "outputs": [], "depends_on": []}],
         "recruit": [], "notes": "replace failed analysis", "drop": [],
     }
+    if returned is not None:
+        replanned["assumptions"] = returned
+    prompts = []
 
     async def dispatch(task):
         if task.meta["kind"] == "plan":
             return result(task, structured=initial)
         if task.meta["kind"] == "replan":
+            prompts.append(task.prompt)
             return result(task, structured=replanned)
         if task.meta["kind"] == "step" and task.meta["step_id"] == "analysis":
             return result(task, ok=False, error="fixture failure")
@@ -147,7 +158,17 @@ async def test_replan_adds_new_scientific_choices_without_losing_old_ones():
     await Orchestrator(hub).run_request("r")
 
     assert hub.requests["r"]["status"] == "done"
-    assert hub.requests["r"]["plan"]["assumptions"] == ASSUMPTIONS
+    assert hub.requests["r"]["plan"]["assumptions"] == expected
+    assert "Return the complete updated list" in prompts[0]
+    assert ASSUMPTIONS[0] in prompts[0]
+
+
+def test_carry_assumptions_replaces_a_stated_list_and_keeps_an_omitted_one():
+    old = {"assumptions": [ASSUMPTIONS[0]]}
+    assert cso._carry_assumptions(old, {"assumptions": [CHANGED]})["assumptions"] == [CHANGED]
+    assert cso._carry_assumptions(old, {"assumptions": []})["assumptions"] == []
+    assert cso._carry_assumptions(old, {"steps": []})["assumptions"] == [ASSUMPTIONS[0]]
+    assert "assumptions" not in cso._carry_assumptions(None, {"steps": []})
 
 
 def test_cli_plan_prints_assumptions_and_midrun_note_guidance(capsys):

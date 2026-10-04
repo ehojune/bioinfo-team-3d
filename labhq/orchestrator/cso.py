@@ -87,17 +87,17 @@ def normalize_assumptions(raw: Any) -> list[str]:
 
 
 def _carry_assumptions(previous: Any, candidate: Any) -> Any:
-    """Carry general-lane design choices across clarification, correction, and re-planning."""
+    """Carry general-lane design choices across clarification, correction, and re-planning.
+
+    A candidate that states `assumptions` replaces the earlier list: a choice it changed must not linger next to its
+    replacement (PR #387 review). One that omits the field keeps the earlier list."""
     if not isinstance(candidate, dict):
         return candidate
-    old_has = isinstance(previous, dict) and "assumptions" in previous
-    if "assumptions" not in candidate and not old_has:
-        return candidate
-    combined = [
-        *normalize_assumptions(previous.get("assumptions") if isinstance(previous, dict) else None),
-        *normalize_assumptions(candidate.get("assumptions")),
-    ]
-    return {**candidate, "assumptions": list(dict.fromkeys(combined))[:8]}
+    if "assumptions" in candidate:
+        return {**candidate, "assumptions": list(dict.fromkeys(normalize_assumptions(candidate["assumptions"])))}
+    if isinstance(previous, dict) and "assumptions" in previous:
+        return {**candidate, "assumptions": normalize_assumptions(previous["assumptions"])}
+    return candidate
 
 
 def _assumptions_prompt(plan: Any) -> str:
@@ -452,7 +452,8 @@ Rules:
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
   approval must change, ask in clarifying_questions and do not plan the blocked work. """ + PI_CARD_QUESTION_RULE + """
 - {question_rule}
-- """ + ASSUMPTIONS_RULE + """
+- """ + ASSUMPTIONS_RULE + """ The current plan's `assumptions` are below. Return the complete updated list: keep
+  the choices that still hold and replace any choice this re-plan changes.
 - """ + ENV_STEP_RULE + """ If the plan already has an environment step, new steps depend on it instead.
 - {empty_rule}
 
@@ -675,7 +676,8 @@ def with_pi_notes(task: Task, request: dict) -> Task:
                       "change the frozen plan. If a note needs a plan change, state that a new CP1 approval is required."])
     if kind == "synthesis":
         lines.extend(["", "In the final report, include one line per PI note saying whether it was incorporated. If it "
-                      "was not, give the reason and what new request is needed."])
+                      "was not, give the reason and what new request is needed. If a note changed a choice listed "
+                      "under 가정, list the choice that was actually used there and name the note that changed it."])
     return task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(lines)})
 
 
