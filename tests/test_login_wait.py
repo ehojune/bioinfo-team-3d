@@ -624,3 +624,21 @@ async def test_parallel_consults_to_two_agents_are_separate_login_turns(tmp_path
     assert (kept["started_at"], kept["deadline_at"]) == (window["started_at"], window["deadline_at"])
     tasks[1].cancel()
     await asyncio.gather(tasks[1], return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_a_consult_window_saved_with_the_old_bare_kind_is_dropped_when_the_ask_ends(tmp_path):
+    # PR #404 review: a window saved before the per-ask key holds "consult"; the recovered ask must not leave it
+    # behind, or a later expiry in the same request would reuse the old deadline.
+    hub = _hub(tmp_path)
+    hub.requests["r"]["login_windows"] = {"claude_code": {"started_at": 1.0, "deadline_at": 2.0,
+                                                         "turns": ["consult"]}}
+    hub.save_request("r")
+
+    async def dispatch(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    result = await asyncio.wait_for(Orchestrator(hub).run_step(
+        Task(agent_id="worker", request_id="r", prompt="ask", meta={"kind": "consult", "ask_id": "ask_a"})), 2)
+    assert result.ok and "login_windows" not in hub.requests["r"]

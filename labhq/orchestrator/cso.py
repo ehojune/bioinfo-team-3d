@@ -2324,7 +2324,10 @@ class Orchestrator:
             window = (req.get("login_windows") or {}).get(engine)
             if window is None:
                 return
-            turns = [key for key in window.get("turns") or [] if key != turn_key(current)]
+            mine = {turn_key(current)}
+            if current.meta.get("ask_id") and not current.meta.get("step_id"):
+                mine.add(str(current.meta.get("kind")))  # a window saved before PR #404 holds the bare kind
+            turns = [key for key in window.get("turns") or [] if key not in mine]
             if turns:
                 if turns != window.get("turns"):
                     window["turns"] = turns
