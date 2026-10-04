@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:10 | [`7c16b7a`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/7c16b7a) | 단독 재시작의 다음 단계를 한 함수로 판정해 폴백 전에 필요한 팀 runner를 기다리게 했다. |
+| 18:48 | [`5e1c789`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/5e1c789) | 단독 결과의 예산 거부를 우선하고 재시작 때 담당 runner와 저장된 리뷰를 이어 쓰게 했다. |
+| 18:32 | [`40dd720`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/40dd720) | 작은 일반 요청을 직원 한 명에게 자동 라우팅하고 실패하면 저장된 팀 계획으로 이어가게 했다. |
 | 12:11 | [`ba41267`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ba41267) | 재계획이 낸 가정 목록이 이전 목록을 대체하고, 메모로 바뀐 가정은 보고서에 실제 쓴 선택으로 적는다 |
 | 11:55 | [`ed5d0e2`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ed5d0e2) | CSO 질문을 세 범주로 제한하고 일반 계획의 과학 설계 가정을 저장·표시·보고한다 |
 | 10:57 | [`61f23df`](https://github.com/ehojune/bioinfo-team-3d/pull/386/commits/61f23df) | 연구 보고서 본문만 claim 검사하고 긴 실행 기록 전문은 request·GitHub·감사 번들에 보존한다. |
