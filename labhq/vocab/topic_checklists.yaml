@@ -39,3 +39,181 @@ single_cell_rna_seq:
   - id: batch
     check: 통합(integration) 전후 batch 효과를 확인한다
     why: 통합이 생물학적 신호를 지우거나 기술 차이를 남길 수 있기 때문이다
+
+spatial_transcriptomics:
+  - id: spot_qc
+    check: 스팟·세포별 QC 기준(검출 유전자 수, UMI 수, 조직 밖 스팟 제외)을 밝힌다
+    why: 조직 밖이나 손상된 스팟이 공간 패턴처럼 보일 수 있기 때문이다
+  - id: deconvolution_reference
+    check: 스팟 단위 기술이면 세포 유형 분해에 쓴 참조 단일세포 데이터와 출처를 밝힌다
+    why: 참조가 조직과 맞지 않으면 세포 구성 추정이 틀어진다
+  - id: section_replicates
+    check: 공간 변이·영역 비교는 공간 자기상관을 고려한 방법으로 하고, 절편·시료 단위 반복을 밝힌다
+    why: 스팟을 독립 반복으로 세면 유의성이 부풀려진다
+
+atac_seq:
+  - id: library_qc
+    check: TSS enrichment, FRiP, 단편 길이 분포(뉴클레오좀 주기), 미토콘드리아 read 비율을 보고한다
+    why: 라이브러리 품질이 나쁘면 접근성 차이가 기술 잡음일 수 있다
+  - id: blacklist
+    check: blacklist 영역을 빼고 중복 read 처리 방식을 밝힌다
+    why: 반복 서열·인공 신호가 peak로 잡히는 것을 막는다
+  - id: differential_model
+    check: 차등 접근성은 consensus peak 정의를 밝히고 생물학적 반복을 갖춘 count 모형으로 판정한다
+    why: peak 겹침 비교만으로는 차이를 판정할 수 없다
+
+chip_seq:
+  - id: input_control
+    check: input(또는 IgG) 대조를 쓰고 peak 호출 방법과 임계값을 밝힌다
+    why: 배경 신호를 빼야 결합 위치를 구분할 수 있다
+  - id: replicate_reproducibility
+    check: 반복 간 재현성(IDR 등)으로 최종 peak를 정한다
+    why: 한 반복에만 있는 peak는 잡음일 가능성이 크다
+  - id: library_qc
+    check: FRiP, 라이브러리 복잡도(NRF·PBC), 교차상관 지표(NSC·RSC)를 보고하고 blacklist를 뺀다
+    why: 항체·라이브러리 품질이 결과 해석의 전제다
+
+cut_and_run:
+  - id: controls_normalization
+    check: IgG 같은 대조와 spike-in 정규화 여부를 밝힌다
+    why: 배경과 전체 신호량 변화를 구분하기 위해서다
+  - id: peak_calling
+    check: 배경이 낮은 자료에 맞는 peak 호출 방법(SEACR 등)과 임계값을 밝힌다
+    why: ChIP용 기본값은 이 자료에서 거짓 peak를 늘리거나 놓칠 수 있다
+  - id: replicates
+    check: 조건당 생물학적 반복을 두고 반복 간 일치를 보고한다
+    why: 단일 시료 결과는 일반화할 수 없다
+
+dna_methylation:
+  - id: conversion_rate
+    check: bisulfite 변환 효율(비CpG 메틸화율 또는 spike-in)을 보고한다
+    why: 변환이 불완전하면 메틸화가 과대추정된다
+  - id: coverage_snp
+    check: CpG별 최소 coverage 기준과 C>T SNP 위치 제외를 밝힌다
+    why: 낮은 coverage와 SNP는 메틸화 수준을 왜곡한다
+  - id: differential_model
+    check: 차등 메틸화는 반복과 coverage를 반영한 모형(beta-binomial 등)으로 판정한다
+    why: 비율만 비교하면 coverage 차이를 무시하게 된다
+
+germline_wgs_wes:
+  - id: pipeline_reference
+    check: 정렬·중복 표지·변이 호출 과정(예를 들어 GATK best practices)과 참조 유전체 판본을 밝힌다
+    why: 파이프라인과 참조 판본이 변이 목록을 바꾼다
+  - id: sample_qc
+    check: 시료 QC(평균 coverage, 성별 일치, 혈연·오염 점검)를 보고한다
+    why: 시료 혼동과 오염을 분석 전에 잡기 위해서다
+  - id: variant_filtering
+    check: 변이 필터 기준(VQSR 또는 hard filter)과 Ti/Tv 같은 call set 지표를 보고한다
+    why: 필터가 정밀도와 민감도를 함께 정하기 때문이다
+
+somatic_wgs_wes:
+  - id: matched_normal
+    check: 짝지은 정상 시료나 panel of normals를 쓰고, 없으면 한계로 밝힌다
+    why: 생식계열 변이를 체세포 변이로 잘못 부르지 않기 위해서다
+  - id: purity_contamination
+    check: 종양 순도와 교차 오염을 추정해 보고한다
+    why: 순도와 오염이 VAF 해석과 검출력을 바꾼다
+  - id: artifact_filters
+    check: FFPE·산화 같은 인공 변이 필터와 VAF·depth 기준을 밝힌다
+    why: 시료 처리 인공물이 체세포 변이처럼 보인다
+
+rare_disease_genomics:
+  - id: phenotype_hpo
+    check: 표현형을 HPO 용어로 정리해 후보 우선순위에 쓴다
+    why: 표현형이 수많은 후보를 줄이는 주된 근거다
+  - id: inheritance
+    check: 가계와 유전 양식(de novo, 열성, X연관)을 고려하고, 있으면 trio 등 가족 자료를 쓴다
+    why: 유전 양식이 맞지 않는 후보를 거르기 위해서다
+  - id: acmg_classification
+    check: 변이 해석은 ACMG/AMP 기준으로 근거와 함께 분류하고, 임상 확정에는 확인 검사가 필요함을 밝힌다
+    why: 연구 분석 결과를 진단처럼 읽지 않게 하기 위해서다
+
+ont_long_read:
+  - id: basecalling
+    check: basecaller와 모델 판본, read 품질·길이 분포(N50)를 보고한다
+    why: basecaller 판본에 따라 정확도가 크게 다르다
+  - id: error_profile
+    check: homopolymer 등 오류 특성에 맞는 도구와 polishing을 쓰고 짧은 indel 해석에 주의한다
+    why: ONT 고유 오류가 indel 변이처럼 보일 수 있다
+
+pacbio_long_read:
+  - id: read_type
+    check: HiFi와 CLR을 구분하고 read 정확도·길이 분포를 보고한다
+    why: read 종류에 따라 맞는 도구와 기대 정확도가 다르다
+  - id: platform_tools
+    check: 정렬·변이 호출에 PacBio 자료에 맞춘 도구·모델을 쓰고 판본을 밝힌다
+    why: short-read용 기본값은 긴 read 오류 특성과 맞지 않는다
+
+long_read_transcriptomics:
+  - id: isoform_definition
+    check: full-length read 선별과 isoform 인정 기준(지원 read 수, 5'·3' 완결성)을 밝힌다
+    why: 잘린 read가 새 isoform처럼 보일 수 있다
+  - id: novel_isoform_support
+    check: 새 isoform은 참조 주석·short-read·독립 증거로 확인하거나 후보로 표시한다
+    why: 단일 근거의 새 isoform은 인공물일 가능성이 있다
+  - id: quantification
+    check: isoform 정량 방법과 조건당 반복을 밝힌다
+    why: 반복 없이 isoform 차이를 판정할 수 없다
+
+metagenome_assembly:
+  - id: bin_quality
+    check: MAG의 완결성·오염(CheckM 등)과 품질 등급(MIMAG)을 보고한다
+    why: 오염된 bin은 존재하지 않는 유전체를 만든다
+  - id: host_removal
+    check: 숙주 read 제거와 assembly 방식(시료별 또는 co-assembly)·파라미터를 밝힌다
+    why: 숙주 서열과 assembly 선택이 회수되는 유전체를 바꾼다
+
+metagenomic_taxonomy:
+  - id: database_version
+    check: 분류 데이터베이스와 판본을 밝힌다
+    why: 분류 결과가 데이터베이스에 크게 좌우된다
+  - id: negative_controls
+    check: 추출·시약 blank 같은 음성 대조로 오염을 점검한다
+    why: 저생물량 시료에서는 시약 오염이 결과를 지배할 수 있다
+  - id: compositional_analysis
+    check: 상대 풍부도는 조성 자료에 맞는 방법(CLR 변환 등)으로 비교하고 시퀀싱 깊이 차이를 처리한다
+    why: 비율 자료를 그대로 비교하면 거짓 상관이 생긴다
+
+amplicon_sequencing:
+  - id: region_primers
+    check: 표적 영역(예를 들어 16S V4)과 primer 제거 방식을 밝힌다
+    why: 영역과 primer가 검출 가능한 분류군을 정한다
+  - id: denoising
+    check: ASV denoising(DADA2 등)과 chimera 제거 기준을 밝힌다
+    why: 시퀀싱 오류와 chimera가 가짜 분류군을 만든다
+  - id: controls
+    check: 음성 대조와 mock community로 오염과 정확도를 점검한다
+    why: 대조 없이는 오염과 실제 신호를 구분할 수 없다
+
+viral_genomics:
+  - id: consensus_masking
+    check: consensus는 최소 depth 기준 아래 위치를 N으로 가리고 그 기준을 밝힌다
+    why: 낮은 coverage 위치의 염기는 믿을 수 없다
+  - id: primer_dropout
+    check: amplicon 방식이면 primer를 제거하고 amplicon 탈락 구간을 확인한다
+    why: primer 서열과 탈락 구간이 변이·결손처럼 보인다
+  - id: lineage_versions
+    check: lineage·clade 지정 도구와 데이터 판본(Pangolin, Nextclade 등)을 밝힌다
+    why: 판본이 바뀌면 같은 서열의 lineage가 달라진다
+
+bacterial_genome_assembly:
+  - id: completeness_contamination
+    check: 완결성·오염(CheckM, BUSCO)과 coverage를 보고한다
+    why: 불완전하거나 오염된 assembly는 유전자 유무 판단을 틀리게 한다
+  - id: species_identity
+    check: 종 동정(ANI 등)으로 시료 정체를 확인한다
+    why: 라벨이 틀린 균주를 다른 종으로 해석하지 않기 위해서다
+  - id: annotation_versions
+    check: 주석 도구와 데이터베이스 판본(Bakta·Prokka, 항생제 내성 DB 등)을 밝힌다
+    why: 주석 판본에 따라 유전자·내성 판정이 달라진다
+
+alternative_splicing:
+  - id: replicates_junctions
+    check: 조건당 생물학적 반복과 junction read 최소 기준을 밝힌다
+    why: 반복과 junction 근거 없이 splicing 차이를 판정할 수 없다
+  - id: depth_read_length
+    check: read 길이와 depth가 splicing 정량에 충분한지 보고한다
+    why: 짧은 read와 낮은 depth는 이벤트 추정을 불안정하게 만든다
+  - id: event_support
+    check: 주요 이벤트는 sashimi plot이나 독립 증거로 확인하거나 후보로 표시한다
+    why: 단일 도구의 이벤트 호출은 인공물을 포함한다
