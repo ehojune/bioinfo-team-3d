@@ -71,6 +71,23 @@ def test_waiting_quota_request_stays_visible_and_active(tmp_path, caplog):
     assert "gateway shutdown with running requests: quota" in caplog.text
 
 
+def test_waiting_login_request_stays_visible_and_active(tmp_path, caplog):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["login"] = {"id": "login", "text": "resume after login", "mode": "orchestrate",
+                              "status": "waiting_login", "created_at": 1.0, "results": {},
+                              "login_waits": {"s1": {"engine": "codex", "resume_at": 9999999999,
+                                                       "deadline_at": 9999999999, "reason": "expired"}}}
+    headers = {"Authorization": f"Bearer {settings.gateway.client_token}"}
+
+    with caplog.at_level(logging.WARNING), TestClient(app) as client:
+        assert [r["id"] for r in client.get("/api/requests?status=running", headers=headers).json()] == ["login"]
+        assert client.get("/api/health").json()["active_requests"] == 1
+    assert "gateway shutdown with running requests: login" in caplog.text
+
+
 def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     def api(_settings, _method, path):
         if path == "/api/health":
@@ -92,6 +109,17 @@ def test_cli_status_shows_running_work_and_approvals(monkeypatch, capsys):
     assert "s2: running" in output and "a1 [tool_permission] 검토" in output
     assert "확인 $0.30 + 추정 $0.20 + 미집계 1건" in output
     assert "claude_code 확인 $0.30" in output and "codex 추정 $0.20 + 미집계 1건" in output
+
+
+def test_cli_resume_uses_the_existing_hold_endpoint(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr("labhq.cli._api", lambda _s, method, path, **kwargs:
+                        calls.append((method, path, kwargs)) or {"ok": True})
+
+    main(["resume", "request-a", "review-1"])
+
+    assert calls == [("POST", "/api/requests/request-a/steps/review-1/resume-quota", {"json": {}})]
+    assert "'ok': True" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio

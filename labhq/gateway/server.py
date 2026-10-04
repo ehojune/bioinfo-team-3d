@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..integrations.github import ProjectReporter
 from ..intake import MAX_REFERENCES, Reference, effective_references
 from ..integrations.rounds import RoundRecorder, environment_snapshot
+from ..login import login_command
 from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
@@ -226,8 +227,11 @@ class Hub:
         self.recovery_steps: set[str] = set()
         self.recovered_tasks: set[str] = set()
         self.quota_events: dict[str, asyncio.Event] = {}
+        self.login_events: dict[str, asyncio.Event] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
+        self.login_notices = {str(entry.get("engine") or "") for req in self.requests.values()
+                              for entry in (req.get("login_waits") or {}).values()}
         self.last_runner_rosters: dict[str, dict] = self.store.all("runner_roster")
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
@@ -242,7 +246,7 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if is_active_request(req.get("status")) and req.get("status") != "waiting_quota":
+            if is_active_request(req.get("status")) and req.get("status") not in {"waiting_quota", "waiting_login"}:
                 req["status"] = "interrupted"
                 self.save_request(rid)
             stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
@@ -254,6 +258,9 @@ class Hub:
                 # Only a follow-up parks on a finished request, and it was interrupted above; its wait must not
                 # hold the engine or send the finished request back through run_request (#302 review).
                 req.pop("quota_waits")
+                self.save_request(rid)
+            if not is_active_request(req.get("status")) and req.get("login_waits"):
+                req.pop("login_waits")
                 self.save_request(rid)
             if req.get("status") == "interrupted" and not any(
                 a["approval"].get("kind") == "resume" and a["approval"].get("request_id") == rid
@@ -287,13 +294,67 @@ class Hub:
         return {"engine": engine, "resume_at": max(float(item["resume_at"]) for item in waits),
                 "deadline_at": min(float(item["deadline_at"]) for item in waits)}
 
+    def login_hold(self, engine: str) -> dict | None:
+        """The account-wide login hold for an engine, derived from durable waits."""
+        waits = [entry for req in self.requests.values() for entry in (req.get("login_waits") or {}).values()
+                 if entry.get("engine") == engine]
+        if not waits:
+            return None
+        return {"engine": engine, "resume_at": max(float(item["resume_at"]) for item in waits),
+                "deadline_at": min(float(item["deadline_at"]) for item in waits),
+                "waiting_since": min(float(item.get("waiting_since") or time.time()) for item in waits)}
+
+    def engine_login_holds(self) -> list[dict]:
+        """One web/CLI notice card per held engine, never one per waiting request."""
+        by_engine: dict[str, tuple[str, str, str | None]] = {}
+        for rid, req in self.requests.items():
+            for step_id, entry in (req.get("login_waits") or {}).items():
+                by_engine.setdefault(str(entry.get("engine") or ""),
+                                     (rid, step_id, entry.get("runner_id")))
+        return [{"kind": "login", "engine": engine,
+                 "command": self._login_command(engine, location[2]),
+                 "request_id": location[0], "step_id": location[1]}
+                for engine, location in sorted(by_engine.items())]
+
+    def _login_command(self, engine: str, runner_id: str | None = None) -> str:
+        """Build guidance for the runner that hosts this engine, falling back to the gateway host."""
+        capabilities = self.runner_capabilities.get(runner_id or "")
+        if capabilities is None:
+            wanted = "claude_code" if engine == "claude" else engine
+            for agent_id, agent in self.agents.items():
+                if str(agent.get("engine") or "") != wanted:
+                    continue
+                candidate = self.agent_runner.get(agent_id) or agent.get("runner_id")
+                if candidate in self.runner_capabilities:
+                    capabilities = self.runner_capabilities[candidate]
+                    break
+        return login_command(engine, self.s, capabilities)
+
+    def _sync_hold_status(self, req: dict) -> None:
+        if not is_active_request(req.get("status")):
+            return
+        if req.get("login_waits"):
+            req["status"] = "waiting_login"
+        elif req.get("quota_waits"):
+            req["status"] = "waiting_quota"
+        elif req.get("status") in {"waiting_login", "waiting_quota"}:
+            req["status"] = "running"
+
     def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
         req = self.requests[rid]
         entry = (req.get("quota_waits") or {}).pop(step_id, None)
         if not req.get("quota_waits"):
             req.pop("quota_waits", None)
-            if req.get("status") == "waiting_quota":
-                req["status"] = "running"
+        self._sync_hold_status(req)
+        self.save_request(rid)
+        return entry
+
+    def _remove_login_wait(self, rid: str, step_id: str) -> dict | None:
+        req = self.requests[rid]
+        entry = (req.get("login_waits") or {}).pop(step_id, None)
+        if not req.get("login_waits"):
+            req.pop("login_waits", None)
+        self._sync_hold_status(req)
         self.save_request(rid)
         return entry
 
@@ -348,11 +409,95 @@ class Hub:
             except asyncio.TimeoutError:
                 continue
 
+    async def release_login(self, engine: str, *, manual: bool) -> list[tuple[str, str]]:
+        """Release one engine login hold and all requests sharing that account."""
+        released = []
+        for rid, req in list(self.requests.items()):
+            for step_id, entry in list((req.get("login_waits") or {}).items()):
+                if entry.get("engine") != engine:
+                    continue
+                self._remove_login_wait(rid, step_id)
+                released.append((rid, step_id))
+                await self.publish({"type": "request.step_login_resumed", "ts": time.time(),
+                                    "request_id": rid, "data": {"step_id": step_id, "engine": engine,
+                                                                   "manual": manual}})
+        event = self.login_events.pop(engine, None)
+        if event:
+            event.set()
+        if released and manual:
+            self.login_notices.discard(engine)
+            await self.publish({"type": "engine.login_resumed", "ts": time.time(),
+                                "data": {"engine": engine, "manual": manual}})
+        return released
+
+    async def login_recovered(self, engine: str, *, reason: str | None = None) -> None:
+        """End one account notice when no request is still held for that engine."""
+        if engine not in self.login_notices or self.login_hold(engine) is not None:
+            return
+        self.login_notices.discard(engine)
+        await self.publish({"type": "engine.login_resumed", "ts": time.time(),
+                            "data": {"engine": engine, "manual": False,
+                                     **({"reason": reason} if reason else {})}})
+
+    async def wait_login(self, rid: str, step_id: str, engine: str, *, resume_at: float,
+                         deadline_at: float, reason: str, agent_id: str | None = None) -> bool:
+        """Park until the PI logs in, the retry clock fires, or the bounded wait expires."""
+        req = self.requests[rid]
+        first_notice = engine not in self.login_notices
+        started = (((req.get("login_windows") or {}).get(engine) or {}).get("started_at") or time.time())
+        runner_id = self.agent_runner.get(agent_id or "")
+        entry = {"engine": engine, "resume_at": resume_at, "deadline_at": deadline_at,
+                 "reason": short(reason, 500), "waiting_since": started,
+                 **({"runner_id": runner_id} if runner_id else {})}
+        command = self._login_command(engine, runner_id)
+        previous = (req.get("login_waits") or {}).get(step_id)
+        req.setdefault("login_waits", {})[step_id] = entry
+        self._sync_hold_status(req)
+        self.save_request(rid)
+        if previous != entry:
+            await self.publish({"type": "request.step_login_wait", "ts": time.time(), "request_id": rid,
+                                "data": {"step_id": step_id, "engine": engine, "resume_at": resume_at,
+                                         "deadline_at": deadline_at, "reason": short(reason, 500),
+                                         "command": command}})
+        if first_notice:
+            self.login_notices.add(engine)
+            await self.publish({"type": "engine.login_wait", "ts": time.time(), "request_id": rid,
+                                "data": {"engine": engine, "command": command,
+                                         "request_id": rid, "step_id": step_id}})
+        while True:
+            hold = self.login_hold(engine)
+            if hold is None:
+                return True
+            now = time.time()
+            if now >= deadline_at:
+                self._remove_login_wait(rid, step_id)
+                return False
+            if now >= hold["resume_at"]:
+                await self.release_login(engine, manual=False)
+                return True
+            event = self.login_events.setdefault(engine, asyncio.Event())
+            try:
+                await asyncio.wait_for(event.wait(), min(hold["resume_at"], deadline_at) - now)
+            except asyncio.TimeoutError:
+                continue
+
     async def force_quota_resume(self, rid: str, step_id: str) -> list[tuple[str, str]]:
         entry = (self.requests[rid].get("quota_waits") or {}).get(step_id)
-        if not entry:
-            raise KeyError(step_id)
-        return await self.release_quota(entry["engine"], manual=True)
+        if entry:
+            return await self.release_quota(entry["engine"], manual=True)
+        entry = (self.requests[rid].get("login_waits") or {}).get(step_id)
+        if entry:
+            return await self.release_login(entry["engine"], manual=True)
+        raise KeyError(step_id)
+
+    async def resume_held_request(self, rid: str) -> None:
+        """Recover a quota/login parked request without asking for PI resume approval."""
+        req = self.requests[rid]
+        if not req.get("quota_waits") and not req.get("login_waits"):
+            req["status"] = "interrupted"
+            self.save_request(rid)
+            return
+        await self.resume_when_ready(rid)
 
     async def resume_quota_request(self, rid: str) -> None:
         """After a gateway restart, recover at once without a PI approval.
@@ -360,12 +505,7 @@ class Hub:
         The durable waits stay. Each recovered step meets its own engine's hold in run_step, so steps on
         other engines and checkpoints that already arrived do not wait for that quota.
         """
-        req = self.requests[rid]
-        if not req.get("quota_waits"):
-            req["status"] = "interrupted"
-            self.save_request(rid)
-            return
-        await self.resume_when_ready(rid)
+        await self.resume_held_request(rid)
 
     def _session_state_changed(self) -> None:
         self.session_revision += 1
@@ -422,6 +562,9 @@ class Hub:
         for sid in (req.get("quota_waits") or {}):
             if states.get(sid, "pending") == "pending":
                 states[sid] = "waiting_quota"
+        for sid in (req.get("login_waits") or {}):
+            if states.get(sid, "pending") == "pending":
+                states[sid] = "waiting_login"
         for task in self.running_tasks():
             if task["request_id"] == rid:
                 entry = self.store.get("task", task["id"]) or {}
@@ -1664,6 +1807,7 @@ class Hub:
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
             "running_tasks": self.running_tasks(),
+            "engine_holds": self.engine_login_holds(),
             "recent_events": [snapshot_event(e) for e in recent_events],
         }}
 
@@ -1677,6 +1821,7 @@ class Hub:
             matches = [(tid, entry) for tid, entry in tasks if entry.get("step_id") == sid]
             result = (request.get("results") or {}).get(sid) or {}
             quota = (request.get("quota_waits") or {}).get(sid) or {}
+            login = (request.get("login_waits") or {}).get(sid) or {}
             latest = max(matches, key=lambda pair: pair[1].get("dispatched_at", 0), default=(None, {}))
             details[sid] = {
                 "task_id": result.get("task_id") or latest[0],
@@ -1687,6 +1832,9 @@ class Hub:
                 "error": result.get("error") or "",
                 "quota_resume_at": quota.get("resume_at"),
                 "quota_engine": quota.get("engine"),
+                "login_resume_at": login.get("resume_at"),
+                "login_engine": login.get("engine"),
+                "login_reason": login.get("reason"),
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
         return details
@@ -1704,8 +1852,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
-            elif request.get("status") == "waiting_quota":
-                asyncio.create_task(hub.resume_quota_request(rid))
+            elif request.get("status") in {"waiting_quota", "waiting_login"}:
+                asyncio.create_task(hub.resume_held_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
@@ -1898,7 +2046,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         try:
             released = await hub.force_quota_resume(rid, step_id)
         except KeyError:
-            raise HTTPException(409, "step is not waiting for quota")
+            raise HTTPException(409, "step is not waiting for quota or login")
         return {"ok": True, "released": [{"request_id": request_id, "step_id": sid}
                                            for request_id, sid in released]}
 

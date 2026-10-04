@@ -236,7 +236,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 .kanban-column h3{margin:0 0 6px;font-size:12px;color:var(--muted)}
 .task-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px;margin-top:6px;font-size:12px}
 .task-card summary{display:flex;justify-content:space-between;gap:6px;cursor:pointer}.task-card p{margin:5px 0;overflow-wrap:anywhere}.task-card ul{margin:3px 0;padding-left:18px}
-.task-working{border-color:var(--working)}.task-waiting_quota{border-color:var(--sleep)}.task-review,.task-error,.task-failed{border-color:var(--wait)}.task-done{opacity:.82}.task-meta{color:var(--muted)}.task-error,.missing{color:var(--error-ink)}.review{color:var(--wait-ink)}
+.task-working{border-color:var(--working)}.task-waiting_quota,.task-waiting_login{border-color:var(--sleep)}.task-review,.task-error,.task-failed{border-color:var(--wait)}.task-done{opacity:.82}.task-meta{color:var(--muted)}.task-error,.missing{color:var(--error-ink)}.review{color:var(--wait-ink)}
 
 /* staff strip */
 .staff-wrap{position:sticky;z-index:18;bottom:76px;max-width:1280px;margin:0 auto 8px;padding:0 16px}
@@ -360,6 +360,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     </nav>
     <section class="panel" data-tab="decisions" aria-labelledby="h-ap">
       <h2 id="h-ap">결정할 일 <span class="n" id="ap-count"></span></h2>
+      <div id="engine-holds"></div>
       <div id="approvals"></div>
       <div id="approval-history" aria-label="결정 이력"></div>
     </section>
@@ -668,9 +669,24 @@ function renderRack() {
 function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
 
 function renderApprovals() {
-  const items = [...S.approvals.values()], sugs = S.suggestions;
-  const total = items.length + sugs.length;
+  const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
+  const total = items.length + sugs.length + holds.length;
   $('#ap-count').textContent = total ? `${total}건` : '';
+  const holdRows = holds.map(hold => {
+    const row = document.createElement('article'); row.className = 'ap'; row.dataset.engine = hold.engine;
+    const body = document.createElement('div'); row.append(body);
+    const kind = document.createElement('div'); kind.className = 'kind'; body.append(kind);
+    const title = document.createElement('strong'); title.textContent = '로그인 대기'; kind.append(title);
+    const engine = document.createElement('span'); engine.textContent = hold.engine; kind.append(engine);
+    const summary = document.createElement('p'); summary.className = 'sum'; summary.textContent = `${hold.engine} 계정에 다시 로그인해 주세요.`; body.append(summary);
+    const command = document.createElement('pre'); command.textContent = hold.command || ''; body.append(command);
+    const resume = document.createElement('button'); resume.className = 'btn go'; resume.type = 'button';
+    resume.textContent = '로그인했어요 · 다시 시도';
+    resume.onclick = () => api?.resumeQuota(hold.request_id, hold.step_id).then(() => toast('로그인 대기를 풀었어요')).catch(err => toast(`재개하지 못했어요: ${err.message}`));
+    body.append(resume); return row;
+  });
+  const holdList = document.createElement('div'); holdList.className = 'list'; holdList.replaceChildren(...holdRows);
+  $('#engine-holds').replaceChildren(...(holdRows.length ? [holdList] : []));
   syncDecisionCards($('#approvals'), items, sugs, { now, nick, kindLabels: KIND_KO, requests: S.requests,
     taskStep: S.taskStep, avatarHTML: (value, type) => headSVG(type === 'suggestion' ? 'owl' : kindOf(ag(value.agent_id))),
     emptyText: '지금은 결정할 일이 없어요. 승인이 필요하면 여기에 바로 떠요.' });
@@ -750,13 +766,13 @@ function renderRequest() {
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   const pick = all.length > 1 ? `<p class="req-pick"><label class="sr" for="req-sel">요청 고르기</label><select id="req-sel">${all.map(r =>
-    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : r.status === 'waiting_quota' ? ' (한도 대기)' : ''}</option>`).join('')}</select></p>` : '';
+    `<option value="${esc(r.id)}"${r.id === q.id ? ' selected' : ''}>${esc(short(r.text || r.id, 40))}${r.status === 'running' ? ' (진행 중)' : r.status === 'waiting_quota' ? ' (한도 대기)' : r.status === 'waiting_login' ? ' (로그인 대기)' : ''}</option>`).join('')}</select></p>` : '';
   const proj = S.projects.find(p => p.id === q.project_id);
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta"><span>${esc(processingLabel(q))}</span></p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'waiting_login' ? '로그인 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
@@ -806,7 +822,7 @@ function renderTargets() {
 }
 let composerRid = null;
 function renderComposerMode() {
-  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota'].includes(q.status);
+  const q = S.requests.get(S.current), active = q && q.mode !== 'direct' && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login'].includes(q.status);
   const mode = $('#send-mode');
   mode.hidden = !active;
   if (active && composerRid !== q.id) { composerRid = q.id; mode.value = 'note'; }
@@ -866,7 +882,7 @@ async function send() {
   const input = $('#ask'), text = input.value.trim(), target = $('#target').value, project = $('#project').value;
   if (!text) { toast('무엇을 맡길지 먼저 적어 주세요'); input.focus(); return; }
   const current = S.requests.get(S.current);
-  const noteMode = current && ['running', 'waiting_for_runner', 'waiting_quota'].includes(current.status) && $('#send-mode').value === 'note';
+  const noteMode = current && ['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login'].includes(current.status) && $('#send-mode').value === 'note';
   if (noteMode) {
     try { await api.note(current.id, text); input.value = ''; toast('다음 단계에 전할 메모를 보냈어요'); }
     catch (e) { toast(`메모를 보내지 못했어요: ${e.message}`); }

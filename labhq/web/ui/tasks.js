@@ -1,7 +1,7 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
-const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
+const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 function list(parent, title, values, className = '') {
   if (!values?.length) return;
@@ -27,6 +27,15 @@ function cardFor(step, status, detail, options) {
     add(card, 'p', `한도 대기, ${when} 재개`, 'task-meta');
     if (options.onQuotaResume) {
       const resume = add(card, 'button', '지금 재개', 'btn'); resume.type = 'button';
+      resume.addEventListener('click', () => options.onQuotaResume(step.id));
+    }
+  }
+  if (status === 'waiting_login') {
+    const when = detail.login_resume_at ? new Date(detail.login_resume_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '시각 확인 중';
+    add(card, 'p', `로그인 대기, ${when} 자동 재시도`, 'task-meta');
+    if (detail.login_reason) add(card, 'p', detail.login_reason, 'task-error');
+    if (options.onQuotaResume) {
+      const resume = add(card, 'button', '로그인했어요 · 다시 시도', 'btn'); resume.type = 'button';
       resume.addEventListener('click', () => options.onQuotaResume(step.id));
     }
   }

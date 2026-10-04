@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -555,6 +557,9 @@ def test_runner_reports_effective_compute_capabilities():
         "scheduler": "none", "compute_backends": ["local CLI"], "hpc_tools": False,
         "engine_cli_versions": {"mock": "unreported"},
         "local_software": {"r": {"available": False, "version": None}},
+        "platform": sys.platform,
+        "environment": {key: os.environ[key] for key in (
+            "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "XDG_CONFIG_HOME") if os.environ.get(key)},
     }
     assert hello["agents"][0]["engine"] == "mock"
 

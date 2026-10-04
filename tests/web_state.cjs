@@ -113,6 +113,15 @@ assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,2000);
 fresh.apply({type:'request.step_quota_resumed',request_id:'r3',data:{step_id:'s2',engine:'codex',manual:true}});
 assert.equal(fresh.req('r3').steps.s2,'pending');
 assert.equal(fresh.S.stepDetails.get('r3:s2').quota_resume_at,undefined);
+fresh.apply({type:'request.step_login_wait',request_id:'r3',data:{step_id:'s2',engine:'claude_code',resume_at:2500,reason:'expired'}});
+assert.equal(fresh.req('r3').steps.s2,'waiting_login');
+assert.equal(fresh.S.stepDetails.get('r3:s2').login_resume_at,2500);
+fresh.apply({type:'engine.login_wait',request_id:'r3',data:{engine:'claude_code',command:'claude\n/login',request_id:'r3',step_id:'s2'}});
+assert.equal(fresh.S.engineHolds.size,1,'one engine login card');
+fresh.apply({type:'request.step_login_resumed',request_id:'r3',data:{step_id:'s2',engine:'claude_code',manual:true}});
+fresh.apply({type:'engine.login_resumed',data:{engine:'claude_code',manual:true}});
+assert.equal(fresh.req('r3').steps.s2,'pending');
+assert.equal(fresh.S.engineHolds.size,0);
 // #302: the request leaves 한도 대기 when its last quota step resumes, not before.
 const quota=create();
 quota.apply({type:'snapshot',data:{requests:[{id:'q',status:'waiting_quota',created_at:1,
@@ -136,6 +145,12 @@ activeSnapshot.apply({type:'snapshot',data:{requests:[
 ]}});
 assert.equal(activeSnapshot.S.current,'quota-active','quota wait remains the selected active request');
 assert.notEqual(activeSnapshot.req('quota-active').phase,'done','quota wait is not rendered as terminal');
+const loginSnapshot=create();
+loginSnapshot.apply({type:'snapshot',data:{engine_holds:[{engine:'codex',command:'codex login',request_id:'l',step_id:'plan'}],requests:[
+  {id:'login-active',status:'waiting_login',created_at:1,step_status:{plan:'waiting_login'}},
+]}});
+assert.equal(loginSnapshot.S.current,'login-active','login wait remains the selected active request');
+assert.equal(loginSnapshot.S.engineHolds.get('codex').command,'codex login');
 for (const terminal of ['request.completed', 'request.failed']) {
   const costs = create();
   costs.apply({type:'agent.usage',request_id:'other',data:{cost_usd:2}});

@@ -60,7 +60,7 @@ def _normalize_instance_arg(argv: list[str]) -> list[str]:
     return (["--instance", instances[0]] if instances else []) + rest
 
 
-def render(ev: dict) -> None:
+def render(ev: dict, login_holds: set[str] | None = None) -> None:
     t, a, d = ev.get("type"), ev.get("agent_id") or "", ev.get("data") or {}
     ic = ICON.get(a, "🐥" if a.startswith("c_") else "·")
     ts = datetime.fromtimestamp(ev.get("ts", time.time())).strftime("%H:%M:%S")
@@ -97,6 +97,18 @@ def render(ev: dict) -> None:
     elif t == "request.route":
         line = ("↪ 처리: 단독 실패 → 팀" if d.get("fallback") else
                 f"↪ 처리: 단독({d.get('agent_id')})" if d.get("mode") == "solo" else "↪ 처리: 팀")
+    elif t in {"engine.login_wait", "request.step_login_wait"}:
+        engine = str(d.get("engine") or "")
+        if login_holds is not None and engine in login_holds:
+            return
+        if login_holds is not None:
+            login_holds.add(engine)
+        line = (f"🔐 {engine} 로그인 대기\n   {d.get('command', '')}\n"
+                "   다시 로그인한 뒤 자동 재시도 또는 resume")
+    elif t == "engine.login_resumed":
+        if login_holds is not None:
+            login_holds.discard(str(d.get("engine") or ""))
+        line = f"🔓 {d.get('engine')} 로그인 대기 해제"
     elif t == "recruit.suggested":
         line = f"🧾 CSO 채용 제안: {d.get('repo') or d.get('paper')} — {d.get('reason')}"
     elif t == "request.review":
@@ -128,6 +140,12 @@ def render(ev: dict) -> None:
         line = f"🔌 {t}: {d.get('runner_id')}"
     if line:
         print(f"[{ts}] {line}", flush=True)
+
+
+def render_snapshot(ev: dict, login_holds: set[str]) -> None:
+    """Show durable login holds when watch connects after their original events."""
+    for hold in (ev.get("data") or {}).get("engine_holds") or []:
+        render({"type": "engine.login_wait", "ts": ev.get("ts"), "data": hold}, login_holds)
 
 
 # ---------------- HTTP / WS client helpers ----------------
@@ -210,14 +228,16 @@ async def _watch(s: Settings, request_id: str | None = None) -> None:
     import websockets
 
     url = f"{s.gateway.url.rstrip('/')}/ws/client?token={s.gateway.client_token}"
+    login_holds: set[str] = set()
     async with websockets.connect(url, max_size=64 * 2**20) as ws:
         async for raw in ws:
             ev = json.loads(raw)
             if ev.get("type") == "snapshot":
+                render_snapshot(ev, login_holds)
                 continue
             if request_id and ev.get("request_id") not in (request_id, None):
                 continue
-            render(ev)
+            render(ev, login_holds)
             if request_id and ev.get("request_id") == request_id and ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
                 return
@@ -227,6 +247,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
     import websockets
 
     url = f"{s.gateway.url.rstrip('/')}/ws/client?token={s.gateway.client_token}"
+    login_holds: set[str] = set()
     async with websockets.connect(url, max_size=64 * 2**20) as ws:
         await ws.recv()  # snapshot
         rid = _api(s, "POST", "/api/requests", json=body)["request_id"]
@@ -235,7 +256,7 @@ async def _send_and_wait(s: Settings, body: dict) -> None:
             ev = json.loads(raw)
             if ev.get("request_id") != rid:
                 continue
-            render(ev)
+            render(ev, login_holds)
             if ev["type"] in ("request.completed", "request.failed"):
                 print("\n" + _terminal_report(ev["data"]))
                 return
@@ -565,6 +586,9 @@ def main(argv: list[str] | None = None) -> None:
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
     note.add_argument("text")
+    resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
+    resume.add_argument("request_id")
+    resume.add_argument("step_id")
     sub.add_parser("watch")
     sub.add_parser("projects", help="list projects and their GitHub repos")
     cr = sub.add_parser("codex-review", help="ask Codex to review a PR in a project repo (posts '@codex review')")
@@ -783,6 +807,8 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_send_and_wait(s, body))
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
+    elif args.cmd == "resume":
+        print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":
         asyncio.run(_watch(s))
     elif args.cmd == "projects":

@@ -191,7 +191,7 @@ function syncLive(S, visual) {
   if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}
   const running=[...S.jobs.values()].filter(j=>j.state==='running').length;
   leds.forEach((led,i)=>{led.visible=i<running;});
-  liveApprovalCount=S.approvals.size;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인 대기 ${liveApprovalCount}`;requestRender();
+  liveApprovalCount=S.approvals.size+S.engineHolds.size;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인·로그인 대기 ${liveApprovalCount}`;requestRender();
 }
 function pose(state){return ({sleep:'hibernating',sleeping:'hibernating',idle:'queued'})[state]|| (STATES.includes(state)?state:'queued');}
 if(!demo)startLiveOffice(syncLive);

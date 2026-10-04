@@ -3,7 +3,7 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
-const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota']);
+const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
@@ -52,12 +52,13 @@ const S = {
 // Keep it out of legacy state serialization while exposing it to both UIs.
 Object.defineProperty(S, 'stepDetails', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'askDetails', { value: new Map(), enumerable: false });
+Object.defineProperty(S, 'engineHolds', { value: new Map(), enumerable: false });
 // #36 additions stay non-enumerable too, so the legacy state digests (tests/web_state.cjs) are unchanged.
 Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
-  S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.seq = 0; S.doorUntil = 0;
+  S.lastSay = {}; S.taskStep.clear(); S.stepDetails.clear(); S.askDetails.clear(); S.engineHolds.clear(); S.seq = 0; S.doorUntil = 0;
   S.defaultRefs = [];
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
@@ -123,10 +124,11 @@ function endApproval(id, effects) {
   effects.push({ type: 'toast.clear', approval_id: id });
 }
 // The gateway sends no request status event for quota: the request waits exactly while one of its steps does.
-function syncQuotaStatus(q) {
-  const parked = Object.values(q.steps).includes('waiting_quota');
-  if (parked && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
-  else if (!parked && q.status === 'waiting_quota') q.status = 'running';
+function syncHoldStatus(q) {
+  const states = Object.values(q.steps);
+  if (states.includes('waiting_login') && !isTerminalRequest(q.status)) q.status = 'waiting_login';
+  else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
+  else if (['waiting_login', 'waiting_quota'].includes(q.status)) q.status = 'running';
 }
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -175,6 +177,7 @@ function apply(ev, replay = false) {
       S.projects = d.projects || [];
       S.defaultRefs = d.default_references || [];
       (d.recent_events || []).forEach(e => apply(e, true));
+      (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
@@ -325,19 +328,43 @@ function apply(ev, replay = false) {
     case 'request.step_quota_wait': {
       const q = req(rid); q.steps[d.step_id] = 'waiting_quota';
       Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine });
-      syncQuotaStatus(q);
+      syncHoldStatus(q);
       break;
     }
     case 'request.step_quota_resumed': {
       const q = req(rid), detail = stepDetail(rid, d.step_id);
       if (q.steps[d.step_id] === 'waiting_quota') q.steps[d.step_id] = 'pending';
       delete detail.quota_resume_at; delete detail.quota_engine;
-      syncQuotaStatus(q);
+      syncHoldStatus(q);
+      break;
+    }
+    case 'request.step_login_wait': {
+      const q = req(rid); q.steps[d.step_id] = 'waiting_login';
+      Object.assign(stepDetail(rid, d.step_id), { login_resume_at: d.resume_at, login_engine: d.engine,
+        login_reason: d.reason || '' });
+      syncHoldStatus(q);
+      break;
+    }
+    case 'request.step_login_resumed': {
+      const q = req(rid), detail = stepDetail(rid, d.step_id);
+      if (q.steps[d.step_id] === 'waiting_login') q.steps[d.step_id] = 'pending';
+      delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason;
+      syncHoldStatus(q);
+      break;
+    }
+    case 'engine.login_wait': {
+      S.engineHolds.set(d.engine, {...d, kind:'login'});
+      feed({ who:'system', text:`${d.engine} 로그인이 필요해요. ${d.command || ''}`, cls:'alert' }, ts, rid);
+      if (!replay) effects.push({ type:'toast', text:`${d.engine} 로그인 뒤 다시 시도해 주세요` });
+      break;
+    }
+    case 'engine.login_resumed': {
+      S.engineHolds.delete(d.engine);
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; syncQuotaStatus(q); break; }
-    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncQuotaStatus(q); break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); delete detail.quota_resume_at; delete detail.quota_engine; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
+    case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
       q.review = d; q.phase = d.verdict === 'revise' ? 'execute' : 'review';

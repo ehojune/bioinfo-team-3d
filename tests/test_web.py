@@ -91,6 +91,19 @@ def test_quota_wait_card_has_a_working_manual_resume_action():
     assert "/resume-quota`" in html
 
 
+def test_login_wait_has_one_engine_card_and_manual_resume_action():
+    from labhq.gateway import server
+
+    html = (server.WEB / "index.html").read_text(encoding="utf-8")
+    state = (server.WEB / "state.js").read_text(encoding="utf-8")
+    tasks = (server.WEB / "ui" / "tasks.js").read_text(encoding="utf-8")
+    live = (server.WEB / "lab3d" / "src" / "live.js").read_text(encoding="utf-8")
+    assert "case 'request.step_login_wait':" in state and "case 'engine.login_wait':" in state
+    assert "S.engineHolds.set(d.engine" in state and 'id="engine-holds"' in html
+    assert "로그인했어요 · 다시 시도" in html and "로그인했어요 · 다시 시도" in tasks
+    assert "login-holds" in live and "/resume-quota" in live
+
+
 def test_clarify_approval_takes_a_typed_answer():
     """A PI question is answered in the approval note; an empty note would stop the request."""
     from pathlib import Path

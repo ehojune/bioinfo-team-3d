@@ -39,13 +39,29 @@ export function startLiveOffice(onState) {
       link.href = url; link.download = `labhq-audit-${rid}.zip`; link.click(); URL.revokeObjectURL(url);
     } catch (error) { notice(`감사 번들을 받지 못했어요: ${error.message}`); }
   }
+  async function resumeLogin(hold) {
+    try {
+      const response = await fetch(`/api/requests/${encodeURIComponent(hold.request_id)}/steps/${encodeURIComponent(hold.step_id)}/resume-quota`,
+        {method:'POST', headers:{Authorization:`Bearer ${token}`, 'Content-Type':'application/json'}, body:'{}'});
+      if (!response.ok) throw new Error(String(response.status));
+      notice('로그인 대기를 풀었어요.');
+    } catch (error) { notice(`재개하지 못했어요: ${error.message}`); }
+  }
   function text(parent, tag, value) {
     const el = document.createElement(tag); el.textContent = value; parent.append(el); return el;
   }
   function render() {
     $('connection').textContent = {live:'실시간', connecting:'연결 중', offline:'연결 끊김 · 재시도 중', auth:'토큰 확인 필요'}[S.conn];
     $('token-form').hidden = S.conn !== 'auth' && S.conn !== 'offline';
-    $('approval-count').textContent = S.approvals.size;
+    $('approval-count').textContent = S.approvals.size + S.engineHolds.size;
+    const holdRows = [...S.engineHolds.values()].map(hold => {
+      const row = document.createElement('article');
+      text(row, 'strong', `로그인 대기 · ${hold.engine}`);
+      text(row, 'pre', hold.command || '');
+      const button = text(row, 'button', '로그인했어요 · 다시 시도'); button.type = 'button';
+      button.onclick = () => resumeLogin(hold); return row;
+    });
+    $('login-holds').replaceChildren(...holdRows);
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
       emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onDecision:(a, approved, note, _type, choice) => {
