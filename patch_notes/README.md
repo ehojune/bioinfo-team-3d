@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:34 | [`6c7576d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/6c7576d) | 로그인 창은 복구 중인 turn이 모두 끝날 때 지우고 재로그인 명령은 대상 runner 정보로만 만든다 |
+| 03:20 | [`797717d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/797717d) | 로그인 대기 후속으로 runner를 모르면 설정 키 안내, 재시작 뒤 알림 상태 재계산, 대기 turn이 남으면 로그인 창 유지 |
 | 03:07 | [`112f1dc`](https://github.com/ehojune/bioinfo-team-3d/pull/400/commits/112f1dc) | 계획 프롬프트의 topic 점검표는 점검 문장만 싣고 이유는 리뷰 문맥에만 둔다 |
 | 02:53 | [`60bca43`](https://github.com/ehojune/bioinfo-team-3d/pull/398/commits/60bca43) | 로그인 재시도에서 원래 작업 필드를 보존하고 만료된 엔진 알림을 정리한다 |
 | 02:37 | [`779db10`](https://github.com/ehojune/bioinfo-team-3d/pull/399/commits/779db10) | 단일세포 pack도 topic(single_cell_rna_seq)으로 적용하는 single_cell_de@3을 더하고 @2는 재개용으로 둔다 |
