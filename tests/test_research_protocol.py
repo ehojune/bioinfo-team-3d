@@ -60,9 +60,20 @@ def valid_pack_values():
 
 
 def valid_plan(packs=None, steps=1, pack_values=None, topics=None):
+    selected_topics = ["single_cell_rna_seq"] if topics is None else topics
+    checklist = {}
+    if "single_cell_rna_seq" in selected_topics:
+        checklist.update({"pseudobulk": "step:s1", "qc": "step:s1", "batch": "step:s1"})
+    if "bulk_rna_seq" in selected_topics or "microarray_expression" in selected_topics:
+        checklist.update({"batch": "step:s1", "pairing": "step:s1", "gene_set_test": "step:s1",
+                          "independent_validation": "not_applicable: no independent cohort in fixture"})
+    if "microarray_expression" in selected_topics:
+        checklist["probe_mapping"] = "step:s1"
     return {
         "schema_version": 2,
-        "topics": ["single_cell_rna_seq"] if topics is None else topics,
+        "topics": selected_topics,
+        "checklist": checklist,
+        "suggested_next": [],
         "intake": {"work_kind": "research", "reason": "PI specified work_kind=research",
                    "scope_status": "in_scope", "confidence": "clear", "source": "explicit"},
         "brief": {"question": "Does condition change expression?", "purpose": "Choose the next assay",

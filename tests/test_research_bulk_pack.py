@@ -457,11 +457,12 @@ async def test_empty_topics_warning_is_frozen_and_visible_on_the_cp1_card():
     hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="Inspect expression data")
     await Orchestrator(hub).run_request("r")
     warning = "topics is empty; topic-conditioned packs were not applied"
+    precedent_warning = "analysis precedents unavailable (agent_unavailable)"
     assert hub.requests["r"]["outcome"] == "plan_approved"
-    assert hub.requests["r"]["plan"]["warnings"] == [warning]
+    assert hub.requests["r"]["plan"]["warnings"] == [warning, precedent_warning]
     detail = hub.approvals[0]["detail"]
-    assert detail["warnings"] == [warning]
-    assert json.loads(detail["plan_canonical"])["warnings"] == [warning]
+    assert detail["warnings"] == [warning, precedent_warning]
+    assert json.loads(detail["plan_canonical"])["warnings"] == [warning, precedent_warning]
 
 
 def test_pack_catalog_exposes_bulk_pack_values_keys_and_applicability():

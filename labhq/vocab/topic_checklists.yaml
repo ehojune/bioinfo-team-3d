@@ -1,0 +1,41 @@
+bulk_rna_seq:
+  - id: batch
+    check: 처리 batch(스캔 날짜, array·lane, 기관)와 비교 집단의 교락을 확인하고 모형에 넣거나 한계로 보고한다
+    why: 기술 차이를 생물학적 차이로 해석하지 않기 위해서다
+  - id: pairing
+    check: 같은 환자·공여자 시료는 주 모형과 유전자 세트 검정 모두에서 짝을 유지하고 짝 없는 시료를 밝힌다
+    why: 개인차를 조건 효과로 잘못 세지 않기 위해서다
+  - id: gene_set_test
+    check: 유전자 세트 검정은 주 모형의 통계량으로 순위를 매기거나 짝 보존 방식으로 하며 짝을 무시한 재검정을 주 결과로 쓰지 않는다
+    why: 주 분석의 짝과 보정을 경로 검정에서도 보존하기 위해서다
+  - id: independent_validation
+    check: 독립 코호트·데이터셋이 있으면 핵심 결과를 검증하고 없으면 이유를 밝힌다
+    why: 한 데이터셋에만 맞는 결론인지 확인하기 위해서다
+
+microarray_expression:
+  - id: batch
+    check: 처리 batch(스캔 날짜, array·lane, 기관)와 비교 집단의 교락을 확인하고 모형에 넣거나 한계로 보고한다
+    why: 기술 차이를 생물학적 차이로 해석하지 않기 위해서다
+  - id: pairing
+    check: 같은 환자·공여자 시료는 주 모형과 유전자 세트 검정 모두에서 짝을 유지하고 짝 없는 시료를 밝힌다
+    why: 개인차를 조건 효과로 잘못 세지 않기 위해서다
+  - id: gene_set_test
+    check: 유전자 세트 검정은 주 모형의 통계량으로 순위를 매기거나 짝 보존 방식으로 하며 짝을 무시한 재검정을 주 결과로 쓰지 않는다
+    why: 주 분석의 짝과 보정을 경로 검정에서도 보존하기 위해서다
+  - id: independent_validation
+    check: 독립 코호트·데이터셋이 있으면 핵심 결과를 검증하고 없으면 이유를 밝힌다
+    why: 한 데이터셋에만 맞는 결론인지 확인하기 위해서다
+  - id: probe_mapping
+    check: probe→gene 집약 규칙과 플랫폼 주석 판본을 밝힌다
+    why: 여러 probe와 오래된 주석이 유전자별 결과를 바꿀 수 있기 때문이다
+
+single_cell_rna_seq:
+  - id: pseudobulk
+    check: 공여자 간 비교는 세포가 아니라 공여자 단위(pseudobulk 등)로 한다
+    why: 세포를 독립 생물학적 반복으로 세는 오류를 막기 위해서다
+  - id: qc
+    check: 시료별 QC 기준과 doublet·ambient RNA 처리를 밝힌다
+    why: 시료별 품질과 오염이 집단 차이처럼 보일 수 있기 때문이다
+  - id: batch
+    check: 통합(integration) 전후 batch 효과를 확인한다
+    why: 통합이 생물학적 신호를 지우거나 기술 차이를 남길 수 있기 때문이다

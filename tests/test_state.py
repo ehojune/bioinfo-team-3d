@@ -929,7 +929,7 @@ def test_plan_only_resume_before_plan_waits_only_for_planners(tmp_path):
     hub = Hub(settings(tmp_path))
     hub.requests["r"] = {"id": "r", "mode": "plan_only", "status": "interrupted"}
 
-    assert hub.resume_agents("r") == {"chief_of_staff", "cso"}
+    assert hub.resume_agents("r") == {"chief_of_staff", "lit_scout", "cso"}
 
 
 def test_plan_only_resume_after_plan_waits_for_no_agents(tmp_path):

@@ -27,7 +27,7 @@ from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, 
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..quota import is_quota_error, received_quota_wait
 from ..request_status import is_terminal_request
-from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
+from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
@@ -38,6 +38,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, pack_
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
+from ..vocab import topic_checklists
 from ..vocab import topics as topic_types
 
 if TYPE_CHECKING:
@@ -62,6 +63,8 @@ PLAN_SCHEMA: dict[str, Any] = {
         "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "assumptions": {"type": "array", "maxItems": 8,
                         "items": {"type": "string", "maxLength": 300}},
+        "checklist": {"type": "object", "additionalProperties": {"type": "string"}},
+        "suggested_next": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
         "route": {"type": "string", "enum": ["team", "solo"]},
         "steps": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
@@ -206,9 +209,45 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
     "required": ["verdict", "issues"],
 }
 
-BRIEFING_PROMPT = """Prepare a briefing (≤300 words) for the CSO on this research request:
+BRIEFING_PROMPT = """Prepare a briefing (≤400 words) for the CSO on this research request:
 field context, recent developments (search the web if available), which datasets exist and how they can be
 accessed (public vs controlled access, DUA constraints), and feasibility risks.
+
+If the request reanalyzes a public GEO, SRA or ArrayExpress accession, or a named cohort, open the original study
+full text at PMC or the publisher. In at most five lines summarize preprocessing and normalization, paired or
+repeated-measures handling, covariates and batch, the statistical model and thresholds, and validation. If the full
+text cannot be opened, say so explicitly.
+
+Request: {request}"""
+
+PRECEDENT_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "papers": {"type": "array", "maxItems": 4, "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"title": {"type": "string"},
+                           "citations": {"type": "array", "items": {"type": "string"}}},
+            "required": ["title", "citations"]}},
+        "required": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"analysis": {"type": "string"}, "why": {"type": "string"},
+                           "citations": {"type": "array", "items": {"type": "string"}}},
+            "required": ["analysis", "why", "citations"]}},
+        "recommended": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "properties": {"analysis": {"type": "string"}, "why": {"type": "string"},
+                           "citations": {"type": "array", "items": {"type": "string"}}},
+            "required": ["analysis", "why", "citations"]}},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["papers", "required", "recommended", "limitations"],
+}
+
+PRECEDENT_PROMPT = """Find 2–4 recent papers or best-practice reviews that used the same assay and question type as
+this request. Look across the analysis branch, not only at the original study. Extract analyses the field treats as
+required and analyses commonly added as recommendations. For every item give analysis, why, and citations using a
+PMID, DOI, or direct URL. Verify the sources rather than relying on search-result titles or snippets. If you cannot
+find something, say so in limitations; never invent it. Return only the structured JSON.
 
 Request: {request}"""
 
@@ -297,6 +336,8 @@ Rules:
 - Save every deliverable under outputs/ using relative paths.
 - Save analysis code under outputs/scripts/ and use only relative paths inside it.
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
+- Follow every supplied topic or precedent checklist item. Add a short cited "선행 연구 기준" section when
+  Analysis precedents are supplied, and put omitted recommendations under "다음에 할 수 있는 분석".
 """
 
 
@@ -327,6 +368,9 @@ Rules:
   focus) and plan the step for whoever is closest; the PI decides whether to hire.
 - {question_rule} """ + PI_CARD_QUESTION_RULE + """
 - """ + ASSUMPTIONS_RULE + """
+- The original study's methods are reference, not a template: the request may ask a different question of the same
+  data. Reuse a choice when it fits this request's question; do not copy the original design otherwise. Record in
+  `assumptions` only a different choice that could change the result.
 - """ + ROUTE_PLAN_RULE + """
 - Judge the request against the lab's scope ({lab_scope}) in `scope`: verdict "in" when it fits, "borderline"
   when it is adjacent work the lab can still do, "out" when it is outside the lab's field; reason is one sentence.
@@ -368,6 +412,9 @@ Contract rules:
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
+- The original study's methods are reference, not a template: the request may ask a different question of the same
+  data. Reuse a choice when it fits this request's question; do not copy the original design otherwise. Record in
+  `protocol` only a different choice that could change the result and its evidence.
 - """ + ENV_STEP_RULE + """
 - LabHQ applies a pack when its structured `applies_when.topics_any` intersects top-level `topics`; fill
   `pack_values[key]` for applied packs only and add nothing for topic packs that do not match. A pack whose `applies_when` is
@@ -484,6 +531,8 @@ criteria scored 1–5: addresses_question, evidence (how well conclusions are su
 List concrete issues per step_id with a priority and a specific revision request. Priority P1 means fixing the issue
 would change a conclusion; P2 means the conclusion stays the same but its evidence or wording is weak; P3 is minor.
 Use verdict "revise" only when there is at least one P1 issue; otherwise use "accept".
+Check the declared topic checklist and Analysis precedents supplied below. File an issue for anything omitted or
+handled incorrectly; it is P1 when fixing it would change a conclusion.
 
 Request: {request}
 
@@ -539,6 +588,9 @@ Warning preview ("(none)" means there is no warning section):
 Scientific design assumptions: {assumptions}
 Under "방법 요약", add a subsection titled "가정" and list these choices with their reasons. If none were recorded,
 do not invent any.
+When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
+analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
+Under "한계", include one line for every checklist answer that used assumption or not_applicable.
 
 Request: {request}
 
@@ -573,6 +625,8 @@ Return one issue per problem with:
 Answer the domain pack reviewer questions below as issues where they find a problem.
 Use verdict "revise" only when there is at least one P1 issue; otherwise "accept". labhq does not re-run the frozen
 plan: a revise ends the request, and a fixed plan needs a new CP1 approval.
+Check the declared topic checklist, its plan answers and Analysis precedents supplied below. File an issue for
+anything omitted or handled incorrectly; it is P1 when fixing it would change a conclusion.
 
 Request: {request}
 
@@ -625,6 +679,9 @@ Claim anchors (labhq checks them by machine):
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim anchors and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
+When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
+analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
+Under "한계", include one line for every checklist answer that used assumption or not_applicable.
 
 Request: {request}
 
@@ -1452,6 +1509,116 @@ def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
         return False
 
     return matches(value, schema)
+
+
+def normalize_precedents(value: Any) -> dict[str, Any] | None:
+    """Bound a valid literature-scout result and give its required analyses stable checklist ids."""
+    if not valid_review(value, PRECEDENT_SCHEMA):
+        return None
+    papers = [dict(row) for row in value["papers"][:4]]
+    required = [{**dict(row), "id": f"precedent.{index}"}
+                for index, row in enumerate(value["required"][:12], 1)]
+    recommended = [dict(row) for row in value["recommended"][:12]]
+    limitations = [str(item) for item in value["limitations"][:12]]
+    return {"status": "ok", "papers": papers, "required": required,
+            "recommended": recommended, "limitations": limitations}
+
+
+def precedent_warning(code: str) -> dict[str, Any]:
+    return {"status": "warning", "warning": f"analysis precedents unavailable ({code})",
+            "papers": [], "required": [], "recommended": [], "limitations": []}
+
+
+def _citations(row: dict[str, Any]) -> str:
+    return "; ".join(str(item) for item in row.get("citations") or []) or "citation unavailable"
+
+
+def analysis_precedents_text(record: Any) -> str:
+    """Compact context shared by planning, solo execution, review and report prompts."""
+    if not isinstance(record, dict):
+        return ""
+    if record.get("status") != "ok":
+        return "Analysis precedents:\n- unavailable; continue without precedent requirements."
+    lines = ["Analysis precedents:", "Papers:"]
+    lines.extend(f"- {row.get('title')}: {_citations(row)}" for row in record.get("papers") or [])
+    lines.append("Required analyses (each id must be answered in `checklist`):")
+    lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
+                 for row in record.get("required") or [])
+    lines.append("Recommended analyses:")
+    lines.extend(f"- {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
+                 for row in record.get("recommended") or [])
+    if record.get("limitations"):
+        lines.append("Search limitations: " + "; ".join(map(str, record["limitations"])))
+    return "\n".join(lines)
+
+
+def _precedent_items(record: Any) -> list[topic_checklists.ChecklistItem]:
+    if not isinstance(record, dict) or record.get("status") != "ok":
+        return []
+    return [topic_checklists.ChecklistItem(str(row["id"]), str(row.get("analysis") or ""),
+                                           str(row.get("why") or ""), "precedent")
+            for row in record.get("required") or [] if row.get("id")]
+
+
+def required_checklist_items(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                             precedents: Any) -> list[topic_checklists.ChecklistItem]:
+    body = plan if isinstance(plan, dict) else {}
+    items = topic_checklists.requirements(body.get("topics"), catalog)
+    by_id = {item.id: item for item in items}
+    for item in _precedent_items(precedents):
+        by_id.setdefault(item.id, item)
+    return list(by_id.values())
+
+
+def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                     precedents: Any) -> list[str]:
+    body = plan if isinstance(plan, dict) else {}
+    steps = body.get("steps") if isinstance(body.get("steps"), list) else []
+    ids = [step.get("id") for step in steps if isinstance(step, dict) and isinstance(step.get("id"), str)]
+    return topic_checklists.answer_errors(body.get("checklist"),
+                                          required_checklist_items(body, catalog, precedents), ids)
+
+
+def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
+    if not catalog and not isinstance(precedents, dict):
+        return ""
+    lines = [topic_checklists.prompt_rule(catalog)]
+    rendered = analysis_precedents_text(precedents)
+    if rendered:
+        lines += ["", rendered,
+                  "Put every recommended analysis in the plan when scope and budget allow. Otherwise add one short "
+                  "cited reason to top-level `suggested_next` (maximum 8)."]
+    return "\n".join(lines)
+
+
+def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
+    body = plan if isinstance(plan, dict) else {}
+    required = required_checklist_items(body, catalog, precedents)
+    rendered = (analysis_precedents_text(precedents)
+                if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
+    if not required and not rendered:
+        return ""
+    lines = ["\n\nDeclared topic checklist and plan answers:"]
+    lines.extend(f"- {item.id}: {item.check} Why: {item.why}" for item in required)
+    answers = body.get("checklist") if isinstance(body.get("checklist"), dict) else {}
+    lines.append("Answers: " + json.dumps(answers, ensure_ascii=False, sort_keys=True))
+    if rendered:
+        lines += ["", rendered]
+    return "\n".join(lines)
+
+
+def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
+    body = plan if isinstance(plan, dict) else {}
+    limits = topic_checklists.limitations(body.get("checklist"))
+    rendered = (analysis_precedents_text(precedents)
+                if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
+    if not limits and not rendered:
+        return ""
+    lines = ["\n\nChecklist limitations (one line each under 한계):"]
+    lines.extend(f"- {item}" for item in limits)
+    if rendered:
+        lines += ["", rendered]
+    return "\n".join(lines)
 
 
 SoloPhase = Literal["solo", "review", "fallback", "done"]
@@ -2838,10 +3005,12 @@ class Orchestrator:
             saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues")}
             review = saved if valid_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) else {}
         if not review:
+            catalog = topic_checklists.load()
             prompt = RESEARCH_REVIEW_PROMPT.format(
                 request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
                 packs=render_pack_review(packs),
-                ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n))
+                ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)) + \
+                plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
                 reply = await self.run_step(Task(
@@ -2885,7 +3054,9 @@ class Orchestrator:
                 uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
                                     f"{row['claim'].get('statement')}" for row in other) or "(none)",
                 gaps="\n".join(_research_gap_lines(ledgers, lookups)) or "(none)", verdict=review["verdict"],
-                issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)),
+                issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
+                plan_report_context(req.get("plan"), topic_checklists.load(),
+                                    req.get("analysis_precedents")),
             meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
                   **({"workdir": workdir} if workdir else {})}))
         if not final.ok:
@@ -3070,9 +3241,13 @@ class Orchestrator:
         if phase == "solo":
             req.setdefault("solo_started_at", time.time())
             self.hub.save_request(rid)
+            catalog = topic_checklists.load()
+            solo_context = (plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents")) +
+                            plan_report_context(req.get("plan"), catalog, req.get("analysis_precedents")))
             result = await self.run_step(Task(
                 agent_id=agent, request_id=rid, budget_usd=req.get("budget_usd"),
-                prompt=SOLO_PROMPT.format(request=text, assumptions=_assumptions_prompt(req.get("plan"))),
+                prompt=SOLO_PROMPT.format(request=text, assumptions=_assumptions_prompt(req.get("plan"))) +
+                       solo_context,
                 meta={**refs, "kind": "direct", "title": f"단독 처리: {req.get('text', '')[:80]}",
                       "project_dirs": req.get("project_dirs", []), "max_attempts": 1}))
             req["solo_result"] = result.model_dump(mode="json")
@@ -3096,7 +3271,9 @@ class Orchestrator:
                 return False
             reviewed = await self.run_step(Task(
                 agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
-                prompt=REVIEW_PROMPT.format(request=text, results=result.text),
+                prompt=REVIEW_PROMPT.format(request=text, results=result.text) +
+                       plan_review_context(req.get("plan"), topic_checklists.load(),
+                                           req.get("analysis_precedents")),
                 meta={**refs, "kind": "review", "revision": 0, "request": text,
                       "title": "단독 결과 과학 리뷰"}))
             parsed = reviewed.structured if valid_review(reviewed.structured) else extract_json(reviewed.text)
@@ -3185,9 +3362,12 @@ class Orchestrator:
             all_agents = list(self.hub.agents.values())
             known = {a["id"] for a in all_agents}
             # The configured orchestration agents, not only the default ids, stay out of the worker roster.
-            orchestration = set(ORCHESTRATION_ROLES) | {x for x in (self.cfg.cso_agent, self.cfg.chief_of_staff_agent,
-                                                                   self.cfg.reviewer_agent) if x}
+            orchestration = set(ORCHESTRATION_ROLES) | {
+                x for x in (self.cfg.cso_agent, self.cfg.chief_of_staff_agent, self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
+            topic_vocab_for_checks = output_vocab.current()
+            checklist_catalog = (topic_checklists.load(vocab=topic_vocab_for_checks)
+                                 if topic_vocab_for_checks is not None else {})
             n = self.cfg.context_chars_per_step
             frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
                                     if resume and research_lane else None)
@@ -3269,6 +3449,12 @@ class Orchestrator:
                                                        active_packs=active_pack_hashes,
                                                        expected_intake=intake, pack_definitions=packs)
                     req["plan"] = validated.model_dump(mode="json")
+                    if req.get("checklist_contract"):
+                        stored_problems = checklist_errors(req["plan"], checklist_catalog,
+                                                           req.get("analysis_precedents"))
+                        if stored_problems:
+                            raise ValueError("frozen research plan checklist invalid: " +
+                                             "; ".join(stored_problems))
                     if not await finish_research_plan(req["plan"]):
                         return
                     steps = req["plan"]["steps"]
@@ -3310,10 +3496,24 @@ class Orchestrator:
             else:
                 briefing = ""
                 cos = self.cfg.chief_of_staff_agent
-                if cos and cos in known:
-                    b = await self.run_step(Task(agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
-                                                 meta={**refs, "kind": "briefing", "request": text,
-                                                       "title": "CSO용 브리핑 준비"}))
+                brief_job = (asyncio.create_task(self.run_step(Task(
+                    agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
+                    meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
+                             if cos and cos in known else None)
+                precedent_job = None
+                precedent_agent = self.cfg.precedent_agent
+                if "analysis_precedents" not in req and precedent_agent:
+                    if precedent_agent in known:
+                        precedent_job = asyncio.create_task(self.run_step(Task(
+                            agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
+                            prompt=PRECEDENT_PROMPT.format(request=text),
+                            meta={**refs, "kind": "precedent", "request": text,
+                                  "title": "선행 연구 분석 기준 조사", "max_attempts": 1})))
+                    else:
+                        req["analysis_precedents"] = precedent_warning("agent_unavailable")
+                        self.hub.save_request(rid)
+                if brief_job:
+                    b = await brief_job
                     if not b.ok:
                         self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
@@ -3321,6 +3521,21 @@ class Orchestrator:
                         self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
                     briefing = b.text
+                if precedent_job:
+                    try:
+                        precedent_result = await precedent_job
+                    except Exception:
+                        precedent_result = None
+                    parsed = None
+                    if precedent_result is not None and precedent_result.ok:
+                        raw = (precedent_result.structured if isinstance(precedent_result.structured, dict)
+                               else extract_json(precedent_result.text))
+                        parsed = normalize_precedents(raw)
+                    req["analysis_precedents"] = (parsed if parsed is not None else precedent_warning(
+                        "parse_failed" if precedent_result is not None and precedent_result.ok else "failed"))
+                    self.hub.save_request(rid)
+                req["checklist_contract"] = 1
+                self.hub.save_request(rid)
 
                 reuse_advisory = ""  # semantics-hook
 
@@ -3342,6 +3557,7 @@ class Orchestrator:
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
                             topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
                                          if topic_vocab else ""))
+                        prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
@@ -3355,6 +3571,7 @@ class Orchestrator:
                                                     output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
                                                     topics_rule=topic_types.prompt_rule(topic_vocab)
                                                     if topic_vocab else "")
+                        prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -3474,6 +3691,8 @@ class Orchestrator:
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
                                             f"use roster ids {workers}")
+                        problems.extend(checklist_errors(candidate, checklist_catalog,
+                                                         req.get("analysis_precedents")))
                         return problems
 
                     for attempt in (1, 2):
@@ -3502,6 +3721,10 @@ class Orchestrator:
                             }
                             selection_problems = [str(error)]
                         # The CSO answers every pack; labhq freezes exact refs only for applicable entries (#222).
+                        precedent_state = req.get("analysis_precedents") or {}
+                        if precedent_state.get("warning"):
+                            plan = {**plan, "warnings": list(dict.fromkeys([
+                                *(plan.get("warnings") or []), precedent_state["warning"]]))}
                         plan = with_pack_refs(plan, pack_refs(candidate_packs))
                         output_problems = []
                         try:
@@ -3551,8 +3774,42 @@ class Orchestrator:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats)
-                            warnings = [*(plan.get("warnings") or []), *step_warnings]
-                            break
+                            precedent_state = req.get("analysis_precedents") or {}
+                            warnings = list(dict.fromkeys([
+                                *(plan.get("warnings") or []), *step_warnings,
+                                *([precedent_state["warning"]] if precedent_state.get("warning") else [])]))
+                            problems = checklist_errors(plan, checklist_catalog, req.get("analysis_precedents"))
+                            if not problems:
+                                break
+                            if attempt == 2:
+                                warnings.append("checklist unanswered after correction: " +
+                                                ", ".join(problem.split(" must ", 1)[0]
+                                                          for problem in problems))
+                                break
+                            plan_res = await make_plan(text + "\n\nThe previous PLAN failed validation:\n" +
+                                                       "\n".join(f"- {problem}" for problem in problems) +
+                                                       "\nReturn a complete corrected PLAN.")
+                            if not plan_res.ok:
+                                self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
+                                return
+                            if rid in self.budget_denials:
+                                self._finish(rid, "교정 계획 뒤 예산 승인 거부",
+                                             {"plan": plan_res.model_dump(mode="json")}, ok=False)
+                                return
+                            plan = _carry_assumptions(
+                                plan, plan_res.structured if isinstance(plan_res.structured, dict)
+                                else extract_json(plan_res.text) or {})
+                            still = normalize_questions(plan.get("clarifying_questions"))
+                            if still:
+                                req["pending_questions"] = [q["question"] for q in still]
+                                if has_structure(still):
+                                    req["pending_question_details"] = still
+                                self.hub.save_request(rid)
+                                await self._emit(rid, "request.questions",
+                                                 {"questions": req["pending_questions"], "details": still})
+                                if self.cfg.wait_for_clarification:
+                                    self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
+                                    return
                         except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
                                 raise ValueError(f"plan invalid after correction: {error}") from error
@@ -3714,7 +3971,8 @@ class Orchestrator:
                             topics_rule=topic_types.prompt_rule(topic_vocab) if topic_vocab else "",
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
-                            results=self.format_results(steps, results, n)),
+                            results=self.format_results(steps, results, n)) +
+                        planning_guidance(checklist_catalog, req.get("analysis_precedents")),
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
@@ -3827,10 +4085,20 @@ class Orchestrator:
                 req["plan"] = {**(req.get("plan") or {}),
                                **({"assumptions": normalize_assumptions(candidate.get("assumptions"))}
                                   if "assumptions" in candidate else {}),
+                               **({"checklist": candidate.get("checklist")}
+                                  if isinstance(candidate.get("checklist"), dict) else {}),
+                               **({"suggested_next": candidate.get("suggested_next")}
+                                  if isinstance(candidate.get("suggested_next"), list) else {}),
                                "steps": steps,
                                "topics": normalized_topics,
                                "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings,
                                             *topic_warnings]}
+                replan_checklist_problems = checklist_errors(req["plan"], checklist_catalog,
+                                                              req.get("analysis_precedents"))
+                if replan_checklist_problems:
+                    req["plan"]["warnings"].append("checklist unanswered after re-plan: " +
+                                                   ", ".join(problem.split(" must ", 1)[0]
+                                                             for problem in replan_checklist_problems))
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 if review_progress is not None:
@@ -3889,6 +4157,8 @@ class Orchestrator:
                 if not reviewer or reviewer not in known:
                     break
                 prompt = REVIEW_PROMPT.format(request=text, results=self.format_results(steps, results, n))
+                prompt += plan_review_context(req.get("plan"), checklist_catalog,
+                                              req.get("analysis_precedents"))
                 prompt += replan_history_note(req)  # retired steps are no longer in the results above (#271)
                 review = {}
                 for parse_attempt in (1, 2):
@@ -3990,6 +4260,8 @@ class Orchestrator:
                                            review=short(review, 3000),
                                            warnings=general_report_warnings(steps, results) or "(none)",
                                            assumptions=_assumptions_prompt(req.get("plan"))) +
+                       plan_report_context(req.get("plan"), checklist_catalog,
+                                           req.get("analysis_precedents")) +
                        replan_history_note(req) +
                        (UNRESOLVED_REVIEW_NOTE if unresolved else "") +
                        (REVIEW_REFERENCE_NOTE if reference_issues else ""),

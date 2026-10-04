@@ -114,6 +114,8 @@ def _plan(prompt: str, *, mistakes: bool) -> dict:
                      "data_boundaries": ["public GEO matrix only"], "not_applicable": {},
                      "statistics": statistics},
         "pack_values": packs,
+        "checklist": {"pseudobulk": "step:s1", "qc": "step:s1", "batch": "step:s1"},
+        "suggested_next": [],
         "clarifying_questions": [],
         "steps": [{"id": "s1", "agent_id": worker, "instruction": "Aggregate counts per donor and condition.",
                    "phase": "analysis", "claim_ids": ["c1"], "input_refs": ["GSE96583"],

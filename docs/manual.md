@@ -204,11 +204,19 @@ orchestrator:
 
 요청은 위 순서로 흐릅니다. 연구로 분류된 요청은 [연구 lane](#연구-lane과-검증)을 따릅니다.
 
+비서실장은 400단어 안에서 브리핑합니다. 공개 GEO·SRA·ArrayExpress accession이나 이름 있는 cohort의 재분석이면 PMC 또는 출판사 본문을 열고, 전처리·정규화, 짝·반복측정, 공변량·batch, 통계 모형·임계값, 검증을 5줄 안에 요약합니다. 본문을 못 열었으면 그대로 밝힙니다. 원 연구 Methods는 참고일 뿐이며, 현재 질문과 맞는 선택만 다시 씁니다.
+
 CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 아는 질병·코호트·시료 범위, 분석 깊이만 묻습니다. 깊이 질문은 시간·비용을 적은 권장안을 첫 선택지로 둡니다. 공개 데이터셋, 모형, 필터, 대조, 방법은 CSO가 정하고 일반 계획의 **가정**에 이유와 함께 남깁니다. 가정은 웹·`labhq watch`·최종 보고서의 방법 요약에서 보이며, 실행 중에는 [메모](#웹-사무실)로 바꿀 수 있습니다. 연구 lane은 같은 질문 기준을 쓰되 가정을 동결 protocol에 기록합니다.
 
 일반 lane 과학 리뷰는 지적마다 P1·P2·P3를 붙입니다. P1은 고치면 결론이 바뀌는 문제, P2는 결론은 같지만 근거나 표현이 약한 문제, P3는 사소한 문제입니다. P1만 재계획·수정하고, 수정 상한 뒤 P1이 남을 때만 요청을 실패로 표시합니다. P2는 최종 보고서의 `리뷰 참고`에 원문을 남깁니다. 우선순위가 없던 옛 저장 리뷰는 재시작할 때 P1로 봅니다.
 
 최종 보고서는 `report`(결론과 권고 → 결과 → 방법 요약 → 한계)와 `report_appendix`(실행 기록)로 나뉩니다. 본문에는 중요한 경고만 한 줄과 "실행 기록 참고"를 남기고, 단계 상태·산출 경로·도구 실패·미해결 리뷰 원문·비용·claim check는 부록에 둡니다. API·이벤트·CLI는 두 필드를 보내고, 웹은 본문 아래 접힌 실행 기록을 보여 줍니다. GitHub 프로젝트 보고와 감사 번들은 `report.md`·`report_appendix.md`를 함께 남기며, claim anchor 검사는 `report`만 읽습니다. 분석 단계는 실행 스크립트를 `outputs/scripts/`, 결과를 좌우한 대응표·gene set 사본을 `outputs/reference/`에 선언·저장하고, `.tmp`에는 버려도 되는 파일만 둡니다. 방법 요약에는 seed와 도구·데이터 버전을 적습니다.
+
+### topic 점검표와 선행 연구 기준
+
+점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`입니다. 새 항목은 먼저 `output_types.yaml`의 승인된 topic key 아래에 넣고 test를 보탭니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption`·`not_applicable` 답은 보고서 한계에 한 줄씩 남습니다.
+
+계획 전 `orchestrator.precedent_agent`가 비서실장과 병렬로 최근 논문·best-practice review 2–4편에서 같은 assay·질문 유형의 필수·권장 분석을 찾습니다. 필수 항목은 `precedent.<n>` 점검표가 되고, 범위 밖 권장 항목은 PLAN `suggested_next`에 남습니다. 실패하면 경고만 남기고 계획하며, 저장된 조사 결과는 재시작 때 다시 돌리지 않습니다. 리뷰와 단독 처리도 같은 목록을 받고, 보고서는 인용을 붙인 `선행 연구 기준` 절로 한 일·못 한 일·다음 분석을 나눕니다.
 
 ### 요청 묶음
 
@@ -490,6 +498,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 - **랩 범위** (`lab.scope`, #36): 일반 요청의 범위 판정에 쓰는 한 줄 설명입니다. 비우면 "one-PI bioinformatics lab"과 주요 분야 목록을 씁니다. CSO가 계획과 함께 범위를 in·borderline·out으로 판정하고, out이면 단계를 실행하기 전에 **범위 확인** 카드로 진행·중단을 묻습니다. 중단하면 실행 비용 없이 끝나고(브리핑·계획 비용만), borderline은 실행하되 보고서에 한 줄을 남깁니다.
 - **재계획** (`orchestrator.max_failure_replans`, 기본 1; `max_replans`, 기본 0): 앞 값은 단계 실패, 뒤 값은 리뷰 revise의 남은 DAG 재계획 상한입니다. 예전 설정처럼 `max_replans`만 적으면 두 경로에 같은 값을 씁니다.
 - **단독 처리** (`orchestrator.solo_agent`, 기본 `null`; `solo_review`, 기본 `false`): 위 [단독 처리](#단독-처리)의 roster 직원과 선택 리뷰를 정합니다. route 결정·단독 결과·리뷰·폴백은 요청 상태에 저장되며, 재시작하면 다음 단계의 runner를 기다립니다.
+- **선행 연구 기준** (`orchestrator.precedent_agent`, 기본 `lit_scout`): `null`이면 문헌 기준 단계를 생략합니다. 그 밖의 실패·파싱 오류는 계획 경고입니다.
 - **HPC** (`hpc:`): `scheduler: sge | pbs | slurm`. SGE는 PE 이름(`smp`/`threads`…), 메모리 리소스(`h_vmem`는 보통 슬롯당이라
   총 메모리를 코어 수로 나눔), `h_rt`. PBS는 Torque(`nodes=1:ppn=…`)와 PBS Pro(`select=1:ncpus=…`, `pro: true`)를 템플릿으로.
   Slurm은 `sbatch --parsable`로 제출하고 `squeue`(실행 중)·`sacct`(끝난 뒤)로 상태를, `scancel`로 취소합니다. 옵션은 `slurm.sbatch_args`
