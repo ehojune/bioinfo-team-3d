@@ -197,7 +197,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
 | `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
 
-코드의 단계 경로는 묶음 루트 기준으로 바꾸고 README 명령도 그 루트에서 실행합니다. Markdown 링크는 문서 기준 상대경로를 유지합니다. 다른 절대경로는 manifest와 부록에 남깁니다. 파일은 link를 따라가지 않는 descriptor로 검사·hash·복사하며, `runner.bundle_max_file_mb`(기본 50)를 넘으면 읽지 않고 `not copied: size`로 기록합니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다. 원본은 건드리지 않으며 프로젝트 GitHub에는 두 보고서만 올립니다.
+코드의 단계 경로는 묶음 루트 기준으로 바꾸고 README 명령도 그 루트에서 실행합니다. Markdown 링크는 문서 기준 상대경로를 유지합니다. 다른 절대경로는 manifest와 부록에 남깁니다. runner와 같은 walker가 link·junction·mount·device 변경·통제 구역을 빼고 descriptor로 검사·hash·복사합니다. `runner.bundle_max_file_mb`(기본 50), 요청별 `bundle_max_total_mb`(2048)·`bundle_max_files`(5000)를 넘긴 파일은 manifest에 남기고 순회를 멈춥니다. 재실행 명령은 안전한 이름만 계획 DAG 순서로 싣습니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다. 원본은 건드리지 않으며 프로젝트 GitHub에는 두 보고서만 올립니다.
 
 ```mermaid
 flowchart LR

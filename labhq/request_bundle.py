@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 from contextlib import ExitStack
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ from typing import Any
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import locate_workdir
+from .runner.workspace import restricted_zones, walk_output_files
 
 
 TEXT_SUFFIXES = frozenset({
@@ -29,6 +31,7 @@ MANIFEST_FIELDS = (
     "rewritten", "remaining_absolute_paths", "rewritten_files",
 )
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+_SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 REMOTE_RUNNER_NOTE = "runner가 다른 PC라 묶음을 만들지 않음"
@@ -84,42 +87,6 @@ def _candidate_roots(result: Mapping[str, Any]) -> set[PurePosixPath]:
 
 def _selected(path: PurePosixPath, roots: set[PurePosixPath]) -> bool:
     return any(path == root or root in path.parents for root in roots)
-
-
-def _copy_candidates(folder: HeldDir, roots: set[PurePosixPath]):
-    """Yield selected regular files opened through held parent descriptors.
-
-    Each descriptor remains open while its metadata, hash and bytes are consumed. Subfolders are opened relative
-    to the held parent and checked against the identity seen in its directory listing, matching the runner walker.
-    """
-    def walk(current: HeldDir, relative: PurePosixPath):
-        entries = sorted(current.entries(1_000_000), key=lambda entry: entry.name)
-        folders = []
-        for entry in entries:
-            rel = relative / entry.name
-            if entry.kind == "dir":
-                folders.append(entry)
-            elif entry.kind == "file" and _selected(rel, roots):
-                fd = current.open_read_file(entry.name)
-                try:
-                    info = os.fstat(fd)
-                    if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
-                        raise OSError(f"{rel.as_posix()} was replaced after it was listed")
-                    with os.fdopen(fd, "rb") as stream:
-                        fd = -1
-                        yield stream, info, rel
-                finally:
-                    if fd >= 0:
-                        os.close(fd)
-        for entry in folders:
-            try:
-                child = current.child(entry.name, expect=entry.ident)
-            except (NotPlainFolder, OSError):
-                continue
-            with child:
-                yield from walk(child, relative / entry.name)
-
-    yield from walk(folder, PurePosixPath())
 
 
 def _held_workdir(stack: ExitStack, root: Path, result: Mapping[str, Any]) -> tuple[HeldDir, Path] | tuple[None, str]:
@@ -222,7 +189,32 @@ def _superseded(req: Mapping[str, Any], tasks: Mapping[str, Any]) -> list[str]:
     return sorted(rows)
 
 
-def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str]) -> str:
+def _topological_steps(steps: list[Mapping[str, Any]], results: Mapping[str, Any]) -> tuple[list[str], list[Mapping[str, Any]]]:
+    """Return result step ids by DAG depth then id, with undeclared/direct results last."""
+    by_id = {str(step.get("id")): step for step in steps if step.get("id") is not None}
+    remaining = {step_id for step_id in by_id if step_id in results}
+    ordered: list[str] = []
+    completed: set[str] = set()
+    while remaining:
+        layer = sorted(step_id for step_id in remaining
+                       if {str(dep) for dep in by_id[step_id].get("depends_on") or []
+                           if str(dep) in by_id and str(dep) in results}
+                       <= completed)
+        if not layer:  # Invalid/cyclic stored plans remain deterministic; validation belongs to plan intake.
+            layer = sorted(remaining)
+        ordered.extend(layer)
+        completed.update(layer)
+        remaining.difference_update(layer)
+    ordered.extend(sorted(str(step_id) for step_id in results if str(step_id) not in ordered))
+    return ordered, [by_id[step_id] for step_id in ordered if step_id in by_id]
+
+
+def _safe_script_path(path: PurePosixPath) -> bool:
+    return all(_SAFE_SCRIPT_COMPONENT.fullmatch(part) for part in path.parts)
+
+
+def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
+            unsafe_scripts: list[str]) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 최종 단계 산출물과 스크립트",
@@ -237,6 +229,7 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
         lines.append("- 선언된 단계 없음")
     lines += ["", "## 다시 실행", "", "아래 명령은 이 묶음의 루트에서 실행합니다.", ""]
     lines += [f"- `{command}`" for command in scripts] if scripts else ["- 실행 스크립트 없음"]
+    lines += [f"- 이름이 안전하지 않아 명령을 만들지 않음: `{path}`" for path in unsafe_scripts]
     lines += ["", "묶음은 원본의 사본입니다. `labhq verify`와 claim anchor 검사는 원래 작업 폴더를 기준으로 합니다.", ""]
     return "\n".join(lines)
 
@@ -259,12 +252,18 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     temp.mkdir()
     rows: list[dict[str, Any]] = []
     workdirs: list[tuple[str, Path]] = []
-    script_commands: list[str] = []
+    script_commands: dict[str, dict[str, str]] = {}
+    unsafe_scripts: dict[str, set[str]] = {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     plan_steps = [step for step in ((req.get("plan") or {}).get("steps") or []) if isinstance(step, Mapping)]
-    ordered_ids = [str(step.get("id")) for step in plan_steps if step.get("id") in results]
-    ordered_ids += [str(sid) for sid in results if str(sid) not in ordered_ids]
-    max_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
+    ordered_ids, ordered_steps = _topological_steps(plan_steps, results)
+    max_file_bytes = int(float(settings.runner.bundle_max_file_mb) * 1024 * 1024)
+    max_total_bytes = int(float(settings.runner.bundle_max_total_mb) * 1024 * 1024)
+    max_total_files = int(settings.runner.bundle_max_files)
+    copied_bytes = 0
+    copied_files = 0
+    total_limit_hit = False
+    zones = restricted_zones(settings)
     try:
         found_workdirs = 0
         with ExitStack() as stack:
@@ -292,22 +291,50 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                  "status": "not copied: outputs 폴더 없음", "rewritten": 0,
                                  "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
-                for stream, info, output_rel in _copy_candidates(outputs, _candidate_roots(result)):
-                    rel = Path("steps") / step_id / Path(*output_rel.parts)
+                roots = _candidate_roots(result)
+
+                def selected(path: PurePosixPath, _entry: Any, _depth: int) -> bool:
+                    output_rel = PurePosixPath(*path.parts[1:])
+                    return _selected(output_rel, roots)
+
+                def copy_file(path: PurePosixPath, _entry: Any, stream: Any,
+                              info: os.stat_result | None) -> str | None:
+                    nonlocal copied_bytes, copied_files, total_limit_hit
+                    assert stream is not None and info is not None
+                    output_rel = PurePosixPath(*path.parts[1:])
+                    rel = PurePosixPath("steps", step_id, *output_rel.parts)
                     source = workdir / "outputs" / Path(*output_rel.parts)
                     row = {"relative_path": rel.as_posix(), "size": info.st_size, "sha256": "",
                            "step_id": step_id, "original_path": str(source), "status": "copied",
                            "rewritten": 0, "remaining_absolute_paths": "", "rewritten_files": ""}
-                    if info.st_size > max_bytes:
+                    if info.st_size > max_file_bytes:
                         row["status"] = "not copied: size"
+                    elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                        row["status"] = "not copied: total limit"
+                        total_limit_hit = True
                     else:
-                        destination = temp / rel
+                        destination = temp / Path(*rel.parts)
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         row["sha256"] = _copy_held(stream, info, destination)
+                        copied_files += 1
+                        copied_bytes += info.st_size
                         command = SCRIPT_COMMANDS.get(destination.suffix.casefold())
                         if command and "scripts" in output_rel.parts:
-                            script_commands.append(f'{command} "{rel.as_posix()}"')
+                            if _safe_script_path(rel):
+                                script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
+                                    (command, rel.as_posix()))
+                            else:
+                                unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
                     rows.append(row)
+                    return "request bundle total limit" if total_limit_hit else None
+
+                real_outputs = (workdir / "outputs").resolve()
+                walk_output_files(
+                    outputs, workdir / "outputs", real_outputs, zones,
+                    settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
+                    None, detailed=True, selected=selected, visit_file=copy_file, open_files=True)
+                if total_limit_hit:
+                    break
         if not found_workdirs:
             raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
 
@@ -317,9 +344,16 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         if replaced:
             appendix += ("\n\n## 요청 묶음: 대체됨\n\n" +
                          "\n".join(f"- {item}" for item in replaced))
+        if total_limit_hit:
+            appendix += ("\n\n- 누적 상한에 도달해 첫 제외 파일에서 순회를 멈춤 "
+                         f"(복사 {copied_files}개, {copied_bytes} bytes; "
+                         f"상한 {max_total_files}개, {max_total_bytes} bytes)")
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
-        (temp / "README.md").write_text(_readme(req, plan_steps, sorted(set(script_commands))),
+        commands = [command for step_id in ordered_ids
+                    for _path, command in sorted(script_commands.get(step_id, {}).items())]
+        unsafe = [path for step_id in ordered_ids for path in sorted(unsafe_scripts.get(step_id, set()))]
+        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0

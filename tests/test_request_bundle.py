@@ -16,8 +16,9 @@ from labhq.cli import main, render
 from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
-from labhq.settings import Settings
+from labhq.settings import DataZone, Settings
 import labhq.request_bundle as request_bundle_module
+import labhq.runner.workspace as workspace_module
 
 
 def digest(path: Path) -> str:
@@ -222,6 +223,103 @@ def test_parent_swap_never_reads_the_replacement(tmp_path, monkeypatch):
     copied = bundle / "steps/s1/data/safe.txt"
     assert not copied.exists() or copied.read_text(encoding="utf-8") == "safe\n"
     assert all(b"SECRET" not in path.read_bytes() for path in bundle.rglob("*") if path.is_file())
+
+
+def test_bundle_uses_runner_walker_for_restricted_zone_and_mount(tmp_path, monkeypatch):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    workdir = Path(request["results"]["s1"]["workdir"])
+    restricted = workdir / "outputs/restricted/secret.txt"
+    mounted = workdir / "outputs/mounted/secret.txt"
+    write(restricted, "restricted\n")
+    write(mounted, "mounted\n")
+    request["results"]["s1"]["outputs"] += [
+        "outputs/restricted/secret.txt", "outputs/mounted/secret.txt",
+    ]
+    settings.policy.data_zones = [DataZone(path=str(restricted.parent), level="restricted")]
+    real_is_mount = workspace_module._is_mount
+    monkeypatch.setattr(
+        workspace_module, "_is_mount",
+        lambda path: path.name == "mounted" or real_is_mount(path),
+    )
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    assert not (bundle / "steps/s1/restricted/secret.txt").exists()
+    assert not (bundle / "steps/s1/mounted/secret.txt").exists()
+
+
+def test_unsafe_script_name_is_listed_without_a_command(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    workdir = Path(request["results"]["s1"]["workdir"])
+    unsafe = workdir / "outputs/scripts/unsafe; echo PWN.py"
+    write(unsafe, "print('safe contents')\n")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+    relative = "steps/s1/scripts/unsafe; echo PWN.py"
+
+    assert (bundle / relative).is_file()
+    assert f"이름이 안전하지 않아 명령을 만들지 않음: `{relative}`" in readme
+    assert f'python "{relative}"' not in readme
+
+
+def test_script_commands_follow_plan_topology_before_command_name(tmp_path):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    results = {}
+    for step_id, script in (("down", "finish.R"), ("up", "prepare.py")):
+        workdir = root / "2026-10-04" / f"task_{step_id}"
+        write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+        write(workdir / "outputs/scripts" / script, "# rerun\n")
+        results[step_id] = {
+            "workdir": str(workdir), "workdir_id": workdir.name,
+            "outputs": [f"outputs/scripts/{script}"],
+        }
+    request = {
+        "id": "topology", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [
+            {"id": "down", "depends_on": ["up"]},
+            {"id": "up", "depends_on": []},
+        ]},
+        "results": results,
+    }
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+
+    assert readme.index("python steps/up/scripts/prepare.py") < readme.index(
+        "Rscript steps/down/scripts/finish.R")
+
+
+@pytest.mark.parametrize("total_bytes,max_files", [(1024 * 1024, 1), (5, 10)])
+def test_request_total_limits_record_first_omission_and_stop(tmp_path, total_bytes, max_files):
+    settings = configured(tmp_path)
+    settings.runner.bundle_max_total_mb = total_bytes / (1024 * 1024)
+    settings.runner.bundle_max_files = max_files
+    root = Path(settings.runner.workspace_root)
+    workdir = root / "2026-10-04" / "task_limits"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    for name in ("a.txt", "b.txt", "c.txt"):
+        write(workdir / "outputs" / name, "xxx")
+    request = {
+        "id": f"limits_{total_bytes}_{max_files}", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [{"id": "s1", "depends_on": []}]},
+        "results": {"s1": {
+            "workdir": str(workdir), "workdir_id": workdir.name,
+            "outputs": [f"outputs/{name}" for name in ("a.txt", "b.txt", "c.txt")],
+        }},
+    }
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle, delimiter="\t"))
+    by_path = {row["relative_path"]: row for row in rows}
+
+    assert by_path["steps/s1/a.txt"]["status"] == "copied"
+    assert by_path["steps/s1/b.txt"]["status"] == "not copied: total limit"
+    assert "steps/s1/c.txt" not in by_path
+    assert "누적 상한에 도달해 첫 제외 파일에서 순회를 멈춤" in (
+        bundle / "report_appendix.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

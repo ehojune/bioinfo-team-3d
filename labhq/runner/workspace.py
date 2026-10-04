@@ -20,7 +20,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path, PurePath
-from typing import Any
+from typing import Any, Callable
 
 from .. import __version__
 from ..adapters.held_dir import HeldDir, NotPlainFolder
@@ -72,6 +72,129 @@ def restricted_zones(settings: Any) -> list[Path]:
             except (OSError, RuntimeError, ValueError):
                 continue
     return zones
+
+
+def walk_output_files(top: HeldDir, root: Path, real_root: Path, zones: list[Path], max_entries: int,
+                      max_depth: int, max_files: int | None, *, detailed: bool,
+                      selected: Callable[[PurePath, Any, int], bool],
+                      visit_file: Callable[[PurePath, Any, Any, os.stat_result | None], str | None],
+                      visit_link: Callable[[PurePath, Any], str | None] | None = None,
+                      open_files: bool = False, suppress_callback_errors: bool = False) -> str | None:
+    """Walk one held outputs folder for both runner manifests and request bundles.
+
+    Folder verdicts live here: descriptor-relative opens, no links/junctions/mounts/device changes/zones,
+    bounded entries and depth.  With ``open_files``, the visitor receives the verified descriptor-backed
+    stream while every parent descriptor is still held.
+    """
+    unsafe = ("outputs 폴더가 안전하지 않거나 통제 구역이어서 관찰 산출물 manifest가 불완전합니다"
+              if detailed else "outputs 폴더가 다른 파일 시스템이거나 통제 구역 안이라 산출 목록을 만들지 않았습니다")
+    try:
+        if (not top.same_as(real_root) or _is_mount(root)
+                or (top.dev is not None and top.dev != os.stat(real_root.parent).st_dev)
+                or any(real_root.is_relative_to(zone) for zone in zones)):
+            return unsafe
+    except (OSError, RuntimeError, ValueError):
+        return ("outputs 폴더를 확인하지 못해 관찰 산출물 manifest가 불완전합니다"
+                if detailed else "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다")
+
+    note: str | None = None
+    seen = 0
+    accepted = 0
+
+    def walk(folder: HeldDir, relative: PurePath, depth: int) -> str | None:
+        nonlocal note, seen, accepted
+        shown = PurePath("outputs", relative).as_posix()
+        try:
+            entries = sorted(folder.entries(max_entries - seen + 1), key=lambda entry: entry.name)
+        except OSError:
+            note = note or f"{shown} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+            return None
+        folders = []
+        for entry in entries:
+            seen += 1
+            if seen > max_entries:
+                return f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다"
+            if not _utf8_name(entry.name):
+                note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
+                continue
+            path = PurePath("outputs", relative, entry.name)
+            if entry.kind is None:
+                continue
+            if entry.kind == "link":
+                if visit_link is None or not selected(path, entry, depth):
+                    continue
+                if max_files is not None and accepted >= max_files:
+                    return f"산출 파일이 상한 {max_files}개를 넘어 관찰 산출물 manifest가 불완전합니다"
+                stop = visit_link(path, entry)
+                accepted += 1
+                if stop:
+                    return stop
+                continue
+            if overlaps_zone(real_root / relative / entry.name, zones):
+                continue
+            if entry.kind == "dir":
+                if _is_mount(root / relative / entry.name) or (
+                        entry.ident is not None and entry.ident[0] != top.dev):
+                    continue
+                if depth + 1 > max_depth:
+                    note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
+                    continue
+                folders.append(entry)
+                continue
+            if entry.kind != "file" or not selected(path, entry, depth):
+                continue
+            if max_files is not None and accepted >= max_files:
+                suffix = ("관찰 산출물 manifest가 불완전합니다" if detailed
+                          else f"앞의 {max_files}개만 기록합니다")
+                return f"산출 파일이 상한 {max_files}개를 넘어 {suffix}"
+            if not open_files:
+                stop = visit_file(path, entry, None, None)
+                accepted += 1
+                if stop:
+                    return stop
+                continue
+            try:
+                fd = folder.open_read_file(entry.name)
+                try:
+                    info = os.fstat(fd)
+                    if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
+                        raise OSError(f"{path.as_posix()} was replaced after it was listed")
+                    with os.fdopen(fd, "rb") as stream:
+                        fd = -1
+                        try:
+                            stop = visit_file(path, entry, stream, info)
+                        except OSError:
+                            if not suppress_callback_errors:
+                                raise
+                            note = note or f"{path.as_posix()}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
+                            continue
+                finally:
+                    if fd >= 0:
+                        os.close(fd)
+            except OSError:
+                note = note or f"{path.as_posix()}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
+                continue
+            accepted += 1
+            if stop:
+                return stop
+        for entry in folders:
+            sub = relative / entry.name
+            try:
+                child = folder.child(entry.name, expect=entry.ident)
+            except NotPlainFolder:
+                note = note or (f"{PurePath('outputs', sub).as_posix()} 폴더가 목록을 만드는 사이 링크나 다른 "
+                                "폴더로 바뀌어 산출 목록에서 뺐습니다")
+                continue
+            except OSError:
+                note = note or f"{PurePath('outputs', sub).as_posix()} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+                continue
+            with child:
+                stop = walk(child, sub, depth + 1)
+            if stop:
+                return stop
+        return None
+
+    return walk(top, PurePath(), 0) or note
 
 
 class TaskWorkspace:
@@ -212,12 +335,6 @@ class TaskWorkspace:
         with top:
             try:
                 real_root = root.resolve()
-                if not top.same_as(real_root):  # its real path must name the folder held open
-                    return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
-                # Its files would live on another file system or in a zone; a zone inside it is left out per entry.
-                if (_is_mount(root) or (top.dev is not None and top.dev != os.stat(real_root.parent).st_dev)
-                        or any(real_root.is_relative_to(zone) for zone in zones)):
-                    return [], "outputs 폴더가 다른 파일 시스템이거나 통제 구역 안이라 산출 목록을 만들지 않았습니다"
             except (OSError, RuntimeError, ValueError):
                 return [], "outputs 폴더를 확인할 수 없어 산출 목록을 만들지 않았습니다"
             return self._list_outputs(top, root, real_root, zones, max_entries, max_depth,
@@ -239,10 +356,6 @@ class TaskWorkspace:
         with top:
             try:
                 real_root = root.resolve()
-                if (not top.same_as(real_root) or _is_mount(root)
-                        or (top.dev is not None and top.dev != os.stat(real_root.parent).st_dev)
-                        or any(real_root.is_relative_to(zone) for zone in zones)):
-                    return [], "outputs 폴더가 안전하지 않거나 통제 구역이어서 관찰 산출물 manifest가 불완전합니다"
             except (OSError, RuntimeError, ValueError):
                 return [], "outputs 폴더를 확인하지 못해 관찰 산출물 manifest가 불완전합니다"
             return self._list_outputs(
@@ -263,109 +376,50 @@ class TaskWorkspace:
         own_names = own if _case_sensitive(root) else {name.casefold() for name in own}
         own_name = (lambda name: name) if own_names is own else str.casefold
         found: list[Any] = []
-        note: str | None = None  # a folder left out; the listing goes on without it
-        seen = 0
 
-        def walk(folder: HeldDir, relative: PurePath, depth: int) -> str | None:
-            """List one held folder, then its subfolders in name order; the reason the listing stops, if it does."""
-            nonlocal note, seen
-            shown = PurePath("outputs", relative).as_posix()
-            try:
-                entries = sorted(folder.entries(max_entries - seen + 1), key=lambda e: e.name)
-            except OSError:
-                note = note or f"{shown} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
-                return None
-            folders = []
-            for entry in entries:
-                seen += 1
-                if seen > max_entries:
-                    return f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다"
-                if not _utf8_name(entry.name):
-                    # A CP949 name unpacked on Linux: the result could not be sent as JSON text and the run would fail.
-                    note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
-                    continue
-                path = PurePath("outputs", relative, entry.name).as_posix()
-                own_result = depth == 0 and own_name(entry.name) in own_names
-                if entry.kind is None or own_result:
-                    continue
-                if entry.kind == "link":
-                    if detailed:
-                        if len(found) >= max_files:
-                            return f"산출 파일이 상한 {max_files}개를 넘어 관찰 산출물 manifest가 불완전합니다"
-                        found.append({"path": path, "size": entry.size, "mtime_ns": entry.mtime_ns,
-                                      "sha256": None, "link": True, "reason": "링크는 해시하지 않음"})
-                    continue  # record the link itself when requested, never follow it
-                if overlaps_zone(real_root / relative / entry.name, zones):
-                    continue  # inside a restricted zone, or a folder holding one
-                if entry.kind == "dir":
-                    if _is_mount(root / relative / entry.name) or (
-                            entry.ident is not None and entry.ident[0] != top.dev):
-                        continue
-                    if depth + 1 > max_depth:
-                        note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
-                        continue
-                    folders.append(entry)
-                elif entry.kind == "file":
-                    if len(found) >= max_files:
-                        return f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
-                    if not detailed:
-                        found.append(path)
-                        continue
-                    try:
-                        fd = folder.open_read_file(entry.name)
-                        with os.fdopen(fd, "rb") as stream:
-                            info = os.fstat(stream.fileno())
-                            if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
-                                raise OSError(f"{path} was replaced after it was listed")
-                            # ino and (POSIX) ctime only tell a replaced or rewritten file from an untouched one
-                            # when size and mtime were kept (`cp -p`, atomic replace); the run baseline compares
-                            # them and the published record drops them.
-                            record: dict[str, Any] = {"path": path, "size": info.st_size,
-                                                      "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
-                                                      "ctime_ns": None if os.name == "nt" else info.st_ctime_ns}
-                            if hash_max_bytes is not None:
-                                if info.st_size > hash_max_bytes:
-                                    record.update(sha256=None,
-                                                  reason=f"output_hash_max_bytes 상한 초과 ({hash_max_bytes})")
-                                else:
-                                    # A writer still appending (an HPC job after the CLI ended) never makes this
-                                    # read more than the cap, and a file that changed while hashed gets no hash.
-                                    digest, read = hashlib.sha256(), 0
-                                    while read <= hash_max_bytes and (
-                                            chunk := stream.read(min(1024 * 1024, hash_max_bytes + 1 - read))):
-                                        digest.update(chunk)
-                                        read += len(chunk)
-                                    after = os.fstat(stream.fileno())
-                                    if read > hash_max_bytes:
-                                        record.update(sha256=None, reason=(
-                                            f"해시하는 동안 output_hash_max_bytes 상한({hash_max_bytes})을 넘음"))
-                                    elif (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns) \
-                                            or read != info.st_size:
-                                        record.update(sha256=None, reason="해시하는 동안 파일이 바뀜")
-                                    else:
-                                        record["sha256"] = digest.hexdigest()
-                            found.append(record)
-                    except OSError:
-                        note = note or f"{path}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
-            for entry in folders:  # a folder's files first, then its subfolders in name order
-                sub = relative / entry.name
-                try:
-                    child = folder.child(entry.name, expect=entry.ident)
-                except NotPlainFolder:
-                    note = note or (f"{PurePath('outputs', sub).as_posix()} 폴더가 목록을 만드는 사이 링크나 다른 "
-                                    "폴더로 바뀌어 산출 목록에서 뺐습니다")
-                    continue
-                except OSError:
-                    note = note or f"{PurePath('outputs', sub).as_posix()} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
-                    continue
-                with child:
-                    stop = walk(child, sub, depth + 1)
-                if stop:
-                    return stop
+        def selected(path: PurePath, _entry: Any, depth: int) -> bool:
+            return not (depth == 0 and own_name(path.name) in own_names)
+
+        def visit_link(path: PurePath, entry: Any) -> str | None:
+            found.append({"path": path.as_posix(), "size": entry.size, "mtime_ns": entry.mtime_ns,
+                          "sha256": None, "link": True, "reason": "링크는 해시하지 않음"})
             return None
 
-        stop = walk(top, PurePath(), 0)
-        return found, stop or note
+        def visit_file(path: PurePath, _entry: Any, stream: Any,
+                       info: os.stat_result | None) -> str | None:
+            if not detailed:
+                found.append(path.as_posix())
+                return None
+            assert stream is not None and info is not None
+            record: dict[str, Any] = {"path": path.as_posix(), "size": info.st_size,
+                                      "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
+                                      "ctime_ns": None if os.name == "nt" else info.st_ctime_ns}
+            if hash_max_bytes is not None:
+                if info.st_size > hash_max_bytes:
+                    record.update(sha256=None, reason=f"output_hash_max_bytes 상한 초과 ({hash_max_bytes})")
+                else:
+                    digest, read = hashlib.sha256(), 0
+                    while read <= hash_max_bytes and (
+                            chunk := stream.read(min(1024 * 1024, hash_max_bytes + 1 - read))):
+                        digest.update(chunk)
+                        read += len(chunk)
+                    after = os.fstat(stream.fileno())
+                    if read > hash_max_bytes:
+                        record.update(sha256=None,
+                                      reason=f"해시하는 동안 output_hash_max_bytes 상한({hash_max_bytes})을 넘음")
+                    elif (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns) \
+                            or read != info.st_size:
+                        record.update(sha256=None, reason="해시하는 동안 파일이 바뀜")
+                    else:
+                        record["sha256"] = digest.hexdigest()
+            found.append(record)
+            return None
+
+        note = walk_output_files(
+            top, root, real_root, zones, max_entries, max_depth, max_files, detailed=detailed,
+            selected=selected, visit_file=visit_file, visit_link=visit_link if detailed else None,
+            open_files=detailed, suppress_callback_errors=True)
+        return found, note
 
     def update_run(self, task_id: str, **fields: Any) -> None:
         """A workspace can host several runs (original + wake-ups after HPC jobs)."""
