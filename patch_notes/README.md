@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:08 | [`826d950`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/826d950) | 버려진 task의 취소도 결과가 오거나 보관 기한(2일)이 지날 때까지 보관한다 |
+| 01:57 | [`29531d3`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/29531d3) | task 취소를 task가 끝날 때까지 보관하고 runner가 다시 붙으면 다시 보낸다 |
+| 01:57 | [`f315ce1`](https://github.com/ehojune/bioinfo-team-3d/pull/397/commits/f315ce1) | 선행 연구 조기 종료 취소도 보관되는 task 취소를 쓴다 |
 | 01:34 | [`d499328`](https://github.com/ehojune/bioinfo-team-3d/pull/396/commits/d499328) | CP1 test가 가짜 CLI가 해석한 전체 prompt로 두 전달 방식을 모두 확인한다(POSIX inline 포함) |
 | 01:27 | [`34a14bb`](https://github.com/ehojune/bioinfo-team-3d/pull/396/commits/34a14bb) | 선행 연구 조사를 조기 종료 때 취소·회수하고, 빈 결과는 경고로 저장하며, CP1 test 기본 경우 단언을 되살린다 |
 | 01:25 | [`7f60b9a`](https://github.com/ehojune/bioinfo-team-3d/pull/393/commits/7f60b9a) | 세션 runner 고정을 재전송과 복구 재전송에도 적용하고 바뀐 대상에는 보내지 않는다 |
