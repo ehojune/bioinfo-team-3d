@@ -619,3 +619,68 @@ async def test_followup_after_restart_isolates_when_the_interrupted_outcome_is_u
         assert hub.requests["r"]["cso_session_id"] == "fresh"
     finally:
         hub.store.close()
+
+
+def _hub_with_solo_session(tmp_path, *, origin, current):
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = Hub(settings)
+    hub.agents = {"solo": {"id": "solo", "engine": "codex"}}
+    hub.agent_runner = {"solo": current}
+    hub.requests["r"] = {"id": "r", "text": "Summarize it", "mode": "orchestrate", "status": "done",
+                         "report": "summary", "followup_agent_id": "solo", "followups": []}
+    hub.store.put("task", "t1", {"request_id": "r", "kind": "direct", "dispatched_at": 1, "completed": True,
+                                 "runner_id": origin, "payload": {"agent_id": "solo"},
+                                 "result": {"session_id": "solo-1", "workdir": str(tmp_path / "solo")}})
+    return hub
+
+
+async def _ask_and_wait(hub, text="Why?"):
+    entry = hub.start_followup("r", text)
+    for _ in range(50):
+        if entry["status"] != "running":
+            break
+        await asyncio.sleep(0.01)
+    return entry
+
+
+@pytest.mark.asyncio
+async def test_followup_is_refused_when_another_runner_now_hosts_the_agent(tmp_path):
+    # PR #391 review: dispatch goes to whichever runner registered the agent id last; resuming there would open
+    # runner A's session id and absolute workdir on runner B's PC.
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-b")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer")
+
+    hub.dispatch = dispatch
+    entry = await _ask_and_wait(hub)
+    assert calls == []
+    assert entry["status"] == "failed" and "runner pc-a" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_followup_resumes_on_the_runner_that_made_the_session(tmp_path):
+    hub = _hub_with_solo_session(tmp_path, origin="pc-a", current="pc-a")
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, text="answer", session_id="solo-2",
+                          workdir=str(tmp_path / "solo"))
+
+    hub.dispatch = dispatch
+    entry = await _ask_and_wait(hub)
+    assert entry["status"] == "done" and calls[0].resume_session_id == "solo-1"
+
+
+def test_foreign_session_check_is_off_without_a_known_origin(tmp_path):
+    hub = _hub_with_solo_session(tmp_path, origin=None, current="pc-b")
+    orchestrator = Orchestrator(hub)
+    assert orchestrator._foreign_session_runner("r", "solo", "solo-1") is None
+    hub.store.put("task", "t1", {**hub.store.get("task", "t1"), "runner_id": "pc-a"})
+    assert orchestrator._foreign_session_runner("r", "solo", "solo-1") == "pc-a"
+    assert orchestrator._foreign_session_runner("r", "solo", None) is None
+    assert orchestrator._foreign_session_runner("r", "solo", "other-session") is None
