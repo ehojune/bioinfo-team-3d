@@ -6,7 +6,7 @@ import platform
 import shutil
 import subprocess
 import threading
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -15,9 +15,8 @@ from labhq.cli import main, render
 from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
-from labhq.settings import DataZone, Settings
+from labhq.settings import Settings
 import labhq.request_bundle as request_bundle_module
-import labhq.runner.workspace as workspace_module
 
 
 def digest(path: Path) -> str:
@@ -110,6 +109,112 @@ def request_fixture(tmp_path: Path):
     return settings, request, tasks, upstream, outside, old
 
 
+def manifest_rows(bundle: Path) -> dict[str, dict[str, str]]:
+    with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
+        return {row["relative_path"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+
+@pytest.mark.parametrize("failure", ["changed", "missing", "link"])
+def test_recorded_output_failure_is_manifested_and_marks_bundle_incomplete(tmp_path, failure):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    workdir = root / "2026-10-04" / f"task_{failure}"
+    output = workdir / "outputs/result.txt"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(output, "during run\n")
+    recorded_hash = digest(output)
+    if failure == "changed":
+        write(output, "after run\n")
+        expected = "not copied: changed since run"
+    elif failure == "missing":
+        output.unlink()
+        expected = "not copied: missing"
+    else:
+        target = tmp_path / "outside.txt"
+        write(target, "outside\n")
+        output.unlink()
+        try:
+            output.symlink_to(target)
+        except OSError:
+            pytest.skip("file symlinks are unavailable")
+        expected = "not copied: changed since run"
+    request = {
+        "id": f"recorded_{failure}", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [{"id": "s1", "depends_on": []}]},
+        "results": {"s1": {
+            "workdir": str(workdir), "workdir_id": workdir.name,
+            "outputs": ["outputs/result.txt"],
+            "output_sha256": {"outputs/result.txt": recorded_hash},
+        }},
+    }
+
+    built = build_request_bundle(request, settings)
+    bundle = Path(built["path"])
+    row = manifest_rows(bundle)["steps/s1/outputs/result.txt"]
+
+    assert row["status"] == expected
+    assert not (bundle / "steps/s1/outputs/result.txt").exists()
+    assert built["status"] == "incomplete"
+    assert "요청 묶음 상태: incomplete" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+
+
+def test_only_runner_recorded_and_hashed_outputs_are_copied(tmp_path):
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    workdir = root / "2026-10-04" / "task_recorded_only"
+    recorded = workdir / "outputs/result.txt"
+    undeclared = workdir / "outputs/scripts/unlisted.py"
+    hash_only = workdir / "outputs/hash-only.txt"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(recorded, "recorded\n")
+    write(undeclared, "print('unlisted')\n")
+    write(hash_only, "hash only\n")
+    request = {
+        "id": "recorded_only", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [{"id": "s1", "depends_on": []}]},
+        "results": {"s1": {
+            "workdir": str(workdir), "workdir_id": workdir.name,
+            "outputs": ["outputs/result.txt", "outputs/scripts/unlisted.py"],
+            "output_sha256": {
+                "outputs/result.txt": digest(recorded),
+                "outputs/hash-only.txt": digest(hash_only),
+            },
+        }},
+    }
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+
+    assert (bundle / "steps/s1/outputs/result.txt").is_file()
+    assert not (bundle / "steps/s1/outputs/scripts/unlisted.py").exists()
+    assert not (bundle / "steps/s1/outputs/hash-only.txt").exists()
+    assert "steps/s1/outputs/scripts/unlisted.py" not in manifest_rows(bundle)
+    assert "steps/s1/outputs/hash-only.txt" not in manifest_rows(bundle)
+
+
+def test_workdir_rewrite_requires_a_path_boundary_and_posix_case(tmp_path):
+    pattern = request_bundle_module._path_prefix_pattern(PurePosixPath("/tmp/foo"))
+    text = "\n".join([
+        "/tmp/foo/outputs/a.tsv",
+        "/var/tmp/foo/outputs/b.tsv",
+        "/tmp/Foo/outputs/c.tsv",
+        "x=/tmp/foo/outputs/d.tsv",
+    ])
+
+    rewritten = pattern.sub(lambda match: f"REL/{match.group('tail')}", text)
+
+    assert "REL/a.tsv" in rewritten
+    assert "/var/tmp/foo/outputs/b.tsv" in rewritten
+    assert "/tmp/Foo/outputs/c.tsv" in rewritten
+    assert "x=REL/d.tsv" in rewritten
+
+
+def test_windows_workdir_rewrite_is_case_insensitive_at_a_boundary():
+    pattern = request_bundle_module._path_prefix_pattern(r"C:\\Runs\\Task")
+
+    assert pattern.search(r'"c:\\runs\\task\\outputs\\a.tsv"')
+    assert not pattern.search(r"prefixC:\\Runs\\Task\\outputs\\a.tsv")
+
+
 def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     settings, request, tasks, upstream, outside, old = request_fixture(tmp_path)
     original_script = (Path(request["results"]["s2"]["workdir"]) / "outputs/scripts/analyze.py").read_bytes()
@@ -119,7 +224,7 @@ def test_bundle_is_portable_filtered_and_idempotent(tmp_path):
     assert bundle == Path(settings.runner.workspace_root) / "requests" / request["id"]
     assert built["rewritten_files"] == 3
     assert (bundle / "steps/s1/outputs/data/input.tsv").is_file()
-    assert (bundle / "steps/s1/outputs/scripts/make.py").is_file()  # scripts are copied even when undeclared
+    assert not (bundle / "steps/s1/outputs/scripts/make.py").exists()
     assert (bundle / "steps/s2/outputs/reference/genes.tsv").is_file()
     assert not (bundle / "steps/s2/outputs/large.bin").exists()
     assert not (bundle / "steps/s1/outputs/obsolete.txt").exists()
@@ -167,6 +272,7 @@ def test_markdown_links_stay_document_relative(tmp_path):
     note = workdir / "outputs/docs/note.md"
     write(note, f"[input]({upstream})\n")
     request["results"]["s2"]["outputs"].append("outputs/docs/note.md")
+    request["results"]["s2"]["output_sha256"]["outputs/docs/note.md"] = digest(note)
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
 
@@ -215,7 +321,8 @@ def test_parent_swap_never_reads_the_replacement(tmp_path, monkeypatch):
     write(outside / "safe.txt", "SECRET\n")
     request = {"id": "race", "report": "ok", "report_appendix": "", "plan": {"steps": [{"id": "s1"}]},
                "results": {"s1": {"workdir": str(workdir), "workdir_id": workdir.name,
-                                    "outputs": ["outputs/data/safe.txt"]}}}
+                                    "outputs": ["outputs/data/safe.txt"],
+                                    "output_sha256": {"outputs/data/safe.txt": digest(source_dir / "safe.txt")}}}}
     real_child = request_bundle_module.HeldDir.child
     attempted = False
 
@@ -237,27 +344,17 @@ def test_parent_swap_never_reads_the_replacement(tmp_path, monkeypatch):
     assert all(b"SECRET" not in path.read_bytes() for path in bundle.rglob("*") if path.is_file())
 
 
-def test_bundle_uses_runner_walker_for_restricted_zone_and_mount(tmp_path, monkeypatch):
+def test_bundle_does_not_list_outputs_directories(tmp_path, monkeypatch):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
-    workdir = Path(request["results"]["s1"]["workdir"])
-    restricted = workdir / "outputs/restricted/secret.txt"
-    mounted = workdir / "outputs/mounted/secret.txt"
-    write(restricted, "restricted\n")
-    write(mounted, "mounted\n")
-    request["results"]["s1"]["outputs"] += [
-        "outputs/restricted/secret.txt", "outputs/mounted/secret.txt",
-    ]
-    settings.policy.data_zones = [DataZone(path=str(restricted.parent), level="restricted")]
-    real_is_mount = workspace_module._is_mount
-    monkeypatch.setattr(
-        workspace_module, "_is_mount",
-        lambda path: path.name == "mounted" or real_is_mount(path),
-    )
+
+    def fail_listing(*_args, **_kwargs):
+        raise AssertionError("request bundle must not enumerate outputs")
+
+    monkeypatch.setattr(request_bundle_module.HeldDir, "entries", fail_listing)
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
 
-    assert not (bundle / "steps/s1/outputs/restricted/secret.txt").exists()
-    assert not (bundle / "steps/s1/outputs/mounted/secret.txt").exists()
+    assert (bundle / "steps/s1/outputs/data/input.tsv").is_file()
 
 
 def test_unsafe_script_name_is_listed_without_a_command(tmp_path):
@@ -265,6 +362,8 @@ def test_unsafe_script_name_is_listed_without_a_command(tmp_path):
     workdir = Path(request["results"]["s1"]["workdir"])
     unsafe = workdir / "outputs/scripts/unsafe; echo PWN.py"
     write(unsafe, "print('safe contents')\n")
+    request["results"]["s1"]["outputs"].append("outputs/scripts/unsafe; echo PWN.py")
+    request["results"]["s1"]["output_sha256"]["outputs/scripts/unsafe; echo PWN.py"] = digest(unsafe)
 
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
     readme = (bundle / "README.md").read_text(encoding="utf-8")
@@ -282,10 +381,12 @@ def test_script_commands_follow_plan_topology_before_command_name(tmp_path):
     for step_id, script in (("down", "finish.R"), ("up", "prepare.py")):
         workdir = root / "2026-10-04" / f"task_{step_id}"
         write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
-        write(workdir / "outputs/scripts" / script, "# rerun\n")
+        script_path = workdir / "outputs/scripts" / script
+        write(script_path, "# rerun\n")
         results[step_id] = {
             "workdir": str(workdir), "workdir_id": workdir.name,
             "outputs": [f"outputs/scripts/{script}"],
+            "output_sha256": {f"outputs/scripts/{script}": digest(script_path)},
         }
     request = {
         "id": "topology", "report": "ok", "report_appendix": "",
@@ -312,9 +413,11 @@ def test_python_command_comes_from_the_step_runner_and_unknown_is_disclosed(tmp_
                                         ("unknown", "t-unknown", "runner-b")):
         workdir = root / "2026-10-04" / f"task_{step_id}"
         write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
-        write(workdir / "outputs/scripts/run.py", "print('ok')\n")
+        script_path = workdir / "outputs/scripts/run.py"
+        write(script_path, "print('ok')\n")
         results[step_id] = {"task_id": task_id, "workdir": str(workdir),
-                            "workdir_id": workdir.name, "outputs": ["outputs/scripts/run.py"]}
+                            "workdir_id": workdir.name, "outputs": ["outputs/scripts/run.py"],
+                            "output_sha256": {"outputs/scripts/run.py": digest(script_path)}}
         tasks[task_id] = {"request_id": "python_command", "step_id": step_id,
                           "runner_id": runner_id, "completed": True, "result": results[step_id]}
     request = {"id": "python_command", "report": "ok", "report_appendix": "",
@@ -332,7 +435,7 @@ def test_python_command_comes_from_the_step_runner_and_unknown_is_disclosed(tmp_
 
 
 @pytest.mark.parametrize("total_bytes,max_files", [(1024 * 1024, 1), (5, 10)])
-def test_request_total_limits_record_first_omission_and_stop(tmp_path, total_bytes, max_files):
+def test_request_total_limits_record_every_omission(tmp_path, total_bytes, max_files):
     settings = configured(tmp_path)
     settings.runner.bundle_max_total_mb = total_bytes / (1024 * 1024)
     settings.runner.bundle_max_files = max_files
@@ -347,6 +450,8 @@ def test_request_total_limits_record_first_omission_and_stop(tmp_path, total_byt
         "results": {"s1": {
             "workdir": str(workdir), "workdir_id": workdir.name,
             "outputs": [f"outputs/{name}" for name in ("a.txt", "b.txt", "c.txt")],
+            "output_sha256": {f"outputs/{name}": digest(workdir / "outputs" / name)
+                              for name in ("a.txt", "b.txt", "c.txt")},
         }},
     }
 
@@ -357,8 +462,8 @@ def test_request_total_limits_record_first_omission_and_stop(tmp_path, total_byt
 
     assert by_path["steps/s1/outputs/a.txt"]["status"] == "copied"
     assert by_path["steps/s1/outputs/b.txt"]["status"] == "not copied: total limit"
-    assert "steps/s1/outputs/c.txt" not in by_path
-    assert "누적 상한에 도달해 첫 제외 파일에서 순회를 멈춤" in (
+    assert by_path["steps/s1/outputs/c.txt"]["status"] == "not copied: total limit"
+    assert "누적 상한으로 기록 산출 일부를 복사하지 않음" in (
         bundle / "report_appendix.md").read_text(encoding="utf-8")
 
 
@@ -402,7 +507,7 @@ async def test_scheduled_bundle_uses_one_worker_without_blocking_loop(tmp_path, 
         calls.append(threading.get_ident())
         loop.call_soon_threadsafe(started.set)
         assert release.wait(5)
-        return {"path": str(tmp_path / "bundle")}
+        return {"path": str(tmp_path / "bundle"), "status": "complete"}
 
     monkeypatch.setattr(request_bundle_module, "build_request_bundle", slow_bundle)
     data = {"ok": True}
@@ -442,7 +547,8 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
     write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
     rid = f"req_{mode}_{research}_{terminal}"
     result = {"task_id": rid, "agent_id": "analyst", "ok": terminal == "request.completed",
-              "workdir": str(workdir), "workdir_id": workdir.name, "outputs": ["outputs/answer.txt"]}
+              "workdir": str(workdir), "workdir_id": workdir.name, "outputs": ["outputs/answer.txt"],
+              "output_sha256": {"outputs/answer.txt": digest(output)}}
     hub = Hub(settings)
     hub.requests[rid] = {
         "id": rid, "text": "request", "mode": mode, "status": "done" if terminal == "request.completed" else "failed",
@@ -459,7 +565,41 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
 
     assert Path(hub.requests[rid]["bundle_path"]).is_dir()
     assert data["bundle_path"] == hub.requests[rid]["bundle_path"]
+    assert data["bundle_status"] == "complete"
     assert hub.events[-1]["data"]["bundle_path"] == data["bundle_path"]
+    assert hub.events[-1]["data"]["bundle_status"] == "complete"
+    await asyncio_sleep()
+    hub.store.close()
+
+
+@pytest.mark.asyncio
+async def test_incomplete_bundle_status_is_stored_in_bundle_event(tmp_path):
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-04" / "task_incomplete"
+    output = workdir / "outputs/answer.txt"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(output, "during run\n")
+    recorded_hash = digest(output)
+    write(output, "after run\n")
+    result = {"task_id": "t-incomplete", "workdir": str(workdir), "workdir_id": workdir.name,
+              "outputs": ["outputs/answer.txt"],
+              "output_sha256": {"outputs/answer.txt": recorded_hash}}
+    hub = Hub(settings)
+    hub.requests["incomplete"] = {
+        "id": "incomplete", "mode": "direct", "status": "done", "report": "body",
+        "report_appendix": "appendix", "results": {"direct": result}, "plan": {"steps": []},
+    }
+    hub.store.put("task", "t-incomplete", {"request_id": "incomplete", "kind": "direct",
+                                             "completed": True, "result": result})
+    data = {"ok": True, "report": "body", "report_appendix": "appendix"}
+
+    hub.commit_terminal("incomplete", "request.completed", data)
+
+    assert data["bundle_status"] == "incomplete"
+    assert hub.events[-1]["type"] == "request.bundle"
+    assert hub.events[-1]["data"]["bundle_status"] == "incomplete"
+    assert "요청 묶음 상태: incomplete" in Path(data["bundle_path"], "report_appendix.md").read_text(
+        encoding="utf-8")
     await asyncio_sleep()
     hub.store.close()
 

@@ -10,7 +10,8 @@ office.apply({type: 'request.completed', request_id: 'r1', data: {
 }});
 assert.equal(office.S.requests.get('r1').bundlePath, 'C:\\runs\\requests\\r1');
 
-office.apply({type: 'request.bundle', request_id: 'r1', data: {bundle_warning: 'copy stopped'}});
+office.apply({type: 'request.bundle', request_id: 'r1', data: {bundle_status: 'incomplete', bundle_warning: 'copy stopped'}});
+assert.equal(office.S.requests.get('r1').bundleStatus, 'incomplete');
 assert.equal(office.S.requests.get('r1').bundleWarning, 'copy stopped');
 
 const restored = global.LabHQState.createOfficeState();

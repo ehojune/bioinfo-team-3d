@@ -10,14 +10,13 @@ import platform
 import re
 import shlex
 import shutil
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterator
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import locate_workdir
-from .runner.workspace import restricted_zones, walk_output_files
 
 
 TEXT_SUFFIXES = frozenset({
@@ -75,18 +74,34 @@ def _clear_owned_dir(path: Path, parent: Path) -> None:
     shutil.rmtree(path)
 
 
-def _candidate_roots(result: Mapping[str, Any]) -> set[PurePosixPath]:
-    """Declared paths below outputs, plus the reproducibility scripts folder."""
-    roots: set[PurePosixPath] = set()
+def _recorded_outputs(result: Mapping[str, Any]) -> list[tuple[str, PurePosixPath | None, str]]:
+    """Runner outputs that have a hash in the same terminal result, preserving output order."""
+    hashes = result.get("output_sha256") if isinstance(result.get("output_sha256"), Mapping) else {}
+    found: list[tuple[str, PurePosixPath | None, str]] = []
+    seen: set[str] = set()
     for raw in result.get("outputs") or []:
-        if isinstance(raw, str) and (safe := _safe_output_path(raw)) is not None:
-            roots.add(PurePosixPath(*safe.parts[1:]))
-    roots.add(PurePosixPath("scripts"))
-    return roots
+        if not isinstance(raw, str) or raw in seen or raw not in hashes:
+            continue
+        seen.add(raw)
+        found.append((raw, _safe_output_path(raw), str(hashes[raw])))
+    return found
 
 
-def _selected(path: PurePosixPath, roots: set[PurePosixPath]) -> bool:
-    return any(path == root or root in path.parents for root in roots)
+@contextmanager
+def _open_recorded_output(outputs: HeldDir, path: PurePosixPath) -> Iterator[tuple[Any, os.stat_result]]:
+    """Open one recorded output by held parents, without listing or following links."""
+    with ExitStack() as stack:
+        folder = outputs
+        for part in path.parts[1:-1]:
+            folder = stack.enter_context(folder.child(part))
+        fd = folder.open_read_file(path.name)
+        try:
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                yield stream, os.fstat(stream.fileno())
+        finally:
+            if fd >= 0:
+                os.close(fd)
 
 
 def _held_workdir(stack: ExitStack, root: Path, result: Mapping[str, Any]) -> tuple[HeldDir, Path] | tuple[None, str]:
@@ -128,13 +143,21 @@ def _copy_held(stream, info: os.stat_result, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _path_prefix_pattern(workdir: Path) -> re.Pattern[str]:
-    parts = [part for part in re.split(r"[\\/]+", str(workdir)) if part]
-    prefix = r"[\\/]+".join(re.escape(part) for part in parts)
-    if str(workdir).startswith(("/", "\\")):
-        prefix = r"[\\/]+" + prefix
+def _path_prefix_pattern(workdir: Any) -> re.Pattern[str]:
+    raw = str(workdir)
+    windows = bool(re.match(r"^[A-Za-z]:[\\/]", raw) or re.match(r"^[\\/]{2}[^\\/]", raw))
+    separator = r"[\\/]+" if windows else "/"
+    parts = [part for part in re.split(r"[\\/]+", raw) if part]
+    prefix = separator.join(re.escape(part) for part in parts)
+    if windows and raw.startswith(("//", "\\\\")):
+        prefix = r"[\\/]{2}" + prefix
+    elif not windows and raw.startswith(("/", "\\")):
+        prefix = "/" + prefix
     # Match the rest of a path until a common text delimiter so its separators can be made portable too.
-    return re.compile(prefix + r"[\\/]+outputs[\\/]+(?P<tail>[^\s<>\"'`|]*)", re.IGNORECASE)
+    boundary = r"(?:^|(?<=[\s\"'=\(\[,:]))"
+    flags = re.IGNORECASE if windows else 0
+    return re.compile(boundary + prefix + separator + r"outputs" + separator +
+                      r"(?P<tail>[^\s<>\"'`|]*)", flags)
 
 
 def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]]) -> tuple[int, list[str]]:
@@ -286,7 +309,6 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     copied_bytes = 0
     copied_files = 0
     total_limit_hit = False
-    zones = restricted_zones(settings)
     try:
         found_workdirs = 0
         with ExitStack() as stack:
@@ -296,12 +318,16 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 result = results.get(step_id)
                 if not isinstance(result, Mapping):
                     continue
+                recorded = _recorded_outputs(result)
                 held, workdir_or_reason = _held_workdir(stack, root, result)
                 if held is None:
-                    rows.append({"relative_path": f"steps/{step_id}", "size": "", "sha256": "",
-                                 "step_id": step_id, "original_path": str(result.get("workdir") or ""),
-                                 "status": f"not copied: {workdir_or_reason}", "rewritten": 0,
-                                 "remaining_absolute_paths": "", "rewritten_files": ""})
+                    for index, (raw, safe, _expected) in enumerate(recorded, 1):
+                        relative = (PurePosixPath("steps", step_id, *safe.parts).as_posix() if safe is not None
+                                    else f"steps/{step_id}/<invalid-output-{index}>")
+                        rows.append({"relative_path": relative, "size": "", "sha256": "",
+                                     "step_id": step_id, "original_path": str(result.get("workdir") or raw),
+                                     "status": "not copied: missing", "rewritten": 0,
+                                     "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
                 workdir = Path(workdir_or_reason)
                 found_workdirs += 1
@@ -309,62 +335,70 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 try:
                     outputs = stack.enter_context(held.child("outputs"))
                 except (NotPlainFolder, OSError):
-                    rows.append({"relative_path": f"steps/{step_id}", "size": "", "sha256": "",
-                                 "step_id": step_id, "original_path": str(workdir / "outputs"),
-                                 "status": "not copied: outputs 폴더 없음", "rewritten": 0,
-                                 "remaining_absolute_paths": "", "rewritten_files": ""})
+                    for index, (raw, safe, _expected) in enumerate(recorded, 1):
+                        relative = (PurePosixPath("steps", step_id, *safe.parts).as_posix() if safe is not None
+                                    else f"steps/{step_id}/<invalid-output-{index}>")
+                        source = workdir / Path(*safe.parts) if safe is not None else workdir / raw
+                        rows.append({"relative_path": relative, "size": "", "sha256": "",
+                                     "step_id": step_id, "original_path": str(source),
+                                     "status": "not copied: missing", "rewritten": 0,
+                                     "remaining_absolute_paths": "", "rewritten_files": ""})
                     continue
-                roots = _candidate_roots(result)
                 python_command = _runner_python_command(result, tasks, runner_capabilities)
-
-                def selected(path: PurePosixPath, _entry: Any, _depth: int) -> bool:
-                    output_rel = PurePosixPath(*path.parts[1:])
-                    return _selected(output_rel, roots)
-
-                def copy_file(path: PurePosixPath, _entry: Any, stream: Any,
-                              info: os.stat_result | None) -> str | None:
-                    nonlocal copied_bytes, copied_files, total_limit_hit, python_unknown
-                    assert stream is not None and info is not None
+                for index, (raw, path, expected_sha256) in enumerate(recorded, 1):
+                    if path is None:
+                        rows.append({"relative_path": f"steps/{step_id}/<invalid-output-{index}>",
+                                     "size": "", "sha256": "", "step_id": step_id,
+                                     "original_path": raw, "status": "not copied: unsafe path", "rewritten": 0,
+                                     "remaining_absolute_paths": "", "rewritten_files": ""})
+                        continue
                     output_rel = PurePosixPath(*path.parts[1:])
                     rel = PurePosixPath("steps", step_id, *path.parts)
-                    source = workdir / "outputs" / Path(*output_rel.parts)
-                    row = {"relative_path": rel.as_posix(), "size": info.st_size, "sha256": "",
+                    source = workdir / Path(*path.parts)
+                    row = {"relative_path": rel.as_posix(), "size": "", "sha256": "",
                            "step_id": step_id, "original_path": str(source), "status": "copied",
                            "rewritten": 0, "remaining_absolute_paths": "", "rewritten_files": ""}
-                    if info.st_size > max_file_bytes:
-                        row["status"] = "not copied: size"
-                    elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
-                        row["status"] = "not copied: total limit"
-                        total_limit_hit = True
-                    else:
-                        destination = temp / Path(*rel.parts)
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        row["sha256"] = _copy_held(stream, info, destination)
-                        copied_files += 1
-                        copied_bytes += info.st_size
-                        suffix = destination.suffix.casefold()
-                        command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
-                        if suffix == ".py" and command is None:
-                            command = "python"
-                            python_unknown = True
-                        if command and "scripts" in output_rel.parts:
-                            if _safe_script_path(rel):
-                                script_path = PurePosixPath("outputs", *output_rel.parts)
-                                script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
-                                    ("cd", f"steps/{step_id}")) + " && " + shlex.join(
-                                        (command, script_path.as_posix()))
+                    destination = temp / Path(*rel.parts)
+                    try:
+                        with _open_recorded_output(outputs, path) as (stream, info):
+                            row["size"] = info.st_size
+                            if info.st_size > max_file_bytes:
+                                row["status"] = "not copied: size"
+                            elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                                row["status"] = "not copied: total limit"
+                                total_limit_hit = True
                             else:
-                                unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
+                                destination.parent.mkdir(parents=True, exist_ok=True)
+                                try:
+                                    source_sha256 = _copy_held(stream, info, destination)
+                                except OSError:
+                                    destination.unlink(missing_ok=True)
+                                    row["status"] = "not copied: changed since run"
+                                else:
+                                    if source_sha256.casefold() != expected_sha256.casefold():
+                                        destination.unlink(missing_ok=True)
+                                        row["status"] = "not copied: changed since run"
+                                    else:
+                                        copied_files += 1
+                                        copied_bytes += info.st_size
+                                        suffix = destination.suffix.casefold()
+                                        command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
+                                        if suffix == ".py" and command is None:
+                                            command = "python"
+                                            python_unknown = True
+                                        if command and "scripts" in output_rel.parts:
+                                            if _safe_script_path(rel):
+                                                script_path = PurePosixPath("outputs", *output_rel.parts)
+                                                script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
+                                                    ("cd", f"steps/{step_id}")) + " && " + shlex.join(
+                                                        (command, script_path.as_posix()))
+                                            else:
+                                                unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
+                    except FileNotFoundError:
+                        row["status"] = "not copied: missing"
+                    except OSError:
+                        row["status"] = "not copied: changed since run"
                     rows.append(row)
-                    return "request bundle total limit" if total_limit_hit else None
-
-                real_outputs = (workdir / "outputs").resolve()
-                walk_output_files(
-                    outputs, workdir / "outputs", real_outputs, zones,
-                    settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
-                    None, detailed=True, selected=selected, visit_file=copy_file, open_files=True)
-                if total_limit_hit:
-                    break
         if not found_workdirs:
             raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
 
@@ -375,9 +409,13 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             appendix += ("\n\n## 요청 묶음: 대체됨\n\n" +
                          "\n".join(f"- {item}" for item in replaced))
         if total_limit_hit:
-            appendix += ("\n\n- 누적 상한에 도달해 첫 제외 파일에서 순회를 멈춤 "
+            appendix += ("\n\n- 누적 상한으로 기록 산출 일부를 복사하지 않음 "
                          f"(복사 {copied_files}개, {copied_bytes} bytes; "
                          f"상한 {max_total_files}개, {max_total_bytes} bytes)")
+        not_copied = sum(str(row["status"]).startswith("not copied:") for row in rows)
+        bundle_status = "incomplete" if not_copied else "complete"
+        if not_copied:
+            appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
         commands = [command for step_id in ordered_ids
@@ -429,7 +467,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
         _clear_owned_dir(target, requests_root)
         temp.replace(target)
-        return {"path": str(target), "rewritten_files": rewritten_files,
+        return {"path": str(target), "status": bundle_status, "not_copied": not_copied,
+                "rewritten_files": rewritten_files,
                 "remaining_absolute_paths": sorted(remaining), "superseded": replaced}
     except Exception:
         if temp.exists():
