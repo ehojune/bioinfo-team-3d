@@ -227,17 +227,51 @@ class PackNotApplicable(StrictModel):
         return value
 
 
+class PackApplicabilityRecord(StrictModel):
+    applied: bool
+    topics_any: list[str]
+    matched_topics: list[str]
+    reason: Literal["topic_match", "no_topic_match", "topics_empty", "no_topic_condition", "not_applicable"]
+
+
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
+    topics: list[str] = Field(default_factory=list, max_length=24)
     intake: IntakeDecision
     brief: ResearchBrief
     protocol: ProtocolContract
     pack_values: dict[str, PackPlanValue | PackNotApplicable]
+    # LabHQ writes these after the CSO draft. They enter the CP1 hash and audit record.
+    pack_applicability: dict[str, PackApplicabilityRecord] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
     notes: str
+
+    @field_validator("topics")
+    @classmethod
+    def approved_topics(cls, value: list[str]) -> list[str]:
+        from .. import vocab as output_vocab
+        from ..vocab import topics as topic_vocab
+
+        loaded = output_vocab.current()
+        if loaded is None:
+            raise ValueError("research topics vocabulary is unavailable")
+        normalized, unknown = topic_vocab.normalize(value, loaded)
+        if unknown:
+            raise ValueError(f"unknown research topics: {unknown}")
+        return normalized
+
+    @model_serializer(mode="wrap")
+    def _drop_empty_topic_metadata(self, handler: Any) -> dict[str, Any]:
+        # Plans frozen before topic routing must keep their canonical JSON and plan hash.
+        data = handler(self)
+        for field in ("topics", "pack_applicability", "warnings"):
+            if not data.get(field):
+                data.pop(field, None)
+        return data
 
     @model_validator(mode="after")
     def research_only(self) -> "ResearchPlan":
@@ -335,7 +369,13 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
 
 # The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
 RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types",),
-                                                ("OutputTypeEntry",))
+                                                ("OutputTypeEntry", "PackApplicabilityRecord"))
+for _system_field in ("pack_applicability", "warnings"):
+    RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
+    if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
+        RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
+if "topics" not in RESEARCH_PLAN_SCHEMA["required"]:
+    RESEARCH_PLAN_SCHEMA["required"].append("topics")
 RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(ResearchResult.model_json_schema(), "ArtifactRef",
                                                   ("data_type", "format"))
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question

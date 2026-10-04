@@ -46,6 +46,9 @@ function renderResearchPlan(list, canonical) {
   detailEntry(list, '중단 조건', protocol.stop_conditions || []);
   detailEntry(list, '자원 상한', protocol.resource_limits || []);
   detailEntry(list, 'data boundary', protocol.data_boundaries || []);
+  detailEntry(list, 'topics', plan.topics || []);
+  detailEntry(list, 'pack 적용 판정', plan.pack_applicability || {});
+  detailEntry(list, '경고', plan.warnings || []);
   detailEntry(list, 'pack 값', plan.pack_values || {});
   detailEntry(list, 'protocol', protocol, {fold: true, open: true, summary: 'protocol 전체'});
   detailEntry(list, '동결 PLAN 전체', canonical, {

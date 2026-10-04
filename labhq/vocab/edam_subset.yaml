@@ -8,12 +8,12 @@ source:
   license: https://creativecommons.org/licenses/by-sa/4.0
 generator:
   script: scripts/edam_subset.py
-  script_sha256: e888ca4473a7563b862bbff33091ab8ecbf4eb1f6026c44c5ae802b434fa8b47
-  map_sha256: 5caf91c3a4acd4541a08276f7e9a815fffd466f1fbc3caf0349896a33aaf220c
+  script_sha256: b02169f928373c25c2a93616ad2afacc455c091278bc95293109eba63e924c21
+  map_sha256: 192f27748c659da0d1d2172443201188c1481614fee776148b595f4d5f07a9a3
 counts:
-  keys: 41
-  edam_terms: 31
-  unknown: 7
+  keys: 100
+  edam_terms: 65
+  unknown: 32
 terms:
   raw_counts:
     branch: data
@@ -342,3 +342,438 @@ terms:
     - operation_2423
     - operation_2945
     - operation_3908
+  abundance_table:
+    branch: data
+    id: data_2082
+    label: Matrix
+    ancestors:
+    - data_0006
+  cell_feature_matrix:
+    branch: data
+    id: data_3917
+    label: Count matrix
+    ancestors:
+    - data_0006
+    - data_2082
+  coverage_track:
+    branch: data
+    id: data_3002
+    label: Annotation track
+    ancestors:
+    - data_0006
+    - data_1255
+  methylation_profile:
+    branch: data
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  taxonomic_profile:
+    branch: data
+    id: data_1872
+    label: Taxonomic classification
+    ancestors:
+    - data_0006
+    - data_0842
+    - data_0976
+    - data_1869
+    - data_2099
+    - data_2909
+  phylogenetic_tree:
+    branch: data
+    id: data_0872
+    label: Phylogenetic tree
+    ancestors:
+    - data_0006
+    - data_2523
+  splicing_table:
+    branch: data
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  copy_number_profile:
+    branch: data
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  spatial_annotations:
+    branch: data
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  html:
+    branch: format
+    id: format_2331
+    label: HTML
+    ancestors:
+    - format_1915
+  cram:
+    branch: format
+    id: format_3462
+    label: CRAM
+    ancestors:
+    - format_1915
+    - format_1921
+    - format_2333
+    - format_2350
+    - format_2920
+  bigwig:
+    branch: format
+    id: format_3006
+    label: bigWig
+    ancestors:
+    - format_1915
+    - format_1920
+    - format_2333
+    - format_2350
+    - format_2919
+  bedgraph:
+    branch: format
+    id: format_3583
+    label: bedgraph
+    ancestors:
+    - format_1915
+    - format_1920
+    - format_2330
+    - format_2350
+    - format_2919
+  gtf:
+    branch: format
+    id: format_2306
+    label: GTF
+    ancestors:
+    - format_1915
+    - format_1920
+    - format_2206
+    - format_2305
+    - format_2330
+    - format_2350
+    - format_2548
+  gff:
+    branch: format
+    id: format_2305
+    label: GFF
+    ancestors:
+    - format_1915
+    - format_1920
+    - format_2206
+    - format_2330
+    - format_2350
+    - format_2548
+  hdf5:
+    branch: format
+    id: format_3590
+    label: HDF5
+    ancestors:
+    - format_1915
+    - format_2333
+    - format_2350
+    - format_3866
+    - format_3867
+  mtx:
+    branch: format
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  newick:
+    branch: format
+    id: format_1910
+    label: newick
+    ancestors:
+    - format_1915
+    - format_2006
+    - format_2330
+    - format_2350
+    - format_2556
+  rds:
+    branch: format
+    id: format_3554
+    label: R file format
+    ancestors:
+    - format_1915
+    - format_2330
+  encode_peak:
+    branch: format
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  qiime2_artifact:
+    branch: format
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  parquet:
+    branch: format
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  tiff:
+    branch: format
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  quality_control:
+    branch: operation
+    id: operation_3218
+    label: Sequencing quality control
+    ancestors:
+    - operation_0004
+    - operation_2403
+    - operation_2428
+    - operation_2478
+    - operation_2945
+  read_preprocessing:
+    branch: operation
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  quantification:
+    branch: operation
+    id: operation_3799
+    label: Quantification
+    ancestors:
+    - operation_0004
+  normalization:
+    branch: operation
+    id: operation_3435
+    label: Standardisation and normalisation
+    ancestors:
+    - operation_0004
+    - operation_2238
+    - operation_3438
+  genome_assembly:
+    branch: operation
+    id: operation_0525
+    label: Genome assembly
+    ancestors:
+    - operation_0004
+    - operation_0310
+    - operation_2403
+    - operation_2478
+    - operation_2945
+    - operation_3918
+  transcriptome_assembly:
+    branch: operation
+    id: operation_3258
+    label: Transcriptome assembly
+    ancestors:
+    - operation_0004
+    - operation_0310
+    - operation_2403
+    - operation_2478
+    - operation_2945
+  sequence_annotation:
+    branch: operation
+    id: operation_0361
+    label: Sequence annotation
+    ancestors:
+    - operation_0004
+    - operation_0226
+  peak_calling:
+    branch: operation
+    id: operation_3222
+    label: Peak calling
+    ancestors:
+    - operation_0004
+    - operation_0415
+    - operation_2403
+    - operation_2423
+    - operation_2478
+    - operation_2945
+  differential_abundance_analysis:
+    branch: operation
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  methylation_calling:
+    branch: operation
+    id: operation_3919
+    label: Methylation calling
+    ancestors:
+    - operation_0004
+    - operation_2403
+    - operation_2478
+    - operation_2945
+    - operation_3204
+  taxonomic_profiling:
+    branch: operation
+    id: operation_3460
+    label: Taxonomic classification
+    ancestors:
+    - operation_0004
+    - operation_2403
+    - operation_2945
+    - operation_2990
+    - operation_2995
+  splicing_analysis:
+    branch: operation
+    id: operation_2499
+    label: Splicing analysis
+    ancestors:
+    - operation_0004
+    - operation_2403
+    - operation_2423
+    - operation_2426
+    - operation_2454
+    - operation_2478
+    - operation_2945
+  variant_annotation:
+    branch: operation
+    id: operation_0331
+    label: Variant effect prediction
+    ancestors:
+    - operation_0004
+    - operation_2423
+  phasing:
+    branch: operation
+    id: operation_3454
+    label: Phasing
+    ancestors:
+    - operation_0004
+    - operation_2480
+    - operation_2945
+    - operation_3445
+  consensus_generation:
+    branch: operation
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  cell_segmentation:
+    branch: operation
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  bulk_rna_seq:
+    branch: topic
+    id: topic_3170
+    label: RNA-Seq
+    ancestors:
+    - topic_0003
+    - topic_3077
+    - topic_3168
+  single_cell_rna_seq:
+    branch: topic
+    id: topic_4028
+    label: Single-cell sequencing
+    ancestors:
+    - topic_0003
+    - topic_3077
+    - topic_3168
+  spatial_transcriptomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  atac_seq:
+    branch: topic
+    id: topic_4053
+    label: ATAC-seq
+    ancestors:
+    - topic_0003
+    - topic_3077
+    - topic_3940
+  chip_seq:
+    branch: topic
+    id: topic_3169
+    label: ChIP-seq
+    ancestors:
+    - topic_0003
+    - topic_3077
+    - topic_3168
+    - topic_3656
+  cut_and_run:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  dna_methylation:
+    branch: topic
+    id: unknown
+    reason: deprecated
+    candidate: DNA methylation
+  germline_wgs_wes:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  somatic_wgs_wes:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  rare_disease_genomics:
+    branch: topic
+    id: topic_3325
+    label: Rare diseases
+    ancestors:
+    - topic_0003
+    - topic_0634
+    - topic_3303
+    - topic_4019
+  ont_long_read:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  pacbio_long_read:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  long_read_transcriptomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  metagenome_assembly:
+    branch: topic
+    id: topic_3174
+    label: Metagenomics
+    ancestors:
+    - topic_0003
+    - topic_0610
+    - topic_0622
+    - topic_3391
+    - topic_3855
+    - topic_4019
+  metagenomic_taxonomy:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  amplicon_sequencing:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  viral_genomics:
+    branch: topic
+    id: topic_0781
+    label: Virology
+    ancestors:
+    - topic_0003
+    - topic_3070
+    - topic_4019
+  bacterial_genome_assembly:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  alternative_splicing:
+    branch: topic
+    id: topic_3320
+    label: RNA splicing
+    ancestors:
+    - topic_0003
+    - topic_0077
+    - topic_0099
+    - topic_0203
+    - topic_3053
+    - topic_3070
+    - topic_3307
+    - topic_3321
+    - topic_4019
+  microarray_expression:
+    branch: topic
+    id: unknown
+    reason: deprecated
+    candidate: Gene expression and microarray

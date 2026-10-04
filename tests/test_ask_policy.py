@@ -42,12 +42,12 @@ def test_question_rule_is_shared_by_general_replan_and_research_planning():
         assert phrase in QUESTION_RULE
 
     common = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                  question_rule=QUESTION_RULE, output_types_rule="", lab_scope="LAB")
+                  question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", lab_scope="LAB")
     rendered = [
         cso.PLAN_PROMPT.format(**common),
         cso.RESEARCH_PLAN_PROMPT.format(**common, intake="INTAKE", packs="PACKS"),
         cso.REPLAN_PROMPT.format(roster="ROSTER", capabilities="CAPS", trigger="WHY", retired="none",
-                                 drop_rule="DROP", used="A", max_steps=3, output_types_rule="",
+                                 drop_rule="DROP", used="A", max_steps=3, output_types_rule="", topics_rule="",
                                  empty_rule="EMPTY", request="REQ", plan="[]", results="",
                                  question_rule=QUESTION_RULE),
     ]

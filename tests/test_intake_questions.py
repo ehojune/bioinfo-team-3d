@@ -161,6 +161,7 @@ def test_qa_text_for_structured_and_legacy_entries():
 def minimal_plan(questions):
     return {
         "schema_version": 2,
+        "topics": [],
         "intake": {"work_kind": "research", "reason": "PI specified work_kind=research", "source": "explicit"},
         "brief": {"question": "What is in the sample?", "purpose": "inventory", "subject": "public counts",
                   "scope": "one table", "deliverables": ["table"], "completion_conditions": ["table written"],

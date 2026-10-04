@@ -3,10 +3,10 @@
 # The CSO sees the key names only. EDAM ids, when present, come from an optional
 # generated edam_subset.yaml; nobody types an id by hand.
 #
-# Per key: branch (data | format | operation), definition (labhq's own words), extensions (format only,
+# Per key: branch (data | format | operation | topic), definition (labhq's own words), extensions (format only,
 # lower case, a single trailing .gz is peeled off first), ok / not (examples), review (PI reviewed every key
 # on 2026-10-04).
-# At most 45 keys. Adding one requires its own review.
+# Branch caps: data 36, format 32, operation 24, topic 24. Adding a key requires its own review.
 version: 1
 
 terms:
@@ -235,4 +235,407 @@ terms:
   data_retrieval:
     branch: operation
     definition: "fetching data from a public or local source"
+    review: "PI 2026-10-04"
+
+  # tier=extended; pipelines=atacseq,chipseq,ampliseq,taxprofiler,mag,differentialabundance; edam=Matrix
+  abundance_table:
+    branch: data
+    definition: "a matrix of quantitative feature abundances across samples or observations, excluding gene or transcript expression matrices"
+    ok: ["ASV-by-sample abundance table", "consensus-peak count matrix", "taxon relative-abundance matrix"]
+    not: ["gene-by-sample RNA count matrix", "cell-by-gene matrix", "differential abundance statistics"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=scrnaseq,spatialaxe; edam=Count matrix
+  cell_feature_matrix:
+    branch: data
+    definition: "a matrix of molecular feature measurements for individual cells or spatially resolved cell-like units"
+    ok: ["cell-by-gene UMI count matrix", "segmented-cell by gene expected-count matrix"]
+    not: ["bulk gene-by-sample count matrix", "sample metadata", "cell boundary coordinates"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,methylseq,atacseq,chipseq,cutandrun,nanoseq,sarek,raredisease,viralrecon,pacbio-hifi-wgs; edam=Annotation track
+  coverage_track:
+    branch: data
+    definition: "a genome-position track of read depth, signal intensity or another continuous coverage measure"
+    ok: ["normalized bigWig signal track", "per-base methylation bedGraph", "mosdepth coverage track"]
+    not: ["read alignment file", "called peak intervals", "coverage summary table without genomic positions"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=methylseq; edam=Annotation track (closest Data label)
+  methylation_profile:
+    branch: data
+    definition: "methylation measurements at cytosines or genomic intervals with their positions and measured levels"
+    ok: ["per-CpG methylation calls", "MethylDackel CpG bedGraph"]
+    not: ["bisulfite-aligned reads", "differential methylation statistics", "generic coverage without methylation values"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq,mag,taxprofiler,bacass,viralrecon; edam=Taxonomic classification
+  taxonomic_profile:
+    branch: data
+    definition: "taxonomic assignments for a sample or features, optionally with counts or relative abundances"
+    ok: ["Kraken2 taxon profile", "ASV taxonomy table", "viral lineage abundance table"]
+    not: ["unclassified feature abundance matrix", "phylogenetic tree", "genome annotation"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq,mag; edam=Phylogenetic tree
+  phylogenetic_tree:
+    branch: data
+    definition: "a tree representing inferred evolutionary relationships among sequences, taxa or genome bins"
+    ok: ["Newick tree of amplicon sequence variants", "genome-bin phylogeny"]
+    not: ["taxonomic classification table", "sequence alignment", "tree plot without reusable tree data"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnasplice; edam=Gene expression profile (closest Data label)
+  splicing_table:
+    branch: data
+    definition: "per-event or per-isoform splicing measurements and, when tested, differential splicing statistics"
+    ok: ["PSI matrix", "contrast-level dPSI table with significance"]
+    not: ["gene-level differential expression table", "transcript TPM matrix", "splice-junction coordinates alone"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=sarek,raredisease; edam=Sequence variations (closest Data label)
+  copy_number_profile:
+    branch: data
+    definition: "copy-number estimates or segments across a genome for one or more samples"
+    ok: ["CNV segment table", "tumor purity-adjusted copy-number profile"]
+    not: ["SNV or indel VCF", "read-depth track without copy-number inference", "structural variant breakpoints alone"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=spatialaxe; edam=Annotation track (closest Data label)
+  spatial_annotations:
+    branch: data
+    definition: "spatial coordinates, boundaries or assignments linking molecular observations to cells or tissue locations"
+    ok: ["cell polygon GeoJSON", "transcript-to-cell assignments", "cell centroid table"]
+    not: ["cell-by-gene matrix without coordinates", "microscopy image", "sample metadata without spatial positions"]
+    review: "PI 2026-10-04"
+
+  # tier=core; pipelines=rnaseq,sarek,fetchngs,differentialabundance,methylseq,atacseq,chipseq,cutandrun,scrnaseq,ampliseq,mag,taxprofiler,nanoseq,rnasplice,raredisease,bacass,viralrecon,spatialaxe,pacbio-hifi-wgs; edam=HTML
+  html:
+    branch: format
+    definition: "HTML document or interactive report"
+    extensions: [".html", ".htm"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=sarek,raredisease; edam=CRAM
+  cram:
+    branch: format
+    definition: "reference-compressed alignment file"
+    extensions: [".cram"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,atacseq,chipseq,cutandrun,nanoseq,raredisease; edam=bigWig
+  bigwig:
+    branch: format
+    definition: "indexed binary genome track for dense continuous values"
+    extensions: [".bigwig", ".bigWig", ".bw"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=methylseq,cutandrun,nanoseq,sarek; edam=bedgraph
+  bedgraph:
+    branch: format
+    definition: "bedGraph text for continuous values over genomic intervals"
+    extensions: [".bedgraph", ".bedGraph"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,atacseq,chipseq,cutandrun,nanoseq,rnasplice; edam=GTF
+  gtf:
+    branch: format
+    definition: "Gene Transfer Format feature annotation text"
+    extensions: [".gtf"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq,mag,bacass; edam=GFF
+  gff:
+    branch: format
+    definition: "version-unspecified General Feature Format text"
+    extensions: [".gff"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,scrnaseq,spatialaxe,viralrecon; edam=HDF5
+  hdf5:
+    branch: format
+    definition: "generic HDF5 container that is not the more specific h5ad format"
+    extensions: [".h5", ".hdf5"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=scrnaseq; edam=Matrix format (closest Format label)
+  mtx:
+    branch: format
+    definition: "Matrix Market coordinate or array text"
+    extensions: [".mtx"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq,mag; edam=newick
+  newick:
+    branch: format
+    definition: "Newick text representation of a tree"
+    extensions: [".newick", ".nwk", ".tree"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,differentialabundance,atacseq,chipseq,ampliseq,rnasplice; edam=R file format
+  rds:
+    branch: format
+    definition: "serialized single R object"
+    extensions: [".rds"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=atacseq,chipseq; edam=ENCODE narrow peak format / ENCODE broad peak format
+  encode_peak:
+    branch: format
+    definition: "ENCODE narrow, broad or gapped peak interval format"
+    extensions: [".narrowPeak", ".broadPeak", ".gappedPeak"]
+    review: "PI 2026-10-04"
+  # tier=defer; pipelines=ampliseq; edam=ZIP format (container match only)
+  qiime2_artifact:
+    branch: format
+    definition: "QIIME 2 artifact or visualization archive"
+    extensions: [".qza", ".qzv"]
+    review: "PI 2026-10-04"
+  # tier=defer; pipelines=spatialaxe; edam=Binary format (closest Format label)
+  parquet:
+    branch: format
+    definition: "Apache Parquet columnar data file"
+    extensions: [".parquet"]
+    review: "PI 2026-10-04"
+  # tier=defer; pipelines=spatialaxe; edam=TIFF / OME-TIFF
+  tiff:
+    branch: format
+    definition: "TIFF image, including OME-TIFF microscopy images"
+    extensions: [".tif", ".tiff", ".ome.tif", ".ome.tiff"]
+    review: "PI 2026-10-04"
+
+  # tier=core; pipelines=rnaseq,sarek,fetchngs,differentialabundance,methylseq,atacseq,chipseq,cutandrun,scrnaseq,ampliseq,mag,taxprofiler,nanoseq,rnasplice,raredisease,bacass,viralrecon,isoseq,spatialaxe,pacbio-hifi-wgs; edam=Sequencing quality control
+  quality_control:
+    branch: operation
+    definition: "assessing data or result quality with explicit metrics, checks or thresholds"
+    ok: ["read-quality assessment and MultiQC aggregation", "assembly completeness assessment", "variant-call QC"]
+    not: ["writing an analysis report without quality checks", "plotting data without a quality criterion"]
+    review: "PI 2026-10-04"
+  # tier=core; pipelines=rnaseq,sarek,fetchngs,methylseq,atacseq,chipseq,cutandrun,scrnaseq,ampliseq,mag,taxprofiler,nanoseq,rnasplice,raredisease,bacass,viralrecon,isoseq,pacbio-hifi-wgs; edam=Sequence trimming (closest Operation label)
+  read_preprocessing:
+    branch: operation
+    definition: "preparing sequence reads by demultiplexing, adapter trimming, quality filtering or contaminant removal"
+    ok: ["adapter and quality trimming", "barcode demultiplexing", "host-read filtering"]
+    not: ["mapping reads to the analysis reference", "calling variants", "normalizing a count matrix"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,atacseq,chipseq,scrnaseq,ampliseq,taxprofiler,nanoseq,rnasplice,spatialaxe; edam=Quantification
+  quantification:
+    branch: operation
+    definition: "estimating counts, abundances or signal levels for biological features"
+    ok: ["transcript abundance estimation", "peak read counting", "cell-by-gene UMI counting"]
+    not: ["testing a contrast", "assigning taxonomic labels without abundance estimation", "read mapping alone"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,differentialabundance,atacseq,chipseq,cutandrun,scrnaseq,ampliseq,rnasplice; edam=Standardisation and normalisation
+  normalization:
+    branch: operation
+    definition: "adjusting measurements to make samples or observations quantitatively comparable"
+    ok: ["library-size normalization", "spike-in signal normalization", "relative-abundance scaling"]
+    not: ["log transformation without scaling", "statistical testing", "read trimming"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=mag,bacass,viralrecon; edam=Genome assembly
+  genome_assembly:
+    branch: operation
+    definition: "constructing genome or metagenome sequences from reads"
+    ok: ["de novo bacterial assembly", "metagenome contig assembly", "viral genome assembly"]
+    not: ["mapping reads to a reference", "reference-guided transcript reconstruction", "calling variants"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,nanoseq,isoseq; edam=Transcriptome assembly
+  transcriptome_assembly:
+    branch: operation
+    definition: "reconstructing transcript models from RNA sequencing reads or alignments"
+    ok: ["StringTie transcript reconstruction", "Iso-Seq transcript model collapse"]
+    not: ["gene expression quantification", "genome assembly", "alternative splicing testing"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnaseq,mag,bacass,isoseq; edam=Sequence annotation
+  sequence_annotation:
+    branch: operation
+    definition: "assigning biological features or functions to assembled or reference sequences"
+    ok: ["Prokka bacterial genome annotation", "gene-model annotation of assembled transcripts"]
+    not: ["annotating variant consequences", "calling peaks", "taxonomic profiling"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=atacseq,chipseq,cutandrun; edam=Peak calling
+  peak_calling:
+    branch: operation
+    definition: "detecting genomic intervals with enriched chromatin accessibility or binding signal"
+    ok: ["MACS peak calling", "SEACR peak calling"]
+    not: ["read-depth track generation", "peak annotation", "differential peak testing"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=differentialabundance,atacseq,chipseq,ampliseq; edam=Statistical calculation (closest Operation label)
+  differential_abundance_analysis:
+    branch: operation
+    definition: "testing non-gene features for abundance differences across specified conditions or contrasts"
+    ok: ["differential taxon abundance testing", "differential peak accessibility testing"]
+    not: ["gene-level differential expression analysis", "feature quantification without a contrast", "functional enrichment analysis"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=methylseq; edam=Methylation calling
+  methylation_calling:
+    branch: operation
+    definition: "estimating methylation state or level at cytosines or genomic intervals"
+    ok: ["per-CpG methylation calling from bisulfite alignments"]
+    not: ["bisulfite read mapping", "differential methylation testing", "generic variant calling"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq,mag,taxprofiler,bacass,viralrecon; edam=Taxonomic classification
+  taxonomic_profiling:
+    branch: operation
+    definition: "assigning taxa to reads or features and optionally estimating their abundances"
+    ok: ["Kraken2 taxonomic profiling", "ASV taxonomy assignment", "viral lineage assignment"]
+    not: ["genome functional annotation", "phylogenetic tree inference", "host-read filtering alone"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnasplice; edam=Splicing analysis
+  splicing_analysis:
+    branch: operation
+    definition: "measuring or testing alternative transcript splicing or isoform usage"
+    ok: ["PSI estimation", "differential splicing analysis"]
+    not: ["gene-level differential expression", "transcript quantification without splicing inference", "splice-aware read mapping"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=sarek,raredisease,viralrecon,pacbio-hifi-wgs; edam=Variant effect prediction
+  variant_annotation:
+    branch: operation
+    definition: "adding predicted consequences, genes, frequencies or clinical knowledge to called variants"
+    ok: ["VEP consequence annotation", "SnpEff functional effect annotation"]
+    not: ["variant calling", "genome feature annotation", "variant prioritization without adding annotations"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=pacbio-hifi-wgs; edam=Phasing
+  phasing:
+    branch: operation
+    definition: "assigning alleles or variants to haplotypes"
+    ok: ["WhatsHap read-backed variant phasing"]
+    not: ["joint genotyping", "haplotag-free alignment", "variant calling without phase sets"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=viralrecon,isoseq,pacbio-hifi-wgs; edam=Sequence assembly (closest Operation label)
+  consensus_generation:
+    branch: operation
+    definition: "deriving a representative consensus sequence from aligned or clustered reads"
+    ok: ["viral consensus genome generation", "PacBio circular consensus sequence generation"]
+    not: ["de novo genome assembly", "multiple sequence alignment", "copying a reference sequence"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=spatialaxe; edam=Image analysis (closest Operation label)
+  cell_segmentation:
+    branch: operation
+    definition: "identifying cell or nucleus boundaries from images or spatial molecular coordinates"
+    ok: ["Cellpose image segmentation", "Proseg transcript-coordinate segmentation"]
+    not: ["single-cell clustering", "cell-type annotation", "transcript quantification without boundary inference"]
+    review: "PI 2026-10-04"
+
+  # tier=extended; pipelines=rnaseq,differentialabundance; edam=RNA-Seq
+  bulk_rna_seq:
+    branch: topic
+    definition: "bulk RNA sequencing for gene or transcript expression analysis"
+    ok: ["poly-A bulk RNA-seq", "ribo-depleted bulk RNA-seq"]
+    not: ["single-cell RNA-seq", "microarray expression", "Iso-Seq transcript discovery"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=scrnaseq; edam=Single-cell sequencing
+  single_cell_rna_seq:
+    branch: topic
+    definition: "single-cell or single-nucleus RNA sequencing with cell-resolved expression measurements"
+    ok: ["10x single-cell RNA-seq", "single-nucleus RNA-seq with intron counting"]
+    not: ["bulk RNA-seq", "spatial transcriptomics", "single-cell ATAC-seq"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=spatialaxe; edam=Transcriptomics (closest Topic label)
+  spatial_transcriptomics:
+    branch: topic
+    definition: "transcript measurements retained with positions in intact tissue"
+    ok: ["10x Xenium in-situ transcriptomics"]
+    not: ["dissociated single-cell RNA-seq", "bulk RNA-seq", "microscopy without transcript measurements"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=atacseq; edam=ATAC-seq
+  atac_seq:
+    branch: topic
+    definition: "ATAC-seq analysis of chromatin accessibility"
+    ok: ["bulk ATAC-seq peak and accessibility analysis"]
+    not: ["ChIP-seq", "CUT&RUN", "single-cell ATAC-seq"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=chipseq; edam=ChIP-seq
+  chip_seq:
+    branch: topic
+    definition: "ChIP-seq analysis of protein-DNA binding or histone marks"
+    ok: ["transcription-factor ChIP-seq", "histone-mark ChIP-seq"]
+    not: ["ATAC-seq", "CUT&RUN", "ChIP-on-chip"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=cutandrun; edam=Epigenomics (closest Topic label)
+  cut_and_run:
+    branch: topic
+    definition: "CUT&RUN or CUT&Tag profiling of chromatin-associated targets"
+    ok: ["histone-mark CUT&RUN", "CUT&Tag binding profile"]
+    not: ["ChIP-seq", "ATAC-seq", "DNA methylation sequencing"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=methylseq; edam=DNA methylation
+  dna_methylation:
+    branch: topic
+    definition: "sequencing-based measurement of DNA methylation"
+    ok: ["WGBS", "RRBS", "EM-seq"]
+    not: ["EPIC methylation array preprocessing", "histone-mark profiling", "long-read basecaller modification tags"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=sarek,raredisease,pacbio-hifi-wgs; edam=Whole genome sequencing / Exome sequencing
+  germline_wgs_wes:
+    branch: topic
+    definition: "germline variant analysis from whole-genome or whole-exome sequencing"
+    ok: ["per-sample germline WGS calling", "joint germline WES genotyping"]
+    not: ["somatic tumor-normal calling", "rare-disease pedigree ranking alone", "RNA variant calling"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=sarek,pacbio-hifi-wgs; edam=Whole genome sequencing / Exome sequencing (somatic qualifier is local)
+  somatic_wgs_wes:
+    branch: topic
+    definition: "somatic variant analysis from tumor-normal or tumor-only whole-genome or whole-exome sequencing"
+    ok: ["tumor-normal somatic WGS", "tumor-only WES with a panel of normals"]
+    not: ["germline cohort calling", "RNA-seq variant calling", "somatic copy-number analysis without sequencing"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=raredisease; edam=Rare diseases
+  rare_disease_genomics:
+    branch: topic
+    definition: "rare-disease genome analysis using pedigree, phenotype or candidate-ranking context"
+    ok: ["trio WGS with HPO-aware ranking", "pedigree-aware rare variant analysis"]
+    not: ["generic germline VCF generation", "tumor sequencing", "population allele-frequency analysis alone"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=nanoseq; edam=Long-read sequencing (ONT qualifier is local)
+  ont_long_read:
+    branch: topic
+    definition: "Oxford Nanopore long-read DNA or RNA sequencing"
+    ok: ["ONT genomic DNA sequencing", "ONT direct RNA sequencing"]
+    not: ["PacBio HiFi sequencing", "Illumina short reads", "generic assembled contigs"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=isoseq,pacbio-hifi-wgs; edam=Long-read sequencing (PacBio qualifier is local)
+  pacbio_long_read:
+    branch: topic
+    definition: "Pacific Biosciences long-read sequencing, including HiFi and Iso-Seq data"
+    ok: ["PacBio HiFi WGS", "PacBio Iso-Seq"]
+    not: ["Oxford Nanopore reads", "Illumina short reads", "generic long contigs"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=isoseq,nanoseq; edam=Transcriptomics / Long-read sequencing
+  long_read_transcriptomics:
+    branch: topic
+    definition: "transcriptome analysis using long RNA or cDNA reads"
+    ok: ["PacBio Iso-Seq transcript discovery", "ONT direct RNA transcript analysis"]
+    not: ["short-read bulk RNA-seq", "long-read genomic DNA sequencing", "amplicon sequencing"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=mag; edam=Metagenomics
+  metagenome_assembly:
+    branch: topic
+    definition: "shotgun metagenome assembly, binning and metagenome-assembled genome analysis"
+    ok: ["short-read MAG recovery", "hybrid metagenome assembly and binning"]
+    not: ["taxonomic profiling without assembly", "16S amplicon analysis", "single-isolate bacterial assembly"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=taxprofiler; edam=Metagenomics / Taxonomy
+  metagenomic_taxonomy:
+    branch: topic
+    definition: "taxonomic profiling of shotgun metagenomic reads without genome assembly as the primary goal"
+    ok: ["Kraken2 profiling of shotgun metagenomes"]
+    not: ["MAG reconstruction", "16S amplicon analysis", "host genome variant calling"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=ampliseq; edam=Taxonomy (closest Topic label)
+  amplicon_sequencing:
+    branch: topic
+    definition: "marker-gene amplicon sequencing for community composition or targeted taxonomy"
+    ok: ["16S rRNA amplicon sequencing", "ITS fungal profiling"]
+    not: ["shotgun metagenomics", "viral whole-genome amplicon sequencing", "generic PCR validation"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=viralrecon; edam=Virology
+  viral_genomics:
+    branch: topic
+    definition: "viral genome reconstruction, variant analysis or lineage assignment"
+    ok: ["SARS-CoV-2 amplicon genome analysis", "viral metagenomic genome reconstruction"]
+    not: ["host germline WGS", "taxonomic profiling of mixed communities", "viral load assay without sequence analysis"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=bacass; edam=Sequence assembly (closest Topic label)
+  bacterial_genome_assembly:
+    branch: topic
+    definition: "de novo assembly and annotation of a bacterial isolate genome"
+    ok: ["short-read bacterial isolate assembly", "hybrid bacterial genome assembly"]
+    not: ["metagenome assembly", "reference-based bacterial variant calling", "viral genome assembly"]
+    review: "PI 2026-10-04"
+  # tier=extended; pipelines=rnasplice; edam=RNA splicing
+  alternative_splicing:
+    branch: topic
+    definition: "alternative splicing or isoform usage in transcriptomic data"
+    ok: ["PSI and differential splicing", "differential transcript usage"]
+    not: ["gene-level differential expression", "transcript quantification without splicing analysis", "genomic splice-site prediction"]
+    review: "PI 2026-10-04"
+  # tier=defer; pipelines=differentialabundance; edam=Gene expression and microarray
+  microarray_expression:
+    branch: topic
+    definition: "gene expression measured by microarray after platform-specific preprocessing"
+    ok: ["normalized expression microarray matrix for contrast testing"]
+    not: ["raw CEL preprocessing", "RNA-seq counts", "DNA methylation array data"]
     review: "PI 2026-10-04"

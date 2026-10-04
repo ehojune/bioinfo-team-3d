@@ -32,11 +32,13 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_STEP_SCHEMA, bind_re
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
-from ..research.packs import (configured_packs, pack_refs, pack_snapshot, render_pack_catalog, render_pack_review,
-                              select_applied_packs)
+from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
+                              packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs,
+                              select_legacy_applied_packs)
 from ..util import clip, extract_json, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
+from ..vocab import topics as topic_types
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
@@ -56,6 +58,7 @@ PLAN_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "properties": {
         "scope": SCOPE_SCHEMA,
+        "topics": {"type": "array", "maxItems": 24, "items": {"type": "string"}},
         "clarifying_questions": {"type": "array", "maxItems": 4, "items": CLARIFYING_QUESTION_SCHEMA},
         "assumptions": {"type": "array", "maxItems": 8,
                         "items": {"type": "string", "maxLength": 300}},
@@ -74,7 +77,7 @@ PLAN_SCHEMA: dict[str, Any] = {
             "required": ["paper", "repo", "focus", "reason"]}},
         "notes": {"type": "string"},
     },
-    "required": ["scope", "clarifying_questions", "steps", "recruit", "notes"],
+    "required": ["scope", "topics", "clarifying_questions", "steps", "recruit", "notes"],
 }
 
 ASSUMPTIONS_RULE = ("Record each scientific design choice you made instead of asking in `assumptions`. Use at most "
@@ -86,6 +89,25 @@ def normalize_assumptions(raw: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [item.strip() for item in raw if isinstance(item, str) and item.strip()][:8]
+
+
+def plan_topics(raw: Any, vocab: output_vocab.Vocab, *, strict: bool) -> tuple[list[str], list[str]]:
+    """The one place that turns declared topics into (sorted approved keys, new warnings). Every path that saves a
+    plan uses it, so no path can keep the keys and drop the warning (PR #390 review)."""
+    normalized, unknown = topic_types.normalize(raw, vocab)
+    if strict and unknown:
+        raise ValueError(f"unknown research topics: {unknown}")
+    return normalized, ([f"topics ignored (unknown_key {len(unknown)})"] if unknown else [])
+
+
+def normalize_plan_topics(plan: Any, vocab: output_vocab.Vocab, *, strict: bool) -> Any:
+    """Sort/deduplicate approved topics; research rejects unknowns, while general plans warn and drop them."""
+    if not isinstance(plan, dict):
+        return plan
+    normalized, added = plan_topics(plan.get("topics"), vocab, strict=strict)
+    warnings = list(plan.get("warnings") or []) if isinstance(plan.get("warnings"), list) else []
+    warnings.extend(added)
+    return {**plan, "topics": normalized, **({"warnings": warnings} if warnings else {})}
 
 
 def route_decision(plan: Any, solo_agent: str | None, roster: list[dict], *, requested: str = "auto",
@@ -294,7 +316,7 @@ Rules:
 - Declare each step's expected output files in outputs so dependencies can be checked. Each one is a
   path inside that step's own workspace outputs/ folder, written as outputs/<name> (for example
   outputs/answer.md), and the instruction saves it at that same path. Never declare an absolute path, `..`,
-  or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}
+  or a file at the workspace root; a file the request asks to save in the work folder also goes under outputs/.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Use HPC jobs only when the assigned agent has labhq_hpc tools and a scheduler is available.
@@ -340,17 +362,20 @@ Contract rules:
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
-  path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}
+  path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Put QC after data generation. {question_rule} Record the scientific design choices you make in `protocol` rather
   than adding another top-level field. Each question is at most 500 characters (a longer one fails plan
   validation), the question itself first.
 - """ + ENV_STEP_RULE + """
-- Answer every configured pack in top-level `pack_values`. If its `applies_when` matches, fill `pack_values[key]`
-  with exactly the keys in its `pack_values_keys`: a value for each field, a non-empty explanation for each validator
-  id, and a non-empty outcome for each acceptance id. Otherwise return exactly
-  `{{"not_applicable": "<non-empty reason>"}}` for that key; the reason is shown to the PI and frozen in the PLAN.
+- LabHQ applies a pack when its structured `applies_when.topics_any` intersects top-level `topics`; fill
+  `pack_values[key]` for applied packs only and add nothing for topic packs that do not match. A pack whose `applies_when` is
+  a plain sentence has no topic condition: answer it with values, or `{{"not_applicable": "<reason>"}}` when it does
+  not fit this request.
+  Each applied value must contain exactly the keys in its `pack_values_keys`: a value for each field, a non-empty
+  explanation for each validator
+  id, and a non-empty outcome for each acceptance id. Do not add values for packs that do not apply.
   Acceptance ids are the pack's rule ids; reviewer questions are not acceptance ids.
   Pack `rules` are machine checks on those values: when every `when` predicate holds (a list means all),
   the `require` predicate must hold and the `forbid` predicate must not. Free-text explanations never pass a rule.
@@ -482,7 +507,7 @@ Rules:
 - {drop_rule}
 - Give every new step a new id that this request has never used. Used ids: {used}.
 - Kept and new steps together are at most {max_steps}. Express order with depends_on.
-- Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}
+- Declare each output as outputs/<name> inside that step's own workspace and save it at that path.{output_types_rule}{topics_rule}
 - """ + DECLARED_OUTPUTS_FALLBACK_RULE + """
 - """ + ANALYSIS_REPRODUCIBILITY_PLAN_RULE + """
 - Stay within the request, permissions, data boundaries and PI approvals. If scope, cost, compute, data access or an
@@ -3164,7 +3189,15 @@ class Orchestrator:
                                                                    self.cfg.reviewer_agent) if x}
             roster = [a for a in all_agents if a["id"] not in orchestration]
             n = self.cfg.context_chars_per_step
-            configured_pack_defs = configured_packs(self.hub.s) if research_lane else {}
+            frozen_pack_snapshot = ((req.get("research_contract") or {}).get("pack_snapshot")
+                                    if resume and research_lane else None)
+            # A contract frozen before topic selection has no pack_applicability record: it resumes by the pack rule
+            # it was approved under and never gains the record, so a second restart takes the same path (#390 review).
+            legacy_pack_contract = (frozen_pack_snapshot is not None
+                                    and "pack_applicability" not in (req.get("research_contract") or {}))
+            configured_pack_defs = (packs_for_snapshot(self.hub.s, frozen_pack_snapshot)
+                                    if frozen_pack_snapshot is not None else
+                                    configured_packs(self.hub.s) if research_lane else {})
             packs = configured_pack_defs
             active_pack_hashes = pack_snapshot(packs)
             # The first plan, research plan and re-plan after resume (#271) all use this same snapshot.
@@ -3185,6 +3218,7 @@ class Orchestrator:
                     "execution_enabled": execution_enabled,
                     "plan_sha256": approval.get("current_sha256") or approval.get("target_sha256"),
                     "pack_snapshot": active_pack_hashes,
+                    **({} if legacy_pack_contract else {"pack_applicability": plan.get("pack_applicability") or {}}),
                     "approval": approval,
                 }
                 self.hub.save_request(rid)
@@ -3196,6 +3230,8 @@ class Orchestrator:
                         kind="research_plan", request_id=rid, summary=summary[:700],
                         detail={"gate": "research_plan", "target_sha256": plan_hash,
                                 "plan_canonical": canonical_plan_json(plan),
+                                "pack_applicability": plan.get("pack_applicability") or {},
+                                "warnings": plan.get("warnings") or [],
                                 "protocol_revision": plan["protocol"]["revision"],
                                 "packs": plan["protocol"]["packs"],
                                 "scope_status": plan["intake"]["scope_status"]})
@@ -3220,7 +3256,13 @@ class Orchestrator:
 
             if resume and req.get("plan", {}).get("steps"):
                 if research_lane:
-                    packs = select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                    # A frozen contract resumes by its CP1 snapshot, never by a fresh applicability decision: the
+                    # snapshot holds the applied packs, and a pack answered not_applicable (pre-topic, or a sentence-
+                    # condition pack after topics) is absent from it (PR #390 review, both eras).
+                    packs = (select_legacy_applied_packs(configured_pack_defs, req["plan"].get("pack_values"))
+                             if frozen_pack_snapshot is not None else
+                             select_applied_packs(configured_pack_defs, req["plan"].get("pack_values"),
+                                                  topics=req["plan"].get("topics")))
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
                     validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
@@ -3237,12 +3279,16 @@ class Orchestrator:
                     return
                 else:
                     req["plan"] = _carry_assumptions(None, req["plan"])
+                    topic_vocab = output_vocab.current()
+                    if topic_vocab is not None:
+                        req["plan"] = normalize_plan_topics(req["plan"], topic_vocab, strict=False)
                     type_stats: dict = {}
                     vocab = self._output_vocab()
                     steps, warnings = validate_steps(req["plan"]["steps"], known, self.cfg.max_steps,
                                                      orchestration, vocab=vocab, stats=type_stats,
                                                      reject_excess=True)
-                    req["plan"] = {**req["plan"], "steps": steps, "warnings": warnings}
+                    req["plan"] = {**req["plan"], "steps": steps,
+                                   "warnings": [*(req["plan"].get("warnings") or []), *warnings]}
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 decision, created = self._ensure_route_decision(req, roster, research=research_lane)
@@ -3285,6 +3331,7 @@ class Orchestrator:
                         req.get("cso_workdir") if continuation else None, rid=rid, step="plan")
                     if research_lane:
                         vocab = self._output_vocab()
+                        topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         prompt = template.format(
                             request=plan_request, roster=format_roster(roster),
@@ -3292,17 +3339,22 @@ class Orchestrator:
                             briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
                             intake=json.dumps(intake.model_dump(mode="json"), ensure_ascii=False, sort_keys=True),
                             packs=render_pack_catalog(configured_pack_defs), question_rule=QUESTION_RULE,
-                            output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                            output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
+                            topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
+                                         if topic_vocab else ""))
                         prompt += reuse_advisory  # semantics-hook
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
                         vocab = self._output_vocab()
+                        topic_vocab = output_vocab.current()
                         prompt = PLAN_PROMPT.format(request=plan_request, roster=format_roster(roster),
                                                     capabilities=capabilities or "No workers available",
                                                     briefing=clip(briefing, 4000) or "(none)",
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
                                                     lab_scope=self._lab_scope(),
-                                                    output_types_rule=output_types.prompt_rule(vocab) if vocab else "")
+                                                    output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
+                                                    topics_rule=topic_types.prompt_rule(topic_vocab)
+                                                    if topic_vocab else "")
                         schema = plan_schema(vocab is not None)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
@@ -3407,6 +3459,7 @@ class Orchestrator:
                             return
                 if research_lane:
                     vocab = self._output_vocab()
+                    topic_vocab = output_vocab.current()
                     workers = sorted(known - orchestration)
 
                     def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
@@ -3427,9 +3480,19 @@ class Orchestrator:
                         type_stats = {}
                         selection_problems = []
                         try:
-                            candidate_packs = select_applied_packs(configured_pack_defs,
-                                                                    plan.get("pack_values") if isinstance(plan, dict)
-                                                                    else None)
+                            if topic_vocab is None:
+                                raise ValueError("research topics vocabulary is unavailable")
+                            plan = normalize_plan_topics(plan, topic_vocab, strict=True)
+                            candidate_packs, applicability, topic_warnings = assess_pack_applicability(
+                                configured_pack_defs, plan.get("topics"),
+                                plan.get("pack_values") if isinstance(plan, dict) else None)
+                            candidate_packs = select_applied_packs(
+                                configured_pack_defs,
+                                plan.get("pack_values") if isinstance(plan, dict) else None,
+                                topics=plan.get("topics"),
+                            )
+                            plan = {**plan, "pack_applicability": applicability,
+                                    "warnings": [*(plan.get("warnings") or []), *topic_warnings]}
                         except ValueError as error:
                             supplied = plan.get("pack_values") if isinstance(plan, dict) else None
                             candidate_packs = {
@@ -3480,11 +3543,15 @@ class Orchestrator:
                     steps = req["plan"]["steps"]
                 else:
                     vocab = self._output_vocab()
+                    topic_vocab = output_vocab.current()
                     for attempt in (1, 2):
                         type_stats: dict = {}
                         try:
-                            steps, warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
-                                                             orchestration, vocab=vocab, stats=type_stats)
+                            if topic_vocab is not None:
+                                plan = normalize_plan_topics(plan, topic_vocab, strict=False)
+                            steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
+                                                                  orchestration, vocab=vocab, stats=type_stats)
+                            warnings = [*(plan.get("warnings") or []), *step_warnings]
                             break
                         except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
@@ -3632,6 +3699,7 @@ class Orchestrator:
 
                 async def ask_cso(parse_attempt: int) -> dict:
                     resumable = self.hub.supports_resume(self.cfg.cso_agent)
+                    topic_vocab = output_vocab.current()
                     session_id, workdir = await self._free_session(
                         self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
                         req.get("cso_workdir") if resumable else None, rid=rid, step="replan")
@@ -3643,6 +3711,7 @@ class Orchestrator:
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
+                            topics_rule=topic_types.prompt_rule(topic_vocab) if topic_vocab else "",
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)),
@@ -3751,11 +3820,17 @@ class Orchestrator:
                     (req.get("step_decisions") or {}).pop(sid, None)
                     (req.get("pending_revisions") or {}).pop(sid, None)
                 steps = merged
+                topic_vocab = output_vocab.current()
+                topic_source = candidate if "topics" in candidate else (req.get("plan") or {})
+                normalized_topics, topic_warnings = (plan_topics(topic_source.get("topics"), topic_vocab, strict=False)
+                                                     if topic_vocab is not None else ([], []))
                 req["plan"] = {**(req.get("plan") or {}),
                                **({"assumptions": normalize_assumptions(candidate.get("assumptions"))}
                                   if "assumptions" in candidate else {}),
                                "steps": steps,
-                               "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings]}
+                               "topics": normalized_topics,
+                               "warnings": [*((req.get("plan") or {}).get("warnings") or []), *warnings,
+                                            *topic_warnings]}
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 if review_progress is not None:

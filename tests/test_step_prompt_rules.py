@@ -59,7 +59,7 @@ def test_plan_questions_fit_the_phone_card_and_the_research_plan_keeps_its_own_r
     """Plan questions are structured (options are a/b/c/d buttons), so only the length and the order apply."""
     rule = QUESTION_RULE + " Each question must fit the PI's phone card: at most 700 characters, the question itself first."
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                question_rule=QUESTION_RULE, output_types_rule="", lab_scope="LAB")
+                question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", lab_scope="LAB")
     assert rule in cso.PLAN_PROMPT.format(**args)
     assert "phone card" not in cso.RESEARCH_PLAN_PROMPT.format(**args, intake="INTAKE", packs="PACKS")
 
@@ -132,7 +132,7 @@ async def test_a_card_question_with_real_newlines_reaches_the_pi_and_the_step_re
 
 def test_replan_questions_follow_the_same_phone_card_rule_as_the_plan():
     args = dict(roster="ROSTER", capabilities="CAPS", trigger="WHY", retired="none", drop_rule="DROP", used="A",
-                max_steps=3, output_types_rule="", empty_rule="EMPTY", request="REQ", plan="[]", results="",
+                max_steps=3, output_types_rule="", topics_rule="", empty_rule="EMPTY", request="REQ", plan="[]", results="",
                 question_rule=QUESTION_RULE)
     text = cso.REPLAN_PROMPT.format(**args)
     assert ("ask in clarifying_questions and do not plan the blocked work. " + cso.PI_CARD_QUESTION_RULE) in text
@@ -149,7 +149,7 @@ def test_research_plan_questions_carry_the_length_their_validation_enforces():
     rule = (f"Each question is at most {limit} characters (a longer one fails plan validation), "
             "the question itself first.")
     args = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
-                question_rule=QUESTION_RULE, output_types_rule="", intake="INTAKE", packs="PACKS")
+                question_rule=QUESTION_RULE, output_types_rule="", topics_rule="", intake="INTAKE", packs="PACKS")
     for template in (cso.RESEARCH_PLAN_PROMPT, cso.RESEARCH_CP2_PLAN_PROMPT):
         assert rule in " ".join(template.format(**args).split())
     assert ClarifyingQuestion(question="q" * limit, options=["a", "b"], allow_free_text=False)

@@ -29,13 +29,13 @@ log = logging.getLogger("labhq.vocab")
 VOCAB_DIR = Path(__file__).parent
 LOCAL_FILE = "output_types.yaml"
 SUBSET_FILE = "edam_subset.yaml"
-BRANCHES = ("data", "format", "operation")
-# PI review split normalized counts into count, expression and transformed sets; keep a little headroom (#151).
-MAX_KEYS = 45          # local keys and distinct EDAM terms are each capped here
+BRANCH_LIMITS = {"data": 36, "format": 32, "operation": 24, "topic": 24}
+BRANCHES = tuple(BRANCH_LIMITS)
+MAX_EDAM_TERMS = sum(BRANCH_LIMITS.values())
 MAX_FILE_BYTES = 256 * 1024
 KEY = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
-EXTENSION = re.compile(r"^\.[a-z0-9]{1,8}$")
-EDAM_ID = re.compile(r"^(data|format|operation)_[0-9]{4}$")
+EXTENSION = re.compile(r"^\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
+EDAM_ID = re.compile(r"^(data|format|operation|topic)_[0-9]{4}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 EDAM_REASONS = ("no_candidate", "no_match", "ambiguous", "deprecated", "wrong_branch", "ancestor_missing",
                 "ancestor_cycle", "ancestor_limit")
@@ -51,6 +51,7 @@ class VocabError(ValueError):
 class Term:
     key: str
     branch: str
+    definition: str
     extensions: tuple[str, ...] = ()
     edam_id: str | None = None        # None: local (no subset, or the script found no single term)
     edam_reason: str | None = None
@@ -94,7 +95,7 @@ class Vocab:
         return None
 
     def counts(self) -> dict[str, int]:
-        """Local keys per branch and distinct EDAM terms, counted apart (each capped at MAX_KEYS)."""
+        """Local keys per branch and distinct EDAM terms, counted against their separate caps."""
         out = {b: len(self.keys(b)) for b in BRANCHES}
         return {**out, "keys": len(self.terms), "edam_terms": len(self.edam_ids)}
 
@@ -135,13 +136,20 @@ def parse_local(data: Any, where: str = LOCAL_FILE) -> tuple[dict[str, Term], st
         extensions = body.get("extensions") or []
         if body["branch"] != "format" and extensions:
             raise VocabError(f"{where}: {key}: only format keys take extensions")
-        if not isinstance(extensions, list) or not all(isinstance(e, str) and EXTENSION.fullmatch(e)
+        if not isinstance(extensions, list) or not all(isinstance(e, str) and len(e) <= 17 and EXTENSION.fullmatch(e)
                                                        for e in extensions):
-            raise VocabError(f"{where}: {key}: extensions are lower-case '.ext' strings")
-        terms[key] = Term(key=key, branch=body["branch"], extensions=tuple(extensions))
-        meaning[key] = {"branch": body["branch"], "definition": definition.strip(), "extensions": sorted(extensions)}
-    if not terms or len(terms) > MAX_KEYS:
-        raise VocabError(f"{where}: {len(terms)} keys; 1 to {MAX_KEYS} allowed")
+            raise VocabError(f"{where}: {key}: extensions are short '.ext' strings")
+        normalized_extensions = tuple(dict.fromkeys(e.lower() for e in extensions))
+        terms[key] = Term(key=key, branch=body["branch"], definition=definition.strip(),
+                          extensions=normalized_extensions)
+        meaning[key] = {"branch": body["branch"], "definition": definition.strip(),
+                        "extensions": sorted(normalized_extensions)}
+    if not terms:
+        raise VocabError(f"{where}: needs at least one key")
+    for branch, limit in BRANCH_LIMITS.items():
+        count = sum(term.branch == branch for term in terms.values())
+        if count > limit:
+            raise VocabError(f"{where}: {branch} has {count} keys; at most {limit} allowed")
     claimed: dict[str, str] = {}
     for term in terms.values():
         for ext in term.extensions:
@@ -176,7 +184,7 @@ def parse_subset(data: Any, terms: Mapping[str, Term]) -> tuple[dict[str, tuple[
             mapping[key] = (edam, None)
         else:
             raise ValueError("subset_id")
-    if len({m[0] for m in mapping.values() if m[0]}) > MAX_KEYS:
+    if len({m[0] for m in mapping.values() if m[0]}) > MAX_EDAM_TERMS:
         raise ValueError("subset_too_many_terms")
     interpretation = {"release": source["release"], "sha256": source["sha256"],
                       "terms": {k: {"id": v[0] or UNKNOWN, "reason": v[1]} for k, v in sorted(mapping.items())}}
@@ -195,7 +203,8 @@ def load(directory: Path | None = None) -> Vocab:
     try:
         if subset_path.exists():
             mapping, edam_sha = parse_subset(_read(subset_path), terms)
-            terms = {k: Term(t.key, t.branch, t.extensions, *mapping[k]) for k, t in terms.items()}
+            terms = {k: Term(t.key, t.branch, t.definition, t.extensions, *mapping[k])
+                     for k, t in terms.items()}
     except FileNotFoundError:
         pass  # optional file disappeared after exists(): the same contract as an absent subset
     except (VocabError, OSError):

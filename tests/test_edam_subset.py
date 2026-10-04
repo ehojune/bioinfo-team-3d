@@ -67,8 +67,24 @@ def test_the_committed_subset_stays_under_the_caps_and_loads():
 
 def test_the_map_holds_candidate_labels_only():
     candidates, _ = es.load_map()
-    assert all(v is None or (isinstance(v, str) and not v.startswith(("data_", "format_", "operation_")))
+    assert all(v is None or (isinstance(v, str) and not v.startswith(("data_", "format_", "operation_", "topic_")))
                for v in candidates.values())
+
+
+def test_closest_multiple_and_local_qualifier_candidates_stay_local():
+    candidates, _ = es.load_map()
+    subset = committed()["terms"]
+    local_only = {
+        "methylation_profile", "splicing_table", "copy_number_profile", "spatial_annotations", "mtx",
+        "encode_peak", "qiime2_artifact", "parquet", "tiff", "read_preprocessing",
+        "differential_abundance_analysis", "consensus_generation", "cell_segmentation",
+        "spatial_transcriptomics", "cut_and_run", "germline_wgs_wes", "somatic_wgs_wes",
+        "ont_long_read", "pacbio_long_read", "long_read_transcriptomics", "metagenomic_taxonomy",
+        "amplicon_sequencing", "bacterial_genome_assembly",
+    }
+    assert all(candidates[key] is None for key in local_only)
+    assert all(subset[key]["id"] == "unknown" and subset[key]["reason"] == "no_candidate"
+               for key in local_only)
 
 
 # ---------------------------------------------------------------- one rule per key

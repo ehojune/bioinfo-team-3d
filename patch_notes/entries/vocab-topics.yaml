@@ -1,0 +1,20 @@
+pr: 390
+rows:
+- sha: d9c59a1
+  at: 2026-10-04 20:09
+  text: PI 승인 어휘를 100키로 확장하고 topic 기반 pack 적용 판정을 추가했습니다.
+- sha: 37c4b9a
+  at: 2026-10-04 20:10
+  text: 어휘 100키와 topic 판정의 구현·검증 상태를 기록했습니다.
+- sha: f094a7c
+  at: 2026-10-04 20:49
+  text: 기존 bulk pack을 보존하고 topic 기반 v2·재개 snapshot 검증·일반 경고 병합을 추가했습니다.
+- sha: 096445e
+  at: 2026-10-04 21:35
+  text: topic 이전 연구 계약을 승인 당시 pack 규칙으로 재개하고 재계획의 모르는 topic 경고를 남긴다
+- sha: a7a44ac
+  at: 2026-10-04 21:55
+  text: topic 조건 없는 pack을 강제 적용하지 않고 topic 이전처럼 값이나 not_applicable로 답하게 한다
+- sha: 070f372
+  at: 2026-10-04 21:50
+  text: 고정된 연구 계약은 재개 때 CP1 snapshot을 따르고 면제한 pack은 사유만 받는다

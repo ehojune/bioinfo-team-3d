@@ -47,7 +47,7 @@ LICENSE = "https://creativecommons.org/licenses/by-sa/4.0"
 MAX_BYTES = 32 * 1024 ** 2
 MAX_DEPTH = 64
 MAX_ANCESTORS = 256
-MAX_KEYS = 45
+MAX_KEYS = 116
 
 NS_EDAM = "http://edamontology.org/"
 NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -57,7 +57,7 @@ NS_OBO = "http://www.geneontology.org/formats/oboInOwl#"
 NS_DCTERMS = "http://purl.org/dc/terms/"
 SEP = "\x1f"
 ABOUT, RESOURCE = NS_RDF + SEP + "about", NS_RDF + SEP + "resource"
-BRANCHES = ("data", "format", "operation")
+BRANCHES = ("data", "format", "operation", "topic")
 
 
 class SubsetError(ValueError):
