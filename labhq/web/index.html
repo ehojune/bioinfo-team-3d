@@ -735,13 +735,16 @@ const notesHTML = q => !(q.piNotes || []).length ? '' : `<section class="pi-note
   `<li><time datetime="${new Date(Number(note.at || 0) * 1000).toISOString()}">${ago(note.at)}</time>${esc(note.text)}</li>`).join('')}</ol></section>`;
 const assumptionsHTML = q => !(q.assumptions || []).length ? '' : `<section class="plan-assumptions" aria-label="계획 가정"><h3>가정</h3><ul>${q.assumptions.map(value =>
   `<li>${esc(value)}</li>`).join('')}</ul><p class="empty-note">바꾸려면 실행 중 메모로 알려 주세요.</p></section>`;
-const bundleHTML = q => q.bundlePath ? `<p class="empty-note">요청 묶음: <code>${esc(q.bundlePath)}</code></p>`
+// An incomplete bundle must not read as a full copy (PR #389 review): the status sits next to the path.
+const bundleHTML = q => q.bundlePath ? (q.bundleStatus === 'incomplete'
+    ? `<p class="empty-note"><strong>요청 묶음(불완전)</strong>: <code>${esc(q.bundlePath)}</code> · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요</p>`
+    : `<p class="empty-note">요청 묶음: <code>${esc(q.bundlePath)}</code></p>`)
   : q.bundleWarning ? `<p class="empty-note">요청 묶음 경고: ${esc(q.bundleWarning)}</p>` : '';
 let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }

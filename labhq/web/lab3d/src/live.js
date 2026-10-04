@@ -64,7 +64,7 @@ export function startLiveOffice(onState) {
     for (const q of [...S.requests.values()].reverse()) {
       const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
-        loadingAnswers.has(q.id)]);
+        q.assumptions, q.bundlePath, q.bundleStatus, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
@@ -76,6 +76,12 @@ export function startLiveOffice(onState) {
       const audit = text(row, 'a', '감사 번들');
       audit.href = `/api/requests/${encodeURIComponent(q.id)}/audit-bundle`;
       audit.onclick = event => { event.preventDefault(); downloadAuditBundle(q.id); };
+      // The same plan assumptions and request bundle the 2.5D view shows (PR #387, #389 follow-ups).
+      if ((q.assumptions || []).length) {
+        text(row, 'h4', '가정');
+        for (const value of q.assumptions) text(row, 'p', `· ${value}`);
+        text(row, 'p', '바꾸려면 실행 중 메모로 알려 주세요.');
+      }
       for (const step of q.plan) text(row, 'p', `${step.id} · ${step.instruction || ''} · ${q.steps[step.id] || 'pending'}`);
       if (q.review?.status === 'review_unparsed') text(row, 'p', '리뷰 판정 실패. PI 확인이 필요해요');
       if (q.error) text(row, 'p', q.error);
@@ -95,6 +101,13 @@ export function startLiveOffice(onState) {
           const more = text(details, 'button', '전문 보기'); more.type = 'button';
           more.disabled = loadingAnswers.has(q.id); more.onclick = () => loadFullAnswers(q.id);
         }
+      }
+      if (q.bundlePath) {
+        text(row, 'p', q.bundleStatus === 'incomplete'
+          ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요`
+          : `요청 묶음: ${q.bundlePath}`);
+      } else if (q.bundleWarning) {
+        text(row, 'p', `요청 묶음 경고: ${q.bundleWarning}`);
       }
       for (const note of q.piNotes || []) {
         const sent = new Date(Number(note.at || 0) * 1000).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
