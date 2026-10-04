@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:11 | [`ba41267`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ba41267) | 재계획이 낸 가정 목록이 이전 목록을 대체하고, 메모로 바뀐 가정은 보고서에 실제 쓴 선택으로 적는다 |
+| 11:55 | [`ed5d0e2`](https://github.com/ehojune/bioinfo-team-3d/pull/387/commits/ed5d0e2) | CSO 질문을 세 범주로 제한하고 일반 계획의 과학 설계 가정을 저장·표시·보고한다 |
 | 10:57 | [`61f23df`](https://github.com/ehojune/bioinfo-team-3d/pull/386/commits/61f23df) | 연구 보고서 본문만 claim 검사하고 긴 실행 기록 전문은 request·GitHub·감사 번들에 보존한다. |
 | 10:44 | [`c462e11`](https://github.com/ehojune/bioinfo-team-3d/pull/386/commits/c462e11) | PI용 report와 실행 기록 report_appendix를 나누고 API·CLI·웹·GitHub·감사 번들에서 함께 보존한다. |
 | 08:27 | [`98a37a2`](https://github.com/ehojune/bioinfo-team-3d/pull/385/commits/98a37a2) | 매뉴얼에 cd 뒤 상대 경로 대조 규칙('..' 단어만, 개인 경로가 아래면 전체)과 256 후보 상한을 적었다. |
