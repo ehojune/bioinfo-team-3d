@@ -89,14 +89,23 @@ def entry_shas(rev: str, cwd: Path | None = None) -> tuple[set[str], list[str]]:
         if not path.endswith(".yaml"):
             continue
         try:
-            data = yaml.safe_load(git("show", f"{rev}:{path}", cwd=cwd))
+            text = git("show", f"{rev}:{path}", cwd=cwd)
+            data = yaml.safe_load(text)
             rows = data.get("rows") if isinstance(data, dict) else None
             if not isinstance(rows, list):
                 raise ValueError("rows가 목록이 아님")
-            for row in rows:
+            written = (yaml.load(text, Loader=yaml.BaseLoader) or {}).get("rows") or []  # scalars as typed
+            for index, row in enumerate(rows):
                 sha = row.get("sha") if isinstance(row, dict) else None
                 if isinstance(sha, str):
                     shas.add(sha)
+                elif isinstance(sha, int) and not isinstance(sha, bool):
+                    # An all-digit short sha is a YAML integer (0123456 even an octal one): name the row as typed
+                    # instead of reporting the commit missing.
+                    typed = written[index] if index < len(written) and isinstance(written[index], dict) else {}
+                    raw = typed.get("sha", sha)
+                    problems.append(f"{path}: sha {raw}가 숫자로 읽힙니다. 숫자로만 된 sha는 따옴표로 감싸세요"
+                                    f" (sha: '{raw}')")
         except (subprocess.CalledProcessError, ValueError, yaml.YAMLError) as exc:
             problems.append(f"{path}을 읽을 수 없습니다: {exc}")
     return shas, problems
