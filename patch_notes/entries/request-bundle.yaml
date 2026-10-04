@@ -9,3 +9,6 @@ rows:
 - sha: 04b6000
   at: 2026-10-04 19:38
   text: runner와 같은 안전 순회, DAG 재실행 순서, 요청별 누적 상한으로 요청 묶음 2차 P1을 보강
+- sha: 53b9b2a
+  at: 2026-10-04 20:06
+  text: 요청 terminal을 먼저 저장하고 단계별 outputs 구조와 runner Python 명령으로 묶음 재실행 경로를 바로잡음
