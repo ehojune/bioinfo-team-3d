@@ -140,7 +140,7 @@ labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1�
 - 뒷벽 **화이트보드**: 지금 요청과 단계(브리핑 → 계획 → 실행 → 리뷰 → 보고), 스텝별 진행
 - **서버 랙**: 최근 HPC 작업 8개의 불빛, **입구**: 파견직이 들어올 때 문이 열리고 걸어 들어옴
 - 오른쪽(폰에서는 하단 탭): **결정** 탭(결정할 일·메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
-- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 같은 CSO 세션(direct 요청이면 그 직원)이 같은 작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
+- 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
 **실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. CLI는 `labhq note <request_id> "text"`입니다.
 - CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다
@@ -179,7 +179,7 @@ labhq contract extend c_scanpy --days 14    # extend | release | activate | rehi
 
 일반 요청 중 한 직원이 약 30분·한 턴 안에 끝낼 조회, 표, QC 한 건, 그림 한 장, 문헌 목록만 CSO가 단독으로 보냅니다. 계획의 DAG는 폴백용으로 그대로 보이며, 단독 답·산출이 비거나 실패하면 `단독 실패 → 팀`으로 이어 갑니다. 연구 lane, HPC, 통제 데이터, 여러 의존 단계는 늘 팀입니다. 웹 **팀으로** 또는 CLI `--team`으로 팀을 강제할 수 있고 `--agent`와 `--team`은 함께 쓸 수 없습니다.
 
-`orchestrator.solo_agent`가 없으면 기능은 꺼집니다. 예를 들어 roster의 `solo` 직원을 `engine: codex`, `model: gpt-6-astra`로 두고 Codex 실행 인자에 `model_reasoning_effort="ultra"`를 설정한 뒤 아래처럼 연결합니다. `solo_review: true`면 단독 결과도 과학 리뷰 한 번을 거치며, 기본은 `false`입니다.
+`orchestrator.solo_agent`가 없으면 기능은 꺼집니다. 예를 들어 roster의 `solo` 직원을 아래처럼 연결합니다. `solo_review: true`면 단독 결과도 과학 리뷰 한 번을 거치며, 기본은 `false`입니다.
 
 ```yaml
 # agents/core/solo.yaml
@@ -188,13 +188,11 @@ name: 단독 처리 직원
 role: 작은 요청 한 턴 처리
 engine: codex
 model: gpt-6-astra
+effort: ultra
 ```
 
 ```yaml
 # config/labhq.yaml
-engines:
-  codex:
-    extra_args: [-c, 'model_reasoning_effort="ultra"']
 orchestrator:
   solo_agent: solo
   solo_review: false
@@ -490,7 +488,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
   `job_group` 제출은 외부 parent traversal을 먼저 확인한 뒤 `jobs`·`logs`·`hpc_out`을 만듭니다.
   스케줄러 명령은 `PATH`·`HOME`·locale과 `SGE_*`·`PBS_*`·`SLURM_*`·`SBATCH_*` 같은 스케줄러 변수만 받습니다. 그래서 `#$ -V`·`#PBS -V`도 broker token이나 API key를 잡에 넘기지 못합니다.
   로그인 노드에서만 qsub·sbatch가 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.
-- **직원** (`agents/core/*.yaml`): `engine`, `model`, `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
+- **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
   `permission_mode`, `project_dirs`.
   쓰기 범위는 [승인 게이트와 쓰기 범위](#승인-게이트와-쓰기-범위)에 있습니다.
   `labhq_ask`는 모든 MCP 지원 직원에게 자동으로 붙습니다. 대상은 `cso`, `facilities`, `colleague:<agent_id>`, `pi`입니다. `facilities`가 roster에 없으면 CSO가 답하되, 재시작 전에 `facilities`가 받던 질의는 그 runner 재접속을 `gateway.resume_wait_s`까지 기다려 같은 상담을 이어받습니다(#113).

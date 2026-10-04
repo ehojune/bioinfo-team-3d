@@ -238,6 +238,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                "--append-system-prompt-file", str(ctx.meta_dir / "system_prompt.md")]
         if a.model:
             cmd += ["--model", a.model]
+        if a.effort:
+            cmd += ["--effort", a.effort]
         if t.resume_session_id:
             cmd += ["--resume", t.resume_session_id]
         if a.max_turns:

@@ -1402,7 +1402,12 @@ class Hub:
             raise ValueError(f"request is {req.get('status')}; ask a follow-up after it finishes")
         if any(f.get("status") == "running" for f in req.get("followups") or []):
             raise ValueError("a follow-up for this request is still running")
-        agent = req.get("agent_id") if req.get("mode") == "direct" else self.s.orchestrator.cso_agent
+        if req.get("followup_agent_id"):
+            agent = req["followup_agent_id"]
+        elif req.get("mode") == "direct":
+            agent = req.get("agent_id")
+        else:
+            agent = self.s.orchestrator.cso_agent
         if agent not in self.agents:
             raise ValueError(f"agent {agent!r} is not on any connected runner")
         refusal = read_only_refusal(agent, self.agents[agent].get("engine"))

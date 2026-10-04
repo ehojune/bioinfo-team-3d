@@ -20,7 +20,7 @@ READ_ONLY_FIELDS = {"sandbox": "read-only", "permission_mode": "plan", "builtin_
                     "allow_skills": False, "required_skills": [], "cli": None, "can_orchestrate": False}
 # Identity, persona, limits and denials: none of these lets the CLI run anything. project_dirs stay readable;
 # disallowed_tools (e.g. a Read deny on a data folder) only take away, so a read-only run keeps them.
-READ_ONLY_KEEPS = ("id", "name", "role", "character", "engine", "model", "system_prompt", "project_dirs",
+READ_ONLY_KEEPS = ("id", "name", "role", "character", "engine", "model", "effort", "system_prompt", "project_dirs",
                    "disallowed_tools", "max_turns", "max_budget_usd", "employment", "contract", "tags")
 # The marker consults and follow-ups carry in task meta. The runner never applies it: it rebuilds the profile.
 READ_ONLY_OVERRIDES = copy.deepcopy(READ_ONLY_FIELDS)

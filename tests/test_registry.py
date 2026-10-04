@@ -1,6 +1,8 @@
 import time
 from pathlib import Path
 
+import pytest
+
 from labhq.models import AgentSpec, ContractInfo, Employment
 from labhq.registry import Registry
 
@@ -32,6 +34,18 @@ def test_core_agents_load():
     assert reg.get("sci_reviewer").tools == ["WebSearch"]
     assert "original source" in lit.system_prompt
     assert "original source" in reg.get("sci_reviewer").system_prompt
+
+
+@pytest.mark.parametrize("engine,effort", [("gemini", "high"), ("codex", "impossible")])
+def test_invalid_agent_effort_fails_registry_load(tmp_path, engine, effort):
+    core = tmp_path / "agents" / "core"
+    core.mkdir(parents=True)
+    (core / "worker.yaml").write_text(
+        f"id: worker\nname: Worker\nrole: test\nengine: {engine}\neffort: {effort}\nbuiltin_mcp: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="effort"):
+        Registry(tmp_path / "agents", tmp_path / "talent").load()
 
 
 def _contract(tmp: Path, expires_in: float) -> AgentSpec:

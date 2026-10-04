@@ -28,6 +28,38 @@ def _settings_arg(cmd):
     return json.loads(cmd[cmd.index("--settings") + 1])
 
 
+@pytest.mark.parametrize("engine,effort,expected", [
+    ("claude_code", "max", ["--effort", "max"]),
+    ("codex", "ultra", ["-c", 'model_reasoning_effort="ultra"']),
+])
+def test_agent_effort_reaches_supported_engine_command(tmp_path, engine, effort, expected):
+    settings = Settings()
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), effort=effort, builtin_mcp=[])
+    ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
+                     mcp_servers=[], env={}, emit=_emit, prompt="x")
+    cmd = get_adapter(agent.engine, settings).build_command(ctx)
+    assert any(cmd[i:i + len(expected)] == expected for i in range(len(cmd)))
+
+
+@pytest.mark.parametrize("engine", ["claude_code", "codex"])
+def test_agent_without_effort_keeps_engine_command_unchanged(tmp_path, engine):
+    cmd = _command(engine, tmp_path)
+    assert "--effort" not in cmd
+    assert not any(str(arg).startswith("model_reasoning_effort=") for arg in cmd)
+
+
+@pytest.mark.parametrize("engine", ["cli", "gemini", "antigravity"])
+def test_agent_effort_is_rejected_for_unsupported_engines(engine):
+    with pytest.raises(ValueError, match="effort is not supported"):
+        AgentSpec(id="a", name="A", role="test", engine=Engine(engine), effort="high", builtin_mcp=[])
+
+
+@pytest.mark.parametrize("engine", ["claude_code", "codex"])
+def test_unknown_agent_effort_is_rejected(engine):
+    with pytest.raises(ValueError, match="unknown .* effort"):
+        AgentSpec(id="a", name="A", role="test", engine=Engine(engine), effort="impossible", builtin_mcp=[])
+
+
 def test_claude_isolation_flags_and_claude_md_exclude(tmp_path):
     cfg = tmp_path / "claude-home"
     cmd = _command("claude_code", tmp_path, env={"CLAUDE_CONFIG_DIR": str(cfg)})

@@ -85,6 +85,7 @@ class AgentSpec(BaseModel):
     character: str | None = None
     engine: Engine = Engine.claude_code
     model: str | None = None
+    effort: str | None = None
     system_prompt: str = ""
     tools: list[str] = []  # pre-approved tools (Claude Code --allowedTools rule syntax)
     disallowed_tools: list[str] = []
@@ -106,7 +107,18 @@ class AgentSpec(BaseModel):
     tags: list[str] = []
 
     @model_validator(mode="after")
-    def antigravity_has_no_mcp(self) -> "AgentSpec":
+    def valid_engine_options(self) -> "AgentSpec":
+        efforts = {
+            Engine.claude_code: {"low", "medium", "high", "xhigh", "max"},
+            Engine.codex: {"low", "medium", "high", "xhigh", "max", "ultra"},
+        }
+        if self.effort is not None:
+            allowed = efforts.get(self.engine)
+            if allowed is None:
+                raise ValueError(f"effort is not supported for engine: {self.engine.value}")
+            if self.effort not in allowed:
+                values = ", ".join(sorted(allowed))
+                raise ValueError(f"unknown {self.engine.value} effort {self.effort!r}; allowed: {values}")
         if self.engine != Engine.claude_code and (self.plugin_dirs or self.allow_skills or self.required_skills):
             raise ValueError("plugin_dirs, allow_skills and required_skills require engine: claude_code")
         for skill in self.required_skills:
