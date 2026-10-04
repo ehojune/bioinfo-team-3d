@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:05 | [`d42ed3c`](https://github.com/ehojune/bioinfo-team-3d/pull/391/commits/d42ed3c) | 직원별 추론 강도를 엔진 명령줄에 적용하고 단독 처리 뒤 이어 묻기를 맡았던 직원의 세션으로 보냅니다. |
 | 19:10 | [`7c16b7a`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/7c16b7a) | 단독 재시작의 다음 단계를 한 함수로 판정해 폴백 전에 필요한 팀 runner를 기다리게 했다. |
 | 18:48 | [`5e1c789`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/5e1c789) | 단독 결과의 예산 거부를 우선하고 재시작 때 담당 runner와 저장된 리뷰를 이어 쓰게 했다. |
 | 18:32 | [`40dd720`](https://github.com/ehojune/bioinfo-team-3d/pull/388/commits/40dd720) | 작은 일반 요청을 직원 한 명에게 자동 라우팅하고 실패하면 저장된 팀 계획으로 이어가게 했다. |

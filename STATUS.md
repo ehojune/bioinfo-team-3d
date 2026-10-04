@@ -4,6 +4,27 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 직원별 effort와 단독 이어 묻기 (#373)
+
+## 단계
+P1 — 직원별 추론 강도와 단독 처리 담당 세션 보존을 구현했습니다.
+
+## 한 일
+- Claude Code·Codex 직원 YAML에 선택 필드 `effort`를 추가하고 엔진별 값을 검증합니다.
+- 단독 성공 요청의 이어 묻기는 CSO가 꺼져 있어도 단독 직원의 세션·작업 폴더로 갑니다.
+- 단독 실패 뒤 팀 폴백은 기존처럼 CSO가 이어 묻기를 맡습니다.
+- manual 예시는 전역 `extra_args` 대신 단독 직원의 `effort: ultra`를 씁니다.
+
+## 테스트 결과
+- [x] 관련 pytest: 96 passed
+- [x] Windows `pytest -q`: 3767 passed, 53 skipped
+- [x] Node CJS 20개 통과
+- [x] `scripts/check_public.sh` 통과
+- [x] manual: 71,292자 → 71,165자
+
+## 막힌 점
+없음.
+
 # 작은 요청 단독 처리와 팀 폴백 (#373 안 A)
 
 ## 단계
