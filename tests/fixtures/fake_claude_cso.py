@@ -194,6 +194,10 @@ def main(argv: list[str]) -> int:
     with Path(".labhq", "fake_cli_prompts.jsonl").open("a", encoding="utf-8") as calls:  # what `-p` carried
         calls.write(json.dumps(argv[argv.index("-p") + 1][:200], ensure_ascii=False) + "\n")
     prompt = _prompt(argv)
+    # The whole prompt as this CLI resolved it (inline, or read from TASK.md), so a test can check that either
+    # transport carried all of it; the log above keeps only the head (PR #396 review).
+    with Path(".labhq", "fake_cli_resolved_prompts.jsonl").open("a", encoding="utf-8") as resolved:
+        resolved.write(json.dumps(prompt, ensure_ascii=False) + "\n")
     schema = json.loads(argv[argv.index("--json-schema") + 1])
     request = _section(prompt, "PI's request:", "\0")
     plan = _plan(prompt, mistakes="[draft-mistakes]" in request)

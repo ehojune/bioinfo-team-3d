@@ -1520,8 +1520,14 @@ def normalize_precedents(value: Any) -> dict[str, Any] | None:
                 for index, row in enumerate(value["required"][:12], 1)]
     recommended = [dict(row) for row in value["recommended"][:12]]
     limitations = [str(item) for item in value["limitations"][:12]]
+    if not papers:  # a search that found nothing is not a precedent basis (PR #395 review): say so, keep its reasons
+        return {**precedent_warning("no_papers"), "limitations": limitations}
     return {"status": "ok", "papers": papers, "required": required,
             "recommended": recommended, "limitations": limitations}
+
+
+# How long an early-finishing request waits for the literature scout's cancelled turn to report back.
+PRECEDENT_CANCEL_GRACE_S = 10.0
 
 
 def precedent_warning(code: str) -> dict[str, Any]:
@@ -3542,20 +3548,41 @@ class Orchestrator:
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:
                     if precedent_agent in known:
-                        precedent_job = asyncio.create_task(self.run_step(Task(
+                        precedent_task = Task(
                             agent_id=precedent_agent, request_id=rid, output_schema=PRECEDENT_SCHEMA,
                             prompt=PRECEDENT_PROMPT.format(request=text),
                             meta={**refs, "kind": "precedent", "request": text,
-                                  "title": "선행 연구 분석 기준 조사", "max_attempts": 1})))
+                                  "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
+                        precedent_job = asyncio.create_task(self.run_step(precedent_task))
                     else:
                         req["analysis_precedents"] = precedent_warning("agent_unavailable")
                         self.hub.save_request(rid)
+
+                async def stop_precedent_job() -> None:
+                    """A request that ends before planning must not leave the literature scout running or its
+                    exception unread (PR #395 review): ask its runner to cancel the turn, give the cancelled result
+                    a short while to come back (so its cost is recorded), then cancel and reap the job."""
+                    if precedent_job is None:
+                        return
+                    runner = getattr(self.hub, "task_runner", {}).get(precedent_task.id)
+                    if runner and not precedent_job.done():
+                        try:
+                            await self.hub.send_runner(runner, {"type": "task.cancel", "task_id": precedent_task.id})
+                        except Exception:  # an unreachable runner cannot run it either; the job is reaped below
+                            pass
+                    await asyncio.wait([precedent_job], timeout=PRECEDENT_CANCEL_GRACE_S)
+                    if not precedent_job.done():
+                        precedent_job.cancel()
+                    await asyncio.gather(precedent_job, return_exceptions=True)
+
                 if brief_job:
                     b = await brief_job
                     if not b.ok:
+                        await stop_precedent_job()
                         self._finish(rid, f"브리핑 실패: {b.error}", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
                     if rid in self.budget_denials:
+                        await stop_precedent_job()
                         self._finish(rid, "브리핑 뒤 예산 승인 거부", {"briefing": b.model_dump(mode="json")}, ok=False)
                         return
                     briefing = b.text

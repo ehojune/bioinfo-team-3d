@@ -248,3 +248,69 @@ def test_review_report_and_solo_contexts_carry_requirements_answers_and_citation
     assert "선행 연구 기준" in cso.SYNTH_PROMPT and "선행 연구 기준" in cso.RESEARCH_SYNTH_PROMPT
     assert "declared topic checklist" in cso.REVIEW_PROMPT
     assert "declared topic checklist" in cso.RESEARCH_REVIEW_PROMPT
+
+
+def test_an_empty_precedent_search_is_a_warning_that_keeps_its_reasons():
+    # PR #395 review: all-empty arrays are schema-valid; stored as ok they would drop precedent checks silently.
+    record = cso.normalize_precedents({"papers": [], "required": [], "recommended": [],
+                                       "limitations": ["PubMed was unreachable"]})
+    assert record["status"] == "warning" and "no_papers" in record["warning"]
+    assert record["limitations"] == ["PubMed was unreachable"]
+    assert "unavailable" in cso.analysis_precedents_text(record)
+
+
+class EarlyEndHub(FakeHub):
+    """Briefing fails at once while the literature scout is still running (PR #395 review)."""
+
+    def __init__(self, *, runner_answers_cancel):
+        self.cancel_sent: list[str] = []
+        self.scout_cancelled = asyncio.Event()
+        self.scout_reaped = False
+        cancel_arrived = asyncio.Event()
+
+        async def dispatch(task):
+            kind = task.meta["kind"]
+            if kind == "briefing":
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="brief tool down")
+            if kind == "precedent":
+                if runner_answers_cancel:
+                    self.task_runner[task.id] = "pc-a"
+                try:
+                    await cancel_arrived.wait()
+                except asyncio.CancelledError:
+                    self.scout_reaped = True
+                    raise
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="cancelled by PI")
+            raise AssertionError(kind)
+
+        async def send_runner(runner_id, message):
+            self.cancel_sent.append(message["task_id"])
+            cancel_arrived.set()
+
+        super().__init__(dispatch)
+        self.task_runner: dict[str, str] = {}
+        self.send_runner = send_runner
+        self.s.orchestrator.chief_of_staff_agent = "chief_of_staff"
+        self.s.orchestrator.precedent_agent = "lit_scout"
+        self.s.orchestrator.reviewer_agent = None
+        self.agents.update({
+            "chief_of_staff": {"id": "chief_of_staff", "name": "chief", "role": "brief", "engine": "mock"},
+            "lit_scout": {"id": "lit_scout", "name": "lit", "role": "precedent", "engine": "mock"},
+        })
+
+
+@pytest.mark.asyncio
+async def test_a_failed_briefing_cancels_the_scout_on_its_runner_and_waits_for_it():
+    hub = EarlyEndHub(runner_answers_cancel=True)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    assert hub.requests["r"]["status"] == "failed"
+    assert len(hub.cancel_sent) == 1 and not hub.scout_reaped  # the runner's cancelled result came back
+
+
+@pytest.mark.asyncio
+async def test_a_failed_briefing_reaps_a_scout_whose_runner_never_answers(monkeypatch):
+    monkeypatch.setattr(cso, "PRECEDENT_CANCEL_GRACE_S", 0.05)
+    hub = EarlyEndHub(runner_answers_cancel=False)
+    await asyncio.wait_for(Orchestrator(hub).run_request("r"), timeout=5)
+    assert hub.requests["r"]["status"] == "failed"
+    assert hub.cancel_sent == [] and hub.scout_reaped
