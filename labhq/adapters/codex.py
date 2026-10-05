@@ -214,7 +214,11 @@ class CodexAdapter(AgentAdapter):
                         st.error_kind = "sandbox_setup_required"
                     await ctx.emit("agent.tool_error", {"text": short(message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
-                await ctx.emit("agent.tool", {"name": f"mcp:{item.get('server')}.{item.get('tool')}"})
+                call = {"name": f"mcp:{item.get('server')}.{item.get('tool')}"}
+                if item.get("arguments") is not None:  # tells calls apart, e.g. for the runaway detector
+                    call["input"] = short(json.dumps(item["arguments"], ensure_ascii=False, sort_keys=True,
+                                                     default=str), 300)
+                await ctx.emit("agent.tool", call)
             elif it == "mcp_tool_call" and typ == "item.completed":
                 result = item.get("result") or {}
                 tool_error = isinstance(result, dict) and (result.get("isError") or result.get("is_error"))
