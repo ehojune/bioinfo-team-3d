@@ -31,7 +31,7 @@
 | 느린 test | 90초 MCP 실측은 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`. CI에서는 별도 job(`pytest-slow`)이 돌린다 |
 | 실측 fixture | Windows 11 실측 스트림은 `tests/fixtures/real/`에 있다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact` |
 | PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
-| PI 창구 감시 | 창구는 고정 issue #435. 세션 시작·문맥 요약 뒤·PI가 채팅을 떠날 때 창구 감시를 켠다. 10-06 새벽 감시가 꺼진 채 결정 요청을 올려 PI 댓글 둘을 3시간 늦게 봤다 |
+| PI 창구 감시 | 창구는 고정 issue #435. 세션 시작·문맥 요약 뒤·PI가 채팅을 떠날 때 창구 감시를 켠다. 10-06 새벽 감시가 꺼진 채 결정 요청을 올려 PI 댓글 둘을 1시간 넘게 늦게 봤다 |
 | Windows Codex sandbox | Codex 위임 전에 UAC 승인 창(`consent.exe`)이 떠 있는지 본다. 떠 있으면 Codex 셸이 실패가 아니라 무기한 멈춰 토큰만 쓴다(10-06, #382). 승인은 PI만 한다 |
 | CI 실패가 이상할 때 | Linux job 셋이 같은 시각에 step 없이 실패하면 GitHub runner 미배정이다(check-run 요약 "not acquired by Runner"). 로그가 없으니 요약부터 보고 실패 job만 다시 돌린다 |
 
@@ -47,7 +47,7 @@
 | v0.25 | PI 대기 | #435 | PI 시운전. 그 전에 PI가 Claude 직원 폴더에 로그인(#335) |
 | v0.25 | 운영 | #435 | PI 소통 창구(2): 결정 대기와 진행 보고. #298은 2026-10-06에 닫고 남은 일을 옮김 |
 | v0.25 | 실측 | #276 #37 | 실제 Codex 장시간 MCP probe, 로그의 token 노출(폰 원격 접속은 보류) |
-| v0.25 | 진행 | #382 | Windows에서 두 CODEX_HOME의 sandbox 재설정 반복. 10-06 새벽 UAC 창 27개가 쌓여 Codex 셸이 무기한 멈춤(PI가 07시 승인). 멈춤 경고는 #433. 근본 해결안을 #435에 결정 요청 |
+| v0.25 | 진행 | #382 | Windows에서 두 CODEX_HOME의 sandbox 재설정 반복. 10-06 새벽 UAC 창 27개가 쌓여 Codex 셸이 무기한 멈춤(PI가 05:40쯤 승인). 멈춤 경고는 #433. 근본 해결안을 #435에 결정 요청 |
 | v0.5 | 1/2 | #90 #58 | 실제 CLI 연구 lane 완주: 10차 `research_reported`(앵커 58·문제 0, `labhq verify` exit 0). 두 번째 완주가 남음(11차 GSE19804는 리뷰가 문헌 추출 실수를 잡아 revise). #58 ①~⑥ 완료. 남은 것: CP3·CP4, revise 뒤 이어 가기(새 CP1에 리뷰 지적·완료 단계 재사용) |
 | v0.5 | 진행 | #423 | 재현성: inputs/ 링크·미보고 산출·`link_inputs.py`(#429), 묶음 재현 등급(#431), 환경 기록 규칙(#432) 병합. 남은 것: 입력 sha256, `rerun_verified` |
 | v0.5 | 다음 | #420 | topic 확장(상한 없음, topic·점검표는 TSV, 프롬프트엔 이름만). 여러 출처 조사 DAG는 준비됨(10-06 UAC로 중단) |
