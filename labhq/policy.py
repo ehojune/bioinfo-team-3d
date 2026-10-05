@@ -1320,7 +1320,11 @@ def _evaluate_tool(
             if roots and not any(_inside(_norm(fp, expand_vars=False), r) for r in roots):
                 return Decision("ask", f"write outside workspace/project dirs: {fp}")
 
-    return Decision("allow")
+    if tool_name in READ_LIKE | WRITE_LIKE or tool_name in policy.approvals.auto_allow_tools:
+        return Decision("allow")
+    # A tool with no rule here is not allowed by default (#421): Monitor runs a shell command, for one.
+    return Decision("ask", f"{tool_name} is neither a shell, file nor MCP tool labhq checks, nor in "
+                           "policy.approvals.auto_allow_tools (분류되지 않은 도구는 PI 승인 필요)")
 
 
 def walltime_hours(walltime: str) -> float:

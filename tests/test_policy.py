@@ -259,3 +259,15 @@ def test_null_device_redirects_are_not_writes(tool, command):
 
 def test_non_recursive_rm_is_allowed():
     assert evaluate_tool("PowerShell", {"command": "rm C:/work/tmp.txt"}, _policy()).action == "allow"
+
+
+def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
+    """#421: an unclassified tool used to fall through to allow. Monitor runs a shell command the Bash checks never
+    see; tools measured in trial records (StructuredOutput, ToolSearch) and the configured list stay allowed."""
+    p = PolicySettings()
+    monitor = evaluate_tool("Monitor", {"command": "until cat /data/cohort/x; do sleep 2; done"}, p)
+    assert monitor.action == "ask" and "auto_allow_tools" in monitor.reason
+    for tool in ("StructuredOutput", "ToolSearch", "WebSearch", "WebFetch", "TodoWrite", "Skill"):
+        assert evaluate_tool(tool, {}, p).action == "allow", tool
+    p.approvals.auto_allow_tools.append("Monitor")
+    assert evaluate_tool("Monitor", {"command": "true"}, p).action == "allow"
