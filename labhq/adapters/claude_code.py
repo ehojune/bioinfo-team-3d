@@ -252,7 +252,13 @@ class ClaudeCodeAdapter(AgentAdapter):
         settings = dict(ctx.claude_settings)
         permissions = dict(settings.get("permissions") or {})
         deny = list(permissions.get("deny") or [])
-        permissions["deny"] = list(dict.fromkeys([*deny, "SendMessage", "ListAgents"]))
+        # Orchestration tools start agents labhq neither approves nor counts (#421, from the #316 open-science review):
+        # a staff member works its own step. Sub-agents (Agent, and its older name Task) stay only for a staff member
+        # that lists one in its tools — recruiter's Paper2Agent conversion (PR #425 review).
+        declared = {str(tool).split("(")[0] for tool in a.tools}
+        sub_agents = [] if declared & {"Agent", "Task"} else ["Agent", "Task"]
+        permissions["deny"] = list(dict.fromkeys([*deny, *sub_agents, "Workflow", "TeamCreate", "TeamDelete",
+                                                  "SendMessage", "ListAgents"]))
         settings["permissions"] = permissions
         # The deny rules stop this session from sending; this stops the PI's other sessions from messaging it
         # (#276). --settings is Claude's flagSettings: it outranks user settings, project/local files can only make
