@@ -184,11 +184,14 @@ async def test_codex_read_only_command_turns_off_hooks_plugins_and_user_config(t
     assert cmd[cmd.index("-s") + 1] == "read-only"
     assert "--ignore-user-config" in cmd and "--ignore-rules" in cmd
     disabled = [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "--disable"]
-    assert {"hooks", "plugins", "apps"} <= set(disabled)
+    assert {"hooks", "plugins", "apps", "multi_agent", "memories"} <= set(disabled)
     assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
     assert not any(arg.startswith("mcp_servers.") for arg in cmd) and ctx.mcp_servers == []
     await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"}))
-    assert "--disable" not in seen[1][1] and "--dangerously-bypass-approvals-and-sandbox" in seen[1][1]
+    writable = seen[1][1]
+    # #421: a writable run turns off only sub-agents and cross-run memory, not the read-only set
+    assert [writable[i + 1] for i, arg in enumerate(writable) if arg == "--disable"] == ["multi_agent", "memories"]
+    assert "--dangerously-bypass-approvals-and-sandbox" in writable
 
 
 @pytest.mark.asyncio

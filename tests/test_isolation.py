@@ -73,7 +73,7 @@ def test_claude_isolation_flags_and_claude_md_exclude(tmp_path):
 def test_claude_isolation_keeps_policy_deny_rules(tmp_path):
     deny = {"permissions": {"deny": ["Read(//data/cohort/**)"]}}
     s = _settings_arg(_command("claude_code", tmp_path, claude_settings=deny))
-    assert s["permissions"]["deny"] == ["Read(//data/cohort/**)", "SendMessage", "ListAgents"]
+    assert s["permissions"]["deny"] == ["Read(//data/cohort/**)", "Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
     assert "claudeMdExcludes" in s
 
 
@@ -82,7 +82,7 @@ def test_claude_isolation_can_be_turned_off(tmp_path):
     settings.engines.claude_code.isolate_user_config = False
     cmd = _command("claude_code", tmp_path, settings=settings)
     assert "--setting-sources" not in cmd and "--disable-slash-commands" not in cmd
-    assert _settings_arg(cmd)["permissions"]["deny"] == ["SendMessage", "ListAgents"]
+    assert _settings_arg(cmd)["permissions"]["deny"] == ["Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
 
 
 @pytest.mark.asyncio

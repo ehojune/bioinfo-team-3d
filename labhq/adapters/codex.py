@@ -27,6 +27,10 @@ WEB_TOOLS = {"WebSearch", "WebFetch"}
 # desktop). Names checked against `codex features list` on codex-cli 0.159.2; an unknown name is a CLI error, so a
 # Codex that lacks one fails the read-only run instead of running it with that feature on.
 READ_ONLY_DISABLED_FEATURES = ("hooks", "plugins", "apps", "computer_use", "browser_use")
+# Off for every staff run (#421): multi_agent starts sub-agents outside labhq's step accounting, and memories carry one
+# request's notes into the next through the shared staff CODEX_HOME. Checked against `codex features list` on the
+# codex-cli this PC runs (2026-10-05); an unknown name fails the run, as above.
+STAFF_DISABLED_FEATURES = ("multi_agent", "memories")
 ELEVATED_SETUP_ERROR = (
     "Codex elevated sandbox setup is required for the staff CODEX_HOME. An unattended run cannot safely "
     "launch its administrator setup helper. Initialize that CODEX_HOME interactively before unattended work; "
@@ -140,9 +144,8 @@ class CodexAdapter(AgentAdapter):
             flags += ["--ignore-user-config", "--ignore-rules"]
             if _is_windows() and b.windows_sandbox:
                 flags += ["-c", f"windows.sandbox={_toml(b.windows_sandbox)}"]
-        if ctx.read_only:
-            for feature in READ_ONLY_DISABLED_FEATURES:
-                flags += ["--disable", feature]
+        for feature in (*STAFF_DISABLED_FEATURES, *(READ_ONLY_DISABLED_FEATURES if ctx.read_only else ())):
+            flags += ["--disable", feature]
         if a.model:
             flags += ["-m", a.model]
         if a.effort:
