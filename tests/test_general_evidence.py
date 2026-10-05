@@ -109,7 +109,7 @@ async def test_general_report_warns_without_copying_long_tool_output():
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():
     # #373 benches A/B add durable artifacts and one-block upstream path variables; #423 makes them inputs/ paths and asks for an outputs/env/ record.
     assert hashlib.sha256(RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "cc998d77731b3bfa38de1c1d62a1ab15d1eb3ed177a78dc3d6883f54108b1be3")
+        "b7c8f16f536f5e2cfc5178358e5a385016d30c6b5da4ec21959c434d4ef28e3e")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
 

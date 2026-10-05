@@ -16,7 +16,7 @@ def _render() -> str:
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
     # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths, plus an outputs/env/ record.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "8f0f040a6e16c0f47fc490c1969254a10a2165fd1d4d33c7c5f0300ed2e18aff")
+        "0bca979ec003c52f3850eb5804280c25ca6449effae96b6c40e31b4df5d0671e")
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -39,7 +39,7 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
     # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths and an outputs/env/ record.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "cc998d77731b3bfa38de1c1d62a1ab15d1eb3ed177a78dc3d6883f54108b1be3")
+        "b7c8f16f536f5e2cfc5178358e5a385016d30c6b5da4ec21959c434d4ef28e3e")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
@@ -158,5 +158,6 @@ def test_research_plan_questions_carry_the_length_their_validation_enforces():
 def test_script_steps_without_an_environment_step_record_their_interpreter():
     """#423: a script step on the runner's own interpreter left no environment record, so no bundle was replayable."""
     for prompt in (STEP_PROMPT, cso.RESEARCH_STEP_PROMPT):
-        assert "no environment step precedes you" in prompt
-        assert "`python -m pip freeze`) to outputs/env/<your step id>.txt" in prompt
+        assert "the interpreter that ran them to\noutputs/env/<your step id>.txt" in prompt
+        assert "`<that interpreter> -m pip freeze`" in prompt  # the same executable, not a bare python (PR #432)
+        assert "packages you installed yourself (for example into\n./.pylib) always go in your own record" in prompt
