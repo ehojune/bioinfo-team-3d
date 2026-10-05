@@ -723,3 +723,38 @@ def test_relink_replaces_only_a_link(tmp_path):
     assert (inputs / "s1" / "f.txt").read_text(encoding="utf-8") == "b"
     assert (first / "f.txt").read_text(encoding="utf-8") == "a"
     assert sorted(os.listdir(inputs / "real")) == ["keep.txt"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="hpc.job_group runs on POSIX runners only")
+def test_hpc_job_files_skip_only_runner_shaped_input_links(tmp_path):
+    """PR #429 review: an agent-made inputs/<name> link to anywhere else is still refused before an HPC submit."""
+    from labhq.tools.hpc_mcp import _upstream_outputs_link
+
+    root = tmp_path / "runs"
+    upstream = root / "2026-10-05" / "task_up_worker" / "outputs"
+    bundle = root / "requests" / "r1" / "outputs"
+    outside = tmp_path / "outside"
+    for folder in (upstream, bundle, outside):
+        folder.mkdir(parents=True)
+    inputs = root / "2026-10-06" / "task_down_worker" / "inputs"
+    inputs.mkdir(parents=True)
+    links = {"s1": upstream, "fake": outside, "bundle": bundle, "task": upstream.parent}
+    for name, target in links.items():
+        os.symlink(target, inputs / name, target_is_directory=True)
+    (inputs / "plain").mkdir()
+
+    assert {name for name in [*links, "plain"] if _upstream_outputs_link(inputs / name, root)} == {"s1"}
+
+
+def test_relink_leaves_a_regular_file_under_the_name(tmp_path):
+    from labhq.adapters.held_dir import HeldDir, NotPlainFolder
+
+    target = tmp_path / "up"
+    target.mkdir()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "s1").write_text("agent file", encoding="utf-8")
+    with HeldDir.hold(inputs) as held, pytest.raises(NotPlainFolder):
+        held.relink("s1", target)
+    assert (inputs / "s1").read_text(encoding="utf-8") == "agent file"
+    assert os.listdir(inputs) == ["s1"], "the entry renamed aside for the check is put back"

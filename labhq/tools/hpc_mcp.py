@@ -82,6 +82,22 @@ def _share_workspace_parents(workdir: Path, workspace_root: Path, gid: int,
             raise RuntimeError(f"cannot grant hpc.job_group traverse on {parent}: {e}") from e
 
 
+def _upstream_outputs_link(path: Path, workspace_root: Path) -> bool:
+    """A link shaped like the runner's inputs/<step> (#423): it resolves to a task folder's plain `outputs/` directly
+    under `<workspace_root>/<date>/<task>/`. Any other link, one the agent made pointing elsewhere included, is still
+    refused: the job would follow it (PR #429 review)."""
+    if not path.is_symlink():
+        return False
+    try:
+        target, root = path.resolve(strict=True), Path(workspace_root).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    if not target.is_relative_to(root) or target.is_symlink() or not target.is_dir():
+        return False
+    parts = target.relative_to(root).parts
+    return len(parts) == 3 and parts[2] == "outputs" and parts[0] != "requests"
+
+
 def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
                        job_group: str | None = None, workspace_root: Path | None = None,
                        job_user: str | None = None) -> None:
@@ -131,7 +147,7 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             dirs[:] = [name for name in dirs if Path(root) / name not in {logs, output_dir}]
             for name in [*dirs, *files]:
                 path = Path(root) / name
-                if path.is_symlink() and path.parent == workdir / "inputs":
+                if path.parent == workdir / "inputs" and _upstream_outputs_link(path, workspace_root):
                     continue  # the runner's inputs/<step> link to an upstream step (#423): not walked, not chmod-ed
                 if path.is_symlink():
                     raise RuntimeError(f"task input must not be a symlink: {path}")

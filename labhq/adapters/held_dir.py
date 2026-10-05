@@ -181,39 +181,47 @@ class HeldDir:
     def relink(self, name: str, target: Path) -> None:
         """Point child `name` at folder `target`, replacing only a link left there (#423, PR #429 review).
 
-        A real file or folder under the name raises NotPlainFolder and stays: nothing here removes more than a link
-        itself. POSIX works relative to the held descriptor; on Windows the held handle keeps this folder in place."""
+        A real file or folder under the name raises NotPlainFolder and stays: the entry is first renamed aside, and
+        only that renamed entry is removed, and only when it is a link (a file swapped in after a check is never the
+        one removed). POSIX works relative to the held descriptor; on Windows the held handle keeps this folder in
+        place."""
         if self._handle is None:
             raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt" and self.path is None:
+            raise OSError(errno.EBADF, "held folder has no stable path")
+        aside = f".{name}.labhq-{os.getpid()}-{id(self):x}"
+        try:
+            self._rename(name, aside)
+        except FileNotFoundError:
+            pass
+        else:
+            if os.name == "nt":
+                attributes = os.lstat(self.path / aside).st_file_attributes
+                is_link = bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            else:
+                is_link = stat.S_ISLNK(os.stat(aside, dir_fd=self._handle, follow_symlinks=False).st_mode)
+            if not is_link:
+                self._rename(aside, name)
+                raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
+            if os.name == "nt":  # rmdir unlinks a junction or folder symlink itself, never its target
+                (os.rmdir if attributes & stat.FILE_ATTRIBUTE_DIRECTORY else os.unlink)(self.path / aside)
+            else:
+                os.unlink(aside, dir_fd=self._handle)
         if os.name == "nt":
-            if self.path is None:
-                raise OSError(errno.EBADF, "held folder has no stable path")
-            path = self.path / name
             try:
-                attributes = os.lstat(path).st_file_attributes
-            except FileNotFoundError:
-                attributes = None
-            if attributes is not None:
-                if not attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-                    raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
-                # rmdir unlinks a junction or folder symlink itself, and fails on a non-empty real folder.
-                (os.rmdir if attributes & stat.FILE_ATTRIBUTE_DIRECTORY else os.unlink)(path)
-            try:
-                os.symlink(target, path, target_is_directory=True)
+                os.symlink(target, self.path / name, target_is_directory=True)
             except OSError:
                 import _winapi  # a junction needs no symlink privilege
 
-                _winapi.CreateJunction(str(target), str(path))
-            return
-        try:
-            info = os.stat(name, dir_fd=self._handle, follow_symlinks=False)
-        except FileNotFoundError:
-            info = None
-        if info is not None:
-            if not stat.S_ISLNK(info.st_mode):
-                raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
-            os.unlink(name, dir_fd=self._handle)  # a folder swapped in meanwhile fails here instead of going
-        os.symlink(target, name, target_is_directory=True, dir_fd=self._handle)
+                _winapi.CreateJunction(str(target), str(self.path / name))
+        else:
+            os.symlink(target, name, target_is_directory=True, dir_fd=self._handle)
+
+    def _rename(self, source: str, target: str) -> None:
+        if os.name == "nt":
+            os.rename(self.path / source, self.path / target)
+        else:
+            os.rename(source, target, src_dir_fd=self._handle, dst_dir_fd=self._handle)
 
     @staticmethod
     def _checked(handle: int, path: Path | None = None) -> HeldDir:
