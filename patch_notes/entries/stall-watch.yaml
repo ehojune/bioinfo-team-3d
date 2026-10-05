@@ -1,0 +1,5 @@
+pr: 433
+rows:
+- sha: "4919342"
+  at: 2026-10-06 04:43
+  text: "직원 CLI가 runner.stall_warn_s(기본 600초) 동안 조용하면 한 번 경고하고, Windows UAC 승인 창이 떠 있으면 Codex sandbox가 그 승인을 기다린다고 alert로 알린다(#382)."
