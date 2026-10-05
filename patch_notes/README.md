@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:48 | [`11670c2`](https://github.com/ehojune/bioinfo-team-3d/pull/436/commits/11670c2) | 인계 문서의 10-06 시각을 바로잡았다. |
+| 05:45 | [`b798eb8`](https://github.com/ehojune/bioinfo-team-3d/pull/436/commits/b798eb8) | 인계 문서를 10-06 기준으로 고쳤다: PI 창구 #435, 작업 큐(#423 #420 #35 #382 #430), PI 결정, 겪어서 안 것 셋. |
+| 04:59 | [`be64c75`](https://github.com/ehojune/bioinfo-team-3d/pull/434/commits/be64c75) | 승인 게이트가 셸·파일·MCP 규칙 없는 도구를 policy.approvals.auto_allow_tools에 있을 때만 허용하고 나머지는 PI에게 묻는다(#421; 예: 셸을 돌리는 Monitor). |
 | 04:49 | [`af17b0f`](https://github.com/ehojune/bioinfo-team-3d/pull/433/commits/af17b0f) | 프롬프트 stdin 쓰기를 timeout·멈춤 감시 안으로 옮겨, stdin을 읽지 않는 CLI도 시간 안에 끝나고 경고를 받는다. |
 | 04:43 | [`4919342`](https://github.com/ehojune/bioinfo-team-3d/pull/433/commits/4919342) | 직원 CLI가 runner.stall_warn_s(기본 600초) 동안 조용하면 한 번 경고하고, Windows UAC 승인 창이 떠 있으면 Codex sandbox가 그 승인을 기다린다고 alert로 알린다(#382). |
 | 04:22 | [`3a02472`](https://github.com/ehojune/bioinfo-team-3d/pull/432/commits/3a02472) | 환경 기록은 스크립트를 실행한 그 인터프리터로 남기고, 직접 설치한 패키지는 환경 단계가 있어도 기록한다. |
