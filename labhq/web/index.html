@@ -774,8 +774,8 @@ const assumptionsHTML = q => !(q.assumptions || []).length ? '' : `<section clas
   `<li>${esc(value)}</li>`).join('')}</ul><p class="empty-note">바꾸려면 실행 중 메모로 알려 주세요.</p></section>`;
 // An incomplete bundle must not read as a full copy (PR #389 review): the status sits next to the path.
 const bundleHTML = q => q.bundlePath ? (q.bundleStatus === 'incomplete'
-    ? `<p class="empty-note"><strong>요청 묶음(불완전)</strong>: <code>${esc(q.bundlePath)}</code> · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요</p>`
-    : `<p class="empty-note">요청 묶음: <code>${esc(q.bundlePath)}</code></p>`)
+    ? `<p class="empty-note"><strong>요청 묶음(불완전)</strong>: <code>${esc(q.bundlePath)}</code> · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${q.bundleGrade ? ` · 재현 등급 <strong>${esc(q.bundleGrade)}</strong>(이유는 묶음 README)` : ''}</p>`
+    : `<p class="empty-note">요청 묶음: <code>${esc(q.bundlePath)}</code>${q.bundleGrade ? ` · 재현 등급 <strong>${esc(q.bundleGrade)}</strong>(이유는 묶음 README)` : ''}</p>`)
   : q.bundleWarning ? `<p class="empty-note">요청 묶음 경고: ${esc(q.bundleWarning)}</p>` : '';
 let reqKey = '';
 function renderRequest() {
@@ -783,7 +783,7 @@ function renderRequest() {
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
   // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
   const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
-  const key = q ? JSON.stringify([S.requests.size, staffNames, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
+  const key = q ? JSON.stringify([S.requests.size, staffNames, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }

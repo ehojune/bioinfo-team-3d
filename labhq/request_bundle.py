@@ -24,6 +24,9 @@ TEXT_SUFFIXES = frozenset({
     ".toml", ".ini", ".cfg", ".xml", ".html", ".js", ".cjs", ".mjs", ".sql",
 })
 SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash"}
+SCRIPT_SUFFIXES = frozenset({".py", ".r", ".sh"})
+# Outputs that are prose, not data a script must have produced (the grade does not ask a script for them).
+TEXT_ONLY = frozenset({".md"})  # .txt is a common data format (counts, variant lists): PR #431 review
 DOCUMENT_SUFFIXES = frozenset({".md"})
 MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",
@@ -282,6 +285,49 @@ def _runner_python_command(result: Mapping[str, Any], tasks: Mapping[str, Any],
     return command if command in {"python3", "python", "py"} else None
 
 
+def _grade(rows: list[dict[str, Any]], steps: list[Mapping[str, Any]],
+           rewrite_by_file: Mapping[str, tuple[int, list[str]]], not_copied: int) -> tuple[str, list[str]]:
+    """`replayable` or `documented`, with the reasons for the lower grade (#423, docs/research_protocol.md).
+
+    replayable: every recorded output was copied; a step with data outputs ships a script; a step with scripts has an
+    environment record (outputs/env/) of its own or from a step it depends on; no copied script keeps an absolute path.
+    `rerun_verified` needs a recorded rerun elsewhere, which nothing writes yet, so it is never given here."""
+    reasons = [f"기록 산출 {not_copied}개 미복사"] if not_copied else []
+    files: dict[str, list[PurePosixPath]] = {}
+    for row in rows:
+        if row["status"] in ("copied", f"copied{UNREPORTED_TAG}"):
+            parts = PurePosixPath(str(row["relative_path"])).parts  # steps/<step>/outputs/...
+            files.setdefault(parts[1], []).append(PurePosixPath(*parts[3:]))
+    deps = {str(step.get("id")): [str(dep) for dep in step.get("depends_on") or []] for step in steps}
+
+    def lineage(step_id: str) -> set[str]:
+        found, pending = {step_id}, [step_id]
+        while pending:
+            for dep in deps.get(pending.pop(), []):
+                if dep not in found:
+                    found.add(dep)
+                    pending.append(dep)
+        return found
+
+    has_env = {step_id for step_id, paths in files.items() if any(path.parts[0] == "env" for path in paths)}
+    no_script, no_env = [], []
+    for step_id, paths in sorted(files.items()):
+        scripts = [p for p in paths if p.parts[0] == "scripts" and p.suffix.casefold() in SCRIPT_SUFFIXES]
+        data = [p for p in paths if p.parts[0] not in ("scripts", "env") and p.suffix.casefold() not in TEXT_ONLY]
+        if data and not scripts:
+            no_script.append(step_id)
+        if scripts and not lineage(step_id) & has_env:
+            no_env.append(step_id)
+    absolute = sorted(path for path, (_count, left) in rewrite_by_file.items() if left and "/outputs/scripts/" in path)
+    if no_script:
+        reasons.append("스크립트 없이 데이터 산출만 있는 단계: " + ", ".join(no_script))
+    if no_env:
+        reasons.append("환경 기록(outputs/env/)이 없는 단계: " + ", ".join(no_env))
+    if absolute:
+        reasons.append("절대경로가 남은 스크립트: " + ", ".join(absolute))
+    return ("documented" if reasons else "replayable"), reasons
+
+
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False) -> str:
     lines = [
@@ -493,7 +539,15 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
 
-        bundle_note = ["", "## 요청 묶음 변환", "", f"- 절대경로를 바꾼 파일: {rewritten_files}개"]
+        grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied)
+        with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(["## 재현 등급", "", f"- `{grade}`", *(f"- {reason}" for reason in grade_reasons),
+                                    "- `replayable`: 기록 산출이 모두 있고, 데이터를 낸 단계마다 스크립트, 스크립트를 쓴 "
+                                    "단계마다 환경 기록이 있으며 스크립트에 절대경로가 없음",
+                                    "- `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 줍니다. 아직 그런 기록은 "
+                                    "없습니다.", ""]))
+        bundle_note = ["", "## 요청 묶음 변환", "", f"- 절대경로를 바꾼 파일: {rewritten_files}개",
+                       f"- 재현 등급: {grade}" + (f" ({'; '.join(grade_reasons)})" if grade_reasons else "")]
         bundle_note.append("- 남은 절대경로: " + (", ".join(sorted(remaining)) if remaining else "없음"))
         if replaced:
             bundle_note.append(f"- 대체되어 제외한 판: {len(replaced)}개")
@@ -526,7 +580,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
 
         _clear_owned_dir(target, requests_root)
         temp.replace(target)
-        return {"path": str(target), "status": bundle_status, "not_copied": not_copied,
+        return {"path": str(target), "status": bundle_status, "grade": grade, "grade_reasons": grade_reasons,
+                "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
                 "remaining_absolute_paths": sorted(remaining), "superseded": replaced}
     except Exception:

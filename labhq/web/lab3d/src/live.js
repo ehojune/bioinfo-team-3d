@@ -80,7 +80,7 @@ export function startLiveOffice(onState) {
     for (const q of [...S.requests.values()].reverse()) {
       const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
-        q.assumptions, q.bundlePath, q.bundleStatus, q.bundleWarning, loadingAnswers.has(q.id)]);
+        q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
       if (prior?.dataset.renderKey === key) { rows.push(prior); continue; }
       const row = document.createElement('article'); row.dataset.requestId = q.id; row.dataset.renderKey = key; rows.push(row);
@@ -119,9 +119,10 @@ export function startLiveOffice(onState) {
         }
       }
       if (q.bundlePath) {
+        const grade = q.bundleGrade ? ` · 재현 등급 ${q.bundleGrade}(이유는 묶음 README)` : '';
         text(row, 'p', q.bundleStatus === 'incomplete'
-          ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요`
-          : `요청 묶음: ${q.bundlePath}`);
+          ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${grade}`
+          : `요청 묶음: ${q.bundlePath}${grade}`);
       } else if (q.bundleWarning) {
         text(row, 'p', `요청 묶음 경고: ${q.bundleWarning}`);
       }
