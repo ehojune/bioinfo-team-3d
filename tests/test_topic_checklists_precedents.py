@@ -345,3 +345,15 @@ def test_plan_prompt_carries_checks_and_the_review_carries_reasons():
     assert item.check in rule and item.why not in rule and "Why:" not in rule
     review = cso.plan_review_context(general_plan(checklist=bulk_answers()), catalog, None)
     assert f"{item.check} Why: {item.why}" in review
+
+
+def test_report_drops_only_required_checks_answered_not_applicable():
+    # PR #427 review: a stray key, or one from a topic the plan no longer declares, must not tell the writer to drop
+    # a description from the report body.
+    catalog = topic_checklists.load()
+    plan = general_plan(checklist={**bulk_answers(), "qc": "not_applicable: not this request",
+                                   "spot_qc": "not_applicable: left from an earlier topic"})
+    report = cso.plan_report_context(plan, catalog, None)
+    skipped = report.partition("Checks that do not apply")[2]
+    assert "independent_validation" in skipped
+    assert "spot_qc" not in skipped and ", qc" not in skipped and ": qc" not in skipped

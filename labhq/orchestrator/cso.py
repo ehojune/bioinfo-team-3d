@@ -1619,7 +1619,10 @@ def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
 def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     body = plan if isinstance(plan, dict) else {}
     limits = topic_checklists.limitations(body.get("checklist"))
-    skipped = topic_checklists.not_applicable(body.get("checklist"))
+    # Only checks this plan requires (PR #427 review): a stray key or one left from an earlier topic must not tell the
+    # writer to drop a QC or analysis description from the body.
+    required = {item.id for item in required_checklist_items(body, catalog, precedents)}
+    skipped = [item_id for item_id in topic_checklists.not_applicable(body.get("checklist")) if item_id in required]
     rendered = (analysis_precedents_text(precedents)
                 if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
     if not limits and not skipped and not rendered:
