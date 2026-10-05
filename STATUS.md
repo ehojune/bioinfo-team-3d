@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · 문서 — 매뉴얼 로드맵에서 끝난 #84 줄 지움
+
+- 결론: "버전에 묶인 장기 과제"에 남아 있던 v0.5 직원·CSO 프롬프트 규칙 묶음(#84)은 반영돼 닫혔다(실패한 조회·방법 낮춤 규칙이 계획·단계 prompt에 있음). 줄을 지웠다.
+- 바뀐 것: `docs/manual.md` 한 줄.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `labhq/orchestrator/cso.py`의 "neither evidence nor proof of absence" 규칙.
+
 ## 2026-10-05 · #298 — PI 문답에 10-04·10-05 질문 셋
 
 - 결론: PI가 10-04·10-05에 물은 것 셋(문헌조사와 원 연구 Methods, Codex 한도 중 Claude 작업, Claude 직원 로그인 만료)을 `docs/pi-qa.md`에 답과 함께 넣었다.
