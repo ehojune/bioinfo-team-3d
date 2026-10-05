@@ -42,6 +42,9 @@ class RunnerSettings(BaseModel):
     # After the CLI's final turn event, how long its process may take to exit before labhq ends its tree and
     # finishes the step with the result already received (#330).
     exit_grace_s: float = Field(default=45, ge=0)
+    # A staff CLI quiet this long gets one warning (never a kill: a long analysis command is quiet too). On Windows
+    # it names pending UAC prompts, which hold a sandboxed Codex shell indefinitely (#382). 0 turns it off.
+    stall_warn_s: float = Field(default=600, ge=0)
     job_poll_s: int = 60
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
     outbox_limit: int = 20000

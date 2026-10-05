@@ -325,6 +325,20 @@ class RunContext:
         return write_owned(self.workdir, f".labhq/{name}", text)
 
 
+
+async def pending_uac_prompts() -> bool:
+    """Whether Windows shows UAC consent prompts now (consent.exe), which can hold a sandboxed CLI (#382)."""
+    if os.name != "nt":
+        return False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "tasklist", "/FI", "IMAGENAME eq consent.exe", "/NH", "/FO", "CSV",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(), 15)
+    except (OSError, asyncio.TimeoutError):
+        return False
+    return b"consent.exe" in out.lower()
+
 @dataclass
 class RunState:
     text_parts: list[str] = field(default_factory=list)
@@ -569,18 +583,18 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.started_command = launcher
-        if payload is not None and proc.stdin:
-            proc.stdin.write(payload)
-            await proc.stdin.drain()
-            proc.stdin.close()
         st = RunState()
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
         ended_after_result = False
 
+        last_output = time.monotonic()
+
         async def read_out() -> None:
+            nonlocal last_output
             assert proc.stdout
             async for raw in proc.stdout:
+                last_output = time.monotonic()
                 line = raw.decode(errors="replace").strip()
                 if not line:
                     continue
@@ -609,12 +623,48 @@ class AgentAdapter(ABC):
             await self._kill(proc)
 
         async def read_err() -> None:
+            nonlocal last_output
             assert proc.stderr
             async for raw in proc.stderr:
+                last_output = time.monotonic()
                 stderr_tail.append(raw.decode(errors="replace").rstrip())
 
-        drain = asyncio.gather(read_out(), read_err(), proc.wait())
+        async def feed_stdin() -> None:
+            """Write the prompt inside the timed, watched run: a CLI that never reads stdin must not hold labhq before
+            task_timeout_s and the stall warning start (PR #433 review)."""
+            if payload is None or not proc.stdin:
+                return
+            try:
+                proc.stdin.write(payload)
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except OSError:  # broken pipe or reset, also after a timeout kill
+                pass  # the CLI ended or closed stdin; its exit and output say what happened
+
+        async def stall_watch() -> None:
+            """Warn once when the CLI has been quiet for stall_warn_s (#382): on Windows, name pending UAC prompts."""
+            limit = self.settings.runner.stall_warn_s
+            if limit <= 0:
+                return
+            while True:
+                await asyncio.sleep(min(30.0, limit))
+                quiet = time.monotonic() - last_output
+                if quiet < limit or result_arrived.is_set():
+                    continue
+                minutes = max(1, int(quiet // 60))
+                if await pending_uac_prompts():
+                    await ctx.emit("agent.log", {"level": "alert", "text": (
+                        f"{self.engine} 출력이 {minutes}분째 없고 이 PC에 Windows 권한 알림(UAC)이 승인을 기다립니다. "
+                        "Codex sandbox 설정이면 승인 전까지 셸이 멈춥니다 — PC에서 알림을 확인하세요 (#382)")})
+                else:
+                    await ctx.emit("agent.log", {"level": "warn", "text": (
+                        f"{self.engine} 출력이 {minutes}분째 없습니다. 긴 명령을 돌리는 중일 수 있고, 멈췄다면 "
+                        "단계를 취소하세요")})
+                return
+
+        drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
         guard = asyncio.create_task(exit_guard())
+        watch = asyncio.create_task(stall_watch())
         try:
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
@@ -627,9 +677,10 @@ class AgentAdapter(ABC):
             await asyncio.shield(drain)
             raise
         finally:
+            watch.cancel()
             if not ended_after_result:
                 guard.cancel()
-        await asyncio.gather(guard, return_exceptions=True)  # a guard that is ending the tree finishes first
+        await asyncio.gather(guard, watch, return_exceptions=True)  # a guard that is ending the tree finishes first
         returncode = 0 if ended_after_result else proc.returncode  # ended by labhq after the result: not a failure
         try:
             ctx.write_meta("stderr_tail.txt", "\n".join(stderr_tail))
