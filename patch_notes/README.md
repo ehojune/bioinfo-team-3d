@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:55 | [`91b802f`](https://github.com/ehojune/bioinfo-team-3d/pull/428/commits/91b802f) | 영문 README 배지도 같은 생성기로 만들고(번역 없는 한국어가 남으면 검사 실패), 버튼·탭 이름에 실제 한국어 UI 이름을 함께 적었다. |
+| 02:42 | [`a2dd59b`](https://github.com/ehojune/bioinfo-team-3d/pull/428/commits/a2dd59b) | README 첫 문장을 멀티 에이전트 오케스트레이션 플랫폼 소개와 합치고, bioinfo-agent 링크·설명과 영문 README(README.en.md, 영문 그림 6개)를 더했다. |
 | 02:30 | [`17a8744`](https://github.com/ehojune/bioinfo-team-3d/pull/427/commits/17a8744) | 해당 없음 목록은 계획의 필수 항목만, README t6 재채점 수치 |
 
 ## 2026-10-05
