@@ -10,10 +10,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-06
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 02:30 | [`17a8744`](https://github.com/ehojune/bioinfo-team-3d/pull/427/commits/17a8744) | 해당 없음 목록은 계획의 필수 항목만, README t6 재채점 수치 |
+
 ## 2026-10-05
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:51 | [`718d90f`](https://github.com/ehojune/bioinfo-team-3d/pull/427/commits/718d90f) | 해당 없는 점검표 항목을 보고서 한계에서 빼고 README 벤치 C 수치 |
 | 19:54 | [`c6b39ac`](https://github.com/ehojune/bioinfo-team-3d/pull/425/commits/c6b39ac) | 하위 agent는 tools에 적은 직원만, 나머지는 Agent·Task 거부 |
 | 19:45 | [`3750148`](https://github.com/ehojune/bioinfo-team-3d/pull/426/commits/3750148) | README 비교표: 칸을 한 줄로, 리뷰어 범위 주석 |
 | 19:42 | [`d00da0a`](https://github.com/ehojune/bioinfo-team-3d/pull/426/commits/d00da0a) | README: 장점 네 꼭지 카드와 다른 방식 비교 |
