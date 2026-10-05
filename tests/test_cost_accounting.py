@@ -3,7 +3,7 @@ from datetime import date
 import pytest
 
 from labhq.costs import (aggregate_costs, classify_cost, cost_text, format_cost, format_engines, format_warnings,
-                         request_cost_summary, task_cost_item)
+                         outcome_unknown_item, request_cost_summary, task_cost_item)
 from labhq.models import TaskResult
 
 
@@ -142,3 +142,18 @@ def test_request_summary_waits_for_every_counted_task_to_be_classified():
 
     assert request_cost_summary({"cost_by_task": {"t0": 0.1, "t1": 0.2}, "cost_items": {"t1": item}}) is None
     assert request_cost_summary({"cost_by_task": {"t1": 0.2}, "cost_items": {"t1": item}})["actual_usd"] == 0.2
+
+
+def test_request_cost_is_split_by_staff_member_when_items_name_them():
+    # #57 ⑦ follow-up: who spent the request's money; items recorded before agent ids keep the old summary shape.
+    cso = task_cost_item(TaskResult(task_id="t1", agent_id="cso", ok=True, cost_usd=0.4), {"engine": "claude_code"})
+    analyst = task_cost_item(TaskResult(task_id="t2", agent_id="analyst", ok=True, cost_usd=0.1),
+                             {"engine": "claude_code"})
+    lost = outcome_unknown_item(TaskResult(task_id="t3", agent_id="analyst", ok=False), {"engine": "codex"})
+    assert cso["agent_id"] == "cso" and lost["agent_id"] == "analyst"
+    summary = aggregate_costs({"t1": cso, "t2": analyst, "t3": lost})
+    assert summary["by_agent"] == {
+        "analyst": {"actual_usd": 0.1, "estimated_usd": 0.0, "unknown_count": 1},
+        "cso": {"actual_usd": 0.4, "estimated_usd": 0.0, "unknown_count": 0}}
+    legacy = {tid: {k: v for k, v in item.items() if k != "agent_id"} for tid, item in {"t1": cso}.items()}
+    assert "by_agent" not in aggregate_costs(legacy)

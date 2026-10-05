@@ -111,17 +111,24 @@ def task_cost_item(result: Any, agent: dict | None = None, *, as_of: date | None
     """Classify a TaskResult (or its dump) with the engine and model the runner recorded for it."""
     data = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
     engine, model = _engine_model(data, agent)
-    return classify_cost(engine=engine, model=model, usage=data.get("usage") or {},
+    item = classify_cost(engine=engine, model=model, usage=data.get("usage") or {},
                          usage_known=data.get("usage_known", True) is not False, cost_usd=data.get("cost_usd"),
                          cost_known=data.get("cost_known"), task_id=str(data.get("task_id") or ""), as_of=as_of)
+    return _with_agent(item, data, agent)
 
 
 def outcome_unknown_item(result: Any, agent: dict | None = None) -> dict:
     """A task the gateway gave up on (runner generation changed, delivery uncertain): it may have spent anything."""
     data = result.model_dump(mode="json") if hasattr(result, "model_dump") else dict(result or {})
     engine, model = _engine_model(data, agent)
-    return {"task_id": str(data.get("task_id") or ""), "engine": engine or "unknown", "model": model,
-            "status": "unknown", "usd": None, "reason": "outcome_unknown"}
+    return _with_agent({"task_id": str(data.get("task_id") or ""), "engine": engine or "unknown", "model": model,
+                        "status": "unknown", "usd": None, "reason": "outcome_unknown"}, data, agent)
+
+
+def _with_agent(item: dict, data: dict, agent: dict | None) -> dict:
+    """Name the staff member, so a request's cost can be read per agent (#57 ⑦ follow-up)."""
+    agent_id = data.get("agent_id") or (agent or {}).get("id")
+    return {**item, "agent_id": str(agent_id)} if agent_id else item
 
 
 def aggregate_costs(items: dict[str, dict]) -> dict:
@@ -129,18 +136,23 @@ def aggregate_costs(items: dict[str, dict]) -> dict:
     actual = estimated = 0.0
     unknown: list[str] = []
     by_engine: dict[str, dict] = {}
+    by_agent: dict[str, dict] = {}
     warnings: list[str] = []
     prices: dict[tuple, dict] = {}
     for tid, item in items.items():
         engine = by_engine.setdefault(item.get("engine") or "unknown",
                                       {"actual_usd": 0.0, "estimated_usd": 0.0, "unknown_count": 0})
+        staff = by_agent.setdefault(item.get("agent_id") or "unknown",
+                                    {"actual_usd": 0.0, "estimated_usd": 0.0, "unknown_count": 0})
         status = item.get("status")
         if status == "actual":
             actual += float(item["usd"])
             engine["actual_usd"] += float(item["usd"])
+            staff["actual_usd"] += float(item["usd"])
         elif status == "estimated":
             estimated += float(item["usd"])
             engine["estimated_usd"] += float(item["usd"])
+            staff["estimated_usd"] += float(item["usd"])
             price = item.get("price") or {}
             key = (item.get("engine"), price.get("model"))
             prices.setdefault(key, {"engine": item.get("engine"), **{k: price.get(k) for k in (
@@ -150,16 +162,21 @@ def aggregate_costs(items: dict[str, dict]) -> dict:
         else:
             unknown.append(tid)
             engine["unknown_count"] += 1
+            staff["unknown_count"] += 1
     for (engine_name, model), price in sorted(prices.items(), key=lambda pair: tuple(map(str, pair[0]))):
         if price.get("stale"):
             warnings.append(f"price_stale:{engine_name}:{model}")
-    for engine in by_engine.values():
-        engine["actual_usd"] = round(engine["actual_usd"], 6)
-        engine["estimated_usd"] = round(engine["estimated_usd"], 6)
-    return {"actual_usd": round(actual, 6), "estimated_usd": round(estimated, 6),
-            "subtotal_usd": round(actual + estimated, 6), "unknown_count": len(unknown),
-            "unknown_tasks": unknown, "by_engine": dict(sorted(by_engine.items())),
-            "prices": list(prices.values()), "warnings": warnings}
+    for row in (*by_engine.values(), *by_agent.values()):
+        row["actual_usd"] = round(row["actual_usd"], 6)
+        row["estimated_usd"] = round(row["estimated_usd"], 6)
+    summary = {"actual_usd": round(actual, 6), "estimated_usd": round(estimated, 6),
+               "subtotal_usd": round(actual + estimated, 6), "unknown_count": len(unknown),
+               "unknown_tasks": unknown, "by_engine": dict(sorted(by_engine.items())),
+               "prices": list(prices.values()), "warnings": warnings}
+    # Items recorded before agent ids were kept leave the summary as it was.
+    if any(item.get("agent_id") for item in items.values()):
+        summary["by_agent"] = dict(sorted(by_agent.items()))
+    return summary
 
 
 def request_cost_summary(req: dict) -> dict | None:

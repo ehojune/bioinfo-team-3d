@@ -29,6 +29,12 @@ function engineCostLabel(summary) {
   return [engines, Number(summary.estimated_usd) > 0 ? '추정은 API 가격표 환산이며 청구액이 아닙니다' : '',
     stale.length ? `가격표 오래됨: ${stale.join(', ')}` : ''].filter(Boolean).join('; ');
 }
+// Who spent it: the request's cost per staff member, when the gateway recorded agent ids (by_agent).
+function agentCostLabel(summary, name = id => id) {
+  if (!summary || !summary.by_agent) return '';
+  return Object.entries(summary.by_agent)
+    .map(([id, row]) => `${id === 'unknown' ? '직원 기록 없음' : name(id)} ${summaryParts(row)}`).join(' · ');
+}
 function totalCostLabel(requests, total) {
   let estimated = 0, unknown = 0, legacyUnknown = false;
   for (const q of requests) {
@@ -508,6 +514,6 @@ function toolLabel(name) {
 
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, totalCostLabel,
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest };
 })(globalThis);
