@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 18:42 | [`1c239b1`](https://github.com/ehojune/bioinfo-team-3d/pull/419/commits/1c239b1) | 매뉴얼 로드맵: 끝난 #84 줄 지움 |
 | 14:59 | [`c28e234`](https://github.com/ehojune/bioinfo-team-3d/pull/418/commits/c28e234) | PI 문답: 문헌조사·Methods, 한도 중 Claude 작업, 로그인 만료 |
 | 14:44 | [`a25ef68`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/a25ef68) | 열린 직원 시트의 쓴 비용도 실시간 갱신 |
 | 14:39 | [`89a45fe`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/89a45fe) | 직원 시트에 쓴 비용(화면의 요청 기준) |
