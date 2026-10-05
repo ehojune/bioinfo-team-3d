@@ -972,8 +972,8 @@ class Runner:
                 for step_id, directory in upstream_steps.items():
                     upstream = Path(str(directory)).resolve()
                     if not INPUT_STEP_ID.fullmatch(str(step_id)):
-                        continue
-                    if str(upstream) in extra_dirs and (upstream / "outputs").is_dir():
+                        unlinked[str(step_id)] = "the step id cannot name a folder"
+                    elif str(upstream) in extra_dirs and (upstream / "outputs").is_dir():
                         links[str(step_id)] = upstream / "outputs"
                     else:
                         unlinked[str(step_id)] = "the folder is not opened to this step"

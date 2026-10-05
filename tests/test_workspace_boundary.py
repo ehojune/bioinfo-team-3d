@@ -644,7 +644,9 @@ async def test_a_step_reads_upstream_outputs_through_its_inputs_link(tmp_path, m
     assert result.ok, result.error
     assert len(seen) == 1 and seen_reads == ["gene\nTP53\n"]
     assert not (workdir / "up").exists() and sorted(os.listdir(workdir / "inputs")) == ["s1"]
-    assert "Upstream inputs not linked" not in (workdir / "TASK.md").read_text(encoding="utf-8")
+    task_md = (workdir / "TASK.md").read_text(encoding="utf-8")
+    assert "- inputs/../up is not available (the step id cannot name a folder)" in task_md
+    assert "inputs/s1 is not available" not in task_md
     assert (other / "outputs" / "table.tsv").read_text(encoding="utf-8") == "stale\n"
 
 
@@ -673,3 +675,51 @@ async def test_an_upstream_not_opened_to_the_step_is_named_instead_of_linked(tmp
     assert f"- inputs/s1 is not available (the folder is not opened to this step); its files are at {outside / 'outputs'}" in task_md
     assert "- inputs/s2 is not available (inputs/s2 is a real file or folder)" in task_md
     assert any("inputs/s1" in text for text in _logs(runner, "warn"))
+
+
+def test_inputs_swapped_for_a_link_after_the_check_is_not_written_through(tmp_path, monkeypatch):
+    """PR #429 review: a process an earlier run left swaps inputs/ for a link right after labhq checked it."""
+    import labhq.runner.workspace as workspace_module
+
+    outside = tmp_path / "outside"
+    (outside / "s1").mkdir(parents=True)
+    (outside / "s1" / "keep.txt").write_text("the PI's file\n", encoding="utf-8")
+    upstream = tmp_path / "runs" / "up" / "outputs"
+    upstream.mkdir(parents=True)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex, builtin_mcp=[])
+    ws = workspace_module.TaskWorkspace(tmp_path / "runs", Task(id="t", agent_id="worker", prompt="q"), agent,
+                                        override=tmp_path / "runs" / "down")
+    real = workspace_module.plain_directory
+
+    def checked_then_swapped(root, relative):
+        checked = real(root, relative)
+        if str(relative) == "inputs":
+            checked.rename(tmp_path / "moved")
+            _link_dir(checked, outside)
+        return checked
+
+    monkeypatch.setattr(workspace_module, "plain_directory", checked_then_swapped)
+    failed = ws.link_inputs({"s1": upstream})
+
+    assert failed == {"s1": "inputs is a link or not a folder in the workspace"}
+    assert sorted(os.listdir(outside / "s1")) == ["keep.txt"]
+
+
+def test_relink_replaces_only_a_link(tmp_path):
+    from labhq.adapters.held_dir import HeldDir, NotPlainFolder
+
+    first, second = tmp_path / "a", tmp_path / "b"
+    for folder, text in ((first, "a"), (second, "b")):
+        folder.mkdir()
+        (folder / "f.txt").write_text(text, encoding="utf-8")
+    inputs = tmp_path / "inputs"
+    (inputs / "real").mkdir(parents=True)
+    (inputs / "real" / "keep.txt").write_text("keep", encoding="utf-8")
+    with HeldDir.hold(inputs) as held:
+        held.relink("s1", first)
+        held.relink("s1", second)  # an earlier run's link is replaced
+        with pytest.raises(NotPlainFolder):
+            held.relink("real", first)
+    assert (inputs / "s1" / "f.txt").read_text(encoding="utf-8") == "b"
+    assert (first / "f.txt").read_text(encoding="utf-8") == "a"
+    assert sorted(os.listdir(inputs / "real")) == ["keep.txt"]

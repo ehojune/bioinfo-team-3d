@@ -115,27 +115,24 @@ class TaskWorkspace:
         Scripts then read upstream files by a path relative to this folder, which a request bundle can restore,
         instead of an absolute runner path. A link an earlier run left is replaced: a revised upstream step can
         have moved to a new folder. Returns step id -> why that input was not linked."""
+        if not upstream:
+            return {}
         failed: dict[str, str] = {}
-        inputs = plain_directory(self.dir, "inputs") if upstream else None
-        if upstream and inputs is None:
+        try:
+            if plain_directory(self.dir, "inputs") is None:
+                raise NotPlainFolder(0, "inputs")
+            # Held, so a process an earlier run left cannot swap inputs/ for a link between the check and the
+            # change (PR #429 review): relink replaces only a link, through this handle.
+            with HeldDir.hold(self.dir) as workdir, workdir.child("inputs") as inputs:
+                for step_id, outputs in upstream.items():
+                    try:
+                        inputs.relink(step_id, outputs)
+                    except NotPlainFolder:
+                        failed[step_id] = f"inputs/{step_id} is a real file or folder"
+                    except OSError as exc:
+                        failed[step_id] = f"{type(exc).__name__}: {exc.strerror or exc}"
+        except OSError:
             return {step_id: "inputs is a link or not a folder in the workspace" for step_id in upstream}
-        for step_id, outputs in upstream.items():
-            link = inputs / step_id
-            try:
-                if os.path.lexists(link) and not _is_link(link):
-                    failed[step_id] = f"inputs/{step_id} is a real file or folder"
-                    continue
-                _remove_entry(link)
-                try:
-                    os.symlink(outputs, link, target_is_directory=True)
-                except OSError:
-                    if os.name != "nt":
-                        raise
-                    import _winapi  # a junction needs no symlink privilege on Windows
-
-                    _winapi.CreateJunction(str(outputs), str(link))
-            except OSError as exc:
-                failed[step_id] = f"{type(exc).__name__}: {exc.strerror or exc}"
         return failed
 
     def install_skill(self, skill_dir: Path) -> str | None:

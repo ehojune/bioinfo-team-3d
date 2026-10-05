@@ -178,6 +178,43 @@ class HeldDir:
             except FileNotFoundError:
                 pass
 
+    def relink(self, name: str, target: Path) -> None:
+        """Point child `name` at folder `target`, replacing only a link left there (#423, PR #429 review).
+
+        A real file or folder under the name raises NotPlainFolder and stays: nothing here removes more than a link
+        itself. POSIX works relative to the held descriptor; on Windows the held handle keeps this folder in place."""
+        if self._handle is None:
+            raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt":
+            if self.path is None:
+                raise OSError(errno.EBADF, "held folder has no stable path")
+            path = self.path / name
+            try:
+                attributes = os.lstat(path).st_file_attributes
+            except FileNotFoundError:
+                attributes = None
+            if attributes is not None:
+                if not attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                    raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
+                # rmdir unlinks a junction or folder symlink itself, and fails on a non-empty real folder.
+                (os.rmdir if attributes & stat.FILE_ATTRIBUTE_DIRECTORY else os.unlink)(path)
+            try:
+                os.symlink(target, path, target_is_directory=True)
+            except OSError:
+                import _winapi  # a junction needs no symlink privilege
+
+                _winapi.CreateJunction(str(target), str(path))
+            return
+        try:
+            info = os.stat(name, dir_fd=self._handle, follow_symlinks=False)
+        except FileNotFoundError:
+            info = None
+        if info is not None:
+            if not stat.S_ISLNK(info.st_mode):
+                raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
+            os.unlink(name, dir_fd=self._handle)  # a folder swapped in meanwhile fails here instead of going
+        os.symlink(target, name, target_is_directory=True, dir_fd=self._handle)
+
     @staticmethod
     def _checked(handle: int, path: Path | None = None) -> HeldDir:
         try:
