@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-06 · #382 — 조용히 멈춘 직원 CLI 경고
+
+- 결론: 10-06 새벽 Codex가 UAC 승인 창을 기다리며 셸에서 무기한 멈췄는데 아무 신호가 없었다(#382 재발). 직원 CLI가 오래 조용하면 실행마다 한 번 경고하고, Windows에서 UAC 승인 창이 떠 있으면 그 원인을 alert로 알린다. 시설팀 설계안(#35)의 1단계와 같은 일이며 A/B 어느 쪽이든 필요하다.
+- 바뀐 것: 프롬프트 stdin 쓰기를 timeout·감시 범위 안으로 옮김(봇 P2: stdin을 안 읽는 CLI가 둘 다 시작 전에 labhq를 붙잡음). `runner.stall_warn_s`(기본 600초, 0이면 끔). adapter 실행 루프가 stdout·stderr 마지막 출력 시각을 보고, 넘으면 작업 로그에 warn 한 줄, `consent.exe`가 떠 있으면 alert 한 줄. 긴 분석 명령도 조용하므로 끝내지는 않는다. 매뉴얼 안전 장치 절.
+- 실행한 것: 새 test 5건(조용한 CLI에 경고 한 번, UAC 있으면 alert, 꺼짐·제때 출력이면 없음, stdin을 안 읽는 CLI도 timeout·경고 — 고치기 전 코드에선 무기한 대기 확인). 이 PC에서 실제 UAC 확인 함수가 True(대기 중인 승인 창 있음). 전체 pytest 3963 passed·54 skipped, `scripts/check_public.sh`.
+- 미해결: 웹 alert 외 폰 알림은 없다. 시설팀(#35)이 붙으면 이 경고를 시설팀 호출로 잇는다.
+- 근거: `labhq/adapters/base.py` `stall_watch`, `pending_uac_prompts`.
+
 ## 2026-10-06 · #423 — 환경 단계 없이 돈 스크립트 단계의 환경 기록
 
 - 결론: 환경 단계 없이 runner의 기본 인터프리터로 스크립트를 돌린 단계는 환경 기록이 없어 요청 묶음이 `replayable`이 될 수 없었다(PR #431 등급의 남은 조각). 어떤 인터프리터를 썼는지는 직원만 알므로 runner가 추측해 쓰지 않고 단계 프롬프트에 규칙 한 줄을 더한다.

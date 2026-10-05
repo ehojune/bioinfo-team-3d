@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:49 | [`af17b0f`](https://github.com/ehojune/bioinfo-team-3d/pull/433/commits/af17b0f) | 프롬프트 stdin 쓰기를 timeout·멈춤 감시 안으로 옮겨, stdin을 읽지 않는 CLI도 시간 안에 끝나고 경고를 받는다. |
+| 04:43 | [`4919342`](https://github.com/ehojune/bioinfo-team-3d/pull/433/commits/4919342) | 직원 CLI가 runner.stall_warn_s(기본 600초) 동안 조용하면 한 번 경고하고, Windows UAC 승인 창이 떠 있으면 Codex sandbox가 그 승인을 기다린다고 alert로 알린다(#382). |
 | 04:22 | [`3a02472`](https://github.com/ehojune/bioinfo-team-3d/pull/432/commits/3a02472) | 환경 기록은 스크립트를 실행한 그 인터프리터로 남기고, 직접 설치한 패키지는 환경 단계가 있어도 기록한다. |
 | 04:10 | [`471fc70`](https://github.com/ehojune/bioinfo-team-3d/pull/432/commits/471fc70) | 환경 단계 없이 스크립트를 돌린 단계는 인터프리터 판과 패키지 목록을 outputs/env/<단계>.txt에 남기도록 단계 프롬프트에 적었다(#423). |
 | 04:09 | [`1552122`](https://github.com/ehojune/bioinfo-team-3d/pull/431/commits/1552122) | 재현 등급에서 .txt 산출도 데이터로 보고, 불완전한 묶음에도 웹이 재현 등급을 보인다. |
