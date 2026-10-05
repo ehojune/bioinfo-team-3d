@@ -103,9 +103,10 @@ def test_checklist_requirements_and_answer_contract_are_topic_scoped():
     assert topic_checklists.answer_errors({}, required, ["A"])
     assert topic_checklists.answer_errors({**bulk_answers(), "batch": "step:missing"}, required, ["A"])
     assert topic_checklists.answer_errors(bulk_answers(), required, ["A"]) == []
-    limits = topic_checklists.limitations({**bulk_answers(), "pairing": "assumption: metadata identifies pairs"})
-    assert limits == ["independent_validation: no independent public cohort",
-                      "pairing: metadata identifies pairs"]
+    answers = {**bulk_answers(), "pairing": "assumption: metadata identifies pairs"}
+    # Bench C (#373): only assumptions are limitations; a check answered not_applicable does not apply at all.
+    assert topic_checklists.limitations(answers) == ["pairing: metadata identifies pairs"]
+    assert topic_checklists.not_applicable(answers) == ["independent_validation"]
 
 
 class ParallelHub(FakeHub):
@@ -259,7 +260,9 @@ def test_review_report_and_solo_contexts_carry_requirements_answers_and_citation
     assert all(value in review for value in ("batch", "gene_set_test", "precedent.1", "step:A",
                                                "PMID:12345678", "https://example.org/review"))
     assert "pairing: metadata identifies pairs" in report
-    assert "independent_validation: no independent public cohort" in report
+    limits_part, _, skipped_part = report.partition("Checks that do not apply")
+    assert "independent_validation" not in limits_part and "independent_validation" in skipped_part
+    assert "leave them out of the report body" in skipped_part
     assert "Analysis precedents" in report
     assert "선행 연구 기준" in cso.SOLO_PROMPT
     assert "선행 연구 기준" in cso.SYNTH_PROMPT and "선행 연구 기준" in cso.RESEARCH_SYNTH_PROMPT
@@ -342,3 +345,15 @@ def test_plan_prompt_carries_checks_and_the_review_carries_reasons():
     assert item.check in rule and item.why not in rule and "Why:" not in rule
     review = cso.plan_review_context(general_plan(checklist=bulk_answers()), catalog, None)
     assert f"{item.check} Why: {item.why}" in review
+
+
+def test_report_drops_only_required_checks_answered_not_applicable():
+    # PR #427 review: a stray key, or one from a topic the plan no longer declares, must not tell the writer to drop
+    # a description from the report body.
+    catalog = topic_checklists.load()
+    plan = general_plan(checklist={**bulk_answers(), "qc": "not_applicable: not this request",
+                                   "spot_qc": "not_applicable: left from an earlier topic"})
+    report = cso.plan_report_context(plan, catalog, None)
+    skipped = report.partition("Checks that do not apply")[2]
+    assert "independent_validation" in skipped
+    assert "spot_qc" not in skipped and ", qc" not in skipped and ": qc" not in skipped

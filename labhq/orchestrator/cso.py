@@ -591,7 +591,8 @@ Under "방법 요약", add a subsection titled "가정" and list these choices w
 do not invent any.
 When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
-Under "한계", include one line for every checklist answer that used assumption or not_applicable.
+Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
+to this request in the report body.
 
 Request: {request}
 
@@ -682,7 +683,8 @@ including seeds and tool and data versions, 4) "한계" including not-establishe
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
 When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
-Under "한계", include one line for every checklist answer that used assumption or not_applicable.
+Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
+to this request in the report body.
 
 Request: {request}
 
@@ -1617,12 +1619,22 @@ def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
 def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     body = plan if isinstance(plan, dict) else {}
     limits = topic_checklists.limitations(body.get("checklist"))
+    # Only checks this plan requires (PR #427 review): a stray key or one left from an earlier topic must not tell the
+    # writer to drop a QC or analysis description from the body.
+    required = {item.id for item in required_checklist_items(body, catalog, precedents)}
+    skipped = [item_id for item_id in topic_checklists.not_applicable(body.get("checklist")) if item_id in required]
     rendered = (analysis_precedents_text(precedents)
                 if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
-    if not limits and not rendered:
+    if not limits and not skipped and not rendered:
         return ""
-    lines = ["\n\nChecklist limitations (one line each under 한계):"]
-    lines.extend(f"- {item}" for item in limits)
+    lines = []
+    if limits:
+        lines += ["\n\nChecklist limitations (one line each under 한계):", *(f"- {item}" for item in limits)]
+    if skipped:
+        # Bench C (#373): a literature table listed batch, pairing and gene-set checks as limitations and lost
+        # readability. Checks that do not apply stay out of the body; the plan keeps the record.
+        lines.append("\n\nChecks that do not apply to this request (not limitations; leave them out of the report "
+                     "body): " + ", ".join(skipped))
     if rendered:
         lines += ["", rendered]
     return "\n".join(lines)
