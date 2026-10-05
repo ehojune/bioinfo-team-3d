@@ -38,9 +38,9 @@ def on_base(sha: str, base: str) -> bool:
     return subprocess.run(["git", "merge-base", "--is-ancestor", sha, base], capture_output=True).returncode == 0
 
 
-# Only tests/test_integrations.py reads the root README (badge block, title, no local paths),
+# Only tests/test_integrations.py reads the root READMEs (badge blocks, title, no local paths),
 # so a README change runs that one file instead of the whole suite (PI 2026-10-02).
-README_ONLY = ("README.md",)
+README_ONLY = ("README.md", "README.en.md")
 
 
 def safe_step(commit: str, base: str, touched: set[str] | None = None) -> bool:

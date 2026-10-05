@@ -11,7 +11,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import yaml
 
@@ -25,6 +25,13 @@ LIFE_SCIENCES = "https://www.anthropic.com/news/healthcare-life-sciences"
 # Badges sit at the README top; the inventory table lives in the manual (PI #298: the README is for
 # first-time users, details go to docs/manual.md).
 README = "README.md"
+README_EN = "README.en.md"
+# README.en.md shows the same badges with these phrases in English. A Korean phrase missing here fails --check,
+# so a new badge cannot leave the English README stale or half Korean (PR #428 review).
+ENGLISH = (("문서·데이터", "Docs · data"), ("코드", "Code"), ("라이선스", "License"), ("패치노트", "Patch notes"),
+           ("화합물 검색", "compound search"), ("임상시험 검색", "trial search"), ("표적 검색", "target search"),
+           ("논문 검색", "paper search"), ("preprint 검색", "preprint search"), ("파견직 채용", "contractor hiring"))
+HANGUL = re.compile("[ㄱ-ㆎ가-힣]")
 MANUAL = "docs/manual.md"
 # Manual anchors for targets without an official page (test_badge_anchors_point_at_manual_headings checks them).
 TOOLS_ANCHOR = f"{MANUAL}#연결된-도구"
@@ -307,6 +314,23 @@ def badges(root: Path) -> str:
     return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
 
 
+def english(text: str) -> str:
+    """One badge block in English: alt texts and shields.io label/message values, re-encoded the same way."""
+    def words(value: str) -> str:
+        value = re.sub(r"직원 (\d+)명", r"\1 staff", value)
+        for korean, english_text in ENGLISH:
+            value = value.replace(korean, english_text)
+        if HANGUL.search(value):
+            raise ValueError("a badge phrase has no English entry in ENGLISH")
+        return value
+
+    def query(match: re.Match[str]) -> str:
+        return f"{match.group(1)}={quote(words(unquote(match.group(2))), safe='')}"
+
+    text = re.sub(r"\[!\[([^\]]*)\]", lambda m: f"[![{words(m.group(1))}]", text)
+    return re.sub(r"\b(label|message)=([^&)]*)", query, text)
+
+
 def marker_span(text: str, start: str, end: str) -> tuple[int, int]:
     """Where one generated block sits, start marker through end marker."""
     if text.count(start) != 1 or text.count(end) != 1:
@@ -343,12 +367,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not (args.root / "agents" / "core").is_dir():
             raise ValueError("agents/core is missing")
-        readme, manual = args.root / README, args.root / MANUAL
-        current = {path: path.read_text(encoding="utf-8") for path in (readme, manual)}
-        # Both files are computed before either is written, so a bad marker in one leaves both untouched.
-        expected = {readme: update_readme(current[readme], badges(args.root)),
+        readme, manual, readme_en = args.root / README, args.root / MANUAL, args.root / README_EN
+        paths = (readme, manual, *([readme_en] if readme_en.is_file() else []))
+        current = {path: path.read_text(encoding="utf-8") for path in paths}
+        # Every file is computed before any is written, so a bad marker in one leaves all untouched.
+        block = badges(args.root)
+        expected = {readme: update_readme(current[readme], block),
                     manual: update_manual(current[manual],
                                           render(args.root / "agents", "../" * MANUAL.count("/")))}
+        if readme_en in current:
+            expected[readme_en] = update_readme(current[readme_en], english(block))
         if args.write:
             for path, text in expected.items():
                 if text != current[path]:
