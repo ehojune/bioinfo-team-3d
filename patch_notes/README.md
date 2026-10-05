@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:22 | [`3a02472`](https://github.com/ehojune/bioinfo-team-3d/pull/432/commits/3a02472) | 환경 기록은 스크립트를 실행한 그 인터프리터로 남기고, 직접 설치한 패키지는 환경 단계가 있어도 기록한다. |
+| 04:10 | [`471fc70`](https://github.com/ehojune/bioinfo-team-3d/pull/432/commits/471fc70) | 환경 단계 없이 스크립트를 돌린 단계는 인터프리터 판과 패키지 목록을 outputs/env/<단계>.txt에 남기도록 단계 프롬프트에 적었다(#423). |
+| 04:09 | [`1552122`](https://github.com/ehojune/bioinfo-team-3d/pull/431/commits/1552122) | 재현 등급에서 .txt 산출도 데이터로 보고, 불완전한 묶음에도 웹이 재현 등급을 보인다. |
+| 04:04 | [`0422170`](https://github.com/ehojune/bioinfo-team-3d/pull/431/commits/0422170) | 요청 묶음이 재현 등급(replayable/documented)과 그 이유를 README·부록에 적고, 웹 요청 화면이 묶음 경로 옆에 등급을 보인다(#423). |
 | 03:21 | [`f985c93`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/f985c93) | 공유 계정 HPC 모드(hpc.submit_prefix)에서는 inputs 링크 대신 원래 경로를 주고, HPC 제출 검사는 main처럼 모든 링크를 거부한다. |
 | 03:11 | [`6623b83`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/6623b83) | HPC 제출 검사는 앞 단계 outputs로 풀리는 inputs 링크만 지나치고, 링크 교체는 옆으로 옮긴 항목이 링크일 때만 지운다. |
 | 03:05 | [`88cabe3`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/88cabe3) | inputs/<단계> 링크를 held handle로 바꿔 끼우고(진짜 파일·폴더는 안 건드림), 링크 이름 규칙을 요청 묶음의 단계 폴더 규칙과 맞췄다. |

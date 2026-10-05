@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-06 · #423 — 환경 단계 없이 돈 스크립트 단계의 환경 기록
+
+- 결론: 환경 단계 없이 runner의 기본 인터프리터로 스크립트를 돌린 단계는 환경 기록이 없어 요청 묶음이 `replayable`이 될 수 없었다(PR #431 등급의 남은 조각). 어떤 인터프리터를 썼는지는 직원만 알므로 runner가 추측해 쓰지 않고 단계 프롬프트에 규칙 한 줄을 더한다.
+- 바뀐 것: 일반·연구 단계 프롬프트에 "스크립트를 돌렸으면 그 스크립트를 실행한 인터프리터로 판과 패키지 목록(`<인터프리터> --version`·`-m pip freeze`)을 `outputs/env/<단계 id>.txt`에 저장. 앞 환경 단계의 lock이 그대로 덮으면 생략, 직접 설치한 패키지(`./.pylib` 등)는 언제나 기록"(봇 P2 둘 반영). 매뉴얼 보고서 절.
+- 실행한 것: 새 test 1건(두 프롬프트에 규칙), 프롬프트 고정 hash 3곳 갱신, 관련 test 245 passed, `scripts/check_public.sh`.
+- 미해결: 입력(참고 폴더·PI 데이터) sha256 기록.
+- 근거: `labhq/orchestrator/cso.py` `RESEARCH_STEP_PROMPT`.
+
+## 2026-10-06 · #423 — 요청 묶음 재현 등급
+
+- 결론: 요청 묶음이 `replayable`인지 `documented`인지 이유와 함께 적는다. `docs/research_protocol.md`가 요구한 구분인데 계산하는 코드가 없었다(#423, #316 검토).
+- 바뀐 것: `replayable` = 기록 산출이 모두 복사됐고, 데이터를 낸 단계마다 스크립트가, 스크립트를 쓴 단계마다 자기나 앞 단계의 환경 기록(`outputs/env/`)이 있고, 복사한 스크립트에 절대경로가 없음. 하나라도 빠지면 `documented`와 이유. `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 주며 아직 쓰는 곳이 없다. 묶음 README "재현 등급" 절, 부록 한 줄, gateway `bundle_grade`(요청·`request.bundle` 이벤트), 2.5D·3D 웹의 묶음 경로 옆 표시(불완전한 묶음에도 — 봇 P2). 매뉴얼 요청 묶음 절.
+- 실행한 것: 새 test 3건(앞 단계 환경 기록을 물려받은 묶음은 replayable·.md만 낸 단계는 스크립트를 묻지 않음, 스크립트·환경·절대경로가 빠지면 이유 셋과 documented, .txt 데이터도 스크립트를 요구 — 봇 P1) + gateway·웹 test 단언 추가. 전체 pytest 3954 passed(웹 표시 test 한 건은 고친 뒤 다시 통과), `scripts/check_public.sh`.
+- 미해결: 스크립트 단계의 환경 기록은 ENV 단계가 있을 때만 생긴다. runner의 기본 Python으로 돈 단계는 `documented`로 남으니, runner가 패키지 목록을 자동으로 남길지 다음에 정한다. 입력(참고 폴더·PI 데이터) sha256 기록도 남았다.
+- 근거: `labhq/request_bundle.py` `_grade`.
+
 ## 2026-10-06 · #423 — 앞 단계 입력을 inputs/로 잇고 보고하지 않은 산출도 묶음에
 
 - 결론: 벤치 C t6의 재현성 결함 둘을 고친다(PI 10-06: inputs/ 방식, Claude 구현). 직원 스크립트가 앞 단계 파일을 runner 절대경로로 나눠 적어 묶음에서 안 돌았고, 스크립트가 읽던 미보고 파일(gene-set 사본·그림 등)이 묶음에 없었다.
