@@ -77,10 +77,27 @@ def test_topic_checklist_loads_known_topics_and_rejects_an_unknown_key(tmp_path)
         topic_checklists.load(bad)
 
 
+def test_one_id_under_two_declared_topics_keeps_both_checks(tmp_path):
+    path = tmp_path / "shared.yaml"
+    path.write_text("atac_seq:\n  - id: library_qc\n    check: report FRiP\n    why: noise\n"
+                    "  - id: peaks\n    check: call peaks\n    why: regions\n"
+                    "chip_seq:\n  - id: library_qc\n    check: report NRF and PBC\n    why: duplicates\n"
+                    "  - id: peaks\n    check: call peaks\n    why: regions\n", encoding="utf-8")
+    loaded = topic_checklists.load(path)
+    required = topic_checklists.requirements(["atac_seq", "chip_seq"], loaded)
+    assert [(item.id, item.check, item.why) for item in required] == [
+        ("library_qc", "report FRiP / report NRF and PBC", "noise / duplicates"),
+        ("peaks", "call peaks", "regions")]
+    assert [item.check for item in topic_checklists.requirements(["chip_seq"], loaded)] == \
+        ["report NRF and PBC", "call peaks"]
+
+
 def test_checklist_requirements_and_answer_contract_are_topic_scoped():
     loaded = topic_checklists.load()
     assert topic_checklists.requirements([], loaded) == []
-    assert topic_checklists.requirements(["atac_seq"], loaded) == []
+    assert topic_checklists.requirements(["not_a_topic"], loaded) == []
+    assert [item.id for item in topic_checklists.requirements(["atac_seq"], loaded)] == \
+        [item.id for item in loaded["atac_seq"]]
     required = topic_checklists.requirements(["bulk_rna_seq"], loaded)
     assert [item.id for item in required] == ["batch", "pairing", "gene_set_test", "independent_validation"]
     assert topic_checklists.answer_errors({}, required, ["A"])
