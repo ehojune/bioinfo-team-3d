@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 03:21 | [`f985c93`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/f985c93) | 공유 계정 HPC 모드(hpc.submit_prefix)에서는 inputs 링크 대신 원래 경로를 주고, HPC 제출 검사는 main처럼 모든 링크를 거부한다. |
+| 03:11 | [`6623b83`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/6623b83) | HPC 제출 검사는 앞 단계 outputs로 풀리는 inputs 링크만 지나치고, 링크 교체는 옆으로 옮긴 항목이 링크일 때만 지운다. |
+| 03:05 | [`88cabe3`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/88cabe3) | inputs/<단계> 링크를 held handle로 바꿔 끼우고(진짜 파일·폴더는 안 건드림), 링크 이름 규칙을 요청 묶음의 단계 폴더 규칙과 맞췄다. |
 | 02:55 | [`91b802f`](https://github.com/ehojune/bioinfo-team-3d/pull/428/commits/91b802f) | 영문 README 배지도 같은 생성기로 만들고(번역 없는 한국어가 남으면 검사 실패), 버튼·탭 이름에 실제 한국어 UI 이름을 함께 적었다. |
+| 02:51 | [`28fe73f`](https://github.com/ehojune/bioinfo-team-3d/pull/429/commits/28fe73f) | 단계가 앞 단계 산출을 작업 폴더 안 inputs/<단계>로 읽고(runner가 링크, 프롬프트엔 상대경로만), 요청 묶음은 보고하지 않은 산출도 복사하고 link_inputs.py로 그 링크를 다시 건다(#423). |
 | 02:42 | [`a2dd59b`](https://github.com/ehojune/bioinfo-team-3d/pull/428/commits/a2dd59b) | README 첫 문장을 멀티 에이전트 오케스트레이션 플랫폼 소개와 합치고, bioinfo-agent 링크·설명과 영문 README(README.en.md, 영문 그림 6개)를 더했다. |
 | 02:30 | [`17a8744`](https://github.com/ehojune/bioinfo-team-3d/pull/427/commits/17a8744) | 해당 없음 목록은 계획의 필수 항목만, README t6 재채점 수치 |
 
