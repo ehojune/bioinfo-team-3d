@@ -17,7 +17,14 @@ assert.equal(agentCostLabel(summary, id => names[id]),
   '너구리 확인 $0.10 + 미집계 1건 · 부엉이 확인 $0.40 · 직원 기록 없음 추정 $0.20');
 assert.equal(agentCostLabel({by_engine: {}}), '', 'an older summary without by_agent adds nothing');
 
+const {agentSpentLabel} = context.LabHQState;
+const requests = [{costSummary: summary}, {costSummary: {by_agent: {cso: {actual_usd: 0.1, estimated_usd: 0.3, unknown_count: 0}}}},
+  {costSummary: {by_engine: {}}}, {}];
+assert.equal(agentSpentLabel(requests, 'cso'), '확인 $0.50 + 추정 $0.30 (요청 2건)', 'the sheet sums the requests it holds');
+assert.equal(agentSpentLabel(requests, 'engineer'), '', 'no row, no line');
+
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /agentCostLabel\(q\.costSummary, nick\)/);
 assert.match(html, /JSON\.stringify\(\[S\.requests\.size, staffNames,/, 'a roster change redraws the cost line');
+assert.match(html, /agentSpentLabel\(\[\.\.\.S\.requests\.values\(\)\], id\)/);
 console.log('cost by agent web tests passed');

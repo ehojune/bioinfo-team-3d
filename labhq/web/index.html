@@ -1017,6 +1017,8 @@ function openSheet(id) {
       ['MCP', (cap.mcp || []).length ? cap.mcp.join(', ') : '없음']);
     if (cap.max_turns) facts.push(['최대 턴', String(cap.max_turns)]);
   } else if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
+  const spent = LabHQState.agentSpentLabel([...S.requests.values()], id);
+  if (spent) facts.push(['쓴 비용', `${spent}, 이 화면에 있는 요청 기준`]);
   const acts = ['<button type="button" class="btn primary" data-act="assign">이 직원에게 맡기기</button>'];
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');

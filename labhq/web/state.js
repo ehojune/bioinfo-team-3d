@@ -35,6 +35,17 @@ function agentCostLabel(summary, name = id => id) {
   return Object.entries(summary.by_agent)
     .map(([id, row]) => `${id === 'unknown' ? '직원 기록 없음' : name(id)} ${summaryParts(row)}`).join(' · ');
 }
+// One staff member's spending across the requests this screen holds (#57 ⑦: the sheet's cumulative cost).
+function agentSpentLabel(requests, id) {
+  let actual = 0, estimated = 0, unknown = 0, count = 0;
+  for (const q of requests) {
+    const row = q && q.costSummary && q.costSummary.by_agent && q.costSummary.by_agent[id];
+    if (!row) continue;
+    count += 1; actual += Number(row.actual_usd) || 0; estimated += Number(row.estimated_usd) || 0;
+    unknown += Number(row.unknown_count) || 0;
+  }
+  return count ? `${costParts(actual, estimated, unknown)} (요청 ${count}건)` : '';
+}
 function totalCostLabel(requests, total) {
   let estimated = 0, unknown = 0, legacyUnknown = false;
   for (const q of requests) {
@@ -514,6 +525,6 @@ function toolLabel(name) {
 
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
-root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, totalCostLabel,
+root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest };
 })(globalThis);
