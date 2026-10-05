@@ -3,3 +3,6 @@ rows:
 - sha: "4919342"
   at: 2026-10-06 04:43
   text: "직원 CLI가 runner.stall_warn_s(기본 600초) 동안 조용하면 한 번 경고하고, Windows UAC 승인 창이 떠 있으면 Codex sandbox가 그 승인을 기다린다고 alert로 알린다(#382)."
+- sha: "af17b0f"
+  at: 2026-10-06 04:49
+  text: 프롬프트 stdin 쓰기를 timeout·멈춤 감시 안으로 옮겨, stdin을 읽지 않는 CLI도 시간 안에 끝나고 경고를 받는다.
