@@ -1163,8 +1163,11 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
             return result(task, text="done", workdir="runs/A", workdir_id="A",
                           outputs=["outputs/table.tsv"])
         assert task.meta["upstream_dirs"] == ["runs/A"]
+        assert task.meta["upstream_steps"] == {"A": "runs/A"}
         assert '"workdir_id": "A"' in task.context
-        assert "runs/A/outputs/table.tsv" in task.context.replace("\\", "/")
+        # Relative to the step folder, where the runner links inputs/A (#423), never the runner's path.
+        assert "Readable files (relative to your folder):\ninputs/A/table.tsv\n" in task.context
+        assert "runs/A/outputs/table.tsv" not in task.context.replace("\\", "/")
         return result(task, text="used table")
 
     hub = FakeHub(dispatch)

@@ -614,3 +614,149 @@ async def test_a_reference_that_resolves_to_unc_is_not_opened_to_claude(tmp_path
         assert any("UNC" in text for text in _logs(runner, "warn"))
     else:
         assert len(ctx.read_dirs) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", [Engine.codex, Engine.claude_code])
+async def test_a_step_reads_upstream_outputs_through_its_inputs_link(tmp_path, monkeypatch, spawned, engine):
+    """#423: the step prompt names upstream files as inputs/<step>/..., so scripts carry no runner path."""
+    settings = _settings(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    upstream = root / "2026-10-05" / "task_up_worker"
+    (upstream / "outputs").mkdir(parents=True)
+    (upstream / "outputs" / "table.tsv").write_text("gene\nTP53\n", encoding="utf-8")
+    other = root / "2026-10-05" / "task_other_worker"
+    (other / "outputs").mkdir(parents=True)
+    (other / "outputs" / "table.tsv").write_text("stale\n", encoding="utf-8")
+    seen_reads = []
+    seen = spawned(engine, during=lambda cwd: seen_reads.append(
+        (cwd / "inputs" / "s1" / "table.tsv").read_text(encoding="utf-8")))
+    runner = _runner(settings, monkeypatch, _staff(engine))
+    workdir = root / "2026-10-06" / "task_down_worker"
+    (workdir / "inputs").mkdir(parents=True)
+    _link_dir(workdir / "inputs" / "s1", other / "outputs")  # an earlier run's link to a replaced upstream
+
+    result = await runner.run_task(Task(
+        agent_id="worker", request_id="r", prompt="q", context="inputs/s1/table.tsv",
+        meta={"kind": "step", "workdir": str(workdir), "upstream_dirs": [str(upstream)],
+              "upstream_steps": {"s1": str(upstream), "../up": str(upstream)}}))
+
+    assert result.ok, result.error
+    assert len(seen) == 1 and seen_reads == ["gene\nTP53\n"]
+    assert not (workdir / "up").exists() and sorted(os.listdir(workdir / "inputs")) == ["s1"]
+    task_md = (workdir / "TASK.md").read_text(encoding="utf-8")
+    assert "- inputs/../up is not available (the step id cannot name a folder)" in task_md
+    assert "inputs/s1 is not available" not in task_md
+    assert (other / "outputs" / "table.tsv").read_text(encoding="utf-8") == "stale\n"
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_not_opened_to_the_step_is_named_instead_of_linked(tmp_path, monkeypatch, spawned):
+    settings = _settings(tmp_path)
+    outside = tmp_path / "elsewhere" / "task_up_worker"  # not under runner.workspace_root: never opened
+    (outside / "outputs").mkdir(parents=True)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-06" / "task_down_worker"
+    (workdir / "inputs" / "s2").mkdir(parents=True)  # a real folder is never replaced
+    upstream = Path(settings.runner.workspace_root) / "2026-10-05" / "task_s2_worker"
+    (upstream / "outputs").mkdir(parents=True)
+    spawned(Engine.codex)
+    runner = _runner(settings, monkeypatch, _staff())
+
+    result = await runner.run_task(Task(
+        agent_id="worker", request_id="r", prompt="q", context="ctx",
+        meta={"kind": "step", "workdir": str(workdir), "upstream_dirs": [str(outside), str(upstream)],
+              "upstream_steps": {"s1": str(outside), "s2": str(upstream)}}))
+
+    assert result.ok, result.error
+    assert not os.path.lexists(workdir / "inputs" / "s1")
+    assert os.listdir(workdir / "inputs" / "s2") == []
+    task_md = (workdir / "TASK.md").read_text(encoding="utf-8")
+    assert "[Upstream inputs not linked]" in task_md
+    assert f"- inputs/s1 is not available (the folder is not opened to this step); read its files at {outside / 'outputs'} instead" in task_md
+    assert "- inputs/s2 is not available (inputs/s2 is a real file or folder)" in task_md
+    assert any("inputs/s1" in text for text in _logs(runner, "warn"))
+
+
+def test_inputs_swapped_for_a_link_after_the_check_is_not_written_through(tmp_path, monkeypatch):
+    """PR #429 review: a process an earlier run left swaps inputs/ for a link right after labhq checked it."""
+    import labhq.runner.workspace as workspace_module
+
+    outside = tmp_path / "outside"
+    (outside / "s1").mkdir(parents=True)
+    (outside / "s1" / "keep.txt").write_text("the PI's file\n", encoding="utf-8")
+    upstream = tmp_path / "runs" / "up" / "outputs"
+    upstream.mkdir(parents=True)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.codex, builtin_mcp=[])
+    ws = workspace_module.TaskWorkspace(tmp_path / "runs", Task(id="t", agent_id="worker", prompt="q"), agent,
+                                        override=tmp_path / "runs" / "down")
+    real = workspace_module.plain_directory
+
+    def checked_then_swapped(root, relative):
+        checked = real(root, relative)
+        if str(relative) == "inputs":
+            checked.rename(tmp_path / "moved")
+            _link_dir(checked, outside)
+        return checked
+
+    monkeypatch.setattr(workspace_module, "plain_directory", checked_then_swapped)
+    failed = ws.link_inputs({"s1": upstream})
+
+    assert failed == {"s1": "inputs is a link or not a folder in the workspace"}
+    assert sorted(os.listdir(outside / "s1")) == ["keep.txt"]
+
+
+def test_relink_replaces_only_a_link(tmp_path):
+    from labhq.adapters.held_dir import HeldDir, NotPlainFolder
+
+    first, second = tmp_path / "a", tmp_path / "b"
+    for folder, text in ((first, "a"), (second, "b")):
+        folder.mkdir()
+        (folder / "f.txt").write_text(text, encoding="utf-8")
+    inputs = tmp_path / "inputs"
+    (inputs / "real").mkdir(parents=True)
+    (inputs / "real" / "keep.txt").write_text("keep", encoding="utf-8")
+    with HeldDir.hold(inputs) as held:
+        held.relink("s1", first)
+        held.relink("s1", second)  # an earlier run's link is replaced
+        with pytest.raises(NotPlainFolder):
+            held.relink("real", first)
+    assert (inputs / "s1" / "f.txt").read_text(encoding="utf-8") == "b"
+    assert (first / "f.txt").read_text(encoding="utf-8") == "a"
+    assert sorted(os.listdir(inputs / "real")) == ["keep.txt"]
+
+
+def test_relink_leaves_a_regular_file_under_the_name(tmp_path):
+    from labhq.adapters.held_dir import HeldDir, NotPlainFolder
+
+    target = tmp_path / "up"
+    target.mkdir()
+    inputs = tmp_path / "inputs"
+    inputs.mkdir()
+    (inputs / "s1").write_text("agent file", encoding="utf-8")
+    with HeldDir.hold(inputs) as held, pytest.raises(NotPlainFolder):
+        held.relink("s1", target)
+    assert (inputs / "s1").read_text(encoding="utf-8") == "agent file"
+    assert os.listdir(inputs) == ["s1"], "the entry renamed aside for the check is put back"
+
+
+@pytest.mark.asyncio
+async def test_shared_account_hpc_mode_links_no_inputs_and_names_the_paths(tmp_path, monkeypatch, spawned):
+    """PR #429 review: submit_prefix jobs run from hpc_out/ as another account and refuse links, so none is made."""
+    settings = _settings(tmp_path)
+    settings.hpc.job_group, settings.hpc.user = "labhq", "hpcuser"
+    settings.hpc.submit_prefix = ["sudo", "-u", "hpcuser"]
+    upstream = Path(settings.runner.workspace_root) / "2026-10-05" / "task_up_worker"
+    (upstream / "outputs").mkdir(parents=True)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-06" / "task_down_worker"
+    spawned(Engine.codex)
+    runner = _runner(settings, monkeypatch, _staff())
+
+    result = await runner.run_task(Task(
+        agent_id="worker", request_id="r", prompt="q", context="ctx",
+        meta={"kind": "step", "workdir": str(workdir), "upstream_dirs": [str(upstream)],
+              "upstream_steps": {"s1": str(upstream)}}))
+
+    assert result.ok, result.error
+    assert not os.path.lexists(workdir / "inputs" / "s1")
+    assert (f"- inputs/s1 is not available (shared-account HPC mode (hpc.submit_prefix) uses no links); "
+            f"read its files at {upstream / 'outputs'} instead") in (workdir / "TASK.md").read_text(encoding="utf-8")

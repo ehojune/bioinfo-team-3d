@@ -14,9 +14,9 @@ def _render() -> str:
 
 
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #373 benches A/B: keep artifacts and make upstream paths bundle-rewritable in one block.
+    # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "57fc95b4fc03cae17a17d6f009fa9ebae46a6196d2bbb71a64ff1f9795424f1a")
+        "f9f88c8a6a87e5418ef2b5f7538363aa03db1674cd6e39557f0eb3e1dd483470")
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -37,9 +37,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #373 benches A/B apply both reproducibility rules to the frozen research lane.
+    # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "b72945de34d0adaa3edab2d6a75280ba985bcd3bce2189975b82586e64bfa25b")
+        "5c36fd02dec0379d8e9e0ee271421a344f023b5b34c327bc07f02a774e6ec786")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():

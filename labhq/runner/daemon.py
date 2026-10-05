@@ -47,7 +47,7 @@ from ..registry import Registry
 from ..settings import MODEL_NAME_PATTERN, Settings, write_staff_config
 from ..store import StateStore
 from ..tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, TERMINAL, Scheduler, job_in_family
-from ..util import output_relpath, short
+from ..util import INPUT_STEP_ID, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from .approvals import Broker
@@ -964,6 +964,33 @@ class Runner:
                         await emit("agent.log", {"level": "warn", "text": f"이전 단계 폴더 제외: {upstream.name} ({reason})"})
                         continue
                     extra_dirs.append(str(upstream))
+            upstream_steps = task.meta.get("upstream_steps")
+            if isinstance(upstream_steps, dict) and upstream_steps and not read_only:
+                # The step prompt names upstream files as inputs/<step id>/... (#423); link the folders opened above.
+                links: dict[str, Path] = {}
+                unlinked: dict[str, str] = {}
+                for step_id, directory in upstream_steps.items():
+                    upstream = Path(str(directory)).resolve()
+                    if self.s.hpc.submit_prefix:
+                        # Shared-account jobs run from hpc_out/ as another account, and their submit check refuses
+                        # every link in the folder: no link, the path below instead (PR #429 review).
+                        unlinked[str(step_id)] = "shared-account HPC mode (hpc.submit_prefix) uses no links"
+                    elif not INPUT_STEP_ID.fullmatch(str(step_id)):
+                        unlinked[str(step_id)] = "the step id cannot name a folder"
+                    elif str(upstream) in extra_dirs and (upstream / "outputs").is_dir():
+                        links[str(step_id)] = upstream / "outputs"
+                    else:
+                        unlinked[str(step_id)] = "the folder is not opened to this step"
+                unlinked.update(await asyncio.to_thread(ws.link_inputs, links))
+                if unlinked:
+                    for step_id, reason in unlinked.items():
+                        await emit("agent.log", {"level": "warn", "text": f"inputs/{step_id} 링크 실패: {reason}"})
+                    note = "\n".join(
+                        f"- inputs/{step_id} is not available ({reason}); read its files at "
+                        f"{Path(str(upstream_steps[step_id])) / 'outputs'} instead"
+                        for step_id, reason in unlinked.items())
+                    task = ws.task = task.model_copy(update={"context": (
+                        f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)

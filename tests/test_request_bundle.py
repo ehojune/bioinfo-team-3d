@@ -434,6 +434,96 @@ def test_python_command_comes_from_the_step_runner_and_unknown_is_disclosed(tmp_
     assert "runner가 쓴 python 명령을 확인하지 못함" in readme
 
 
+def test_unreported_outputs_are_copied_after_recorded_ones_without_marking_incomplete(tmp_path):
+    """Bench C t6 (#423): a gene-set copy a script read was never reported, so the bundle could not rerun it."""
+    settings = configured(tmp_path)
+    settings.runner.bundle_max_files = 3
+    root = Path(settings.runner.workspace_root)
+    first, second = root / "2026-10-05" / "task_a", root / "2026-10-05" / "task_b"
+    for workdir in (first, second):
+        write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(first / "outputs/table.tsv", "gene\nTP53\n")
+    for name in ("genes.gmt", "matrix.tsv", "figure.svg"):
+        write(first / "outputs/reference" / name, name)
+    (first / "outputs/huge.bin").write_bytes(b"x" * (1024 * 1024 + 1))
+    write(second / "outputs/result.txt", "done\n")
+    request = {
+        "id": "unreported", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [{"id": "s1", "depends_on": []}, {"id": "s2", "depends_on": ["s1"]}]},
+        "results": {
+            "s1": {"workdir": str(first), "workdir_id": first.name, "outputs": ["outputs/table.tsv"],
+                   "output_sha256": {"outputs/table.tsv": digest(first / "outputs/table.tsv")},
+                   "unreported_outputs": ["outputs/huge.bin", "outputs/reference/figure.svg",
+                                          "outputs/reference/genes.gmt", "outputs/reference/matrix.tsv",
+                                          "../escape.txt"]},
+            "s2": {"workdir": str(second), "workdir_id": second.name, "outputs": ["outputs/result.txt"],
+                   "output_sha256": {"outputs/result.txt": digest(second / "outputs/result.txt")}},
+        },
+    }
+
+    built = build_request_bundle(request, settings)
+    bundle = Path(built["path"])
+    rows = manifest_rows(bundle)
+
+    # Both recorded outputs first; one file slot is left for the unreported ones, in listed order.
+    assert rows["steps/s1/outputs/table.tsv"]["status"] == "copied"
+    assert rows["steps/s2/outputs/result.txt"]["status"] == "copied"
+    assert rows["steps/s1/outputs/huge.bin"]["status"] == "not copied (unreported): size"
+    assert rows["steps/s1/outputs/reference/figure.svg"]["status"] == "copied (unreported)"
+    assert rows["steps/s1/outputs/reference/figure.svg"]["sha256"] == digest(first / "outputs/reference/figure.svg")
+    assert rows["steps/s1/outputs/reference/genes.gmt"]["status"] == "not copied (unreported): total limit"
+    assert (bundle / "steps/s1/outputs/reference/figure.svg").read_text(encoding="utf-8") == "figure.svg"
+    assert not any("escape" in path for path in rows)
+    assert built["status"] == "complete"
+    appendix = (bundle / "report_appendix.md").read_text(encoding="utf-8")
+    assert "보고하지 않은 산출 3개 미복사" in appendix
+    assert "누적 상한으로 기록 산출 일부를 복사하지 않음" not in appendix
+
+
+def test_link_script_restores_upstream_inputs_so_a_copied_script_reruns(tmp_path):
+    """A step reads upstream files as inputs/<step>/... (#423); the bundle relinks them to steps/<step>/outputs."""
+    import sys
+
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    first, second = root / "2026-10-05" / "task_a", root / "2026-10-05" / "task_b"
+    for workdir in (first, second):
+        write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+    write(first / "outputs/data/input.tsv", "value\n7\n")
+    script = second / "outputs/scripts/analyze.py"
+    write(script, "\n".join([
+        "from pathlib import Path",
+        'UPSTREAM = Path("inputs/s1/data/input.tsv")',
+        'Path("outputs/result.tsv").write_text(UPSTREAM.read_text(encoding="utf-8"), encoding="utf-8")',
+        "",
+    ]))
+    request = {
+        "id": "linked", "report": "ok", "report_appendix": "",
+        "plan": {"steps": [{"id": "s1", "depends_on": []}, {"id": "s2", "depends_on": ["s1", "gone"]}]},
+        "results": {
+            "s1": {"workdir": str(first), "workdir_id": first.name, "outputs": ["outputs/data/input.tsv"],
+                   "output_sha256": {"outputs/data/input.tsv": digest(first / "outputs/data/input.tsv")}},
+            "s2": {"workdir": str(second), "workdir_id": second.name, "outputs": ["outputs/scripts/analyze.py"],
+                   "output_sha256": {"outputs/scripts/analyze.py": digest(script)}},
+        },
+    }
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+    assert "먼저 `python link_inputs.py`" in readme
+    assert manifest_rows(bundle)["link_inputs.py"]["status"] == "generated"
+    moved = shutil.move(str(bundle), str(tmp_path / "elsewhere"))  # the bundle runs from any folder
+
+    linked = subprocess.run([sys.executable, "link_inputs.py"], cwd=moved, capture_output=True, text=True)
+    assert linked.returncode == 0, linked.stderr
+    assert "steps/s2/inputs/s1 -> steps/s1/outputs" in linked.stdout
+    assert not (Path(moved) / "steps/s2/inputs/gone").exists()
+    ran = subprocess.run([sys.executable, "outputs/scripts/analyze.py"], cwd=Path(moved) / "steps/s2",
+                         capture_output=True, text=True)
+    assert ran.returncode == 0, ran.stderr
+    assert (Path(moved) / "steps/s2/outputs/result.tsv").read_text(encoding="utf-8") == "value\n7\n"
+
+
 @pytest.mark.parametrize("total_bytes,max_files", [(1024 * 1024, 1), (5, 10)])
 def test_request_total_limits_record_every_omission(tmp_path, total_bytes, max_files):
     settings = configured(tmp_path)
@@ -640,8 +730,9 @@ async def test_bundle_failure_is_warning_only_and_restart_does_not_rebuild(tmp_p
 
 
 def test_step_prompts_and_cli_completion_show_bundle(capsys):
-    rule = "collect those paths in one variable block at the top"
-    assert rule in RESEARCH_STEP_PROMPT and rule in STEP_PROMPT
+    for rule in ("upstream step files by their relative paths under inputs/<step id>/",
+                 "collected in one variable block at the top", "never write an absolute path into a script"):
+        assert rule in RESEARCH_STEP_PROMPT and rule in STEP_PROMPT
     render({"type": "request.completed", "ts": 1, "data": {
         "ok": True, "cost_usd": 0, "bundle_path": "C:/runs/requests/r1"}})
     assert "요청 묶음: C:/runs/requests/r1" in capsys.readouterr().out

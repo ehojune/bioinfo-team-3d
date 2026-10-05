@@ -178,6 +178,51 @@ class HeldDir:
             except FileNotFoundError:
                 pass
 
+    def relink(self, name: str, target: Path) -> None:
+        """Point child `name` at folder `target`, replacing only a link left there (#423, PR #429 review).
+
+        A real file or folder under the name raises NotPlainFolder and stays: the entry is first renamed aside, and
+        only that renamed entry is removed, and only when it is a link (a file swapped in after a check is never the
+        one removed). POSIX works relative to the held descriptor; on Windows the held handle keeps this folder in
+        place."""
+        if self._handle is None:
+            raise OSError(errno.EBADF, "folder handle is closed")
+        if os.name == "nt" and self.path is None:
+            raise OSError(errno.EBADF, "held folder has no stable path")
+        aside = f".{name}.labhq-{os.getpid()}-{id(self):x}"
+        try:
+            self._rename(name, aside)
+        except FileNotFoundError:
+            pass
+        else:
+            if os.name == "nt":
+                attributes = os.lstat(self.path / aside).st_file_attributes
+                is_link = bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            else:
+                is_link = stat.S_ISLNK(os.stat(aside, dir_fd=self._handle, follow_symlinks=False).st_mode)
+            if not is_link:
+                self._rename(aside, name)
+                raise NotPlainFolder(errno.EEXIST, f"{name} is a real file or folder")
+            if os.name == "nt":  # rmdir unlinks a junction or folder symlink itself, never its target
+                (os.rmdir if attributes & stat.FILE_ATTRIBUTE_DIRECTORY else os.unlink)(self.path / aside)
+            else:
+                os.unlink(aside, dir_fd=self._handle)
+        if os.name == "nt":
+            try:
+                os.symlink(target, self.path / name, target_is_directory=True)
+            except OSError:
+                import _winapi  # a junction needs no symlink privilege
+
+                _winapi.CreateJunction(str(target), str(self.path / name))
+        else:
+            os.symlink(target, name, target_is_directory=True, dir_fd=self._handle)
+
+    def _rename(self, source: str, target: str) -> None:
+        if os.name == "nt":
+            os.rename(self.path / source, self.path / target)
+        else:
+            os.rename(source, target, src_dir_fd=self._handle, dst_dir_fd=self._handle)
+
     @staticmethod
     def _checked(handle: int, path: Path | None = None) -> HeldDir:
         try:
