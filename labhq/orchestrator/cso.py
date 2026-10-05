@@ -462,6 +462,8 @@ For reproducibility, save every analysis script under outputs/scripts/ and every
 intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
 A script reads upstream step files by their relative paths under inputs/<step id>/, exactly as the context lists
 them, collected in one variable block at the top of the script; never write an absolute path into a script.
+If you run scripts and no environment step precedes you, save the interpreter version and its package list (for
+Python: `python --version` and `python -m pip freeze`) to outputs/env/<your step id>.txt.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
