@@ -93,6 +93,8 @@ def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
     lines += [
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
         "`step:<step id>`, `assumption: <one line>`, or `not_applicable: <reason>`.",
+        "Use not_applicable only when the check does not apply to this request. When it applies but the plan cannot",
+        "do it (e.g. no independent cohort exists), answer `assumption: <why>`: that becomes a stated limitation.",
         "A topic with no listed items adds no checklist requirement.",
     ]
     return "\n".join(lines)
@@ -118,15 +120,24 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
 
 
 def limitations(answers: Any) -> list[str]:
-    """The answers that the PI report must name as one-line limitations."""
+    """The answers the PI report must name as one-line limitations: checks that apply but rest on an assumption.
+
+    A not_applicable check is not a limitation (bench C, #373); not_applicable() lists those."""
     if not isinstance(answers, dict):
         return []
     found = []
     for item_id, value in answers.items():
-        if not isinstance(item_id, str) or not isinstance(value, str):
-            continue
-        for prefix in ("assumption:", "not_applicable:"):
-            if value.startswith(prefix) and value[len(prefix):].strip():
-                found.append(f"{item_id}: {value[len(prefix):].strip()}")
-                break
+        if isinstance(item_id, str) and isinstance(value, str) and value.startswith("assumption:"):
+            reason = value[len("assumption:"):].strip()
+            if reason:
+                found.append(f"{item_id}: {reason}")
     return sorted(found)
+
+
+def not_applicable(answers: Any) -> list[str]:
+    """The ids answered not_applicable: checks that do not apply to this request."""
+    if not isinstance(answers, dict):
+        return []
+    return sorted(item_id for item_id, value in answers.items()
+                  if isinstance(item_id, str) and isinstance(value, str) and value.startswith("not_applicable:")
+                  and value[len("not_applicable:"):].strip())
