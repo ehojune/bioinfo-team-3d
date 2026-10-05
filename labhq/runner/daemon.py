@@ -971,7 +971,11 @@ class Runner:
                 unlinked: dict[str, str] = {}
                 for step_id, directory in upstream_steps.items():
                     upstream = Path(str(directory)).resolve()
-                    if not INPUT_STEP_ID.fullmatch(str(step_id)):
+                    if self.s.hpc.submit_prefix:
+                        # Shared-account jobs run from hpc_out/ as another account, and their submit check refuses
+                        # every link in the folder: no link, the path below instead (PR #429 review).
+                        unlinked[str(step_id)] = "shared-account HPC mode (hpc.submit_prefix) uses no links"
+                    elif not INPUT_STEP_ID.fullmatch(str(step_id)):
                         unlinked[str(step_id)] = "the step id cannot name a folder"
                     elif str(upstream) in extra_dirs and (upstream / "outputs").is_dir():
                         links[str(step_id)] = upstream / "outputs"
@@ -982,8 +986,9 @@ class Runner:
                     for step_id, reason in unlinked.items():
                         await emit("agent.log", {"level": "warn", "text": f"inputs/{step_id} 링크 실패: {reason}"})
                     note = "\n".join(
-                        f"- inputs/{step_id} is not available ({reason}); its files are at "
-                        f"{Path(str(upstream_steps[step_id])) / 'outputs'}" for step_id, reason in unlinked.items())
+                        f"- inputs/{step_id} is not available ({reason}); read its files at "
+                        f"{Path(str(upstream_steps[step_id])) / 'outputs'} instead"
+                        for step_id, reason in unlinked.items())
                     task = ws.task = task.model_copy(update={"context": (
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.

@@ -672,7 +672,7 @@ async def test_an_upstream_not_opened_to_the_step_is_named_instead_of_linked(tmp
     assert os.listdir(workdir / "inputs" / "s2") == []
     task_md = (workdir / "TASK.md").read_text(encoding="utf-8")
     assert "[Upstream inputs not linked]" in task_md
-    assert f"- inputs/s1 is not available (the folder is not opened to this step); its files are at {outside / 'outputs'}" in task_md
+    assert f"- inputs/s1 is not available (the folder is not opened to this step); read its files at {outside / 'outputs'} instead" in task_md
     assert "- inputs/s2 is not available (inputs/s2 is a real file or folder)" in task_md
     assert any("inputs/s1" in text for text in _logs(runner, "warn"))
 
@@ -725,27 +725,6 @@ def test_relink_replaces_only_a_link(tmp_path):
     assert sorted(os.listdir(inputs / "real")) == ["keep.txt"]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="hpc.job_group runs on POSIX runners only")
-def test_hpc_job_files_skip_only_runner_shaped_input_links(tmp_path):
-    """PR #429 review: an agent-made inputs/<name> link to anywhere else is still refused before an HPC submit."""
-    from labhq.tools.hpc_mcp import _upstream_outputs_link
-
-    root = tmp_path / "runs"
-    upstream = root / "2026-10-05" / "task_up_worker" / "outputs"
-    bundle = root / "requests" / "r1" / "outputs"
-    outside = tmp_path / "outside"
-    for folder in (upstream, bundle, outside):
-        folder.mkdir(parents=True)
-    inputs = root / "2026-10-06" / "task_down_worker" / "inputs"
-    inputs.mkdir(parents=True)
-    links = {"s1": upstream, "fake": outside, "bundle": bundle, "task": upstream.parent}
-    for name, target in links.items():
-        os.symlink(target, inputs / name, target_is_directory=True)
-    (inputs / "plain").mkdir()
-
-    assert {name for name in [*links, "plain"] if _upstream_outputs_link(inputs / name, root)} == {"s1"}
-
-
 def test_relink_leaves_a_regular_file_under_the_name(tmp_path):
     from labhq.adapters.held_dir import HeldDir, NotPlainFolder
 
@@ -758,3 +737,26 @@ def test_relink_leaves_a_regular_file_under_the_name(tmp_path):
         held.relink("s1", target)
     assert (inputs / "s1").read_text(encoding="utf-8") == "agent file"
     assert os.listdir(inputs) == ["s1"], "the entry renamed aside for the check is put back"
+
+
+@pytest.mark.asyncio
+async def test_shared_account_hpc_mode_links_no_inputs_and_names_the_paths(tmp_path, monkeypatch, spawned):
+    """PR #429 review: submit_prefix jobs run from hpc_out/ as another account and refuse links, so none is made."""
+    settings = _settings(tmp_path)
+    settings.hpc.job_group, settings.hpc.user = "labhq", "hpcuser"
+    settings.hpc.submit_prefix = ["sudo", "-u", "hpcuser"]
+    upstream = Path(settings.runner.workspace_root) / "2026-10-05" / "task_up_worker"
+    (upstream / "outputs").mkdir(parents=True)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-06" / "task_down_worker"
+    spawned(Engine.codex)
+    runner = _runner(settings, monkeypatch, _staff())
+
+    result = await runner.run_task(Task(
+        agent_id="worker", request_id="r", prompt="q", context="ctx",
+        meta={"kind": "step", "workdir": str(workdir), "upstream_dirs": [str(upstream)],
+              "upstream_steps": {"s1": str(upstream)}}))
+
+    assert result.ok, result.error
+    assert not os.path.lexists(workdir / "inputs" / "s1")
+    assert (f"- inputs/s1 is not available (shared-account HPC mode (hpc.submit_prefix) uses no links); "
+            f"read its files at {upstream / 'outputs'} instead") in (workdir / "TASK.md").read_text(encoding="utf-8")
