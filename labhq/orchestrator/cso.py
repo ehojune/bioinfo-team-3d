@@ -36,7 +36,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
 from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
                               packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs,
                               select_legacy_applied_packs)
-from ..util import clip, extract_json, output_relpath, short
+from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
 from ..vocab import topic_checklists
@@ -460,7 +460,8 @@ with "- ". Inside the JSON string write each line break as \\n. Do not proceed w
 
 For reproducibility, save every analysis script under outputs/scripts/ and every result-determining reference or
 intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
-In a script that reads upstream step files, collect those paths in one variable block at the top of the script.
+A script reads upstream step files by their relative paths under inputs/<step id>/, exactly as the context lists
+them, collected in one variable block at the top of the script; never write an absolute path into a script.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
@@ -2707,9 +2708,13 @@ class Orchestrator:
                     head = f"## {d} · {by_id[d]['agent_id']}" + ("" if r.ok else f" (FAILED: {short(r.error, 200)})")
                     artifacts = [{"workdir_id": r.workdir_id, "path": path}
                                  for path in r.outputs]
-                    paths = "\n".join(str(Path(r.workdir) / path) for path in r.outputs) if r.workdir else ""
+                    # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
+                    # names these paths still runs from a request bundle on another machine.
+                    paths = "\n".join(input_relpath(d, path) or str(Path(r.workdir) / path)
+                                      for path in r.outputs) if r.workdir else ""
                     parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
-                                 f"Readable files:\n{paths}\n{clip(r.text, self.cfg.context_chars_per_step)}")
+                                 f"Readable files (relative to your folder):\n{paths}\n"
+                                 f"{clip(r.text, self.cfg.context_chars_per_step)}")
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
@@ -2768,6 +2773,8 @@ class Orchestrator:
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
             upstream_dirs = [results[d].workdir for d in step["depends_on"]
                              if d in results and results[d].workdir and results[d].outputs]
+            upstream_steps = {d: results[d].workdir for d in step["depends_on"]
+                              if d in results and results[d].workdir and results[d].outputs}
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
                         resume_session_id=session_id if can_resume else None,
@@ -2778,7 +2785,8 @@ class Orchestrator:
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                                "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
-                               "upstream_dirs": upstream_dirs, "outputs": step.get("outputs", []),
+                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
+                               "outputs": step.get("outputs", []),
                                **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),

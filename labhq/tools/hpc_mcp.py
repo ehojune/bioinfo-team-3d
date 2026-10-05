@@ -131,6 +131,8 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
             dirs[:] = [name for name in dirs if Path(root) / name not in {logs, output_dir}]
             for name in [*dirs, *files]:
                 path = Path(root) / name
+                if path.is_symlink() and path.parent == workdir / "inputs":
+                    continue  # the runner's inputs/<step> link to an upstream step (#423): not walked, not chmod-ed
                 if path.is_symlink():
                     raise RuntimeError(f"task input must not be a symlink: {path}")
                 st = path.stat()

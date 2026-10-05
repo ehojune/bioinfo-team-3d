@@ -399,3 +399,15 @@ def output_relpath(name: str) -> str | None:
     if n in (".", "..") or n.startswith("../"):
         return None
     return n if n == "outputs" or n.startswith("outputs/") else f"outputs/{n}"
+
+
+# A step id that can name the inputs/<step id> link in a downstream step folder (#423).
+INPUT_STEP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def input_relpath(step_id: str, output: str) -> str | None:
+    """An upstream step's output as the downstream folder reads it, `inputs/<step id>/...`, or None."""
+    relative = output_relpath(output)
+    if not INPUT_STEP_ID.fullmatch(str(step_id)) or relative is None or relative == "outputs":
+        return None
+    return f"inputs/{step_id}/{relative[len('outputs/'):]}"

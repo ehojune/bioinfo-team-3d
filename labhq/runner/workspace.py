@@ -109,6 +109,35 @@ class TaskWorkspace:
                                f"there.\n\nInstruction summary: {t.prompt[:2000]}")
         return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
 
+    def link_inputs(self, upstream: dict[str, Path]) -> dict[str, str]:
+        """Point ``inputs/<step id>`` at each upstream step's ``outputs/`` folder (#423).
+
+        Scripts then read upstream files by a path relative to this folder, which a request bundle can restore,
+        instead of an absolute runner path. A link an earlier run left is replaced: a revised upstream step can
+        have moved to a new folder. Returns step id -> why that input was not linked."""
+        failed: dict[str, str] = {}
+        inputs = plain_directory(self.dir, "inputs") if upstream else None
+        if upstream and inputs is None:
+            return {step_id: "inputs is a link or not a folder in the workspace" for step_id in upstream}
+        for step_id, outputs in upstream.items():
+            link = inputs / step_id
+            try:
+                if os.path.lexists(link) and not _is_link(link):
+                    failed[step_id] = f"inputs/{step_id} is a real file or folder"
+                    continue
+                _remove_entry(link)
+                try:
+                    os.symlink(outputs, link, target_is_directory=True)
+                except OSError:
+                    if os.name != "nt":
+                        raise
+                    import _winapi  # a junction needs no symlink privilege on Windows
+
+                    _winapi.CreateJunction(str(outputs), str(link))
+            except OSError as exc:
+                failed[step_id] = f"{type(exc).__name__}: {exc.strerror or exc}"
+        return failed
+
     def install_skill(self, skill_dir: Path) -> str | None:
         """Install a fresh contract skill copy for this run, without traversing workspace links.
 

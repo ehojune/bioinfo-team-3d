@@ -34,6 +34,35 @@ _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 REMOTE_RUNNER_NOTE = "runner가 다른 PC라 묶음을 만들지 않음"
+LINK_SCRIPT = "link_inputs.py"
+# Written into the bundle: scripts read upstream files as inputs/<step id>/..., which the runner linked (#423).
+LINK_SCRIPT_BODY = '''"""Link steps/<step>/inputs/<upstream> to steps/<upstream>/outputs (labhq request bundle)."""
+import os
+import shutil
+from pathlib import Path
+
+LINKS = __LINKS__
+root = Path(__file__).resolve().parent
+for step, upstream_ids in LINKS.items():
+    for upstream in upstream_ids:
+        target, link = root / "steps" / upstream / "outputs", root / "steps" / step / "inputs" / upstream
+        if not target.is_dir() or os.path.lexists(link):
+            continue
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(os.path.relpath(target, link.parent), link, target_is_directory=True)
+        except OSError:
+            try:
+                import _winapi  # Windows without the symlink privilege: a junction
+
+                _winapi.CreateJunction(str(target), str(link))
+            except (ImportError, OSError):
+                shutil.copytree(target, link)
+        print(f"steps/{step}/inputs/{upstream} -> steps/{upstream}/outputs")
+'''
+# Status suffix for a file the step wrote without reporting it: copied without a run-time hash, and a miss does not
+# make the bundle incomplete ("not copied (unreported): size" does not start with "not copied:").
+UNREPORTED_TAG = " (unreported)"
 
 
 class RemoteRunnerBundle(OSError):
@@ -254,7 +283,7 @@ def _runner_python_command(result: Mapping[str, Any], tasks: Mapping[str, Any],
 
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
-            unsafe_scripts: list[str], python_unknown: bool) -> str:
+            unsafe_scripts: list[str], python_unknown: bool, linked: bool = False) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
@@ -268,6 +297,8 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
     else:
         lines.append("- 선언된 단계 없음")
     lines += ["", "## 다시 실행", "", "아래 명령은 묶음 루트에서 시작해 각 단계 폴더에서 실행합니다.", ""]
+    if linked:
+        lines.append(f"- 먼저 `python {LINK_SCRIPT}`: 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇습니다")
     lines += [f"- `{command}`" for command in scripts] if scripts else ["- 실행 스크립트 없음"]
     lines += [f"- 이름이 안전하지 않아 명령을 만들지 않음: `{path}`" for path in unsafe_scripts]
     if python_unknown:
@@ -309,6 +340,60 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     copied_bytes = 0
     copied_files = 0
     total_limit_hit = False
+    unreported: list[tuple[str, HeldDir, Path, PurePosixPath, str | None]] = []
+
+    def copy_output(step_id: str, outputs: HeldDir, workdir: Path, path: PurePosixPath,
+                    expected_sha256: str | None, python_command: str | None) -> dict[str, Any]:
+        """Copy one output. ``expected_sha256`` None: an unreported file, copied as it is now (no run hash)."""
+        nonlocal copied_bytes, copied_files, total_limit_hit, python_unknown
+        tag = "" if expected_sha256 is not None else UNREPORTED_TAG
+        output_rel = PurePosixPath(*path.parts[1:])
+        rel = PurePosixPath("steps", step_id, *path.parts)
+        source = workdir / Path(*path.parts)
+        row = {"relative_path": rel.as_posix(), "size": "", "sha256": "",
+               "step_id": step_id, "original_path": str(source), "status": f"copied{tag}",
+               "rewritten": 0, "remaining_absolute_paths": "", "rewritten_files": ""}
+        destination = temp / Path(*rel.parts)
+        try:
+            with _open_recorded_output(outputs, path) as (stream, info):
+                row["size"] = info.st_size
+                if info.st_size > max_file_bytes:
+                    row["status"] = f"not copied{tag}: size"
+                elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
+                    row["status"] = f"not copied{tag}: total limit"
+                    total_limit_hit = total_limit_hit or not tag  # its appendix note counts recorded outputs
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        source_sha256 = _copy_held(stream, info, destination)
+                    except OSError:
+                        destination.unlink(missing_ok=True)
+                        row["status"] = f"not copied{tag}: changed since run"
+                        return row
+                    if expected_sha256 is not None and source_sha256.casefold() != expected_sha256.casefold():
+                        destination.unlink(missing_ok=True)
+                        row["status"] = "not copied: changed since run"
+                        return row
+                    copied_files += 1
+                    copied_bytes += info.st_size
+                    suffix = destination.suffix.casefold()
+                    command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
+                    if suffix == ".py" and command is None:
+                        command = "python"
+                        python_unknown = True
+                    if command and "scripts" in output_rel.parts:
+                        if _safe_script_path(rel):
+                            script_path = PurePosixPath("outputs", *output_rel.parts)
+                            script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
+                                ("cd", f"steps/{step_id}")) + " && " + shlex.join((command, script_path.as_posix()))
+                        else:
+                            unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
+        except FileNotFoundError:
+            row["status"] = f"not copied{tag}: missing"
+        except OSError:
+            row["status"] = f"not copied{tag}: changed since run"
+        return row
+
     try:
         found_workdirs = 0
         with ExitStack() as stack:
@@ -352,53 +437,16 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                                      "original_path": raw, "status": "not copied: unsafe path", "rewritten": 0,
                                      "remaining_absolute_paths": "", "rewritten_files": ""})
                         continue
-                    output_rel = PurePosixPath(*path.parts[1:])
-                    rel = PurePosixPath("steps", step_id, *path.parts)
-                    source = workdir / Path(*path.parts)
-                    row = {"relative_path": rel.as_posix(), "size": "", "sha256": "",
-                           "step_id": step_id, "original_path": str(source), "status": "copied",
-                           "rewritten": 0, "remaining_absolute_paths": "", "rewritten_files": ""}
-                    destination = temp / Path(*rel.parts)
-                    try:
-                        with _open_recorded_output(outputs, path) as (stream, info):
-                            row["size"] = info.st_size
-                            if info.st_size > max_file_bytes:
-                                row["status"] = "not copied: size"
-                            elif copied_files >= max_total_files or copied_bytes + info.st_size > max_total_bytes:
-                                row["status"] = "not copied: total limit"
-                                total_limit_hit = True
-                            else:
-                                destination.parent.mkdir(parents=True, exist_ok=True)
-                                try:
-                                    source_sha256 = _copy_held(stream, info, destination)
-                                except OSError:
-                                    destination.unlink(missing_ok=True)
-                                    row["status"] = "not copied: changed since run"
-                                else:
-                                    if source_sha256.casefold() != expected_sha256.casefold():
-                                        destination.unlink(missing_ok=True)
-                                        row["status"] = "not copied: changed since run"
-                                    else:
-                                        copied_files += 1
-                                        copied_bytes += info.st_size
-                                        suffix = destination.suffix.casefold()
-                                        command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
-                                        if suffix == ".py" and command is None:
-                                            command = "python"
-                                            python_unknown = True
-                                        if command and "scripts" in output_rel.parts:
-                                            if _safe_script_path(rel):
-                                                script_path = PurePosixPath("outputs", *output_rel.parts)
-                                                script_commands.setdefault(step_id, {})[rel.as_posix()] = shlex.join(
-                                                    ("cd", f"steps/{step_id}")) + " && " + shlex.join(
-                                                        (command, script_path.as_posix()))
-                                            else:
-                                                unsafe_scripts.setdefault(step_id, set()).add(rel.as_posix())
-                    except FileNotFoundError:
-                        row["status"] = "not copied: missing"
-                    except OSError:
-                        row["status"] = "not copied: changed since run"
-                    rows.append(row)
+                    rows.append(copy_output(step_id, outputs, workdir, path, expected_sha256, python_command))
+                listed = {raw for raw, _path, _sha in recorded}
+                unreported += [(step_id, outputs, workdir, path, python_command)
+                               for raw in result.get("unreported_outputs") or []
+                               if isinstance(raw, str) and raw not in listed
+                               and (path := _safe_output_path(raw)) is not None]
+            # Files a step wrote without reporting them (a gene-set copy, a figure) can be what its scripts read
+            # (#423). They are copied after every recorded output, so they never push one past the total limit.
+            for step_id, outputs, workdir, path, python_command in unreported:
+                rows.append(copy_output(step_id, outputs, workdir, path, None, python_command))
         if not found_workdirs:
             raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
 
@@ -414,6 +462,9 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                          f"상한 {max_total_files}개, {max_total_bytes} bytes)")
         not_copied = sum(str(row["status"]).startswith("not copied:") for row in rows)
         bundle_status = "incomplete" if not_copied else "complete"
+        unreported_missed = sum(str(row["status"]).startswith(f"not copied{UNREPORTED_TAG}:") for row in rows)
+        if unreported_missed:
+            appendix += f"\n\n- 보고하지 않은 산출 {unreported_missed}개 미복사(크기·누적 상한 등; MANIFEST.tsv 확인)"
         if not_copied:
             appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
@@ -421,7 +472,14 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         commands = [command for step_id in ordered_ids
                     for _path, command in sorted(script_commands.get(step_id, {}).items())]
         unsafe = [path for step_id in ordered_ids for path in sorted(unsafe_scripts.get(step_id, set()))]
-        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown),
+        bundled = {step_id for step_id, _workdir in workdirs}
+        links = {str(step.get("id")): deps for step in ordered_steps
+                 if str(step.get("id")) in bundled
+                 and (deps := [str(dep) for dep in step.get("depends_on") or [] if str(dep) in bundled])}
+        if links:
+            (temp / LINK_SCRIPT).write_text(LINK_SCRIPT_BODY.replace("__LINKS__", json.dumps(links, sort_keys=True)),
+                                            encoding="utf-8", newline="\n")
+        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links)),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -443,7 +501,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         with appendix_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(bundle_note) + "\n")
 
-        generated = [temp / "README.md", temp / "report.md", appendix_path]
+        generated = [temp / "README.md", temp / "report.md", appendix_path,
+                     *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else [])]
         for path in generated:
             relative = path.relative_to(temp).as_posix()
             count, paths = rewrite_by_file.get(relative, (0, []))
@@ -451,7 +510,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                          "step_id": "", "original_path": "", "status": "generated", "rewritten": count,
                          "remaining_absolute_paths": " | ".join(paths), "rewritten_files": ""})
         for row in rows:
-            if row["status"] == "copied":
+            if row["status"] in ("copied", f"copied{UNREPORTED_TAG}"):
                 copied = temp / str(row["relative_path"])
                 count, paths = rewrite_by_file.get(str(row["relative_path"]), (0, []))
                 row.update(size=copied.stat().st_size, sha256=_sha256(copied), rewritten=count,
