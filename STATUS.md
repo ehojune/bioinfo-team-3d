@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #298 — PI 문답에 10-04·10-05 질문 셋
+
+- 결론: PI가 10-04·10-05에 물은 것 셋(문헌조사와 원 연구 Methods, Codex 한도 중 Claude 작업, Claude 직원 로그인 만료)을 `docs/pi-qa.md`에 답과 함께 넣었다.
+- 바뀐 것: `docs/pi-qa.md` 8,258 → 9,946자.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `docs/pi-qa.md`.
+
 ## 2026-10-05 · 운영 — 그림자 제거 검사의 실패 진단
 
 - 결론: `test_semantics_shadow_remove`가 Windows에서 가끔 실패하는데(오늘 6번 중 1번 등), 실패 메시지가 안쪽 pytest 출력의 마지막 3,000자뿐이라 faulthandler 스택만 보이고 어느 test인지 알 수 없었다. 이제 실패한 test 줄과 덤프 머리 줄을 먼저 보인다. 자식 출력은 UTF-8인데 cp949로 읽어 reader thread가 깨지던 것도 고쳤다.
