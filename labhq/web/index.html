@@ -774,7 +774,7 @@ const assumptionsHTML = q => !(q.assumptions || []).length ? '' : `<section clas
   `<li>${esc(value)}</li>`).join('')}</ul><p class="empty-note">바꾸려면 실행 중 메모로 알려 주세요.</p></section>`;
 // An incomplete bundle must not read as a full copy (PR #389 review): the status sits next to the path.
 const bundleHTML = q => q.bundlePath ? (q.bundleStatus === 'incomplete'
-    ? `<p class="empty-note"><strong>요청 묶음(불완전)</strong>: <code>${esc(q.bundlePath)}</code> · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요</p>`
+    ? `<p class="empty-note"><strong>요청 묶음(불완전)</strong>: <code>${esc(q.bundlePath)}</code> · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${q.bundleGrade ? ` · 재현 등급 <strong>${esc(q.bundleGrade)}</strong>(이유는 묶음 README)` : ''}</p>`
     : `<p class="empty-note">요청 묶음: <code>${esc(q.bundlePath)}</code>${q.bundleGrade ? ` · 재현 등급 <strong>${esc(q.bundleGrade)}</strong>(이유는 묶음 README)` : ''}</p>`)
   : q.bundleWarning ? `<p class="empty-note">요청 묶음 경고: ${esc(q.bundleWarning)}</p>` : '';
 let reqKey = '';

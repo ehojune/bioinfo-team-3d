@@ -26,7 +26,7 @@ TEXT_SUFFIXES = frozenset({
 SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash"}
 SCRIPT_SUFFIXES = frozenset({".py", ".r", ".sh"})
 # Outputs that are prose, not data a script must have produced (the grade does not ask a script for them).
-TEXT_ONLY = frozenset({".md", ".txt"})
+TEXT_ONLY = frozenset({".md"})  # .txt is a common data format (counts, variant lists): PR #431 review
 DOCUMENT_SUFFIXES = frozenset({".md"})
 MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",

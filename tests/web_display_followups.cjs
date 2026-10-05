@@ -29,6 +29,10 @@ assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'complete', bun
 // 3D: same information, re-rendered when it changes.
 assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleWarning/);
 assert.match(live3d, /재현 등급 \$\{q\.bundleGrade\}/);
+// An incomplete bundle is the case a lower grade matters most (PR #431 review): both views keep the grade.
+assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'incomplete', bundleGrade: 'documented'}),
+  /요청 묶음\(불완전\).* · 재현 등급 <strong>documented<\/strong>/);
+assert.match(live3d, /MANIFEST\.tsv에 있어요\$\{grade\}`/);
 assert.match(live3d, /text\(row, 'h4', '가정'\)/);
 assert.match(live3d, /요청 묶음\(불완전\)/);
 assert.match(live3d, /요청 묶음 경고: /);

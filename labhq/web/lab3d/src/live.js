@@ -119,9 +119,10 @@ export function startLiveOffice(onState) {
         }
       }
       if (q.bundlePath) {
+        const grade = q.bundleGrade ? ` · 재현 등급 ${q.bundleGrade}(이유는 묶음 README)` : '';
         text(row, 'p', q.bundleStatus === 'incomplete'
-          ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요`
-          : `요청 묶음: ${q.bundlePath}${q.bundleGrade ? ` · 재현 등급 ${q.bundleGrade}(이유는 묶음 README)` : ''}`);
+          ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${grade}`
+          : `요청 묶음: ${q.bundlePath}${grade}`);
       } else if (q.bundleWarning) {
         text(row, 'p', `요청 묶음 경고: ${q.bundleWarning}`);
       }

@@ -805,3 +805,10 @@ def test_missing_scripts_environment_or_a_kept_absolute_path_lowers_the_grade_wi
     assert "- `documented`\n- 스크립트 없이 데이터 산출만 있는 단계: qc\n" in readme
     appendix = (Path(built["path"]) / "report_appendix.md").read_text(encoding="utf-8")
     assert "- 재현 등급: documented (스크립트 없이 데이터 산출만 있는 단계: qc; " in appendix
+
+
+def test_a_txt_data_output_without_a_script_is_not_replayable(tmp_path):
+    """PR #431 review: counts.txt or variants.txt is data, so its step needs a script like a .tsv would."""
+    built, _readme = _graded(tmp_path, {"count": {"outputs/counts.txt": "TP53 12\n", "outputs/notes.md": "# n\n"}}, {})
+    assert built["grade"] == "documented"
+    assert built["grade_reasons"] == ["스크립트 없이 데이터 산출만 있는 단계: count"]
