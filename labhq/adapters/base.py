@@ -583,10 +583,6 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.started_command = launcher
-        if payload is not None and proc.stdin:
-            proc.stdin.write(payload)
-            await proc.stdin.drain()
-            proc.stdin.close()
         st = RunState()
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
@@ -633,6 +629,18 @@ class AgentAdapter(ABC):
                 last_output = time.monotonic()
                 stderr_tail.append(raw.decode(errors="replace").rstrip())
 
+        async def feed_stdin() -> None:
+            """Write the prompt inside the timed, watched run: a CLI that never reads stdin must not hold labhq before
+            task_timeout_s and the stall warning start (PR #433 review)."""
+            if payload is None or not proc.stdin:
+                return
+            try:
+                proc.stdin.write(payload)
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except OSError:  # broken pipe or reset, also after a timeout kill
+                pass  # the CLI ended or closed stdin; its exit and output say what happened
+
         async def stall_watch() -> None:
             """Warn once when the CLI has been quiet for stall_warn_s (#382): on Windows, name pending UAC prompts."""
             limit = self.settings.runner.stall_warn_s
@@ -654,7 +662,7 @@ class AgentAdapter(ABC):
                         "단계를 취소하세요")})
                 return
 
-        drain = asyncio.gather(read_out(), read_err(), proc.wait())
+        drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
         guard = asyncio.create_task(exit_guard())
         watch = asyncio.create_task(stall_watch())
         try:

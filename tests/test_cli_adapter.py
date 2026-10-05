@@ -114,3 +114,27 @@ async def test_cli_usage_reaches_manifest_and_request(tmp_path, monkeypatch):
     await hub.on_runner_message("runner", {"type": "task.result", "task_id": task.id,
                                           "request_id": "r", "data": result.model_dump()})
     assert hub.request_summary(hub.requests["r"])["usage"] == {"input_tokens": 7, "output_tokens": 4}
+
+
+async def test_a_cli_that_never_reads_its_stdin_still_times_out_and_gets_the_stall_warning(tmp_path, monkeypatch):
+    """PR #433 review: the prompt was written before the timeout and the stall watch began, so a CLI that never read a
+    prompt larger than the pipe buffer held labhq forever."""
+    import asyncio
+    import labhq.adapters.base as base
+
+    async def no_prompts():
+        return False
+
+    monkeypatch.setattr(base, "pending_uac_prompts", no_prompts)
+    script = tmp_path / "deaf-agent"
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    cli = CliSpec(command=[sys.executable, str(script)], stdin="prompt", output="jsonl")
+    ctx, events = _ctx(tmp_path, cli)
+    ctx.prompt = "x" * 4_000_000  # far past any pipe buffer
+    ctx.settings.runner.task_timeout_s = 3
+    ctx.settings.runner.stall_warn_s = 1
+
+    res = await asyncio.wait_for(get_adapter(Engine.cli, ctx.settings).run(ctx), 45)
+
+    assert not res.ok and "timeout after 3s" in (res.error or "")
+    assert any(t == "agent.log" and d.get("level") == "warn" and "출력이" in d.get("text", "") for t, d in events)
