@@ -62,13 +62,21 @@ def load(path: Path | None = None, vocab: Vocab | None = None) -> dict[str, list
 
 
 def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> list[ChecklistItem]:
-    """Return declared-topic requirements once, preserving file/topic order."""
+    """Return declared-topic requirements once per id, preserving file/topic order.
+
+    Two declared topics can list one id with different checks (``library_qc`` for ATAC and ChIP). The plan answers
+    an id once, so the checks are joined instead of the later topic's check being dropped."""
     selected = set(topics) if isinstance(topics, list) else set()
     found: dict[str, ChecklistItem] = {}
     for topic, items in checklists.items():
         if topic in selected:
             for item in items:
-                found.setdefault(item.id, item)
+                prior = found.get(item.id)
+                if prior is None:
+                    found[item.id] = item
+                elif item.check not in prior.check.split(" / "):
+                    found[item.id] = ChecklistItem(item.id, f"{prior.check} / {item.check}",
+                                                   f"{prior.why} / {item.why}", f"{prior.topic},{item.topic}")
     return list(found.values())
 
 
