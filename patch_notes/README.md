@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:44 | [`a25ef68`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/a25ef68) | 열린 직원 시트의 쓴 비용도 실시간 갱신 |
+| 14:39 | [`89a45fe`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/89a45fe) | 직원 시트에 쓴 비용(화면의 요청 기준) |
 | 14:19 | [`91bbe31`](https://github.com/ehojune/bioinfo-team-3d/pull/416/commits/91bbe31) | 그림자 제거 검사: 실패한 test 줄을 먼저, 자식 출력은 UTF-8로 |
 | 14:16 | [`700bbd7`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/700bbd7) | 요청 줄 다시 그리기 key에 직원 이름 |
 | 14:08 | [`721285b`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/721285b) | 요청 비용을 직원별로 |
