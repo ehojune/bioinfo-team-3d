@@ -93,3 +93,15 @@ def test_the_public_scan_covers_every_shadow_file():
     from tests.test_semantics_public import pilot_files
     scanned = {p.relative_to(ROOT).as_posix() for p in pilot_files()}
     assert set(removal.OWNED) <= scanned
+
+
+def test_a_failed_inner_run_names_its_failures_above_a_long_tail():
+    # 2026-10-05: an inner run failed with a faulthandler stack as its last 3000 characters, hiding which test.
+    import subprocess
+
+    output = "Fatal Python error: Segmentation fault\nFAILED tests/test_x.py::test_y - boom\n" + "frame\n" * 2000
+    with pytest.raises(SystemExit) as caught:
+        removal._ok(subprocess.CompletedProcess(["pytest"], 1, output, ""), "pytest")
+    head = str(caught.value).splitlines()[:3]
+    assert head == ["pytest failed after removal:", "Fatal Python error: Segmentation fault",
+                    "FAILED tests/test_x.py::test_y - boom"]

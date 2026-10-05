@@ -175,7 +175,7 @@ def check(state_dir: Path | None = None, only: str | None = None) -> dict:
         summary = remove(copy, only)
         env = {**_env(), "PYTHONPATH": str(copy)}
         run = [sys.executable, "-c", "import compileall, sys; sys.exit(not compileall.compile_dir('labhq', quiet=1))"]
-        _ok(subprocess.run(run, cwd=copy, capture_output=True, text=True, env=env), "compile")
+        _ok(subprocess.run(run, cwd=copy, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env), "compile")
         words = (("semantics_actions", "semantics-hook: actions", "semantics-actions", "after_followup")
                  if only == "actions" else
                  ("semantics_shadow", "semantics_objects", "semantics_input_fit", "semantics-hook", "records_from_rows",
@@ -187,13 +187,13 @@ def check(state_dir: Path | None = None, only: str | None = None) -> dict:
         if state_dir is not None:
             done = _ok(subprocess.run([sys.executable, "-c", ACTIONS_SMOKE if only == "actions" else SMOKE,
                                        str(Path(tmp) / "labhq.yaml"), state_dir.as_posix()],
-                                      cwd=copy, capture_output=True, text=True, env=env, timeout=300),
+                                      cwd=copy, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=300),
                        "settings and state")
             summary["state"] = __import__("json").loads(done.stdout.strip().splitlines()[-1])
         tests = _ok(subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
                                     f"--basetemp={Path(tmp) / 'pt'}",
                                     *(ACTIONS_CHECK_TESTS if only == "actions" else CHECK_TESTS)],
-                                   cwd=copy, capture_output=True, text=True, env=env, timeout=1500), "pytest")
+                                   cwd=copy, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=1500), "pytest")
         summary["pytest"] = tests.stdout.strip().splitlines()[-1]
         return summary
 
@@ -205,7 +205,13 @@ def _env() -> dict:
 
 def _ok(done: subprocess.CompletedProcess, what: str) -> subprocess.CompletedProcess:
     if done.returncode != 0:
-        raise SystemExit(f"{what} failed after removal:\n{(done.stdout + done.stderr)[-3000:]}")
+        output = (done.stdout or "") + (done.stderr or "")
+        # The tail alone can be a faulthandler stack (a flaky inner run on 2026-10-05): lead with the failed tests
+        # and the dump's header line, which sit far above the last 3000 characters.
+        key = [line for line in output.splitlines() if line.startswith(("FAILED ", "ERROR "))
+               or line.startswith(("Fatal Python error", "Timeout (", "Windows fatal exception"))]
+        raise SystemExit(f"{what} failed after removal:\n" + "".join(f"{line}\n" for line in key[:20])
+                         + f"...\n{output[-3000:]}")
     return done
 
 
