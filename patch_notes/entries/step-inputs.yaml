@@ -9,3 +9,6 @@ rows:
 - sha: "6623b83"
   at: 2026-10-06 03:11
   text: HPC 제출 검사는 앞 단계 outputs로 풀리는 inputs 링크만 지나치고, 링크 교체는 옆으로 옮긴 항목이 링크일 때만 지운다.
+- sha: "f985c93"
+  at: 2026-10-06 03:21
+  text: 공유 계정 HPC 모드(hpc.submit_prefix)에서는 inputs 링크 대신 원래 경로를 주고, HPC 제출 검사는 main처럼 모든 링크를 거부한다.
