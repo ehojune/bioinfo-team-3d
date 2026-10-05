@@ -19,4 +19,5 @@ assert.equal(agentCostLabel({by_engine: {}}), '', 'an older summary without by_a
 
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /agentCostLabel\(q\.costSummary, nick\)/);
+assert.match(html, /JSON\.stringify\(\[S\.requests\.size, staffNames,/, 'a roster change redraws the cost line');
 console.log('cost by agent web tests passed');
