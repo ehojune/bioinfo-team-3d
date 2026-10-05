@@ -303,3 +303,21 @@ def test_logos_are_limited_to_verified_slugs():
     assert Look("x", "#x", "python").logo == "python"
     with pytest.raises(ValueError):
         Look("x", "#x", "openai")  # draws nothing on shields.io
+
+
+def test_english_readme_badges_are_generated_from_the_same_block():
+    """PR #428 review: a static English copy would keep old staff counts after the next roster change."""
+    readme_en = (ROOT / integrations.README_EN).read_text(encoding="utf-8")
+    assert block(readme_en, BADGES_START, BADGES_END).strip() == integrations.english(badges(ROOT)).strip()
+    assert not integrations.HANGUL.search(" ".join(labels(block(readme_en, BADGES_START, BADGES_END))))
+
+
+def test_english_badges_translate_alt_text_and_query_and_refuse_unknown_korean():
+    english = integrations.english(
+        integrations.shield("PubMed", "MCP · 논문 검색", Look("", "https://pubmed.ncbi.nlm.nih.gov/")) + "\n"
+        + integrations.shield("Codex", "직원 3명 · gpt", Look("", "https://github.com/openai/codex")))
+    assert "[![PubMed: MCP · paper search]" in english and "message=MCP%20%C2%B7%20paper%20search" in english
+    assert "[![Codex: 3 staff · gpt]" in english and "message=3%20staff%20%C2%B7%20gpt" in english
+    assert "](https://pubmed.ncbi.nlm.nih.gov/)" in english
+    with pytest.raises(ValueError):
+        integrations.english(integrations.shield("X", "새 기능", Look("", "https://example.org/")))

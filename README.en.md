@@ -1,11 +1,12 @@
 # labhq — HQ for a one-person bioinformatics lab (v0.25)
 
+<!-- badges:start -->
 [![Claude Code: 8 staff · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=8%20staff%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
 [![Codex: 3 staff · gpt-6-astra/gpt-6-luna/gpt-6.1-sol](https://img.shields.io/static/v1?label=Codex&message=3%20staff%20%C2%B7%20gpt-6-astra%2Fgpt-6-luna%2Fgpt-6.1-sol&color=10A37F)](https://github.com/openai/codex)
-[![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#%EC%84%A4%EC%A0%95-%ED%8F%AC%EC%9D%B8%ED%8A%B8)
-[![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#%EC%84%A4%EC%A0%95-%ED%8F%AC%EC%9D%B8%ED%8A%B8)
-[![SLURM: HPC scheduler](https://img.shields.io/static/v1?label=SLURM&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#%EC%84%A4%EC%A0%95-%ED%8F%AC%EC%9D%B8%ED%8A%B8)
-[![labhq MCP: approval · ask · hpc](https://img.shields.io/static/v1?label=labhq%20MCP&message=approval%20%C2%B7%20ask%20%C2%B7%20hpc&color=5B5BD6&logo=modelcontextprotocol)](docs/manual.md#%EC%97%B0%EA%B2%B0%EB%90%9C-%EB%8F%84%EA%B5%AC)
+[![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
+[![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
+[![SLURM: HPC scheduler](https://img.shields.io/static/v1?label=SLURM&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
+[![labhq MCP: approval · ask · hpc](https://img.shields.io/static/v1?label=labhq%20MCP&message=approval%20%C2%B7%20ask%20%C2%B7%20hpc&color=5B5BD6&logo=modelcontextprotocol)](docs/manual.md#연결된-도구)
 [![ChEMBL: MCP · compound search](https://img.shields.io/static/v1?label=ChEMBL&message=MCP%20%C2%B7%20compound%20search&color=007EC6)](https://www.ebi.ac.uk/chembl/)
 [![ClinicalTrials.gov: MCP · trial search](https://img.shields.io/static/v1?label=ClinicalTrials.gov&message=MCP%20%C2%B7%20trial%20search&color=007EC6)](https://clinicaltrials.gov/)
 [![Open Targets: MCP · target search](https://img.shields.io/static/v1?label=Open%20Targets&message=MCP%20%C2%B7%20target%20search&color=007EC6)](https://platform.opentargets.org/)
@@ -19,6 +20,7 @@
 [![Code: GPL-3.0](https://img.shields.io/static/v1?label=Code&message=GPL-3.0&color=555555)](LICENSE)
 [![Docs · data: CC BY-SA 4.0](https://img.shields.io/static/v1?label=Docs%20%C2%B7%20data&message=CC%20BY-SA%204.0&color=555555)](LICENSE-CC-BY-SA-4.0.txt)
 [![Patch notes: changelog](https://img.shields.io/static/v1?label=Patch%20notes&message=changelog&color=5B5BD6)](patch_notes/README.md)
+<!-- badges:end -->
 
 <p align="center"><a href="README.md">한국어</a> · <b>English</b></p>
 
@@ -208,13 +210,13 @@ In a third terminal, run `labhq open` to open the web office already logged in (
 ### 4. First request
 
 1. Type a request in the input box below. A small public-data request is a good start (e.g. "public penguin data QC summary").
-2. If the CSO asks a clarifying question, choose an option and press **Reply and continue**.
-3. Things to approve arrive as cards in the **Decisions** tab (things to decide) on the right. Approve or reject to carry on.
-4. Watch step progress and outputs on the **Workboard**, and open the **Final report** when it ends. To ask more about the report, use **Follow up**.
-5. If you pick a running request that the CSO is handling, the input box default is **Note on this request**. A note is delivered from the next plan or step on, not to a turn that is already running. For a request given directly to one staff member, use **Follow up** after it ends.
+2. If the CSO asks a clarifying question, choose an option and press **답하고 진행** (Reply and continue).
+3. Things to approve arrive as cards in the **결정** (Decisions) tab on the right. Approve or reject to carry on.
+4. Watch step progress and outputs on the **작업판** (Workboard), and open the **최종 보고서** (Final report) when it ends. To ask more about the report, use **이어 묻기** (Follow up).
+5. If you pick a running request that the CSO is handling, the input box default is **이 요청에 메모** (Note on this request). A note is delivered from the next plan or step on, not to a turn that is already running. For a request given directly to one staff member, use **이어 묻기** after it ends.
 
 To give work directly to one staff member, pick that staff member in the input box or drag a yellow note onto their desk.
-Attach GitHub URLs, DOIs, and data paths with the **Reference** button.
+Attach GitHub URLs, DOIs, and data paths with the **참고** (Reference) button.
 Phone setup is in the manual's [Launch and connect](docs/manual.md#%EB%9D%84%EC%9A%B0%EA%B8%B0%EC%99%80-%EC%A0%91%EC%86%8D) (Tailscale) and [Web office](docs/manual.md#%EC%9B%B9-%EC%82%AC%EB%AC%B4%EC%8B%A4) (add to home screen).
 
 ## Using it safely
