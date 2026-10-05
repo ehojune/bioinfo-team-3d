@@ -781,7 +781,9 @@ let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
+  // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
+  const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
+  const key = q ? JSON.stringify([S.requests.size, staffNames, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -793,7 +795,7 @@ function renderRequest() {
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta"><span>${esc(processingLabel(q))}</span></p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'waiting_login' ? '로그인 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'waiting_login' ? '로그인 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
