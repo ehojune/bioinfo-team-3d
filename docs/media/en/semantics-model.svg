@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" role="img" aria-labelledby="t d">
+  <title id="t">Semantic model and ontology</title>
+  <desc id="d">After a request ends, a shadow computation groups its records into a provenance model and an object view and keeps only IDs, kinds, hashes, and counts. Output-kind tags (the labhq vocabulary and EDAM terms) are used to count whether step inputs fit. A/B gives reuse candidates to the CSO plan as a hint for only half of the research requests.</desc>
+  <style>
+    text { font-family: "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; fill: #0F172A; }
+    .title { font-size: 18px; font-weight: 700; }
+    .h { font-size: 15px; font-weight: 700; }
+    .s { font-size: 12px; fill: #475569; }
+    .lbl { font-size: 12px; font-weight: 700; fill: #334155; }
+    .mono { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 12px; }
+    .ok { font-size: 13px; fill: #166534; }
+    .bad { font-size: 13px; fill: #991B1B; }
+    .unk { font-size: 13px; fill: #475569; }
+    .band { font-size: 14px; font-weight: 700; fill: #92400E; }
+    .bs { font-size: 12px; fill: #92400E; }
+    .note { font-size: 12px; fill: #475569; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1000" height="530" rx="16" fill="#F8FAFC"/>
+  <text class="title" x="32" y="38">Semantic model and ontology</text>
+
+  <!-- shadow pipeline -->
+  <rect x="32" y="96" width="180" height="88" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="122" y="126" text-anchor="middle">Finished request</text>
+  <text class="s" x="122" y="148" text-anchor="middle">Request, step, staff, job,</text>
+  <text class="s" x="122" y="166" text-anchor="middle">approval, output file hashes</text>
+
+  <line x1="212" y1="140" x2="246" y2="140" stroke="#64748B" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="248" y="96" width="180" height="88" rx="10" fill="#EEF2FF" stroke="#6366F1" stroke-width="1.8"/>
+  <text class="h" x="338" y="126" text-anchor="middle">Shadow computation</text>
+  <text class="s" x="338" y="148" text-anchor="middle">After a request ends,</text>
+  <text class="s" x="338" y="166" text-anchor="middle">the gateway computes it</text>
+
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M428,124 C446,124 446,99 464,99"/>
+    <path d="M428,156 C446,156 446,185 464,185"/>
+  </g>
+
+  <rect x="466" y="64" width="290" height="70" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="486" y="92">Provenance model</text>
+  <text class="s" x="486" y="116">Who made this result, and can it be reused?</text>
+
+  <rect x="466" y="150" width="290" height="70" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="486" y="178">Object view</text>
+  <text class="s" x="486" y="202">Who owns what, and what awaits approval?</text>
+
+  <g stroke="#64748B" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M756,99 C774,99 774,124 792,124"/>
+    <path d="M756,185 C774,185 774,156 792,156"/>
+  </g>
+
+  <rect x="794" y="96" width="174" height="88" rx="10" fill="#F1F5F9" stroke="#94A3B8" stroke-width="1.5"/>
+  <text class="h" x="881" y="126" text-anchor="middle">One record line</text>
+  <text class="s" x="881" y="148" text-anchor="middle">Only ID, kind, hash, count</text>
+  <text class="s" x="881" y="166" text-anchor="middle">No raw data, paths, or text</text>
+
+  <!-- ontology -->
+  <rect x="32" y="244" width="936" height="168" rx="12" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text class="h" x="52" y="272">Term dictionary (ontology)</text>
+  <text class="s" x="262" y="272">The CSO labels each step output's kind with these terms (optional, off by default)</text>
+
+  <text class="lbl" x="52" y="300">38 labhq terms</text>
+  <text class="lbl" x="262" y="300">EDAM shared terms (32 keys linked)</text>
+  <text class="lbl" x="640" y="300">Step-input match (de_analysis example)</text>
+
+  <g fill="#F1F5F9" stroke="#94A3B8">
+    <rect x="52" y="312" width="160" height="24" rx="6"/>
+    <rect x="52" y="342" width="160" height="24" rx="6"/>
+    <rect x="52" y="372" width="160" height="24" rx="6"/>
+  </g>
+  <text class="mono" x="132" y="328" text-anchor="middle">raw_counts</text>
+  <text class="mono" x="132" y="358" text-anchor="middle">alignment</text>
+  <text class="mono" x="132" y="388" text-anchor="middle">de_analysis</text>
+
+  <g stroke="#64748B" stroke-width="1.5" marker-end="url(#arrow)">
+    <line x1="214" y1="324" x2="258" y2="324"/>
+    <line x1="214" y1="354" x2="258" y2="354"/>
+    <line x1="214" y1="384" x2="258" y2="384"/>
+  </g>
+
+  <g fill="#E0F2FE" stroke="#0284C7">
+    <rect x="262" y="312" width="300" height="24" rx="6"/>
+    <rect x="262" y="342" width="300" height="24" rx="6"/>
+    <rect x="262" y="372" width="300" height="24" rx="6"/>
+  </g>
+  <text class="mono" x="412" y="328" text-anchor="middle" fill="#075985">Gene expression matrix</text>
+  <text class="mono" x="412" y="358" text-anchor="middle" fill="#075985">Sequence alignment</text>
+  <text class="mono" x="412" y="388" text-anchor="middle" fill="#075985">Differential gene expression profiling</text>
+
+  <line x1="610" y1="288" x2="610" y2="400" stroke="#E2E8F0" stroke-width="1.5"/>
+
+  <text class="ok" x="640" y="330">raw_counts input → match</text>
+  <text class="bad" x="640" y="354">alignment input → mismatch</text>
+  <text class="unk" x="640" y="378">no kind declared → unknown</text>
+  <text class="s" x="640" y="400">Only counted, never blocked</text>
+
+  <!-- A/B -->
+  <rect x="32" y="430" width="936" height="58" rx="12" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text class="band" x="52" y="454">A/B (semantics: ab)</text>
+  <text class="bs" x="226" y="454">Every 10 requests or 3 weeks, compare the two arms to decide whether to drop, keep, or widen</text>
+  <text class="bs" x="52" y="476">Only half of research requests get a list of 'reusable past results' (artifact ID, kind, source request) as a hint in the CSO plan. The other half only computes.</text>
+
+  <text class="note" x="32" y="514">Off by default. Even when on, planning, approval, and execution are the same as when off (A/B excepted). Raw data never goes anywhere.</text>
+</svg>

@@ -22,7 +22,9 @@
 [![패치노트: changelog](https://img.shields.io/static/v1?label=%ED%8C%A8%EC%B9%98%EB%85%B8%ED%8A%B8&message=changelog&color=5B5BD6)](patch_notes/README.md)
 <!-- badges:end -->
 
-Claude Code와 Codex를 **연구소 직원**처럼 부리는 바이오인포 플랫폼입니다.
+<p align="center"><b>한국어</b> · <a href="README.en.md">English</a></p>
+
+labhq는 Claude Code와 Codex를 **연구소 직원**처럼 부리는 바이오인포 **멀티 에이전트 오케스트레이션 플랫폼**입니다.
 웹 사무실에 요청을 적으면 CSO가 계획을 세우고, 직원들이 나눠 실행하고, 다른 회사 모델이 리뷰한 뒤 보고서가 나옵니다.
 위험한 일과 돈이 드는 일은 PI가 웹이나 폰에서 승인합니다.
 
@@ -38,6 +40,7 @@ mock 데모(`labhq demo --web`)를 15초 동안 녹화한 화면입니다. 요�
 ![요청이 흐르는 길: PI 요청 → 브리핑 → CSO 계획 → 직원 단계 → 과학 리뷰 → 최종 보고서. 아래는 PI 결정함 카드가 끼는 자리](docs/media/request-flow.svg)
 
 - 직원 11명이 역할마다 다른 엔진·모델·도구를 씁니다. 과학 리뷰어는 일부러 다른 회사 모델입니다.
+- 반복·정형 분석은 [bioinfo-agent](https://github.com/ehojune/bioinfo-agent) 직원이 맡습니다. 이 프로젝트의 PI가 만든 Claude Code 에이전트로, 말로 시킨 분석에 맞는 nf-core Nextflow 파이프라인을 골라 시간·디스크를 계산한 계획서를 내고, 승인 뒤 실행해 MultiQC로 QC 판정까지 돌려줍니다.
 - 팀에 없는 방법이 필요하면 논문·코드를 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 바꿔 **파견직**으로 채용합니다.
 - HPC(SGE·PBS·Slurm)에 잡을 내면 직원 세션은 잡이 끝날 때까지 쉬었다가 같은 세션으로 이어 갑니다.
 - CSO는 권한·비용·데이터 접근, PI만 아는 선택(질병·코호트), 분석 깊이만 묻습니다. 나머지 설계는 스스로 정하고 계획과 보고서에 **가정**으로 적습니다.

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="260" viewBox="0 0 480 260" role="img" aria-labelledby="t d">
+  <title id="t">Same bar at every handoff</title>
+  <desc id="d">Same bar at every handoff. One domain tag makes plan, review, and report use the same checklist. Illustration: as work passes from plan to review to report, all three are linked to a single bulk_rna_seq tag and its four-item checklist.</desc>
+  <style>
+    text { font-family: "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; fill: #0F172A; }
+    .h { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+    .l { font-size: 14px; fill: #475569; }
+    .n { font-size: 14px; font-weight: 700; fill: #FFFFFF; }
+    .k { font-size: 13px; font-weight: 700; fill: #1E4E73; }
+    .m { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 11px; font-weight: 700; fill: #FFFFFF; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748B"/>
+    </marker>
+  </defs>
+  <rect x=".5" y=".5" width="479" height="259" rx="18" fill="#F2F7FB" stroke="#CFE0EC"/>
+  <circle cx="392" cy="130" r="86" fill="#DFEBF4"/>
+
+  <circle cx="42" cy="74" r="14" fill="#2F6F9F"/>
+  <text class="n" x="42" y="79" text-anchor="middle">3</text>
+  <text class="h" x="28" y="128">Same bar at every handoff</text>
+  <text class="l" x="28" y="164">One domain tag keeps plan, review,</text>
+  <text class="l" x="28" y="188">and report on the same checklist</text>
+
+  <!-- handoff: plan -> review -> report -->
+  <g fill="none" stroke="#64748B" stroke-width="2" stroke-linecap="round" marker-end="url(#a)">
+    <path d="M362 48h34"/>
+    <path d="M446 66C470 120 456 186 420 206"/>
+  </g>
+  <!-- every desk hangs on the one tag -->
+  <g fill="none" stroke="#2F6F9F" stroke-width="1.8" stroke-dasharray="3 4" stroke-linecap="round">
+    <path d="M334 64L352 104"/>
+    <path d="M428 64L418 104"/>
+    <path d="M384 158V194"/>
+  </g>
+
+  <g fill="#FFFFFF" stroke="#2F6F9F" stroke-width="2">
+    <rect x="306" y="32" width="56" height="32" rx="8"/>
+    <rect x="400" y="32" width="56" height="32" rx="8"/>
+    <rect x="352" y="194" width="64" height="32" rx="8"/>
+  </g>
+  <text class="k" x="334" y="53" text-anchor="middle">Plan</text>
+  <text class="k" x="428" y="53" text-anchor="middle">Review</text>
+  <text class="k" x="384" y="215" text-anchor="middle">Report</text>
+
+  <!-- the shared tag -->
+  <path d="M346 104h88a6 6 0 0 1 6 6v42a6 6 0 0 1-6 6h-88l-18-27z" fill="#2F6F9F"/>
+  <circle cx="340" cy="131" r="3.5" fill="#DFEBF4"/>
+  <text class="m" x="393" y="124" text-anchor="middle">bulk_rna_seq</text>
+  <path d="M354 134h12v12h-12zM376 134h12v12h-12zM398 134h12v12h-12zM420 134h12v12h-12z" fill="#FFFFFF"/>
+  <path d="M356.5 140l3 3 5-6M378.5 140l3 3 5-6M400.5 140l3 3 5-6M422.5 140l3 3 5-6" fill="none" stroke="#2F9E5E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

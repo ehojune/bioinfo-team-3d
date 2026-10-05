@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="260" viewBox="0 0 480 260" role="img" aria-labelledby="t d">
+  <title id="t">Resumable and bundled</title>
+  <desc id="d">Resumable and bundled. Finished steps are skipped on resume; code and results go into one folder. Illustration: after three of five steps finish, the plug is pulled, but work resumes from the bookmark on the fourth step, and when it ends, the script and figures are placed together in the requests folder.</desc>
+  <style>
+    text { font-family: "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif; fill: #0F172A; }
+    .h { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+    .l { font-size: 14px; fill: #475569; }
+    .n { font-size: 14px; font-weight: 700; fill: #FFFFFF; }
+    .m { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 12px; font-weight: 700; fill: #92400E; }
+    .c { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 12px; font-weight: 700; fill: #475569; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#D97706"/>
+    </marker>
+  </defs>
+  <rect x=".5" y=".5" width="479" height="259" rx="18" fill="#FFF9EC" stroke="#FCE3B0"/>
+  <circle cx="392" cy="130" r="86" fill="#FDEDCB"/>
+
+  <circle cx="42" cy="74" r="14" fill="#B45309"/>
+  <text class="n" x="42" y="79" text-anchor="middle">4</text>
+  <text class="h" x="28" y="128">Resumable and bundled</text>
+  <text class="l" x="28" y="164">Finished steps are skipped on resume;</text>
+  <text class="l" x="28" y="188">code and results share one folder</text>
+
+  <!-- unplugged -->
+  <g stroke="#475569" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M338 34h40" fill="none"/>
+    <rect x="378" y="27" width="14" height="14" rx="3" fill="#FFFFFF"/>
+    <path d="M392 31h5M392 37h5" fill="none"/>
+    <rect x="410" y="25" width="13" height="18" rx="3" fill="#FFFFFF"/>
+    <path d="M423 34h16" fill="none"/>
+  </g>
+  <path d="M403 18v4M397 20l2 3M409 20l-2 3" stroke="#D97706" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- five steps -->
+  <path d="M316 78H444" stroke="#CBD5E1" stroke-width="3"/>
+  <g fill="#2F9E5E">
+    <circle cx="316" cy="78" r="11"/>
+    <circle cx="348" cy="78" r="11"/>
+    <circle cx="380" cy="78" r="11"/>
+  </g>
+  <path d="M311 78l3.5 3.5 6-7M343 78l3.5 3.5 6-7M375 78l3.5 3.5 6-7" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="412" cy="78" r="11" fill="#FFFFFF" stroke="#D97706" stroke-width="2.5"/>
+  <circle cx="444" cy="78" r="11" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="2.5"/>
+  <path d="M406 52h12v18l-6-5-6 5z" fill="#D97706"/>
+  <path d="M414 93C418 106 440 106 443 95" fill="none" stroke="#D97706" stroke-width="2" stroke-linecap="round" marker-end="url(#a)"/>
+
+  <!-- request bundle -->
+  <path d="M316 132a6 6 0 0 1 6-6h34l8 8h72a6 6 0 0 1 6 6v78a6 6 0 0 1-6 6H322a6 6 0 0 1-6-6z" fill="#FDE68A" stroke="#D97706" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="330" y="128" width="40" height="52" rx="4" fill="#FFFFFF" stroke="#475569" stroke-width="1.6"/>
+  <text class="c" x="350" y="158" text-anchor="middle">&lt;/&gt;</text>
+  <rect x="380" y="120" width="48" height="56" rx="4" fill="#FFFFFF" stroke="#475569" stroke-width="1.6"/>
+  <path d="M388 166h32" stroke="#94A3B8" stroke-width="1.5"/>
+  <path d="M392 166v-10M400 166v-20M408 166v-14M416 166v-26" stroke="#2F6F9F" stroke-width="5"/>
+  <path d="M312 170a4 4 0 0 1 4-4h132a4 4 0 0 1 4 4.6l-6 50a6 6 0 0 1-6 5.4H322a6 6 0 0 1-6-5.4z" fill="#FCD34D" stroke="#D97706" stroke-width="2" stroke-linejoin="round"/>
+  <text class="m" x="382" y="203" text-anchor="middle">requests/&lt;id&gt;</text>
+</svg>
