@@ -1,0 +1,5 @@
+pr: 425
+rows:
+- sha: 063af01
+  at: 2026-10-05 19:36
+  text: 직원 세션의 여러 agent 도구와 Codex 기억 끄기
