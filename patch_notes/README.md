@@ -14,6 +14,34 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:59 | [`c28e234`](https://github.com/ehojune/bioinfo-team-3d/pull/418/commits/c28e234) | PI 문답: 문헌조사·Methods, 한도 중 Claude 작업, 로그인 만료 |
+| 14:44 | [`a25ef68`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/a25ef68) | 열린 직원 시트의 쓴 비용도 실시간 갱신 |
+| 14:39 | [`89a45fe`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/89a45fe) | 직원 시트에 쓴 비용(화면의 요청 기준) |
+| 14:19 | [`91bbe31`](https://github.com/ehojune/bioinfo-team-3d/pull/416/commits/91bbe31) | 그림자 제거 검사: 실패한 test 줄을 먼저, 자식 출력은 UTF-8로 |
+| 14:16 | [`700bbd7`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/700bbd7) | 요청 줄 다시 그리기 key에 직원 이름 |
+| 14:08 | [`721285b`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/721285b) | 요청 비용을 직원별로 |
+| 13:56 | [`5346c06`](https://github.com/ehojune/bioinfo-team-3d/pull/414/commits/5346c06) | 폭주 감지: Codex MCP 인자를 입력으로, 입력 없는 호출은 반복으로 세지 않음 |
+| 13:52 | [`6f01a87`](https://github.com/ehojune/bioinfo-team-3d/pull/414/commits/6f01a87) | runner: 실행 중 폭주 감지(그림자, 경고만) |
+| 06:31 | [`701afcc`](https://github.com/ehojune/bioinfo-team-3d/pull/413/commits/701afcc) | README: 분석 점검표와 선행 연구 기준 |
+| 06:15 | [`74eee3b`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/74eee3b) | main 병합: #410과 겹친 매뉴얼 2.5D 절과 CI web test 목록을 둘 다 살림 |
+| 06:14 | [`b0cbd2a`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/b0cbd2a) | 숫자 sha 안내는 원문 표기 그대로(0으로 시작해도) |
+| 06:06 | [`a47b501`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/a47b501) | 패치노트 검사: 숫자로 읽힌 sha를 짚어 알려 줌 |
+| 06:02 | [`7999708`](https://github.com/ehojune/bioinfo-team-3d/pull/410/commits/7999708) | capability card가 읽기 전용을 못 지키는 엔진의 이어 묻기·상담을 안 됨으로 보이고 MCP는 runner가 실제로 붙이는 목록만 보인다 |
+| 06:01 | [`e975c77`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/e975c77) | 사무실 칠판·HPC 랙·문이 작업판·HPC·메신저 탭을 열고 결정이 기다리면 칠판이 깜박이며 결정 탭으로 안내한다 |
+| 05:58 | [`292afe5`](https://github.com/ehojune/bioinfo-team-3d/pull/410/commits/292afe5) | 직원 상세 시트가 권한·추론 강도·이어 쓰기·읽기 전용 상담·MCP를 gateway가 보낸 capability card로 보여 준다 |
+| 05:37 | [`31e15ee`](https://github.com/ehojune/bioinfo-team-3d/pull/409/commits/31e15ee) | 열린 직원 시트의 기록을 화면 갱신마다 새로 그리고 생각·디버그는 보관한 60줄을 모두 보여 준다 |
+| 05:33 | [`2cdefdc`](https://github.com/ehojune/bioinfo-team-3d/pull/409/commits/2cdefdc) | 웹이 버리던 직원의 생각·디버그 로그를 직원마다 60줄 보관하고 상세 시트에서 활동과 골라 본다 |
+| 05:13 | [`4ebb282`](https://github.com/ehojune/bioinfo-team-3d/pull/407/commits/4ebb282) | 매뉴얼에 bulk @2로 승인된 요청도 저장된 version으로 재개한다고 적는다 |
+| 05:12 | [`8b1156f`](https://github.com/ehojune/bioinfo-team-3d/pull/408/commits/8b1156f) | HANDOFF 작업 큐에 v0.25 선언과 |
+| 05:10 | [`a2a9f1e`](https://github.com/ehojune/bioinfo-team-3d/pull/407/commits/a2a9f1e) | bulk pack @3은 짝의 근거를 메타데이터 출처 목록에서만 받고 짝이 있으면 출처를 하나 이상 요구한다 |
+| 04:47 | [`31878a9`](https://github.com/ehojune/bioinfo-team-3d/pull/406/commits/31878a9) | PLAN field 칸 검사에 ge·min_length 같은 Field 제약도 넣는다 |
+| 04:46 | [`ce14536`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/ce14536) | 업그레이드 전에 저장된 로그인 창의 옛 consult 키는 상담 turn이 빠질 때 함께 지운다 |
+| 04:44 | [`78c9996`](https://github.com/ehojune/bioinfo-team-3d/pull/406/commits/78c9996) | pack 조합 표에 든 core PLAN field 칸이 PLAN schema type에 맞지 않으면 load에서 거부한다 |
+| 04:34 | [`dc67700`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/dc67700) | 매뉴얼 로그인 대기 절에 마감이 복구 중인 turn 전부를 기다린다는 것을 적는다 |
+| 04:33 | [`a0b572b`](https://github.com/ehojune/bioinfo-team-3d/pull/404/commits/a0b572b) | 로그인·한도 대기의 turn 키를 함수 하나로 모으고, 병렬 상담은 ask마다 따로 센다 |
+| 04:23 | [`31e9492`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/31e9492) | 조합 표의 null 칸은 생략한 답과도 명시한 null과도 맞지 않으므로 load에서 거부한다 |
+| 04:18 | [`61754ac`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/61754ac) | pack 조합 표의 칸이 field type·최솟값·pattern을 어기면 load에서 거부하고, PLAN 답 검사와 같은 판정 함수를 쓴다 |
+| 04:18 | [`dc9678b`](https://github.com/ehojune/bioinfo-team-3d/pull/403/commits/dc9678b) | 매뉴얼 연구 lane 절에 pack 조합 표 칸 검사를 적는다 |
 | 03:34 | [`6c7576d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/6c7576d) | 로그인 창은 복구 중인 turn이 모두 끝날 때 지우고 재로그인 명령은 대상 runner 정보로만 만든다 |
 | 03:20 | [`797717d`](https://github.com/ehojune/bioinfo-team-3d/pull/401/commits/797717d) | 로그인 대기 후속으로 runner를 모르면 설정 키 안내, 재시작 뒤 알림 상태 재계산, 대기 turn이 남으면 로그인 창 유지 |
 | 03:07 | [`112f1dc`](https://github.com/ehojune/bioinfo-team-3d/pull/400/commits/112f1dc) | 계획 프롬프트의 topic 점검표는 점검 문장만 싣고 이유는 리뷰 문맥에만 둔다 |

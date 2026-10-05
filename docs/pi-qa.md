@@ -60,6 +60,22 @@ PI가 묻고 개발 총괄이 답한 것과 PI가 내린 결정을 모았습니�
 
 [답 원문](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5963818111) · [⑥ 반영](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5963989474)
 
+### 요청이 오면 문헌조사를 하나? 원 연구 Methods를 따라 하나? (10-04)
+
+- 한다. 계획 전에 문헌 담당(lit_scout)이 비서실장 브리핑과 나란히 같은 assay·질문 유형의 최근 논문·리뷰 2–4편을 보고, 필수·권장 분석을 뽑습니다. 필수 항목은 계획이 단계나 가정으로 답해야 하는 점검표가 됩니다([PR #395](https://github.com/ehojune/bioinfo-team-3d/pull/395)).
+- 원 연구 Methods는 참고만 합니다. 같은 데이터로 다른 갈래의 분석을 할 수 있으므로 거기에 매이지 않습니다(PI 지시 10-05).
+- 갈래별 점검표는 topic마다 있습니다. 17개 topic을 더하는 안은 [PR #402](https://github.com/ehojune/bioinfo-team-3d/pull/402)에서 PI 승인을 기다립니다.
+
+### Codex가 한도에 걸려도 Claude는 일하나? (10-04)
+
+- 한다. Codex 레인과 따로, Claude도 늘 자기 issue나 PR을 하나 이상 진행합니다. Codex 한도에 닿으면 바로 #298에 알리고 묻습니다.
+- 10-04 오후·밤과 10-05 아침에 Claude가 기다리기만 한 시간이 있었습니다. 원인과 고친 방식은 #298에 적었습니다.
+
+### Claude 직원 로그인이 만료되면 어떻게 되나? (10-05)
+
+- 요청은 실패하지 않고 `waiting_login`으로 멈춥니다. 같은 엔진을 쓰는 요청은 대기를 함께 쓰고, 600초마다 다시 시도하며 24시간 뒤 실패합니다([PR #398](https://github.com/ehojune/bioinfo-team-3d/pull/398)).
+- 웹 카드에 직원 폴더용 로그인 명령이 뜹니다. 그 명령으로 로그인하고 **로그인했어요 · 다시 시도**를 누르면 바로 이어 갑니다.
+
 ## 내린 결정
 
 #298에서 물은 것입니다.

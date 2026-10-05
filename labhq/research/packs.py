@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
@@ -38,6 +38,52 @@ class PackField(StrictModel):
         if self.pattern is not None:
             result["pattern"] = self.pattern
         return result
+
+
+def field_value_problem(field: PackField, value: Any) -> str | None:
+    """Why ``value`` cannot answer ``field``, or None. Plan answers and allowed_combinations cells share it."""
+    valid_type = ((field.value_type == "string" and isinstance(value, str)) or
+                  (field.value_type == "integer" and isinstance(value, int) and not isinstance(value, bool)) or
+                  (field.value_type == "boolean" and isinstance(value, bool)))
+    if not valid_type:
+        return f"must be {field.value_type}"
+    if field.allowed_values and value not in field.allowed_values:
+        return f"must be one of {field.allowed_values}"
+    if field.minimum is not None and value < field.minimum:
+        return f"must be at least {field.minimum:g}"
+    if field.pattern is not None and re.fullmatch(field.pattern, value) is None:
+        return f"must match {field.pattern}"
+    return None
+
+
+def _model_in(annotation: Any) -> type[BaseModel] | None:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    return next((arg for arg in get_args(annotation) if isinstance(arg, type) and issubclass(arg, BaseModel)), None)
+
+
+def plan_field_problem(path: str, value: Any) -> str | None:
+    """Why ``value`` can never equal the core PLAN field at ``path``, or None (PR #403 review): a closed-table
+    cell outside the PLAN schema type (a Literal choice, int, bool, or a list field) is a dead row."""
+    from pydantic import TypeAdapter, ValidationError
+
+    from .contract import ResearchPlan  # contract imports this module, so the schema is looked up late
+
+    model: type[BaseModel] | None = ResearchPlan
+    annotation: Any = None
+    metadata: list[Any] = []
+    for part in path.split("."):
+        if model is None or part not in model.model_fields:
+            return None
+        annotation, metadata = model.model_fields[part].annotation, model.model_fields[part].metadata
+        model = _model_in(annotation)
+    # The Field constraints (ge=1, min_length=1) live in the metadata, not the annotation (PR #406 review).
+    schema = Annotated[(annotation, *metadata)] if metadata else annotation
+    try:
+        TypeAdapter(schema).validate_python(value, strict=True)
+    except ValidationError:
+        return f"does not fit the PLAN schema type {annotation!r}"
+    return None
 
 
 class PackValidator(StrictModel):
@@ -217,12 +263,18 @@ class DomainRulePack(StrictModel):
                     if name not in known and name not in _PLAN_RULE_FIELDS:
                         raise ValueError(f"domain pack rule {rule.id}: unknown combination field {name!r}")
                 declared = {field.name: field for field in self.fields}
+                # A cell no valid answer can equal is a dead row (PR #366 review): check it like an answer.
                 for row in rule.allowed_combinations.rows:
                     for name, value in zip(rule.allowed_combinations.fields, row):
                         field = declared.get(name)
-                        if field and field.allowed_values and value not in field.allowed_values:
+                        if field is None:
+                            problem = plan_field_problem(name, value)
+                        else:
+                            # An omitted answer never equals null and an explicit null fails the type check.
+                            problem = ("cannot be null" if value is None else field_value_problem(field, value))
+                        if problem:
                             raise ValueError(f"domain pack rule {rule.id}: combination value {value!r} is not "
-                                             f"allowed for {name}")
+                                             f"allowed for {name} ({name} {problem})")
         return self
 
     @property

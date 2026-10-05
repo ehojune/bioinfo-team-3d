@@ -1,0 +1,135 @@
+schema_version: 1
+id: bulk_tumor_normal
+version: "3"
+title: Bulk expression differential analysis between two tissues or conditions
+core_contract: extend_only
+applies_when:
+  description: Bulk microarray or bulk RNA-seq expression compares two tissues or conditions, such as tumor versus normal.
+  topics_any: [bulk_rna_seq, microarray_expression]
+sources:
+  - title: labhq mock research runs 8 through 11
+    url: docs/research_protocol.md
+    revision: "2026-10-03"
+    license: repository-local protocol; no external text copied
+fields:
+  - name: pairing
+    description: Whether the two conditions have no, partial, or complete patient pairing.
+    required: true
+    value_type: string
+    allowed_values: [none, partial, complete]
+  - name: pairing_evidence
+    description: >-
+      Semicolon-separated metadata sources that establish pairing, from geo_characteristics, sample_title,
+      source_name, biosample_attributes, supplementary_table, publication_methods, local_metadata; or none.
+      Expression similarity is never a pairing source.
+    required: true
+    value_type: string
+    pattern: '^(?:none|(?:geo_characteristics|sample_title|source_name|biosample_attributes|supplementary_table|publication_methods|local_metadata)(?:;(?:geo_characteristics|sample_title|source_name|biosample_attributes|supplementary_table|publication_methods|local_metadata))*)$'
+  - name: primary_model
+    description: Primary pairing-aware model fixed before approval.
+    required: true
+    value_type: string
+    allowed_values: [paired_t, mixed_model, unpaired, count_glm_negative_binomial, paired_count_glm]
+  - name: model_rule
+    description: Pre-specified number of verified pairs required to use a paired model.
+    required: true
+    value_type: string
+  - name: expression_scale
+    description: Scale of the expression values entering differential analysis.
+    required: true
+    value_type: string
+    allowed_values: [log2_normalized, raw_counts, other]
+  - name: low_expression_filter
+    description: Low-expression filtering rule fixed before approval.
+    required: true
+    value_type: string
+  - name: de_threshold
+    description: Differential-expression threshold including FDR and absolute log2 fold change.
+    required: true
+    value_type: string
+  - name: positive_controls
+    description: Semicolon-separated GENE|direction|PMID rows; direction is up_in_first_condition or down_in_first_condition.
+    required: true
+    value_type: string
+    pattern: '^(?:[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)(?:;[A-Za-z0-9][A-Za-z0-9._-]*\|(?:up|down)_in_first_condition\|PMID:[1-9][0-9]*)*$'
+validators:
+  - id: bulk_tumor_normal.pairing_definition
+    requirement: Pairing and its metadata evidence must be fixed without inferring pairs from expression; the core protocol owns the analysis unit.
+    required_fields: [pairing, pairing_evidence, primary_model, model_rule]
+  - id: bulk_tumor_normal.de_contract
+    requirement: Expression scale, low-expression filter, and DE threshold must be fixed here; core statistics owns multiplicity and sensitivity analyses.
+    required_fields: [expression_scale, low_expression_filter, de_threshold]
+  - id: bulk_tumor_normal.positive_control_rows
+    requirement: Every positive-control row must name a gene, expected direction, and PMID source.
+    required_fields: [positive_controls]
+reviewer_questions:
+  - Does the primary model preserve the verified pairing structure?
+  - Is the low-expression filter identical to the frozen value?
+  - Does each positive-control direction match its PMID source?
+fixtures:
+  - id: paired_but_unpaired
+    purpose: Reject an unpaired primary model when verified pairing is partial or complete.
+  - id: filter_undefined
+    purpose: Reject a plan that leaves the low-expression filter undefined.
+  - id: pairing_from_expression
+    purpose: Reject expression similarity or free text as the pairing source.
+rules:
+  - id: bulk_tumor_normal.core_statistics_applicable
+    description: An applied bulk differential-expression pack requires the core statistics contract.
+    require:
+      field: protocol.statistics.applicable
+      value: true
+  - id: bulk_tumor_normal.core_estimand
+    description: The core statistics contract must name the estimand.
+    require:
+      field: protocol.statistics.estimand
+      present: true
+  - id: bulk_tumor_normal.core_analysis_unit
+    description: The core statistics contract must name the analysis unit.
+    require:
+      field: protocol.statistics.analysis_unit
+      present: true
+  - id: bulk_tumor_normal.core_comparison_groups
+    description: The core statistics contract must name both comparison groups.
+    require:
+      field: protocol.statistics.comparison_groups
+      min_items: 2
+  - id: bulk_tumor_normal.core_primary_outcomes
+    description: The core statistics contract must name the primary outcomes.
+    require:
+      field: protocol.statistics.primary_outcomes
+      present: true
+  - id: bulk_tumor_normal.core_multiple_testing
+    description: The core statistics contract is the sole source for the multiple-testing method.
+    require:
+      field: protocol.statistics.multiple_testing
+      present: true
+  - id: bulk_tumor_normal.core_sensitivity_analyses
+    description: The core statistics contract is the sole source for sensitivity analyses.
+    require:
+      field: protocol.statistics.sensitivity_analyses
+      present: true
+  - id: bulk_tumor_normal.pairing_from_metadata
+    description: Partial or complete pairing must name at least one metadata source.
+    when:
+      field: pairing
+      in: [partial, complete]
+    forbid:
+      field: pairing_evidence
+      value: none
+  - id: bulk_tumor_normal.model_compatibility
+    description: The closed table is authoritative for expression scale, pairing, and primary model compatibility.
+    allowed_combinations:
+      fields: [expression_scale, pairing, primary_model]
+      rows:
+        - [raw_counts, none, count_glm_negative_binomial]
+        - [raw_counts, partial, paired_count_glm]
+        - [raw_counts, complete, paired_count_glm]
+        - [log2_normalized, none, unpaired]
+        - [log2_normalized, partial, mixed_model]
+        - [log2_normalized, complete, paired_t]
+        - [log2_normalized, complete, mixed_model]
+        - [other, none, unpaired]
+        - [other, partial, mixed_model]
+        - [other, complete, paired_t]
+        - [other, complete, mixed_model]

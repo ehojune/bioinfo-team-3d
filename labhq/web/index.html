@@ -83,6 +83,8 @@ a{color:var(--sleep-ink)}
 .chip.st-revise{border-color:var(--wait);color:var(--wait-ink);background:var(--wait-bg)}
 .chip.st-error,.chip.st-failed{border-color:var(--error);color:var(--error-ink);background:var(--error-bg)}
 .rack,.door{flex:none;width:52px;height:auto;display:block}
+[data-tab-link]{cursor:pointer}[data-tab-link]:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.board.alert{border-color:var(--wait)}
 .rack-body{fill:#2B3642}.rack-slot{fill:#3A4652}
 .led{fill:#56616C}.led.queued{fill:var(--wait)}.led.running{fill:var(--working)}.led.completed{fill:#8FA0AF}.led.failed{fill:var(--error)}
 .door-frame{fill:var(--desk-front)}.door-gap{fill:#0E151B}.door-panel{fill:var(--desk-top)}.door-knob{fill:#E9D9A6}
@@ -125,6 +127,7 @@ a{color:var(--sleep-ink)}
 .m-bang circle{fill:var(--wait)}.m-bang text{font:600 12px var(--ui);fill:#fff}
 .m-check circle{fill:var(--working)}.m-check path{stroke:#fff}
 @media (prefers-reduced-motion:no-preference){
+  .board.alert{animation:boardBlink 1.6s ease-in-out infinite}
   .char,.paw,.paw-up,.m-bang,.m-z text,.code rect,.door-panel{transform-box:fill-box}
   .char{transform-origin:50% 100%}
   .st-idle .char{animation:breathe 3.4s ease-in-out infinite}
@@ -145,6 +148,7 @@ a{color:var(--sleep-ink)}
   .door-panel{transform-origin:0 50%;transition:transform .5s ease}
 }
 .door.open .door-panel{transform:scaleX(.28)}
+@keyframes boardBlink{50%{box-shadow:0 0 0 4px var(--wait)}}
 @keyframes breathe{50%{transform:translateY(-1px) scaleY(1.012)}}
 @keyframes bob{50%{transform:translateY(-1.6px)}}
 @keyframes type{50%{transform:translateY(-2.6px)}}
@@ -315,6 +319,8 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 .activity{list-style:none;margin:0 0 14px;padding:0;font-size:13px;max-height:200px;overflow:auto}
 .activity li{padding:4px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 .activity time{color:var(--muted);margin-right:8px}
+.activity li.trace{color:var(--muted)}.activity li.trace b{font-weight:600;margin-right:4px}
+.log-view{display:flex;gap:6px;margin:0 0 6px}.log-view .btn{min-height:32px;font-size:13px}.log-view .btn[aria-pressed="true"]{border-color:var(--ink);font-weight:600}
 .toast{position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60;max-width:calc(100% - 32px)}
 .toast.show{opacity:1}
 </style>
@@ -340,9 +346,9 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <main class="layout">
   <section class="office" id="office" aria-label="사무실">
     <div class="wall">
-      <div class="board" id="board" aria-live="off"></div>
-      <svg class="rack" id="rack" viewBox="0 0 52 104" role="img" aria-label="HPC 서버 랙"></svg>
-      <svg class="door" id="door" viewBox="0 0 52 104" role="img" aria-label="입구">
+      <div class="board" id="board" aria-live="off" data-tab-link="tasks" role="button" tabindex="0" title="작업판 열기"></div>
+      <svg class="rack" id="rack" viewBox="0 0 52 104" data-tab-link="jobs" role="button" tabindex="0" aria-label="HPC 서버 랙, HPC 탭 열기"></svg>
+      <svg class="door" id="door" viewBox="0 0 52 104" data-tab-link="feed" role="button" tabindex="0" aria-label="입구, 메신저 열기">
         <rect class="door-frame" x="4" y="8" width="44" height="96" rx="2"/>
         <rect class="door-gap" x="8" y="12" width="36" height="92"/>
         <g class="door-panel"><rect x="8" y="12" width="36" height="92" fill="currentColor" style="fill:var(--desk-top)"/><circle class="door-knob" cx="38" cy="60" r="2.4"/></g>
@@ -438,7 +444,18 @@ const store = {
 };
 const raf = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : (f => setTimeout(f, 16));
 const safeUrl = u => (typeof u === 'string' && /^https?:\/\//.test(u)) ? u : null;
-initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+const showTab = initTabShell($('#cc-tabs'), $('#command-center'), 'decisions');
+// #57 ⑧: the office props are tab entrances — the board opens the task board (or 결정 while decisions wait),
+// the HPC rack opens HPC, the door opens the messenger.
+function openPropTab(e) {
+  const prop = e.target.closest('[data-tab-link]'); if (!prop) return;
+  if (e.type === 'keydown') { if (e.key !== 'Enter' && e.key !== ' ') return; e.preventDefault(); }
+  showTab(prop.dataset.tabLink);
+  const cc = $('#command-center'), box = cc.getBoundingClientRect();
+  if (box.top < 0 || box.top > innerHeight - 80) cc.scrollIntoView({ block: 'start' });
+}
+$('#office .wall').addEventListener('click', openPropTab);
+$('#office .wall').addEventListener('keydown', openPropTab);
 let decisionHistory = [];
 
 /* ---------------- staff art: original chibi animals ---------------- */
@@ -559,7 +576,7 @@ let pending = false;
 function schedule() { if (!pending) { pending = true; raf(() => { pending = false; render(); }); } }
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
-  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs();
+  renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
   const s = Math.max(0, now() - (ts || now()));
@@ -664,7 +681,7 @@ function renderRack() {
     s += `<rect class="rack-slot" x="10" y="${y}" width="32" height="8" rx="1.5"/><circle class="led ${j ? esc(j.state) : ''}" cx="36" cy="${y + 4}" r="2.2"/>`;
   }
   el.innerHTML = s;
-  el.setAttribute('aria-label', `HPC 서버 랙, 실행 중 ${jobs.filter(j => j.state === 'running').length}건`);
+  el.setAttribute('aria-label', `HPC 서버 랙, 실행 중 ${jobs.filter(j => j.state === 'running').length}건, HPC 탭 열기`);
 }
 function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
 
@@ -672,6 +689,10 @@ function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
   const total = items.length + sugs.length + holds.length;
   $('#ap-count').textContent = total ? `${total}건` : '';
+  const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
+  board.classList.toggle('alert', total > 0);
+  board.dataset.tabLink = total ? 'decisions' : 'tasks';
+  board.title = total ? `결정 ${total}건 기다림, 결정 열기` : '작업판 열기';
   const holdRows = holds.map(hold => {
     const row = document.createElement('article'); row.className = 'ap'; row.dataset.engine = hold.engine;
     const body = document.createElement('div'); row.append(body);
@@ -760,7 +781,9 @@ let reqKey = '';
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
   const details = q ? q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)) : [];
-  const key = q ? JSON.stringify([S.requests.size, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
+  // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
+  const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
+  const key = q ? JSON.stringify([S.requests.size, staffNames, q.id, q.phase, q.status, q.steps, details, q.github.length, q.pipelinePr, q.report, q.report_appendix, q.bundlePath, q.bundleStatus, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : 'none';
   if (key === reqKey) return;
   reqKey = key;
   if (!q) { el.innerHTML = '<p class="empty-note">아직 요청이 없어요. 아래 입력창에 적으면 CSO가 팀에 나눠 맡겨요.</p>'; return; }
@@ -772,7 +795,7 @@ function renderRequest() {
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${q.pipelinePr.status === 'pending' ? '대기' : '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
   el.innerHTML = `${pick}<p class="req-text">${esc(q.text)}</p><p class="req-meta"><span>${esc(processingLabel(q))}</span></p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}${phaseList(q)}<div id="task-board"></div>
-<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'waiting_login' ? '로그인 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
+<p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span>${q.status === 'running' ? '진행 중' : q.status === 'waiting_quota' ? '한도 대기' : q.status === 'waiting_login' ? '로그인 대기' : q.status === 'done' ? '완료' : '실패'}</span></p>
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${reportHTML(q)}${bundleHTML(q)}${auditHTML(q)}${q.error ? `<p class="empty-note">${esc(q.error)}</p>` : ''}${followupHTML(q)}`;
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
@@ -962,21 +985,52 @@ $('#staff-toggle').addEventListener('click', () => {
   $('#staff-toggle').textContent = open ? '직원 닫기' : '직원 보기';
 });
 
+// The trace view lists every kept line (the reducer keeps 60); render() refreshes an open sheet's list (#409 review).
+function sheetLogs(a, view) {
+  return view === 'trace'
+    ? (a.trace || []).slice().reverse().map(l => `<li class="trace"><time>${ago(l.ts)}</time><b>${l.level === 'thinking' ? '생각' : '디버그'}</b> ${esc(l.text)}</li>`).join('') || '<li>생각·디버그 기록이 없어요.</li>'
+    : a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>';
+}
+// The staff member's spending over the requests on screen; render() keeps an open sheet's figure live (#417 review).
+function sheetSpent(id) {
+  const spent = LabHQState.agentSpentLabel([...S.requests.values()], id);
+  return spent ? `${spent}, 이 화면에 있는 요청 기준` : '아직 기록 없음';
+}
+function renderSheetLogs() {
+  const dlg = $('#sheet'), a = dlg.open || dlg.hasAttribute('open') ? ag(dlg.dataset.agent) : null;
+  const list = a && $('#sheet-in ul.activity'); if (!list) return;
+  const html = sheetLogs(a, list.dataset.view);
+  if (list.innerHTML !== html) list.innerHTML = html;
+  const count = $('#sheet-in .trace-count'); if (count) count.textContent = String((a.trace || []).length);
+  const spent = $('#sheet-in .sheet-spent'), figure = sheetSpent(a.id); if (spent && spent.textContent !== figure) spent.textContent = figure;
+}
 function openSheet(id) {
   const a = ag(id); if (!a) return;
   const dlg = $('#sheet'), vs = visual(a);
+  if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
+  const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
   const facts = [
     ['상태', STATE_KO[vs]], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
-  if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
+  const cap = a.capabilities;  // #57 ⑦: facts the gateway took from the roster and engine adapters
+  if (cap) {
+    facts.push(['권한', cap.permission || '—'], ['추론 강도', cap.effort || '기본'],
+      // Follow-ups and consults run read-only, so an engine that cannot enforce it gets neither (#410 review).
+      ['이어 묻기·상담', !cap.read_only ? '안 됨(엔진이 읽기 전용을 강제하지 못함)'
+        : cap.resume ? '가능, 같은 세션을 이어 씀' : '가능, 새 세션으로'],
+      ['MCP', (cap.mcp || []).length ? cap.mcp.join(', ') : '없음']);
+    if (cap.max_turns) facts.push(['최대 턴', String(cap.max_turns)]);
+  } else if (a.mcp && a.mcp.length) facts.push(['논문 도구', a.mcp.join(', ')]);
+  facts.push(['쓴 비용', sheetSpent(id)]);
   const acts = ['<button type="button" class="btn primary" data-act="assign">이 직원에게 맡기기</button>'];
   if (isContract(a)) acts.push('<button type="button" class="btn" data-act="extend">계약 14일 연장</button>', '<button type="button" class="btn" data-act="release">계약 종료</button>');
   acts.push('<button type="button" class="btn" data-act="close">닫기</button>');
   $('#sheet-in').innerHTML = `<div class="sheet-head"><svg viewBox="18 2 64 72" aria-hidden="true">${charArt(kindOf(a))}</svg><div><h2>${esc(a.name)}</h2><p class="role">${esc(a.role || '')}</p></div></div>
-<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-<ul class="activity">${a.log.slice().reverse().slice(0, 14).map(l => `<li><time>${ago(l.ts)}</time>${esc(l.text)}</li>`).join('') || '<li>아직 기록이 없어요.</li>'}</ul>
+<dl class="facts">${facts.map(([k, v]) => `<dt>${esc(k)}</dt><dd${k === '쓴 비용' ? ' class="sheet-spent"' : ''}>${esc(v)}</dd>`).join('')}</dl>
+<div class="log-view" role="group" aria-label="기록 보기"><button type="button" class="btn" data-act="log" data-view="activity" aria-pressed="${view === 'activity'}">활동</button><button type="button" class="btn" data-act="log" data-view="trace" aria-pressed="${view === 'trace'}">생각·디버그 <span class="trace-count">${(a.trace || []).length}</span></button></div>
+<ul class="activity" data-view="${view}">${sheetLogs(a, view)}</ul>
 <div class="acts">${acts.join('')}</div>`;
   dlg.dataset.agent = id;
   if (typeof dlg.showModal === 'function') { if (!dlg.open) dlg.showModal(); } else dlg.setAttribute('open', '');
@@ -988,6 +1042,7 @@ $('#sheet').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]'); if (!btn) return;
   const id = d.dataset.agent, act = btn.dataset.act;
   if (act === 'close') return closeSheet();
+  if (act === 'log') { d.dataset.log = btn.dataset.view; openSheet(id); return; }
   if (act === 'assign') { closeSheet(); $('#send-mode').value = 'request'; $('#target').value = id; renderComposerMode(); $('#ask').focus(); toast(`${nick(id)}에게 맡길 내용을 적어 주세요`); return; }
   try { await api.contract(id, act, 14); toast(act === 'extend' ? '계약을 14일 연장했어요' : '계약을 종료했어요'); closeSheet(); }
   catch (err) { toast(`처리하지 못했어요: ${err.message}`); }
@@ -1093,6 +1148,7 @@ const Demo = (() => {
   const sleep = ms => new Promise(r => setTimeout(r, ms / SPEED));
   const E = (type, o = {}) => apply({ type, ts: now(), ...o });
   const say = (a, text, rid) => E('agent.log', { agent_id: a, request_id: rid, data: { text } });
+  const think = (a, text, rid) => E('agent.log', { agent_id: a, request_id: rid, data: { level: 'thinking', text } });
   const tool = (a, name, input, rid) => E('agent.tool', { agent_id: a, request_id: rid, data: { name, input } });
   const gh = (rid, kind, number = 12) => E('github.posted', { request_id: rid, data: { kind, number, url: `https://github.com/lab/demo-project/${kind === 'pr' || kind === 'codex_review' ? 'pull' : 'issues'}/${number}` } });
   const ROSTER = [
@@ -1102,7 +1158,10 @@ const Demo = (() => {
     ['data_steward', '다람쥐 데이터 담당', '데이터 확보·매니페스트', 'claude_code', 'sonnet'], ['analyst', '너구리 분석가', '분석 설계·실행', 'claude_code', 'opus'],
     ['engineer', '문어 코딩 엔지니어', '파이프라인·도구 개발', 'codex', null], ['qc_reviewer', '고슴도치 Data QC', 'PASS/WARN/FAIL QC', 'claude_code', 'sonnet'],
     ['recruiter', '비버 인사팀', 'Paper2Agent 채용', 'claude_code', 'opus'],
-  ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core' }));
+  ].map(([id, name, role, engine, model]) => ({ id, name, role, engine, model, employment: 'core',
+    capabilities: { resume: engine !== 'cli', read_only: engine !== 'cli', effort: null, max_turns: null,
+      permission: engine === 'codex' ? 'workspace-write' : engine === 'cli' ? null : 'default',
+      mcp: engine === 'cli' ? [] : ['labhq_approval'] } }));
 
   async function work(agent, rid, meta, fn) {
     const task_id = `task_demo${++n}`;
@@ -1179,6 +1238,8 @@ const Demo = (() => {
       say('bioinfo-agent', '표준 QC 12/12 통과, doublet 3.1% 제거했어요', rid); await sleep(600);
     });
     await step(rid, 's4', 'analyst', steps[3].instruction, async () => {
+      think('analyst', 'pseudobulk로 환자별 합친 뒤 비교해야 세포 수가 많은 환자가 결과를 끌지 않는다', rid);
+      think('analyst', 'fibroblast 하위군이 섞였을 수 있으니 marker로 먼저 확인', rid);
       tool('analyst', 'mcp__labhq_hpc__hpc_submit', 'pseudobulk_de', rid); await sleep(600);
       await hpc('analyst', rid, 'pseudobulk_de', 5200);
       say('analyst', 'fibroblast에서 CD276 log2FC 1.9 (FDR 3e-6), T세포에서는 감소', rid); await sleep(800);

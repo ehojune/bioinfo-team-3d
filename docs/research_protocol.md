@@ -114,7 +114,7 @@ receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 �
 
 ## 6. domain rule pack
 
-pack은 core 계약을 약화하지 않고 field·validator·review 질문·fixture·기계 판정 `rules`만 더한다. loader는 내용을 hash하고 같은 validator/rule ID의 상충 요구, 모르는 field·연산자를 거부한다.
+pack은 core 계약을 약화하지 않고 field·validator·review 질문·fixture·기계 판정 `rules`만 더한다. loader는 내용을 hash하고 같은 validator/rule ID의 상충 요구, 모르는 field·연산자를 거부한다. `allowed_combinations`의 칸은 PLAN 답과 같은 검사(type·`allowed_values`·`minimum`·`pattern`)를 통과해야 한다. 어떤 답도 맞출 수 없는 행은 load에서 거부한다. 빈칸(`null`)도 맞출 답이 없어 거부한다. core PLAN field(`brief.study_type` 등)의 칸은 PLAN schema type(선택지·int·bool·list)에 맞아야 한다.
 
 ```yaml
 rules:
@@ -128,7 +128,7 @@ predicate는 `field`와 `value`, `in`, `not_in`, `present`, `min_items` 중 하�
 
 active pack 중 `applies_when`이 맞는 것만 PLAN의 `pack_values[pack_key]`에 field 값과 validator·acceptance 설명을 둔다. acceptance 문자열은 설명일 뿐 통과 근거가 아니다. 동결 전에 필수 field·타입·허용값·최솟값·pattern을 검사하고 모든 rule을 실행한다. 하나라도 실패하면 CP1을 열지 않고 한 번 재계획한다. 교정 prompt에는 schema·pack 문제를 한 번에 모두 넣는다. 교정 뒤에도 실패하면 요청을 `plan_invalid`로 끝내고 남은 문제를 보고서와 `plan_validation`에 남긴다(#222).
 
-예시는 `single_cell_de@3`과 `bulk_tumor_normal@2`다. 전자는 donor·scale·model을, 후자는 벌크 두 조건의 pairing·저발현 filter·DE 기준·양성 대조 방향과 PMID를 CP1 전에 고정한다. 설정 예시는 `active_packs: [single_cell_de@3, bulk_tumor_normal@2]`이며, 두 pack 모두 요청 topic으로 적용된다. 기존 `bulk_tumor_normal@1`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개한다.
+예시는 `single_cell_de@3`과 `bulk_tumor_normal@3`이다. 전자는 donor·scale·model을, 후자는 벌크 두 조건의 pairing·저발현 filter·DE 기준·양성 대조 방향과 PMID를 CP1 전에 고정한다. `@3`의 `pairing_evidence`는 메타데이터 출처(`geo_characteristics`, `sample_title`, `source_name`, `biosample_attributes`, `supplementary_table`, `publication_methods`, `local_metadata`)를 `;`로 잇거나 `none`이고, pairing이 `partial`·`complete`면 `none`을 쓸 수 없다. 설정 예시는 `active_packs: [single_cell_de@3, bulk_tumor_normal@3]`이며, 두 pack 모두 요청 topic으로 적용된다. 기존 `bulk_tumor_normal@1`·`@2`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개한다.
 
 | `model` | `model_family` | 허용 `count_scale` |
 |---|---|---|

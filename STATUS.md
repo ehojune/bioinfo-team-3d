@@ -4,6 +4,129 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #298 — PI 문답에 10-04·10-05 질문 셋
+
+- 결론: PI가 10-04·10-05에 물은 것 셋(문헌조사와 원 연구 Methods, Codex 한도 중 Claude 작업, Claude 직원 로그인 만료)을 `docs/pi-qa.md`에 답과 함께 넣었다.
+- 바뀐 것: `docs/pi-qa.md` 8,258 → 9,946자.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `docs/pi-qa.md`.
+
+## 2026-10-05 · 운영 — 그림자 제거 검사의 실패 진단
+
+- 결론: `test_semantics_shadow_remove`가 Windows에서 가끔 실패하는데(오늘 6번 중 1번 등), 실패 메시지가 안쪽 pytest 출력의 마지막 3,000자뿐이라 faulthandler 스택만 보이고 어느 test인지 알 수 없었다. 이제 실패한 test 줄과 덤프 머리 줄을 먼저 보인다. 자식 출력은 UTF-8인데 cp949로 읽어 reader thread가 깨지던 것도 고쳤다.
+- 바뀐 것: `scripts/semantics_shadow_remove.py`(subprocess 세 곳 `encoding="utf-8", errors="replace"`, `_ok` 메시지).
+- 실행한 것: 새 test(긴 꼬리 위에 실패 줄과 덤프 머리)와 `tests/test_semantics_shadow_remove.py` 전체 통과, `scripts/check_public.sh`.
+- 미해결: 간헐 실패의 원인 자체는 다음 실패 때 이 메시지로 찾는다.
+- 근거: `scripts/semantics_shadow_remove.py`.
+
+## 2026-10-05 · #57 후속 — 직원 시트의 쓴 비용
+
+- 결론: #57 ⑦에서 뺀 직원별 누적 비용을 넣었다. 직원 상세 시트가 화면에 있는 요청들의 `by_agent`(#415)를 더해 "확인 $0.50 + 추정 $0.30 (요청 2건)"처럼 보여 준다.
+- 바뀐 것: `labhq/web/state.js`(`agentSpentLabel`), 시트 capability card, 매뉴얼 2.5D 절.
+- 실행한 것: `tests/web_cost_by_agent.cjs`에 합산·빈 경우 단언 추가. web test 통과, `scripts/check_public.sh`.
+- 미해결: 화면에 없는 오래된 요청은 합산하지 않는다(gateway가 보낸 요청만).
+- 근거: `labhq/web/state.js`.
+
+## 2026-10-05 · #57 후속 — 요청 비용을 직원별로
+
+- 결론: 요청 비용 요약이 엔진별로만 나뉘어 누가 얼마를 썼는지 알 수 없었다(#57 ⑦에서 뺀 항목). 이제 비용 항목에 직원 ID를 남기고 요약에 `by_agent`를 더해, 웹 요청 줄에 "부엉이 확인 $0.40 · 너구리 추정 $0.10"처럼 보인다.
+- 바뀐 것: `labhq/costs.py`(`task_cost_item`·`outcome_unknown_item`이 `agent_id`를 담고, `aggregate_costs`가 직원별 소계를 낸다. 직원 ID가 하나도 없는 예전 기록은 요약 모양이 그대로다), `labhq/web/state.js`(`agentCostLabel`), 요청 줄, 매뉴얼.
+- 실행한 것: `tests/test_cost_accounting.py`에 직원별 소계·예전 기록 test, 새 `tests/web_cost_by_agent.cjs`(CI 목록). 전체 pytest 3933 passed·1 failed·54 skipped. 실패 1건(`test_semantics_shadow_remove` 안의 재실행)은 단독으로 두 번 돌려 둘 다 통과한 간헐 실패, `scripts/check_public.sh`.
+- 미해결: 여러 요청을 가로지르는 직원별 누적은 아직 없다.
+- 근거: `labhq/costs.py`, `labhq/web/state.js`.
+
+## 2026-10-05 · #59 ② — 실행 중 폭주 감지(그림자)
+
+- 결론: Codex·Antigravity에는 max_turns나 예산 상한이 없어, 같은 명령을 되풀이하는 직원을 막는 것이 task timeout뿐이었다. runner가 이제 직원 이벤트를 보고 루프를 알린다. 그림자 단계라 멈추지 않는다.
+- 바뀐 것: `labhq/runner/breaker.py`(부수효과 없는 감지기: 같은 도구·입력 8번 연속, 실패한 도구 호출 5번 연속, 신호마다 task당 한 번). runner의 task `emit`이 `agent.breaker` 이벤트와 피드 경고(`agent.log` alert)를 낸다. 엔진은 성공을 알리지 않으므로 오류 없이 지나간 도구 호출이 실패 연속을 끊는다. 매뉴얼 로드맵.
+- 실행한 것: `tests/test_breaker.py` 5건(반복·입력 변경·실패 연속과 끊김·오류 줄 여러 개, runner에서 경고 뒤에도 task가 정상 종료). 전체 pytest 3937 passed·54 skipped(첫 실행의 1건 실패는 다시 나오지 않았고 이름을 잡지 못함).
+- 봇 P2: Codex MCP 호출이 인자 없이 기록돼 서로 다른 검색도 같은 반복으로 셀 수 있었다. adapter가 인자를 정렬한 짧은 JSON으로 넘기고, 입력이 없는 호출은 반복으로 세지 않는다. test 2건 추가.
+- 미해결: 멈추기(steer → 제한 → stop), 작업 폴더·HPC 진행 없음 신호, hook 제어(steer·pause·halt)는 #59에 남는다.
+- 근거: `labhq/runner/breaker.py`, `tests/test_breaker.py`.
+
+## 2026-10-05 · 운영 — 패치노트 검사가 숫자로 읽힌 sha를 알려 줌
+
+- 결론: 손으로 쓴 행의 짧은 sha가 숫자로만 되어 있으면(`7999708`) YAML이 정수로 읽어 검사가 "커밋이 없다"고만 했다(PR #410). 이제 그 행을 짚어 따옴표로 감싸라고 알려 준다.
+- 바뀐 것: `scripts/patch_notes.py` `entry_shas()`. `rows` 명령은 원래 `yaml.safe_dump`으로 따옴표를 붙이므로 그대로다.
+- 실행한 것: 새 test가 수정 전 실패, 수정 뒤 통과. `tests/test_patch_notes.py` 17 passed, `scripts/check_public.sh`.
+- 미해결: 없음.
+- 근거: `scripts/patch_notes.py`.
+
+## 2026-10-05 · #57 ⑧ — 사무실 소품을 탭 입구로
+
+- 결론: 사무실 칠판·HPC 랙·문을 누르거나 키보드로 고르면 작업판·HPC·메신저 탭이 열린다. 결정이 기다리면 칠판이 깜박이고(움직임 줄이기 설정이면 테두리 색만) 결정 탭으로 안내한다.
+- 바뀐 것: `labhq/web/index.html`(소품의 `data-tab-link`·role·tabindex, `initTabShell`이 돌려주는 탭 전환 함수 사용, 좁은 화면에서는 Command Center로 스크롤, `renderApprovals`가 칠판 상태를 바꿈), 매뉴얼 2.5D 절.
+- 실행한 것: 새 `tests/web_office_props.cjs`를 CI 목록에 넣었다. 데모에서 랙→HPC, 문→메신저, 결정 2건 대기 중 칠판 깜박임→결정, Enter 키를 확인했다. web test 48 passed, `scripts/check_public.sh`.
+- 미해결: 배정 때 서류 애니메이션은 넣지 않았다.
+- 근거: `labhq/web/index.html`, `tests/web_office_props.cjs`.
+
+## 2026-10-05 · #373 — README에 분석 점검표·선행 연구
+
+- 결론: README "무엇이 다른가" 표에 topic 점검표와 선행 연구 기준(#395·#400)이 없었다. PI가 요청한 기능이라 한 행을 더했다.
+- 바뀐 것: `README.md` 한 행. 15,200 → 15,524자.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `README.md`.
+
+## 2026-10-05 · #57 ⑦ — 직원 상세 시트의 capability card
+
+- 결론: 직원 시트가 엔진·모델·소속만 보여 줬다. 이제 권한, 추론 강도, 같은 세션 이어 쓰기, 읽기 전용 상담 가능 여부, 붙은 MCP를 보여 준다. 값은 gateway가 runner의 roster와 엔진 adapter에서 가져온 것이고 웹은 추측하지 않는다.
+- 바뀐 것: `Hub._agent_capabilities()`가 runner 등록 때 직원마다 `capabilities`를 붙여 snapshot·roster 이벤트로 나간다. `supports_resume`는 같은 판정(`_agent_resumes`)을 쓴다. 권한은 Codex면 `sandbox`, 그 밖은 `permission_mode`다. roster 요약에 `effort`를 더했다. 웹 시트·데모 roster·매뉴얼 2.5D 절.
+- 실행한 것: `tests/test_agent_capabilities.py`(Claude·Codex·CLI 직원 card), `tests/web_agent_capabilities.cjs`(snapshot·roster 갱신, 시트 항목)를 CI 목록에 넣었다. 데모에서 엔지니어 시트를 열어 확인했다. 전체 pytest 3929 passed·54 skipped, `scripts/check_public.sh`.
+- 미해결: 직원별 누적 비용·토큰은 지금 직원 단위로 모으는 곳이 없어 넣지 않았다. #57 ⑧(사무실 소품 탭 입구)이 남는다.
+- 근거: `labhq/gateway/server.py`, `labhq/web/index.html`.
+
+## 2026-10-05 · #57 ⑥ — 직원별 생각·디버그 기록
+
+- 결론: 웹은 엔진이 보내는 `thinking`·`debug` 로그를 받자마자 버렸다. 이제 직원마다 최근 60줄을 따로 보관하고, 직원 상세 시트에서 **활동 / 생각·디버그**로 골라 본다. 피드·말풍선·활동 목록에는 여전히 넣지 않는다.
+- 바뀐 것: `labhq/web/state.js`(`traceTo` ring buffer, 재생 상태 비교에 들지 않는 비열거 속성이라 roster 갱신 뒤에도 유지), `labhq/web/index.html`(시트 전환 버튼, 데모 각본에 생각 두 줄), 매뉴얼 2.5D 절.
+- 실행한 것: 새 `tests/web_agent_trace.cjs`(보관·경계·피드 제외·roster 갱신 뒤 유지)를 CI 목록에 넣었다. 기존 재생 상태 hash test(`web_state.cjs`)는 그대로 통과한다. 데모 페이지에서 분석가 시트를 열어 생각 줄이 보이는 것을 확인했다. web test 57 passed.
+- 미해결: #57 ⑦ capability card, ⑧ 사무실 소품 탭 입구.
+- 근거: `labhq/web/state.js`, `tests/web_agent_trace.cjs`.
+
+## 2026-10-05 · #369 — bulk pack @3: 짝의 근거는 메타데이터 출처 목록에서만
+
+- 결론: #369 2번. `bulk_tumor_normal@2`의 `pairing_evidence`는 자유 문자열이라 "발현 상관으로 짝 추정"도 통과했다. `@3`은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면(`partial`·`complete`) 출처를 하나 이상 요구한다. #369의 세 항목(1번 #390, 2번 이 PR, P2 #403·#406)이 모두 닫힌다.
+- 바뀐 것: `labhq/research/packs/bulk_tumor_normal_v3.yaml`(v2 + `pairing_evidence` pattern, 규칙 `bulk_tumor_normal.pairing_from_metadata`, fixture 하나). `@1`·`@2`는 그대로라 승인된 요청은 저장된 version과 hash로 재개한다. 설정 예시·매뉴얼·`docs/research_protocol.md` 6절을 `@3`으로.
+- 실행한 것: `@3` test 9건(허용 4·pattern 거부 3·규칙 거부 2)과 `@2`의 자유 문자열 유지 test, 내장 pack hash 고정에 `@3` 추가. 전체 pytest 3926 passed·54 skipped, `scripts/check_public.sh`.
+- 미해결: 없음. 운영 설정의 `active_packs`는 비어 있어(연구 lane 꺼짐) 바꿀 것이 없다.
+- 근거: `labhq/research/packs/bulk_tumor_normal_v3.yaml`, `tests/test_research_bulk_pack.py`.
+
+## 2026-10-05 · #369 — pack 조합 표의 core PLAN field 칸도 schema로 검사
+
+- 결론: PR #403 봇 P2. 조합 표에 core PLAN field(`brief.study_type`, `protocol.statistics.applicable` 등)가 들어가면 그 칸은 검사 없이 load됐다. PLAN schema에 없는 값(`"bogus"`, bool 자리의 `1`, list field의 문자열)은 어떤 PLAN과도 맞지 않는 행이다. 이제 load에서 거부한다.
+- 바뀐 것: `plan_field_problem()`이 칸의 path를 `ResearchPlan` schema로 따라가 그 field type에 strict하게 맞는지 본다. `contract.py`가 `packs.py`를 import하므로 schema는 검사할 때 늦게 가져온다. 선택(`| None`) field의 `null`은 PLAN dump의 값과 같아 허용한다. 문서: `docs/research_protocol.md` 6절, 매뉴얼 연구 lane 절.
+- 실행한 것: 새 test 6건 중 거부 5건이 옛 검사에서 실패하고 이 branch에서 통과했다. 남은 1건은 맞는 칸이 계속 load되는지 확인한다. 전체 pytest 3912 passed·54 skipped, `scripts/check_public.sh`.
+- 봇 P2: Field 제약(`ge=1`, `min_length=1`)은 annotation이 아니라 metadata에 있어 함께 검사한다. `protocol.revision: 0`, `brief.subject: ""` test가 수정 전 실패, 수정 뒤 통과.
+- 미해결: 없음.
+- 근거: `labhq/research/packs.py`, `tests/test_research_bulk_pack.py`.
+
+## 2026-10-05 · #373 — HANDOFF 작업 큐와 PI 결정을 10-05 기준으로
+
+- 결론: 작업 큐가 10-03 기준이라 v0.25 선언과 #373 후속이 빠져 있었다. 총괄이 시작할 때 읽는 표를 지금 상태로 맞췄다.
+- 바뀐 것: 작업 큐에 v0.25 선언(#379)과 #373 진행·남은 것(벤치 C, #402), #382 실측 행을 더하고, 끝난 README 분리 행을 뺐다. PI 결정에 10-04·10-05 결정 3건(단독 라우팅 안 A, 어휘 100키, 원 연구 Methods는 참고·갈래별 분석은 선행 연구)을 더했다. 12,070자 → 12,803자.
+- 실행한 것: `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `HANDOFF.md`.
+
+## 2026-10-05 · #373 — 로그인 대기의 turn 키를 상담 ask마다 따로
+
+- 결론: 같은 request에서 서로 다른 직원에게 보낸 상담은 병렬로 돌지만 둘 다 `kind="consult"`라 한 turn으로 묶였다. 먼저 끝난 상담이 로그인 창을 지워 남은 상담이 24시간 상한을 새로 시작했고, 두 대기 기록도 서로 덮어썼다. PR #401 봇 3차 P1로, 병합 때 남긴 것이다.
+- 바뀐 것: `turn_key()` 하나가 turn을 가리킨다. 단계는 `step_id`, 그 밖은 `kind`이고, 상담은 `kind:ask_id`다. 로그인 창의 turn 목록, 로그인·한도 대기 기록, 시도 횟수가 모두 이 키를 쓴다. 전에는 세 곳이 각자 식을 썼다.
+- 실행한 것: 새 test(두 직원 상담이 같은 엔진 로그인을 기다림)가 옛 키에서 실패(대기 기록이 `consult` 하나로 덮임)하고 이 branch에서 통과했다. 로그인 대기 test 44건, 전체 pytest 3898 passed·54 skipped, `scripts/check_public.sh`.
+- 봇 P2(업그레이드 때 대기 중이던 상담): 옛 창에 남은 `consult` 키는 그 상담이 빠질 때 함께 지운다. 새 test가 수정 전 실패, 수정 뒤 통과.
+- 미해결: 없음.
+- 근거: `labhq/orchestrator/cso.py`(`turn_key`), `tests/test_login_wait.py`.
+
+## 2026-10-05 · #369 — pack 조합 표의 칸을 PLAN 답과 같은 규칙으로 검사
+
+- 결론: pack의 `allowed_combinations` 칸이 field의 type·`minimum`·`pattern`을 어기면 그 행은 어떤 PLAN도 통과할 수 없다. 이제 load에서 거부한다. PR #366 봇 P2(#369 남은 지적)다.
+- 바뀐 것: `labhq/research/packs.py`에 `field_value_problem()`을 두어 PLAN 답 검사(`contract.py`)와 조합 표 칸 검사가 같은 판정을 쓴다. 전에는 칸을 `allowed_values`로만 봤다. `null` 칸도 거부한다(생략한 답은 `null`과 같지 않고, 명시한 `null`은 type 검사에서 떨어진다). 내장 pack 내용과 hash는 그대로다. `docs/research_protocol.md` 6절.
+- 실행한 것: 새 test 9건 중 거부 8건이 옛 검사에서 실패하고 이 branch에서 통과했다. 통과 1건은 맞는 칸이 계속 load되는지 확인한다. PLAN 답 오류 문구는 그대로라 기존 test 기대값을 바꾸지 않았다. 전체 pytest 3905 passed·54 skipped, `scripts/check_public.sh`.
+- 미해결: 봇 P2 — core PLAN field(`brief.study_type` 등)의 칸은 PLAN schema로 검사하지 않는다(남은 지적). #369 1번(적용 pack의 `not_applicable` 우회)은 #390에서 topic 판정으로 닫혔다. 2번 `pairing_evidence` 닫힌 선택지는 pack version을 올려야 해 이 PR에 넣지 않았다.
+- 근거: `labhq/research/packs.py`, `labhq/research/contract.py`, `tests/test_research_bulk_pack.py`.
+
 # 엔진 로그인 대기와 이어서 실행 (#373)
 
 ## 단계

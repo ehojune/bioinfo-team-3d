@@ -12,6 +12,7 @@ from pydantic import (BaseModel, ConfigDict, Field, ValidationError, field_valid
 
 from ..intake import ClarifyingQuestion
 from ..vocab.declare import MAX_ENTRIES, MAX_KEY, MAX_NAME
+from .packs import field_value_problem
 from ..evidence.claims import (STATUS_NEEDS, Claim, Evidence, EvidenceLink, ledger_errors,
                                normalize_artifact_path)
 
@@ -481,21 +482,9 @@ def _one_pack_errors(key: str, pack: Any, supplied: dict[str, Any], plan_values:
                 continue
             if name not in fields:
                 continue
-            current = fields[name]
-            valid_type = ((field.value_type == "string" and isinstance(current, str)) or
-                          (field.value_type == "integer" and isinstance(current, int) and not isinstance(current, bool)) or
-                          (field.value_type == "boolean" and isinstance(current, bool)))
-            if not valid_type:
-                errors.append(f"pack_values[{key}].fields.{name} must be {field.value_type}")
-                invalid_fields.add(name)
-            elif field.allowed_values and current not in field.allowed_values:
-                errors.append(f"pack_values[{key}].fields.{name} must be one of {field.allowed_values}")
-                invalid_fields.add(name)
-            elif field.minimum is not None and current < field.minimum:
-                errors.append(f"pack_values[{key}].fields.{name} must be at least {field.minimum:g}")
-                invalid_fields.add(name)
-            elif field.pattern is not None and re.fullmatch(field.pattern, current) is None:
-                errors.append(f"pack_values[{key}].fields.{name} must match {field.pattern}")
+            problem = field_value_problem(field, fields[name])
+            if problem:
+                errors.append(f"pack_values[{key}].fields.{name} {problem}")
                 invalid_fields.add(name)
     fields_ok = fields is not None and not errors
 

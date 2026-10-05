@@ -1,0 +1,8 @@
+pr: 410
+rows:
+- sha: 292afe5
+  at: 2026-10-05 05:58
+  text: 직원 상세 시트가 권한·추론 강도·이어 쓰기·읽기 전용 상담·MCP를 gateway가 보낸 capability card로 보여 준다
+- sha: '7999708'
+  at: 2026-10-05 06:02
+  text: capability card가 읽기 전용을 못 지키는 엔진의 이어 묻기·상담을 안 됨으로 보이고 MCP는 runner가 실제로 붙이는 목록만 보인다

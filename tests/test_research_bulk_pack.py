@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.research.contract import freeze_plan, validate_research_plan
-from labhq.research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                                  render_pack_catalog, select_applied_packs, select_legacy_applied_packs)
+from labhq.research.packs import (DomainRulePack, assess_pack_applicability, configured_packs, pack_refs,
+                                  pack_snapshot, render_pack_catalog, select_applied_packs, select_legacy_applied_packs)
 from labhq.settings import Settings
 from tests.test_research_protocol import PACK as SINGLE_CELL_PACK
 from tests.test_research_protocol import valid_pack_values as valid_single_cell_values
@@ -524,3 +525,104 @@ def test_single_cell_v3_keeps_v2_rules_and_v2_stays_for_resumes():
     assert v3.applies_when.description == v2.applies_when
     assert [rule.id for rule in v3.rules] == [rule.id for rule in v2.rules]
     assert [field.name for field in v3.fields] == [field.name for field in v2.fields]
+
+
+def _bulk_pack_with_table(extra_fields, column, cells):
+    raw = yaml.safe_load((Path("labhq/research/packs") / "bulk_tumor_normal_v2.yaml").read_text(encoding="utf-8"))
+    raw["fields"] += extra_fields
+    raw["rules"].append({"id": "bulk_tumor_normal.extra_table", "description": "Extra closed table.",
+                         "allowed_combinations": {"fields": ["pairing", column],
+                                                  "rows": [["none", cell] for cell in cells]}})
+    return raw
+
+
+MIN_PAIRS = {"name": "min_pairs", "description": "Pairs needed.", "value_type": "integer", "minimum": 3}
+FLAG = {"name": "flag", "description": "Optional flag.", "value_type": "boolean", "required": False}
+
+
+@pytest.mark.parametrize("extra, column, cell, detail", [
+    ([MIN_PAIRS], "min_pairs", "3", "min_pairs must be integer"),
+    ([MIN_PAIRS], "min_pairs", True, "min_pairs must be integer"),
+    ([MIN_PAIRS], "min_pairs", 2, "min_pairs must be at least 3"),
+    ([FLAG], "flag", 1, "flag must be boolean"),
+    ([], "positive_controls", "TP53", "positive_controls must match"),
+    ([], "pairing_evidence", None, "pairing_evidence cannot be null"),
+    ([FLAG], "flag", None, "flag cannot be null"),
+    ([], "primary_model", "paired", "primary_model must be one of"),
+])
+def test_combination_cells_no_valid_answer_can_match_are_rejected_at_load(extra, column, cell, detail):
+    # PR #366 review P2: a cell of the wrong type, pattern or minimum is a row no plan can ever pass.
+    with pytest.raises(ValueError, match=f"combination value .* is not allowed for {column} \({detail}"):
+        DomainRulePack.model_validate(_bulk_pack_with_table(extra, column, [cell]))
+
+
+def test_combination_cells_that_a_valid_answer_can_match_still_load():
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([MIN_PAIRS], "min_pairs", [3, 4]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([FLAG], "flag", [True, False]))
+
+
+@pytest.mark.parametrize("column, cell", [
+    ("brief.study_type", "bogus"),
+    ("protocol.statistics.applicable", 1),
+    ("protocol.revision", True),
+    ("protocol.statistics.comparison_groups", "tumor"),
+    ("brief.subject", None),
+    ("brief.subject", ""),
+    ("protocol.revision", 0),
+])
+def test_core_plan_field_cells_outside_the_plan_schema_are_rejected_at_load(column, cell):
+    # PR #403 review P2: a core PLAN field's cell is checked against the PLAN schema type, not skipped.
+    with pytest.raises(ValueError, match=f"is not allowed for {column} \({column} does not fit the PLAN schema"):
+        DomainRulePack.model_validate(_bulk_pack_with_table([], column, [cell]))
+
+
+def test_core_plan_field_cells_a_plan_can_hold_still_load():
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.study_type", ["comparative", "technical"]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "protocol.statistics.applicable", [True, False]))
+    assert DomainRulePack.model_validate(_bulk_pack_with_table([], "brief.primary_hypothesis", [None, "H1"]))
+
+
+BULK_V3 = "bulk_tumor_normal@3"
+
+
+def _bulk_v3_plan(**fields):
+    selected = _selected(BULK_V3)
+    values = valid_bulk_values(BULK_V3)
+    values[BULK_V3]["fields"].update({"pairing_evidence": "geo_characteristics;sample_title", **fields})
+    values[BULK_V3]["acceptance"]["bulk_tumor_normal.pairing_from_metadata"] = "Pairing names a metadata source."
+    plan = valid_plan(pack_values=values, topics=["bulk_rna_seq"])
+    plan["brief"]["subject"] = "bulk tumor and normal tissue expression"
+    return plan, selected
+
+
+@pytest.mark.parametrize("fields, failure", [
+    ({}, None),
+    ({"pairing_evidence": "supplementary_table"}, None),
+    ({"pairing": "none", "primary_model": "unpaired", "pairing_evidence": "none"}, None),
+    ({"pairing": "none", "primary_model": "unpaired", "pairing_evidence": "sample_title"}, None),
+    ({"pairing_evidence": "metadata.patient_id and tissue_type"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "expression_correlation"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "none;sample_title"}, "pairing_evidence must match"),
+    ({"pairing_evidence": "none"}, "bulk_tumor_normal.pairing_from_metadata"),
+    ({"pairing": "partial", "pairing_evidence": "none"}, "bulk_tumor_normal.pairing_from_metadata"),
+])
+def test_bulk_v3_pairing_evidence_is_a_closed_metadata_source_list(fields, failure):
+    # #369 2: pairing evidence named expression similarity in free text passed v2; v3 takes only metadata sources,
+    # and partial or complete pairing must name one.
+    plan, selected = _bulk_v3_plan(**fields)
+    if failure is None:
+        _validate(plan, selected)
+    else:
+        with pytest.raises(ValueError, match=failure):
+            _validate(plan, selected)
+
+
+def test_bulk_v3_keeps_v2_rules_and_topics_and_v2_stays_for_resumes():
+    catalog = configured_packs(Settings(), [BULK_PACK, BULK_V3])
+    v2, v3 = catalog[BULK_PACK].pack, catalog[BULK_V3].pack
+    assert v3.applies_when.topics_any == v2.applies_when.topics_any
+    assert [rule.id for rule in v3.rules] == [*(rule.id for rule in v2.rules[:-1]),
+                                              "bulk_tumor_normal.pairing_from_metadata", v2.rules[-1].id]
+    assert [field.name for field in v3.fields] == [field.name for field in v2.fields]
+    v2_evidence = next(field for field in v2.fields if field.name == "pairing_evidence")
+    assert v2_evidence.pattern is None  # approved @2 contracts resume with the free-text field
