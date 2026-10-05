@@ -14,9 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:54 | [`c6b39ac`](https://github.com/ehojune/bioinfo-team-3d/pull/425/commits/c6b39ac) | 하위 agent는 tools에 적은 직원만, 나머지는 Agent·Task 거부 |
 | 19:45 | [`3750148`](https://github.com/ehojune/bioinfo-team-3d/pull/426/commits/3750148) | README 비교표: 칸을 한 줄로, 리뷰어 범위 주석 |
 | 19:42 | [`d00da0a`](https://github.com/ehojune/bioinfo-team-3d/pull/426/commits/d00da0a) | README: 장점 네 꼭지 카드와 다른 방식 비교 |
 | 19:37 | [`d1b1cc4`](https://github.com/ehojune/bioinfo-team-3d/pull/402/commits/d1b1cc4) | somatic 점검표: matched normal과 panel of normals를 나눔 |
+| 19:36 | [`063af01`](https://github.com/ehojune/bioinfo-team-3d/pull/425/commits/063af01) | 직원 세션의 여러 agent 도구와 Codex 기억 끄기 |
 | 18:42 | [`1c239b1`](https://github.com/ehojune/bioinfo-team-3d/pull/419/commits/1c239b1) | 매뉴얼 로드맵: 끝난 #84 줄 지움 |
 | 14:59 | [`c28e234`](https://github.com/ehojune/bioinfo-team-3d/pull/418/commits/c28e234) | PI 문답: 문헌조사·Methods, 한도 중 Claude 작업, 로그인 만료 |
 | 14:44 | [`a25ef68`](https://github.com/ehojune/bioinfo-team-3d/pull/417/commits/a25ef68) | 열린 직원 시트의 쓴 비용도 실시간 갱신 |
