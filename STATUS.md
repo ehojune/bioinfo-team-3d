@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · 운영 — 그림자 제거 검사의 실패 진단
+
+- 결론: `test_semantics_shadow_remove`가 Windows에서 가끔 실패하는데(오늘 6번 중 1번 등), 실패 메시지가 안쪽 pytest 출력의 마지막 3,000자뿐이라 faulthandler 스택만 보이고 어느 test인지 알 수 없었다. 이제 실패한 test 줄과 덤프 머리 줄을 먼저 보인다. 자식 출력은 UTF-8인데 cp949로 읽어 reader thread가 깨지던 것도 고쳤다.
+- 바뀐 것: `scripts/semantics_shadow_remove.py`(subprocess 세 곳 `encoding="utf-8", errors="replace"`, `_ok` 메시지).
+- 실행한 것: 새 test(긴 꼬리 위에 실패 줄과 덤프 머리)와 `tests/test_semantics_shadow_remove.py` 전체 통과, `scripts/check_public.sh`.
+- 미해결: 간헐 실패의 원인 자체는 다음 실패 때 이 메시지로 찾는다.
+- 근거: `scripts/semantics_shadow_remove.py`.
+
 ## 2026-10-05 · #57 후속 — 요청 비용을 직원별로
 
 - 결론: 요청 비용 요약이 엔진별로만 나뉘어 누가 얼마를 썼는지 알 수 없었다(#57 ⑦에서 뺀 항목). 이제 비용 항목에 직원 ID를 남기고 요약에 `by_agent`를 더해, 웹 요청 줄에 "부엉이 확인 $0.40 · 너구리 추정 $0.10"처럼 보인다.

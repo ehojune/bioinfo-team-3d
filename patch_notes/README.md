@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:19 | [`91bbe31`](https://github.com/ehojune/bioinfo-team-3d/pull/416/commits/91bbe31) | 그림자 제거 검사: 실패한 test 줄을 먼저, 자식 출력은 UTF-8로 |
 | 14:16 | [`700bbd7`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/700bbd7) | 요청 줄 다시 그리기 key에 직원 이름 |
 | 14:08 | [`721285b`](https://github.com/ehojune/bioinfo-team-3d/pull/415/commits/721285b) | 요청 비용을 직원별로 |
 | 13:56 | [`5346c06`](https://github.com/ehojune/bioinfo-team-3d/pull/414/commits/5346c06) | 폭주 감지: Codex MCP 인자를 입력으로, 입력 없는 호출은 반복으로 세지 않음 |
