@@ -1,5 +1,8 @@
 pr: 425
 rows:
+- sha: c6b39ac
+  at: 2026-10-05 19:54
+  text: 하위 agent는 tools에 적은 직원만, 나머지는 Agent·Task 거부
 - sha: 063af01
   at: 2026-10-05 19:36
   text: 직원 세션의 여러 agent 도구와 Codex 기억 끄기
