@@ -254,7 +254,10 @@ def _default_bash_ask() -> list[str]:
 
 
 def _default_auto_allow() -> list[str]:
-    return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Task", "Agent", "Skill"]
+    # Tools the approval gate allows without a shell, file or MCP rule. Anything else asks the PI (#421): Monitor, for
+    # one, runs a shell command the Bash checks never see. StructuredOutput and ToolSearch: seen in trial records.
+    return ["Read", "Glob", "Grep", "LS", "WebSearch", "WebFetch", "TodoWrite", "Task", "Agent", "Skill",
+            "StructuredOutput", "ToolSearch"]
 
 
 class ApprovalRules(BaseModel):
