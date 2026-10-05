@@ -27,4 +27,5 @@ const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(html, /agentCostLabel\(q\.costSummary, nick\)/);
 assert.match(html, /JSON\.stringify\(\[S\.requests\.size, staffNames,/, 'a roster change redraws the cost line');
 assert.match(html, /agentSpentLabel\(\[\.\.\.S\.requests\.values\(\)\], id\)/);
+assert.match(html, /spent\.textContent = figure/, 'an open sheet keeps its spending live');
 console.log('cost by agent web tests passed');
