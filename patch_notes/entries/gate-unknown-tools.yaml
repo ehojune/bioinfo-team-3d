@@ -1,0 +1,5 @@
+pr: 434
+rows:
+- sha: "be64c75"
+  at: 2026-10-06 04:59
+  text: "승인 게이트가 셸·파일·MCP 규칙 없는 도구를 policy.approvals.auto_allow_tools에 있을 때만 허용하고 나머지는 PI에게 묻는다(#421; 예: 셸을 돌리는 Monitor)."
