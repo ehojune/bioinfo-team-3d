@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:56 | [`5346c06`](https://github.com/ehojune/bioinfo-team-3d/pull/414/commits/5346c06) | 폭주 감지: Codex MCP 인자를 입력으로, 입력 없는 호출은 반복으로 세지 않음 |
+| 13:52 | [`6f01a87`](https://github.com/ehojune/bioinfo-team-3d/pull/414/commits/6f01a87) | runner: 실행 중 폭주 감지(그림자, 경고만) |
 | 06:31 | [`701afcc`](https://github.com/ehojune/bioinfo-team-3d/pull/413/commits/701afcc) | README: 분석 점검표와 선행 연구 기준 |
 | 06:15 | [`74eee3b`](https://github.com/ehojune/bioinfo-team-3d/pull/411/commits/74eee3b) | main 병합: #410과 겹친 매뉴얼 2.5D 절과 CI web test 목록을 둘 다 살림 |
 | 06:14 | [`b0cbd2a`](https://github.com/ehojune/bioinfo-team-3d/pull/412/commits/b0cbd2a) | 숫자 sha 안내는 원문 표기 그대로(0으로 시작해도) |
