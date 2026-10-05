@@ -15,13 +15,16 @@ async def _emit(kind, data):
     pass
 
 
-def _command(engine, tmp_path, settings=None, env=None, claude_settings=None):
+def _command(engine, tmp_path, settings=None, env=None, claude_settings=None, tools=()):
     settings = settings or Settings()
-    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), builtin_mcp=[])
+    agent = AgentSpec(id="a", name="A", role="test", engine=Engine(engine), builtin_mcp=[], tools=list(tools))
     ctx = RunContext(task=Task(agent_id="a", prompt="x"), agent=agent, workdir=tmp_path, settings=settings,
                      mcp_servers=[], env=env or {}, emit=_emit, prompt="x",
                      claude_settings=claude_settings or {})
     return get_adapter(agent.engine, settings).build_command(ctx)
+
+
+STAFF_DENY = ["Agent", "Task", "Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
 
 
 def _settings_arg(cmd):
@@ -73,7 +76,7 @@ def test_claude_isolation_flags_and_claude_md_exclude(tmp_path):
 def test_claude_isolation_keeps_policy_deny_rules(tmp_path):
     deny = {"permissions": {"deny": ["Read(//data/cohort/**)"]}}
     s = _settings_arg(_command("claude_code", tmp_path, claude_settings=deny))
-    assert s["permissions"]["deny"] == ["Read(//data/cohort/**)", "Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
+    assert s["permissions"]["deny"] == ["Read(//data/cohort/**)", *STAFF_DENY]
     assert "claudeMdExcludes" in s
 
 
@@ -82,7 +85,7 @@ def test_claude_isolation_can_be_turned_off(tmp_path):
     settings.engines.claude_code.isolate_user_config = False
     cmd = _command("claude_code", tmp_path, settings=settings)
     assert "--setting-sources" not in cmd and "--disable-slash-commands" not in cmd
-    assert _settings_arg(cmd)["permissions"]["deny"] == ["Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
+    assert _settings_arg(cmd)["permissions"]["deny"] == STAFF_DENY
 
 
 @pytest.mark.asyncio
@@ -442,3 +445,11 @@ def test_labhq_ask_keeps_its_own_longer_mcp_timeout(tmp_path, engine):
         cmd = adapter.build_command(ctx)
         assert f"mcp_servers.labhq_ask.tool_timeout_sec={ask.timeout_s}" in cmd
         assert f"mcp_servers.labhq_hpc.tool_timeout_sec={generic}" in cmd
+
+
+def test_claude_staff_that_lists_a_sub_agent_tool_keeps_both_names(tmp_path):
+    # PR #425 review: sub-agents run outside labhq's approvals and accounting, so only a staff member that lists Agent
+    # (recruiter's Paper2Agent conversion) or its older name Task keeps them; orchestration tools stay denied.
+    deny = _settings_arg(_command("claude_code", tmp_path, tools=["Read", "Agent"]))["permissions"]["deny"]
+    assert "Agent" not in deny and "Task" not in deny
+    assert deny == ["Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]

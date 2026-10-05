@@ -88,7 +88,8 @@ async def test_claude_code_adapter(tmp_path):
     assert cfg["paper_x"]["command"] == "bash" and "cd /opt/x" in cfg["paper_x"]["args"][1]
     assert cfg["labhq_approval"]["timeout"] == 135_000 and "timeout" not in cfg["paper_x"]
     settings = json.loads(argv[argv.index("--settings") + 1])
-    assert settings["permissions"]["deny"] == ["Read(//d/**)", "Workflow", "TeamCreate", "TeamDelete", "SendMessage", "ListAgents"]
+    assert settings["permissions"]["deny"] == ["Read(//d/**)", "Agent", "Task", "Workflow", "TeamCreate",
+                                               "TeamDelete", "SendMessage", "ListAgents"]
     assert run_fields["model_id"] == "claude-opus"
     assert any(t == "agent.tool" for t, _ in events)
 
