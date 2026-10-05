@@ -12,7 +12,7 @@ PMID는 2026-10-05에 PubMed에서 첫 저자·학술지·연도와 제목 단�
 | cut_and_run | Skene & Henikoff 2017 eLife, CUT&RUN (PMID 28079019) · Meers et al. 2019 Epigenetics Chromatin, SEACR (PMID 31300027) |
 | dna_methylation | Krueger et al. 2012 Nat Methods (PMID 22290186) · Feng et al. 2014 Nucleic Acids Res, DSS (PMID 24561809) |
 | germline_wgs_wes | Van der Auwera et al. 2013 Curr Protoc Bioinformatics, GATK best practices (PMID 25431634) |
-| somatic_wgs_wes | Cibulskis et al. 2013 Nat Biotechnol, MuTect (PMID 23396013) · Costello et al. 2013 Nucleic Acids Res, 산화 인공물 (PMID 23303777) |
+| somatic_wgs_wes | Cibulskis et al. 2013 Nat Biotechnol, MuTect·panel of normals (PMID 23396013) · Costello et al. 2013 Nucleic Acids Res, 산화 인공물 (PMID 23303777). tumor-only의 집단 생식계열 필터(gnomAD)는 PR #402 리뷰로 더함 |
 | rare_disease_genomics | Richards et al. 2015 Genet Med, ACMG/AMP (PMID 25741868) · Köhler et al. 2021 Nucleic Acids Res, HPO (PMID 33264411) |
 | ont_long_read | Wick et al. 2019 Genome Biol, basecaller 비교 (PMID 31234903) |
 | pacbio_long_read | Wenger et al. 2019 Nat Biotechnol, HiFi (PMID 31406327) |

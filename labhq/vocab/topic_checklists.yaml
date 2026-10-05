@@ -108,14 +108,14 @@ germline_wgs_wes:
 
 somatic_wgs_wes:
   - id: matched_normal
-    check: 짝지은 정상 시료나 panel of normals를 쓰고, 없으면 한계로 밝힌다
-    why: 생식계열 변이를 체세포 변이로 잘못 부르지 않기 위해서다
+    check: 짝지은 정상 시료로 생식계열 변이를 거르고, 없으면(tumor-only) gnomAD 같은 집단 생식계열 자료로 거른 뒤 남는 오분류 위험을 한계로 밝힌다
+    why: panel of normals는 기술적 인공물만 걸러 그 환자 고유의 생식계열 변이를 체세포 변이로 잘못 부를 수 있다
   - id: purity_contamination
     check: 종양 순도와 교차 오염을 추정해 보고한다
     why: 순도와 오염이 VAF 해석과 검출력을 바꾼다
   - id: artifact_filters
-    check: FFPE·산화 같은 인공 변이 필터와 VAF·depth 기준을 밝힌다
-    why: 시료 처리 인공물이 체세포 변이처럼 보인다
+    check: panel of normals, FFPE·산화 같은 인공 변이 필터, VAF·depth 기준을 밝힌다
+    why: 시료 처리와 시퀀싱 인공물이 체세포 변이처럼 보인다
 
 rare_disease_genomics:
   - id: phenotype_hpo
