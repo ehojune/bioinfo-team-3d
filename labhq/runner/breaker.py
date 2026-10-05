@@ -35,8 +35,10 @@ class Breaker:
     def observe(self, kind: str, data: dict[str, Any]) -> dict[str, Any] | None:
         """Feed one agent event; return a trip record the first time a signal crosses its limit."""
         if kind == "agent.tool":
-            key = _call_key(data)
-            self._repeats = self._repeats + 1 if key == self._last_call else 1
+            # A call whose input the engine did not report cannot be told apart from the next, so it never counts
+            # as a repeat (PR #414 review: Codex MCP calls without arguments).
+            key = _call_key(data) if data.get("input") not in (None, "") else None
+            self._repeats = self._repeats + 1 if key is not None and key == self._last_call else int(key is not None)
             self._last_call, self._last_tool = key, str(data.get("name") or "")
             # Engines report failures but not successes: a tool call that follows one without an error ends the
             # error streak.

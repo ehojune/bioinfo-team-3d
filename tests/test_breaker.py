@@ -22,6 +22,14 @@ def test_a_different_input_restarts_the_repeat_count():
         assert breaker.observe(*tool(text=f"ls step{i % 2}")) is None
 
 
+def test_calls_without_a_reported_input_never_count_as_repeats():
+    # PR #414 review: Codex MCP calls used to arrive without arguments; distinct searches must not look identical.
+    breaker = Breaker()
+    for _ in range(12):
+        assert breaker.observe("agent.tool", {"name": "mcp:pubmed.search_articles"}) is None
+        assert breaker.observe("agent.tool", {"name": "mcp:pubmed.search_articles", "input": ""}) is None
+
+
 def test_five_failed_calls_in_a_row_trip_and_a_quiet_call_ends_the_streak():
     breaker = Breaker()
     for i in range(4):
@@ -76,3 +84,25 @@ async def test_runner_reports_a_looping_agent_without_stopping_it(tmp_path, monk
         assert alerts == ["폭주 의심: shell를 같은 입력으로 8번 연달아 불렀어요 (경고만, 멈추지 않음)"]
     finally:
         runner.store.close()
+
+
+async def test_codex_mcp_calls_carry_their_arguments():
+    # PR #414 review: the started event keeps a short, stable fingerprint of the arguments.
+    import json
+    from types import SimpleNamespace
+
+    from labhq.adapters import get_adapter
+    from labhq.adapters.base import RunState
+
+    events = []
+
+    async def emit(kind, data):
+        events.append((kind, data))
+
+    adapter = get_adapter("codex", Settings())
+    for query in ("CD276 fibroblast", "CD276 T cell"):
+        line = {"type": "item.started", "item": {"type": "mcp_tool_call", "server": "pubmed", "tool": "search",
+                                                 "arguments": {"query": query, "max_results": 5}}}
+        await adapter.handle_line(json.dumps(line), RunState(), SimpleNamespace(emit=emit))
+    assert [data["input"] for _, data in events] == [
+        '{"max_results": 5, "query": "CD276 fibroblast"}', '{"max_results": 5, "query": "CD276 T cell"}']
