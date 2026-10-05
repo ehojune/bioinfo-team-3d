@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-05 · #57 후속 — 요청 비용을 직원별로
+
+- 결론: 요청 비용 요약이 엔진별로만 나뉘어 누가 얼마를 썼는지 알 수 없었다(#57 ⑦에서 뺀 항목). 이제 비용 항목에 직원 ID를 남기고 요약에 `by_agent`를 더해, 웹 요청 줄에 "부엉이 확인 $0.40 · 너구리 추정 $0.10"처럼 보인다.
+- 바뀐 것: `labhq/costs.py`(`task_cost_item`·`outcome_unknown_item`이 `agent_id`를 담고, `aggregate_costs`가 직원별 소계를 낸다. 직원 ID가 하나도 없는 예전 기록은 요약 모양이 그대로다), `labhq/web/state.js`(`agentCostLabel`), 요청 줄, 매뉴얼.
+- 실행한 것: `tests/test_cost_accounting.py`에 직원별 소계·예전 기록 test, 새 `tests/web_cost_by_agent.cjs`(CI 목록). 전체 pytest 3933 passed·1 failed·54 skipped. 실패 1건(`test_semantics_shadow_remove` 안의 재실행)은 단독으로 두 번 돌려 둘 다 통과한 간헐 실패, `scripts/check_public.sh`.
+- 미해결: 여러 요청을 가로지르는 직원별 누적은 아직 없다.
+- 근거: `labhq/costs.py`, `labhq/web/state.js`.
+
 ## 2026-10-05 · #59 ② — 실행 중 폭주 감지(그림자)
 
 - 결론: Codex·Antigravity에는 max_turns나 예산 상한이 없어, 같은 명령을 되풀이하는 직원을 막는 것이 task timeout뿐이었다. runner가 이제 직원 이벤트를 보고 루프를 알린다. 그림자 단계라 멈추지 않는다.
