@@ -32,6 +32,7 @@ from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_d
 from ..ask_results import read_ask_results, rejected_step
 from ..login import LOGIN_PATH_ENV
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
+from .breaker import Breaker, trip_text
 from .versions import engine_cli_versions
 from ..intake import (expand_home_references, overlaps_restricted, overlaps_zone, reference_roots,
                       scan_reference_dir, withhold_reference_paths, zone_links)
@@ -884,12 +885,18 @@ class Runner:
             self.task_req[task.id] = task.request_id
 
         tool_errors: list[str] = []
+        breaker = Breaker()
 
         async def emit(typ: str, data: dict) -> None:
             if typ == "agent.tool_error" and task.meta.get("general_result_contract"):
                 first = str(data.get("text") or "tool failed").splitlines()[0].strip() or "tool failed"
                 tool_errors.append(short(first, 200))
             await self.emit(Event(type=typ, task_id=task.id, agent_id=agent.id, request_id=task.request_id, data=data))
+            trip = breaker.observe(typ, data)
+            if trip:  # #59 shadow: tell the PI once per signal, keep the agent running
+                for kind, body in (("agent.breaker", trip), ("agent.log", {"level": "alert", "text": trip_text(trip)})):
+                    await self.emit(Event(type=kind, task_id=task.id, agent_id=agent.id, request_id=task.request_id,
+                                          data=body))
 
         await emit("agent.status", {"state": "queued"})
         consult = task.meta.get("kind") == "consult"
