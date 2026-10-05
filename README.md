@@ -43,19 +43,103 @@ mock 데모(`labhq demo --web`)를 15초 동안 녹화한 화면입니다. 요�
 - CSO는 권한·비용·데이터 접근, PI만 아는 선택(질병·코호트), 분석 깊이만 묻습니다. 나머지 설계는 스스로 정하고 계획과 보고서에 **가정**으로 적습니다.
 - 단계마다 작업 폴더에 지시문·산출·엔진·비용 기록이 남습니다.
 
-## 무엇이 다른가
+## labhq가 공들인 네 가지
 
-| | labhq |
-|---|---|
-| 검수 | 과학 리뷰어는 팀과 다른 회사 모델(GPT-6-Astra)입니다. 인용·ID·날짜는 PubMed·bioRxiv MCP로 원문 레코드를 열어 확인합니다. 과잉 일반화, 유리한 결과만 고른 보고, 추측을 사실처럼 쓴 문장은 그 문장을 인용해 지적합니다 |
-| 근거 등급 | 주장과 근거를 따로 적습니다. 근거마다 종류(관찰·DB 주석·실험·문헌), 출처 수준(1차·2차·3차), 직접성을 답니다. 추론과 가설은 근거로 세지 않고, 실패한 조회는 증거도 부재 증명도 아닙니다 |
-| 근거 검증 | [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech)(Science 2026)에서 claim 장부와 산출 hash 기록을 가져왔습니다(MIT). 여기에 PI의 근거 승인(CP2), 보고서 수치마다 붙는 근거 앵커 검사, `labhq verify`의 hash 재계산을 더했습니다 |
-| 사람의 결정 | 위험한 셸 명령, 작업 폴더 밖 쓰기, 설치, 예산 초과, HPC 제출은 PI가 웹·폰 카드로 정합니다. 엔진이 무엇이든 같습니다 |
-| 데이터 보호 | 통제(DUA) 데이터는 데이터 구역으로 묶어 HPC 잡 안에서만 다룹니다. Claude 직원에게는 `~/.ssh` 같은 PI 개인 경로를 가립니다 |
-| 긴 작업 | HPC 잡을 낸 직원은 쉬었다가 같은 세션으로 이어 갑니다. 계획(DAG)과 재시도 상한은 코드가 쥐고, gateway가 다시 떠도 멈춘 곳부터 이어 갑니다 |
-| 분석 점검표 | 요청의 assay·분야(topic)마다 빠뜨리기 쉬운 점검(batch, 짝, QC 등)에 계획이 단계나 가정으로 답해야 합니다. 계획 전에 선행 논문에서 같은 갈래의 필수·권장 분석을 찾아 더합니다. 공개 데이터 원 연구의 Methods는 참고만 합니다 |
-| 작은 요청 | 30분 안에 한 직원이 끝낼 조회·표·QC·그림·문헌 목록은 한 턴으로 처리하고, 실패하면 저장된 팀 계획으로 이어 갑니다 |
-| 재현 | 요청이 끝나면 산출과 분석 코드를 한 폴더(요청 묶음)로 모읍니다. runner가 hash로 기록한 파일만 복사하고 단계 사이 경로를 상대경로로 바꿔, 다른 곳에서도 다시 돌릴 수 있습니다. 빠진 파일은 MANIFEST에 이유와 함께 남습니다 |
+labhq는 빨리 끝내기보다 점검을 겹쳐 두고 근거를 다시 확인할 수 있게 남기는 쪽을 골랐습니다.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+<img src="docs/media/why/card-1.svg" width="100%" alt="틀린 근거를 미리 거른다: 인용은 원문으로, 결과 파일은 hash로 다시 확인한다">
+
+**틀린 근거를 미리 거른다**
+
+AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서 전에 잡으려고 검사를 두 겹 둡니다. 과학 리뷰어(GPT-6-Astra)가 PubMed 원문을 열어 인용을 대조하고, 결론을 바꾸는 지적(P1)이 남으면 요청은 통과하지 못합니다. [The Virtual Biotech](https://github.com/harrisongzhang/TheVirtualBiotech)(Science 2026)에서 가져온 claim 장부와 산출 sha256 기록(MIT)으로 `labhq verify`가 보고서 근거 앵커와 hash를 다시 검사합니다.
+
+<details><summary>근거와 한계</summary>
+
+<sub>근거: [11차 시운전](https://github.com/ehojune/bioinfo-team-3d/issues/298#issuecomment-5969847101)(GSE19804): 문헌 단계가 원 논문의 SEMA5A 방향을 거꾸로 적고 Yang 2018 허브 목록을 빠뜨린 것을 리뷰어가 PubMed 원문과 대조해 잡았고, 요청은 보고서를 내기 전에 멈췄습니다 · [예시 GSE10072](docs/examples/gse10072/README.md): `labhq verify`로 산출 58개 hash 재확인 · [#339](https://github.com/ehojune/bioinfo-team-3d/pull/339)(verify)</sub>
+
+<sub>한계: 근거 앵커와 PI 근거 승인(CP2)은 기본 꺼짐인 연구 lane에서만 돕니다. `verify`는 파일이 바뀌지 않았는지만 보며, 내용이 옳다는 증명은 아닙니다. 리뷰가 놓친 비율은 재지 않았습니다.</sub>
+
+</details>
+
+</td>
+<td width="50%" valign="top">
+
+<img src="docs/media/why/card-2.svg" width="100%" alt="논문에서 출발한다: 선행 논문으로 계획을 다지고, 없는 방법은 파견직으로 들일 수 있다">
+
+**논문에서 출발한다**
+
+계획 전에 선행 연구 직원이 같은 주제의 논문·리뷰 몇 편에서 꼭 할 분석을 뽑아 점검표에 넣고, 보고서에는 인용을 붙인 '선행 연구 기준' 절을 둡니다. 팀에 없는 방법이 필요하면 PI 승인 뒤 [Paper2Agent](https://github.com/jmiao24/Paper2Agent)로 그 논문의 코드를 도구로 쥔 기한부 **파견직**을 들일 수 있습니다.
+
+<details><summary>근거와 한계</summary>
+
+<sub>근거: [#395](https://github.com/ehojune/bioinfo-team-3d/pull/395)(선행 연구 단계) · [매뉴얼: 선행 연구 기준](docs/manual.md#topic-점검표와-선행-연구-기준) · [매뉴얼: 파견직 제도](docs/manual.md#파견직-제도-paper2agent)</sub>
+
+<sub>한계: 선행 연구 단계는 시험 요청 4건에서만 돌았습니다. 파견직은 mock 시험만 통과했고 실제 논문으로 채용까지 간 적이 없으며, Paper2Agent skill은 따로 설치해야 합니다.</sub>
+
+</details>
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+<img src="docs/media/why/card-3.svg" width="100%" alt="일을 넘겨도 기준은 같다: 분야 이름표 하나로 계획·리뷰·보고서가 같은 점검표를 본다">
+
+**일을 넘겨도 기준은 같다**
+
+CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(100키, 그중 68키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 20개에서 고릅니다. 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
+
+<details><summary>근거와 한계</summary>
+
+<sub>근거: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390)(topic 필수, 어휘 100키) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369)(계획 문장 한 줄로 분야 규칙이 빠지던 우회 → topic 판정으로 닫음)</sub>
+
+<sub>한계: 점검표는 20개 분야, 60항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). 새로 넣은 17개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
+
+</details>
+
+</td>
+<td width="50%" valign="top">
+
+<img src="docs/media/why/card-4.svg" width="100%" alt="끊겨도 잇고, 묶어서 남긴다: 끝난 단계는 건너뛰고, 코드와 결과는 한 폴더에 모은다">
+
+**끊겨도 잇고, 묶어서 남긴다**
+
+요청·단계·승인을 SQLite에 저장합니다. PC가 멈춰도 PI 재개 카드 한 장이면 끝난 단계는 건너뛰고 멈춘 단계부터 잇고, 구독 한도·로그인 만료에는 요청을 세워 두었다가 풀리면 다시 갑니다. 요청이 끝나면 hash로 확인한 산출과 분석 코드를 한 폴더([요청 묶음](docs/manual.md#요청-묶음))에 모으고, 단계 사이 경로는 상대경로로 바꿉니다.
+
+<details><summary>근거와 한계</summary>
+
+<sub>근거: [v0.25 리허설](docs/status/2026-10-04-0458-release-v025.md) 요청 2: PC가 멈춰 labhq가 모두 꺼진 뒤 이어 가기 카드 한 장으로 다시 이어서 리뷰 통과(accept)까지 갔습니다 · [벤치 A 2차](https://github.com/ehojune/bioinfo-team-3d/issues/373#issuecomment-5975156477): labhq 재현성 2 → 4점([#384](https://github.com/ehojune/bioinfo-team-3d/pull/384)), Astra 단독은 같은 보고서가 두 채점에서 4점·3점 · [#389](https://github.com/ehojune/bioinfo-team-3d/pull/389)(요청 묶음)</sub>
+
+<sub>한계: 한도·로그인 대기는 10-05 실제 로그인 만료로 요청 4건이 실패한 뒤 고쳤고, test로만 확인했습니다. 재로그인은 사람이 합니다. 요청 묶음은 같은 PC runner의 산출만 모으며, 넣은 뒤 재현성은 다시 채점하지 않았습니다.</sub>
+
+</details>
+
+</td>
+</tr>
+</table>
+
+## 단독 AI 세션·연구 workbench와 비교
+
+| | labhq | Claude Code·Codex 단독 | 연구 workbench |
+|---|---|---|---|
+| 리뷰 | ✅ 별도 리뷰어(Claude 팀과 다른 회사) | ❌ 같은 모델의 자기 검토 | ⚠️ 켜면 별도 맥락에서 검토 |
+| 분석&nbsp;기준 | ✅ 선행 논문·분야 점검표(효과 미측정) | ⚠️ 모델 재량 | ⚠️ 고른 skill에 따라 |
+| 근거&nbsp;추적 | ✅ 산출 hash·근거 앵커 재검사 | ⚠️ 모델이 남긴 스크립트·로그 | ✅ 산출 출처 기록·재실행 비교 |
+| 사람의&nbsp;결정 | ✅ 웹·폰 카드 | ⚠️ 세션 안에서 승인 | ✅ 승인 모드·폰 원격 |
+| 중단&nbsp;뒤 | ✅ 카드 한 장으로 멈춘 단계부터 | ⚠️ 세션 재개, 단계는 사람이 챙김 | ✅ 원격 잡 재시작 복구 |
+| 문헌&nbsp;관리 | ⚠️ 검색·인용만 | ⚠️ 붙인 도구에 따라 | ✅ 서재·PDF·선별 |
+| 속도·비용 | ❌ 큰 과제 144분·$31 | ✅ 같은 과제 19분 | — |
+
+연구 workbench 칸은 [open-science](https://github.com/aipoch/open-science) v0.35.0 README·ROADMAP을 읽고 적었고, 앱은 돌려 보지 않았습니다(2026-10, [#316](https://github.com/ehojune/bioinfo-team-3d/issues/316)). 속도·비용은 재지 않아 —로 둡니다.
+단독 칸의 속도·근거 추적은 벤치 기준선(GPT-6-Astra 단독)에서 잰 값입니다. 채점은 GPT-6.1-Sol이 출처를 가리고 과제마다 한 번 했습니다([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373)).
+
+**labhq가 맞는 경우**: 결과를 근거째 남에게 넘겨야 하거나, 몇 시간짜리 분석을 맡겨 두고 결정만 폰으로 하고 싶을 때. v0.25 리허설에서 accept된 4건은 설치·예산·이어 가기를 뺀 PI 카드가 요청당 0~1장이었습니다([리허설](docs/status/2026-10-04-0458-release-v025.md)).
+
+**아직 지는 곳**: 같은 과제를 눈가림 채점하면 총점은 단독 세션이 앞섰습니다(큰 과제 21 대 26, 작은 과제 셋 모두). 큰 과제에서 labhq는 7배 넘는 시간을 다른 회사 리뷰·PI 통제·근거 장부에 씁니다([#373](https://github.com/ehojune/bioinfo-team-3d/issues/373)). 작은 요청은 [#388](https://github.com/ehojune/bioinfo-team-3d/pull/388)부터 강한 모델 한 명이 바로 끝내게 켤 수 있지만, 이때는 기본으로 리뷰를 거치지 않고 효과는 측정 전입니다. 문헌 서재·PDF 관리가 중심이면 workbench가 맞습니다.
 
 ## 예시: 공개 폐선암 데이터 분석
 

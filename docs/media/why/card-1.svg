@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="260" viewBox="0 0 480 260" role="img" aria-labelledby="t d">
+  <title id="t">틀린 근거를 미리 거른다</title>
+  <desc id="d">틀린 근거를 미리 거른다. 인용은 원문으로, 결과 파일은 hash로 다시 확인한다. 그림: 보고서 속 숫자는 sha256 꼬리표가 붙은 산출 파일로, 인용 줄은 다른 색 돋보기가 비추는 PubMed 원문으로 실이 이어지고 둘 다 확인 표시가 붙었다.</desc>
+  <style>
+    text { font-family: "Noto Sans KR", "Noto Sans CJK KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif; fill: #0F172A; }
+    .h { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+    .l { font-size: 15px; fill: #475569; }
+    .n { font-size: 14px; font-weight: 700; fill: #FFFFFF; }
+    .v { font-size: 12px; font-weight: 700; }
+    .q { font-size: 20px; font-weight: 700; fill: #6D28D9; }
+    .m { font-family: "Consolas", "Menlo", "DejaVu Sans Mono", monospace; font-size: 12px; font-weight: 700; fill: #FFFFFF; }
+    .p { font-size: 11px; font-weight: 700; fill: #FFFFFF; }
+  </style>
+  <rect x=".5" y=".5" width="479" height="259" rx="18" fill="#F1F9F4" stroke="#CDEBD8"/>
+  <circle cx="392" cy="130" r="86" fill="#DCF1E4"/>
+
+  <circle cx="42" cy="74" r="14" fill="#1E7B47"/>
+  <text class="n" x="42" y="79" text-anchor="middle">1</text>
+  <text class="h" x="28" y="128">틀린 근거를 미리 거른다</text>
+  <text class="l" x="28" y="164">인용은 원문으로,</text>
+  <text class="l" x="28" y="188">결과 파일은 hash로 다시 확인한다</text>
+
+  <!-- report -->
+  <rect x="306" y="40" width="66" height="178" rx="7" fill="#FFFFFF" stroke="#475569" stroke-width="2"/>
+  <rect x="314" y="52" width="34" height="5" rx="2.5" fill="#475569"/>
+  <path d="M314 70h48M314 80h40M314 122h48M314 132h36M314 174h46M314 184h48M314 194h30" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/>
+  <rect x="312" y="90" width="38" height="20" rx="4" fill="#FDE68A"/>
+  <text class="v" x="331" y="105" text-anchor="middle">1.8</text>
+  <rect x="312" y="142" width="50" height="22" rx="4" fill="#EDE9FE"/>
+  <text class="q" x="318" y="162">“</text>
+  <path d="M332 153h24" stroke="#A78BFA" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- threads -->
+  <g fill="none" stroke="#2F9E5E" stroke-width="2" stroke-linecap="round">
+    <path d="M350 100C376 100 378 72 404 70"/>
+    <path d="M362 153C384 153 382 174 402 174"/>
+  </g>
+  <circle cx="350" cy="100" r="3" fill="#2F9E5E"/>
+  <circle cx="362" cy="153" r="3" fill="#2F9E5E"/>
+
+  <!-- output file + sha256 -->
+  <path d="M404 40h30l12 12v48h-42z" fill="#FFFFFF" stroke="#475569" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M434 40v12h12" fill="none" stroke="#475569" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M412 64h24M412 74h24M412 84h16" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/>
+  <rect x="396" y="103" width="58" height="19" rx="9.5" fill="#1E7B47"/>
+  <text class="m" x="425" y="116.5" text-anchor="middle">sha256</text>
+
+  <!-- PubMed source -->
+  <rect x="402" y="144" width="56" height="74" rx="5" fill="#FFFFFF" stroke="#475569" stroke-width="2"/>
+  <path d="M403 149a4 4 0 0 1 4-4h46a4 4 0 0 1 4 4v13h-54z" fill="#2F6F9F"/>
+  <text class="p" x="430" y="157.5" text-anchor="middle">PubMed</text>
+  <path d="M411 169h36M411 190h36M411 200h28M411 210h34" stroke="#CBD5E1" stroke-width="3" stroke-linecap="round"/>
+  <rect x="409" y="176" width="40" height="7" rx="3" fill="#DDD6FE"/>
+  <circle cx="440" cy="180" r="12" fill="#FFFFFF" fill-opacity=".5" stroke="#7C3AED" stroke-width="3"/>
+  <path d="M449 189l9 9" stroke="#7C3AED" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- checks -->
+  <g stroke="#FFFFFF" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="448" cy="42" r="10" fill="#2F9E5E" stroke="none"/>
+    <path d="M443.5 42l3 3 5.5-6"/>
+    <circle cx="460" cy="138" r="10" fill="#2F9E5E" stroke="none"/>
+    <path d="M455.5 138l3 3 5.5-6"/>
+  </g>
+</svg>
