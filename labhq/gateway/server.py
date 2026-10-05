@@ -585,7 +585,8 @@ class Hub:
                 "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
                 "usage": req.get("usage", {}),
                 "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
-                "bundle_status": req.get("bundle_status"), "bundle_warning": req.get("bundle_warning")}
+                "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
+                "bundle_warning": req.get("bundle_warning")}
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -618,6 +619,7 @@ class Hub:
         if bundled:
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
+            self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
             self.requests[rid].pop("bundle_warning", None)
             return
         warning = str(outcome["warning"])
@@ -630,8 +632,10 @@ class Hub:
                     data["report_appendix"] = appendix
         self.requests[rid].pop("bundle_path", None)
         self.requests[rid].pop("bundle_status", None)
+        self.requests[rid].pop("bundle_grade", None)
         data.pop("bundle_path", None)
         data.pop("bundle_status", None)
+        data.pop("bundle_grade", None)
         self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
         log.warning("request bundle unavailable for %s: %s", rid, warning)
 
@@ -641,7 +645,8 @@ class Hub:
         event = self.store.commit_request_event(
             rid, self.requests[rid],
             {"type": "request.bundle", "ts": time.time(), "request_id": rid,
-             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_warning") if key in data}},
+             "data": {key: data[key] for key in ("bundle_path", "bundle_status", "bundle_grade", "bundle_warning")
+                      if key in data}},
             self.s.gateway.event_buffer,
         )
         self.events.append(event)
@@ -1823,7 +1828,7 @@ class Hub:
                                                                   "project_id", "plan", "cost_usd", "cost_known",
                                                                   "cost_summary", "usage", "usage_known", "agent_id",
                                                                   "references", "pi_notes", "route", "route_decision",
-                                                                  "bundle_path", "bundle_status", "bundle_warning")},
+                                                                  "bundle_path", "bundle_status", "bundle_grade", "bundle_warning")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
                           "step_status": self.request_summary(r)["step_progress"]["steps"],

@@ -2,6 +2,7 @@ import asyncio
 import csv
 import hashlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -658,6 +659,9 @@ async def test_terminal_hook_builds_direct_general_research_and_failed_bundles(t
     assert data["bundle_status"] == "complete"
     assert hub.events[-1]["data"]["bundle_path"] == data["bundle_path"]
     assert hub.events[-1]["data"]["bundle_status"] == "complete"
+    # The grade reaches the request and its event, so the web shows it next to the path (#423).
+    assert data["bundle_grade"] == hub.requests[rid]["bundle_grade"] == hub.events[-1]["data"]["bundle_grade"]
+    assert data["bundle_grade"] in ("replayable", "documented")
     await asyncio_sleep()
     hub.store.close()
 
@@ -751,3 +755,53 @@ def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
     monkeypatch.setattr("labhq.cli._api", api)
     main(["status"])
     assert "요청 묶음: C:/runs/requests/r1" in capsys.readouterr().out
+
+
+def _graded(tmp_path, files: dict[str, dict[str, str]], deps: dict[str, list[str]]):
+    """Bundle with each step's recorded files {step: {outputs/...: text}}; returns (built, README text)."""
+    settings = configured(tmp_path)
+    root = Path(settings.runner.workspace_root)
+    results = {}
+    for step_id, outputs in files.items():
+        workdir = root / "2026-10-06" / f"task_{step_id}"
+        write(workdir / "manifest.json", json.dumps({"host": platform.node()}))
+        for rel, text in outputs.items():
+            write(workdir / rel, text)
+        results[step_id] = {"workdir": str(workdir), "workdir_id": workdir.name, "outputs": list(outputs),
+                            "output_sha256": {rel: digest(workdir / rel) for rel in outputs}}
+    request = {"id": f"grade_{len(tmp_path.name)}", "report": "ok", "report_appendix": "",
+               "plan": {"steps": [{"id": sid, "depends_on": deps.get(sid, [])} for sid in files]},
+               "results": results}
+    built = build_request_bundle(request, settings)
+    return built, (Path(built["path"]) / "README.md").read_text(encoding="utf-8")
+
+
+def test_a_bundle_with_scripts_and_an_inherited_environment_record_is_replayable(tmp_path):
+    built, readme = _graded(tmp_path, {
+        "env": {"outputs/env/requirements.lock.txt": "pandas==2.2.2\n"},
+        "de": {"outputs/scripts/de.py": "import pandas\n", "outputs/de.tsv": "gene\tlogFC\n",
+               "outputs/summary.md": "# DE\n"},
+        "lit": {"outputs/notes.md": "# papers\n"},  # prose only: no script asked
+    }, {"de": ["env"]})
+
+    assert (built["grade"], built["grade_reasons"]) == ("replayable", [])
+    assert "## 재현 등급\n\n- `replayable`\n" in readme
+    assert "`rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만" in readme
+
+
+def test_missing_scripts_environment_or_a_kept_absolute_path_lowers_the_grade_with_reasons(tmp_path):
+    outside = "C:\\data\\cohort.tsv" if os.name == "nt" else "/data/cohort.tsv"
+    built, readme = _graded(tmp_path, {
+        "qc": {"outputs/qc.tsv": "sample\tok\n"},  # data, no script
+        "de": {"outputs/scripts/de.py": f'DATA = r"{outside}"\n', "outputs/de.tsv": "x\n"},  # no env, abs path
+    }, {"de": ["qc"]})
+
+    assert built["grade"] == "documented"
+    assert built["grade_reasons"] == [
+        "스크립트 없이 데이터 산출만 있는 단계: qc",
+        "환경 기록(outputs/env/)이 없는 단계: de",
+        "절대경로가 남은 스크립트: steps/de/outputs/scripts/de.py",
+    ]
+    assert "- `documented`\n- 스크립트 없이 데이터 산출만 있는 단계: qc\n" in readme
+    appendix = (Path(built["path"]) / "report_appendix.md").read_text(encoding="utf-8")
+    assert "- 재현 등급: documented (스크립트 없이 데이터 산출만 있는 단계: qc; " in appendix

@@ -23,10 +23,12 @@ assert.match(incomplete, /요청 묶음\(불완전\)/);
 assert.match(incomplete, /MANIFEST\.tsv/);
 assert.match(context.bundleHTML({bundleWarning: 'disk full'}), /요청 묶음 경고: disk full/);
 assert.equal(context.bundleHTML({}), '');
-assert.match(html, /q\.bundlePath, q\.bundleStatus, q\.bundleWarning/, '2.5D re-renders when only the status changes');
+assert.match(html, /q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleWarning/, '2.5D re-renders when only the status changes');
+assert.match(context.bundleHTML({bundlePath: 'r1', bundleStatus: 'complete', bundleGrade: 'documented'}), / · 재현 등급 <strong>documented<\/strong>/);
 
 // 3D: same information, re-rendered when it changes.
-assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleWarning/);
+assert.match(live3d, /q\.assumptions, q\.bundlePath, q\.bundleStatus, q\.bundleGrade, q\.bundleWarning/);
+assert.match(live3d, /재현 등급 \$\{q\.bundleGrade\}/);
 assert.match(live3d, /text\(row, 'h4', '가정'\)/);
 assert.match(live3d, /요청 묶음\(불완전\)/);
 assert.match(live3d, /요청 묶음 경고: /);
