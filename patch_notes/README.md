@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:28 | [`e1a4aac`](https://github.com/ehojune/bioinfo-team-3d/pull/445/commits/e1a4aac) | 모든 계획이 결과 종류별 공개 자원 목록(public_resources.tsv)을 참고로 받고, 목록 밖 자원도 필요하면 계획하며 조회 자원의 판본을 기록한다 |
 | 14:45 | [`e61f997`](https://github.com/ehojune/bioinfo-team-3d/pull/444/commits/e61f997) | HANDOFF 작업 큐와 PI 결정을 10-06 오후 상태로 갱신(#382 안 A, |
 | 14:09 | [`e02e75e`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/e02e75e) | 통제 구역 목록 test가 입력 walker의 descriptor 나열도 실제 폴더로 기록해 Linux에서 통과한다 |
 | 13:49 | [`930a578`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/930a578) | 상위 project 폴더를 거쳐 들어가는 실행 폴더는 입력에서 빼고, 실패·취소된 단계도 실행 전 입력 hash를 남긴다(리뷰 반영) |
