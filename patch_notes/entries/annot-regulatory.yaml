@@ -9,3 +9,6 @@ rows:
 - sha: 'fc3e403'
   at: 2026-10-06 19:49
   text: 'ChIP-Atlas request_id에 제출 때 release를 묶어, 그 사이 갱신됐으면 제출 때 release로 기록하고 캐시하지 않는다. AlphaGenome client 호출은 매번 새 daemon thread에서 돌고, 시간이 초과돼 멈춘 thread가 4개 쌓이면 새 호출을 바로 거부한다'
+- sha: '5676cd7'
+  at: 2026-10-06 20:11
+  text: 'Windows에서 AlphaGenome 키 폴더와 파일의 ACL을 현재 계정 항목 하나로 통째로 새로 쓴다. 폴더에 미리 있던 명시 항목(SYSTEM·Administrators 등) 때문에 CI runner에서 키 저장이 거부되던 문제를 고쳤다'
