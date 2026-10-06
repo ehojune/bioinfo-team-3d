@@ -105,10 +105,14 @@ def _alphagenome_key(settings: Settings) -> None:
         print("AlphaGenome: 키 형식이 아니라 저장하지 않았습니다 (공백 없는 한 덩어리여야 합니다)")
         return
     try:
-        annot_keys.write_key(annot_keys.key_path(settings), key)
+        keep_out = [settings.path(settings.runner.state_dir), settings.path(settings.runner.workspace_root),
+                    settings.path(settings.gateway.state_dir)]
+        if settings.config_path:
+            keep_out.append(Path(settings.config_path).parent)
+        annot_keys.write_key(annot_keys.key_path(settings), key, keep_out)
     except annot_keys.KeyFileError as exc:
         raise InitError(f"AlphaGenome 키를 저장하지 못했습니다: {exc}") from None
-    print("AlphaGenome: 키 저장 (runner 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
+    print("AlphaGenome: 키 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
 
 
 def _hpc_query(argv: list[str]):

@@ -8,6 +8,8 @@ import json
 import os
 import stat
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
@@ -117,12 +119,37 @@ async def test_chipatlas_gene_list_submits_waits_and_records(tmp_path):
     log = _log(tmp_path)[0]
     assert log["tool"] == "chipatlas" and "POU5F1" not in json.dumps(log) and log["n_inputs"] == 4
     full = _full(tmp_path, result)
-    assert full["inputs"] == ["POU5F1", "NANOG", "SOX2"] and len(full["answer"]["rows"]) == 4
+    assert full["inputs"] == ["POU5F1", "nanog", "SOX2"] and len(full["answer"]["rows"]) == 4
     assert full["answer"]["rows"][0]["fold_enrichment"] == 15.3
     # The same set again (any order) comes from the cache: nothing is submitted.
     again, _calls, _clock = make(chipatlas_handler(polls=0, state=state)[0], tmp_path)
-    cached = await again.chipatlas(["SOX2", "POU5F1", "NANOG"])
+    cached = await again.chipatlas(["SOX2", "POU5F1", "nanog"])
     assert cached["n_cached"] == 3 and state["posts"] == []
+    # Another spelling is another job: ChIP-Atlas receives the symbols as typed, so the cache follows that spelling.
+    other = await again.chipatlas(["SOX2", "POU5F1", "NANOG"])
+    assert other["n_cached"] == 0 and state["posts"][0]["bedAFile"] == "SOX2\nPOU5F1\nNANOG"
+
+
+async def test_chipatlas_request_id_must_belong_to_the_same_inputs_and_options(tmp_path):
+    handler, state = chipatlas_handler(polls=10_000)
+    annotator, _calls, _clock = make(handler, tmp_path)
+    with pytest.raises(annot.LookupFailed, match=RID):
+        await annotator.chipatlas(["POU5F1", "NANOG"], wait_s=60)
+    handler, state = chipatlas_handler(polls=0)
+    resumed, _calls, _clock = make(handler, tmp_path)
+    with pytest.raises(ValueError, match="다른 입력"):
+        await resumed.chipatlas(["SOX2", "KLF4"], request_id=RID)
+    with pytest.raises(ValueError, match="다른 입력"):
+        await resumed.chipatlas(["POU5F1", "NANOG"], threshold=100, request_id=RID)
+    assert state["gets"] == 0 and state["posts"] == []
+    # An id this cache never submitted is answered but not cached, and the answer says so.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    unknown, _calls, _clock = make(handler, elsewhere)
+    result = await unknown.chipatlas(["SOX2"], request_id=RID)
+    assert result["n_experiments"] == 4 and "request_id_note" in result and state["posts"] == []
+    again = await unknown.chipatlas(["SOX2"])
+    assert again["n_cached"] == 0 and len(state["posts"]) == 1
 
 
 async def test_chipatlas_regions_use_bed_and_random_background_and_refuse_mixing(tmp_path):
@@ -304,6 +331,16 @@ def gtex_handler(state):
                 "paging_info": {"numberOfPages": 1, "totalNumberOfItems": 2}})
         if path == "association/singleTissueEqtl":
             page = int(params["page"])
+            tissue = params.get("tissueSiteDetailId")
+            if tissue is None:  # all tissues: thousands of rows, the first pages from tissues nobody asked for
+                rows = [{"variantId": f"chr1_{page}{i}_G_T_b38", "tissueSiteDetailId": "Adipose_Subcutaneous",
+                         "pValue": 1e-3} for i in range(3)]
+                return httpx.Response(200, json={"data": rows, "paging_info": {"numberOfPages": 20,
+                                                                               "totalNumberOfItems": 5000}})
+            if tissue == "Whole_Blood":
+                return httpx.Response(200, json={"data": [{"variantId": "chr1_42_G_T_b38", "snpId": "rs42",
+                                                           "tissueSiteDetailId": "Whole_Blood", "pValue": 1e-12}],
+                                                 "paging_info": {"numberOfPages": 1, "totalNumberOfItems": 1}})
             rows = [{"variantId": f"chr1_{i}_G_T_b38", "snpId": f"rs{i}", "tissueSiteDetailId": "Liver",
                      "pValue": 10.0 ** -i, "nes": 1.0} for i in ((5, 9) if page == 0 else (7,))]
             return httpx.Response(200, json={"data": rows, "paging_info": {"numberOfPages": 2,
@@ -339,6 +376,18 @@ async def test_gtex_gene_and_variant_with_dataset_release(tmp_path):
         await annotator.gtex(["SORT1"], dataset="v10")
 
 
+async def test_gtex_several_tissues_page_each_tissue_and_count_only_those(tmp_path):
+    state = {}
+    annotator, _calls, _clock = make(gtex_handler(state), tmp_path)
+    result = await annotator.gtex(["SORT1", "rs12740374"], tissues=["Liver", "Whole_Blood"])
+    gene, variant = result["results"]
+    for answer in (gene, variant):
+        assert answer["eqtl"]["n_total"] == 4 and answer["eqtl"]["n_fetched"] == 4 and "truncated" not in answer["eqtl"]
+        assert [r["snpId"] for r in answer["eqtl"]["top"]][:2] == ["rs42", "rs9"]
+    asked = [q.get("tissueSiteDetailId") for p, q in state["paths"] if p == "association/singleTissueEqtl"]
+    assert None not in asked and set(asked) == {"Liver", "Whole_Blood"}
+
+
 async def test_gtex_reads_rs1_as_a_gene_not_an_rsid(tmp_path):
     state = {}
     annotator, _calls, _clock = make(gtex_handler(state), tmp_path)
@@ -353,18 +402,24 @@ Organism = enum.Enum("Organism", ["HOMO_SAPIENS", "MUS_MUSCULUS"])
 
 
 class FakeModel:
-    def __init__(self, log, fail=None):
-        self.log, self.fail = log, fail
+    def __init__(self, log, fail=None, delay=0.0):
+        self.log, self.fail, self.delay = log, fail, delay
+        self.threads = []
 
-    def _track(self, interval, shift):
-        values = [[1.0, 2.0] for _ in range(8)]
-        values[3] = [1.0 + shift, 2.0 - shift / 2]
+    def _track(self, interval, shift, at=3, outside=None):
+        values = [[1.0, 2.0]] * (interval.end - interval.start)
+        values[at] = [1.0 + shift, 2.0 - shift / 2]
+        if outside is not None:  # a stronger peak in the window but outside the requested interval
+            values[outside] = [50.0, 50.0]
         return SimpleNamespace(values=values, resolution=1, interval=interval,
                                metadata=[{"name": "liver RNA", "ontology_curie": "UBERON:0002107", "strand": "+"},
                                          {"name": "blood RNA", "ontology_curie": "UBERON:0000178", "strand": "-"}])
 
     def predict_variant(self, interval, variant, organism, requested_outputs, ontology_terms):
         self.log.append(("variant", interval, variant, organism, requested_outputs, ontology_terms))
+        self.threads.append(threading.current_thread().name)
+        if self.delay:
+            time.sleep(self.delay)
         if self.fail:
             raise RuntimeError(self.fail)
         ref = {ot: self._track(interval, 0.0) for ot in requested_outputs}
@@ -373,16 +428,21 @@ class FakeModel:
 
     def predict_interval(self, interval, organism, requested_outputs, ontology_terms):
         self.log.append(("interval", interval, organism, requested_outputs, ontology_terms))
-        tracks = {ot: self._track(interval, 5.0) for ot in requested_outputs}
+        tracks = {ot: self._track(interval, 5.0, at=150, outside=3) for ot in requested_outputs}
         return SimpleNamespace(get=tracks.get)
 
 
-def fake_backend(log, fail=None):
+def fake_backend(log, fail=None, delay=0.0, create_error=None):
     keys = []
 
-    def create(key):
+    def create(key, timeout=None):
         keys.append(key)
-        return FakeModel(log, fail)
+        create.timeouts.append(timeout)
+        if create_error:
+            raise create_error
+        create.model = FakeModel(log, fail, delay)
+        return create.model
+    create.timeouts = []
     dna_client = SimpleNamespace(create=create, OutputType=OutputType, Organism=Organism)
     genome = SimpleNamespace(Interval=lambda **kw: SimpleNamespace(**kw), Variant=lambda **kw: SimpleNamespace(**kw))
     return reg.AlphaGenomeBackend(FAKE_KEY, dna_client=dna_client, genome=genome, version="0.9.0"), keys
@@ -406,8 +466,13 @@ async def test_alphagenome_variant_and_interval_summaries_with_release(tmp_path)
     top = variant["RNA_SEQ"]["top"][0]
     assert top["name"] == "liver RNA" and top["max_abs_change"] == 4.0
     assert top["max_change_position"] == sent.start + 3 + 1 and top["alt_minus_ref_sum"] == 4.0
-    assert variant["RNA_SEQ"]["top"][1]["max_abs_change"] == 2.0 and variant["interval"].startswith("chr22:")
-    assert interval["DNASE"]["top"][0]["max"] == 6.0 and log[1][0] == "interval"
+    assert variant["RNA_SEQ"]["top"][1]["max_abs_change"] == 2.0 and variant["window"].startswith("chr22:")
+    assert variant["summarised_over"] == "window"
+    # The interval's summary covers chr22:100-299 only, not the 16 KB window whose peak (50.0) lies outside it.
+    assert interval["window"] == "chr22:1-16384" and interval["summarised_over"] == "chr22:100-299"
+    peak = interval["DNASE"]["top"][0]
+    assert (peak["max"], peak["max_position"]) == (6.0, 151) and peak["mean"] == pytest.approx(205 / 200)
+    assert log[1][0] == "interval" and keys == [FAKE_KEY]
     assert not rsid["ok"] and "rsID" in rsid["error"] and not too_long["ok"]
     full = (tmp_path / "work" / result["full_result"]).read_text(encoding="utf-8")
     assert FAKE_KEY not in full and FAKE_KEY not in json.dumps(_log(tmp_path))
@@ -415,6 +480,46 @@ async def test_alphagenome_variant_and_interval_summaries_with_release(tmp_path)
     cached = await again.alphagenome(["chr22:36201698:A:C"], outputs=["RNA_SEQ", "DNASE"],
                                      ontology_terms=["UBERON:0002107"], sequence_length="16KB")
     assert cached["n_cached"] == 1 and len(log) == 2
+
+
+def test_interval_stats_cut_bins_to_the_region():
+    track = SimpleNamespace(values=[[float(i)] for i in range(10)], resolution=128,
+                            interval=SimpleNamespace(start=1000), metadata=[{"name": "a"}])
+    # 1-based 1300..1500 is 0-based 1299..1500: bins 2 (1256-1383) and 3 (1384-1511).
+    stats = reg.interval_track_stats(track, 1299, 1500)[0]
+    assert (stats["max"], stats["max_position"], stats["mean"]) == (3.0, 1000 + 3 * 128 + 1, 2.5)
+    assert reg.interval_track_stats(track)[0]["max"] == 9.0  # no region: the whole window
+
+
+async def test_alphagenome_runs_on_its_own_pool_with_a_connect_timeout_and_a_default_size(tmp_path):
+    log = []
+    backend, _keys = fake_backend(log)
+    annotator, _calls, _clock = make(lambda r: pytest.fail("no HTTP"), tmp_path, alphagenome=backend)
+    await annotator.alphagenome(["chr1:100000:A:G"])
+    assert backend._dna_client.create.timeouts == [reg.AG_CONNECT_TIMEOUT_S]
+    assert backend._dna_client.create.model.threads[0].startswith("labhq-alphagenome")
+    assert log[0][1].end - log[0][1].start == reg.AG_LENGTHS[reg.AG_DEFAULT_LENGTH] == 2 ** 17
+    # Every 1-bp track over 500 KB or 1 MB is gigabytes per allele: refused unless ontology_terms narrows it.
+    with pytest.raises(ValueError, match="ontology_terms"):
+        await annotator.alphagenome(["chr1:100000:A:G"], sequence_length="1MB")
+    await annotator.alphagenome(["chr1:100000:A:G"], sequence_length="1MB", ontology_terms=["UBERON:0002107"])
+    await annotator.alphagenome(["chr1:100000:A:G"], outputs=["CHIP_TF"], sequence_length="1MB")
+    assert len(log) == 3
+
+
+async def test_alphagenome_stops_the_call_after_an_unreachable_service_or_a_timeout(tmp_path, monkeypatch):
+    backend, keys = fake_backend([], create_error=TimeoutError(f"channel not ready ({FAKE_KEY})"))
+    annotator, _calls, _clock = make(lambda r: pytest.fail("no HTTP"), tmp_path, alphagenome=backend)
+    with pytest.raises(annot.LookupFailed) as failure:
+        await annotator.alphagenome(["chr1:1000:A:G", "chr1:2000:A:G", "chr1:3000:A:G"])
+    assert len(keys) == 1 and "연결하지 못했습니다" in str(failure.value) and FAKE_KEY not in str(failure.value)
+    monkeypatch.setattr(reg, "AG_TIMEOUT_S", 0.05)
+    log = []
+    slow, _keys = fake_backend(log, delay=0.3)
+    annotator, _calls, _clock = make(lambda r: pytest.fail("no HTTP"), tmp_path, alphagenome=slow)
+    with pytest.raises(annot.LookupFailed, match="답이 없었습니다"):
+        await annotator.alphagenome(["chr1:1000:A:G", "chr1:2000:A:G"])
+    assert len(log) == 1  # the second item never reached the model
 
 
 async def test_alphagenome_errors_never_carry_the_key(tmp_path):
@@ -560,6 +665,23 @@ def test_write_key_leaves_an_owner_only_file(tmp_path):
     assert path.read_text(encoding="utf-8").strip() == FAKE_KEY
     _owner_only(path)
     assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temporary file left behind
+    annot_keys.write_key(path, FAKE_KEY + "2")  # replacing the key in its own folder is fine
+    assert path.read_text(encoding="utf-8").strip() == FAKE_KEY + "2"
+
+
+def test_write_key_refuses_a_folder_it_would_lock_others_out_of(tmp_path, monkeypatch):
+    shared = tmp_path / "labhq-home"
+    (shared / "state").mkdir(parents=True)
+    with pytest.raises(annot_keys.KeyFileError, match="다른 항목"):
+        annot_keys.write_key(shared / "alphagenome_key", FAKE_KEY)
+    fresh = tmp_path / "fresh"
+    with pytest.raises(annot_keys.KeyFileError, match="state"):
+        annot_keys.write_key(fresh / "alphagenome_key", FAKE_KEY, keep_out=[fresh / "state"])
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    with pytest.raises(annot_keys.KeyFileError, match="홈"):
+        annot_keys.write_key(tmp_path / "home" / "alphagenome_key", FAKE_KEY)
+    assert not fresh.exists() and not (tmp_path / "home").exists()
+    assert sorted(p.name for p in shared.iterdir()) == ["state"]
 
 
 @pytest.fixture

@@ -160,6 +160,16 @@ C:\LabHQ\app\.venv\Scripts\labhq.exe --config C:\LabHQ\config\runner.yaml doctor
 
 `runner account isolation`은 `ok`, `runner config holds client token`·`default client token` 경고는 없어야 하고(`runner.os_account`와 실제 실행 계정이 같을 때만 ok), 필요한 직원 행도 `ok`, 전체 `fail`은 0이어야 합니다.
 
+### AlphaGenome 키 (선택)
+
+AlphaGenome 키 파일은 `labhq init`을 실행한 계정만 읽을 수 있고, `~`도 그 계정의 프로필로 풀립니다. PI 계정에서 넣은 키는 runner가 읽지 못해 `alphagenome` 도구가 등록되지 않습니다. 키를 쓰려면 같은 runner 창에서 한 번 실행합니다.
+
+```powershell
+C:\LabHQ\app\.venv\Scripts\labhq.exe --config C:\LabHQ\config\runner.yaml init
+```
+
+설정이 이미 있으므로 `runner.yaml`은 바꾸지 않고 키만 묻습니다. 키는 `C:\Users\labhq-runner\.labhq\secrets\`에 runner 전용으로 저장되고, 위 doctor의 `AlphaGenome` 행이 `키 있음`이면 됩니다. client는 `C:\LabHQ\app\.venv`에 `pip install alphagenome`으로 설치합니다.
+
 PI 계정에서는 gateway를 기존 `labhq`로 띄웁니다.
 
 ```powershell

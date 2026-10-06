@@ -33,10 +33,12 @@ import gzip
 import hashlib
 import importlib.metadata
 import importlib.util
+import inspect
 import os
 import re
 import tempfile
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -85,7 +87,15 @@ AG_ORGANISMS = {"human": "HOMO_SAPIENS", "mouse": "MUS_MUSCULUS"}
 AG_MAX_PER_CALL = 10
 AG_MAX_TERMS = 20
 AG_TIMEOUT_S = 300.0
+AG_CONNECT_TIMEOUT_S = 30.0
 AG_TOP_TRACKS = 10
+AG_DEFAULT_LENGTH = "100KB"
+# Outputs at 1-bp resolution: with every track (no ontology_terms) over 500 KB or more, one allele is gigabytes.
+AG_BP_OUTPUTS = ("ATAC", "CAGE", "DNASE", "RNA_SEQ", "SPLICE_SITES", "SPLICE_SITE_USAGE", "PROCAP")
+AG_ALL_TRACKS_MAX = 2 ** 17
+# Its own small pool: a call that never returns (unreachable gRPC service) cannot fill the event loop's default
+# executor, which ENCODE's file scan and md5 share.
+_AG_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="labhq-alphagenome")
 
 _REGION = re.compile(r"^(?:chr)?([0-9]{1,2}|X|Y|M|MT):([0-9][0-9,]*)(?:-([0-9][0-9,]*))?$", re.IGNORECASE)
 _GENE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,39}$")
@@ -340,12 +350,22 @@ def variant_track_stats(reference: Any, alternate: Any) -> list[dict]:
     return out
 
 
-def interval_track_stats(track: Any) -> list[dict]:
+def interval_track_stats(track: Any, region_start0: int | None = None, region_end: int | None = None) -> list[dict]:
+    """Per track: mean and peak signal over the requested region only (0-based half-open `region_start0..region_end`),
+    not the whole prediction window around it. Positions are 1-based genome coordinates of the bin start."""
     if track is None:
         return []
-    length, tracks, column = _columns(track.values)
-    start0 = getattr(getattr(track, "interval", None), "start", 0) or 0
+    window0 = getattr(getattr(track, "interval", None), "start", 0) or 0
     resolution = int(getattr(track, "resolution", 1) or 1)
+    values = track.values
+    start0 = window0
+    if region_start0 is not None and region_end is not None:
+        total_bins = int(values.shape[0]) if getattr(values, "shape", None) is not None else len(values)
+        low = min(max(0, (region_start0 - window0) // resolution), total_bins)
+        high = min(max(low + 1, -(-(region_end - window0) // resolution)), total_bins)
+        values = values[low:high]
+        start0 = window0 + low * resolution
+    length, tracks, column = _columns(values)
     metas = _rows(getattr(track, "metadata", None))
     out = []
     for j in range(tracks):
@@ -353,10 +373,14 @@ def interval_track_stats(track: Any) -> list[dict]:
         index, peak = _argmax(values)
         total = _total(values)
         out.append({**_track_label(metas[j] if j < len(metas) else {}), "resolution": resolution,
-                    "mean": total / length if length else None, "max": peak,
-                    "max_position": start0 + index * resolution + 1})
+                    "mean": total / length if length else None, "max": peak if length else None,
+                    "max_position": start0 + index * resolution + 1 if length else None})
     out.sort(key=lambda r: -(r["max"] or 0))
     return out
+
+
+class AlphaGenomeUnavailable(Exception):
+    """The client could not open the service (unreachable, refused key): later items of the call fail at once."""
 
 
 class AlphaGenomeBackend:
@@ -388,11 +412,26 @@ class AlphaGenomeBackend:
     def redact(self, text: str) -> str:
         return text.replace(self._key, "***") if self._key else text
 
+    def _create(self, dna_client: Any) -> Any:
+        """The client's model handle. `create` waits for the gRPC channel; without a timeout it blocks for ever when
+        the service is unreachable, so the timeout is passed whenever this client version takes one."""
+        try:
+            parameters = inspect.signature(dna_client.create).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        takes_timeout = "timeout" in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+        if takes_timeout:
+            return dna_client.create(self._key, timeout=AG_CONNECT_TIMEOUT_S)
+        return dna_client.create(self._key)
+
     def predict(self, query: Query, width: int, outputs: list[str], terms: list[str] | None,
                 organism: str) -> dict[str, list[dict]]:
         dna_client, genome = self._modules()
         if self._model is None:
-            self._model = dna_client.create(self._key)
+            try:
+                self._model = self._create(dna_client)
+            except Exception as exc:  # noqa: BLE001 - grpc, auth and timeout errors alike
+                raise AlphaGenomeUnavailable(f"{type(exc).__name__}: {exc}") from exc
         if query.variant is not None:
             centre0 = query.variant.pos - 1
         else:
@@ -410,17 +449,20 @@ class AlphaGenomeBackend:
                                                out.alternate.get(dna_client.OutputType[name])) for name in outputs}
         out = self._model.predict_interval(interval=interval, organism=kind, requested_outputs=requested,
                                            ontology_terms=terms)
-        return {name: interval_track_stats(out.get(dna_client.OutputType[name])) for name in outputs}
+        return {name: interval_track_stats(out.get(dna_client.OutputType[name]), query.start0, query.end)
+                for name in outputs}
 
 
 def _alphagenome_summary(item: Item) -> dict:
     answer = item.answer if isinstance(item.answer, dict) else {}
     tracks = answer.get("tracks") or {}
-    out: dict[str, Any] = {"input": item.variant.key, "interval": answer.get("interval")}
+    out: dict[str, Any] = {"input": item.variant.key, "window": answer.get("window"),
+                           "summarised_over": answer.get("summarised_over")}
     for name, rows in tracks.items():
         out[name] = {"n_tracks": len(rows), "top": rows[:AG_TOP_TRACKS]}
-    out["meaning"] = ("변이는 track별 alt-ref 최대 절대 변화(max_abs_change)와 그 위치, 구간은 track별 최대 신호입니다. "
-                      "모델 예측이며 임상 판단에 쓰지 않습니다(AlphaGenome 이용 약관)")
+    out["meaning"] = ("변이는 예측 창(window) 전체에서 track별 alt-ref 최대 절대 변화(max_abs_change)와 그 위치, "
+                      "구간은 요청한 구간(summarised_over) 안의 track별 평균·최대 신호입니다. 모델 예측이며 임상 판단에 "
+                      "쓰지 않습니다(AlphaGenome 이용 약관)")
     return out
 
 
@@ -493,6 +535,8 @@ class RegulatoryAnnotator(Annotator):
             except ValueError as exc:
                 errors.append({"input": value, "error": str(exc)})
                 continue
+            if query.kind == "gene":  # ChIP-Atlas gets the symbol as typed, so dedup and cache use that spelling
+                query = Query(query.raw, "gene", query.raw)
             mode = mode or query.kind
             if query.kind != mode:
                 errors.append({"input": value, "error": "한 호출에 유전자와 영역을 섞을 수 없습니다. 따로 부르세요"})
@@ -507,18 +551,34 @@ class RegulatoryAnnotator(Annotator):
         release, cacheable = await self._chipatlas_release()
         cache_key = Cache.key("chipatlas", release, options, "\n".join(sorted(keys)))
         hit = self.cache.get("chipatlas", cache_key) if cacheable and request_id is None else None
+        # The job a request_id names is bound to its inputs and options at submission (`request` below).
+        request = Cache.key("chipatlas_request", "", options, "\n".join(sorted(keys)))
+        verified = True
         if hit is not None:
             answer, cached_at = hit["answer"], hit.get("queried_at")
         else:
-            by_key = {q.key: q for q in queries}
-            rid = request_id or await self._chipatlas_submit(genome, antigen_class, cell_class, threshold, mode,
-                                                             [by_key[k] for k in keys], distance_kb, permutations)
+            if request_id is not None:
+                bound = self.cache.get("chipatlas_requests", Cache.key("chipatlas_requests", "", {}, request_id))
+                if bound is not None and bound["answer"] != request:
+                    raise ValueError(f"request_id {request_id}는 다른 입력·옵션으로 낸 분석입니다. 그 분석을 낸 "
+                                     "호출과 같은 입력·옵션으로 부르세요")
+                verified = bound is not None
+                rid = request_id
+            else:
+                by_key = {q.key: q for q in queries}
+                rid = await self._chipatlas_submit(genome, antigen_class, cell_class, threshold, mode,
+                                                   [by_key[k] for k in keys], distance_kb, permutations)
+                self.cache.put("chipatlas_requests", Cache.key("chipatlas_requests", "", {}, rid), request, _now())
             text = await self._chipatlas_wait(rid, float(wait_s))
             answer, cached_at = {"request_id": rid, "rows": chipatlas_rows(text)}, None
-            if cacheable:
+            if cacheable and verified:
                 self.cache.put("chipatlas", cache_key, answer, _now())
+        summary = _chipatlas_summary(answer)
+        if not verified:
+            summary["request_id_note"] = ("이 request_id를 낸 기록이 캐시에 없어 입력·옵션이 맞는지 확인하지 못했습니다. "
+                                          "답을 캐시하지 않았습니다")
         return self._set_record("chipatlas", "ChIP-Atlas enrichment analysis", release, CHIPATLAS_WABI, options,
-                                keys, errors, answer, cached_at, _chipatlas_summary(answer))
+                                keys, errors, answer, cached_at, summary)
 
     async def _chipatlas_release(self) -> tuple[str, bool]:
         """ChIP-Atlas names no release; the experiment table's last update stands for it."""
@@ -792,7 +852,8 @@ class RegulatoryAnnotator(Annotator):
                 items.append(Item(None, value, error=str(exc)))
         release = (f"{meta.get('displayName') or dataset} ({dataset}, GENCODE {meta.get('gencodeVersion')}, "
                    f"dbSNP {meta.get('dbSnpBuild')})")
-        options = {"dataset": dataset, "tissues": wanted, "eqtl": bool(eqtl), "max_eqtl_rows": GTEX_PAGE * GTEX_MAX_PAGES}
+        options = {"dataset": dataset, "tissues": wanted, "eqtl": bool(eqtl), "max_eqtl_rows": GTEX_PAGE * GTEX_MAX_PAGES,
+                   "eqtl_rows_per": "tissue" if wanted else "item"}
         self._from_cache("gtex", release, options, items)
         lookup_errors = 0
         done: dict[str, object] = {}
@@ -909,13 +970,22 @@ class RegulatoryAnnotator(Annotator):
                                   "expression": [{k: r.get(k) for k in ("tissueSiteDetailId", "median", "unit")}
                                                  for r in rows]}
         if eqtl:
-            params = {"gencodeId": gencode, "datasetId": dataset}
-            if tissues and len(tissues) == 1:
-                params["tissueSiteDetailId"] = tissues[0]
-            found = await self._gtex_paged("association/singleTissueEqtl", params)
-            found["rows"] = [r for r in found["rows"] if not tissues or r.get("tissueSiteDetailId") in tissues]
-            answer["eqtl"] = found
+            answer["eqtl"] = await self._gtex_eqtl({"gencodeId": gencode, "datasetId": dataset}, tissues)
         return answer
+
+    async def _gtex_eqtl(self, params: dict, tissues: list[str] | None) -> dict:
+        """singleTissueEqtl rows, paged per requested tissue so the 1,000-row stop and the totals count only those
+        tissues (one unfiltered query could spend every page on other tissues)."""
+        if not tissues:
+            return await self._gtex_paged("association/singleTissueEqtl", params)
+        rows: list[dict] = []
+        total, truncated = 0, False
+        for tissue in tissues:
+            found = await self._gtex_paged("association/singleTissueEqtl", {**params, "tissueSiteDetailId": tissue})
+            rows += [r for r in found["rows"] if r.get("tissueSiteDetailId") == tissue]
+            total += found["total"]
+            truncated = truncated or found["truncated"]
+        return {"rows": rows, "total": total, "truncated": truncated}
 
     async def _gtex_variant(self, query: Query, dataset: str, tissues: list[str] | None) -> dict:
         variant = query.variant
@@ -934,11 +1004,8 @@ class RegulatoryAnnotator(Annotator):
         rows: list[dict] = []
         total, truncated = 0, False
         for entry in known[:5]:
-            params = {"variantId": entry["variantId"], "datasetId": dataset}
-            if tissues and len(tissues) == 1:
-                params["tissueSiteDetailId"] = tissues[0]
-            found = await self._gtex_paged("association/singleTissueEqtl", params)
-            rows += [r for r in found["rows"] if not tissues or r.get("tissueSiteDetailId") in tissues]
+            found = await self._gtex_eqtl({"variantId": entry["variantId"], "datasetId": dataset}, tissues)
+            rows += found["rows"]
             total += found["total"]
             truncated = truncated or found["truncated"]
         return {"found": True, "variants": known, "tissues": tissues,
@@ -946,7 +1013,7 @@ class RegulatoryAnnotator(Annotator):
 
     # ----- AlphaGenome -----
     async def alphagenome(self, variants_or_intervals: object, outputs: list[str] | None = None,
-                          ontology_terms: list[str] | None = None, sequence_length: str = "1MB",
+                          ontology_terms: list[str] | None = None, sequence_length: str = AG_DEFAULT_LENGTH,
                           organism: str = "human") -> dict:
         backend = self.alphagenome_backend
         if backend is None:
@@ -963,6 +1030,11 @@ class RegulatoryAnnotator(Annotator):
         if organism not in AG_ORGANISMS:
             raise ValueError(f"organism은 {', '.join(AG_ORGANISMS)} 중 하나입니다")
         width = AG_LENGTHS[sequence_length]
+        heavy = [o for o in outputs if o in AG_BP_OUTPUTS]
+        if not terms and heavy and width > AG_ALL_TRACKS_MAX:
+            raise ValueError(f"{', '.join(heavy)}는 1 bp 해상도라 ontology_terms 없이(모든 track) {sequence_length}를 "
+                             f"받으면 변이 하나에 수 GB입니다. ontology_terms(예: UBERON:0002107)를 주거나 "
+                             f"sequence_length를 100KB 이하로 주세요")
         values = [variants_or_intervals] if isinstance(variants_or_intervals, str) else variants_or_intervals
         if not isinstance(values, list) or not values:
             raise ValueError("변이나 구간 목록이 비었습니다")
@@ -981,21 +1053,32 @@ class RegulatoryAnnotator(Annotator):
         self._from_cache("alphagenome", release, options, items)
         lookup_errors = 0
         done: dict[str, object] = {}
+        stopped: str | None = None  # after a timeout or an unreachable service the rest fail at once
+        loop = asyncio.get_running_loop()
         for item in items:
             if not item.variant or item.error is not None or item.cached_at is not None:
                 continue
             query = item.variant
-            if query.key not in done:
+            if query.key not in done and stopped is not None:
+                lookup_errors += 1
+                done[query.key] = LookupFailed(f"앞 항목이 실패해 건너뜀({stopped})")
+            elif query.key not in done:
                 await self.http._pace("alphagenome")
                 try:
-                    tracks = await asyncio.wait_for(asyncio.to_thread(
-                        backend.predict, query, width, outputs, terms or None, organism), AG_TIMEOUT_S)
+                    tracks = await asyncio.wait_for(loop.run_in_executor(
+                        _AG_EXECUTOR, backend.predict, query, width, outputs, terms or None, organism), AG_TIMEOUT_S)
                     centre = (query.variant.pos - 1) if query.variant else (query.start0 + query.end) // 2
                     start0 = max(0, centre - width // 2)
-                    done[query.key] = {"interval": f"{query.chrom}:{start0 + 1}-{start0 + width}", "tracks": tracks}
+                    done[query.key] = {"window": f"{query.chrom}:{start0 + 1}-{start0 + width}",
+                                       "summarised_over": "window" if query.variant else query.key, "tracks": tracks}
                 except asyncio.TimeoutError:
                     lookup_errors += 1
-                    done[query.key] = LookupFailed(f"{AG_TIMEOUT_S:.0f}초 안에 답이 없었습니다")
+                    stopped = f"{AG_TIMEOUT_S:.0f}초 안에 답이 없었습니다"
+                    done[query.key] = LookupFailed(stopped)
+                except AlphaGenomeUnavailable as exc:
+                    lookup_errors += 1
+                    stopped = "AlphaGenome에 연결하지 못했습니다: " + backend.redact(str(exc))[:400]
+                    done[query.key] = LookupFailed(stopped)
                 except Exception as exc:  # noqa: BLE001 - the client raises grpc and value errors alike
                     lookup_errors += 1
                     done[query.key] = LookupFailed(backend.redact(f"{type(exc).__name__}: {exc}")[:500])

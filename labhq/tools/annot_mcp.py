@@ -138,13 +138,15 @@ if ALPHAGENOME is not None:
     @server.tool()
     async def alphagenome(variants_or_intervals: list[str], outputs: list[str] | None = None,
                           ontology_terms: list[str] | None = None,
-                          sequence_length: Literal["16KB", "100KB", "500KB", "1MB"] = "1MB",
+                          sequence_length: Literal["16KB", "100KB", "500KB", "1MB"] = "100KB",
                           organism: Literal["human", "mouse"] = "human") -> str:
         """Google DeepMind AlphaGenome predictions. A variant chr:pos:ref:alt (hg38/mm10) gets, per track, the
-        largest predicted alt-minus-ref change and where it is; an interval chr:start-end gets each track's peak
-        signal. outputs: RNA_SEQ (default), ATAC, CAGE, DNASE, CHIP_HISTONE, CHIP_TF, SPLICE_SITES,
-        SPLICE_SITE_USAGE, PROCAP. ontology_terms (e.g. UBERON:0002107 for liver) narrows the tracks; leave it empty
-        for all. Up to 10 items per call. Model predictions for research, not clinical decisions."""
+        largest predicted alt-minus-ref change in the prediction window and where it is; an interval chr:start-end
+        gets each track's mean and peak signal inside that interval. outputs: RNA_SEQ (default), ATAC, CAGE, DNASE,
+        CHIP_HISTONE, CHIP_TF, SPLICE_SITES, SPLICE_SITE_USAGE, PROCAP. ontology_terms (e.g. UBERON:0002107 for
+        liver) narrows the tracks; empty means all tracks, which 500KB and 1MB refuse for the 1-bp outputs
+        (everything but CHIP_HISTONE and CHIP_TF). Up to 10 items per call. Model predictions for research, not
+        clinical decisions."""
         return await _run("alphagenome", variants_or_intervals, outputs, ontology_terms, sequence_length, organism)
 
 

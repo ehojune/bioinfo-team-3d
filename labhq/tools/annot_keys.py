@@ -5,8 +5,11 @@ goes into the repository, the config (only the file's location, `annot.alphageno
 doctor output or the MCP command line. A file and not an environment variable: staff processes inherit the runner's
 environment, so a key there would be one `echo` away from the agent and its transcript.
 
-The file is readable by the runner account only: POSIX mode 0600 in a 0700 folder; on Windows the folder and the
-file lose inherited access and grant full control to the current account alone (checked after writing).
+The file is readable by the account that ran `labhq init` only: POSIX mode 0600 in a 0700 folder; on Windows the folder
+and the file lose inherited access and grant full control to the current account alone (checked after writing). With a
+separate runner account (docs/runner-account.md) that is the runner, so `labhq init` runs once in the runner's window.
+Owner-only access goes on the key's own folder, so that folder must hold nothing else and must not contain labhq's
+state, workspaces or config: `write_key` refuses otherwise rather than cut other accounts out of them.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import os
 import re
 import subprocess
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
 
 from ..settings import Settings
@@ -84,9 +88,36 @@ def _windows_owner_only(path: Path, account: str, sid: str, folder: bool) -> Non
         raise KeyFileError(f"키 {'폴더' if folder else '파일'}에 다른 계정의 접근이 남아 있습니다({len(others)}개)")
 
 
-def write_key(path: Path, key: str) -> None:
-    """Write `key` so only the runner account can read it. On any failure nothing new is left at `path`."""
+def _within(inner: Path, outer: Path) -> bool:
+    try:
+        inner.relative_to(outer)
+        return True
+    except ValueError:
+        return False
+
+
+def check_key_folder(path: Path, keep_out: Iterable[Path] = ()) -> None:
+    """Refuse a key folder that is not the key's own: one holding other files, the home folder itself, or one that
+    contains (or is) a folder in `keep_out` (labhq state, workspaces, config). Owner-only access on it would spread
+    to everything below and cut sandbox and service accounts out."""
+    folder = Path(os.path.abspath(path.parent))
+    if folder == Path(os.path.abspath(Path.home())) or folder.parent == folder:
+        raise KeyFileError("키 파일을 홈 폴더나 드라이브 바로 아래에 둘 수 없습니다. 키 전용 하위 폴더를 지정하세요")
+    for other in keep_out:
+        if _within(Path(os.path.abspath(other)), folder):
+            raise KeyFileError("키 파일 폴더 안에 labhq의 state·작업 폴더·설정이 있습니다. 키 전용 하위 폴더를 지정하세요")
+    if folder.is_dir():
+        others = [p.name for p in folder.iterdir()
+                  if p.name != path.name and not (p.name.startswith(f".{path.name}.") and p.name.endswith(".tmp"))]
+        if others:
+            raise KeyFileError(f"키 파일 폴더에 다른 항목이 {len(others)}개 있습니다. 키만 두는 폴더를 "
+                               "annot.alphagenome_key_file에 지정하세요")
+
+
+def write_key(path: Path, key: str, keep_out: Iterable[Path] = ()) -> None:
+    """Write `key` so only the current account can read it. On any failure nothing new is left at `path`."""
     folder = path.parent
+    check_key_folder(path, keep_out)
     folder.mkdir(parents=True, exist_ok=True)
     temporary = folder / f".{path.name}.{uuid.uuid4().hex}.tmp"
     try:
@@ -107,4 +138,4 @@ def write_key(path: Path, key: str) -> None:
         temporary.unlink(missing_ok=True)
         if isinstance(exc, KeyFileError):
             raise
-        raise KeyFileError(f"키 파일을 runner 계정 전용으로 쓰지 못했습니다: {type(exc).__name__}") from exc
+        raise KeyFileError(f"키 파일을 이 계정 전용으로 쓰지 못했습니다: {type(exc).__name__}") from exc

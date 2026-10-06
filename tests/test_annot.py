@@ -496,14 +496,21 @@ def test_core_staff_with_annot_and_roster_line(tmp_path):
 
 
 async def test_stdio_server_lists_tools_and_answers_malformed_items_offline(tmp_path):
+    # A temporary home and config with no AlphaGenome key file: the PI's own key is never read here (#435 C ③).
+    home = tmp_path / "home"
+    home.mkdir()
+    config = tmp_path / "labhq.yaml"
+    config.write_text(json.dumps({"runner": {"state_dir": str(tmp_path / "state")},
+                                  "annot": {"alphagenome_key_file": str(tmp_path / "no-key" / "ag")}}),
+                      encoding="utf-8")
     env = {"PYTHONPATH": str(REPO), "LABHQ_WORKDIR": str(tmp_path / "work"),
-           "LABHQ_STATE_DIR": str(tmp_path / "state")}
+           "LABHQ_STATE_DIR": str(tmp_path / "state"), "LABHQ_CONFIG": str(config), "HOME": str(home),
+           "USERPROFILE": str(home)}
     (tmp_path / "work").mkdir()
     tools = await list_tools(McpServerSpec(name="annot", command=sys.executable,
                                            args=["-m", "labhq.tools.annot_mcp"], env=env))
-    # #435 C ③ added the regional tools; alphagenome appears only where a key file and its client exist.
-    assert set(tools) - {"alphagenome"} == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode",
-                                            "gtex"}
+    # #435 C ③ added the regional tools; without a key alphagenome is not registered.
+    assert set(tools) == {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.annot_mcp"],
                                    env={**os.environ, **env})
     async with stdio_client(params) as streams:
