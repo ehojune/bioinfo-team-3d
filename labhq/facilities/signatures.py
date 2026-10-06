@@ -1,8 +1,8 @@
 """Deterministic environment-failure signatures (#35 stage 2).
 
 A step that failed because the runner PC lacks something (a package, a command, disk, DNS, Docker, the Codex sandbox
-setup) is an ``environment`` failure: another identical attempt fails the same way, so labhq does not retry it and
-shows the PI the signature's cause and hint instead of a raw error. The table is data (``signatures.yaml``); this
+setup) is an ``environment`` failure. labhq shows the PI the signature's cause and hint instead of a raw error; three
+signatures may also offer one approved, allowlisted repair and rerun. The table is data (``signatures.yaml``); this
 module loads it and matches text. Only failure text is ever matched: the step's error, the CLI's stderr tail, and the
 output of shell commands that failed. A command that succeeded, or a log that quotes the phrase, is not evidence.
 """
@@ -133,19 +133,33 @@ def match(engine: str, text: str | None, *, error_kind: str | None = None) -> Si
 def scan_run(engine: str, stderr_lines: Iterable[str], failed_outputs: Iterable[Any]) -> dict[str, str] | None:
     """Runner side: the CLI's stderr tail first, then the last failed command's output. The adapters clear that output
     when a later shell command succeeds, so a failure the agent got past is not evidence (PR #447 review)."""
-    found = match(engine, "\n".join(str(line) for line in stderr_lines))
+    stderr = "\n".join(str(line) for line in stderr_lines)
+    found = match(engine, stderr)
     if found:
-        return found.record("stderr")
+        record = found.record("stderr")
+        from .fixes import proposal
+        proposed = proposal(record, stderr)
+        if proposed and proposed.get("package"):
+            record["package"] = proposed["package"]
+        return record
     last = list(failed_outputs)[-1:]
-    found = match(engine, str(last[0])) if last else None
-    return found.record("command") if found else None
+    text = str(last[0]) if last else ""
+    found = match(engine, text) if text else None
+    if not found:
+        return None
+    record = found.record("command")
+    from .fixes import proposal
+    proposed = proposal(record, text)
+    if proposed and proposed.get("package"):
+        record["package"] = proposed["package"]
+    return record
 
 
 def clean_record(value: Any) -> dict[str, str] | None:
     """A result's environment field as another runner version may send it: bounded strings, an id, a known source."""
     if not isinstance(value, dict):
         return None
-    out = {key: value[key].strip()[:300] for key in ("id", "cause", "hint", "source", "fix")
+    out = {key: value[key].strip()[:300] for key in ("id", "cause", "hint", "source", "fix", "package")
            if isinstance(value.get(key), str) and value[key].strip()}
     if not out.get("id"):
         return None

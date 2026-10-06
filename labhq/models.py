@@ -204,9 +204,11 @@ class TaskResult(BaseModel):
     error: str | None = None
     # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).
     quota_reset_at: float | None = None
-    # The environment signature behind a failure (#35): {id, cause, hint, source[, fix]}. The runner sets it from the
+    # The environment signature behind a failure (#35): {id, cause, hint, source[, fix, package]}. The runner sets it from the
     # CLI's stderr tail or a failed shell command; the gateway from the error. Read through cso.environment_problem.
     environment: dict[str, str] | None = None
+    # One PI-approved facilities repair attempted before this step's single rerun (#35 stage 3).
+    facilities_fix: dict[str, Any] | None = None
 
     @field_validator("environment", mode="before")
     @classmethod
@@ -253,6 +255,8 @@ class TaskResult(BaseModel):
                 data.pop("quota_reset_at", None)
             if data.get("environment") is None:
                 data.pop("environment", None)
+            if data.get("facilities_fix") is None:
+                data.pop("facilities_fix", None)
         return data
 
 
@@ -279,7 +283,7 @@ class ApprovalRequest(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     request_id: str | None = None
-    kind: str  # hpc_submit | tool_permission | budget | recruit | download
+    kind: str  # hpc_submit | tool_permission | budget | recruit | download | facilities_fix
     summary: str
     detail: dict[str, Any] = {}
     created_at: float = Field(default_factory=time.time)

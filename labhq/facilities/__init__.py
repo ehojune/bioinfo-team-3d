@@ -1,1 +1,1 @@
-"""Facilities team (#35): environment failures and, later, their allowlisted fixes."""
+"""Facilities team (#35): environment signatures and PI-approved, allowlisted repairs."""

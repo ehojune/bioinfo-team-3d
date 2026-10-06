@@ -151,6 +151,7 @@ export function decisionChoice(approval, act) {
 function renderDetail(container, kind, detail) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
+    kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
     kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'plan_sha256', 'results'] : [];
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices'] : [];

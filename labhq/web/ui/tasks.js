@@ -1,7 +1,7 @@
 const doc = () => globalThis.document;
 function add(parent, tag, text = '', className = '') { const el = doc().createElement(tag); el.textContent = text; if (className) el.className = className; parent.append(el); return el; }
-const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
-const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
+const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
+const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
 function list(parent, title, values, className = '') {
   if (!values?.length) return;
@@ -22,6 +22,7 @@ function cardFor(step, status, detail, options) {
   list(card, '리뷰 지적', detail.review_issues, 'review');
   // Environment failure (#35): what is missing on the runner PC and what to do, above the raw error.
   if (detail.environment) add(card, 'p', `환경 문제: ${detail.environment.cause || detail.environment.id || ''}${detail.environment.hint ? ` — ${detail.environment.hint}` : ''}`, 'task-error task-environment');
+  if (detail.facilities_fix) add(card, 'p', `환경 수정 ${detail.facilities_fix.ok ? '완료' : '실패'}: ${detail.facilities_fix.action || detail.facilities_fix.fix_id || ''}`, detail.facilities_fix.ok ? 'task-meta' : 'task-error');
   if (detail.error) add(card, 'p', detail.error, 'task-error');
   if (detail.text) add(card, 'p', detail.text, 'task-result');
   if (status === 'waiting_quota') {

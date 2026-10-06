@@ -35,7 +35,9 @@ def test_every_signature_has_a_real_example_and_the_fields_the_lane_asked_for():
             "network_name_resolution", "docker_daemon_down", "codex_sandbox_setup"} <= {sig.id for sig in table}
     raw = yaml.safe_load(env.SIGNATURE_FILE.read_text(encoding="utf-8"))
     assert all({"id", "engine", "pattern", "cause", "hint", "fix"} <= set(entry) for entry in raw)
-    assert all(entry["fix"] is None for entry in raw)  # stage 3 (facilities_fix) fills these
+    fixes = {entry["id"]: entry["fix"] for entry in raw if entry["fix"]}
+    assert fixes == {"python_module_missing": "install_python_package", "r_package_missing": "install_r_package",
+                     "disk_full": "clear_workspace_cache"}
 
 
 @pytest.mark.parametrize("example", EXAMPLES["match"], ids=lambda e: e["id"])
@@ -306,7 +308,8 @@ async def test_runner_reads_failed_command_output(tmp_path):
     traceback = ("Traceback (most recent call last):\n  File \"de.py\", line 1, in <module>\n"
                  "ModuleNotFoundError: No module named 'pydeseq2'\n")
     res = await _run_codex(tmp_path, [_command(traceback, 1)])
-    assert not res.ok and res.environment == {**env.by_id("python_module_missing").record("command")}
+    assert not res.ok and res.environment == {**env.by_id("python_module_missing").record("command"),
+                                               "package": "pydeseq2"}
     assert failure_kind(res, "codex") == "environment"
 
 

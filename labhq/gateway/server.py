@@ -235,7 +235,7 @@ class Hub:
         self.events: deque = deque(maxlen=settings.gateway.event_buffer)
         self.events.extend(self.store.events_since(max(0, self.store.event_bounds()[1] - settings.gateway.event_buffer)))
         for aid, entry in list(self.approvals.items()):
-            if entry.get("origin") is None and entry["approval"].get("kind") != "resume":
+            if entry.get("origin") is None and entry["approval"].get("kind") not in {"resume", "facilities_fix"}:
                 self.approvals.pop(aid)
                 self.store.delete("approval", aid)
                 self.store.put("approval_decision", aid, {"approval": entry["approval"],
@@ -245,7 +245,8 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if is_active_request(req.get("status")) and req.get("status") not in {"waiting_quota", "waiting_login"}:
+            if is_active_request(req.get("status")) and req.get("status") not in {
+                    "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
                 req["status"] = "interrupted"
                 self.save_request(rid)
             stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
@@ -343,7 +344,10 @@ class Hub:
             req["status"] = "waiting_login"
         elif req.get("quota_waits"):
             req["status"] = "waiting_quota"
-        elif req.get("status") in {"waiting_login", "waiting_quota"}:
+        elif any(entry.get("status") in {"waiting", "approved", "running"}
+                 for entry in (req.get("facilities_fixes") or {}).values()):
+            req["status"] = "waiting_facilities_fix"
+        elif req.get("status") in {"waiting_login", "waiting_quota", "waiting_facilities_fix"}:
             req["status"] = "running"
 
     def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
@@ -497,9 +501,28 @@ class Hub:
         raise KeyError(step_id)
 
     async def resume_held_request(self, rid: str) -> None:
-        """Recover a quota/login parked request without asking for PI resume approval."""
+        """Recover a quota/login/facilities parked request without another PI resume approval."""
         req = self.requests[rid]
-        if not req.get("quota_waits") and not req.get("login_waits"):
+        facilities = req.get("facilities_fixes") or {}
+        facilities_hold = req.get("status") == "waiting_facilities_fix"
+        changed = False
+        for entry in facilities.values():
+            decision = self.store.get("approval_decision", entry.get("approval_id"))
+            if entry.get("status") == "waiting" and decision:
+                entry.update(status="approved" if decision.get("approved") else (
+                    "timed_out" if decision.get("state") == "timed_out" else "declined"),
+                    approved=bool(decision.get("approved")), note=decision.get("note") or "",
+                    state=decision.get("state") or "resolved")
+                changed = True
+        if changed:
+            self._sync_hold_status(req)
+            self.save_request(rid)
+        # A still-open phone card is already durable. Do not restart the orchestration until the PI answers;
+        # resolve_approval() wakes it. This also keeps the request/card visibly waiting across a gateway restart.
+        if any(entry.get("status") == "waiting" for entry in facilities.values()):
+            return
+        facilities_resume = bool(facilities) and facilities_hold
+        if not req.get("quota_waits") and not req.get("login_waits") and not facilities_resume:
             req["status"] = "interrupted"
             self.save_request(rid)
             return
@@ -1698,6 +1721,87 @@ class Hub:
             return {"approved": False, "note": "timed out", "state": "timed_out", "approval_id": req.id,
                     "decided_at": time.time()}
 
+    async def request_facilities_fix(self, rid: str, step_id: str, proposal: dict) -> dict:
+        """Request one durable repair approval per step and reuse its decision after a restart."""
+        req_state = self.requests[rid]
+        fixes = req_state.setdefault("facilities_fixes", {})
+        saved = fixes.get(step_id)
+        if saved and saved.get("status") in {"declined", "timed_out", "failed", "succeeded"}:
+            return {"approved": saved.get("status") == "succeeded", **saved}
+        approval_id = saved.get("approval_id") if saved else None
+        decision = self.store.get("approval_decision", approval_id) if approval_id else None
+        if decision:
+            status = "approved" if decision.get("approved") else (
+                "timed_out" if decision.get("state") == "timed_out" else "declined")
+            saved = {**(saved or {}), "status": status, "approved": bool(decision.get("approved")),
+                     "note": decision.get("note") or "", "state": decision.get("state") or "resolved"}
+            fixes[step_id] = saved
+            self._sync_hold_status(req_state)
+            self.save_request(rid)
+            return {"approved": bool(decision.get("approved")), **saved}
+
+        if saved:
+            entry = self.approvals.get(str(approval_id))
+            if entry is None:
+                raise RuntimeError("facilities fix approval record is missing")
+            fut = entry.get("future")
+            if fut is None or fut.done():
+                fut = asyncio.get_running_loop().create_future()
+                entry["future"] = fut
+            approval = ApprovalRequest.model_validate(entry["approval"])
+        else:
+            detail = {key: proposal[key] for key in
+                      ("action", "reason", "signature_id", "fix_id", "command") if key in proposal}
+            approval = ApprovalRequest(kind="facilities_fix", request_id=rid,
+                                       summary=f"{step_id} 환경 문제를 고친 뒤 같은 단계를 한 번 다시 돌릴까요?",
+                                       detail={"step_id": step_id, **detail},
+                                       timeout_s=self.s.policy.approvals.timeout_s)
+            fut = asyncio.get_running_loop().create_future()
+            self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"),
+                                           "origin": None, "future": fut}
+            self.save_approval(approval.id)
+            saved = {"status": "waiting", "approval_id": approval.id,
+                     "proposal": {key: proposal[key] for key in
+                                  ("fix_id", "signature_id", "action", "execution", "package", "command")
+                                  if key in proposal}}
+            fixes[step_id] = saved
+            req_state["status"] = "waiting_facilities_fix"
+            self.save_request(rid)
+            await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": rid,
+                                "data": approval.model_dump(mode="json")})
+
+        remaining = max(0.0, approval.created_at + approval.timeout_s - time.time())
+        try:
+            answer = await asyncio.wait_for(asyncio.shield(fut), remaining)
+        except asyncio.TimeoutError:
+            self.approvals.pop(approval.id, None)
+            self.store.delete("approval", approval.id)
+            answer = {"approved": False, "note": "timed out", "state": "timed_out"}
+            self.store.put("approval_decision", approval.id,
+                           {"approval": approval.model_dump(mode="json"), **answer, "decided_at": time.time()})
+            await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": rid,
+                                "data": {"id": approval.id, **answer}})
+        status = "approved" if answer.get("approved") else (
+            "timed_out" if answer.get("state") == "timed_out" else "declined")
+        saved.update(status=status, approved=bool(answer.get("approved")), note=answer.get("note") or "",
+                     state=answer.get("state") or "resolved")
+        self._sync_hold_status(req_state)
+        self.save_request(rid)
+        return {"approved": bool(answer.get("approved")), **saved}
+
+    async def record_facilities_fix(self, rid: str, step_id: str, record: dict) -> None:
+        """Persist the execution beside the request and leave one concise work-feed event."""
+        req = self.requests[rid]
+        entry = req.setdefault("facilities_fixes", {}).setdefault(step_id, {})
+        status = "succeeded" if record.get("ok") else "failed"
+        entry.update(status=status, execution=record)
+        self._sync_hold_status(req)
+        self.save_request(rid)
+        await self.publish({"type": "request.facilities_fix", "ts": time.time(), "request_id": rid,
+                            "data": {"step_id": step_id, "ok": bool(record.get("ok")),
+                                     "fix_id": record.get("fix_id"), "action": record.get("action"),
+                                     "error": record.get("error")}})
+
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None) -> None:
         entry = self.approvals.pop(approval_id, None)
@@ -1721,6 +1825,16 @@ class Hub:
                 self.requests[rid]["status"] = "waiting_for_runner"
                 self.save_request(rid)
                 self._restart_request_asks(rid)
+                asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
+        elif entry["approval"].get("kind") == "facilities_fix":
+            rid = entry["approval"]["request_id"]
+            step_id = (entry["approval"].get("detail") or {}).get("step_id")
+            saved = (self.requests[rid].get("facilities_fixes") or {}).get(step_id)
+            if saved is not None:
+                saved.update(status="approved" if approved else "declined", approved=approved, note=note)
+                self._sync_hold_status(self.requests[rid])
+                self.save_request(rid)
+            if approved and self.requests[rid].get("status") == "waiting_facilities_fix":
                 asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
@@ -1884,6 +1998,8 @@ class Hub:
             environment = environment_problem(result) if result and not result.get("ok") else None
             if environment:  # the task card's "환경 문제" line survives a reconnect (#35)
                 details[sid]["environment"] = environment
+            if result and result.get("facilities_fix"):
+                details[sid]["facilities_fix"] = result["facilities_fix"]
         return details
 
 
@@ -1899,7 +2015,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
-            elif request.get("status") in {"waiting_quota", "waiting_login"}:
+            elif request.get("status") in {"waiting_quota", "waiting_login", "waiting_facilities_fix"}:
                 asyncio.create_task(hub.resume_held_request(rid))
 
     @app.on_event("shutdown")

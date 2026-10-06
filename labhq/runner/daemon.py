@@ -30,6 +30,7 @@ from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
+from ..facilities import fixes as facility_fixes
 from ..login import LOGIN_PATH_ENV
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
 from .breaker import Breaker, trip_text
@@ -937,6 +938,27 @@ class Runner:
                 self.workspaces[task.id] = ws
                 self.task_req[task.id] = task.request_id
             assert ws is not None
+            if task.meta.get("kind") == "facilities_fix":
+                started = time.time()
+                proposal = task.meta.get("facilities_fix")
+                ws.update_run(task.id, started_at=started, kind="facilities_fix",
+                              fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
+                record = await facility_fixes.execute(
+                    proposal, ws.dir, task.meta.get("upstream_steps") or {}, self.ws_root.resolve())
+                result = TaskResult(task_id=task.id, agent_id=agent.id, ok=bool(record.get("ok")),
+                                    text=record.get("action") or "", cost_usd=0.0, cost_known=True,
+                                    error=record.get("error"), facilities_fix=record,
+                                    workdir=str(ws.dir), workdir_id=ws.dir.name)
+                ws.update_run(task.id, ended_at=time.time(), ok=result.ok, error=result.error,
+                              cost_usd=0.0, cost_known=True, facilities_fix=record)
+                result.provenance = ws.provenance()
+                status = "완료" if result.ok else "실패"
+                await emit("agent.log", {"level": "info" if result.ok else "alert",
+                                         "text": f"환경 수정 {status}: {record.get('action') or record.get('error') or ''}"})
+                await emit("agent.status", {"state": "done" if result.ok else "error",
+                                            **({"error": short(result.error, 200)} if result.error else {})})
+                await emit("task.result", result.model_dump(mode="json"))
+                return result
             extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
             task, consult_error = self._stage_consult_refs(task, ws)
             ws.task = task
