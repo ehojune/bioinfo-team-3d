@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:40 | [`cf0ded2`](https://github.com/ehojune/bioinfo-team-3d/pull/441/commits/cf0ded2) | 재개 대기 test가 느린 CI에서 0.15초 대기를 넘겨 실패하던 시간 경쟁을 없앴다(첫 요청은 대기 30초, 시간 초과 검사만 0.15초). |
 | 13:05 | [`e3a59dd`](https://github.com/ehojune/bioinfo-team-3d/pull/439/commits/e3a59dd) | 같은 논문의 두 id를 합치고 잘못 붙은 topic 연결 하나를 떼어 출처 수를 다시 셌다(출처 133개, 리뷰 반영). |
 | 12:31 | [`6e88a89`](https://github.com/ehojune/bioinfo-team-3d/pull/438/commits/6e88a89) | 연구 lane 보고서도 남은 P2·P3 지적 원문을 실행 기록에 두고, "수치는 한 번"을 결과 통계로 한정했다(seed·버전은 방법 요약에 그대로, 리뷰 반영). |
 | 12:10 | [`d5dff26`](https://github.com/ehojune/bioinfo-team-3d/pull/439/commits/d5dff26) | topic 확장 조사 결과(후보 73행, 출처 134개와 확인 결과)를 PI 검토용 참고 자료로 docs/reference에 두었다. |
