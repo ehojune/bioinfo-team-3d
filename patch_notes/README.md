@@ -14,8 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:28 | [`bcf3429`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/bcf3429) | 검증된 Python·R 패키지 매핑과 승인 재실행 상태 전이를 추가 |
 | 03:52 | [`afa2e05`](https://github.com/ehojune/bioinfo-team-3d/pull/456/commits/afa2e05) | main 병합: 로드맵 v0.5 행에서 동시 설치 경합(이 PR)과 topic별 근거 논문(#455)을 남은 것에서 끝난 것으로 옮겼다. |
+| 03:48 | [`887721b`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/887721b) | 직원 산출물 실행을 없애고 복원 승인 timeout과 disk-full 정리 순서를 보강 |
 | 03:47 | [`0b40d44`](https://github.com/ehojune/bioinfo-team-3d/pull/456/commits/0b40d44) | 공유 환경 설치 게이트가 사전 허용 규칙·실행 파일 경로·R 호출별 library 우회를 차단 |
+| 03:26 | [`35750ee`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/35750ee) | 환경 실패를 PI 승인 뒤 allowlist로 고치고 같은 단계를 한 번 재실행 |
 | 03:24 | [`b1b0508`](https://github.com/ehojune/bioinfo-team-3d/pull/456/commits/b1b0508) | 공유 environment 설치는 환경 단계 하나로 제한하고 뒤 단계의 추가 패키지를 작업 폴더별로 격리 |
 | 02:57 | [`7d2c503`](https://github.com/ehojune/bioinfo-team-3d/pull/455/commits/7d2c503) | main 병합: 점검표가 43 topic 모두에 생긴 매뉴얼 문단에 topic별 근거 논문 링크를 이어 붙였다. |
 | 02:56 | [`a8a3453`](https://github.com/ehojune/bioinfo-team-3d/pull/452/commits/a8a3453) | main 병합: #446의 점검표 파일 방식(TSV)에 이유 필수·경고 규칙을 합치고, 로드맵 v0.5 행의 pack 설명을 지금 상태(single_cell_de@3·bulk_tumor_normal@3)로 고쳤다. |
