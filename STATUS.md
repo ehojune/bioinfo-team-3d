@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · 로그인 대기 test가 CI 부하에서 흔들리던 것
+
+- 결론: `tests/test_login_wait.py::test_login_retry_expiry_ends_notice_and_next_failure_notifies_again`의 로그인 대기 상한을 0.2초에서 1초로 늘렸다. 검사 내용은 그대로다.
+- 바뀐 것: `tests/test_login_wait.py` 한 줄과 주석.
+- 실행한 것: `tests/test_login_wait.py` 45 passed. PR #457 CI의 `pytest-windows`가 이 test에서 두 번 연속 `calls == 1`로 실패했고, 같은 커밋을 다시 돌리자 통과했다.
+- 미해결: 없음.
+- 근거: 이 PR.
+
 ## 2026-10-07 · #35 시설팀 3단계 — 승인된 환경 수정 (PR #457)
 
 - 결론: 봇 P1 4건을 고쳐 패키지는 원 단계의 격리 폴더에 설치하고, 복원 승인과 `disk_full` 정리가 멈추지 않게 했습니다.

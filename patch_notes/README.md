@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:10 | [`264de92`](https://github.com/ehojune/bioinfo-team-3d/pull/459/commits/264de92) | 로그인 대기 test의 상한을 0.2초에서 1초로 늘려, CI 부하에서 재시도 한 번이 안 들어가 흔들리던 것을 막았다. |
 | 04:28 | [`bcf3429`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/bcf3429) | 검증된 Python·R 패키지 매핑과 승인 재실행 상태 전이를 추가 |
 | 03:52 | [`afa2e05`](https://github.com/ehojune/bioinfo-team-3d/pull/456/commits/afa2e05) | main 병합: 로드맵 v0.5 행에서 동시 설치 경합(이 PR)과 topic별 근거 논문(#455)을 남은 것에서 끝난 것으로 옮겼다. |
 | 03:48 | [`887721b`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/887721b) | 직원 산출물 실행을 없애고 복원 승인 timeout과 disk-full 정리 순서를 보강 |
