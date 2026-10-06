@@ -34,11 +34,12 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import inspect
+import itertools
 import os
 import re
 import tempfile
+import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -93,9 +94,12 @@ AG_DEFAULT_LENGTH = "100KB"
 # Outputs at 1-bp resolution: with every track (no ontology_terms) over 500 KB or more, one allele is gigabytes.
 AG_BP_OUTPUTS = ("ATAC", "CAGE", "DNASE", "RNA_SEQ", "SPLICE_SITES", "SPLICE_SITE_USAGE", "PROCAP")
 AG_ALL_TRACKS_MAX = 2 ** 17
-# Its own small pool: a call that never returns (unreachable gRPC service) cannot fill the event loop's default
-# executor, which ENCODE's file scan and md5 share.
-_AG_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="labhq-alphagenome")
+# Each client call runs on its own daemon thread, not the event loop's default executor (ENCODE's file scan and md5
+# share that) nor a fixed pool: a thread that timed out cannot be killed, and in a fixed pool two of them would hold
+# every worker for ever. Timed-out threads still running are counted; at AG_MAX_STUCK new calls are refused.
+AG_MAX_STUCK = 4
+_AG_STUCK: list[threading.Thread] = []
+_AG_THREAD_IDS = itertools.count(1)
 
 _REGION = re.compile(r"^(?:chr)?([0-9]{1,2}|X|Y|M|MT):([0-9][0-9,]*)(?:-([0-9][0-9,]*))?$", re.IGNORECASE)
 _GENE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,39}$")
@@ -380,7 +384,46 @@ def interval_track_stats(track: Any, region_start0: int | None = None, region_en
 
 
 class AlphaGenomeUnavailable(Exception):
-    """The client could not open the service (unreachable, refused key): later items of the call fail at once."""
+    """The client could not open the service (unreachable, refused key), or too many earlier calls are still stuck:
+    later items of the call fail at once."""
+
+
+async def _alphagenome_call(fn: Callable[..., Any], *args: Any) -> Any:
+    """`fn(*args)` on a fresh daemon thread, waited for at most AG_TIMEOUT_S. A timed-out thread is left running
+    (daemon, so it never holds up exit) and counted in `_AG_STUCK` until it ends."""
+    _AG_STUCK[:] = [thread for thread in _AG_STUCK if thread.is_alive()]
+    if len(_AG_STUCK) >= AG_MAX_STUCK:
+        raise AlphaGenomeUnavailable(f"앞서 시간이 초과된 AlphaGenome 호출 {len(_AG_STUCK)}개가 아직 끝나지 않았습니다. "
+                                     "잠시 뒤 다시 부르거나 labhq를 다시 시작하세요")
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future = loop.create_future()
+
+    def settle(result: Any, error: BaseException | None) -> None:
+        if future.done():  # the caller gave up (timeout) before the client answered
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    def run() -> None:
+        try:
+            outcome: tuple[Any, BaseException | None] = (fn(*args), None)
+        except Exception as exc:  # noqa: BLE001 - handed to the awaiting coroutine
+            outcome = (None, exc)
+        try:
+            loop.call_soon_threadsafe(settle, *outcome)
+        except RuntimeError:  # the event loop closed while the client hung
+            pass
+
+    thread = threading.Thread(target=run, name=f"labhq-alphagenome-{next(_AG_THREAD_IDS)}", daemon=True)
+    thread.start()
+    try:
+        return await asyncio.wait_for(future, AG_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        if thread.is_alive():
+            _AG_STUCK.append(thread)
+        raise
 
 
 class AlphaGenomeBackend:
@@ -431,7 +474,7 @@ class AlphaGenomeBackend:
             try:
                 self._model = self._create(dna_client)
             except Exception as exc:  # noqa: BLE001 - grpc, auth and timeout errors alike
-                raise AlphaGenomeUnavailable(f"{type(exc).__name__}: {exc}") from exc
+                raise AlphaGenomeUnavailable(f"AlphaGenome에 연결하지 못했습니다: {type(exc).__name__}: {exc}") from exc
         if query.variant is not None:
             centre0 = query.variant.pos - 1
         else:
@@ -551,32 +594,44 @@ class RegulatoryAnnotator(Annotator):
         release, cacheable = await self._chipatlas_release()
         cache_key = Cache.key("chipatlas", release, options, "\n".join(sorted(keys)))
         hit = self.cache.get("chipatlas", cache_key) if cacheable and request_id is None else None
-        # The job a request_id names is bound to its inputs and options at submission (`request` below).
+        # The job a request_id names is bound at submission to its inputs and options (`request`) and to the release
+        # it ran on: a job resumed after experimentList.tab changed keeps its own release and is not cached.
         request = Cache.key("chipatlas_request", "", options, "\n".join(sorted(keys)))
-        verified = True
+        notes: dict[str, str] = {}
         if hit is not None:
             answer, cached_at = hit["answer"], hit.get("queried_at")
         else:
             if request_id is not None:
                 bound = self.cache.get("chipatlas_requests", Cache.key("chipatlas_requests", "", {}, request_id))
-                if bound is not None and bound["answer"] != request:
+                binding = bound["answer"] if bound is not None else None
+                if not (isinstance(binding, dict) and isinstance(binding.get("request"), str)
+                        and isinstance(binding.get("release"), str)):
+                    binding = None
+                if binding is not None and binding["request"] != request:
                     raise ValueError(f"request_id {request_id}는 다른 입력·옵션으로 낸 분석입니다. 그 분석을 낸 "
                                      "호출과 같은 입력·옵션으로 부르세요")
-                verified = bound is not None
+                if binding is None:
+                    cacheable = False
+                    notes["request_id_note"] = ("이 request_id를 낸 기록이 캐시에 없어 입력·옵션·release가 맞는지 "
+                                                "확인하지 못했습니다. 답을 캐시하지 않았습니다")
+                elif binding["release"] != release:
+                    cacheable = False
+                    notes["release_note"] = (f"이 분석은 {binding['release']} 때 냈고 지금 release는 {release}입니다. "
+                                             "답은 제출 때 release로 기록했고 캐시하지 않았습니다. 지금 release로 "
+                                             "분석하려면 request_id 없이 다시 부르세요")
+                    release = binding["release"]
                 rid = request_id
             else:
                 by_key = {q.key: q for q in queries}
                 rid = await self._chipatlas_submit(genome, antigen_class, cell_class, threshold, mode,
                                                    [by_key[k] for k in keys], distance_kb, permutations)
-                self.cache.put("chipatlas_requests", Cache.key("chipatlas_requests", "", {}, rid), request, _now())
+                self.cache.put("chipatlas_requests", Cache.key("chipatlas_requests", "", {}, rid),
+                               {"request": request, "release": release}, _now())
             text = await self._chipatlas_wait(rid, float(wait_s))
             answer, cached_at = {"request_id": rid, "rows": chipatlas_rows(text)}, None
-            if cacheable and verified:
+            if cacheable:
                 self.cache.put("chipatlas", cache_key, answer, _now())
-        summary = _chipatlas_summary(answer)
-        if not verified:
-            summary["request_id_note"] = ("이 request_id를 낸 기록이 캐시에 없어 입력·옵션이 맞는지 확인하지 못했습니다. "
-                                          "답을 캐시하지 않았습니다")
+        summary = {**_chipatlas_summary(answer), **notes}
         return self._set_record("chipatlas", "ChIP-Atlas enrichment analysis", release, CHIPATLAS_WABI, options,
                                 keys, errors, answer, cached_at, summary)
 
@@ -1054,7 +1109,6 @@ class RegulatoryAnnotator(Annotator):
         lookup_errors = 0
         done: dict[str, object] = {}
         stopped: str | None = None  # after a timeout or an unreachable service the rest fail at once
-        loop = asyncio.get_running_loop()
         for item in items:
             if not item.variant or item.error is not None or item.cached_at is not None:
                 continue
@@ -1065,8 +1119,7 @@ class RegulatoryAnnotator(Annotator):
             elif query.key not in done:
                 await self.http._pace("alphagenome")
                 try:
-                    tracks = await asyncio.wait_for(loop.run_in_executor(
-                        _AG_EXECUTOR, backend.predict, query, width, outputs, terms or None, organism), AG_TIMEOUT_S)
+                    tracks = await _alphagenome_call(backend.predict, query, width, outputs, terms or None, organism)
                     centre = (query.variant.pos - 1) if query.variant else (query.start0 + query.end) // 2
                     start0 = max(0, centre - width // 2)
                     done[query.key] = {"window": f"{query.chrom}:{start0 + 1}-{start0 + width}",
@@ -1077,7 +1130,7 @@ class RegulatoryAnnotator(Annotator):
                     done[query.key] = LookupFailed(stopped)
                 except AlphaGenomeUnavailable as exc:
                     lookup_errors += 1
-                    stopped = "AlphaGenome에 연결하지 못했습니다: " + backend.redact(str(exc))[:400]
+                    stopped = backend.redact(str(exc))[:400]
                     done[query.key] = LookupFailed(stopped)
                 except Exception as exc:  # noqa: BLE001 - the client raises grpc and value errors alike
                     lookup_errors += 1

@@ -80,13 +80,13 @@ EA_TSV = "\n".join([
     "SRX103\tTFs and others\tCTCF\tBlood\tK562\t50000\t1/8\t5000/20000\t-0.1\t0\t0.5"]) + "\n"
 
 
-def chipatlas_handler(polls=2, tsv=EA_TSV, state=None):
+def chipatlas_handler(polls=2, tsv=EA_TSV, state=None, stamp="Mon, 28 Sep 2026 08:00:16 GMT"):
     state = state if state is not None else {}
     state.update(posts=[], gets=0)
 
     def handler(request):
         if request.method == "HEAD" and request.url.path.endswith("/metadata/experimentList.tab"):
-            return httpx.Response(200, headers={"Last-Modified": "Mon, 28 Sep 2026 08:00:16 GMT"})
+            return httpx.Response(200, headers={"Last-Modified": stamp})
         if request.method == "POST":
             state["posts"].append({k: v[0] for k, v in parse_qs(request.content.decode(),
                                                                  keep_blank_values=True).items()})
@@ -179,8 +179,30 @@ async def test_chipatlas_times_out_with_a_request_id_and_resumes_without_resubmi
     resumed, _calls, _clock = make(handler, tmp_path)
     result = await resumed.chipatlas(["SOX2"], request_id=RID)
     assert state["posts"] == [] and result["n_experiments"] == 4
+    assert "release_note" not in result and "request_id_note" not in result
+    cached = await resumed.chipatlas(["SOX2"])  # same release: the resumed answer was cached
+    assert cached["n_cached"] == 1 and state["posts"] == []
     with pytest.raises(ValueError, match="request_id"):
         await resumed.chipatlas(["SOX2"], request_id="../../etc")
+
+
+async def test_chipatlas_resume_after_a_release_update_keeps_the_submission_release_and_skips_the_cache(tmp_path):
+    handler, state = chipatlas_handler(polls=10_000)
+    annotator, _calls, _clock = make(handler, tmp_path)
+    with pytest.raises(annot.LookupFailed, match=RID):
+        await annotator.chipatlas(["SOX2"], wait_s=60)
+    # experimentList.tab changed between submission and resumption.
+    handler, state = chipatlas_handler(polls=0, stamp="Mon, 05 Oct 2026 08:00:00 GMT")
+    resumed, _calls, _clock = make(handler, tmp_path)
+    result = await resumed.chipatlas(["SOX2"], request_id=RID)
+    assert result["n_experiments"] == 4 and state["posts"] == []
+    assert result["source"]["release_or_version"] == "ChIP-Atlas (experimentList.tab 2026-09-28)"
+    assert "2026-09-28" in result["release_note"] and "2026-10-05" in result["release_note"]
+    assert _full(tmp_path, result)["source"]["release_or_version"] == "ChIP-Atlas (experimentList.tab 2026-09-28)"
+    # Nothing was stored under the new release: the same set without request_id is submitted afresh.
+    fresh = await resumed.chipatlas(["SOX2"])
+    assert fresh["n_cached"] == 0 and len(state["posts"]) == 1
+    assert fresh["source"]["release_or_version"] == "ChIP-Atlas (experimentList.tab 2026-10-05)"
 
 
 async def test_chipatlas_job_error_and_refused_submission_fail_the_call(tmp_path):
@@ -491,7 +513,7 @@ def test_interval_stats_cut_bins_to_the_region():
     assert reg.interval_track_stats(track)[0]["max"] == 9.0  # no region: the whole window
 
 
-async def test_alphagenome_runs_on_its_own_pool_with_a_connect_timeout_and_a_default_size(tmp_path):
+async def test_alphagenome_runs_on_its_own_thread_with_a_connect_timeout_and_a_default_size(tmp_path):
     log = []
     backend, _keys = fake_backend(log)
     annotator, _calls, _clock = make(lambda r: pytest.fail("no HTTP"), tmp_path, alphagenome=backend)
@@ -520,6 +542,70 @@ async def test_alphagenome_stops_the_call_after_an_unreachable_service_or_a_time
     with pytest.raises(annot.LookupFailed, match="답이 없었습니다"):
         await annotator.alphagenome(["chr1:1000:A:G", "chr1:2000:A:G"])
     assert len(log) == 1  # the second item never reached the model
+
+
+class HungModel(FakeModel):
+    def __init__(self, gate):
+        super().__init__([])
+        self.gate = gate
+
+    def predict_variant(self, **kwargs):
+        self.gate.wait(30)
+        return super().predict_variant(**kwargs)
+
+
+def hung_backend(gate, at):
+    """A client that never answers until `gate` opens: in `create` (an old client without a timeout parameter) or in
+    `predict_variant`."""
+    model = HungModel(gate) if at == "predict" else FakeModel([])
+
+    def create(key):
+        if at == "create":
+            gate.wait(30)
+        return model
+    dna_client = SimpleNamespace(create=create, OutputType=OutputType, Organism=Organism)
+    genome = SimpleNamespace(Interval=lambda **kw: SimpleNamespace(**kw), Variant=lambda **kw: SimpleNamespace(**kw))
+    return reg.AlphaGenomeBackend(FAKE_KEY, dna_client=dna_client, genome=genome, version="0.9.0")
+
+
+async def test_alphagenome_hung_client_calls_never_hold_later_calls_and_their_threads_are_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(reg, "_AG_STUCK", [])
+    monkeypatch.setattr(reg, "AG_MAX_STUCK", 3)
+    no_http = lambda r: pytest.fail("no HTTP")  # noqa: E731
+    gate = threading.Event()
+    try:
+        monkeypatch.setattr(reg, "AG_TIMEOUT_S", 0.2)
+        for at in ("create", "predict"):
+            annotator, _calls, _clock = make(no_http, tmp_path, cache=False, alphagenome=hung_backend(gate, at))
+            with pytest.raises(annot.LookupFailed, match="답이 없었습니다"):
+                await annotator.alphagenome(["chr1:1000:A:G"], sequence_length="16KB")
+        assert len(reg._AG_STUCK) == 2 and all(t.is_alive() and t.daemon for t in reg._AG_STUCK)
+        # Two hung calls held both workers of the old fixed pool; a later call still gets a fresh thread.
+        monkeypatch.setattr(reg, "AG_TIMEOUT_S", 30.0)
+        log = []
+        backend, _keys = fake_backend(log)
+        annotator, _calls, _clock = make(no_http, tmp_path, cache=False, alphagenome=backend)
+        assert (await annotator.alphagenome(["chr1:1000:A:G"], sequence_length="16KB"))["n_ok"] == 1
+        assert len(log) == 1
+        # A third hang reaches the cap: the next call is refused at once and never reaches the client.
+        monkeypatch.setattr(reg, "AG_TIMEOUT_S", 0.2)
+        annotator, _calls, _clock = make(no_http, tmp_path, cache=False, alphagenome=hung_backend(gate, "predict"))
+        with pytest.raises(annot.LookupFailed, match="답이 없었습니다"):
+            await annotator.alphagenome(["chr1:1000:A:G"], sequence_length="16KB")
+        log = []
+        backend, keys = fake_backend(log)
+        annotator, _calls, _clock = make(no_http, tmp_path, cache=False, alphagenome=backend)
+        with pytest.raises(annot.LookupFailed, match="3개가 아직 끝나지 않았습니다") as failure:
+            await annotator.alphagenome(["chr1:1000:A:G", "chr1:2000:A:G"], sequence_length="16KB")
+        assert log == [] and keys == [] and FAKE_KEY not in str(failure.value)
+    finally:
+        gate.set()
+    # Once the stuck calls end they stop counting and calls go through again.
+    for thread in list(reg._AG_STUCK):
+        thread.join(10)
+    monkeypatch.setattr(reg, "AG_TIMEOUT_S", 30.0)
+    assert (await annotator.alphagenome(["chr1:1000:A:G"], sequence_length="16KB"))["n_ok"] == 1
+    assert len(log) == 1 and reg._AG_STUCK == []
 
 
 async def test_alphagenome_errors_never_carry_the_key(tmp_path):
