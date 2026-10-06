@@ -142,7 +142,8 @@ def _windows_config_owner_is_current_user(path: Path) -> bool | None:
 def _current_os_account() -> str | None:
     """The process token's account (DOMAIN\\user), from `whoami`, not the spoofable USERNAME variable (#304)."""
     try:
-        out = subprocess.run(["whoami"], capture_output=True, text=True, timeout=10).stdout.strip()
+        out = subprocess.run(["whoami"], capture_output=True, text=True, timeout=10,
+                             encoding="oem" if os.name == "nt" else None, errors="replace").stdout.strip()
         return out or None
     except Exception:  # noqa: BLE001 - doctor never fails on an unavailable identity
         return None
