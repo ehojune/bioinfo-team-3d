@@ -278,6 +278,24 @@ def _claude_staff_row(settings: Settings, agents: list[AgentSpec], forced: Engin
     return _row("staff", "claude staff config", "warn", "직원 전용 설정 폴더에 로그인 없음", f"로그인: {login}")
 
 
+def _sandbox_homes_row(settings: Settings, agent: AgentSpec, seen: set[Path]) -> list[dict]:
+    """The runner account's own Codex home is elevated too (#382). Checked even when the staff preflight failed: a
+    stale staff home is exactly what that other home causes."""
+    env = {**os.environ, **get_adapter(agent.engine, settings).engine_env()}
+    homes = codex_sandbox.elevated_homes(settings, env, settings.path(settings.runner.workspace_root))
+    other = codex_sandbox.other_elevated_home(homes) if homes else None
+    if other is None or other[0] in seen:
+        return []
+    own, value = other
+    seen.add(own)
+    state = "elevated sandbox" if value == "elevated" else "[windows] sandbox 키가 없음(Codex 앱이 elevated로 다시 설정)"
+    return [_row("staff", "codex sandbox homes", "warn",
+                 f"{codex_sandbox.home_label(own)}의 Codex 설정도 {state} — 직원 홈과 같은 sandbox 계정 비밀번호를 "
+                 "번갈아 바꿔 승인 창(UAC)이 반복됩니다 (#382)",
+                 f"{codex_sandbox.home_label(own)}/config.toml의 [windows] sandbox를 \"unelevated\"로 바꾸고(키를 "
+                 "지우면 Codex 앱이 elevated 설정을 다시 시작) Codex 앱을 다시 켠 뒤, 직원 홈 sandbox 준비를 한 번 하세요")]
+
+
 def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict, seen: set[Path],
                           dry_run: bool) -> list[dict]:
     """The elevated-setup check, continued (#328): setup_marker.json exists, but did it work with this Codex?"""
@@ -285,18 +303,6 @@ def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict,
     env = {**os.environ, **adapter.engine_env()}
     rows = []
     homes = codex_sandbox.elevated_homes(settings, env, settings.path(settings.runner.workspace_root))
-    other = codex_sandbox.other_elevated_home(homes) if homes else None
-    if other is not None and other[0] not in seen:
-        own, value = other
-        seen.add(own)
-        state = ("elevated sandbox" if value == "elevated" else
-                 "[windows] sandbox 키가 없음(Codex 앱이 elevated로 다시 설정)")
-        rows.append(_row("staff", "codex sandbox homes", "warn",
-                         f"{codex_sandbox.home_label(own)}의 Codex 설정도 {state} — 직원 홈과 같은 sandbox "
-                         "계정 비밀번호를 번갈아 바꿔 승인 창(UAC)이 반복됩니다 (#382)",
-                         f"{codex_sandbox.home_label(own)}/config.toml의 [windows] sandbox를 \"unelevated\"로 "
-                         "바꾸고(키를 지우면 Codex 앱이 elevated 설정을 다시 시작) Codex 앱을 다시 켠 뒤, 직원 홈 "
-                         "sandbox 준비를 한 번 하세요"))
     for home in homes:
         if home in seen or not codex_sandbox.has_setup_marker(home):
             continue
@@ -540,12 +546,15 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             for raw in agent.plugin_dirs:
                 error = error.replace(raw, _safe_path(raw))
         status = ("warn" if plugin else "fail") if error else "ok" if ready else "warn"
-        hint = ("무인 실행 전에 직원 CODEX_HOME의 elevated sandbox setup을 대화형으로 마치세요."
+        hint = ("무인 실행 전에 직원 CODEX_HOME의 elevated sandbox setup을 대화형으로 마치세요. 이 PC의 다른 "
+                "Codex 홈이 elevated면 먼저 unelevated로 바꾸세요(한 PC에 elevated 홈은 하나, #382)."
                 if engine == "codex" and error and "elevated sandbox setup" in error else
                 "직원 전용 CODEX_HOME에서 codex login한 뒤 engines.codex.env.CODEX_HOME에 지정하세요."
                 if engine == "codex" and error and "CODEX_HOME" in error else
                 f"Resolve the {engine} adapter preflight or install/configure its executable.")
         rows.append(_row("staff", agent.id, status, error or f"engine={engine}", hint))
+        if engine == "codex":
+            rows += _sandbox_homes_row(settings, agent, sandbox_homes)
         if engine == "codex" and not error:
             rows += _sandbox_version_rows(settings, agent, codex_now, sandbox_homes, dry_run)
         if plugin:

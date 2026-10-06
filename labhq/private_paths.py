@@ -3,8 +3,9 @@
 Three layers for Claude staff, none of them a sandbox: Claude file tools get deny rules, and while any path is
 active no shell command and no read outside the task's own folders is pre-approved, so they reach the approval
 gate, which judges the canonical, real path (a shell command naming one goes to the PI); the instructions list
-them as `~` labels. Codex, Gemini, Antigravity and cli staff get only the instructions: nothing intercepts their
-file or shell reads (the Codex sandbox limits writes and network, not reads).
+them as `~` labels. Codex staff under the elevated Windows sandbox also get the paths as sandbox deny-read (#382),
+which holds for paths a shell builds at run time too. Other Codex runs and Gemini, Antigravity and cli staff get only
+the instructions: nothing intercepts their file or shell reads.
 
 The gate is lexical, so a path built at run time passes it: `python -c` joining `'..', '.ssh'`, or a script the
 staff member wrote into its own workdir (PR #324 live probe, Claude 2.1.282). Staff with shell and workdir writes
@@ -30,7 +31,7 @@ from .settings import Settings
 # Relative to the runner account's home. A path that does not exist on this host is skipped quietly.
 DEFAULT_HOME_ENTRIES = (
     ".ssh", ".aws", ".azure", ".gnupg", ".docker", ".kube", ".config/gh", ".config/gcloud",
-    ".git-credentials", ".netrc", ".claude", ".claude.json", ".codex",
+    ".git-credentials", ".netrc", ".claude", ".claude.json", ".codex", ".gemini", ".env",
     "AppData/Local/Google/Chrome/User Data", "AppData/Local/Microsoft/Edge/User Data",
     "AppData/Roaming/Mozilla/Firefox",
     ".config/google-chrome", ".config/microsoft-edge", ".mozilla",

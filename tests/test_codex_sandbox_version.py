@@ -518,6 +518,21 @@ def test_config_windows_sandbox_reads_only_that_key(tmp_path, text, value):
     assert codex_sandbox.config_windows_sandbox(tmp_path / "missing.toml") is None
 
 
+def test_doctor_names_the_other_elevated_home_when_the_staff_home_is_stale(tmp_path, monkeypatch, windows):
+    """The stale staff home is what the other elevated home causes, so the warning must not hide behind the fail."""
+    settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
+    _secrets(home, 1_000_000)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: _accounts(1_000_000 + 1800.0))
+    own = tmp_path / "own-codex"
+    own.mkdir()
+    (own / "config.toml").write_text('[windows]\nsandbox = "elevated"\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(own))
+    checks = doctor.collect(settings)["checks"]
+    staff = next(r for r in checks if r["group"] == "staff" and r["name"] == "worker")
+    assert staff["status"] == "fail" and "another Codex home" in staff["detail"] and "#382" in staff["hint"]
+    assert [r["status"] for r in checks if r["name"] == "codex sandbox homes"] == ["warn"]
+
+
 def test_doctor_warns_when_the_runner_accounts_own_codex_home_is_also_elevated(tmp_path, monkeypatch, windows):
     settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
     own = tmp_path / "own-codex"
