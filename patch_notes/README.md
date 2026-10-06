@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:45 | [`c695ab8`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/c695ab8) | 주석 MCP가 도구 호출 사이에도 서비스별 요청 간격을 지킨다(리뷰 반영) |
+| 17:31 | [`6a43504`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/6a43504) | labhq_annot 리뷰 반영: ClinVar가 VCF indel을 구간으로 찾고 repeat 안 같은 allele을 exact로 맞춘다. gnomAD chrM은 mtDNA query로, gnomAD 캐시는 30일. 같은 요청을 반복해도 앞 결과 파일을 덮어쓰지 않는다 |
+| 17:10 | [`cd9e439`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/cd9e439) | labhq_annot MCP: 직원이 변이를 Ensembl VEP·gnomAD·ClinVar에서 조회하고, 결과마다 DB 판본·조회 시각·요청 hash를 남긴다(한도 지킴·캐시) |
 | 16:28 | [`e1a4aac`](https://github.com/ehojune/bioinfo-team-3d/pull/445/commits/e1a4aac) | 모든 계획이 결과 종류별 공개 자원 목록(public_resources.tsv)을 참고로 받고, 목록 밖 자원도 필요하면 계획하며 조회 자원의 판본을 기록한다 |
 | 14:45 | [`e61f997`](https://github.com/ehojune/bioinfo-team-3d/pull/444/commits/e61f997) | HANDOFF 작업 큐와 PI 결정을 10-06 오후 상태로 갱신(#382 안 A, |
 | 14:09 | [`e02e75e`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/e02e75e) | 통제 구역 목록 test가 입력 walker의 descriptor 나열도 실제 폴더로 기록해 Linux에서 통과한다 |
