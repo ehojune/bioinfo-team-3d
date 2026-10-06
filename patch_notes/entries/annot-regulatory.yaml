@@ -3,3 +3,6 @@ rows:
 - sha: 'efa23b0'
   at: 2026-10-06 18:32
   text: 'labhq_annot에 ChIP-Atlas(enrichment·target genes)·ENCODE cCRE·GTEx 조회와 AlphaGenome 예측을 더한다. AlphaGenome 키는 labhq init이 한 번 묻고 runner 계정만 읽는 파일에 둔다(없으면 도구 미등록)'
+- sha: '2a1ba2d'
+  at: 2026-10-06 19:18
+  text: 'AlphaGenome 구간은 요청 구간만 요약하고 연결 시간 제한·전용 thread·기본 100KB를 둔다. GTEx는 조직마다 eQTL을 받고, ChIP-Atlas request_id는 입력과 묶어 확인하며, 키 파일 폴더가 공용이면 저장을 거부한다'
