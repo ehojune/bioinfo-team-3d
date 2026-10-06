@@ -337,6 +337,10 @@ function apply(ev, replay = false) {
     case 'request.plan': {
       const q = req(rid); setPlan(q, d); q.phase = 'execute';
       feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
+      // #446: each topic checklist item the plan could not do reaches the PI with its reason, one line each.
+      for (const w of d.warnings || []) {
+        if (typeof w === 'string' && w.startsWith('점검 못 함 ')) feed({ who: 'cso', text: short(w, 300), cls: 'alert' }, ts, rid);
+      }
       break;
     }
     case 'request.route': {

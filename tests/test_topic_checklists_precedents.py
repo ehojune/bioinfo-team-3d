@@ -357,3 +357,100 @@ def test_report_drops_only_required_checks_answered_not_applicable():
     skipped = report.partition("Checks that do not apply")[2]
     assert "independent_validation" in skipped
     assert "spot_qc" not in skipped and ", qc" not in skipped and ": qc" not in skipped
+
+
+# PI 2026-10-07 (#446): do each check the data allow; a skip must say why and the PI sees it as a warning.
+@pytest.mark.parametrize("answer", ["assumption:", "assumption: -", "assumption: n/a", "assumption: N/A.",
+                                    "assumption: 없음", "not_applicable: -", "not_applicable: none",
+                                    "not_applicable: 해당 없음"])
+def test_a_skip_without_a_real_reason_is_rejected(answer):
+    required = topic_checklists.requirements(["bulk_rna_seq"], topic_checklists.load())
+    errors = topic_checklists.answer_errors({**bulk_answers(), "independent_validation": answer}, required, ["A"])
+    assert len(errors) == 1 and errors[0].startswith("checklist.independent_validation must answer with a reason")
+    assert topic_checklists.limitations({"independent_validation": answer}) == []
+    assert topic_checklists.skip_warnings({"independent_validation": answer}, required) == []
+
+
+def test_a_reasoned_skip_is_accepted_and_warns_once_with_topic_and_id():
+    catalog = topic_checklists.load()
+    required = topic_checklists.requirements(["bulk_rna_seq"], catalog)
+    answers = {**bulk_answers(), "independent_validation": "assumption: 독립 공개 코호트가 없다"}
+    assert topic_checklists.answer_errors(answers, required, ["A"]) == []
+    assert topic_checklists.skip_warnings(answers, required) == [
+        "점검 못 함 bulk_rna_seq/independent_validation: 독립 공개 코호트가 없다"]
+    # not_applicable does not apply at all, so it is not a skipped check.
+    assert topic_checklists.skip_warnings(bulk_answers(), required) == []
+    # A precedent id already names its source.
+    record = cso.normalize_precedents(PRECEDENTS)
+    plan = general_plan(checklist={**answers, "precedent.1": "assumption: 짝 정보가 없다"})
+    assert cso.checklist_skip_warnings(plan, catalog, record) == [
+        "점검 못 함 bulk_rna_seq/independent_validation: 독립 공개 코호트가 없다",
+        "점검 못 함 precedent.1: 짝 정보가 없다"]
+    again = cso.with_checklist_skip_warnings(cso.with_checklist_skip_warnings(plan, catalog, record), catalog, record)
+    assert len(again["warnings"]) == 2
+
+
+def test_the_report_warning_preview_counts_skipped_checks():
+    catalog = topic_checklists.load()
+    plan = cso.with_checklist_skip_warnings(
+        general_plan(checklist={**bulk_answers(), "batch": "assumption: 처리 날짜가 기록되지 않았다",
+                                "independent_validation": "assumption: 독립 코호트가 없다"}), catalog, None)
+    preview = cso.general_report_warnings(plan["steps"], {}, plan)
+    assert preview.startswith("## 보고서 경고")
+    assert "못 한 점검 2건" in preview
+    assert "bulk_rna_seq/batch" in preview and "bulk_rna_seq/independent_validation" in preview
+    assert cso.general_report_warnings(plan["steps"], {}, general_plan(checklist=bulk_answers())) == ""
+
+
+@pytest.mark.asyncio
+async def test_general_empty_reason_skip_is_repaired_then_warned_once():
+    skipped = "assumption: 독립 공개 코호트가 없다"
+    repaired = general_plan(checklist={**bulk_answers(), "independent_validation": skipped})
+    # A CSO that copies the warning into its own plan does not make it appear twice.
+    repaired["warnings"] = ["점검 못 함 bulk_rna_seq/independent_validation: 독립 공개 코호트가 없다"]
+    plans = [general_plan(checklist={**bulk_answers(), "independent_validation": "assumption: -"}), repaired]
+    hub = ParallelHub(precedent_agent=None, plans=plans)
+    hub.release.set()
+    await Orchestrator(hub).run_request("r")
+    request = hub.requests["r"]
+    assert [task.meta["kind"] for task in hub.calls].count("plan") == 2
+    plan_prompts = [task.prompt for task in hub.calls if task.meta["kind"] == "plan"]
+    assert "checklist.independent_validation must answer with a reason" in plan_prompts[1]
+    assert request["status"] == "done"
+    warnings = [w for w in request["plan"]["warnings"] if w.startswith("점검 못 함")]
+    assert warnings == ["점검 못 함 bulk_rna_seq/independent_validation: 독립 공개 코호트가 없다"]
+    assert not any("checklist unanswered" in w for w in request["plan"]["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_research_lane_accepts_a_reasoned_assumption_and_freezes_its_warning():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.precedent_agent = None
+    settings.orchestrator.reviewer_agent = None
+    plan = valid_plan()
+    plan["checklist"]["qc"] = "assumption: 공개 count에 세포별 QC 지표가 없다"
+
+    async def reply(task):
+        assert task.meta["kind"] == "plan"
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=copy.deepcopy(plan))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+    await Orchestrator(hub).run_request("r")
+    request = hub.requests["r"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan"]
+    assert request.get("outcome") != "plan_invalid", request.get("plan_validation")
+    assert request["plan"]["checklist"]["qc"] == plan["checklist"]["qc"]
+    assert "점검 못 함 single_cell_rna_seq/qc: 공개 count에 세포별 QC 지표가 없다" in request["plan"]["warnings"]
+
+
+def test_prompts_ask_for_every_possible_check_and_accept_a_reasoned_skip():
+    rule = topic_checklists.prompt_rule(topic_checklists.load())
+    assert "Do every applicable check the data allow" in rule
+    assert "assumption: <why it could not be done>" in rule
+    assert "Never skip silently" in rule and "justified skip is acceptable" in rule
+    for prompt in (cso.REVIEW_PROMPT, cso.RESEARCH_REVIEW_PROMPT):
+        assert "stated, correct reason is acceptable" in prompt
+        assert "not\nmerely because it was skipped" in prompt
+        assert "reason is wrong or the missing check would change a conclusion (then P1)" in prompt
