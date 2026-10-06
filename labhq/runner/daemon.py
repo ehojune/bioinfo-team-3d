@@ -1171,7 +1171,7 @@ class Runner:
                     ws.scan_input_records, input_roots, zones, list(hash_private.paths),
                     self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth,
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
-                    self.input_hash_cache)
+                    self.input_hash_cache, [self.ws_root.resolve()])
 
             # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
             input_files, input_notes = await scan_inputs()
@@ -1190,6 +1190,9 @@ class Runner:
                     try:
                         result = await adapter.run(ctx)
                     except BaseException:  # cancelled or crashed after the CLI was stopped: still compare
+                        # Keep what the failed step read; the after-run comparison is skipped (PR #442 review).
+                        ws.update_run(task.id, input_files=input_files,
+                                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
                         await collect_observed_outputs()
                         if watch and watch.baseline is not None:
                             await self._read_only_verdict(TaskResult(task_id=task.id, agent_id=agent.id, ok=False),

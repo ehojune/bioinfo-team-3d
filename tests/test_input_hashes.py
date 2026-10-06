@@ -227,6 +227,63 @@ async def test_input_the_step_rewrites_keeps_its_pre_run_hash_and_is_marked_chan
     assert "실행 중에 바뀌었습니다" in manifest["runs"][task.id]["input_files_incomplete"]
 
 
+def _project_runner(tmp_path, monkeypatch, adapter, workspace_root=None):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    if workspace_root is not None:
+        settings.runner.workspace_root = str(workspace_root)
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code)
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: adapter)
+    return runner, agent
+
+
+async def test_a_project_holding_the_run_folders_does_not_hash_them(tmp_path, monkeypatch):
+    """PR #442 review: workspace_root under a project's local_dir must not turn every run's files into inputs."""
+    project = tmp_path / "project"
+    (project / "data").mkdir(parents=True)
+    (project / "data" / "cohort.tsv").write_text("sample,S1", encoding="utf-8")
+
+    class Adapter:
+        async def run(self, ctx):
+            (ctx.workdir / "outputs").mkdir(exist_ok=True)
+            (ctx.workdir / "outputs" / "result.tsv").write_text("x", encoding="utf-8")
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, text="done")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter(), workspace_root=project / "runs")
+    task = Task(id="task-nested", request_id="request-nested", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s1", "project_dirs": [str(project)]})
+    result = await runner.run_task(task)
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    paths = [row["path"] for row in manifest["runs"][task.id]["input_files"]]
+    assert paths == [portable_input_path(project.resolve()) + "/data/cohort.tsv"]
+    assert "input_files_incomplete" not in manifest["runs"][task.id]
+
+
+async def test_a_step_that_crashes_keeps_its_pre_run_input_hashes(tmp_path, monkeypatch):
+    """PR #442 review: a failed or cancelled step still records what it read."""
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "cohort.tsv"
+    source.write_text("sample,S1", encoding="utf-8")
+
+    class Adapter:
+        async def run(self, ctx):
+            raise RuntimeError("engine crashed")
+
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+    task = Task(id="task-crash", request_id="request-crash", agent_id=agent.id, prompt="read",
+                meta={"kind": "step", "step_id": "s1", "project_dirs": [str(project)]})
+    with pytest.raises(RuntimeError):
+        await runner.run_task(task)
+    [manifest_path] = list((tmp_path / "workspace_root").rglob("manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    [record] = manifest["runs"][task.id]["input_files"]
+    assert record["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
 def test_request_bundle_lists_inputs_and_adds_the_hash_skip_summary(tmp_path):
     settings = Settings()
     settings.runner.workspace_root = str(tmp_path / "runs")

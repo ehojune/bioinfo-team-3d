@@ -387,8 +387,11 @@ class TaskWorkspace:
 
     def scan_input_records(self, roots: list[tuple[Path, str]], restricted: list[Path], private: list[Path],
                            max_entries: int, max_depth: int, hash_max_file_bytes: int,
-                           hash_max_total_bytes: int, cache: InputHashCache) -> tuple[list[dict[str, Any]], list[str]]:
-        """Record files exposed outside this task workspace, without following links or protected folders."""
+                           hash_max_total_bytes: int, cache: InputHashCache,
+                           exclude: list[Path] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+        """Record files exposed outside this task workspace, without following links or protected folders.
+        `exclude` (the runner's run folders) is left out silently when a root above it is walked, so a project
+        that holds workspace_root does not hash every step's TASK.md, manifest and outputs (PR #442 review)."""
         found: list[dict[str, Any]] = []
         notes: list[str] = []
         counters = {"entries": 0, "files": 0}
@@ -444,10 +447,12 @@ class TaskWorkspace:
                     found.append({"path": shown_root, "size": None, "mtime_ns": None,
                                   "sha256": None, "skipped": "unreadable"})
                     continue
+                skip = [(Path(path), "workspace") for path in exclude or []
+                        if not (real_root == Path(path) or real_root.is_relative_to(Path(path)))]
                 rows, note = self._list_outputs(
                     top, root, real_root, [], max_entries, max_depth, max_entries,
                     detailed=True, hash_max_bytes=hash_max_file_bytes, prefix=PurePath(shown_root),
-                    exclude_results=False, blocked=blocked, cache=cache, hash_state=hash_state,
+                    exclude_results=False, blocked=[*blocked, *skip], cache=cache, hash_state=hash_state,
                     input_mode=True, counters=counters)
                 found.extend(rows)
                 if note:
@@ -520,6 +525,8 @@ class TaskWorkspace:
                     continue
                 actual = real_root / relative / entry.name
                 if input_mode and (reason := blocked_reason(actual)):
+                    if reason == "workspace":
+                        continue  # run folders are outputs, never recorded as inputs
                     if counters["files"] >= max_files:
                         return f"입력 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
                     found.append({"path": path, "size": None, "mtime_ns": None,
