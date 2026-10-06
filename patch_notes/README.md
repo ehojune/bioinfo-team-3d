@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:06 | [`578e2b2`](https://github.com/ehojune/bioinfo-team-3d/pull/453/commits/578e2b2) | #446 병합 뒤 표를 점검표 124항목으로 다시 생성했다. |
+| 02:05 | [`52174cd`](https://github.com/ehojune/bioinfo-team-3d/pull/453/commits/52174cd) | topic·점검표·어휘 키·공개 자원을 표로 모은 docs/vocabulary.md를 원본에서 생성하고(scripts/vocab_tables.py), README에서 링크한다. |
 | 01:49 | [`9486910`](https://github.com/ehojune/bioinfo-team-3d/pull/446/commits/9486910) | PI 검토로 SV caller_benchmark 항목을 뺐다(모든 시료에 GIAB 같은 기준 자료가 있지 않음). 점검표 124항목. |
 | 01:37 | [`8860134`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/8860134) | Windows elevated sandbox의 Codex 직원 실행은 개인 경로를 permission profile의 읽기 거부로 받는다(실측에서 canary 읽기 거부, 승인 창 0). 기본 개인 경로에 ~/.gemini·~/.env를 더했다. |
 | 01:37 | [`02ff93f`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/02ff93f) | doctor가 직원 Codex 홈이 낡았을 때도 다른 elevated 홈을 알리고, 안내에 한 PC 한 elevated 홈 규칙을 적는다. |
