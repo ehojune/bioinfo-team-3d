@@ -12,6 +12,14 @@
 - 미해결: 없음.
 - 근거: GitHub Actions run 37404631861(3.10), 37411745645(Windows).
 
+## 2026-10-06 · #420 — topic 23개 채택
+
+- 결론: PI 결정 A대로 출처 3개 이상인 후보 23개를 어휘에 넣었다(topic 20 → 43). topic 상한은 없앴다(PI 10-05).
+- 바뀐 것: output_types.yaml 23개, topic 상한 제거(로더·EDAM 생성기), EDAM 부분집합 재생성(새 topic 11개 연결, 전체 79키), 별칭 10개 정규화, 일반 lane 계획 프롬프트는 topic 이름만, README·영문 README·manual 수치.
+- 실행한 것: 어휘·topic 관련 test 692 passed·1 skipped, `scripts/edam_subset.py --fetch`, `scripts/integrations.py --check`, `scripts/check_public.sh`.
+- 미해결: 새 23개 topic의 점검표 항목(근거 문헌, PI 검토).
+- 근거: `docs/reference/topic_candidates_420.tsv`, `labhq/vocab/output_types.yaml`.
+
 ## 2026-10-06 · #420 — topic 후보 조사 결과
 
 - 결론: 출처 133개(논문 63·교과서 4·웹 자료 66)에서 새 topic 후보 38개를 찾았다. 출처가 많은 순으로 proteomics 14, de_novo_genome_assembly 11, single_cell_proteomics 10, gwas·multi_omics_integration 9, proteomics_dia·structural_variant_calling 8. PI 검토 전 후보다.
