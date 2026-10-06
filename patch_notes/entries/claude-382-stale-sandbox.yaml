@@ -3,3 +3,6 @@ rows:
 - sha: 1a1a93e
   at: 2026-10-06 11:04
   text: 직원 Codex 홈의 elevated sandbox 준비가 낡았으면(빈 marker, 다른 홈이 공용 계정 비밀번호를 바꿈) 승인 창 대신 실행 전에 거부하고, 첫 setup 오류에서 Codex를 끝낸다. doctor는 PI Codex 홈도 elevated면 알린다.
+- sha: b081c30
+  at: 2026-10-06 11:32
+  text: setup을 마친 홈인데 sandbox 계정이 없어졌으면(Codex 재설치) 거부하고, PI Codex 설정에 sandbox 키가 없어도 doctor가 알린다(리뷰 반영).
