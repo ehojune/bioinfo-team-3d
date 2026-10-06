@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:32 | [`b081c30`](https://github.com/ehojune/bioinfo-team-3d/pull/437/commits/b081c30) | setup을 마친 홈인데 sandbox 계정이 없어졌으면(Codex 재설치) 거부하고, PI Codex 설정에 sandbox 키가 없어도 doctor가 알린다(리뷰 반영). |
+| 11:04 | [`1a1a93e`](https://github.com/ehojune/bioinfo-team-3d/pull/437/commits/1a1a93e) | 직원 Codex 홈의 elevated sandbox 준비가 낡았으면(빈 marker, 다른 홈이 공용 계정 비밀번호를 바꿈) 승인 창 대신 실행 전에 거부하고, 첫 setup 오류에서 Codex를 끝낸다. doctor는 PI Codex 홈도 elevated면 알린다. |
 | 05:48 | [`11670c2`](https://github.com/ehojune/bioinfo-team-3d/pull/436/commits/11670c2) | 인계 문서의 10-06 시각을 바로잡았다. |
 | 05:45 | [`b798eb8`](https://github.com/ehojune/bioinfo-team-3d/pull/436/commits/b798eb8) | 인계 문서를 10-06 기준으로 고쳤다: PI 창구 #435, 작업 큐(#423 #420 #35 #382 #430), PI 결정, 겪어서 안 것 셋. |
 | 04:59 | [`be64c75`](https://github.com/ehojune/bioinfo-team-3d/pull/434/commits/be64c75) | 승인 게이트가 셸·파일·MCP 규칙 없는 도구를 policy.approvals.auto_allow_tools에 있을 때만 허용하고 나머지는 PI에게 묻는다(#421; 예: 셸을 돌리는 Monitor). |

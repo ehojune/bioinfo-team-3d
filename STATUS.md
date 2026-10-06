@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-06 · #382 — 낡은 직원 Codex sandbox는 승인 창 대신 실행 전에 거부
+
+- 결론: 한 PC의 elevated Codex 홈 둘이 공용 sandbox 계정 비밀번호를 번갈아 바꿔 승인 창(UAC)이 반복됐다(PI 결정 안 A, #435). labhq는 이제 직원 홈이 낡았는지 실행 전에 알아보고 Codex를 띄우지 않는다.
+- 바뀐 것: 실행 전 점검(빈·깨진 setup_marker, sandbox_users.json 없음, 그 파일이 계정 비밀번호 변경 시각보다 오래됨), 첫 sandbox setup required에서 Codex 프로세스 트리 종료, doctor의 "다른 elevated 홈" warn, setup 안내의 한 홈 주의, manual.
+- 실행한 것: 관련 test 125 passed, 어댑터 관련 50개 파일 1794 passed·34 skipped. 이 PC 실측으로 직원 홈 낡음·PI 홈 marker 빔·PI 홈 elevated를 모두 잡음. `scripts/check_public.sh`.
+- 미해결: 개인 경로(`policy.private_paths`)를 Codex deny-read로 넘기기는 안 A 적용 뒤 canary 실측과 함께 별도 PR.
+- 근거: `labhq/adapters/codex.py` `elevated_home_problem`·`sandbox_password_set`, `labhq/runner/codex_sandbox.py` `other_elevated_home`.
+
 ## 2026-10-06 · #421 — 규칙 없는 도구를 승인 게이트가 기본 허용하지 않기
 
 - 결론: #316 검토의 P1 남은 몫. 승인 게이트는 셸·파일·MCP가 아닌 도구를 그냥 허용했다. 로컬 실행 기록 252개를 세어 보니 직원이 `Monitor`를 한 번 썼는데, 이 도구는 셸 명령을 돌리면서 Bash가 받는 통제 구역·개인 경로·위험 명령 검사를 거치지 않는다. 읽는 곳이 없던 `policy.approvals.auto_allow_tools`를 연결해, 목록에 없는 도구는 PI에게 묻는다.
