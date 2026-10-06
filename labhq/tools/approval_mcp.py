@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 
 from ..policy import WRITE_LIKE, evaluate_tool
+from ..environment_install import shared_environment_install_denial
 from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
 from ..util import short
@@ -28,6 +29,8 @@ TASK = os.environ.get("LABHQ_TASK_ID")
 AGENT = os.environ.get("LABHQ_AGENT_ID")
 WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
 WORKDIR = str(Path(WORKDIR_INPUT).resolve())
+ENVIRONMENT_STEP = os.environ.get("LABHQ_ENVIRONMENT_STEP") == "1"
+SHARED_ENVIRONMENT_PROTECTED = os.environ.get("LABHQ_SHARED_ENVIRONMENT_PROTECTED") == "1"
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
 # The runner sets this task's list (possibly empty) and switch; without them the gate works both out itself.
 PRIVATE = gate_private_paths(os.environ, lambda: resolve_private_paths(S, [WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS]))
@@ -41,7 +44,6 @@ def _allow(tool_input: dict) -> str:
 
 def _deny(message: str) -> str:
     return json.dumps({"behavior": "deny", "message": message})
-
 
 
 def _text_only_tool():
@@ -58,6 +60,11 @@ def _text_only_tool():
 async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
+    install_denial = shared_environment_install_denial(
+        tool_name, input or {}, protected=SHARED_ENVIRONMENT_PROTECTED,
+        environment_step=ENVIRONMENT_STEP, workdir=WORKDIR)
+    if install_denial:
+        return _deny(install_denial)
     d = evaluate_tool(tool_name, input or {}, S.policy,
                       allowed_roots=[WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS], workdir=WORKDIR,
                       private_paths=PRIVATE.paths, private_enabled=PRIVATE.enabled,

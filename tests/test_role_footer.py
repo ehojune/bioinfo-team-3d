@@ -76,6 +76,8 @@ def test_writing_staff_get_the_environment_rule():
 
     assert "If the plan has an environment step, run packages from its interpreter" in WORKSPACE_WRITE_RULES
     assert "--target ./.pylib" in WORKSPACE_WRITE_RULES and "never write into another step's workspace" in WORKSPACE_WRITE_RULES
+    assert "never install into that shared environment" in WORKSPACE_WRITE_RULES
+    assert "pip freeze --path ./.pylib" in WORKSPACE_WRITE_RULES and "outputs/env/<step id>.txt" in WORKSPACE_WRITE_RULES
 
 
 def test_claude_staff_disables_background_tasks_by_default_and_respects_pi_value(tmp_path):

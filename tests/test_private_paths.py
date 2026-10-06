@@ -519,7 +519,8 @@ async def test_runner_gives_claude_the_ask_rules_and_keeps_the_paper2agent_skill
 
 # ---------------- review of PR #324, round 3: shell and outside reads always reach the gate ----------------
 
-def _allowed(tmp_path, tools, private, read_dirs=(), enabled=False):
+def _allowed(tmp_path, tools, private, read_dirs=(), enabled=False, shared_environment=False,
+             environment_step=False):
     from labhq.adapters import get_adapter
 
     agent = AgentSpec(id="analyst", name="A", role="test", engine=Engine.claude_code, tools=list(tools),
@@ -528,6 +529,7 @@ def _allowed(tmp_path, tools, private, read_dirs=(), enabled=False):
     ctx = RunContext(task=Task(agent_id=agent.id, prompt="x"), agent=agent, workdir=tmp_path / "ws",
                      settings=Settings(), mcp_servers=[], env={}, emit=None, prompt="x",
                      read_dirs=[str(d) for d in read_dirs], claude_settings={}, private_paths=list(private),
+                     shared_environment_protected=shared_environment, environment_step=environment_step,
                      **({"private_enabled": True} if enabled else {}))
     cmd = get_adapter(agent.engine, Settings()).build_command(ctx)
     i = cmd.index("--allowedTools")
@@ -557,6 +559,14 @@ def test_no_shell_rule_is_pre_approved_and_reads_narrow_to_task_roots_while_priv
     probes = {p["id"]: p for p in json.loads(fixture.read_text(encoding="utf-8"))["probes"]}
     assert probes["bare_read_alias"]["pre_approved"] and not probes["scoped_read_alias"]["pre_approved"]
     assert all(probes[k]["pre_approved"] for k in ("scoped_read_inside", "scoped_read_grep", "scoped_read_glob"))
+
+
+def test_shared_environment_gate_removes_only_install_capable_shell_rules_with_private_paths_off(tmp_path):
+    tools = ["Read", "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "PowerShell(Get-Content *)"]
+    protected = _allowed(tmp_path, tools, [], shared_environment=True)
+    assert protected == ["Read", "Bash(ls *)", "PowerShell(Get-Content *)"]
+    assert _allowed(tmp_path, tools, [], shared_environment=True, environment_step=True) == tools
+    assert _allowed(tmp_path, tools, []) == tools
 
 
 @pytest.mark.parametrize("tool,command", [

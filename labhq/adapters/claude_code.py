@@ -297,7 +297,9 @@ class ClaudeCodeAdapter(AgentAdapter):
         on = ctx.private_enabled or bool(ctx.private_paths)  # on with no active path too (PR #327)
         # The task's own project folder in the staff config folder is read-only: Read rules, no Edit rule (#298 ⑤).
         read_roots = [ctx.workdir, *ctx.extra_dirs, *ctx.read_dirs, *ctx.private_open_reads] if on else None
-        allowed = [*claude_allowed_tools(a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots),
+        allowed = [*claude_allowed_tools(
+                       a.tools, [ctx.workdir, *ctx.extra_dirs], read_roots,
+                       shared_environment_gate=ctx.shared_environment_protected and not ctx.environment_step),
                    *(f"mcp__{s.name}" for s in ctx.mcp_servers if s.auto_approve)]
         if allowed:
             cmd += ["--allowedTools", *allowed]
