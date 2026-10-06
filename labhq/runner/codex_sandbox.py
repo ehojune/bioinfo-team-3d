@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -105,15 +106,63 @@ def _powershell_home(home: Path) -> str:
         return "'<engines.codex.env.CODEX_HOME>'"
 
 
+ONE_HOME_NOTE = ("한 PC에서 elevated sandbox는 Codex 홈 하나만 쓸 수 있습니다. 다른 홈(PI 본인 Codex 등)이 "
+                 "elevated면 이 준비가 그 홈을, 그 홈의 준비가 이 홈을 무효로 만들어 승인 창이 번갈아 뜹니다 (#382)")
+
+
 def setup_hint(home: Path, command: list[str] | str | None, env: dict[str, str]) -> str:
     """PowerShell commands the PI runs once (it shows a UAC prompt): an elevated workspace-write run in a probe dir."""
-    return ("PowerShell에서 직접 실행하고 UAC를 승인하세요: "
+    return (f"{ONE_HOME_NOTE}. PowerShell에서 직접 실행하고 UAC를 승인하세요: "
             f"$env:CODEX_HOME = {_powershell_home(home)}; "
             "$probe = Join-Path $env:TEMP 'labhq-sandbox-probe'; New-Item -ItemType Directory -Force $probe | Out-Null; "
             "Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $probe 'ok.txt'); "
             f"& {powershell_executable(command, env)} exec --skip-git-repo-check -C $probe -s workspace-write "
             "-c 'windows.sandbox=\"elevated\"' 'Create ok.txt containing ok'; "
             "Test-Path (Join-Path $probe 'ok.txt')  # True면 준비 완료, 다음 Codex 직원 작업이 판본을 기록합니다")
+
+
+_TABLE = re.compile(r"^\s*\[\[?\s*([^\]]*?)\s*\]\]?\s*(?:#.*)?$")
+_ELEVATED = re.compile(r"""^\s*(windows\s*\.\s*)?sandbox\s*=\s*["']elevated["']\s*(?:#.*)?$""")
+
+
+def config_elevated(config: Path) -> bool:
+    """Whether a Codex config.toml sets `[windows] sandbox = "elevated"` (or the dotted top-level form). A line scan,
+    not a TOML parser: Python 3.10 has no tomllib, and only this one key matters."""
+    try:
+        lines = config.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return False
+    table = ""
+    for line in lines:
+        header = _TABLE.match(line)
+        if header:
+            table = header.group(1).replace(" ", "")
+            continue
+        found = _ELEVATED.match(line)
+        if found and ((table == "" and found.group(1)) or (table == "windows" and not found.group(1))):
+            return True
+    return False
+
+
+def other_elevated_home(staff_homes: list[Path]) -> Path | None:
+    """The runner account's own Codex home ($CODEX_HOME of the runner, else ~/.codex) when it is not a staff home and
+    its config also turns on the elevated sandbox: the two homes then reset each other's setup (#382)."""
+    own = Path(os.path.expanduser(os.environ.get("CODEX_HOME") or os.path.join("~", ".codex")))
+    try:
+        own = own.resolve()
+        if any(os.path.normcase(own) == os.path.normcase(home.resolve()) for home in staff_homes):
+            return None
+    except OSError:
+        return None
+    return own if config_elevated(own / "config.toml") else None
+
+
+def home_label(home: Path) -> str:
+    """`~/…` for a home under the user's profile, never the absolute path (doctor output may be pasted publicly)."""
+    try:
+        return "~/" + home.relative_to(Path.home().resolve()).as_posix()
+    except ValueError:
+        return "$CODEX_HOME"
 
 
 def read_ok(home: Path) -> dict | None:

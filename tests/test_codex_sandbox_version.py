@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -392,3 +393,129 @@ def test_hint_uses_a_placeholder_for_a_bin_outside_the_app_folder(tmp_path):
 def test_hint_clears_an_earlier_probe_result_first(tmp_path):
     hint = codex_sandbox.setup_hint(tmp_path / "home", None, {})
     assert hint.index("Remove-Item") < hint.index(" exec ") < hint.index("Test-Path")
+
+
+# --- #382: one elevated CODEX_HOME per PC -----------------------------------------------------------------------------
+
+def _preflight(tmp_path, home):
+    settings = _runner_settings(tmp_path, home)
+    adapter = get_adapter(Engine.codex, settings)
+    ctx = _ctx(tmp_path, settings, [])
+    return adapter.preflight_error(ctx, adapter.staff_env(ctx))
+
+
+def _secrets(home, mtime):
+    secrets = home / ".sandbox-secrets" / "sandbox_users.json"
+    secrets.parent.mkdir(parents=True, exist_ok=True)
+    secrets.write_text("{}", encoding="utf-8")  # contents are never read; only the time counts
+    os.utime(secrets, (mtime, mtime))
+    return secrets
+
+
+def test_preflight_refuses_an_empty_setup_marker(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)
+    (home / ".sandbox" / "setup_marker.json").write_bytes(b"")
+    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    error = _preflight(tmp_path, home)
+    assert error and "elevated sandbox setup" in error and "empty or unreadable" in error
+
+
+def test_preflight_refuses_a_home_whose_passwords_another_home_reset(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)
+    _secrets(home, 1_000_000)
+    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: 1_000_000 + 1800.0)
+    error = _preflight(tmp_path, home)
+    assert error and "another Codex home" in error and "#382" in error
+    assert "did not start Codex" in error
+
+
+@pytest.mark.parametrize("password_set", [None, 1_000_000 - 3600.0, 1_000_000 + 2.0])
+def test_preflight_accepts_a_home_that_set_the_current_passwords(tmp_path, monkeypatch, windows, password_set):
+    home = _home(tmp_path)
+    _secrets(home, 1_000_000)
+    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: password_set)
+    assert _preflight(tmp_path, home) is None
+
+
+def test_preflight_refuses_a_secrets_folder_without_its_users_file(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)
+    (home / ".sandbox-secrets").mkdir()
+    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    assert "no sandbox_users.json" in (_preflight(tmp_path, home) or "")
+
+
+def test_password_time_is_unknown_off_windows(monkeypatch):
+    monkeypatch.setattr(codex_mod, "_is_windows", lambda: False)
+    assert codex_mod.sandbox_password_set() is None
+
+
+@pytest.mark.asyncio
+async def test_first_setup_error_ends_the_cli_instead_of_waiting(tmp_path):
+    """A hung UAC fallback keeps Codex alive with nothing more to say; labhq must not wait for task_timeout_s."""
+    events = [{"type": "thread.started", "thread_id": "t1"},
+              {"type": "item.completed", "item": {"type": "command_execution", "command": "ls", "exit_code": 1,
+                                                  "aggregated_output": "Failed to create unified exec process: "
+                                                  "sandbox setup required: sandbox users missing or incompatible "
+                                                  "with marker version"}}]
+    stream = tmp_path / "hang.jsonl"
+    stream.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+    script = tmp_path / "hang.py"
+    script.write_text("import sys, time\n"
+                      f"sys.stdout.write(open({str(stream)!r}, encoding='utf-8').read()); sys.stdout.flush()\n"
+                      "time.sleep(120)\n", encoding="utf-8")
+    settings = Settings()
+    settings.engines.codex.bin = sys.executable
+    settings.engines.codex.prefix_args = [str(script)]
+    settings.runner.task_timeout_s = 300
+    (tmp_path / "codex-home").mkdir()
+    settings.engines.codex.env = {"CODEX_HOME": str(tmp_path / "codex-home")}
+    log = []
+    ctx = _ctx(tmp_path, settings, log)
+    started = time.monotonic()
+    result = await get_adapter(Engine.codex, settings).run(ctx)
+    assert time.monotonic() - started < 60
+    assert not result.ok and result.error_kind == "sandbox_setup_required"
+    assert codex_mod.ELEVATED_SETUP_ERROR in (result.error or "")
+    warns = [d["text"] for k, d in log if k == "agent.log" and d.get("level") == "warn"]
+    assert sum("#382" in text for text in warns) == 1
+
+
+@pytest.mark.parametrize("text, elevated", [
+    ('[windows]\nsandbox = "elevated"\n', True),
+    ("[windows]\nsandbox = 'elevated'  # app default\n", True),
+    ('model = "x"\nwindows.sandbox = "elevated"\n', True),
+    ('[windows]\nsandbox = "unelevated"\n', False),
+    ('[projects.a]\nsandbox = "elevated"\n[windows]\nsandbox = "unelevated"\n', False),
+    ('[windows]\n# sandbox = "elevated"\n', False),
+    ('[[mcp]]\nsandbox = "elevated"\n', False),
+    ('[windows]\nsandbox = "unelevated"\n[[x]]\n[windows]\n', False),
+])
+def test_config_elevated_reads_only_the_windows_sandbox_key(tmp_path, text, elevated):
+    config = tmp_path / "config.toml"
+    config.write_text(text, encoding="utf-8")
+    assert codex_sandbox.config_elevated(config) is elevated
+    assert codex_sandbox.config_elevated(tmp_path / "missing.toml") is False
+
+
+def test_doctor_warns_when_the_runner_accounts_own_codex_home_is_also_elevated(tmp_path, monkeypatch, windows):
+    settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
+    own = tmp_path / "own-codex"
+    own.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(own))
+    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    (own / "config.toml").write_text('[windows]\nsandbox = "elevated"\n', encoding="utf-8")
+    rows = [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
+    assert len(rows) == 1 and rows[0]["status"] == "warn" and "#382" in rows[0]["detail"]
+    assert '"unelevated"' in rows[0]["hint"] and str(tmp_path) not in json.dumps(rows[0])
+
+    (own / "config.toml").write_text('[windows]\nsandbox = "unelevated"\n', encoding="utf-8")
+    assert not [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
+    monkeypatch.setenv("CODEX_HOME", str(home))  # the staff home itself is not "another" home
+    (home / "config.toml").write_text('[windows]\nsandbox = "elevated"\n', encoding="utf-8")
+    assert not [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
+
+
+def test_setup_hint_warns_that_only_one_home_may_be_elevated(tmp_path):
+    hint = codex_sandbox.setup_hint(tmp_path / "home", None, {})
+    assert hint.startswith(codex_sandbox.ONE_HOME_NOTE) and "#382" in hint
+    assert hint.index("#382") < hint.index(" exec ")

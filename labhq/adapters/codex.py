@@ -61,6 +61,16 @@ def _turn_needs_setup(message: str) -> bool:
     return _command_needs_setup(message) or SETUP_REQUIRED in message.lower()
 
 
+def _stop_for_setup(st: RunState, error: str) -> None:
+    """The first setup error ends the run (#382): every later shell command would ask for setup again, and on the
+    UAC fallback each one leaves a prompt open while the command hangs."""
+    if getattr(st, "error_kind", None) != "sandbox_setup_required":
+        st.stop_reason = ("Codex가 elevated sandbox 준비를 요구해 labhq가 Codex를 끝냈습니다. 다음 셸 명령이 "
+                          "승인 창(UAC)을 또 띄우지 않게 합니다 (#382)")
+    st.error = error
+    st.error_kind = "sandbox_setup_required"
+
+
 def _toml(v: object) -> str:
     if isinstance(v, dict):
         return "{" + ", ".join(f"{k} = {_toml(x)}" for k, x in v.items()) + "}"
@@ -69,6 +79,70 @@ def _toml(v: object) -> str:
 
 def _is_windows() -> bool:
     return os.name == "nt"
+
+
+# The two machine-wide accounts every elevated setup creates and gives new random passwords (#382). Each CODEX_HOME
+# keeps those passwords only in its own .sandbox-secrets, so a setup run from one home leaves the other unable to log
+# on; that home's next command then asks for setup again, which shows a UAC prompt or hangs an unattended run.
+SANDBOX_ACCOUNTS = ("CodexSandboxOffline", "CodexSandboxOnline")
+SECRETS_FILE = (".sandbox-secrets", "sandbox_users.json")
+STALE_SLACK_S = 5.0  # Codex writes the secrets file right after it sets the passwords
+
+
+def sandbox_password_set() -> float | None:
+    """When the sandbox accounts last got a new password (epoch seconds), read without admin rights through
+    NetUserGetInfo level 1; None when the accounts do not exist or the call fails."""
+    if not _is_windows():
+        return None
+    try:
+        import ctypes
+        import time
+        from ctypes import wintypes
+
+        class UserInfo1(ctypes.Structure):
+            _fields_ = [("name", wintypes.LPWSTR), ("password", wintypes.LPWSTR), ("password_age", wintypes.DWORD),
+                        ("priv", wintypes.DWORD), ("home_dir", wintypes.LPWSTR), ("comment", wintypes.LPWSTR),
+                        ("flags", wintypes.DWORD), ("script_path", wintypes.LPWSTR)]
+
+        netapi = ctypes.WinDLL("netapi32")
+        netapi.NetUserGetInfo.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                                          ctypes.POINTER(ctypes.c_void_p)]
+        now, newest = time.time(), None
+        for name in SANDBOX_ACCOUNTS:
+            buf = ctypes.c_void_p()
+            if netapi.NetUserGetInfo(None, name, 1, ctypes.byref(buf)) != 0:
+                continue
+            try:
+                age = ctypes.cast(buf, ctypes.POINTER(UserInfo1)).contents.password_age
+            finally:
+                netapi.NetApiBufferFree(buf)
+            newest = max(newest or 0.0, now - age)
+        return newest
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def elevated_home_problem(home: Path, password_set: float | None) -> str | None:
+    """Why this staff CODEX_HOME's elevated setup would make Codex ask for setup again, judged from file metadata only
+    (never the secrets' contents); None when it looks usable."""
+    marker = home / ".sandbox" / "setup_marker.json"
+    if not marker.is_file():
+        return "Expected $CODEX_HOME/.sandbox/setup_marker.json"
+    try:
+        json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "$CODEX_HOME/.sandbox/setup_marker.json is empty or unreadable (an interrupted setup)"
+    secrets = home.joinpath(*SECRETS_FILE)
+    if secrets.parent.is_dir() and not secrets.is_file():
+        return "$CODEX_HOME/.sandbox-secrets has no sandbox_users.json"
+    try:
+        written = secrets.stat().st_mtime
+    except OSError:
+        return None
+    if password_set is not None and written + STALE_SLACK_S < password_set:
+        return ("The sandbox accounts got new passwords after this CODEX_HOME's setup: another Codex home on this PC "
+                "ran elevated setup. Only one CODEX_HOME per PC may use windows.sandbox=\"elevated\" (#382)")
+    return None
 
 
 class CodexAdapter(AgentAdapter):
@@ -126,12 +200,12 @@ class CodexAdapter(AgentAdapter):
                         "engines.codex.env.CODEX_HOME at a separate staff login, or set "
                         "engines.codex.allow_global_agents_md: true.")
         if isolated and _is_windows() and b.windows_sandbox == "elevated":
-            incomplete = [home for home in homes
-                          if any((home / name).exists() for name in CODEX_HOME_STATE)
-                          and not (home / ".sandbox" / "setup_marker.json").is_file()]
-            if incomplete:
-                return (ELEVATED_SETUP_ERROR + " Expected $CODEX_HOME/.sandbox/setup_marker.json; "
-                        "LabHQ did not start Codex or request elevation.")
+            used = [home for home in homes if any((home / name).exists() for name in CODEX_HOME_STATE)]
+            password_set = sandbox_password_set() if used else None
+            for home in used:
+                problem = elevated_home_problem(home, password_set)
+                if problem:
+                    return f"{ELEVATED_SETUP_ERROR} {problem}; LabHQ did not start Codex or request elevation."
         return None
 
     def build_command(self, ctx: RunContext) -> list[str]:
@@ -213,8 +287,7 @@ class CodexAdapter(AgentAdapter):
                 elif exit_code not in (None, 0):
                     message = str(item.get("aggregated_output") or "command failed")
                     if _command_needs_setup(message):
-                        st.error = ELEVATED_SETUP_ERROR
-                        st.error_kind = "sandbox_setup_required"
+                        _stop_for_setup(st, ELEVATED_SETUP_ERROR)
                     await ctx.emit("agent.tool_error", {"text": short(message, 400)})
             elif it == "mcp_tool_call" and typ == "item.started":
                 call = {"name": f"mcp:{item.get('server')}.{item.get('tool')}"}
@@ -256,8 +329,7 @@ class CodexAdapter(AgentAdapter):
             err = ev.get("error")
             message = (err.get("message") if isinstance(err, dict) else None) or ev.get("message") or "codex error"
             if _turn_needs_setup(str(message)):
-                st.error = f"{ELEVATED_SETUP_ERROR} Codex: {short(str(message), 200)}"
-                st.error_kind = "sandbox_setup_required"
+                _stop_for_setup(st, f"{ELEVATED_SETUP_ERROR} Codex: {short(str(message), 200)}")
             elif getattr(st, "error_kind", None) != "sandbox_setup_required":
                 st.error = message
 

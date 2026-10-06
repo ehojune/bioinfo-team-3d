@@ -356,6 +356,7 @@ class RunState:
     result_seen: bool = False
     model_id: str | None = None
     commands_ran: bool = False  # a shell command ran to exit 0 (engines that report commands)
+    stop_reason: str | None = None  # the adapter saw a failure more turns cannot fix: labhq ends the process tree
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
@@ -602,6 +603,10 @@ class AgentAdapter(ABC):
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
                     await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
+                if st.stop_reason and proc.returncode is None:
+                    reason, st.stop_reason = st.stop_reason, None
+                    await ctx.emit("agent.log", {"level": "warn", "text": reason})
+                    await self._kill(proc)
                 if st.result_seen:
                     result_arrived.set()
 
