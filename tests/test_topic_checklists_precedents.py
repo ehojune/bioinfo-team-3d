@@ -79,7 +79,7 @@ def test_topic_checklist_loads_known_topics_and_rejects_an_unknown_key(tmp_path)
 
 def test_every_approved_topic_has_checks_with_a_cited_basis():
     # #420: the 23 topics added on 2026-10-06 got their items too. Every topic but the first three (from the PR #395
-    # mock-study record) has a row in the sources table, and the whole catalog in the plan prompt stays bounded.
+    # mock-study record) has a row in the sources table.
     from labhq import vocab
 
     terms = vocab.load()
@@ -90,7 +90,70 @@ def test_every_approved_topic_has_checks_with_a_cited_basis():
     sources = Path("docs/reference/topic_checklists_sources.md").read_text(encoding="utf-8")
     cited = {line.split("|")[1].strip() for line in sources.splitlines() if line.startswith("| ")}
     assert set(approved) - cited == {"bulk_rna_seq", "microarray_expression", "single_cell_rna_seq"}
-    assert len(topic_checklists.prompt_rule(loaded)) < 11_000  # 125 checks; the next step is #420's per-topic file
+
+
+def test_plan_prompt_names_the_checklist_file_and_the_tsv_carries_every_check():
+    # PI 2026-10-05 (#420), PR #446 review: the plan prompt carried all 43 topics' checks (10,400 chars). It now names
+    # the TSV the runner writes in the planner's folder, and its size no longer grows with the catalog.
+    loaded = topic_checklists.load()
+    rule = topic_checklists.prompt_rule(loaded)
+    assert len(rule) < 1_000 and topic_checklists.CHECKLIST_TSV in rule
+    assert not any(item.check in rule for items in loaded.values() for item in items)
+    files = topic_checklists.workspace_files(loaded)
+    rows = files[topic_checklists.CHECKLIST_TSV].splitlines()
+    assert rows[0] == "topic\tid\tcheck\twhy"
+    assert len(rows) - 1 == sum(len(items) for items in loaded.values())
+    assert all(len(row.split("\t")) == 4 for row in rows)
+    item = loaded["proteomics"][0]
+    assert f"proteomics\t{item.id}\t{item.check}\t{item.why}" in rows
+    assert topic_checklists.prompt_rule({}) == "" and topic_checklists.workspace_files({}) == {}
+    assert cso.checklist_meta({}) == {}
+
+
+def test_tsv_cells_hold_no_tab_or_line_break():
+    item = topic_checklists.ChecklistItem("x", "check\twith tab\nand line", "why", "atac_seq")
+    rows = topic_checklists.table({"atac_seq": [item]}).splitlines()
+    assert rows[1] == "atac_seq\tx\tcheck with tab and line\twhy"
+
+
+def test_a_missing_answer_names_the_check_for_the_correction_round():
+    # The prompt no longer lists checks, so the correction round must say what each missing id asks.
+    loaded = topic_checklists.load()
+    required = topic_checklists.requirements(["bulk_rna_seq"], loaded)
+    errors = topic_checklists.answer_errors({}, required, ["A"])
+    assert errors[0].startswith("checklist.batch must ") and f"(check: {required[0].check})" in errors[0]
+
+
+def test_the_runner_writes_named_reference_files_and_refuses_other_names(tmp_path):
+    from labhq.models import AgentSpec, Engine, Task
+    from labhq.runner.workspace import TaskWorkspace
+
+    agent = AgentSpec(id="cso", name="CSO", role="plan", engine=Engine.claude_code)
+    ws = TaskWorkspace(tmp_path / "runs", Task(id="t", agent_id="cso", prompt="p"), agent)
+    refused = ws.write_reference_files({"topic_checklists.tsv": "topic\tid\n", "../escape.tsv": "x",
+                                        "TASK.md": "x", ".hidden.tsv": "x", "big.tsv": "x" * 300_000,
+                                        "notext.tsv": 3})
+    assert (ws.dir / "topic_checklists.tsv").read_text(encoding="utf-8") == "topic\tid\n"
+    assert sorted(refused) == sorted(["../escape.tsv", "TASK.md", ".hidden.tsv", "big.tsv", "notext.tsv"])
+    assert not (ws.dir.parent / "escape.tsv").exists() and not (ws.dir / "TASK.md").exists()
+    assert ws.write_reference_files(None) == []
+    assert ws.write_reference_files("x") == ["workspace_files is not a mapping"]
+
+
+@pytest.mark.asyncio
+async def test_the_runner_writes_the_checklist_tsv_before_the_planner_runs(tmp_path, monkeypatch):
+    from labhq.models import Task
+    from tests.test_intake_references import _reference_runner
+
+    runner, seen = _reference_runner(tmp_path, monkeypatch, Settings())
+    catalog = topic_checklists.load()
+    await runner.run_task(Task(id="task-plan", request_id="r1", agent_id="worker",
+                               prompt="plan" + topic_checklists.prompt_rule(catalog),
+                               meta={"kind": "plan", **cso.checklist_meta(catalog)}))
+    workdir = runner.workspaces["task-plan"].dir
+    assert seen["ctx"].task.id == "task-plan"
+    written = (workdir / topic_checklists.CHECKLIST_TSV).read_text(encoding="utf-8")
+    assert written == topic_checklists.table(catalog)
 
 
 def test_one_id_under_two_declared_topics_keeps_both_checks(tmp_path):
@@ -174,7 +237,8 @@ async def test_briefing_and_precedent_dispatch_in_parallel_and_store_structured_
     plan = next(task for task in hub.calls if task.meta["kind"] == "plan")
     assert "Analysis precedents" in plan.prompt
     assert "precedent.1" in plan.prompt and "validate in another cohort" in plan.prompt
-    assert "bulk_rna_seq" in plan.prompt and "gene_set_test" in plan.prompt
+    assert "bulk_rna_seq" in plan.prompt and "topic_checklists.tsv" in plan.prompt
+    assert "gene_set_test" in plan.meta["workspace_files"]["topic_checklists.tsv"]
     assert [task.meta["kind"] for task in hub.calls[:2]] == ["briefing", "precedent"] or set(
         task.meta["kind"] for task in hub.calls[:2]) == {"briefing", "precedent"}
 
@@ -352,13 +416,12 @@ async def test_a_failed_briefing_reaps_a_scout_whose_runner_never_answers(monkey
     assert hub.cancel_sent == [] and hub.scout_reaped
 
 
-def test_plan_prompt_carries_checks_and_the_review_carries_reasons():
-    # The plan prompt lists every topic's items, so it leaves out the reasons; the reviewer gets them for the
-    # declared topics only.
+def test_plan_prompt_names_the_file_and_the_review_carries_checks_with_reasons():
+    # The plan prompt names the checklist TSV (#420); the reviewer gets checks and reasons for the declared topics.
     catalog = topic_checklists.load()
     rule = topic_checklists.prompt_rule(catalog)
     item = catalog["bulk_rna_seq"][0]
-    assert item.check in rule and item.why not in rule and "Why:" not in rule
+    assert item.check not in rule and item.why not in rule and "Why:" not in rule
     review = cso.plan_review_context(general_plan(checklist=bulk_answers()), catalog, None)
     assert f"{item.check} Why: {item.why}" in review
 

@@ -1608,6 +1608,12 @@ def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.Checkli
                                           required_checklist_items(body, catalog, precedents), ids)
 
 
+def checklist_meta(catalog: dict[str, list[topic_checklists.ChecklistItem]]) -> dict[str, Any]:
+    """Task meta that has the runner write the checklist TSV the plan prompt names (#420)."""
+    files = topic_checklists.workspace_files(catalog)
+    return {"workspace_files": files} if files else {}
+
+
 def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     # Every plan sees the public resource reference (PI 2026-10-06, #435 C), with or without a topic checklist.
     resources = public_resources.prompt_rule()
@@ -3809,7 +3815,8 @@ class Orchestrator:
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
                         meta={**refs, "kind": "plan", "roster": roster, "request": plan_request,
-                              "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {})}))
+                              "title": "업무 분해·배정 계획 수립", **({"workdir": workdir} if workdir else {}),
+                              **checklist_meta(checklist_catalog)}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
@@ -4209,7 +4216,8 @@ class Orchestrator:
                         # revision and parse_attempt keep each CSO call distinct for ledger recovery after a restart.
                         meta={**refs, "kind": "replan", "trigger": trigger, "revision": attempt,
                               "parse_attempt": parse_attempt, "request": text, "roster": roster,
-                              "title": f"남은 DAG 재계획 #{attempt}", **({"workdir": workdir} if workdir else {})}))
+                              "title": f"남은 DAG 재계획 #{attempt}", **({"workdir": workdir} if workdir else {}),
+                              **checklist_meta(checklist_catalog)}))
                     if planned.session_id:
                         req["cso_session_id"] = planned.session_id
                         req["cso_workdir"] = planned.workdir
