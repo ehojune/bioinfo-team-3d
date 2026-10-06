@@ -94,7 +94,7 @@ AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서
 
 **일을 넘겨도 기준은 같다**
 
-CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔습니다([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
+CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔고([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), topic마다 근거 논문을 20편 이상, 모두 1255편 붙였습니다([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [목록](docs/reference/topic_papers.md)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
 
 <details><summary>근거와 한계</summary>
 

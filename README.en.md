@@ -96,7 +96,7 @@ Before planning, the prior-research staff pull the analyses that must be done fr
 
 **Same bar at every handoff**
 
-The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
+The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), and each topic now has at least 20 supporting papers, 1255 in all ([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [list](docs/reference/topic_papers.md)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
 
 <details><summary>Evidence and limits</summary>
 
