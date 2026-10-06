@@ -14,9 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:45 | [`e02e75e`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/e02e75e) | 통제 구역 목록 test가 입력 walker의 descriptor 나열도 실제 폴더로 기록해 Linux에서 통과한다 |
+| 16:10 | [`930a578`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/930a578) | 상위 project 폴더를 거쳐 들어가는 실행 폴더는 입력에서 빼고, 실패·취소된 단계도 실행 전 입력 hash를 남긴다(리뷰 반영) |
+| 15:20 | [`085b791`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/085b791) | 입력을 직원 CLI 실행 전에 hash하고 실행 중 바뀐 파일을 표시하며, cache는 열린 파일의 ID와 POSIX ctime까지 맞을 때만 쓴다(리뷰 반영) |
 | 14:40 | [`cf0ded2`](https://github.com/ehojune/bioinfo-team-3d/pull/441/commits/cf0ded2) | 재개 대기 test가 느린 CI에서 0.15초 대기를 넘겨 실패하던 시간 경쟁을 없앴다(첫 요청은 대기 30초, 시간 초과 검사만 0.15초). |
 | 14:05 | [`559d7c8`](https://github.com/ehojune/bioinfo-team-3d/pull/440/commits/559d7c8) | manual·README 곳곳의 어휘 수치를 123키·EDAM 연결 79키·EDAM 용어 75개로 맞췄다(리뷰 반영). |
 | 13:35 | [`821ed7a`](https://github.com/ehojune/bioinfo-team-3d/pull/440/commits/821ed7a) | #420 조사에서 출처 3개 이상인 topic 23개를 어휘에 넣고(topic 43개) topic 상한을 없앴다. 계획 프롬프트에는 topic 이름만 넣고, 조사에서 나온 별칭은 승인된 키로 바꾼다. |
+| 13:21 | [`46d13df`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/46d13df) | 단계 외부 입력의 SHA-256을 cache와 상한을 적용해 기록하고 요청 묶음에 넣음 |
 | 13:05 | [`e3a59dd`](https://github.com/ehojune/bioinfo-team-3d/pull/439/commits/e3a59dd) | 같은 논문의 두 id를 합치고 잘못 붙은 topic 연결 하나를 떼어 출처 수를 다시 셌다(출처 133개, 리뷰 반영). |
 | 12:31 | [`6e88a89`](https://github.com/ehojune/bioinfo-team-3d/pull/438/commits/6e88a89) | 연구 lane 보고서도 남은 P2·P3 지적 원문을 실행 기록에 두고, "수치는 한 번"을 결과 통계로 한정했다(seed·버전은 방법 요약에 그대로, 리뷰 반영). |
 | 12:10 | [`d5dff26`](https://github.com/ehojune/bioinfo-team-3d/pull/439/commits/d5dff26) | topic 확장 조사 결과(후보 73행, 출처 134개와 확인 결과)를 PI 검토용 참고 자료로 docs/reference에 두었다. |

@@ -20,6 +20,14 @@
 - 미해결: 새 23개 topic의 점검표 항목(근거 문헌, PI 검토).
 - 근거: `docs/reference/topic_candidates_420.tsv`, `labhq/vocab/output_types.yaml`.
 
+## 2026-10-06 · #423 — 단계 입력 파일 SHA-256 기록
+
+- 결론: 단계가 읽을 수 있던 외부 입력을 파일별 경로·크기·mtime·sha256으로 남기고 요청 묶음 `INPUTS.tsv`와 재현 등급 설명에 넣었습니다.
+- 바뀐 것: PR #442. 산출 held-directory walker를 입력에도 쓰며 링크·junction·mount를 따라가지 않습니다. 파일당 2 GiB, 단계당 cache miss 20 GiB, 기존 항목·깊이 상한을 적용하고 `(실제 경로, 크기, mtime_ns)` cache를 runner 상태 폴더 한 파일에 둡니다. restricted·private은 파일을 열지 않고 생략 이유만 기록합니다.
+- 실행한 것: 새 test 8건과 관련 test 192건 통과. Windows 전체 pytest 3996 passed·54 skipped, `scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: #423의 `rerun_verified` 영수증 경로와 벤치 C t6 재채점은 다음 작업입니다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/request_bundle.py`, `tests/test_input_hashes.py`, `docs/manual.md`.
+
 ## 2026-10-06 · #420 — topic 후보 조사 결과
 
 - 결론: 출처 133개(논문 63·교과서 4·웹 자료 66)에서 새 topic 후보 38개를 찾았다. 출처가 많은 순으로 proteomics 14, de_novo_genome_assembly 11, single_cell_proteomics 10, gwas·multi_omics_integration 9, proteomics_dia·structural_variant_calling 8. PI 검토 전 후보다.
