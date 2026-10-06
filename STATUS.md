@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-06 · #423 — 단계 입력 파일 SHA-256 기록
+
+- 결론: 단계가 읽을 수 있던 외부 입력을 파일별 경로·크기·mtime·sha256으로 남기고 요청 묶음 `INPUTS.tsv`와 재현 등급 설명에 넣었습니다.
+- 바뀐 것: PR #442. 산출 held-directory walker를 입력에도 쓰며 링크·junction·mount를 따라가지 않습니다. 파일당 2 GiB, 단계당 cache miss 20 GiB, 기존 항목·깊이 상한을 적용하고 `(실제 경로, 크기, mtime_ns)` cache를 runner 상태 폴더 한 파일에 둡니다. restricted·private은 파일을 열지 않고 생략 이유만 기록합니다.
+- 실행한 것: 새 test 8건과 관련 test 192건 통과. Windows 전체 pytest 3996 passed·54 skipped, `scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: #423의 `rerun_verified` 영수증 경로와 벤치 C t6 재채점은 다음 작업입니다.
+- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/request_bundle.py`, `tests/test_input_hashes.py`, `docs/manual.md`.
+
 ## 2026-10-06 · 재개 대기 test의 시간 경쟁
 
 - 결론: `test_resume_waits_for_runner_and_reoffers_after_timeout`가 0.15초 재개 대기를 첫 요청에도 써서 느린 CI에서 단언 전에 대기가 끝났다(10-06 Python 3.10·Windows에서 각 1번). 첫 요청은 30초 대기와 폴링, 시간 초과 검사만 0.15초.
@@ -19,14 +27,6 @@
 - 실행한 것: 어휘·topic 관련 test 692 passed·1 skipped, `scripts/edam_subset.py --fetch`, `scripts/integrations.py --check`, `scripts/check_public.sh`.
 - 미해결: 새 23개 topic의 점검표 항목(근거 문헌, PI 검토).
 - 근거: `docs/reference/topic_candidates_420.tsv`, `labhq/vocab/output_types.yaml`.
-
-## 2026-10-06 · #423 — 단계 입력 파일 SHA-256 기록
-
-- 결론: 단계가 읽을 수 있던 외부 입력을 파일별 경로·크기·mtime·sha256으로 남기고 요청 묶음 `INPUTS.tsv`와 재현 등급 설명에 넣었습니다.
-- 바뀐 것: PR #442. 산출 held-directory walker를 입력에도 쓰며 링크·junction·mount를 따라가지 않습니다. 파일당 2 GiB, 단계당 cache miss 20 GiB, 기존 항목·깊이 상한을 적용하고 `(실제 경로, 크기, mtime_ns)` cache를 runner 상태 폴더 한 파일에 둡니다. restricted·private은 파일을 열지 않고 생략 이유만 기록합니다.
-- 실행한 것: 새 test 8건과 관련 test 192건 통과. Windows 전체 pytest 3996 passed·54 skipped, `scripts/check_public.sh`, `git diff --check` 통과.
-- 미해결: #423의 `rerun_verified` 영수증 경로와 벤치 C t6 재채점은 다음 작업입니다.
-- 근거: `labhq/runner/workspace.py`, `labhq/runner/daemon.py`, `labhq/request_bundle.py`, `tests/test_input_hashes.py`, `docs/manual.md`.
 
 ## 2026-10-06 · #420 — topic 후보 조사 결과
 
