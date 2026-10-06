@@ -1053,3 +1053,23 @@ def refresh_plan_approval(plan: ResearchPlan | dict[str, Any], receipt: dict[str
                 "current_sha256": current}
     return {**(receipt or {}), "status": "approval_required", "reapproval_required": True,
             "current_sha256": current}
+
+
+def task_round_plan(request: dict[str, Any], task: dict[str, Any]) -> tuple[Any, Any]:
+    """(plan, plan_sha256) a research task ran under (#90 continuation).
+
+    A request that continued after a review "revise" keeps each earlier round's frozen plan in
+    ``research_contract.rounds``; a task of such a round (task meta ``research_round``, absent in round 1) ran under
+    that plan, not the request's current one. Any other task ran under the current plan."""
+    payload = task.get("payload") if isinstance(task.get("payload"), dict) else {}
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    contract = request.get("research_contract") if isinstance(request.get("research_contract"), dict) else {}
+    try:
+        round_no, current = int(meta.get("research_round") or 1), int(contract.get("round") or 1)
+    except (TypeError, ValueError):
+        round_no = current = 1
+    if round_no != current:
+        for archived in contract.get("rounds") or []:
+            if isinstance(archived, dict) and archived.get("round") == round_no:
+                return archived.get("plan"), archived.get("plan_sha256")
+    return request.get("plan"), contract.get("plan_sha256")

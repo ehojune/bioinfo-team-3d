@@ -28,7 +28,8 @@ from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
 from ..request_status import is_terminal_request
-from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
+from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
+                                 bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
@@ -3071,6 +3072,21 @@ class Orchestrator:
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
+        # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
+        # continuation result is a copy rebound to the new plan (``carry_over``); this catches any other drift
+        # (PR #448 review).
+        unbound = self._unbound_research_results(req, steps, results)
+        if unbound:
+            contract["failure"] = {"steps": sorted(unbound), "plan_sha256": contract["plan_sha256"],
+                                   "unbound_results": unbound}
+            req["outcome"] = "research_failed"
+            self.hub.save_request(rid)
+            self._finish(rid, self.report_results(steps, results, n) +
+                         "\n\nResearch stopped before CP2: these step results do not validate under the frozen plan "
+                         f"{contract['plan_sha256'][:12]}:\n" +
+                         "\n".join(f"- {sid}: {'; '.join(problems)}" for sid, problems in sorted(unbound.items())),
+                         serialized(), ok=False)
+            return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
         ancestors = step_ancestors(steps)
         refused: list[dict[str, str]] = []
@@ -3116,9 +3132,10 @@ class Orchestrator:
         reuse_lines: list[str] = []
         if carried.get("plan_sha256") == contract["plan_sha256"]:  # a continuation round (#90)
             detail["continuation"] = {key: carried.get(key) for key in
-                                      ("round", "from_plan_sha256", "reuse", "refused_reuse")}
+                                      ("round", "from_plan_sha256", "reuse", "reused_from", "refused_reuse")}
             reuse_lines.append(f"Continuation round {carried.get('round')}: reused from plan "
-                               f"{str(carried.get('from_plan_sha256'))[:12]} with output hashes checked again: "
+                               f"{str(carried.get('from_plan_sha256'))[:12]} with output hashes checked again, "
+                               "each result rebound to this plan: "
                                f"{', '.join(carried.get('reuse') or []) or 'none'}.")
             reuse_lines += [f"- reuse refused, re-ran {row['step_id']}: {row['reason']}"
                             for row in carried.get("refused_reuse") or []]
@@ -3351,13 +3368,10 @@ class Orchestrator:
                        **({"state": decision["state"]} if decision.get("state") else {})}
             contract["continue_decision"] = decided
             if approved:
-                rounds.append({"round": len(rounds) + 1, "plan_sha256": plan_hash,
-                               "plan": json.loads(json.dumps(req["plan"])),
-                               "approval": contract.get("approval"),
-                               "cp2": (contract.get("checkpoints") or {}).get("cp2"),
-                               "review": contract.get("review"),
-                               "continuation": contract.get("continuation"),
-                               "results": {sid: result.model_dump(mode="json") for sid, result in results.items()}})
+                # Everything this round's frozen plan owns, so an unstarted continuation can put it back whole.
+                rounds.append({**research_continuation.archive_round(
+                    req, {sid: result.model_dump(mode="json") for sid, result in results.items()}),
+                    "round": len(rounds) + 1})
                 contract["rounds"] = rounds
                 contract["round"] = round_no
                 contract["continuation"] = {"round": round_no, "from_plan_sha256": plan_hash, "p1_issues": issues,
@@ -3370,11 +3384,12 @@ class Orchestrator:
         await self.run_request(rid, continuation=True)
         return None
 
-    def _adopt_continuation_plan(self, rid: str, plan: dict) -> None:
+    def _adopt_continuation_plan(self, rid: str, plan: dict, pack_hashes: dict[str, str]) -> None:
         """Pair the new plan with the previous round's results: keep only reusable steps' results (#90).
 
         Called before the save that stores the new plan, so a restart sees the plan and its pruned results together.
         The reuse is not final until the output hashes are checked after the new CP1 (``_verify_research_reuse``).
+        ``pack_hashes`` is the pack snapshot the new plan is frozen with; a changed pack re-runs every step.
 
         The previous round's CP1 approval, CP2 receipt, review and continue decision are dropped in the same save:
         they are keyed by plan_sha256, and a new plan byte-identical to the revised one (a P1 execution mistake in an
@@ -3383,25 +3398,29 @@ class Orchestrator:
         req = self.hub.requests[rid]
         contract = req["research_contract"]
         carried = contract["continuation"]
-        previous = contract["rounds"][-1]
-        reused, rerun = research_continuation.split_reuse(previous["plan"], plan, previous["results"],
-                                                         carried.get("p1_issues") or [])
-        carried.update(plan_sha256=research_plan_sha256(plan), reuse=reused, rerun=rerun, verified=False)
+        carry = research_continuation.carry_over(contract["rounds"][-1], plan, pack_hashes,
+                                                 carried.get("p1_issues") or [])
+        carried.update(plan_sha256=research_plan_sha256(plan), verified=False)
         carried.pop("refused_reuse", None)
+        contract["pack_snapshot"] = dict(pack_hashes)  # the new plan's packs, saved with it
         for key in ("approval", "review", "continue_decision"):
             contract.pop(key, None)
         (contract.get("checkpoints") or {}).pop("cp2", None)
-        # A reused step keeps the evidence rows and claims its result salvage refused; CP2 shows them again.
-        salvage = {sid: rows for sid, rows in ((previous.get("cp2") or {}).get("result_salvage") or {}).items()
-                   if sid in reused}
-        if salvage:
-            contract["result_salvage"] = salvage
+        self._apply_carry(rid, carry, set(req.get("step_decisions") or {}) | set(req.get("pending_revisions") or {}))
+        req["pending_questions"] = []
+
+    def _apply_carry(self, rid: str, carry: research_continuation.Carry, also_forget: set[str] = frozenset()) -> None:
+        """Make ``carry`` the request's state: only the reused steps' results, each bound to the current plan, their
+        salvage rows (CP2 shows them again) and the reuse record; every other step starts fresh (#90)."""
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        contract["continuation"].update(reuse=carry.reuse, rerun=carry.rerun, reused_from=carry.reused_from)
+        if carry.salvage:
+            contract["result_salvage"] = carry.salvage
         else:
             contract.pop("result_salvage", None)
-        req["results"] = {sid: previous["results"][sid] for sid in reused}
-        self._forget_step_state(rid, (set(rerun) | set(req.get("step_decisions") or {}) |
-                                      set(req.get("pending_revisions") or {})) - set(reused))
-        req["pending_questions"] = []
+        req["results"] = carry.results
+        self._forget_step_state(rid, (set(carry.rerun) | set(also_forget)) - set(carry.reuse))
 
     def _forget_step_state(self, rid: str, steps: set[str]) -> None:
         """A step that runs again in a continuation starts fresh: no earlier PI decision, pending revision or
@@ -3418,33 +3437,46 @@ class Orchestrator:
         """After the new CP1, before dispatch: hash every reused step's recorded outputs again (#90).
 
         A step whose files changed, vanished or cannot be checked on this PC, and every step below it, loses its
-        reused result and runs."""
+        reused result and runs. The decision is ``carry_over`` again, from the round archive and the frozen pack
+        snapshot, with the hash refusals added: the same rule as at adoption, so a restart in between agrees with it,
+        and reuse can only shrink from what the CP1 card showed."""
         req = self.hub.requests[rid]
-        carried = req["research_contract"]["continuation"]
+        contract = req["research_contract"]
+        carried = contract["continuation"]
         saved = req.get("results") or {}
         reused = [sid for sid in carried.get("reuse") or [] if sid in saved]
         try:
-            refused = (await asyncio.to_thread(research_continuation.verify_reuse,
-                                               {sid: saved[sid] for sid in reused}, self.hub.s)
-                       if reused else {})
+            hashes = (await asyncio.to_thread(research_continuation.verify_reuse,
+                                              {sid: saved[sid] for sid in reused}, self.hub.s)
+                      if reused else {})
         except Exception as error:  # nothing reused that labhq could not check
-            refused = {sid: f"hash check failed: {type(error).__name__}: {error}" for sid in reused}
-        dropped = research_continuation.with_dependents(plan, refused) & set(reused)
-        rerun = dict(carried.get("rerun") or {})
-        salvage = req["research_contract"].get("result_salvage") or {}
-        for sid in reused:
-            if sid in dropped:
-                saved.pop(sid, None)
-                salvage.pop(sid, None)
-                rerun[sid] = (f"output hash check: {refused[sid]}" if sid in refused else
-                              "upstream reuse refused: " + ", ".join(sorted(set(refused) & dropped)))
-        if not salvage:
-            req["research_contract"].pop("result_salvage", None)
+            hashes = {sid: f"hash check failed: {type(error).__name__}: {error}" for sid in reused}
+        refused = {sid: f"output hash check: {why}" for sid, why in hashes.items()}
+        adopted = carried.get("rerun") or {}
+        refused.update({step["id"]: adopted.get(step["id"]) or "not reused at CP1" for step in plan.get("steps") or []
+                        if step["id"] not in reused and step["id"] not in refused})
+        carry = research_continuation.carry_over(contract["rounds"][-1], plan, contract.get("pack_snapshot"),
+                                                 carried.get("p1_issues") or [], refused=refused)
         # A refused step runs fresh, not as the round-1 session in the folder whose file changed (PR #448 review).
-        self._forget_step_state(rid, dropped)
-        carried.update(verified=True, reuse=[sid for sid in reused if sid not in dropped], rerun=rerun,
-                       refused_reuse=[{"step_id": sid, "reason": rerun[sid]} for sid in reused if sid in dropped])
+        self._apply_carry(rid, carry)
+        carried.update(verified=True, refused_reuse=[{"step_id": sid, "reason": carry.rerun[sid]}
+                                                     for sid in reused if sid not in carry.reuse])
         self.hub.save_request(rid)
+
+    @staticmethod
+    def _unbound_research_results(req: dict, steps: list[dict],
+                                  results: dict[str, TaskResult]) -> dict[str, list[str]]:
+        """{step: problems} for each result that does not validate under the request's frozen plan, which must hash
+        to the contract's CP1-frozen plan_sha256."""
+        frozen = ResearchPlan.model_validate(req["plan"])
+        if research_plan_sha256(frozen) != req["research_contract"]["plan_sha256"]:
+            return {s["id"]: ["the request plan does not hash to the CP1-frozen plan_sha256"] for s in steps}
+        unbound: dict[str, list[str]] = {}
+        for step in steps:
+            problems = research_result_errors(results[step["id"]].structured, plan=frozen)
+            if problems:
+                unbound[step["id"]] = problems
+        return unbound
 
     def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                           refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
@@ -4175,7 +4207,7 @@ class Orchestrator:
                             else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
                     if continuation:  # saved below with the plan, so a restart sees both or neither
-                        self._adopt_continuation_plan(rid, req["plan"])
+                        self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     warnings: list[str] = []
@@ -4716,6 +4748,10 @@ class Orchestrator:
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
+            if self._continuation_unstarted(req):
+                # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
+                self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}")
+                return
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             execution = []
             if req.get("plan", {}).get("steps"):
@@ -4742,22 +4778,33 @@ class Orchestrator:
                 await self._emit(rid, "request.failed", failed)
 
     @staticmethod
+    def _continuation_unstarted(req: dict) -> bool:
+        """A continuation round is on and none of its steps has been dispatched (its reuse is not verified yet)."""
+        contract = req.get("research_contract") or {}
+        carried = contract.get("continuation") or {}
+        return bool(carried and not carried.get("verified") and contract.get("rounds"))
+
+    @staticmethod
     def _unstarted_continuation_end(req: dict, report: str, results: dict,
                                     review: dict | None) -> tuple[str, dict, dict | None]:
         """A continuation round that ends before its new CP1 let any step run (#90, PR #448 review).
 
         A rejected or timed-out CP1, a failed or invalid plan, or an error ends the request as the revise it
         continued: outcome ``research_review_revise``, the previous round's review on top, and its results kept,
-        so the record and ``labhq verify`` still show what ran. Why the round ended is kept in
+        so the record and ``labhq verify`` still show what ran. The previous round's plan, hash, CP1 approval, pack
+        snapshot and CP2 receipt come back with them (``restore_round``): the results never ran under the new draft,
+        which stays in ``continuation.declined_plan`` (PR #448 review). Why the round ended is kept in
         ``continuation.ended_before_dispatch``."""
-        contract = req.get("research_contract") or {}
-        carried = contract.get("continuation") or {}
-        rounds = contract.get("rounds") or []
-        if not carried or carried.get("verified") or not rounds:
+        if not Orchestrator._continuation_unstarted(req):
             return report, results, review
-        previous = rounds[-1]
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        previous = contract["rounds"][-1]
         stored = previous.get("review") or {}
         reason = (report.strip().splitlines() or ["-"])[0]
+        draft = research_continuation.restore_round(req, previous)
+        if draft:
+            carried["declined_plan"] = draft
         carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason}
         req["outcome"] = "research_review_revise"
         report = "\n".join([

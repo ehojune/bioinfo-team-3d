@@ -16,7 +16,7 @@ from typing import Any
 
 from ..evidence.claims import normalize_artifact_path
 from ..vocab.declare import FIELDS, UNKNOWN, read, staff_declarations, unknown
-from .contract import validate_research_result
+from .contract import task_round_plan, validate_research_result
 
 OBJECT_TYPES = ("Staff", "Request", "Step", "Task", "Job", "DataAsset", "Approval", "Artifact")
 # link type -> (source object type, allowed target types)
@@ -103,7 +103,8 @@ def type_artifacts(view: ObjectView, snap: Mapping[str, Any], vocab: Any) -> Obj
         staff: dict[str, dict[str, str]] = {}
         if plan is not None and task.get("step_id") and result.get("structured"):
             try:  # the provenance model's own check, so both models read the same staff declarations
-                refs = validate_research_result(result["structured"], plan=plan).artifact_refs
+                ran = task_round_plan(req, task)[0]  # an earlier research round's task ran under its plan (#90)
+                refs = validate_research_result(result["structured"], plan=ran).artifact_refs
                 staff = staff_declarations(refs, normalize_artifact_path)
             except (ValueError, TypeError):
                 staff = {}
