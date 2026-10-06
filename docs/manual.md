@@ -313,7 +313,7 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 서명 | 무엇 |
 |---|---|
 | `python_module_missing` | `ModuleNotFoundError`, `No module named` |
-| `command_not_found` | `command not found`, `is not recognized as an internal or external command`, 한국어 Windows의 `내부 또는 외부 명령`·`용어가 cmdlet` |
+| `command_not_found` | `command not found`, `is not recognized as an internal or external command`, 한국어 Windows의 `내부 또는 외부 명령`·`용어가 cmdlet`, 직원 CLI 실행 파일이 없을 때 어댑터가 내는 `executable not found` |
 | `r_package_missing` | `there is no package called` |
 | `disk_full` | `No space left on device`, `ENOSPC`, `There is not enough space on the disk`, `디스크 공간이 부족합니다` |
 | `network_name_resolution` | `Could not resolve host`, `getaddrinfo failed`·`ENOTFOUND`, `ProxyError` |

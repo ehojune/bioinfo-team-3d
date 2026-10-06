@@ -1747,8 +1747,9 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     Known engine login expiry                   login
     Environment signature in the error, error   environment
       kind or CLI stderr (labhq/facilities);
-      a stderr-only one yields to cancel and to
-      an explicit transient signal below
+      a stderr-only one yields to an explicit
+      terminal or transient cause in the error
+      below and to an engine limit
     Offline, timeout, empty result/CLI stream,  transient
       explicit rate-limit/overload/5xx/network signal
     Policy/approval/budget/cancel/invalid input, terminal
@@ -1782,13 +1783,12 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     if outcome.quota_reset_at is not None or is_quota_error("", error):
         return "quota"
     strong = _strong_environment(outcome, engine)
-    # The PI's cancel stays terminal even when the stopped CLI's stderr held a signature. A signature seen only in
-    # the CLI's stderr is older than an explicit timeout, rate limit or 5xx in the error, which wins (PR #447 review).
+    # A signature seen only in the CLI's stderr is older than an explicit cause in the error (cancel, permission,
+    # approval, budget, policy; timeout, rate limit, 5xx) and than an engine limit, which win (PR #447 review).
     if strong and (strong.get("source") == "error"
-                   or ("cancel" not in error and not _transient_signal(error))):
+                   or not (_terminal_signal(error) or _transient_signal(error) or _engine_limit(outcome))):
         return "environment"
-    if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
-                                      "budget", "cancel", "ineligibletier", "401")):
+    if _terminal_signal(error):
         return "terminal"
     if (("invalid model selection" in error and "is not recognized" in error)
             or any(word in error for word in ("model catalog", "model catalogue", "failed to fetch models"))):
@@ -1800,12 +1800,23 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if _transient_signal(error):
         return "transient"
-    if (outcome.environment and outcome.environment.get("source") == "command"
-            and not (outcome.error_kind or "").startswith("error_max_")):
+    if outcome.environment and outcome.environment.get("source") == "command" and not _engine_limit(outcome):
         # The last failed command, with no successful command after it, and nothing else explains the failure. An
         # engine limit (turns, budget) is its own cause even when the agent last tripped on a missing tool.
         return "environment"
     return "terminal"
+
+
+def _terminal_signal(error: str) -> bool:
+    """An explicit cause in a lower-cased error that another run does not fix: policy, permission, approval,
+    budget, cancel."""
+    return any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
+                                          "budget", "cancel", "ineligibletier", "401"))
+
+
+def _engine_limit(outcome: TaskResult) -> bool:
+    """The engine stopped at its own limit (turns, budget): that is the cause, whatever else the run saw."""
+    return (outcome.error_kind or "").startswith("error_max_")
 
 
 def _transient_signal(error: str) -> bool:

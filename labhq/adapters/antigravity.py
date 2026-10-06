@@ -66,8 +66,11 @@ class AntigravityAdapter(AgentAdapter):
                 elif data.get("state") == "DONE" and data.get("tool_name") in SHELL_TOOLS:
                     note_command_ok(st)
                 elif data.get("state") == "ERROR":
-                    note_failed_output(st, info.get("error"))
-                    await ctx.emit("agent.tool_error", {"text": short(info.get("error") or "agy tool failed", 400)})
+                    error = info.get("error")
+                    if isinstance(error, dict):  # real agy sends {"type": "TOOL_ERROR", "message": "..."} (PR #447)
+                        error = error.get("message") or error.get("type")
+                    note_failed_output(st, error)
+                    await ctx.emit("agent.tool_error", {"text": short(error or "agy tool failed", 400)})
         elif typ == "result":
             st.result_seen = True
             st.session_id = data.get("conversation_id") or st.session_id

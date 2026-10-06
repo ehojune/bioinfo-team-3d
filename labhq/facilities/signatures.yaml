@@ -26,7 +26,7 @@
 - id: command_not_found
   engine: any
   pattern: >-
-    ^[^\s:]*sh(?:\.exe)?: (?:line \d+: |\d+: )?[^:\n]+: (?:command )?not found\s*$|^zsh: command not found: |^'[^'\n]+' is not recognized as an internal or external command|^'[^'\n]+'은\(는\) 내부 또는 외부 명령|The term '[^'\n]+' is not recognized as (?:the|a) name of a cmdlet|'[^'\n]+' 용어가 cmdlet
+    ^[^\s:]*sh(?:\.exe)?: (?:line \d+: |\d+: )?[^:\n]+: (?:command )?not found\s*$|^zsh: command not found: |^'[^'\n]+' is not recognized as an internal or external command|^'[^'\n]+'은\(는\) 내부 또는 외부 명령|The term '[^'\n]+' is not recognized as (?:the|a) name of a cmdlet|'[^'\n]+' 용어가 cmdlet|^executable not found: (?:'[^'\n]+'|"[^"\n]+") — install it on the runner\b
   cause: 명령(프로그램)을 찾지 못했습니다
   hint: 'runner PC에 그 도구를 설치하거나 PATH에 넣으세요. 확인: `labhq doctor`'
   fix:

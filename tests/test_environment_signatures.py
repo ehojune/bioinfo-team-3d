@@ -110,12 +110,24 @@ DOCKER_STDERR = env.by_id("docker_daemon_down").record("stderr")
     (_failed("timeout after 600s", environment=DOCKER_STDERR), "transient"),
     (_failed("exit 1: HTTP 429 too many requests", environment=DOCKER_STDERR), "transient"),
     (_failed("runner restarted", environment=DOCKER_STDERR), "transient"),
+    # ... and than an explicit terminal cause in the error (PR #447 review)
+    (_failed("permission denied", environment=STDERR), "terminal"),
+    (_failed("exit 1: approval required for Bash", environment=STDERR), "terminal"),
+    (_failed("budget exceeded: $2.00", environment=STDERR), "terminal"),
     # an engine limit is its own cause, whatever command the agent last tripped on
     (_failed("error_max_turns", error_kind="error_max_turns", environment=COMMAND), "terminal"),
+    (_failed("error_max_turns", error_kind="error_max_turns", environment=STDERR), "terminal"),
     (TaskResult(task_id="t", agent_id="a", ok=True, text="done", environment=COMMAND), None),
 ])
 def test_environment_kind(outcome, kind):
     assert failure_kind(outcome, "codex") == kind
+
+
+def test_an_explicit_terminal_cause_hides_an_older_stderr_signature():
+    """stderr held "No space left on device" earlier; the step then ended on a permission error (PR #447 review)."""
+    outcome = _failed("permission denied", environment=STDERR)
+    assert failure_kind(outcome, "claude_code") != "environment"
+    assert environment_problem(outcome, "claude_code") is None
 
 
 def test_login_and_quota_are_decided_before_environment():
@@ -299,6 +311,19 @@ async def test_runner_reads_failed_command_output(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_missing_engine_binary_is_command_not_found(tmp_path):
+    settings = Settings()
+    settings.engines.codex.bin = str(tmp_path / "no-such-codex")
+    (tmp_path / "codex-home").mkdir()
+    settings.engines.codex.env = {"CODEX_HOME": str(tmp_path / "codex-home")}
+    res = await get_adapter(Engine.codex, settings).run(_ctx(tmp_path, settings, []))
+    assert not res.ok and res.error.startswith("executable not found: ")
+    assert failure_kind(res, "codex") == "environment"
+    found = environment_problem(res, "codex")
+    assert found["id"] == "command_not_found" and found["source"] == "error"
+
+
+@pytest.mark.asyncio
 async def test_successful_commands_that_print_the_phrase_are_not_evidence(tmp_path):
     grep = _command("logs/a.log:3:ModuleNotFoundError: No module named 'x'\nbash: x: command not found\n", 0)
     res = await _run_codex(tmp_path, [grep])
@@ -386,3 +411,27 @@ def test_gemini_and_antigravity_shell_success_clears_the_failed_output(tmp_path)
     assert env.scan_run("antigravity", [], state.failed_outputs)["id"] == "command_not_found"
     asyncio.run(agy.handle_line(json.dumps(step("DONE", output="ok")), state, ctx))
     assert env.scan_run("antigravity", [], state.failed_outputs) is None
+
+
+def test_antigravity_error_objects_keep_their_message(tmp_path):
+    """Real agy sends tool_info.error as {"type", "message"}: the message is matched, not the dict (PR #447 review)."""
+    import asyncio
+    settings = Settings()
+    agy = get_adapter(Engine.antigravity, settings)
+    events = []
+    ctx = _ctx(tmp_path, settings, events, Engine.antigravity)
+    state = RunState()
+    error = {"type": "TOOL_ERROR", "message": "bash: samtools: command not found"}
+    line = {"event": "step_update", "step_update": {"step_type": "tool", "state": "ERROR", "tool_name": "run_command",
+                                                     "tool_info": {"name": "run_command", "error": error}}}
+    asyncio.run(agy.handle_line(json.dumps(line), state, ctx))
+    assert list(state.failed_outputs) == ["bash: samtools: command not found"]
+    assert env.scan_run("antigravity", [], state.failed_outputs)["id"] == "command_not_found"
+    assert ("agent.tool_error", {"text": "bash: samtools: command not found"}) in events
+    # the recorded real stream: the kept text is the message itself
+    real = Path(__file__).parent / "fixtures" / "real" / "antigravity" / "agy_tool_allowed.jsonl"
+    failed = next(json.loads(row) for row in real.read_text(encoding="utf-8").splitlines()
+                  if '"state": "ERROR"' in row)
+    state = RunState()
+    asyncio.run(agy.handle_line(json.dumps(failed), state, ctx))
+    assert list(state.failed_outputs) == [failed["step_update"]["tool_info"]["error"]["message"]]
