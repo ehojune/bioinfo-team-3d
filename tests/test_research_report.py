@@ -103,6 +103,23 @@ async def test_approved_evidence_is_reviewed_and_reported_with_checked_anchors()
 
 
 @pytest.mark.asyncio
+async def test_research_report_keeps_p3_as_a_count_and_every_issue_verbatim_in_the_record():
+    """PR #438 review: the body counts P3, so the execution record must hold what the PI is pointed to."""
+    p3 = {"step_id": "s1", "claim_id": "", "priority": "P3", "category": "other", "evidence_quote": "row 1",
+          "problem": "unit spelled two ways", "request": "use TPM throughout"}
+    hub = _hub(review={**ACCEPT, "issues": [*ACCEPT["issues"], p3]})
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    assert "- P3(표현) 1건: 실행 기록 참고" in req["report"] and "unit spelled two ways" not in req["report"]
+    assert "P2 · s1: no external cohort" in req["report"]
+    record = req["report_appendix"]
+    assert "P3 · s1: unit spelled two ways → use TPM throughout" in record
+    assert "P2 · s1: no external cohort → state the single cohort" in record
+
+
+@pytest.mark.asyncio
 async def test_contract_refusal_is_kept_in_the_final_report_metadata():
     hub = _hub(contract_violation=True)
     await Orchestrator(hub).run_request("r")

@@ -586,8 +586,9 @@ Use these sections in this order: 1) "결론과 권고", 2) "결과" with eviden
 including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
 The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
-number once, in "결과", and refer to it elsewhere instead of repeating it; keep "방법 요약" to about eight lines, and
-under "한계" keep only what could change the conclusion.
+result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
+still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
+conclusion.
 Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings, review records and execution
 details in the separate execution record; do not copy their details into the body. When the warning preview is not
 "(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
@@ -690,8 +691,9 @@ Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim 
 including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
 The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
-number once, in "결과", and refer to it elsewhere instead of repeating it; keep "방법 요약" to about eight lines, and
-under "한계" keep only what could change the conclusion.
+result statistic once, in "결과", and refer to it elsewhere instead of repeating it (seeds, versions and cutoffs
+still belong in "방법 요약"); keep "방법 요약" to about eight lines, and under "한계" keep only what could change the
+conclusion.
 When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
 Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
@@ -3269,7 +3271,14 @@ class Orchestrator:
         body_reference = _review_reference(review)
         if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = body.rstrip() + "\n\n" + body_reference
-        report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix, [*claim_check, cp2_audit])
+        # The body keeps only P2 lines and a P3 count, so the record holds every remaining issue verbatim (PR #438).
+        open_reference = [issue for issue in (review or {}).get("issues") or []
+                          if isinstance(issue, dict) and issue.get("priority") in {"P2", "P3"}]
+        review_record = (["남은 P2·P3 지적 원문:\n" + "\n".join(
+            f"- {issue.get('priority')} · {issue.get('step_id') or '-'}: {issue.get('problem')} → {issue.get('request')}"
+            for issue in open_reference)] if open_reference else [])
+        report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix,
+                                                             [*claim_check, *review_record, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
