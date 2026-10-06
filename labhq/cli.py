@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .costs import cost_detail, cost_text
+from .facilities.signatures import problem_text
 from .request_status import is_terminal_request
 from .settings import Settings
 from .util import free_port, short
@@ -761,13 +762,24 @@ def main(argv: list[str] | None = None) -> None:
         for req in running:
             progress = req["step_progress"]
             print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}")
+            environment = req.get("step_environment") or {}
             for sid, state in progress["steps"].items():
-                print(f"    {sid}: {state}")
+                problem = problem_text(environment.get(sid))
+                print(f"    {sid}: {state}" + (f" — {problem}" if problem else ""))
             summary = req.get("cost_summary")
             if summary or req.get("cost_known") is False or req.get("cost_usd"):
                 print(f"    비용: {cost_text(req.get('cost_usd'), req.get('cost_known'), summary)}"
                       + (f" {cost_detail(summary)}" if summary else ""))
-        finished = [req for req in _api(s, "GET", "/api/requests?status=all&limit=20")
+        recent = _api(s, "GET", "/api/requests?status=all&limit=20")
+        # Running requests show their environment problems above, beside the step.
+        shown = {req["id"] for req in running}
+        problems = [(req["id"], sid, problem_text(found)) for req in recent if req.get("id") not in shown
+                    for sid, found in (req.get("step_environment") or {}).items()]
+        if problems:
+            print(f"환경 문제로 멈춘 단계: {len(problems)}")
+            for rid, sid, problem in problems:
+                print(f"  {rid} {sid}: {problem}")
+        finished = [req for req in recent
                     if req.get("status") in {"done", "failed"} and
                     (req.get("bundle_path") or req.get("bundle_warning"))]
         if finished:

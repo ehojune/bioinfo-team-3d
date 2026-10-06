@@ -22,6 +22,7 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
+from ..facilities import signatures as env_signatures
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
@@ -1073,6 +1074,10 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
             shown = ", ".join(str(path) for path in paths[:5])
             suffix = f" (+{len(paths) - 5}개)" if len(paths) > 5 else ""
             lines.append(f"- {sid}: Evidence 경로 불일치 {len(paths)}건: {shown}{suffix}")
+        ok = result.ok if isinstance(result, TaskResult) else result.get("ok")
+        environment = None if ok else environment_problem(result)
+        if environment:
+            lines.append(f"- {sid}: {env_signatures.problem_text(environment)}")
         errors = result.tool_errors if isinstance(result, TaskResult) else result.get("tool_errors") or []
         if errors:
             first = str(errors[0]).splitlines()[0].strip() or "tool failed"
@@ -1741,12 +1746,21 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     Outcome                                      Kind
     Successful result                            None
     Known engine login expiry                   login
+    Environment signature in the error, error   environment
+      kind or CLI stderr (labhq/facilities);
+      a stderr-only one yields to an explicit
+      terminal or transient cause in the error
+      below and to an engine limit
     Offline, timeout, empty result/CLI stream,  transient
       explicit rate-limit/overload/5xx/network signal
     Policy/approval/budget/cancel/invalid input, terminal
       ordinary nonzero exit, other error
+    Environment signature only in the last       environment
+      failed command's output (no later command
+      succeeded), no engine limit, no other rule
 
-    An exit code alone is never evidence that another run is safe.
+    An exit code alone is never evidence that another run is safe. An environment failure is not retried: the same
+    PC fails the same way until someone installs or frees what is missing (#35).
     """
     if isinstance(outcome, asyncio.CancelledError):
         return "terminal"
@@ -1769,8 +1783,13 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "login"
     if outcome.quota_reset_at is not None or is_quota_error("", error):
         return "quota"
-    if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
-                                      "budget", "cancel", "ineligibletier", "401")):
+    strong = _strong_environment(outcome, engine)
+    # A signature seen only in the CLI's stderr is older than an explicit cause in the error (cancel, permission,
+    # approval, budget, policy; timeout, rate limit, 5xx) and than an engine limit, which win (PR #447 review).
+    if strong and (strong.get("source") == "error"
+                   or not (_terminal_signal(error) or _transient_signal(error) or _engine_limit(outcome))):
+        return "environment"
+    if _terminal_signal(error):
         return "terminal"
     if (("invalid model selection" in error and "is not recognized" in error)
             or any(word in error for word in ("model catalog", "model catalogue", "failed to fetch models"))):
@@ -1780,15 +1799,61 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     if outcome.ok or (not outcome.text.strip() and
                       (not error or "empty cli stream" in error or "no result event" in error)):
         return "transient"
+    if _transient_signal(error):
+        return "transient"
+    if outcome.environment and outcome.environment.get("source") == "command" and not _engine_limit(outcome):
+        # The last failed command, with no successful command after it, and nothing else explains the failure. An
+        # engine limit (turns, budget) is its own cause even when the agent last tripped on a missing tool.
+        return "environment"
+    return "terminal"
+
+
+def _terminal_signal(error: str) -> bool:
+    """An explicit cause in a lower-cased error that another run does not fix: policy, permission, approval,
+    budget, cancel."""
+    return any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
+                                          "budget", "cancel", "ineligibletier", "401"))
+
+
+def _engine_limit(outcome: TaskResult) -> bool:
+    """The engine stopped at its own limit (turns, budget): that is the cause, whatever else the run saw."""
+    return (outcome.error_kind or "").startswith("error_max_")
+
+
+def _transient_signal(error: str) -> bool:
+    """An explicit retry-worthy signal in a lower-cased error: timeout, rate limit, overload, network drop, 5xx."""
     if any(word in error for word in ("timeout", "timed out", "rate limit", "rate-limit", "429",
                                       "overload", "capacity", "temporar", "resource exhausted",
                                       "too many requests", "connection reset", "connection refused",
                                       "connection aborted", "broken pipe", "network unreachable",
                                       "runner restarted", "try again")):
-        return "transient"
-    if re.search(r"\b5\d{2}\b|\b5xx\b", error):
-        return "transient"
-    return "terminal"
+        return True
+    return bool(re.search(r"\b5\d{2}\b|\b5xx\b", error))
+
+
+def _strong_environment(outcome: TaskResult, engine: str) -> dict | None:
+    """An environment signature in the step's own error or error kind, or one the runner read in the CLI's stderr."""
+    found = env_signatures.match(engine, outcome.error, error_kind=outcome.error_kind)
+    if found:
+        return found.record("error")
+    env = outcome.environment
+    return env if env and env.get("source") != "command" else None
+
+
+def environment_problem(outcome: TaskResult | dict | None, engine: str = "") -> dict | None:
+    """The environment signature ({id, cause, hint, source}) of a failed step, or None when it failed otherwise.
+
+    A skipped step carries its upstream's error after "skipped: "; the upstream step is the one with the problem,
+    so the skipped one has none of its own (PR #447 review)."""
+    if isinstance(outcome, dict):
+        try:
+            outcome = TaskResult.model_validate(outcome)
+        except ValueError:
+            return None
+    if (not isinstance(outcome, TaskResult) or (outcome.error or "").startswith("skipped:")
+            or failure_kind(outcome, engine) != "environment"):
+        return None
+    return _strong_environment(outcome, engine) or outcome.environment
 
 
 def holds_session(entry: dict, agent_id: str, session_id: str | None, workdir: str | None) -> bool:
@@ -2446,6 +2511,8 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                    if kind == "environment":  # the record the step result, its event and the report show (#35)
+                        res = res.model_copy(update={"environment": environment_problem(res, engine)})
                 if res.tool_errors:
                     tool_errors.extend(res.tool_errors)
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
@@ -2987,10 +3054,13 @@ class Orchestrator:
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
+                    environment = None if outcome.ok else environment_problem(outcome)
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
-                                                                "reason": results[sid].error})
+                                                                "reason": results[sid].error,
+                                                                **({"environment": environment} if environment
+                                                                   else {})})
                     res = results[sid]
                     question = blocking_question(res)
                     if res.ok and question:
@@ -3378,6 +3448,10 @@ class Orchestrator:
                 return "not run; re-send the request once the steps above are fixed."
             if skipped(r):
                 return "fix the failed upstream step(s) above, then re-send the request."
+            environment = environment_problem(r)
+            # A failed command's output is weaker evidence than the missing outputs themselves (PR #447 review).
+            if environment and not (r.missing_outputs and environment.get("source") == "command"):
+                return env_signatures.problem_text(environment)
             if r.missing_outputs:
                 return f"produce the missing outputs in {r.workdir_id or 'the work folder'}, then re-run this step."
             if (r.error_kind or failure_kind(r)) == "transient":

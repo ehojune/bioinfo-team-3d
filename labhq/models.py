@@ -204,6 +204,15 @@ class TaskResult(BaseModel):
     error: str | None = None
     # Epoch seconds of a subscription-quota reset. The runner reads the CLI's clock time in its own zone (#37).
     quota_reset_at: float | None = None
+    # The environment signature behind a failure (#35): {id, cause, hint, source[, fix]}. The runner sets it from the
+    # CLI's stderr tail or a failed shell command; the gateway from the error. Read through cso.environment_problem.
+    environment: dict[str, str] | None = None
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def bounded_environment(cls, value: Any) -> dict[str, str] | None:
+        from .facilities.signatures import clean_record
+        return clean_record(value)
 
     @model_validator(mode="after")
     def infer_cost_known(self) -> "TaskResult":
@@ -242,6 +251,8 @@ class TaskResult(BaseModel):
                 data.pop("pipeline_submission", None)
             if data.get("quota_reset_at") is None:
                 data.pop("quota_reset_at", None)
+            if data.get("environment") is None:
+                data.pop("environment", None)
         return data
 
 

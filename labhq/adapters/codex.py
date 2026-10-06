@@ -16,8 +16,8 @@ import os
 from pathlib import Path
 
 from ..util import openai_strict_schema, short, strip_optional_nulls
-from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env,
-                   record_model_id, wrap_cwd)
+from .base import (AgentAdapter, role_footer, child_config_dirs, RunContext, RunState, expand_env, note_command_ok,
+                   note_failed_output, record_model_id, wrap_cwd)
 from .owned import read_owned, write_owned
 
 # Staff tool names that mean "web". Codex has no per-tool rules for them; its native search turns on instead.
@@ -298,8 +298,10 @@ class CodexAdapter(AgentAdapter):
                     await ctx.emit("agent.tool", {"name": "shell", "input": short(item.get("command"), 300)})
                 elif exit_code == 0 and not isinstance(exit_code, bool):
                     st.commands_ran = True  # the sandbox started a command (#328)
+                    note_command_ok(st)
                 elif exit_code not in (None, 0):
                     message = str(item.get("aggregated_output") or "command failed")
+                    note_failed_output(st, item.get("aggregated_output"))
                     if _command_needs_setup(message):
                         _stop_for_setup(st, ELEVATED_SETUP_ERROR)
                     await ctx.emit("agent.tool_error", {"text": short(message, 400)})

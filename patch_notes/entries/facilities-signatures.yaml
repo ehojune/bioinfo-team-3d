@@ -1,0 +1,11 @@
+pr: 447
+rows:
+- sha: '9f3b7f0'
+  at: 2026-10-06 17:14
+  text: '단계 실패에 environment 종류와 오류 서명 표를 넣고, 재시도 대신 "환경 문제: 원인 — 할 일"을 웹·보고서·labhq status에 보인다 (#35)'
+- sha: 'c3be2fa'
+  at: 2026-10-06 17:29
+  text: '환경 서명이 한국어 Windows 문구를 잡고, 인용만 한 줄·건너뛴 단계·이미 넘어간 실패 명령·timeout 같은 일시 오류는 환경 문제로 세지 않는다 (#35)'
+- sha: '195418c'
+  at: 2026-10-06 17:48
+  text: 'CLI stderr의 옛 환경 서명은 권한 거부·승인·예산 같은 명시적 원인에 양보하고, Antigravity 오류 객체의 message와 직원 CLI 실행 파일 누락(executable not found)도 환경 문제로 잡는다 (#35)'

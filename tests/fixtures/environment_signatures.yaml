@@ -1,0 +1,120 @@
+# Real wording for labhq/facilities/signatures.yaml (#35). Every signature id needs at least one `match` example.
+# `engine` defaults to "any engine" (""); `error_kind` is the TaskResult field.
+
+match:
+  - id: python_module_missing
+    text: |
+      Traceback (most recent call last):
+        File "/work/outputs/scripts/de.py", line 3, in <module>
+          import pandas as pd
+      ModuleNotFoundError: No module named 'pandas'
+  - id: python_module_missing
+    text: "/usr/bin/python3: No module named pytest"
+  - id: python_module_missing
+    text: 'C:\Program Files\Python312\python.exe: No module named scanpy'
+  - id: command_not_found
+    text: "bash: samtools: command not found"
+  - id: command_not_found
+    text: "/bin/bash: line 1: featureCounts: command not found"
+  - id: command_not_found
+    text: "/bin/sh: 1: Rscript: not found"
+  - id: command_not_found
+    text: "zsh: command not found: nextflow"
+  - id: command_not_found
+    text: |
+      'samtools' is not recognized as an internal or external command,
+      operable program or batch file.
+  - id: command_not_found
+    text: "samtools : The term 'samtools' is not recognized as the name of a cmdlet, function, script file, or operable program."
+  # the same two on the runner PC (ko-KR UI culture): cmd.exe and Windows PowerShell 5.1
+  - id: command_not_found
+    text: |
+      'samtools'은(는) 내부 또는 외부 명령, 실행할 수 있는 프로그램, 또는
+      배치 파일이 아닙니다.
+  - id: command_not_found
+    text: "samtools : 'samtools' 용어가 cmdlet, 함수, 스크립트 파일 또는 실행할 수 있는 프로그램 이름으로 인식되지 않습니다. 이름이 정확한지 확인하고 경로가 포함된 경우 경로가 올바른지 검증한 다음 다시 시도하십시오."
+  - id: command_not_found
+    text: |
+      Exit code 127
+      /usr/bin/bash: line 1: salmon: command not found
+  - id: r_package_missing
+    text: "Error in library(DESeq2) : there is no package called ‘DESeq2’"
+  - id: r_package_missing
+    text: |
+      Error: package or namespace load failed for ‘edgeR’ in loadNamespace(j <- i[[1L]], c(lib.loc, .libPaths()), versionCheck = vI[[j]]):
+       there is no package called ‘limma’
+  - id: disk_full
+    text: "OSError: [Errno 28] No space left on device: '/work/outputs/counts.tsv'"
+  - id: disk_full
+    text: "cp: error writing '/data/ref/genome.fa': No space left on device"
+  - id: disk_full
+    text: "Error: ENOSPC: no space left on device, write"
+  - id: disk_full
+    text: "There is not enough space on the disk."
+  - id: disk_full
+    text: "디스크 공간이 부족합니다."
+  - id: disk_full
+    text: "Out-File : 디스크 공간이 부족합니다."
+  - id: network_name_resolution
+    text: "curl: (6) Could not resolve host: ftp.ncbi.nlm.nih.gov"
+  - id: network_name_resolution
+    text: "fatal: unable to access 'https://github.com/nf-core/rnaseq/': Could not resolve host: github.com"
+  - id: network_name_resolution
+    text: "urllib.error.URLError: <urlopen error [Errno 11001] getaddrinfo failed>"
+  - id: network_name_resolution
+    text: "WARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', OSError('Tunnel connection failed: 407 Proxy Authentication Required'))': /simple/pandas/"
+  - id: network_name_resolution
+    text: "requests.exceptions.ProxyError: HTTPSConnectionPool(host='files.pythonhosted.org', port=443)"
+  - id: network_name_resolution
+    text: "npm ERR! request to https://registry.npmjs.org/x failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org"
+  - id: docker_daemon_down
+    text: "docker: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+  - id: docker_daemon_down
+    text: "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+  - id: codex_sandbox_setup
+    engine: codex
+    text: "Codex elevated sandbox setup is required for the staff CODEX_HOME. An unattended run cannot safely launch its administrator setup helper."
+  - id: codex_sandbox_setup
+    engine: codex
+    error_kind: sandbox_setup_required
+    text: ""
+  # The step error as BaseAdapter.run builds it: "exit N: " and the stderr tail joined with " | ".
+  - id: command_not_found
+    text: "exit 127: + samtools sort in.bam | bash: samtools: command not found"
+  # BaseAdapter.run when the staff CLI binary itself is missing (PR #447 review)
+  - id: command_not_found
+    text: "executable not found: 'codex' — install it on the runner or fix engines/cli settings for agent 'engineer'"
+  - id: command_not_found
+    text: "executable not found: 'C:\\\\Users\\\\pi\\\\AppData\\\\Roaming\\\\npm\\\\agy.exe' — install it on the runner or fix engines/cli settings for agent 'analyst'"
+
+no_match:
+  # grep prints the file name before the quoted line
+  - text: "logs/run1.log:bash: samtools: command not found"
+  - text: "logs/run1.log:12:ModuleNotFoundError: No module named 'pandas'"
+  # a pytest diff that quotes the phrase
+  - text: "E       AssertionError: assert 'ModuleNotFoundError: No module named x' == ''"
+  - text: "E   assert 'bash: x: command not found' in out"
+  # the same for every signature (PR #447 review): pytest "E "/">" lines, compiler/grep "path:N:", grep in a log
+  - text: "E       assert 'Could not resolve host: x' in out"
+  - text: ">       mock.side_effect = ProxyError('boom')"
+  - text: "E       AssertionError: 'getaddrinfo failed' not in msg"
+  - text: "E   assert 'OSError: [Errno 28] No space left on device' in str(exc)"
+  - text: "tests/test_docker.py:4: Cannot connect to the Docker daemon"
+  - text: "logs/run1.log:curl: (6) Could not resolve host: x"
+  - text: "E   assert \"'x'은(는) 내부 또는 외부 명령\" in out"
+  - text: "E   assert '디스크 공간이 부족합니다' in msg"
+  - text: "logs/run1.log:there is no package called ‘DESeq2’"
+  - text: "src/env.py:12: 'x' 용어가 cmdlet"
+  # a log line that only mentions the phrase mid-sentence
+  - text: "2026-10-06 12:00:01 INFO retrying after Cannot connect to the Docker daemon"
+  - text: "print('Could not resolve host')"
+  - text: "E   assert \"executable not found: 'x' — install it on the runner\" in res.error"
+  - text: "the log says executable not found: 'x' — install it on the runner"
+  # ordinary failures that are not the PC's fault
+  - text: "FileNotFoundError: [Errno 2] No such file or directory: 'counts.tsv'"
+  - text: "exit 1: Error in DESeq(dds) : every gene contains at least one zero"
+  - text: "timeout after 3600s"
+  # the Codex signature is for Codex only
+  - engine: claude_code
+    error_kind: sandbox_setup_required
+    text: ""

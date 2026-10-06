@@ -29,7 +29,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator, holds_session, solo_phase
+from ..orchestrator.cso import Orchestrator, environment_problem, holds_session, solo_phase
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -577,16 +577,23 @@ class Hub:
                 sid = entry.get("step_id") or entry.get("kind")
                 if sid and states.get(sid, "pending") == "pending":
                     states[sid] = task["state"]
-        return {"id": rid, "status": req.get("status"), "text": short(req.get("text"), 120),
-                "created_at": req.get("created_at"), "updated_at": req.get("updated_at", req.get("created_at")),
-                "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),
-                                  "total": len(steps) if steps else (1 if req.get("mode") == "direct" else 0),
-                                  "steps": states}, "cost_usd": req.get("cost_usd", 0),
-                "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
-                "usage": req.get("usage", {}),
-                "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
-                "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
-                "bundle_warning": req.get("bundle_warning")}
+        # Failed steps whose cause is the runner PC (#35): `labhq status` shows "환경 문제: cause — hint".
+        environment = {sid: found for sid, outcome in (req.get("results") or {}).items()
+                       if isinstance(outcome, dict) and not outcome.get("ok")
+                       and (found := environment_problem(outcome))}
+        summary = {"id": rid, "status": req.get("status"), "text": short(req.get("text"), 120),
+                   "created_at": req.get("created_at"), "updated_at": req.get("updated_at", req.get("created_at")),
+                   "step_progress": {"done": sum(v in {"done", "failed", "skipped"} for v in states.values()),
+                                     "total": len(steps) if steps else (1 if req.get("mode") == "direct" else 0),
+                                     "steps": states}, "cost_usd": req.get("cost_usd", 0),
+                   "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary"),
+                   "usage": req.get("usage", {}),
+                   "usage_known": req.get("usage_known", True), "bundle_path": req.get("bundle_path"),
+                   "bundle_status": req.get("bundle_status"), "bundle_grade": req.get("bundle_grade"),
+                   "bundle_warning": req.get("bundle_warning")}
+        if environment:
+            summary["step_environment"] = environment
+        return summary
 
     def clear_step_jobs(self, rid: str, step_id: str) -> None:
         # A jobs.finished checkpoint remains useful until the resulting step is adopted.
@@ -1872,6 +1879,9 @@ class Hub:
                 "login_reason": login.get("reason"),
                 "review_issues": [issue for issue in review.get("issues", []) if issue.get("step_id") == sid],
             }
+            environment = environment_problem(result) if result and not result.get("ok") else None
+            if environment:  # the task card's "환경 문제" line survives a reconnect (#35)
+                details[sid]["environment"] = environment
         return details
 
 
