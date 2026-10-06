@@ -73,8 +73,18 @@ def _stop_for_setup(st: RunState, error: str) -> None:
 
 def _toml(v: object) -> str:
     if isinstance(v, dict):
-        return "{" + ", ".join(f"{k} = {_toml(x)}" for k, x in v.items()) + "}"
+        return "{" + ", ".join(f"{_toml_key(k)} = {_toml(x)}" for k, x in v.items()) + "}"
     return json.dumps(v)  # JSON strings/arrays/bools/numbers are valid TOML here
+
+
+def _toml_key(key: str) -> str:
+    """A bare key when TOML allows it (MCP env names stay as they were), else a quoted one (paths)."""
+    return key if key and all(c.isascii() and (c.isalnum() or c in "_-") for c in key) else json.dumps(key)
+
+
+# Built-in Codex permission profiles a staff profile extends; `danger-full-access` has none and keeps `-s`.
+PROFILE_PARENTS = {"workspace-write": ":workspace", "read-only": ":read-only"}
+STAFF_PROFILE = "labhq_staff"
 
 
 def _is_windows() -> bool:
@@ -222,9 +232,31 @@ class CodexAdapter(AgentAdapter):
                     return f"{ELEVATED_SETUP_ERROR} {problem}; LabHQ did not start Codex or request elevation."
         return None
 
+    def deny_read_paths(self, ctx: RunContext) -> list[str]:
+        """The PI personal paths this run's sandbox itself refuses to read (#382). Only the elevated Windows sandbox
+        enforces deny-read (unelevated refuses to start with it), and only that backend is measured here, so other
+        platforms keep the instruction in the role footer. labhq passes windows.sandbox only to isolated runs."""
+        b = self.settings.engines.codex
+        if not (ctx.private_paths and _is_windows() and b.windows_sandbox == "elevated"
+                and (b.isolate_user_config or ctx.read_only)):
+            return []
+        return list(dict.fromkeys(ctx.private_paths))
+
+    def sandbox_flags(self, ctx: RunContext) -> list[str]:
+        """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
+        Codex profiles and `-s` do not compose: a run takes one or the other."""
+        sandbox = ctx.agent.sandbox
+        parent = PROFILE_PARENTS.get(sandbox)
+        deny = self.deny_read_paths(ctx) if parent else []
+        if not deny:
+            return ["-s", sandbox]
+        profile = {"extends": parent, "filesystem": {path: "deny" for path in deny}}
+        return ["-c", f"default_permissions={_toml(STAFF_PROFILE)}",
+                "-c", f"permissions.{STAFF_PROFILE}={_toml(profile)}"]
+
     def build_command(self, ctx: RunContext) -> list[str]:
         a, t, b = ctx.agent, ctx.task, self.settings.engines.codex
-        flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), "-s", a.sandbox,
+        flags = ["--json", "--skip-git-repo-check", "-C", str(ctx.workdir), *self.sandbox_flags(ctx),
                  "-o", str(ctx.meta_dir / "last_message.txt")]
         if b.isolate_user_config or ctx.read_only:
             # config.toml carries the PI's plugins, notify hook and MCP servers. The global AGENTS.md in
