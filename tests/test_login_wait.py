@@ -328,7 +328,9 @@ async def test_login_wait_deadline_becomes_terminal_failure_with_reason(tmp_path
 
 @pytest.mark.asyncio
 async def test_login_retry_expiry_ends_notice_and_next_failure_notifies_again(tmp_path):
-    hub = _hub(tmp_path, retry=0.05, maximum=0.2)
+    # A 0.2 s cap left one retry slot; a loaded Windows CI runner sometimes spent it all on the first wait
+    # bookkeeping and saw calls == 1 (PR #457 CI, 2026-10-07). 1 s keeps the test about a second long.
+    hub = _hub(tmp_path, retry=0.05, maximum=1.0)
     calls = 0
 
     async def dispatch(task):
