@@ -6,7 +6,7 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | 무엇 | 수 | 쓰임 |
 |---|---:|---|
 | topic(분야) | 43 | CSO가 계획마다 적는 분야 이름표. 점검표와 분야 규칙 pack을 고르는 열쇠 |
-| 점검표 항목 | 60 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
+| 점검표 항목 | 124 | topic마다 계획이 답해야 하는 점검. 할 수 있으면 하고, 못 하면 이유를 밝힌다 |
 | 데이터 종류(data) | 30 | 단계 산출에 붙이는 이름표 |
 | 파일 형식(format) | 28 | 단계 산출에 붙이는 이름표 |
 | 작업(operation) | 22 | 단계 산출에 붙이는 이름표 |
@@ -36,29 +36,29 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `bacterial_genome_assembly` | de novo assembly and annotation of a bacterial isolate genome | 3 | - |
 | `alternative_splicing` | alternative splicing or isoform usage in transcriptomic data | 3 | RNA splicing (topic_3320) |
 | `microarray_expression` | gene expression measured by microarray after platform-specific preprocessing | 5 | - |
-| `proteomics` | mass-spectrometry protein identification, quantification and comparison | 0 | Proteomics (topic_0121) |
-| `proteomics_dia` | data-independent-acquisition proteomics processing and quantification | 0 | - |
-| `single_cell_proteomics` | protein identification and quantification at single-cell resolution | 0 | - |
-| `spatial_proteomics` | spatially resolved protein measurement and tissue proteome analysis | 0 | - |
-| `metaproteomics` | protein identification and quantification in microbial communities | 0 | Metaproteomics (topic_4060) |
-| `metabolomics` | small-molecule measurement processing and comparative metabolite analysis | 0 | Metabolomics (topic_3172) |
-| `spatial_metabolomics` | spatially resolved metabolite measurement and analysis | 0 | - |
-| `gwas` | genome-wide association testing and downstream locus interpretation | 0 | GWAS study (topic_3517) |
-| `structural_variant_calling` | detection and genotyping of large insertions, deletions and rearrangements | 0 | Structural variation (topic_3175) |
-| `de_novo_genome_assembly` | reference-free assembly and polishing of non-bacterial genomes | 0 | Sequence assembly (topic_0196) |
-| `genome_annotation` | gene and feature annotation of assembled genomes | 0 | - |
-| `pangenomics` | multi-genome or graph-reference construction, genotyping and comparison | 0 | - |
-| `phylogenetics` | sequence-based tree inference, placement and comparative evolution analysis | 0 | Phylogenetics (topic_3293) |
-| `hi_c` | chromosome-conformation contact, loop, compartment and domain analysis | 0 | - |
-| `spatial_epigenomics` | spatial profiling and analysis of epigenetic features | 0 | - |
-| `multi_omics_integration` | joint statistical analysis of distinct omics layers or assays | 0 | Multiomics (topic_4021) |
-| `single_cell_multiome` | joint single-cell analysis of RNA, chromatin, protein or other modalities measured in the same cells | 0 | - |
-| `spatial_multiomics` | joint spatial analysis of two or more molecular modalities | 0 | - |
-| `perturb_seq` | pooled perturbation screens with single-cell molecular readouts | 0 | - |
-| `immune_repertoire_sequencing` | BCR, TCR or other adaptive immune-receptor repertoire analysis | 0 | Immunoinformatics (topic_3948) |
-| `metagenomic_functional_profiling` | gene, pathway and functional profiling from metagenomic data | 0 | Metagenomics (topic_3174) |
-| `metagenome_binning` | grouping metagenomic contigs into metagenome-assembled genomes | 0 | - |
-| `metatranscriptomics` | RNA sequencing of microbial communities for activity and function | 0 | Metatranscriptomics (topic_3941) |
+| `proteomics` | mass-spectrometry protein identification, quantification and comparison | 3 | Proteomics (topic_0121) |
+| `proteomics_dia` | data-independent-acquisition proteomics processing and quantification | 3 | - |
+| `single_cell_proteomics` | protein identification and quantification at single-cell resolution | 3 | - |
+| `spatial_proteomics` | spatially resolved protein measurement and tissue proteome analysis | 3 | - |
+| `metaproteomics` | protein identification and quantification in microbial communities | 2 | Metaproteomics (topic_4060) |
+| `metabolomics` | small-molecule measurement processing and comparative metabolite analysis | 3 | Metabolomics (topic_3172) |
+| `spatial_metabolomics` | spatially resolved metabolite measurement and analysis | 2 | - |
+| `gwas` | genome-wide association testing and downstream locus interpretation | 3 | GWAS study (topic_3517) |
+| `structural_variant_calling` | detection and genotyping of large insertions, deletions and rearrangements | 2 | Structural variation (topic_3175) |
+| `de_novo_genome_assembly` | reference-free assembly and polishing of non-bacterial genomes | 3 | Sequence assembly (topic_0196) |
+| `genome_annotation` | gene and feature annotation of assembled genomes | 3 | - |
+| `pangenomics` | multi-genome or graph-reference construction, genotyping and comparison | 3 | - |
+| `phylogenetics` | sequence-based tree inference, placement and comparative evolution analysis | 4 | Phylogenetics (topic_3293) |
+| `hi_c` | chromosome-conformation contact, loop, compartment and domain analysis | 3 | - |
+| `spatial_epigenomics` | spatial profiling and analysis of epigenetic features | 2 | - |
+| `multi_omics_integration` | joint statistical analysis of distinct omics layers or assays | 3 | Multiomics (topic_4021) |
+| `single_cell_multiome` | joint single-cell analysis of RNA, chromatin, protein or other modalities measured in the same cells | 3 | - |
+| `spatial_multiomics` | joint spatial analysis of two or more molecular modalities | 2 | - |
+| `perturb_seq` | pooled perturbation screens with single-cell molecular readouts | 3 | - |
+| `immune_repertoire_sequencing` | BCR, TCR or other adaptive immune-receptor repertoire analysis | 3 | Immunoinformatics (topic_3948) |
+| `metagenomic_functional_profiling` | gene, pathway and functional profiling from metagenomic data | 3 | Metagenomics (topic_3174) |
+| `metagenome_binning` | grouping metagenomic contigs into metagenome-assembled genomes | 3 | - |
+| `metatranscriptomics` | RNA sequencing of microbial communities for activity and function | 2 | Metatranscriptomics (topic_3941) |
 
 ## 점검표
 
@@ -223,6 +223,185 @@ labhq가 계획과 산출에 붙이는 이름표를 한곳에 모은 표입니�
 | `gene_set_test` | 유전자 세트 검정은 주 모형의 통계량으로 순위를 매기거나 짝 보존 방식으로 하며 짝을 무시한 재검정을 주 결과로 쓰지 않는다 | 주 분석의 짝과 보정을 경로 검정에서도 보존하기 위해서다 |
 | `independent_validation` | 독립 코호트·데이터셋이 있으면 핵심 결과를 검증하고 없으면 이유를 밝힌다 | 한 데이터셋에만 맞는 결론인지 확인하기 위해서다 |
 | `probe_mapping` | probe→gene 집약 규칙과 플랫폼 주석 판본을 밝힌다 | 여러 probe와 오래된 주석이 유전자별 결과를 바꿀 수 있기 때문이다 |
+
+### proteomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `fdr_control` | target-decoy로 PSM·peptide·protein 수준 FDR(보통 1%)을 정하고 protein inference 규칙을 밝힌다 | 동정 오류는 단백질 수준으로 갈수록 쌓이기 때문이다 |
+| `missing_values` | 결측값의 성격(검출 한계 아래인지 무작위인지)에 맞는 대체 방법과 정규화를 밝힌다 | 저풍부 단백질의 결측은 무작위가 아니어서 대체 방식이 차등 결과를 바꾼다 |
+| `batch` | MS run 순서·TMT plex 같은 처리 batch와 비교 집단의 교락을 확인하고 모형에 넣거나 한계로 보고한다 | 기기 drift와 plex 차이를 생물학적 차이로 해석하지 않기 위해서다 |
+
+### proteomics_dia
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `spectral_library` | spectral library 방식(실험 library, 예측, library-free)과 분석 소프트웨어·판본을 밝힌다 | library 출처가 동정 수와 FDR 추정을 바꾼다 |
+| `fdr_control` | precursor·protein FDR을 run 단위와 실험 전체 단위로 나눠 보고한다 | run이 많으면 run별 1% FDR이 실험 전체에서 부풀려진다 |
+| `missing_values` | 결측값의 성격(검출 한계 아래인지 무작위인지)에 맞는 대체 방법과 정규화를 밝힌다 | 저풍부 단백질의 결측은 무작위가 아니어서 대체 방식이 차등 결과를 바꾼다 |
+
+### single_cell_proteomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `carrier_blank` | carrier 채널 배율과 빈 웰(blank) 대조를 밝히고 blank 대비 세포 신호를 보고한다 | carrier가 과하면 단일세포 정량이 왜곡되고, blank 없이는 배경 신호를 가를 수 없다 |
+| `cell_qc` | 세포별 QC 기준(동정 peptide·단백질 수, 반복 peptide의 CV)과 제외한 세포 수를 밝힌다 | 품질 낮은 세포가 군집이나 집단 차이처럼 보일 수 있기 때문이다 |
+| `batch` | 분석 batch(LC-MS run, TMT plex, plate)와 세포 유형·조건의 교락을 확인하고 모형에 넣는다 | 단일세포 자료는 결측이 많아 batch 효과가 생물학적 군집처럼 보이기 쉽다 |
+
+### spatial_proteomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `antibody_validation` | 항체 패널의 검증(대조 조직, 단독 염색과의 비교)과 클론을 밝힌다 | 검증되지 않은 항체 신호는 실제 단백질 분포를 보장하지 않는다 |
+| `segmentation_qc` | 세포 분할 방법과 분할 품질 확인 방식을 밝힌다 | 분할 오류가 이웃 세포 신호를 섞어 가짜 공발현을 만든다 |
+| `spillover` | 채널 간 spillover 보정 여부와 방법(spillover 행렬 등)을 밝힌다 | 채널 간 신호 번짐이 공발현 세포 유형처럼 보이기 때문이다 |
+
+### metaproteomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `search_database` | 검색 단백질 DB의 구성(짝 metagenome 유래 등)·크기, 숙주 단백질 포함 여부, FDR 기준을 밝힌다 | DB가 시료와 맞지 않거나 지나치게 크면 동정 수와 FDR 추정이 무너진다 |
+| `peptide_attribution` | 분류군·기능 배정에서 여러 분류군이 공유하는 peptide 처리 규칙(LCA 등)과 도구·DB 판본을 밝힌다 | 공유 peptide를 한 분류군에 몰아주면 조성이 왜곡된다 |
+
+### metabolomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `qc_samples` | pooled QC와 blank를 run 전체에 넣고 QC의 RSD 기준으로 feature를 거르며 신호 drift를 보정한다 | 기기 신호 drift와 오염 feature가 집단 차이처럼 보일 수 있기 때문이다 |
+| `batch` | 주입 순서를 무작위로 하고 분석 batch와 비교 집단의 교락을 확인한다 | 주입 순서와 batch가 집단과 겹치면 기술 차이와 생물학적 차이를 가를 수 없다 |
+| `annotation_confidence` | 대사체 동정은 확신 수준(MSI level 1–4 등)과 근거(표준품, MS/MS 일치)를 함께 보고한다 | 질량만 맞춘 추정 주석을 확정 동정으로 읽지 않게 하기 위해서다 |
+
+### spatial_metabolomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `annotation_confidence` | 대사체 주석은 질량 정확도와 FDR 통제 주석(METASPACE 등)으로 하고 FDR 수준을 밝힌다 | 고해상도 질량만으로는 이성질체와 우연 일치를 거를 수 없다 |
+| `background_normalization` | 매트릭스·조직 밖 영역 신호를 배경으로 확인해 빼고 정규화 방법(TIC 등)을 밝힌다 | 매트릭스 peak와 이온화 차이가 공간 패턴처럼 보이기 때문이다 |
+
+### gwas
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `sample_variant_qc` | 시료 QC(결측률, 성별 불일치, 혈연, 이형접합도)와 변이 QC(call rate, MAF, HWE), imputation 품질 기준을 밝힌다 | 유전형 오류와 시료 혼동이 거짓 연관을 만든다 |
+| `population_structure` | 주성분이나 혼합모형으로 집단 구조와 혈연을 보정하고 genomic inflation(λGC 또는 LDSC intercept)을 보고한다 | 집단 계층화가 표현형과 겹치면 거짓 연관이 생긴다 |
+| `significance_replication` | 유전체 전체 유의수준(5×10⁻⁸)을 쓰고 독립 표본 재현 여부를 밝힌다 | 수백만 번 검정에서 나온 단일 연구 신호는 재현 전까지 후보다 |
+
+### structural_variant_calling
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `merge_criteria` | caller 결과나 여러 시료의 SV를 합칠 때 병합 기준(breakpoint 거리, 크기 일치)과 도구를 밝힌다 | 병합 기준에 따라 SV 수와 시료 간 공유 여부가 달라진다 |
+| `validation` | 주요 SV는 read 시각화·long read·PCR 같은 독립 증거로 확인하거나 후보로 표시한다 | 반복 서열 영역의 SV 호출은 거짓 양성이 많다 |
+
+### de_novo_genome_assembly
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `contiguity_completeness` | contig·scaffold N50, 전체 크기, BUSCO 완결성과 lineage 판본을 보고한다 | 연속성과 완결성이 assembly로 답할 수 있는 질문을 정한다 |
+| `base_accuracy` | k-mer 기반 QV(Merqury 등)로 염기 정확도를 보고하고 phasing을 했으면 그 정확도도 밝힌다 | 연속성이 좋아도 염기 오류가 많으면 유전자 모델과 변이가 틀어진다 |
+| `contamination` | 오염 서열 점검(FCS-GX, BlobToolKit 등)과 세포기관 서열 분리 방식을 밝힌다 | 오염 contig가 그 생물의 유전자처럼 해석될 수 있다 |
+
+### genome_annotation
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `repeat_masking` | 유전자 예측 전에 종 맞춤 반복서열 library로 soft-masking하고 방법을 밝힌다 | 반복서열과 transposon이 가짜 유전자 모델을 만든다 |
+| `evidence_support` | 유전자 모델을 RNA-seq·단백질 증거로 뒷받침하고 쓴 증거와 도구(BRAKER, MAKER 등)를 밝힌다 | ab initio 예측만으로는 유전자 구조 오류가 많다 |
+| `annotation_completeness` | 주석 단백질 세트의 BUSCO 완결성과 근거 일치 지표(AED 등)를 보고한다 | 주석이 빠뜨린 유전자를 없는 유전자로 해석하지 않기 위해서다 |
+
+### pangenomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `graph_construction` | pangenome 구성 방법(Minigraph-Cactus, PGGB 등)과 넣은 haplotype, 기준 좌표계를 밝힌다 | 구성 방법과 기준 좌표계에 따라 그래프와 변이 표현이 달라진다 |
+| `input_assembly_quality` | 넣은 assembly들의 품질(QV, 완결성)과 phasing 여부를 보고한다 | assembly 오류가 그래프에서 가짜 변이로 남는다 |
+| `gene_family_thresholds` | 유전자 단위 pangenome이면 core·accessory 정의 임계값과 clustering 기준, 주석 오류 보정 여부를 밝힌다 | 임계값과 주석 오류가 accessory 유전자 수를 크게 바꾼다 |
+
+### phylogenetics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `alignment_trimming` | 다중 정렬 도구와 정렬 다듬기(trimAl 등) 기준을 밝힌다 | 정렬 오류와 잘 정렬되지 않은 구간이 계통수 위상을 바꾼다 |
+| `model_selection` | 치환 모형을 모형 선택(ModelFinder 등)으로 고르고 밝힌다 | 맞지 않는 모형은 가지 길이와 위상을 틀리게 추정한다 |
+| `branch_support` | 가지 지지도(bootstrap, UFBoot, SH-aLRT)를 보고하고 지지가 낮은 가지를 결론에 쓰지 않는다 | 지지 낮은 분기는 자료가 뒷받침하지 않는다 |
+| `recombination` | 세균·바이러스 계통이면 재조합 구간을 찾아 빼거나(Gubbins 등) 한계로 밝힌다 | 재조합 구간은 하나의 계통수를 따르지 않아 위상과 가지 길이를 왜곡한다 |
+
+### hi_c
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `library_qc` | valid pair 비율, cis/trans 비, 장거리 cis 비율, 중복률을 보고한다 | 라이브러리 품질이 나쁘면 접촉 행렬이 잡음으로 채워진다 |
+| `normalization_resolution` | 행렬 정규화(ICE, KR 등)와 분석 해상도를 밝히고 그 해상도가 depth로 뒷받침되는지 보고한다 | depth에 비해 해상도가 높으면 loop·TAD 호출이 불안정하다 |
+| `replicate_reproducibility` | 반복 간 재현성(HiCRep 등)을 보고하고 조건 비교는 반복을 갖춘 방법으로 한다 | 반복 없이 접촉 차이를 판정할 수 없다 |
+
+### spatial_epigenomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `library_qc` | 스팟별 단편 수, TSS enrichment, FRiP을 보고하고 조직 밖 스팟을 뺀다 | 스팟당 단편이 적어 품질 차이가 공간 패턴처럼 보이기 쉽다 |
+| `section_replicates` | 공간 변이·영역 비교는 공간 자기상관을 고려한 방법으로 하고, 절편·시료 단위 반복을 밝힌다 | 스팟을 독립 반복으로 세면 유의성이 부풀려진다 |
+
+### multi_omics_integration
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `sample_matching` | 오믹스 사이 시료 짝(같은 개체·시점)을 확인하고 한 오믹스에만 있는 시료의 처리 방식을 밝힌다 | 짝이 틀리거나 빠진 시료를 몰래 버리면 통합 결과가 왜곡된다 |
+| `per_omics_preprocessing` | 오믹스별 정규화·batch 보정을 통합 전에 따로 하고, 인자·군집마다 각 오믹스의 기여를 보고한다 | 규모가 큰 한 오믹스가 통합 결과를 지배할 수 있다 |
+| `cross_validation` | 지도 통합 모형(DIABLO 등)은 교차검증으로 성능을 보고하고 특징 선택을 검증 fold 안에서 한다 | 같은 자료로 고르고 평가하면 성능이 부풀려진다 |
+
+### single_cell_multiome
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `modality_qc` | 세포마다 modality별 QC(RNA의 UMI·미토콘드리아 비율, ATAC의 TSS enrichment·단편 수, 단백질의 배경 보정)를 함께 적용하고 기준을 밝힌다 | 한 modality만 걸러 남은 저품질 세포가 통합 군집을 흐린다 |
+| `pseudobulk` | 공여자 간 비교는 세포가 아니라 공여자 단위(pseudobulk 등)로 한다 | 세포를 독립 생물학적 반복으로 세는 오류를 막기 위해서다 |
+| `peak_gene_links` | peak–유전자 연결은 GC·접근성 배경을 보정한 상관으로 구하고 조절 관계는 독립 증거 없이 단정하지 않는다 | 같은 세포의 상관은 인과 조절을 보여 주지 않는다 |
+
+### spatial_multiomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `registration` | 절편·modality 사이 정합(registration) 방법과 정합 오차를 밝힌다 | 정합이 어긋나면 서로 다른 위치의 신호를 짝지어 해석하게 된다 |
+| `section_replicates` | 공간 변이·영역 비교는 공간 자기상관을 고려한 방법으로 하고, 절편·시료 단위 반복을 밝힌다 | 스팟을 독립 반복으로 세면 유의성이 부풀려진다 |
+
+### perturb_seq
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `guide_assignment` | 세포별 guide 배정 기준(UMI 임계값)과 guide가 없거나 여럿인 세포의 처리, MOI를 밝힌다 | 잘못 배정된 세포가 섞이면 교란 효과가 희석되거나 뒤섞인다 |
+| `perturbation_efficiency` | 표적 유전자의 knockdown·knockout 효율을 확인하고 교란을 피한 세포(Mixscape 등)를 처리한다 | 교란되지 않은 세포가 섞이면 효과를 과소추정한다 |
+| `nontargeting_controls` | 효과는 같은 batch의 non-targeting guide 세포와 비교해 판정한다 | 배양·batch 차이를 교란 효과로 오인하지 않기 위해서다 |
+
+### immune_repertoire_sequencing
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `umi_error_correction` | UMI로 PCR·시퀀싱 오류와 증폭 편향을 보정하고 consensus 기준을 밝힌다 | 증폭 오류가 가짜 clonotype과 부풀린 다양성을 만든다 |
+| `germline_annotation` | V(D)J 배정 도구와 germline 참조 판본(IMGT 등)을 밝히고 AIRR 표준 형식으로 결과를 남긴다 | 참조 판본에 따라 유전자 배정과 체세포 돌연변이 판정이 달라진다 |
+| `diversity_depth` | 다양성·clonality 비교는 시료 간 read·세포 수를 맞추거나(rarefaction 등) 표본 크기 영향을 밝힌다 | 다양성 지표는 표본 크기에 크게 좌우된다 |
+
+### metagenomic_functional_profiling
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `database_version` | 기능 주석 데이터베이스(UniRef, KEGG, eggNOG 등)와 판본, 도구를 밝힌다 | 데이터베이스 판본이 배정되는 기능과 경로를 바꾼다 |
+| `unmapped_fraction` | 시료별로 기능이 배정된 read 비율과 미배정 비율을 보고한다 | 배정률 차이가 기능 풍부도 차이처럼 보일 수 있다 |
+| `compositional_analysis` | 상대 풍부도는 조성 자료에 맞는 방법(CLR 변환 등)으로 비교하고 시퀀싱 깊이 차이를 처리한다 | 비율 자료를 그대로 비교하면 거짓 상관이 생긴다 |
+
+### metagenome_binning
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `bin_quality` | MAG의 완결성·오염(CheckM 등)과 품질 등급(MIMAG)을 보고한다 | 오염된 bin은 존재하지 않는 유전체를 만든다 |
+| `binning_refinement` | binning 도구, 여러 시료의 coverage 사용 여부, bin 정제(DAS Tool 등) 방법을 밝힌다 | binning 방식에 따라 회수되는 유전체 수와 오염이 크게 다르다 |
+| `dereplication` | 시료 간 중복 MAG 제거 기준(ANI 95% 등)과 분류 도구·DB 판본(GTDB-Tk 등)을 밝힌다 | 같은 유전체를 여러 번 세거나 판본마다 다른 분류명을 쓰지 않기 위해서다 |
+
+### metatranscriptomics
+
+| id | 점검 | 이유 |
+|---|---|---|
+| `rrna_host_removal` | rRNA 제거(실험·in silico)와 숙주 read 제거 뒤 남은 read 비율을 보고한다 | rRNA와 숙주 read가 남으면 미생물 전사 신호가 묻힌다 |
+| `dna_normalization` | 전사 차이는 짝 metagenome의 DNA 풍부도로 보정해 발현 변화와 분류군 풍부도 변화를 구분한다 | 분류군이 늘어난 것을 발현이 늘어난 것으로 오인하지 않기 위해서다 |
 
 ## 데이터 종류(data)
 
