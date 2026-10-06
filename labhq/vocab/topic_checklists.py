@@ -16,6 +16,14 @@ CHECKLIST_FILE = Path(__file__).with_name("topic_checklists.yaml")
 CHECKLIST_TSV = "topic_checklists.tsv"  # written in the planner's work folder (runner REFERENCE_FILE rule)
 CHECK_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 ANSWER = re.compile(r"^(step:([^\s]+)|assumption:\s*\S.+|not_applicable:\s*\S.+)$")
+SKIP_PREFIXES = ("assumption:", "not_applicable:")
+SKIP_WARNING = "점검 못 함"
+# A skip must say why (PI 2026-10-07, #446). These stand in for a reason without giving one; compared after
+# lowercasing and dropping everything but letters and digits, so "N/A", "n.a." and "- " all match.
+PLACEHOLDER_REASONS = frozenset({
+    "", "na", "none", "null", "nil", "tbd", "todo", "unknown", "skip", "skipped", "notapplicable", "assumption",
+    "없음", "해당없음", "모름", "미정", "생략",
+})
 
 
 @dataclass(frozen=True)
@@ -111,12 +119,30 @@ def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
         f"Every topic has checks in `{CHECKLIST_TSV}` in the current directory (columns topic, id, check, why).",
         "After choosing `topics`, read only the rows of the topics you declare.",
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
-        "`step:<step id>`, `assumption: <one line>`, or `not_applicable: <reason>`.",
-        "Use not_applicable only when the check does not apply to this request. When it applies but the plan cannot",
-        "do it (e.g. no independent cohort exists), answer `assumption: <why>`: that becomes a stated limitation.",
+        "`step:<step id>`, `assumption: <why it could not be done>`, or `not_applicable: <why it does not apply>`.",
+        "Do every applicable check the data allow. When a check applies but cannot be done (e.g. no independent",
+        "cohort exists), answer `assumption: <why it could not be done>`: a justified skip is acceptable, becomes a",
+        "stated limitation and is shown to the PI as a warning. Never skip silently or with an empty reason.",
+        "Use not_applicable only when the check does not apply to this request.",
         "A topic with no rows in the file adds no checklist requirement.",
     ]
     return "\n".join(lines)
+
+
+def skip_reason(value: Any) -> str | None:
+    """The reason of an assumption/not_applicable answer, "" when it gives none, None for any other answer."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    for prefix in SKIP_PREFIXES:
+        if text.startswith(prefix):
+            reason = text[len(prefix):].strip()
+            return "" if _placeholder(reason) else reason
+    return None
+
+
+def _placeholder(reason: str) -> bool:
+    return "".join(ch for ch in reason.lower() if ch.isalnum()) in PLACEHOLDER_REASONS
 
 
 def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[str]) -> list[str]:
@@ -128,16 +154,44 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
     known = set(step_ids)
     for item in required:
         value = body.get(item.id)
+        if skip_reason(value) == "":
+            errors.append(f"checklist.{item.id} must answer with a reason: assumption: <why it could not be done> "
+                          "or not_applicable: <why it does not apply>")
+            continue
         if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
             # The check itself rides along: the plan prompt names only the file (#420), so a correction round
             # still says what to answer if the planner never read it.
-            errors.append(f"checklist.{item.id} must answer step:<step id>, assumption: <one line>, or "
-                          f"not_applicable: <reason> (check: {item.check})")
+            errors.append(f"checklist.{item.id} must answer step:<step id>, assumption: <why it could not be "
+                          f"done>, or not_applicable: <why it does not apply> (check: {item.check})")
             continue
         match = ANSWER.fullmatch(value.strip())
         if match and match.group(2) and match.group(2) not in known:
             errors.append(f"checklist.{item.id} refers to unknown step {match.group(2)}")
     return errors
+
+
+def label(item: ChecklistItem) -> str:
+    """topic/id for the PI; a precedent item's id already names its source (precedent.1)."""
+    return item.id if item.id.startswith(f"{item.topic}.") else f"{item.topic}/{item.id}"
+
+
+def skipped(answers: Any, required: list[ChecklistItem]) -> list[tuple[str, str]]:
+    """(topic/id, reason) for each required check the plan will not do: an assumption answer with a real reason.
+
+    One per item, in requirement order. not_applicable is not here: it does not apply, nothing was left undone."""
+    body = answers if isinstance(answers, dict) else {}
+    found = []
+    for item in required:
+        value = body.get(item.id)
+        reason = skip_reason(value)
+        if reason and value.strip().startswith("assumption:"):
+            found.append((label(item), reason))
+    return found
+
+
+def skip_warnings(answers: Any, required: list[ChecklistItem]) -> list[str]:
+    """One plan warning per check not done, so the PI sees each during the run (PI 2026-10-07, #446)."""
+    return [f"{SKIP_WARNING} {name}: {reason}" for name, reason in skipped(answers, required)]
 
 
 def limitations(answers: Any) -> list[str]:
@@ -149,7 +203,7 @@ def limitations(answers: Any) -> list[str]:
     found = []
     for item_id, value in answers.items():
         if isinstance(item_id, str) and isinstance(value, str) and value.startswith("assumption:"):
-            reason = value[len("assumption:"):].strip()
+            reason = skip_reason(value)
             if reason:
                 found.append(f"{item_id}: {reason}")
     return sorted(found)
@@ -161,4 +215,4 @@ def not_applicable(answers: Any) -> list[str]:
         return []
     return sorted(item_id for item_id, value in answers.items()
                   if isinstance(item_id, str) and isinstance(value, str) and value.startswith("not_applicable:")
-                  and value[len("not_applicable:"):].strip())
+                  and skip_reason(value))
