@@ -4,6 +4,30 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · #446 — topic별 근거 논문 묶음
+
+- 결론: topic 43개 모두 근거 논문 10편 이상(최소 20, 최대 82), 모두 1255편이다. 30편 미만은 6개(`viral_genomics` 20, `metaproteomics` 23, `microarray_expression` 24, `amplicon_sequencing` 25, `metagenome_assembly` 28, `metatranscriptomics` 29).
+- 바뀐 것: `docs/reference/topic_papers.tsv`·`topic_papers.md` 추가, reference README·README·README.en·manual에 한 줄씩 연결.
+- 실행한 것: 1255개 PMID 전부 NCBI esummary 대조(제목 단어 50% 이상 겹침) → 1255 ok·0 제외, `scripts/check_public.sh`, `pytest -q`.
+- 미해결: 30편 목표(PI 결정)는 위 6개 topic이 남았다.
+- 근거: `docs/reference/topic_papers.md`.
+
+## 2026-10-07 · 한국어 Windows UTF-8 모드에서 키 파일 권한 검사가 멈추던 문제
+
+- 결론: `labhq init`의 AlphaGenome 키 쓰기와 doctor의 계정 확인이 `whoami`·`icacls` 출력을 콘솔 코드 페이지로 읽는다. 전에는 `PYTHONUTF8=1`(인스턴스를 띄우는 방식)에서 한국어 출력(CP949)을 UTF-8로 읽다 실패해 키 쓰기가 멈추고 doctor는 계정을 잃었다.
+- 바뀐 것: `labhq/tools/annot_keys.py`(`CONSOLE` 인코딩), `labhq/doctor.py`(whoami), `tests/test_annot_keys_console.py`.
+- 실행한 것: `PYTHONUTF8=1` pytest `tests/test_annot_regulatory.py`·doctor test·새 test 통과. 고치기 전에는 이 PC에서 `test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of_everything`가 `UnicodeDecodeError`로 실패했다.
+- 미해결: 없음.
+- 근거: 이 PR.
+
+## 2026-10-07 · 어휘·topic·점검표 표 (#453)
+
+- 결론: PI 요청대로 topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보는 md 하나(`docs/vocabulary.md`)를 README에서 링크했다.
+- 바뀐 것: `scripts/vocab_tables.py`(원본 `labhq/vocab/`에서 생성, `--write`·`--check`), `docs/vocabulary.md`(topic 43·점검표 124항목·data 30·format 28·operation 22·공개 자원 21), `tests/test_vocab_tables.py`(어긋나면 실패), README·영문 README 링크, HANDOFF 작업 방식 한 줄.
+- 실행한 것: `tests/test_vocab_tables.py`·`tests/test_integrations.py` 36 passed, `scripts/check_public.sh`.
+- 미해결: 없음.
+- 근거: PR #453.
+
 ## 2026-10-07 · #382 — 개인 경로를 Codex sandbox 읽기 거부로
 
 - 결론: 안 A 적용 뒤 직원 홈(elevated)에서 실측했다. 개인 경로가 Codex sandbox의 읽기 거부로 걸리고(canary `Access is denied`), 작업 폴더·`--add-dir` 쓰기는 그대로이며 승인 창은 뜨지 않았다.

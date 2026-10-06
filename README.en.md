@@ -96,7 +96,7 @@ Before planning, the prior-research staff pull the analyses that must be done fr
 
 **Same bar at every handoff**
 
-The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
+The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), and each topic now has at least 20 supporting papers, 1255 in all ([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [list](docs/reference/topic_papers.md)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
 
 <details><summary>Evidence and limits</summary>
 
@@ -169,7 +169,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 | Semantics | Agreements on what to judge with the tags | Hash freeze of the PI-approved plan (CP1), rule packs per analysis type (single-cell DE, bulk tumor-vs-normal; applied by the request's topic key), a match / mismatch / unknown verdict on whether a step's input fits the method, report evidence anchors |
 | Ontology | Relations between tags | Only a few parent-child relations. The map that groups a finished request into a provenance model ("who made it, and can it be reused") and an object view ("who owns what, and what awaits approval") is computed only as a shadow |
 
-The shadow computation is off by default and only records even when on. `semantics: ab` gives reuse candidates to only half of research requests as a reference in the CSO plan, so the effect can be compared. The vocabulary is being widened to cover bioinformatics requests in general (#375). Details are in the [manual](docs/manual.md#%EC%9D%98%EB%AF%B8-%EB%AA%A8%EB%8D%B8%EA%B3%BC-%EC%98%A8%ED%86%A8%EB%A1%9C%EC%A7%80).
+The shadow computation is off by default and only records even when on. `semantics: ab` gives reuse candidates to only half of research requests as a reference in the CSO plan, so the effect can be compared. The vocabulary is being widened to cover bioinformatics requests in general (#375). Details are in the [manual](docs/manual.md#%EC%9D%98%EB%AF%B8-%EB%AA%A8%EB%8D%B8%EA%B3%BC-%EC%98%A8%ED%86%A8%EB%A1%9C%EC%A7%80); every topic, checklist item and vocabulary key is in the [vocabulary tables](docs/vocabulary.md) (Korean).
 
 ## Getting started on the web
 
@@ -248,6 +248,7 @@ Each version has pass criteria, and meeting them moves it on to the next version
 | [Manual](docs/manual.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
 | [PI Q&A](docs/pi-qa.md) | What the PI asked, the answers, and the decisions made |
 | [Research protocol](docs/research_protocol.md) | The research lane's contract and checkpoints |
+| [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
 | [Patch notes](patch_notes/README.md) | What changed |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Agents developing this repository |
 

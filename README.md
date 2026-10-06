@@ -94,7 +94,7 @@ AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서
 
 **일을 넘겨도 기준은 같다**
 
-CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔습니다([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
+CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔고([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)), topic마다 근거 논문을 20편 이상, 모두 1255편 붙였습니다([#446](https://github.com/ehojune/bioinfo-team-3d/pull/446), [목록](docs/reference/topic_papers.md)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
 
 <details><summary>근거와 한계</summary>
 
@@ -167,7 +167,7 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 | 시맨틱 | 이름표로 무엇을 판정할지 정한 약속 | PI가 승인한 계획의 hash 동결(CP1), 분석 종류별 규칙 pack(단일세포 DE, 벌크 종양-정상; 요청의 topic 키로 적용), 단계 입력이 방법에 맞는지 맞음·틀림·모름 판정, 보고서 근거 앵커 |
 | 온톨로지 | 이름표 사이의 관계 | 상하위 관계 몇 개만 둡니다. 끝난 요청을 출처 모델("누가 만들었고 다시 써도 되나")과 객체 뷰("누가 무엇을 맡았고 무엇이 승인을 기다리나")로 묶는 지도는 그림자로만 계산합니다 |
 
-그림자 계산은 기본 꺼짐이고 켜도 기록만 합니다. `semantics: ab`는 연구 요청 절반에만 재사용 후보를 CSO 계획에 참고로 줘서 효과를 견줍니다. 어휘는 생명정보 요청 전반으로 넓히는 중입니다(#375). 자세한 설명은 [매뉴얼](docs/manual.md#의미-모델과-온톨로지)에 있습니다.
+그림자 계산은 기본 꺼짐이고 켜도 기록만 합니다. `semantics: ab`는 연구 요청 절반에만 재사용 후보를 CSO 계획에 참고로 줘서 효과를 견줍니다. 어휘는 생명정보 요청 전반으로 넓히는 중입니다(#375). 자세한 설명은 [매뉴얼](docs/manual.md#의미-모델과-온톨로지)에 있고, topic·점검표·어휘 키 전체는 [어휘·topic·점검표 표](docs/vocabulary.md)에 있습니다.
 
 ## 웹으로 시작하기
 
@@ -246,6 +246,7 @@ GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
 | [매뉴얼](docs/manual.md) | 명령줄, 설정, 안전 장치, 연구 lane, 알려진 한계까지 깊이 보려는 사람 |
 | [PI Q&A](docs/pi-qa.md) | PI가 물은 것과 답, 내린 결정 |
 | [연구 수행 규약](docs/research_protocol.md) | 연구 lane의 계약과 checkpoint |
+| [어휘·topic·점검표](docs/vocabulary.md) | topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보려는 사람 |
 | [패치노트](patch_notes/README.md) | 바뀐 내용 |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | 이 저장소를 개발하는 에이전트 |
 
