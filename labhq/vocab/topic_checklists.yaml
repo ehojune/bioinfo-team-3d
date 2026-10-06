@@ -301,9 +301,6 @@ gwas:
     why: 수백만 번 검정에서 나온 단일 연구 신호는 재현 전까지 후보다
 
 structural_variant_calling:
-  - id: caller_benchmark
-    check: SV caller와 판본을 밝히고 GIAB SV benchmark 같은 기준으로 정밀도·민감도를 확인하거나 못 한 이유를 밝힌다
-    why: caller마다 SV 종류·크기별 성능이 크게 다르다
   - id: merge_criteria
     check: caller 결과나 여러 시료의 SV를 합칠 때 병합 기준(breakpoint 거리, 크기 일치)과 도구를 밝힌다
     why: 병합 기준에 따라 SV 수와 시료 간 공유 여부가 달라진다

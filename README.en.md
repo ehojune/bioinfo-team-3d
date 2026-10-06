@@ -102,7 +102,7 @@ The CSO writes a domain tag (topic key) on every plan. The key is picked from th
 
 <sub>Evidence: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390) (topic required, 100-key vocabulary) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369) (a bypass where one line in the plan text dropped the domain rules, closed with a topic check)</sub>
 
-<sub>Limits: The checklist covers 43 domains and 125 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). The 40 domains beyond the first three have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
+<sub>Limits: The checklist covers 43 domains and 124 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). The 40 domains beyond the first three have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
 
 </details>
 

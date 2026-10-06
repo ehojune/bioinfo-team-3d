@@ -100,7 +100,7 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 
 <sub>근거: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390)(topic 필수, 어휘 100키) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369)(계획 문장 한 줄로 분야 규칙이 빠지던 우회 → topic 판정으로 닫음)</sub>
 
-<sub>한계: 점검표는 43개 분야, 125항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 처음 세 분야 밖의 40개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
+<sub>한계: 점검표는 43개 분야, 124항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 처음 세 분야 밖의 40개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
 
 </details>
 
