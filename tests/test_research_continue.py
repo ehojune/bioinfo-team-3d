@@ -462,6 +462,10 @@ async def test_a_continuation_that_ends_before_dispatch_keeps_the_revise_record(
     ended = carried["ended_before_dispatch"]
     assert why in ended["outcome"] + ended["reason"]
     assert _steps(hub)[-1] == "plan"  # no step of round 2 ran
+    # A failed plan task is kept for diagnosis, never listed as a step result (PR #448 review).
+    assert set(req["results"]) == {"s1", "s2"}
+    if fail_plan:
+        assert "plan" in ended["task_results"]
 
     # The record pairs round 1's results with round 1's frozen plan, approval, packs and CP2 receipt, not with a
     # draft that never ran or was approved (PR #448 review).

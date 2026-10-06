@@ -4805,7 +4805,13 @@ class Orchestrator:
         draft = research_continuation.restore_round(req, previous)
         if draft:
             carried["declined_plan"] = draft
-        carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason}
+        # Results of a round that never dispatched are not step results: a failed plan task or a refused budget
+        # card arrives as results={"plan": ...}. Keep it for diagnosis here, not beside the restored steps (PR #448).
+        step_ids = {str(s.get("id")) for s in (req.get("plan") or {}).get("steps") or [] if isinstance(s, dict)}
+        stray = {key: value for key, value in (results or {}).items() if key not in step_ids}
+        results = {key: value for key, value in (results or {}).items() if key in step_ids}
+        carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason,
+                                            **({"task_results": stray} if stray else {})}
         req["outcome"] = "research_review_revise"
         report = "\n".join([
             f"이어 가기 {carried.get('round')}차가 단계 실행 전에 끝났습니다: {reason}",
