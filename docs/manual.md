@@ -231,10 +231,19 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 | `link_inputs.py` | 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇는 스크립트(의존이 있을 때만) |
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
 | `MANIFEST.tsv` | 상대경로·크기·sha256·단계·원래 절대경로·복사 상태 |
+| `INPUTS.tsv` | 단계에 연 외부 입력 파일의 경로·크기·mtime·sha256 또는 생략 이유 |
 
 단계 폴더는 원래 workdir의 `outputs/` 구조를 유지합니다. 묶음은 폴더를 순회하지 않고 runner가 실행 때 기록하고 hash한 산출만 링크를 따르지 않는 handle로 엽니다. 현재 hash가 기록과 다르거나 파일 확인·상한 검사가 실패하면 복사하지 않고 `MANIFEST.tsv`에 이유를 남기며 묶음을 `incomplete`로 표시합니다. 단계가 보고하지 않고 `outputs/`에 쓴 파일(그림, gene-set 사본 등)도 스크립트가 읽을 수 있어 복사합니다. 기록된 산출을 모두 복사한 뒤 남은 상한 안에서 복사하고, 실행 때 hash가 없어 상태를 `copied (unreported)`로 적습니다. 이런 파일이 빠져도 묶음은 `incomplete`가 되지 않고 부록에 개수만 남습니다. 단계는 앞 단계 산출을 작업 폴더 안 `inputs/<앞 단계 id>/`로 읽습니다. runner가 실행 전에 이 링크(POSIX symlink, Windows junction)를 앞 단계 `outputs/`에 걸고, 프롬프트에는 그 상대경로만 줍니다. 링크를 못 걸면 이유와 원래 경로를 프롬프트에 적습니다. 공유 계정 HPC 모드(`hpc.submit_prefix`)에서는 잡이 다른 계정으로 `hpc_out/`에서 돌고 제출 검사가 작업 폴더의 링크를 모두 거부하므로 링크를 만들지 않고 원래 경로를 줍니다. 묶음에서는 `python link_inputs.py`가 같은 링크를 다시 겁니다(안 되면 복사). README는 각 `steps/<step_id>/`에서 스크립트를 실행하고, 위 단계 절대경로는 그 폴더 기준 상대경로로 바꿉니다. Markdown 링크는 문서 기준입니다. Python은 runner가 보고한 명령을 쓰고, 모르면 `python`과 경고를 함께 적습니다. 다른 절대경로는 manifest와 부록에 남깁니다. 수정 전 판은 부록의 `대체됨` 목록에만 적습니다.
 
-묶음 README·부록과 웹 요청 화면에는 재현 등급을 적습니다(`docs/research_protocol.md`의 구분). `replayable`은 기록 산출이 모두 복사됐고, 데이터를 낸 단계마다 스크립트가, 스크립트를 쓴 단계마다 자기나 앞 단계의 환경 기록(`outputs/env/`)이 있고, 복사한 스크립트에 절대경로가 남지 않았을 때입니다. 하나라도 빠지면 `documented`이고 빠진 것을 이유로 적습니다. `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 주며, 아직 그 기록을 쓰는 곳은 없습니다.
+묶음 README·부록과 웹 요청 화면에는 재현 등급을 적습니다(`docs/research_protocol.md`의 구분). `replayable`은 기록 산출이 모두 복사됐고, 데이터를 낸 단계마다 스크립트가, 스크립트를 쓴 단계마다 자기나 앞 단계의 환경 기록(`outputs/env/`)이 있고, 복사한 스크립트에 절대경로가 남지 않았을 때입니다. 하나라도 빠지면 `documented`이고 빠진 것을 이유로 적습니다. 입력 hash·생략 수와 이유도 함께 적되 등급 기준에는 쓰지 않습니다. `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 주며, 아직 그 기록을 쓰는 곳은 없습니다.
+
+runner는 직원 CLI를 띄우기 전에 project·upstream·참고 폴더를 산출과 같은 held-directory walker로 나열하고 hash합니다(단계 자신의 작업 폴더와, 상위 폴더를 거쳐 들어가는 `runner.workspace_root` 아래 실행 폴더는 빼고). 기록은 단계가 읽은 실행 전 내용이며, 단계가 끝난 뒤 다시 보아 내용이 바뀐 파일에는 `changed_during_step`을 붙이고 경고합니다(project·upstream 폴더는 직원이 쓸 수 있습니다). 단계가 실패하거나 취소돼도 실행 전 기록은 남습니다. 링크·junction·하위 mount는 따라가지 않고, restricted 구역과 `policy.private_paths`는 파일을 열지 않은 채 각각 `restricted`·`private`로 남깁니다. 파일당 `runner.input_hash_max_file_bytes`(기본 2 GiB), 단계당 cache miss `runner.input_hash_max_total_bytes`(기본 20 GiB), 파일 수·깊이는 `reference_scan_max_entries`·`reference_scan_max_depth`를 씁니다. cache는 `runner.state_dir/input-sha256-cache.json` 하나이며, 키는 (실제 경로, 크기, mtime_ns)에 열린 파일에서 읽은 파일 ID와 POSIX ctime을 더한 것입니다. 같은 크기로 바꿔치고 mtime을 되돌린 파일(`cp -p`, `os.utime`)도 다시 hash합니다. Windows에는 ctime이 없어 같은 파일을 제자리에서 고쳐 쓰고 크기·mtime을 되돌리면 알아채지 못합니다. cache가 깨지면 버리고 다시 만듭니다.
+
+| runner 설정 | 기본값 | 입력 기록에서 하는 일 |
+|---|---:|---|
+| `input_hash_max_file_bytes` | 2 GiB | 큰 파일은 `too_large`로 생략 |
+| `input_hash_max_total_bytes` | 20 GiB | 단계의 새 hash 읽기가 넘으면 `total_limit`로 생략 |
+| `reference_scan_max_entries` · `reference_scan_max_depth` | 20,000 · 16 | 파일 수·폴더 깊이 상한 |
 
 ```mermaid
 flowchart LR

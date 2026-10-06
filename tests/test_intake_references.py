@@ -686,7 +686,14 @@ async def test_a_link_into_a_zone_is_not_listed_through(tmp_path, monkeypatch):
     settings.policy.data_zones.append(DataZone(path=str(project / "controlled")))
     listed = []
     real_scandir = os.scandir
-    monkeypatch.setattr(intake.os, "scandir", lambda p: listed.append(Path(p)) or real_scandir(p))
+    def listed_path(p):
+        # The input walker (#442) lists held folders by descriptor on POSIX; record the folder it stands for.
+        if isinstance(p, int):
+            return Path(os.readlink(f"/proc/self/fd/{p}")) if os.path.isdir("/proc/self/fd") else None
+        return Path(p)
+
+    monkeypatch.setattr(intake.os, "scandir",
+                        lambda p: (listed.append(path) if (path := listed_path(p)) else None) or real_scandir(p))
     runner, seen = _reference_runner(tmp_path, monkeypatch, settings)
     await runner.run_task(Task(id="task-z", request_id="r1", agent_id="worker", prompt="work",
                                meta={"project_dirs": [str(project)]}))
