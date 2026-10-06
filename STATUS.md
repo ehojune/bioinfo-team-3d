@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · #446 — topic별 근거 논문 묶음
+
+- 결론: topic 43개 모두 근거 논문 10편 이상(최소 20, 최대 82), 모두 1255편이다. 30편 미만은 6개(`viral_genomics` 20, `metaproteomics` 23, `microarray_expression` 24, `amplicon_sequencing` 25, `metagenome_assembly` 28, `metatranscriptomics` 29).
+- 바뀐 것: `docs/reference/topic_papers.tsv`·`topic_papers.md` 추가, reference README·README·README.en·manual에 한 줄씩 연결.
+- 실행한 것: 1255개 PMID 전부 NCBI esummary 대조(제목 단어 50% 이상 겹침) → 1255 ok·0 제외, `scripts/check_public.sh`, `pytest -q`.
+- 미해결: 30편 목표(PI 결정)는 위 6개 topic이 남았다.
+- 근거: `docs/reference/topic_papers.md`.
+
 ## 2026-10-07 · 한국어 Windows UTF-8 모드에서 키 파일 권한 검사가 멈추던 문제
 
 - 결론: `labhq init`의 AlphaGenome 키 쓰기와 doctor의 계정 확인이 `whoami`·`icacls` 출력을 콘솔 코드 페이지로 읽는다. 전에는 `PYTHONUTF8=1`(인스턴스를 띄우는 방식)에서 한국어 출력(CP949)을 UTF-8로 읽다 실패해 키 쓰기가 멈추고 doctor는 계정을 잃었다.

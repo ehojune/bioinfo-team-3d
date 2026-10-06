@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:57 | [`7d2c503`](https://github.com/ehojune/bioinfo-team-3d/pull/455/commits/7d2c503) | main 병합: 점검표가 43 topic 모두에 생긴 매뉴얼 문단에 topic별 근거 논문 링크를 이어 붙였다. |
+| 02:37 | [`4e62c63`](https://github.com/ehojune/bioinfo-team-3d/pull/455/commits/4e62c63) | topic 43개마다 PMID를 검증한 근거 논문 1255편 목록을 더했다(topic별 20~82편, |
 | 02:29 | [`ef64690`](https://github.com/ehojune/bioinfo-team-3d/pull/454/commits/ef64690) | 한국어 Windows에서 PYTHONUTF8=1이면 키 파일 권한 검사와 doctor 계정 확인이 whoami·icacls 출력을 못 읽던 것을 콘솔 코드 페이지로 읽게 고쳤다. |
 | 02:06 | [`578e2b2`](https://github.com/ehojune/bioinfo-team-3d/pull/453/commits/578e2b2) | #446 병합 뒤 표를 점검표 124항목으로 다시 생성했다. |
 | 02:05 | [`52174cd`](https://github.com/ehojune/bioinfo-team-3d/pull/453/commits/52174cd) | topic·점검표·어휘 키·공개 자원을 표로 모은 docs/vocabulary.md를 원본에서 생성하고(scripts/vocab_tables.py), README에서 링크한다. |
