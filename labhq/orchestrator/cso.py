@@ -39,7 +39,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, pack_
 from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
-from ..vocab import topic_checklists
+from ..vocab import public_resources, topic_checklists
 from ..vocab import topics as topic_types
 
 if TYPE_CHECKING:
@@ -1609,14 +1609,18 @@ def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.Checkli
 
 
 def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
+    # Every plan sees the public resource reference (PI 2026-10-06, #435 C), with or without a topic checklist.
+    resources = public_resources.prompt_rule()
     if not catalog and not isinstance(precedents, dict):
-        return ""
+        return ("\n" + resources) if resources else ""
     lines = [topic_checklists.prompt_rule(catalog)]
     rendered = analysis_precedents_text(precedents)
     if rendered:
         lines += ["", rendered,
                   "Put every recommended analysis in the plan when scope and budget allow. Otherwise add one short "
                   "cited reason to top-level `suggested_next` (maximum 8)."]
+    if resources:
+        lines += ["", resources]
     return "\n".join(lines)
 
 
