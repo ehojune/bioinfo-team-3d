@@ -3142,14 +3142,16 @@ class Orchestrator:
                 cp2 = read_evidence_decision(decision)
             decided = cp2 or "unreadable"
             note = str(decision.get("note") or "").strip()
+            # Kept per step in the receipt: a continuation reuses a step together with its salvage records (#90).
+            salvage = contract.pop("result_salvage", None) or {}
             contract.setdefault("checkpoints", {})["cp2"] = {
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
                 **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
-                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
-            contract.pop("result_salvage", None)
+                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                **({"result_salvage": salvage} if salvage else {})}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         audit = f"CP2 evidence review: {decided}."
@@ -3372,7 +3374,12 @@ class Orchestrator:
         """Pair the new plan with the previous round's results: keep only reusable steps' results (#90).
 
         Called before the save that stores the new plan, so a restart sees the plan and its pruned results together.
-        The reuse is not final until the output hashes are checked after the new CP1 (``_verify_research_reuse``)."""
+        The reuse is not final until the output hashes are checked after the new CP1 (``_verify_research_reuse``).
+
+        The previous round's CP1 approval, CP2 receipt, review and continue decision are dropped in the same save:
+        they are keyed by plan_sha256, and a new plan byte-identical to the revised one (a P1 execution mistake in an
+        unchanged step) has the same hash. Kept, they would skip the new CP1 and CP2, reuse the "revise" review and
+        continue again without the PI (PR #448 review). The round archive in ``rounds`` keeps them."""
         req = self.hub.requests[rid]
         contract = req["research_contract"]
         carried = contract["continuation"]
@@ -3381,13 +3388,30 @@ class Orchestrator:
                                                          carried.get("p1_issues") or [])
         carried.update(plan_sha256=research_plan_sha256(plan), reuse=reused, rerun=rerun, verified=False)
         carried.pop("refused_reuse", None)
+        for key in ("approval", "review", "continue_decision"):
+            contract.pop(key, None)
+        (contract.get("checkpoints") or {}).pop("cp2", None)
+        # A reused step keeps the evidence rows and claims its result salvage refused; CP2 shows them again.
+        salvage = {sid: rows for sid, rows in ((previous.get("cp2") or {}).get("result_salvage") or {}).items()
+                   if sid in reused}
+        if salvage:
+            contract["result_salvage"] = salvage
+        else:
+            contract.pop("result_salvage", None)
         req["results"] = {sid: previous["results"][sid] for sid in reused}
+        self._forget_step_state(rid, (set(rerun) | set(req.get("step_decisions") or {}) |
+                                      set(req.get("pending_revisions") or {})) - set(reused))
+        req["pending_questions"] = []
+
+    def _forget_step_state(self, rid: str, steps: set[str]) -> None:
+        """A step that runs again in a continuation starts fresh: no earlier PI decision, pending revision or
+        attempt count, so it never resumes an earlier round's session in that round's work folder (#90)."""
+        req = self.hub.requests[rid]
         for key in ("step_decisions", "pending_revisions"):
             entries = req.get(key) or {}
-            for sid in [sid for sid in entries if sid not in reused]:
+            for sid in [sid for sid in entries if sid in steps]:
                 entries.pop(sid)
-        req["pending_questions"] = []
-        for sid in rerun:
+        for sid in steps:
             self.attempts.get(rid, {}).pop(sid, None)
 
     async def _verify_research_reuse(self, rid: str, plan: dict) -> None:
@@ -3407,11 +3431,17 @@ class Orchestrator:
             refused = {sid: f"hash check failed: {type(error).__name__}: {error}" for sid in reused}
         dropped = research_continuation.with_dependents(plan, refused) & set(reused)
         rerun = dict(carried.get("rerun") or {})
+        salvage = req["research_contract"].get("result_salvage") or {}
         for sid in reused:
             if sid in dropped:
                 saved.pop(sid, None)
+                salvage.pop(sid, None)
                 rerun[sid] = (f"output hash check: {refused[sid]}" if sid in refused else
                               "upstream reuse refused: " + ", ".join(sorted(set(refused) & dropped)))
+        if not salvage:
+            req["research_contract"].pop("result_salvage", None)
+        # A refused step runs fresh, not as the round-1 session in the folder whose file changed (PR #448 review).
+        self._forget_step_state(rid, dropped)
         carried.update(verified=True, reuse=[sid for sid in reused if sid not in dropped], rerun=rerun,
                        refused_reuse=[{"step_id": sid, "reason": rerun[sid]} for sid in reused if sid in dropped])
         self.hub.save_request(rid)
@@ -4711,9 +4741,36 @@ class Orchestrator:
             else:
                 await self._emit(rid, "request.failed", failed)
 
+    @staticmethod
+    def _unstarted_continuation_end(req: dict, report: str, results: dict,
+                                    review: dict | None) -> tuple[str, dict, dict | None]:
+        """A continuation round that ends before its new CP1 let any step run (#90, PR #448 review).
+
+        A rejected or timed-out CP1, a failed or invalid plan, or an error ends the request as the revise it
+        continued: outcome ``research_review_revise``, the previous round's review on top, and its results kept,
+        so the record and ``labhq verify`` still show what ran. Why the round ended is kept in
+        ``continuation.ended_before_dispatch``."""
+        contract = req.get("research_contract") or {}
+        carried = contract.get("continuation") or {}
+        rounds = contract.get("rounds") or []
+        if not carried or carried.get("verified") or not rounds:
+            return report, results, review
+        previous = rounds[-1]
+        stored = previous.get("review") or {}
+        reason = (report.strip().splitlines() or ["-"])[0]
+        carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason}
+        req["outcome"] = "research_review_revise"
+        report = "\n".join([
+            f"이어 가기 {carried.get('round')}차가 단계 실행 전에 끝났습니다: {reason}",
+            f"{previous.get('round')}차 결과와 리뷰가 이 요청의 결과입니다.", "",
+            f"Research review ({stored.get('reviewer') or '-'}): revise.",
+            *_research_issue_lines(stored.get("issues") or []), "", report])
+        return report, {**(previous.get("results") or {}), **results}, review or (stored or None)
+
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
+        report, results, review = self._unstarted_continuation_end(req, report, results, review)
         report, report_appendix = _split_report_appendix(report)
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
             report_appendix = _appendix_sections(report_appendix, [report])

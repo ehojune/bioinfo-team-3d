@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -57,7 +58,7 @@ def _result(hub, task, step) -> dict:
     }
 
 
-def _hub(tmp_path: Path, decisions: list, *, reviews=None, limit: int = 2):
+def _hub(tmp_path: Path, decisions: list, *, reviews=None, limit: int = 2, mutate=None, fail_round2_plan=False):
     settings = _settings()
     settings.orchestrator.reviewer_agent = "sci_reviewer"
     settings.runner.workspace_root = str(tmp_path / "ws")
@@ -68,9 +69,12 @@ def _hub(tmp_path: Path, decisions: list, *, reviews=None, limit: int = 2):
     async def reply(task):
         hub = holder["hub"]
         kind = task.meta["kind"]
+        assert len(hub.calls) < 30, "runaway continuation"
         if kind == "plan":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
-                              structured=_plan(2 if "Continuation (research round 2)" in task.prompt else 1))
+            round_no = 2 if "Continuation (research round 2)" in task.prompt else 1
+            if round_no == 2 and fail_round2_plan:
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="planner crashed")
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_plan(round_no))
         if kind == "step":
             step = next(s for s in hub.requests["r"]["plan"]["steps"] if s["id"] == task.meta["step_id"])
             relative = output_relpath(step["outputs"][0])
@@ -79,7 +83,10 @@ def _hub(tmp_path: Path, decisions: list, *, reviews=None, limit: int = 2):
             body = f"gene\teffect\n{step['id']}\t{step['instruction']}\n".encode()
             (workdir / relative).parent.mkdir(parents=True, exist_ok=True)
             (workdir / relative).write_bytes(body)
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_result(hub, task, step),
+            structured = _result(hub, task, step)
+            if mutate:
+                mutate(task, step, structured)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=structured,
                               outputs=[relative], output_sha256={relative: hashlib.sha256(body).hexdigest()},
                               workdir=str(workdir), workdir_id=workdir_id)
         if kind == "review":
@@ -255,3 +262,95 @@ def test_restart_recovery_never_hands_a_continuation_task_an_earlier_rounds_resu
     assert Hub._matches_recovery(first, entry)
     assert not Hub._matches_recovery(second, entry)
     assert Hub._matches_recovery(second, {**entry, "payload": {"meta": {**second.meta}}})
+
+
+@pytest.mark.asyncio
+async def test_an_identical_continuation_plan_still_needs_a_new_cp1_cp2_and_review(tmp_path, monkeypatch):
+    """A P1 execution mistake in an unchanged step: the CSO returns the revised plan byte for byte (PR #448 review).
+    Its hash equals round 1's, yet the round-1 approval, CP2 receipt, review and continue decision are not reused."""
+    monkeypatch.setattr(sys.modules[__name__], "FIXED", valid_plan(steps=2)["steps"][1]["instruction"])
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE], reviews=[REVISE, REVISE], limit=1)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    assert _kinds(hub) == ["research_plan", "research_evidence", "research_continue", "research_plan",
+                           "research_evidence"]
+    assert _steps(hub) == ["plan", "s1", "s2", "review", "plan", "s2", "review"]
+    assert contract["plan_sha256"] == contract["rounds"][0]["plan_sha256"]
+    assert contract["continuation"]["rerun"] == {"s2": "named by a P1 review issue"}
+    assert contract["approval"]["approval_id"] == "a4" and contract["checkpoints"]["cp2"]["approval_id"] == "a5"
+    # The second revise meets the limit, so the request ends instead of continuing on round 1's decision.
+    assert req["outcome"] == "research_review_revise" and len(contract["rounds"]) == 1
+    assert "상한" in req["report"] + req.get("report_appendix", "")
+
+
+@pytest.mark.asyncio
+async def test_a_refused_reuse_drops_the_steps_earlier_pi_decision(tmp_path):
+    """s1 answered a blocking question in round 1, then its file changed: it re-runs fresh, not as the round-1
+    session in the folder whose file changed (PR #448 review)."""
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
+    old: dict = {}
+
+    def tamper():
+        req = hub.requests["r"]
+        saved = req["results"]["s1"]
+        old["workdir"] = saved["workdir"]
+        req["step_decisions"] = {"s1": {"answer": "b", "question": "which cohort?", "session_id": "sess-1",
+                                        "workdir": saved["workdir"], "previous_result": saved}}
+        Path(saved["workdir"], saved["outputs"][0]).write_bytes(b"edited by hand\n")
+
+    hub.hooks[4] = tamper
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    rerun = [task for task in hub.calls[4:] if task.meta.get("step_id") == "s1"]
+    assert len(rerun) == 1 and rerun[0].meta.get("workdir") != old["workdir"]
+    assert rerun[0].resume_session_id is None and "which cohort?" not in rerun[0].prompt
+    assert "s1" not in (req.get("step_decisions") or {})
+    assert req["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("decisions", "fail_plan", "why"), [
+    ([CP1, APPROVE, CONTINUE, {"approved": False, "note": "no"}], False, "plan_rejected"),
+    ([CP1, APPROVE, CONTINUE], True, "계획 실패"),
+])
+async def test_a_continuation_that_ends_before_dispatch_keeps_the_revise_record(tmp_path, decisions, fail_plan,
+                                                                               why):
+    hub = _hub(tmp_path, decisions, fail_round2_plan=fail_plan)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    first, = req["research_contract"]["rounds"]
+    assert req["outcome"] == "research_review_revise" and req["status"] == "failed"
+    assert {sid: req["results"][sid]["task_id"] for sid in ("s1", "s2")} == {
+        sid: first["results"][sid]["task_id"] for sid in ("s1", "s2")}
+    assert P1["problem"] in req["report"] and "이어 가기 2차가 단계 실행 전에 끝났습니다" in req["report"]
+    ended = req["research_contract"]["continuation"]["ended_before_dispatch"]
+    assert why in ended["outcome"] + ended["reason"]
+    assert _steps(hub)[-1] == "plan"  # no step of round 2 ran
+
+
+@pytest.mark.asyncio
+async def test_a_reused_step_keeps_its_salvaged_rows_at_the_next_cp2(tmp_path):
+    def broken_row(task, step, structured):  # round 1's s1 carries one evidence row that salvage refuses
+        if step["id"] == "s1" and "research_round" not in task.meta:
+            structured["evidence"].append({
+                "id": "bad", "kind": "observation", "observation": "cross-check", "status": "observed",
+                "source": {"uri": "https://example.org/record", "accessed_at": "not-a-date", "locator": "table 1"},
+                "directness": "indirect", "source_level": "primary", "independence_group": "crosscheck",
+                "assessment_reason": "an independent cross-check", "slots": []})
+
+    hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE], mutate=broken_row)
+    hub.s.research.result_corrections = 0
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["research_contract"]["continuation"]["reuse"] == ["s1"]
+    first_card, second_card = hub.approvals[1], hub.approvals[4]
+    refused = [(row["step_id"], row["row_id"]) for row in first_card["detail"]["refused_rows"]]
+    assert ("s1", "bad") in refused
+    assert [(row["step_id"], row["row_id"]) for row in second_card["detail"]["refused_rows"]] == refused
+    assert req["research_contract"]["checkpoints"]["cp2"]["refused_rows"] == second_card["detail"]["refused_rows"]
+    assert req["outcome"] == "research_reported"
