@@ -1632,13 +1632,19 @@ def checklist_skip_warnings(plan: Any, catalog: dict[str, list[topic_checklists.
 
 def with_checklist_skip_warnings(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
                                  precedents: Any) -> Any:
-    """The plan with its skip warnings added once; a warning already present (resume, re-plan) is not repeated."""
+    """The plan with exactly the skip warnings of its current checklist, one per item.
+
+    Earlier skip warnings (a re-plan's old plan, a CSO that copied them) are dropped first, so a check the new plan
+    does, or skips for a changed reason, is not still counted (PR #452 review)."""
     if not isinstance(plan, dict):
         return plan
-    added = checklist_skip_warnings(plan, catalog, precedents)
-    if not added:
+    prefix = topic_checklists.SKIP_WARNING + " "
+    current = checklist_skip_warnings(plan, catalog, precedents)
+    previous = plan.get("warnings") or []
+    kept = [warning for warning in previous if not (isinstance(warning, str) and warning.startswith(prefix))]
+    if not current and len(kept) == len(previous):
         return plan
-    return {**plan, "warnings": list(dict.fromkeys([*(plan.get("warnings") or []), *added]))}
+    return {**plan, "warnings": [*kept, *current]}
 
 
 def checklist_skip_line(plan: Any) -> str:
@@ -3976,6 +3982,21 @@ class Orchestrator:
                     if req.get("checklist_contract"):
                         stored_problems = checklist_errors(req["plan"], checklist_catalog,
                                                            req.get("analysis_precedents"))
+                        # A plan approved at CP1 before #446 may skip with a placeholder reason ("none", "n/a")
+                        # the old rule accepted. The approval stands; the request records which items lack a reason
+                        # instead of failing on restart (PR #452 review). The frozen plan itself is not changed.
+                        frozen_answers = req["plan"].get("checklist") or {}
+                        reasonless = [item for item in (problem.split(" must ", 1)[0].removeprefix("checklist.")
+                                                        for problem in stored_problems
+                                                        if " must answer with a reason" in problem)
+                                      if isinstance(frozen_answers.get(item), str) and
+                                      topic_checklists.ANSWER.fullmatch(frozen_answers[item].strip())]
+                        if reasonless:
+                            req["checklist_reasonless"] = reasonless
+                            self.hub.save_request(rid)
+                        stored_problems = [problem for problem in stored_problems
+                                           if problem.split(" must ", 1)[0].removeprefix("checklist.")
+                                           not in reasonless]
                         if stored_problems:
                             raise ValueError("frozen research plan checklist invalid: " +
                                              "; ".join(stored_problems))

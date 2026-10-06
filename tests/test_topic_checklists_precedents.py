@@ -390,6 +390,23 @@ def test_a_reasoned_skip_is_accepted_and_warns_once_with_topic_and_id():
     assert len(again["warnings"]) == 2
 
 
+def test_a_replan_keeps_only_the_skip_warnings_of_its_current_checklist():
+    # PR #452 review: the re-plan merge keeps the old plan's warnings; a check now done, or skipped for a new reason,
+    # must not stay counted.
+    catalog = topic_checklists.load()
+    first = cso.with_checklist_skip_warnings(
+        general_plan(checklist={**bulk_answers(), "batch": "assumption: 처리 날짜 기록 없음"}), catalog, None)
+    first["warnings"] = ["step A: added dependency", *first["warnings"]]
+    done = cso.with_checklist_skip_warnings({**first, "checklist": bulk_answers()}, catalog, None)
+    assert done["warnings"] == ["step A: added dependency"]
+    assert cso.checklist_skip_line(done) == ""
+    reworded = cso.with_checklist_skip_warnings(
+        {**first, "checklist": {**bulk_answers(), "batch": "assumption: 배치 정보 부족"}}, catalog, None)
+    assert reworded["warnings"] == ["step A: added dependency", "점검 못 함 bulk_rna_seq/batch: 배치 정보 부족"]
+    assert "못 한 점검 1건: bulk_rna_seq/batch" in cso.checklist_skip_line(reworded).replace(
+        " (이유는 계획 경고와 한계)", "")
+
+
 def test_the_report_warning_preview_counts_skipped_checks():
     catalog = topic_checklists.load()
     plan = cso.with_checklist_skip_warnings(
