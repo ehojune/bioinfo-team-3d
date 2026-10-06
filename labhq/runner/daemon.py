@@ -1012,6 +1012,9 @@ class Runner:
 
                 task = ws.task = task.model_copy(update={"prompt": rewrite(task.prompt),
                                                          "context": rewrite(task.context)})
+            # Reference tables the prompt names by file (topic checklists, #420), written before TASK.md.
+            for name in ws.write_reference_files(task.meta.get("workspace_files")):
+                await emit("agent.log", {"level": "warn", "text": f"참고 파일 거부: {name}"})
             prompt = ws.write_task_md()
             if agent.contract and agent.contract.skill_dir:
                 skill_error = ws.install_skill(Path(agent.contract.skill_dir))

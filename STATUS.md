@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · #382 — 개인 경로를 Codex sandbox 읽기 거부로
+
+- 결론: 안 A 적용 뒤 직원 홈(elevated)에서 실측했다. 개인 경로가 Codex sandbox의 읽기 거부로 걸리고(canary `Access is denied`), 작업 폴더·`--add-dir` 쓰기는 그대로이며 승인 창은 뜨지 않았다.
+- 바뀐 것: Codex 격리 실행의 `-s` → permission profile(`extends` + `filesystem` deny), 기본 개인 경로 `~/.gemini`·`~/.env`, doctor의 다른 elevated 홈 경고가 낡은 직원 홈에서도 나옴, manual.
+- 실행한 것: 실측 2건(`:workspace`, `:read-only`), 관련 test 560 passed·2 skipped, `scripts/check_public.sh`.
+- 미해결: 없음. PI 홈은 unelevated라 PI 본인 Codex와 총괄 위임에는 deny-read가 없다(안 A의 대가).
+- 근거: PR #451 본문 실측 표, 직원 홈 `.sandbox/deny_read_acl_state.json`.
+
 ## 2026-10-06 · #435 C ③ — labhq_annot 조절 영역·발현·AlphaGenome (#450)
 
 - 결론: 직원이 ChIP-Atlas(enrichment·target genes), ENCODE cCRE, GTEx(발현·eQTL)를 내장 도구로 조회하고, 키가 있으면 AlphaGenome 예측도 부른다. 판본 기록·조회 로그·결과 파일·캐시는 #449와 같은 틀이다. 통제 구역 데이터의 변이·영역도 경고·승인 없이 조회한다(PI 결정 10-06).
@@ -53,6 +61,14 @@
 - 실행한 것: 전체 `pytest -q` 4096 passed·54 skipped, 바꾼 곳 test 511 passed, `scripts/check_public.sh`.
 - 미해결: 없음.
 - 근거: PR #447 리뷰 지적, `tests/test_environment_signatures.py`.
+
+## 2026-10-06 · #420 — 새 topic 23개 점검표
+
+- 결론: #420으로 채택한 topic 23개에 점검표 65항목을 넣었다(전체 43 topic·125항목). 리뷰 지적대로 계획 프롬프트에는 점검표 대신 작업 폴더 `topic_checklists.tsv` 이름만 싣는다(점검표 부분 10,400자 → 643자). 병합 전에 PI가 항목을 검토한다.
+- 바뀐 것: `labhq/vocab/topic_checklists.yaml`, `docs/reference/topic_checklists_sources.md`(topic별 근거 한 줄), `topic_checklists.py`(TSV·짧은 규칙·누락 오류에 점검 내용), `cso.py`(계획·재계획 Task에 TSV), 러너 `workspace.py`·`daemon.py`(TASK.md 전에 TSV 쓰기), 점검표 test, README·README.en·manual.
+- 실행한 것: 근거 PMID 87개 esummary 제목 대조(87 ok), 점검표·공개 자원 test 27 passed, 점검표·작업 폴더 관련 test 13개 파일 253 passed·32 skipped, 전체 suite 4010 passed·54 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음. 낡은 러너는 TSV를 쓰지 않지만, 그때도 답 누락 고침 요청이 점검 내용을 담는다.
+- 근거: #420, PR #440, PR #446.
 
 ## 2026-10-06 · #435 C ① — 계획마다 공개 자원 목록
 

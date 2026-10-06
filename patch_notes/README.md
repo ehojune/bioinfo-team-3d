@@ -10,6 +10,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-07
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:49 | [`9486910`](https://github.com/ehojune/bioinfo-team-3d/pull/446/commits/9486910) | PI 검토로 SV caller_benchmark 항목을 뺐다(모든 시료에 GIAB 같은 기준 자료가 있지 않음). 점검표 124항목. |
+| 01:37 | [`8860134`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/8860134) | Windows elevated sandbox의 Codex 직원 실행은 개인 경로를 permission profile의 읽기 거부로 받는다(실측에서 canary 읽기 거부, 승인 창 0). 기본 개인 경로에 ~/.gemini·~/.env를 더했다. |
+| 01:37 | [`02ff93f`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/02ff93f) | doctor가 직원 Codex 홈이 낡았을 때도 다른 elevated 홈을 알리고, 안내에 한 PC 한 elevated 홈 규칙을 적는다. |
+
 ## 2026-10-06
 
 | 시간 | 커밋 | 주요 변경사항 |
@@ -25,9 +33,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 17:32 | [`dfcc6e0`](https://github.com/ehojune/bioinfo-team-3d/pull/448/commits/dfcc6e0) | 이어 가기의 새 계획이 이전과 같아도 새 CP1·CP2·리뷰를 다시 받는다. 새 CP1 거절이나 계획 실패로 끝나면 이전 차수 결과와 리뷰가 남는다. |
 | 17:31 | [`6a43504`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/6a43504) | labhq_annot 리뷰 반영: ClinVar가 VCF indel을 구간으로 찾고 repeat 안 같은 allele을 exact로 맞춘다. gnomAD chrM은 mtDNA query로, gnomAD 캐시는 30일. 같은 요청을 반복해도 앞 결과 파일을 덮어쓰지 않는다 |
 | 17:29 | [`c3be2fa`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/c3be2fa) | 환경 서명이 한국어 Windows 문구를 잡고, 인용만 한 줄·건너뛴 단계·이미 넘어간 실패 명령·timeout 같은 일시 오류는 환경 문제로 세지 않는다 (#35) |
+| 17:20 | [`99d618d`](https://github.com/ehojune/bioinfo-team-3d/pull/446/commits/99d618d) | 계획 프롬프트는 점검표 대신 작업 폴더의 topic_checklists.tsv 이름만 싣는다(10,400자 → 643자, #420 PI 결정). 러너가 TSV를 쓰고, 답이 빠지면 고침 요청에 점검 내용을 붙인다. |
 | 17:14 | [`9f3b7f0`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/9f3b7f0) | 단계 실패에 environment 종류와 오류 서명 표를 넣고, 재시도 대신 "환경 문제: 원인 — 할 일"을 웹·보고서·labhq status에 보인다 (#35) |
 | 17:10 | [`cd9e439`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/cd9e439) | labhq_annot MCP: 직원이 변이를 Ensembl VEP·gnomAD·ClinVar에서 조회하고, 결과마다 DB 판본·조회 시각·요청 hash를 남긴다(한도 지킴·캐시) |
 | 17:09 | [`b15043c`](https://github.com/ehojune/bioinfo-team-3d/pull/448/commits/b15043c) | 연구 리뷰가 revise로 끝나면 PI가 새 CP1로 이어 갈 수 있다. 리뷰 P1을 넣은 새 계획에서 사양과 산출 hash가 그대로인 단계는 다시 돌리지 않는다. |
+| 17:05 | [`85362ed`](https://github.com/ehojune/bioinfo-team-3d/pull/446/commits/85362ed) | #420으로 더한 topic 23개에 점검표 65항목을 넣었다(전체 43 topic·125항목). 근거 PMID 87개는 스크립트로 제목을 대조했고, PI 검토 뒤 병합한다. |
 | 16:28 | [`e1a4aac`](https://github.com/ehojune/bioinfo-team-3d/pull/445/commits/e1a4aac) | 모든 계획이 결과 종류별 공개 자원 목록(public_resources.tsv)을 참고로 받고, 목록 밖 자원도 필요하면 계획하며 조회 자원의 판본을 기록한다 |
 | 14:45 | [`e61f997`](https://github.com/ehojune/bioinfo-team-3d/pull/444/commits/e61f997) | HANDOFF 작업 큐와 PI 결정을 10-06 오후 상태로 갱신(#382 안 A, |
 | 14:09 | [`e02e75e`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/e02e75e) | 통제 구역 목록 test가 입력 walker의 descriptor 나열도 실제 폴더로 기록해 Linux에서 통과한다 |

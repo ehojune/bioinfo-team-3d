@@ -13,6 +13,7 @@ from . import Vocab, current
 
 
 CHECKLIST_FILE = Path(__file__).with_name("topic_checklists.yaml")
+CHECKLIST_TSV = "topic_checklists.tsv"  # written in the planner's work folder (runner REFERENCE_FILE rule)
 CHECK_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 ANSWER = re.compile(r"^(step:([^\s]+)|assumption:\s*\S.+|not_applicable:\s*\S.+)$")
 SKIP_PREFIXES = ("assumption:", "not_applicable:")
@@ -88,24 +89,42 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
     return list(found.values())
 
 
-def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
-    """Show all currently curated topic lists because the CSO declares topics in the same response.
+def _cell(text: str) -> str:
+    return " ".join(str(text).split())  # one TSV cell: no tab or line break
 
-    Only the checks: every plan prompt carries the whole catalog, so the reasons go to the reviewer, who sees
-    them for the declared topics only (plan_review_context)."""
-    lines = ["\n\nTopic checklists:"]
-    for topic, items in checklists.items():
-        if items:
-            lines.append(f"- {topic}:")
-            lines.extend(f"  - {item.id}: {item.check}" for item in items)
-    lines += [
+
+def table(checklists: Mapping[str, list[ChecklistItem]]) -> str:
+    """The whole catalog as the TSV the plan reads from its work folder (topic, id, check, why)."""
+    rows = ["topic\tid\tcheck\twhy"]
+    rows += ["\t".join(_cell(value) for value in (topic, item.id, item.check, item.why))
+             for topic, items in checklists.items() for item in items]
+    return "\n".join(rows) + "\n"
+
+
+def workspace_files(checklists: Mapping[str, list[ChecklistItem]]) -> dict[str, str]:
+    """``task.meta["workspace_files"]`` for a plan or re-plan: the runner writes the TSV next to TASK.md."""
+    return {CHECKLIST_TSV: table(checklists)} if any(checklists.values()) else {}
+
+
+def prompt_rule(checklists: Mapping[str, list[ChecklistItem]]) -> str:
+    """Name the checklist file instead of listing every topic's checks (PI 2026-10-05, #420).
+
+    The CSO declares topics in the same response, so it reads the rows of the topics it declares from the TSV the
+    runner writes in its work folder (workspace_files). Missing answers are still caught against the catalog
+    (answer_errors), and the reviewer sees the checks with reasons for the declared topics (plan_review_context)."""
+    if not any(checklists.values()):
+        return ""
+    lines = [
+        "\n\nTopic checklists:",
+        f"Every topic has checks in `{CHECKLIST_TSV}` in the current directory (columns topic, id, check, why).",
+        "After choosing `topics`, read only the rows of the topics you declare.",
         "For every item under each topic you declare, answer top-level `checklist` with exactly one of:",
         "`step:<step id>`, `assumption: <why it could not be done>`, or `not_applicable: <why it does not apply>`.",
         "Do every applicable check the data allow. When a check applies but cannot be done (e.g. no independent",
         "cohort exists), answer `assumption: <why it could not be done>`: a justified skip is acceptable, becomes a",
         "stated limitation and is shown to the PI as a warning. Never skip silently or with an empty reason.",
         "Use not_applicable only when the check does not apply to this request.",
-        "A topic with no listed items adds no checklist requirement.",
+        "A topic with no rows in the file adds no checklist requirement.",
     ]
     return "\n".join(lines)
 
@@ -140,8 +159,10 @@ def answer_errors(answers: Any, required: list[ChecklistItem], step_ids: list[st
                           "or not_applicable: <why it does not apply>")
             continue
         if not isinstance(value, str) or not ANSWER.fullmatch(value.strip()):
+            # The check itself rides along: the plan prompt names only the file (#420), so a correction round
+            # still says what to answer if the planner never read it.
             errors.append(f"checklist.{item.id} must answer step:<step id>, assumption: <why it could not be "
-                          "done>, or not_applicable: <why it does not apply>")
+                          f"done>, or not_applicable: <why it does not apply> (check: {item.check})")
             continue
         match = ANSWER.fullmatch(value.strip())
         if match and match.group(2) and match.group(2) not in known:
