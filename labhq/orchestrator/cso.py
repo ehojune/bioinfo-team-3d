@@ -23,6 +23,7 @@ from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
 from ..facilities import signatures as env_signatures
+from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
@@ -2696,9 +2697,85 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(tool_errors)})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        read_only = is_read_only_task(task.meta)
+        environment = None if res.ok else environment_problem(res, engine)
+        propose = facility_fixes.proposal(environment, res.error, res.tool_errors)
+        approve_fix = getattr(self.hub, "request_facilities_fix", None)
+        if propose and not read_only and callable(approve_fix):
+            # Use the logical turn key, not a generated task id: direct requests must keep their one-fix limit
+            # when the gateway restarts while the approval or repair is in flight.
+            key = turn_key(task)
+            decision = await approve_fix(rid, key, propose)
+            record = (decision.get("execution")
+                      if decision.get("status") in {"applied", "succeeded"} else None)
+            if not decision.get("approved"):
+                record = {**propose, "ok": False, "status": decision.get("status") or "declined",
+                          "approval_id": decision.get("approval_id"), "note": decision.get("note") or ""}
+                res = res.model_copy(update={"facilities_fix": record})
+            else:
+                remember = getattr(self.hub, "record_facilities_fix", None)
+                if not record:
+                    if propose["execution"] in {"python_package", "r_package"}:
+                        instruction = facility_fixes.retry_instruction(propose)
+                        record = {**propose, "ok": None, "status": "applied",
+                                  "mode": "task_local_instruction", "instruction": instruction}
+                    else:
+                        fix_task = Task(agent_id=task.agent_id, request_id=rid, prompt="",
+                                        meta={**task.meta, "kind": "facilities_fix", "step_id": key,
+                                              "parent_task": res.task_id, "title": f"{key}: 승인된 환경 수정",
+                                              "facilities_fix": propose,
+                                              **({"workdir": res.workdir} if res.workdir else {})})
+                        try:
+                            fixed = await self.hub.dispatch(fix_task)
+                        except (asyncio.CancelledError, KeyboardInterrupt):
+                            raise
+                        except Exception as exc:
+                            fixed = TaskResult(task_id=fix_task.id, agent_id=task.agent_id, ok=False,
+                                               error=f"facilities fix dispatch failed: {exc}")
+                        record = fixed.facilities_fix or {**propose, "ok": fixed.ok,
+                                                           "status": "succeeded" if fixed.ok else "failed",
+                                                           **({"error": fixed.error} if fixed.error else {})}
+                    if callable(remember):
+                        await remember(rid, key, record)
+                can_rerun = record.get("status") == "applied" or bool(record.get("ok"))
+                if not can_rerun:
+                    res = res.model_copy(update={"facilities_fix": record})
+                else:
+                    can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
+                    repair_instruction = (record.get("instruction") or
+                                          (facility_fixes.retry_instruction(propose)
+                                           if propose["execution"] in {"python_package", "r_package"} else ""))
+                    retry_note = (repair_instruction + "\n\n" if repair_instruction else
+                                  "The PI approved and the runner completed the allowlisted environment fix. ")
+                    retry = task.model_copy(update={
+                        "id": new_id("task"),
+                        "prompt": continuation_prompt(
+                            task, retry_note + "Retry the same task once now.",
+                            resumable=can_resume, previous_result=res,
+                            context_chars=self.cfg.context_chars_per_step),
+                        "context": "", "resume_session_id": res.session_id if can_resume else None,
+                        "meta": {**task.meta, "parent_task": res.task_id, "facilities_rerun": True,
+                                 **({"workdir": res.workdir} if res.workdir else {})},
+                    })
+                    retried = await dispatch_turn(retry, max_attempts=1)
+                    final_record = record
+                    if propose["execution"] in {"python_package", "r_package"}:
+                        rerun_environment = None if retried.ok else environment_problem(retried, engine)
+                        if retried.ok:
+                            final_record = {**record, "ok": True, "status": "succeeded"}
+                        elif (rerun_environment and
+                              rerun_environment.get("id") == propose.get("signature_id")):
+                            final_record = {**record, "ok": False, "status": "failed",
+                                            "error": retried.error or rerun_environment.get("cause") or
+                                                     "same environment failure after repair"}
+                        if final_record is not record and callable(remember):
+                            await remember(rid, key, final_record)
+                    res = retried.model_copy(update={
+                        "facilities_fix": final_record,
+                        "tool_errors": list(dict.fromkeys([*res.tool_errors, *retried.tool_errors])),
+                    })
         overrides = task.meta.get("agent_overrides") or {}
         # A read-only task (consult, follow-up) has nothing to save, and a wrap-up must never lift its limits.
-        read_only = is_read_only_task(task.meta)
         turn_limit = int(overrides.get("max_turns") or (self.hub.agents.get(task.agent_id) or {}).get("max_turns") or 0)
         # A research step cannot be re-planned, so one that hits its turn limit first finishes in the same session
         # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
@@ -3125,7 +3202,9 @@ class Orchestrator:
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
                                                                 "reason": results[sid].error,
                                                                 **({"environment": environment} if environment
-                                                                   else {})})
+                                                                   else {}),
+                                                                **({"facilities_fix": results[sid].facilities_fix}
+                                                                   if results[sid].facilities_fix else {})})
                     res = results[sid]
                     question = blocking_question(res)
                     if res.ok and question:

@@ -1,0 +1,17 @@
+# PI-approved environment repairs (#35 stage 3). Package repairs become a fixed task-local rerun instruction;
+# only workspace-cache deletion is executed directly by the runner.
+
+- id: install_python_package
+  signatures: [python_module_missing]
+  action: 이 단계 전용 .pylib에 빠진 Python 패키지를 설치합니다
+  execution: python_package
+
+- id: install_r_package
+  signatures: [r_package_missing]
+  action: 이 단계 전용 .rlib에 검증된 R 패키지를 설치합니다
+  execution: r_package
+
+- id: clear_workspace_cache
+  signatures: [disk_full]
+  action: 이 단계 작업 폴더 안의 임시 캐시만 비웁니다
+  execution: workspace_cache

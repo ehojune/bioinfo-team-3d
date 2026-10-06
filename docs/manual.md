@@ -314,7 +314,7 @@ Claude Code나 Codex 로그인이 만료되면 요청은 `waiting_login`에서 �
 
 ### 환경 실패와 오류 서명
 
-runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니다(#35). 같은 PC에서 다시 돌려도 같게 실패하므로 재시도하지 않고, 웹 작업판 카드·보고서의 `Next:`와 `보고서 경고`·`labhq status`에 "환경 문제: 원인 — 할 일"을 보여 줍니다. 단계 결과(`environment`)와 `request.step_done` 이벤트에는 서명 `id`·`cause`·`hint`가 붙습니다.
+runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니다(#35). 웹 작업판·보고서·`labhq status`에 "환경 문제: 원인 — 할 일"을 보여 주고, 단계 결과와 이벤트에 서명 `id`·`cause`·`hint`를 남깁니다.
 
 | 서명 | 무엇 |
 |---|---|
@@ -331,7 +331,12 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 - 실패한 명령 출력은 마지막 실패 하나만 봅니다. 그 뒤에 성공한 셸 명령이 있으면(예: `pip install` 뒤) 증거에서 뺍니다.
 - 실패한 명령 출력이나 CLI stderr에서만 찾은 서명은 약한 증거입니다. 단계 오류가 따로 설명하면(timeout, rate limit, 5xx, 권한 거부, 취소, turn 한도 등) 그쪽을 따릅니다. 산출물이 빠졌으면 `Next:`는 산출물을 먼저 말합니다.
 - 건너뛴 단계(`skipped`)는 위 단계의 오류를 옮겨 적을 뿐이라 따로 환경 문제로 세지 않습니다.
-- 서명 추가: `labhq/facilities/signatures.yaml`에 항목(`id`, `engine`, `pattern`, `cause`, `hint`, `fix`)을 넣고 `tests/fixtures/environment_signatures.yaml`에 실제 문구 예시를 하나 이상 둡니다. `pattern`은 대소문자를 무시하는 정규식이고 `^`는 줄 첫머리입니다. 도구가 찍는 오류 줄 첫머리에 맞춥니다. 문구를 인용만 하는 줄(pytest의 `E `·`>`, `파일:줄:`, `logs/x.log:` 같은 grep 출력)은 맞추기 전에 뺍니다. Windows 문구는 영어와 한국어 둘 다 넣습니다. `fix`는 비워 둡니다(다음 단계의 `facilities_fix` 자리).
+- 서명의 `fix`가 `labhq/facilities/fixes.yaml` allowlist를 가리키면 `facilities_fix` 카드가 "이 단계 전용 폴더에 <이름> 설치 후 한 번 다시 실행"을 묻습니다. 승인 뒤 같은 workdir·sandbox에서 원 단계를 한 번만 다시 돌리며, session resume이 가능하면 이어 씁니다.
+- 자동 설치 후보는 `labhq/facilities/packages.yaml`의 검증된 Python import→PyPI distribution·R package→CRAN/Bioconductor 표만 씁니다. 표에 없는 이름은 환경 hint만 보이고 승인 카드는 만들지 않습니다.
+- Python은 그 단계 interpreter로 `-m pip install --target ./.pylib <검증된 distribution>`을 실행하고 `./.pylib`을 import 경로 맨 앞에 둡니다. R은 CRAN이면 `install.packages()`, Bioconductor면 `BiocManager::install()`을 `./.rlib`에 실행합니다. runner는 직원 산출물이나 작업 폴더 안 실행 파일을 실행하지 않으며 패키지를 직접 설치하지 않습니다. 버전·URL·경로·옵션은 거부합니다.
+- `disk_full`만 runner가 직접 작업 폴더의 임시 캐시를 비웁니다. event·`manifest.json`보다 먼저 정리하고, 앞선 기록은 메모리에 두었다가 정리 뒤 씁니다.
+- 재시작 뒤 승인·거절·시간 초과는 모두 저장된 결정을 소비하며 원 요청을 재개합니다. 거절·시간 초과·수정 실패·두 번째 환경 실패는 원래 `environment` 실패로 끝납니다. 연구 계획 hash와 예산 gate는 바꾸지 않습니다.
+- 서명 추가: `signatures.yaml`의 `pattern`은 실제 오류 줄 첫머리에 맞추고, fixture에 실제 문구를 둡니다. 인용 줄(pytest `E `·`>`, `파일:줄:`, 로그 grep)은 매칭 전에 뺍니다. 자동 수정은 별도 allowlist 항목과 검증·가짜 실행 test가 있어야 `fix`에 연결합니다.
 
 ## 직원과 도구
 

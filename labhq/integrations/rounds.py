@@ -139,6 +139,7 @@ def build_record(hub: "Hub", rid: str) -> dict:
                       **({"environment": environment} if (environment := (
                           None if result.get("ok") or not result.get("task_id") or not result.get("agent_id")
                           else environment_problem(result))) else {}),
+                      **({"facilities_fix": result["facilities_fix"]} if result.get("facilities_fix") else {}),
                       "engine_cli_version": next((run.get("engine_cli_version") for run in runs.values()
                                                   if isinstance(run, dict) and run.get("engine_cli_version")), None)})
     for ev in events:

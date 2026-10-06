@@ -3,7 +3,7 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
-const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login']);
+const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
@@ -80,7 +80,7 @@ function resetSnapshotState() {
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비' };
+const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
@@ -153,7 +153,8 @@ function syncHoldStatus(q) {
   const states = Object.values(q.steps);
   if (states.includes('waiting_login') && !isTerminalRequest(q.status)) q.status = 'waiting_login';
   else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
-  else if (['waiting_login', 'waiting_quota'].includes(q.status)) q.status = 'running';
+  else if (states.includes('waiting_facilities_fix') && !isTerminalRequest(q.status)) q.status = 'waiting_facilities_fix';
+  else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status)) q.status = 'running';
 }
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -314,12 +315,15 @@ function apply(ev, replay = false) {
     }
     case 'approval.requested': {
       S.approvals.set(d.id, { ...d, agent_id: d.agent_id || id, request_id: d.request_id || rid });
+      if (d.kind === 'facilities_fix' && rid && d.detail?.step_id) {
+        const q = req(rid); q.steps[d.detail.step_id] = 'waiting_facilities_fix'; syncHoldStatus(q);
+      }
       feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
       if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
       break;
     }
     case 'approval.expired': case 'approval.stale': endApproval(d.id, effects); break;
-    case 'approval.resolved': endApproval(d.id, effects); feed({ who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break;
+    case 'approval.resolved': { const pending = S.approvals.get(d.id); endApproval(d.id, effects); if (pending?.kind === 'facilities_fix' && rid && pending.detail?.step_id) { const q = req(rid); if (q.steps[pending.detail.step_id] === 'waiting_facilities_fix') q.steps[pending.detail.step_id] = 'pending'; syncHoldStatus(q); } feed({ who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break; }
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
@@ -395,7 +399,8 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
+    case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};

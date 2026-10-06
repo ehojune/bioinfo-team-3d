@@ -1,6 +1,7 @@
 """Shared request lifecycle classification."""
 
-ACTIVE_REQUEST_STATES = frozenset({"running", "waiting_for_runner", "waiting_quota", "waiting_login"})
+ACTIVE_REQUEST_STATES = frozenset({"running", "waiting_for_runner", "waiting_quota", "waiting_login",
+                                   "waiting_facilities_fix"})
 TERMINAL_REQUEST_STATES = frozenset({"done", "failed", "cancelled", "rejected"})
 
 

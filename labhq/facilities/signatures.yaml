@@ -1,5 +1,6 @@
 # Environment failure signatures (#35 stage 2). A failed step whose error, CLI stderr tail or failed shell command
-# output matches one of these is an `environment` failure: labhq does not retry it and shows "환경 문제: cause — hint".
+# output matches one of these is an `environment` failure. labhq shows "환경 문제: cause — hint" and, when `fix`
+# names an allowlisted repair, may rerun the step once after PI approval.
 #
 # Fields
 #   id          stable name, used in events and records
@@ -12,7 +13,7 @@
 #   error_kind  optional: a TaskResult.error_kind that means this signature without any text match
 #   cause       one line, Korean: what is wrong
 #   hint        one line, Korean: what the PI does next, with the command when there is one
-#   fix         empty for now: the place for a stage-3 `facilities_fix` allowlist id
+#   fix         optional `facilities_fix` allowlist id; empty means that only the manual hint is shown
 #
 # Every pattern needs a real-wording example in tests/fixtures/environment_signatures.yaml.
 
@@ -21,7 +22,7 @@
   pattern: '^\s*(?:ModuleNotFoundError|ImportError): No module named\b|^(?:[a-z]:[\\/])?[^:\n]*python[\d.]*(?:\.exe)?: No module named\b'
   cause: Python 모듈이 설치돼 있지 않습니다
   hint: '단계가 쓴 Python 환경에 패키지를 설치하세요(`<python> -m pip install <패키지>` 또는 conda·venv 확인)'
-  fix:
+  fix: install_python_package
 
 - id: command_not_found
   engine: any
@@ -36,14 +37,14 @@
   pattern: '^\s*(?:Error\b[^\n]*?:\s*)?there is no package called\b'
   cause: R 패키지가 설치돼 있지 않습니다
   hint: 'R에서 `install.packages("<패키지>")` 또는 `BiocManager::install("<패키지>")`로 설치하세요'
-  fix:
+  fix: install_r_package
 
 - id: disk_full
   engine: any
   pattern: '(?:^|:\s)(?:\[Errno 28\]\s)?(?:No space left on device|There is not enough space on the disk|디스크 공간이 부족합니다)|(?:^|:\s)ENOSPC\b'
   cause: 디스크 공간이 부족합니다
   hint: '작업 폴더(`runner.workspace_root`)가 있는 디스크를 비우고 요청을 다시 보내세요'
-  fix:
+  fix: clear_workspace_cache
 
 - id: network_name_resolution
   engine: any
