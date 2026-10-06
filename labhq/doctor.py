@@ -221,6 +221,20 @@ def _private_paths_row(private: PrivatePaths) -> dict:
 CLAUDE_STAFF_DIR = ".labhq/claude-staff"
 
 
+def _alphagenome_row(settings: Settings) -> dict:
+    """Whether labhq_annot registers its alphagenome tool: only "키 있음/없음", never the key or its path (#435)."""
+    from .tools.annot_keys import has_key
+    from .tools.annot_regulatory import alphagenome_client_available
+
+    if not has_key(settings):
+        return _row("annot", "AlphaGenome", "skip", "키 없음 (도구 미등록)",
+                    "키가 생기면 labhq init을 다시 실행해 붙여 넣으세요.")
+    if not alphagenome_client_available():
+        return _row("annot", "AlphaGenome", "warn", "키 있음, alphagenome 패키지 없음 (도구 미등록)",
+                    "runner의 Python에 pip install alphagenome")
+    return _row("annot", "AlphaGenome", "ok", "키 있음", "")
+
+
 def claude_login_command(windows: bool) -> str:
     """What the PI runs once to sign the staff Claude in to ~/.labhq/claude-staff. Home variables only, so no
     user name or path is printed."""
@@ -539,6 +553,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                              "Set the plugin directory and install its required skill."))
     private = _doctor_private(settings, agents, forced)
     rows.append(_private_paths_row(private))
+    rows.append(_alphagenome_row(settings))
     claude_staff = _claude_staff_row(settings, agents, forced, private, login_codes.get("claude_code"))
     if claude_staff:
         rows.append(claude_staff)

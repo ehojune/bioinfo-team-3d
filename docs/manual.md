@@ -87,6 +87,7 @@ $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
 ```
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
+AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
 한 PC에서 여러 연구소를 띄우려면 `labhq init --instance <이름>`을 실행한 뒤 각 명령에 같은
 `--instance <이름>`을 붙이세요. 설정·state·runs·talent·포트·token이 인스턴스별로 나뉩니다.
 엔진 로그인과 사용량 한도는 모든 인스턴스가 공유합니다.
@@ -357,7 +358,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 <!-- integrations:start -->
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
-| 내장 MCP | labhq_annot | 변이 주석 조회: Ensembl VEP·gnomAD·ClinVar (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
+| 내장 MCP | labhq_annot | 공개 자원 조회: Ensembl VEP·gnomAD·ClinVar·ChIP-Atlas·ENCODE cCRE·GTEx, API 키가 있으면 변이 효과 예측 모델 (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
@@ -376,20 +377,30 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 
 ### 공개 자원 조회 도구
 
-`labhq_annot`은 변이를 공개 DB에서 조회하는 내장 MCP입니다(#435). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
+`labhq_annot`은 변이·영역·유전자를 공개 DB에서 조회하는 내장 MCP입니다(#435). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
 
 | 도구 | DB | 받는 것 | 판본 기록 |
 |---|---|---|---|
 | `vep(variants, assembly, species)` | Ensembl REST VEP | `chr:pos:ref:alt`·HGVS·rsID | `/info/data`의 Ensembl release (GRCh37은 grch37 서버) |
 | `gnomad(variants, dataset)` | gnomAD GraphQL | `chr:pos:ref:alt`·rsID. chrM은 mtDNA 전용 query로 보냄(heteroplasmy 포함) | dataset ID (예: `gnomad_r4`) |
 | `clinvar(variants_or_ids, assembly)` | NCBI E-utilities ClinVar | 위 셋 + VCV 번호·Variation ID | einfo의 build와 last update |
+| `chipatlas(genes_or_regions, genome, antigen_class, cell_class, threshold, distance_kb, permutations, wait_s, request_id)` | ChIP-Atlas enrichment analysis (DDBJ WABI) | 유전자 목록(배경: RefSeq 전체) 또는 영역 목록(배경: random permutation). 섞으면 다른 쪽이 항목 오류 | `experimentList.tab` 갱신일 |
+| `chipatlas_targets(antigens, genome, distance_kb, genes, top)` | ChIP-Atlas target genes 표 | 단백질 이름(예: POU5F1), TSS ±1·5·10 kb | 표 파일의 갱신일 |
+| `encode(regions, assembly)` | ENCODE cCRE registry (GRCh38·mm10) | 영역 `chr:start-end`(1부터, 닫힌 구간)·`chr:pos` | registry 판본·annotation·파일 accession·공개일 (예: V4, ENCSR800VNX, ENCFF420VPZ) |
+| `gtex(genes_or_variants, tissues, dataset, eqtl)` | GTEx Portal API v2 | 유전자 기호·Ensembl ID, `chr:pos:ref:alt`(GRCh38)·rsID | dataset 이름·GENCODE·dbSNP (예: GTEx Analysis v10, GENCODE v39) |
+| `alphagenome(variants_or_intervals, outputs, ontology_terms, sequence_length, organism)` | Google DeepMind AlphaGenome (공식 `alphagenome` client) | `chr:pos:ref:alt`·`chr:start-end` (hg38·mm10) | client 판본과 기본 모델(ALL_FOLDS) |
 
 - 형식이 틀린 항목은 그 항목만 오류로 돌아오고 나머지는 조회합니다. 항목 오류는 조회 실패이고, `found: false`는 조회에 성공했는데 DB에 없다는 뜻입니다.
 - 한도: VEP는 200개씩 나눠 보내고, 429면 `Retry-After`만큼 기다려 다시 보냅니다(최대 5회, 2분이 넘는 대기는 실패로 돌려줌). gnomAD는 분당 10회라 한 호출에 새 변이 50개까지, ClinVar는 초당 3회로 보냅니다. 속도 조절은 도구 프로세스마다 따로라 여러 직원이 동시에 부르면 합이 한도를 넘을 수 있고, 그때는 재시도가 받습니다.
 - ClinVar에 `chr:pos:ref:alt`를 주면 VCF padding base부터 ref 끝 다음 base까지 구간으로 찾습니다. ClinVar는 indel을 처음 바뀐 base에 색인하기 때문입니다. record마다 `match`가 붙습니다: `exact`(같은 allele, repeat 안에서 위치가 달라도 같은 변이면 exact), `other_allele`(같은 구간의 다른 변이), `not_compared`(GRCh37이라 비교 못 함). GRCh38에서 같은 allele이 없으면 `exact_match: false`와 그 뜻이 붙습니다. VCF는 left-normalise된 것으로 봅니다.
 - 결과마다 `source: {db, release_or_version, url, queried_at, request_sha256}`가 붙습니다. 같은 내용이 작업 폴더 `outputs/annotation_queries.jsonl`에 한 줄씩 쌓이고(변이 목록은 넣지 않고 개수와 hash만), DB 응답 전체는 `outputs/annotation/<도구>-<요청 hash>-<내용 hash>.json`에 남아 요청 묶음에 들어갑니다. 같은 요청을 다시 해도 앞 파일을 덮어쓰지 않고, 로그 줄의 `result_sha256`으로 파일을 확인할 수 있습니다.
 - 캐시: 같은 (도구, 판본, 옵션, 변이)의 답은 `runner.state_dir/annot_cache`에서 다시 씁니다. 판본이 바뀌면 다시 묻습니다. gnomAD는 API가 dataset보다 세밀한 판본을 주지 않으므로 캐시를 30일만 씁니다. gnomAD의 신선도는 시간 기준입니다.
-- 통제 구역 데이터에서 나온 변이도 조회합니다. 경고·승인·거부를 붙이지 않습니다(PI 결정 2026-10-06). 그래서 Claude는 `--allowedTools`, Codex는 approve 모드로 승인 없이 부릅니다.
+- 통제 구역 데이터에서 나온 변이·영역도 조회합니다. 경고·승인·거부를 붙이지 않습니다(PI 결정 2026-10-06). 그래서 Claude는 `--allowedTools`, Codex는 approve 모드로 승인 없이 부릅니다.
+- ChIP-Atlas enrichment는 DDBJ 서버에서 잡으로 돕니다. 제출 뒤 결과 파일을 15초마다 확인하며 `wait_s`(기본 600초, 최대 1500초)까지 기다립니다. 시간을 넘기면 오류 문구에 `request_id`가 붙고, 같은 입력·옵션에 그 값을 붙여 다시 부르면 새로 제출하지 않고 결과를 받습니다. 제출할 때 `request_id`와 입력·옵션의 hash, 그때의 release를 캐시에 함께 적어 두므로, 다른 입력·옵션으로 이어 받으려 하면 오류입니다. 그 사이 `experimentList.tab`이 갱신됐으면 답을 제출 때 release로 기록하고 캐시하지 않으며 `release_note`를 붙입니다. 제출 기록이 없는 `request_id`(다른 PC·캐시 없음)는 답은 주되 캐시하지 않고 `request_id_note`를 붙입니다. 유전자 기호는 적은 철자 그대로 보내고 캐시도 그 철자로 나눕니다(mm10의 `Sox2`처럼 대소문자가 뜻을 가짐). 결과는 실험(SRX)마다 겹친 수·log10 Q·fold enrichment이고, 답에는 단백질별 최고 값과 상위 실험 20개가 요약됩니다.
+- ENCODE cCRE: SCREEN GraphQL API는 개인 API 키(90일마다 갱신)가 필요해서 쓰지 않습니다. ENCODE portal REST에서 가장 새 cCRE registry 파일(GRCh38 V4 bed.gz, 약 33 MB)을 찾아 md5를 확인한 뒤 캐시에 두고 겹침을 직접 셉니다. 첫 호출만 내려받는 시간이 듭니다.
+- GTEx: 유전자 ID는 dataset의 GENCODE 판본으로 찾습니다(gtex_v10은 v39, gtex_v8은 v26). eQTL은 항목당 1,000줄까지 받고 전체 개수를 함께 돌려줍니다. 조직을 고르면 조직마다 따로 받아 1,000줄 한도와 전체 개수도 조직마다 셉니다. 조직 이름은 `tissueSiteDetailId`(예: `Liver`, `Whole_Blood`)이고, 없는 이름이면 호출 전체가 오류입니다.
+- AlphaGenome은 키가 있을 때만 등록됩니다. `labhq init`이 처음 설정할 때 한 번 "AlphaGenome API 키가 있으면 붙여 넣으세요, 없으면 Enter"라고 묻습니다(입력은 화면에 안 보임). Enter면 넘어가고, 나중에 `labhq init`을 다시 돌리면 다시 묻습니다. 키는 `annot.alphagenome_key_file`(기본 `~/.labhq/secrets/alphagenome_api_key`) 파일에만 저장됩니다. POSIX는 0600, Windows는 폴더와 파일의 ACL을 현재 계정 항목 하나로 새로 씁니다. 미리 있던 명시 항목도 지우고 SYSTEM·Administrators 항목도 두지 않습니다(SYSTEM 서비스는 백업 권한이 있어 항목이 없어도 됩니다). 설정 파일에는 위치만 둡니다. 환경변수를 쓰지 않는 까닭은 직원 프로세스가 runner의 환경을 물려받기 때문입니다. 키는 MCP 서버가 시작할 때 파일에서 읽고 명령줄·로그·이벤트·프롬프트에 넣지 않으며, doctor는 `AlphaGenome: 키 있음/없음`만 보입니다. 키 파일은 PI 개인 경로에도 들어갑니다. 접근 제한은 키 파일이 든 폴더에 걸리므로 그 폴더는 키 전용이어야 합니다. 다른 파일이 있는 폴더, 홈 폴더, labhq state·작업 폴더·설정을 품은 폴더면 저장을 거부합니다. runner를 별도 계정으로 돌리면 키는 runner 계정이 읽어야 하므로 `labhq init`을 runner 창에서 한 번 더 돌립니다([runner 전용 계정](runner-account.md#alphagenome-키-선택)). client는 runner의 Python에 `pip install alphagenome`으로 설치하며, 키가 있어도 client가 없으면 도구가 등록되지 않고 doctor가 warn을 냅니다.
+- AlphaGenome 답은 track마다 요약입니다. 변이는 alt−ref 최대 절대 변화와 그 위치, 대립유전자별 합계, 구간은 요청한 구간 안의 track별 평균·최대 신호와 위치이고(예측 창 전체가 아님), 상위 10개 track이 답에, 전체 track 요약이 결과 파일에 남습니다. 답의 `window`는 예측 창, `summarised_over`는 요약한 범위입니다. 서열 길이는 16KB·100KB(기본)·500KB·1MB이고 변이·구간 가운데를 중심으로 잡습니다. 1 bp 해상도 출력(CHIP_HISTONE·CHIP_TF 외 전부)을 `ontology_terms` 없이 500KB·1MB로 부르면 변이 하나에 수 GB라 거부합니다. client 연결은 30초, 항목당 예측은 300초까지 기다리고, 연결 실패나 시간 초과가 나면 같은 호출의 남은 항목은 바로 실패로 돌립니다. client 호출은 매번 새 thread에서 돌아 다른 도구를 막지 않고, 멈춘 호출이 다음 호출을 붙잡지도 않습니다. 시간이 초과된 thread는 끊을 수 없어 끝날 때까지 세어 두며, 4개가 쌓이면 새 호출을 바로 거부합니다(잠시 뒤 다시 부르거나 labhq를 다시 시작). 비상업 연구용이며 임상 판단에 쓰지 않습니다([약관](https://alphagenome.google/terms)).
 
 ### 역할·엔진·도구를 나눈 기준
 

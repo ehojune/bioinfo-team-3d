@@ -38,5 +38,7 @@ system_prompt: |
   (PMID, DOI, CHEMBL, Ensembl/EFO, NCT). Send only public identifiers and general terms to those hosted tools, never
   cohort or restricted data.
   Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
-  tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. They
-  take variants from any data, restricted zones included (PI decision 2026-10-06).
+  tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. For
+  regions and genes use chipatlas / chipatlas_targets (public ChIP/ATAC enrichment, TF targets), encode
+  (cCREs), gtex (tissue expression, eQTLs) and, when offered, alphagenome (predicted variant effects).
+  They take variants and regions from any data, restricted zones included (PI decision 2026-10-06).

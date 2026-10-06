@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import secrets
 import shutil
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from . import doctor, hpc_consult
 from .adapters.base import _resolve_command
 from .runner.codex_sandbox import codex_command, powershell_executable, setup_hint
 from .settings import HpcSettings, Settings
+from .tools import annot_keys
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS, Scheduler
 from .util import free_port
 
@@ -78,6 +81,38 @@ def _ask(prompt: str, default: str, yes: bool) -> str:
     # Paths are not echoed in prompts or reports.
     answer = input(prompt + " [Enter: 기본값] ").strip()
     return answer or default
+
+
+def _interactive() -> bool:
+    """A person at a terminal: the key prompt never reads from a pipe or a test's captured stdin."""
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _alphagenome_key(settings: Settings) -> None:
+    """Ask once per `labhq init` for the AlphaGenome API key when none is stored (PI decision 2026-10-06).
+    Enter skips: the alphagenome tool is then not registered, and the next `labhq init` asks again. The key is read
+    without echo and never printed; neither is the file's location."""
+    if not _interactive() or annot_keys.has_key(settings):
+        return
+    key = getpass.getpass("AlphaGenome API 키가 있으면 붙여 넣으세요, 없으면 Enter (입력은 화면에 보이지 않음): ").strip()
+    if not key:
+        print("AlphaGenome: 건너뜀 (도구 미등록, 나중에 labhq init을 다시 실행하면 다시 묻습니다)")
+        return
+    if not annot_keys.valid_key(key):
+        print("AlphaGenome: 키 형식이 아니라 저장하지 않았습니다 (공백 없는 한 덩어리여야 합니다)")
+        return
+    try:
+        keep_out = [settings.path(settings.runner.state_dir), settings.path(settings.runner.workspace_root),
+                    settings.path(settings.gateway.state_dir)]
+        if settings.config_path:
+            keep_out.append(Path(settings.config_path).parent)
+        annot_keys.write_key(annot_keys.key_path(settings), key, keep_out)
+    except annot_keys.KeyFileError as exc:
+        raise InitError(f"AlphaGenome 키를 저장하지 못했습니다: {exc}") from None
+    print("AlphaGenome: 키 저장 (이 계정만 읽을 수 있는 파일, 값과 경로 출력 생략)")
 
 
 def _hpc_query(argv: list[str]):
@@ -277,6 +312,8 @@ def run(config: str | None = None, *, yes: bool = False, dry_run: bool = False,
                 print("로그인 뒤 elevated sandbox 준비: " + setup_hint(staff_home, command, env))
         if claude_home:
             print("Claude 직원 로그인은 직접 실행하세요(새 창에서): " + doctor.claude_login_command(_is_windows()))
+    if not yes and not dry_run:
+        _alphagenome_key(settings)
     result = doctor.collect(settings, dry_run=dry_run, require_roster=True)
     print(doctor.render(result))
     summary = result["summary"]
