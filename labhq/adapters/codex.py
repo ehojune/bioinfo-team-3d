@@ -89,9 +89,13 @@ SECRETS_FILE = (".sandbox-secrets", "sandbox_users.json")
 STALE_SLACK_S = 5.0  # Codex writes the secrets file right after it sets the passwords
 
 
-def sandbox_password_set() -> float | None:
-    """When the sandbox accounts last got a new password (epoch seconds), read without admin rights through
-    NetUserGetInfo level 1; None when the accounts do not exist or the call fails."""
+NERR_USER_NOT_FOUND = 2221
+
+
+def sandbox_accounts() -> dict[str, float | None] | None:
+    """When each sandbox account last got a new password (epoch seconds), read without admin rights through
+    NetUserGetInfo level 1. An account that does not exist maps to None (a Codex reinstall deletes them, and the next
+    command recreates them through setup); the whole answer is None when the accounts cannot be read."""
     if not _is_windows():
         return None
     try:
@@ -107,22 +111,26 @@ def sandbox_password_set() -> float | None:
         netapi = ctypes.WinDLL("netapi32")
         netapi.NetUserGetInfo.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
                                           ctypes.POINTER(ctypes.c_void_p)]
-        now, newest = time.time(), None
+        now, accounts = time.time(), {}
         for name in SANDBOX_ACCOUNTS:
             buf = ctypes.c_void_p()
-            if netapi.NetUserGetInfo(None, name, 1, ctypes.byref(buf)) != 0:
+            code = netapi.NetUserGetInfo(None, name, 1, ctypes.byref(buf))
+            if code == NERR_USER_NOT_FOUND:
+                accounts[name] = None
                 continue
+            if code != 0:
+                return None
             try:
                 age = ctypes.cast(buf, ctypes.POINTER(UserInfo1)).contents.password_age
             finally:
                 netapi.NetApiBufferFree(buf)
-            newest = max(newest or 0.0, now - age)
-        return newest
+            accounts[name] = now - age
+        return accounts
     except (OSError, AttributeError, ValueError):
         return None
 
 
-def elevated_home_problem(home: Path, password_set: float | None) -> str | None:
+def elevated_home_problem(home: Path, accounts: dict[str, float | None] | None) -> str | None:
     """Why this staff CODEX_HOME's elevated setup would make Codex ask for setup again, judged from file metadata only
     (never the secrets' contents); None when it looks usable."""
     marker = home / ".sandbox" / "setup_marker.json"
@@ -139,7 +147,13 @@ def elevated_home_problem(home: Path, password_set: float | None) -> str | None:
         written = secrets.stat().st_mtime
     except OSError:
         return None
-    if password_set is not None and written + STALE_SLACK_S < password_set:
+    if not accounts:
+        return None
+    missing = [name for name, changed in accounts.items() if changed is None]
+    if missing:
+        return (f"The sandbox account {missing[0]} no longer exists (a Codex reinstall removes them), so the next "
+                "command would recreate it through setup")
+    if written + STALE_SLACK_S < max(accounts.values()):
         return ("The sandbox accounts got new passwords after this CODEX_HOME's setup: another Codex home on this PC "
                 "ran elevated setup. Only one CODEX_HOME per PC may use windows.sandbox=\"elevated\" (#382)")
     return None
@@ -201,9 +215,9 @@ class CodexAdapter(AgentAdapter):
                         "engines.codex.allow_global_agents_md: true.")
         if isolated and _is_windows() and b.windows_sandbox == "elevated":
             used = [home for home in homes if any((home / name).exists() for name in CODEX_HOME_STATE)]
-            password_set = sandbox_password_set() if used else None
+            accounts = sandbox_accounts() if used else None
             for home in used:
-                problem = elevated_home_problem(home, password_set)
+                problem = elevated_home_problem(home, accounts)
                 if problem:
                     return f"{ELEVATED_SETUP_ERROR} {problem}; LabHQ did not start Codex or request elevation."
         return None

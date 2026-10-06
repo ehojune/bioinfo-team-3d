@@ -415,38 +415,59 @@ def _secrets(home, mtime):
 def test_preflight_refuses_an_empty_setup_marker(tmp_path, monkeypatch, windows):
     home = _home(tmp_path)
     (home / ".sandbox" / "setup_marker.json").write_bytes(b"")
-    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: None)
     error = _preflight(tmp_path, home)
     assert error and "elevated sandbox setup" in error and "empty or unreadable" in error
+
+
+def _accounts(changed):
+    return {name: changed for name in codex_mod.SANDBOX_ACCOUNTS}
 
 
 def test_preflight_refuses_a_home_whose_passwords_another_home_reset(tmp_path, monkeypatch, windows):
     home = _home(tmp_path)
     _secrets(home, 1_000_000)
-    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: 1_000_000 + 1800.0)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: _accounts(1_000_000 + 1800.0))
     error = _preflight(tmp_path, home)
     assert error and "another Codex home" in error and "#382" in error
     assert "did not start Codex" in error
 
 
-@pytest.mark.parametrize("password_set", [None, 1_000_000 - 3600.0, 1_000_000 + 2.0])
-def test_preflight_accepts_a_home_that_set_the_current_passwords(tmp_path, monkeypatch, windows, password_set):
+@pytest.mark.parametrize("accounts", [None, _accounts(1_000_000 - 3600.0), _accounts(1_000_000 + 2.0)])
+def test_preflight_accepts_a_home_that_set_the_current_passwords(tmp_path, monkeypatch, windows, accounts):
     home = _home(tmp_path)
     _secrets(home, 1_000_000)
-    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: password_set)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: accounts)
+    assert _preflight(tmp_path, home) is None
+
+
+def test_preflight_refuses_when_a_sandbox_account_was_deleted(tmp_path, monkeypatch, windows):
+    """A Codex reinstall removes the accounts; the next command would recreate them through setup (PR #437 review)."""
+    home = _home(tmp_path)
+    _secrets(home, 1_000_000)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts",
+                        lambda: {"CodexSandboxOffline": 1_000_000 - 10.0, "CodexSandboxOnline": None})
+    assert "CodexSandboxOnline no longer exists" in (_preflight(tmp_path, home) or "")
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: _accounts(None))
+    assert "no longer exists" in (_preflight(tmp_path, home) or "")
+
+
+def test_a_home_never_set_up_is_not_judged_by_the_accounts(tmp_path, monkeypatch, windows):
+    home = _home(tmp_path)  # marker but no .sandbox-secrets: CI runners have no sandbox accounts at all
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: _accounts(None))
     assert _preflight(tmp_path, home) is None
 
 
 def test_preflight_refuses_a_secrets_folder_without_its_users_file(tmp_path, monkeypatch, windows):
     home = _home(tmp_path)
     (home / ".sandbox-secrets").mkdir()
-    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: None)
     assert "no sandbox_users.json" in (_preflight(tmp_path, home) or "")
 
 
-def test_password_time_is_unknown_off_windows(monkeypatch):
+def test_accounts_are_unknown_off_windows(monkeypatch):
     monkeypatch.setattr(codex_mod, "_is_windows", lambda: False)
-    assert codex_mod.sandbox_password_set() is None
+    assert codex_mod.sandbox_accounts() is None
 
 
 @pytest.mark.asyncio
@@ -480,21 +501,21 @@ async def test_first_setup_error_ends_the_cli_instead_of_waiting(tmp_path):
     assert sum("#382" in text for text in warns) == 1
 
 
-@pytest.mark.parametrize("text, elevated", [
-    ('[windows]\nsandbox = "elevated"\n', True),
-    ("[windows]\nsandbox = 'elevated'  # app default\n", True),
-    ('model = "x"\nwindows.sandbox = "elevated"\n', True),
-    ('[windows]\nsandbox = "unelevated"\n', False),
-    ('[projects.a]\nsandbox = "elevated"\n[windows]\nsandbox = "unelevated"\n', False),
-    ('[windows]\n# sandbox = "elevated"\n', False),
-    ('[[mcp]]\nsandbox = "elevated"\n', False),
-    ('[windows]\nsandbox = "unelevated"\n[[x]]\n[windows]\n', False),
+@pytest.mark.parametrize("text, value", [
+    ('[windows]\nsandbox = "elevated"\n', "elevated"),
+    ("[windows]\nsandbox = 'elevated'  # app default\n", "elevated"),
+    ('model = "x"\nwindows.sandbox = "elevated"\n', "elevated"),
+    ('[windows]\nsandbox = "unelevated"\n', "unelevated"),
+    ('[projects.a]\nsandbox = "elevated"\n[windows]\nsandbox = "unelevated"\n', "unelevated"),
+    ('[windows]\n# sandbox = "elevated"\n', codex_sandbox.UNSET),
+    ('[[mcp]]\nsandbox = "elevated"\n', codex_sandbox.UNSET),
+    ('model = "x"\n', codex_sandbox.UNSET),
 ])
-def test_config_elevated_reads_only_the_windows_sandbox_key(tmp_path, text, elevated):
+def test_config_windows_sandbox_reads_only_that_key(tmp_path, text, value):
     config = tmp_path / "config.toml"
     config.write_text(text, encoding="utf-8")
-    assert codex_sandbox.config_elevated(config) is elevated
-    assert codex_sandbox.config_elevated(tmp_path / "missing.toml") is False
+    assert codex_sandbox.config_windows_sandbox(config) == value
+    assert codex_sandbox.config_windows_sandbox(tmp_path / "missing.toml") is None
 
 
 def test_doctor_warns_when_the_runner_accounts_own_codex_home_is_also_elevated(tmp_path, monkeypatch, windows):
@@ -502,13 +523,18 @@ def test_doctor_warns_when_the_runner_accounts_own_codex_home_is_also_elevated(t
     own = tmp_path / "own-codex"
     own.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(own))
-    monkeypatch.setattr(codex_mod, "sandbox_password_set", lambda: None)
+    monkeypatch.setattr(codex_mod, "sandbox_accounts", lambda: None)
     (own / "config.toml").write_text('[windows]\nsandbox = "elevated"\n', encoding="utf-8")
     rows = [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
     assert len(rows) == 1 and rows[0]["status"] == "warn" and "#382" in rows[0]["detail"]
     assert '"unelevated"' in rows[0]["hint"] and str(tmp_path) not in json.dumps(rows[0])
 
+    (own / "config.toml").write_text('model = "x"\n', encoding="utf-8")  # no key: the app sets elevated again
+    rows = [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
+    assert len(rows) == 1 and "키가 없음" in rows[0]["detail"]
     (own / "config.toml").write_text('[windows]\nsandbox = "unelevated"\n', encoding="utf-8")
+    assert not [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
+    (own / "config.toml").unlink()  # no Codex config at all: nothing to warn about
     assert not [r for r in doctor.collect(settings)["checks"] if r["name"] == "codex sandbox homes"]
     monkeypatch.setenv("CODEX_HOME", str(home))  # the staff home itself is not "another" home
     (home / "config.toml").write_text('[windows]\nsandbox = "elevated"\n', encoding="utf-8")

@@ -608,9 +608,9 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
   - Codex on Windows: config.toml을 건너뛰면 `[windows] sandbox`도 빠져 쓰기가 막히고, 종료 코드는 0입니다. labhq가 `windows.sandbox="elevated"`를 다시 넣습니다.
   - Codex 앱이 업데이트되면 직원 `CODEX_HOME`의 elevated sandbox 준비가 무효가 될 수 있습니다(#328). runner는 셸 명령이 한 번이라도 돈 성공 실행에서, 그 실행이 띄운 Codex의 판본을 `CODEX_HOME/.labhq-sandbox-ok.json`에 적고, doctor는 지금 판본과 다르면 warn과 PI가 칠 PowerShell 명령을 보여 줍니다. 무인 실행이 이 오류로 멈추면 runner마다 한 번 결정함에 알립니다. `bin: auto`는 codex.exe가 있는 앱 폴더 중 판본이 가장 높은 곳을 고릅니다.
   - **한 PC에서 elevated sandbox는 Codex 홈 하나만** 쓸 수 있습니다(#382). elevated 준비는 PC 공용 계정 `CodexSandboxOffline`·`CodexSandboxOnline`의 비밀번호를 새로 바꾸고 그 값을 자기 홈에만 적습니다. PI 본인 Codex(`~/.codex`)도 elevated면 두 홈이 서로를 무효로 만들어 승인 창(UAC)이 번갈아 뜹니다. PI 홈은 `[windows] sandbox = "unelevated"`로 두세요. 키를 지우면 Codex 앱이 elevated 설정을 다시 시작합니다.
-    - 실행 전 점검(관리자 권한·비밀 내용 없이 파일 시각만 봄): `setup_marker.json`이 비었거나 깨졌을 때, 또는 직원 홈의 `.sandbox-secrets/sandbox_users.json`이 계정 비밀번호를 바꾼 시각보다 오래됐을 때 Codex를 띄우지 않고 거부합니다. 띄우면 승인 창을 띄우거나 셸이 멈추기 때문입니다. doctor도 같은 이유로 fail을 냅니다.
+    - 실행 전 점검(관리자 권한·비밀 내용 없이 파일 시각만 봄): `setup_marker.json`이 비었거나 깨졌을 때, 직원 홈의 `.sandbox-secrets/sandbox_users.json`이 계정 비밀번호를 바꾼 시각보다 오래됐을 때, setup을 마친 홈인데 sandbox 계정이 없어졌을 때(Codex 재설치) Codex를 띄우지 않고 거부합니다. 띄우면 승인 창을 띄우거나 셸이 멈추기 때문입니다. doctor도 같은 이유로 fail을 냅니다.
     - 실행 중 첫 "sandbox setup required"에서 Codex 프로세스 트리를 끝냅니다. 다음 셸 명령마다 승인 창이 또 뜨는 것을 막습니다.
-    - doctor는 runner 계정의 Codex 홈(`$CODEX_HOME`, 없으면 `~/.codex`)이 직원 홈이 아닌데 elevated로 설정돼 있으면 warn을 냅니다.
+    - doctor는 runner 계정의 Codex 홈(`$CODEX_HOME`, 없으면 `~/.codex`)이 직원 홈이 아닌데 config.toml이 elevated이거나 그 키가 없으면 warn을 냅니다.
   - agy: 전역 지침을 읽지 않았습니다(실측). 사용자 `settings.json` 권한과 MCP는 끌 옵션이 없습니다.
 - 이어 묻기·상담은 허용 목록 profile로 돕니다(`labhq/adapters/read_only.py`). 직원의 이름·역할·지침·모델·한도·`project_dirs`·금지 도구(`disallowed_tools`)만 가져오고, 보낸 쪽 override는 보지 않습니다. `isolate_user_config: false`여도 격리합니다.
   - Claude: plan 모드, `Read,Glob,Grep`, MCP 없음, plugin·`extra_args` 없음, `--setting-sources ""`(작업 폴더의 `.claude/settings.json`도 안 읽음), `disableAllHooks`. 수정 전 명령에서는 작업 폴더와 plugin의 SessionStart·Stop hook이 plan 모드를 거치지 않고 돌았습니다(실측 `claude_read_only_*.jsonl`, 2.1.282).

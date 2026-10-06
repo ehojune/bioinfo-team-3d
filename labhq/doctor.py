@@ -272,12 +272,15 @@ def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict,
     rows = []
     homes = codex_sandbox.elevated_homes(settings, env, settings.path(settings.runner.workspace_root))
     other = codex_sandbox.other_elevated_home(homes) if homes else None
-    if other is not None and other not in seen:
-        seen.add(other)
+    if other is not None and other[0] not in seen:
+        own, value = other
+        seen.add(own)
+        state = ("elevated sandbox" if value == "elevated" else
+                 "[windows] sandbox 키가 없음(Codex 앱이 elevated로 다시 설정)")
         rows.append(_row("staff", "codex sandbox homes", "warn",
-                         f"{codex_sandbox.home_label(other)}의 Codex 설정도 elevated sandbox — 직원 홈과 같은 sandbox "
+                         f"{codex_sandbox.home_label(own)}의 Codex 설정도 {state} — 직원 홈과 같은 sandbox "
                          "계정 비밀번호를 번갈아 바꿔 승인 창(UAC)이 반복됩니다 (#382)",
-                         f"{codex_sandbox.home_label(other)}/config.toml의 [windows] sandbox를 \"unelevated\"로 "
+                         f"{codex_sandbox.home_label(own)}/config.toml의 [windows] sandbox를 \"unelevated\"로 "
                          "바꾸고(키를 지우면 Codex 앱이 elevated 설정을 다시 시작) Codex 앱을 다시 켠 뒤, 직원 홈 "
                          "sandbox 준비를 한 번 하세요"))
     for home in homes:

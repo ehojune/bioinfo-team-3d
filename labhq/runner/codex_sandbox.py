@@ -122,31 +122,35 @@ def setup_hint(home: Path, command: list[str] | str | None, env: dict[str, str])
 
 
 _TABLE = re.compile(r"^\s*\[\[?\s*([^\]]*?)\s*\]\]?\s*(?:#.*)?$")
-_ELEVATED = re.compile(r"""^\s*(windows\s*\.\s*)?sandbox\s*=\s*["']elevated["']\s*(?:#.*)?$""")
+_SANDBOX_KEY = re.compile(r"""^\s*(windows\s*\.\s*)?sandbox\s*=\s*["']([^"']*)["']\s*(?:#.*)?$""")
+UNSET = "unset"
 
 
-def config_elevated(config: Path) -> bool:
-    """Whether a Codex config.toml sets `[windows] sandbox = "elevated"` (or the dotted top-level form). A line scan,
-    not a TOML parser: Python 3.10 has no tomllib, and only this one key matters."""
+def config_windows_sandbox(config: Path) -> str | None:
+    """`[windows] sandbox` (or the dotted top-level form) of a Codex config.toml; UNSET when the file has no such key,
+    None when there is no readable file. A line scan, not a TOML parser: Python 3.10 has no tomllib, and only this one
+    key matters."""
     try:
         lines = config.read_text(encoding="utf-8-sig").splitlines()
     except (OSError, UnicodeDecodeError):
-        return False
+        return None
     table = ""
     for line in lines:
         header = _TABLE.match(line)
         if header:
             table = header.group(1).replace(" ", "")
             continue
-        found = _ELEVATED.match(line)
+        found = _SANDBOX_KEY.match(line)
         if found and ((table == "" and found.group(1)) or (table == "windows" and not found.group(1))):
-            return True
-    return False
+            return found.group(2)
+    return UNSET
 
 
-def other_elevated_home(staff_homes: list[Path]) -> Path | None:
-    """The runner account's own Codex home ($CODEX_HOME of the runner, else ~/.codex) when it is not a staff home and
-    its config also turns on the elevated sandbox: the two homes then reset each other's setup (#382)."""
+def other_elevated_home(staff_homes: list[Path]) -> tuple[Path, str] | None:
+    """The runner account's own Codex home ($CODEX_HOME of the runner, else ~/.codex) and its windows.sandbox value,
+    when that home is not a staff home and its config does not pin a non-elevated sandbox: the two homes then reset
+    each other's setup (#382). A missing key counts, since the Codex app sets it to elevated again (PR #437 review);
+    a home without a config.toml does not."""
     own = Path(os.path.expanduser(os.environ.get("CODEX_HOME") or os.path.join("~", ".codex")))
     try:
         own = own.resolve()
@@ -154,7 +158,8 @@ def other_elevated_home(staff_homes: list[Path]) -> Path | None:
             return None
     except OSError:
         return None
-    return own if config_elevated(own / "config.toml") else None
+    value = config_windows_sandbox(own / "config.toml")
+    return (own, value) if value in ("elevated", UNSET) else None
 
 
 def home_label(home: Path) -> str:
