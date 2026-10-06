@@ -17,7 +17,7 @@ from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
 from ..util import short
-from .base import (AgentAdapter, role_footer, RunContext, RunState, child_config_dirs, expand_env,
+from .base import (AgentAdapter, role_footer, RunContext, RunState, child_config_dirs, expand_env, note_failed_output,
                    record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
@@ -324,6 +324,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         elif typ == "user":
             for block in (ev.get("message") or {}).get("content") or []:
                 if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                    note_failed_output(st, block.get("content"))
                     await ctx.emit("agent.tool_error", {"text": short(block.get("content"), 400)})
         elif typ == "result":
             st.result_seen = True

@@ -11,7 +11,7 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 | [띄우기와 접속](#띄우기와-접속) | gateway·runner, 브라우저·폰 |
 | [웹 사무실](#웹-사무실) | 2.5D·3D 화면과 기능 |
 | [명령줄(CLI)](#명령줄cli) | `send`·`approve`·`verify`·`recruit` 등 |
-| [구조와 이벤트](#구조와-이벤트) | 요청 흐름, 아키텍처, 이벤트, REST |
+| [구조와 이벤트](#구조와-이벤트) | 요청 흐름, 아키텍처, 이벤트, REST, 환경 실패 |
 | [직원과 도구](#직원과-도구) | 조직도, 연결된 도구, bioinfo-agent |
 | [파견직 제도](#파견직-제도-paper2agent) | Paper2Agent 채용·계약 |
 | [안전 장치](#안전-장치) | 승인 게이트, 데이터 구역, PI 개인 경로, 예산 |
@@ -305,6 +305,25 @@ Claude Code나 Codex 로그인이 만료되면 요청은 `waiting_login`에서 �
 - CLI는 단계 대기와 새 `labhq watch`의 현재 대기에도 runner OS·펼친 직원 경로에 맞는 로그인 명령을 한 번 보여 줍니다.
 - 재시작해도 대기와 마감은 유지됩니다. 자격 증명은 저장하지 않습니다.
 - 마감은 요청·엔진마다 하나이고, 그 요청에서 복구 중인 turn(단계마다, 상담은 질의마다)이 모두 끝나야 지웁니다. 먼저 끝난 turn이 남은 turn의 마감을 새로 시작시키지 않습니다.
+
+### 환경 실패와 오류 서명
+
+runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니다(#35). 같은 PC에서 다시 돌려도 같게 실패하므로 재시도하지 않고, 웹 작업판 카드·보고서의 `Next:`와 `보고서 경고`·`labhq status`에 "환경 문제: 원인 — 할 일"을 보여 줍니다. 단계 결과(`environment`)와 `request.step_done` 이벤트에는 서명 `id`·`cause`·`hint`가 붙습니다.
+
+| 서명 | 무엇 |
+|---|---|
+| `python_module_missing` | `ModuleNotFoundError`, `No module named` |
+| `command_not_found` | `command not found`, `is not recognized as an internal or external command` |
+| `r_package_missing` | `there is no package called` |
+| `disk_full` | `No space left on device`, `ENOSPC`, `There is not enough space on the disk` |
+| `network_name_resolution` | `Could not resolve host`, `getaddrinfo failed`, `ProxyError` |
+| `docker_daemon_down` | `Cannot connect to the Docker daemon` |
+| `codex_sandbox_setup` | Codex 직원 홈의 elevated sandbox 준비 필요(`sandbox_setup_required`) |
+
+- 로그인 만료(`login`)와 한도(`quota`)를 먼저 가립니다. 로그인 만료는 지금처럼 로그인 대기로 갑니다.
+- 보는 곳은 실패 문구뿐입니다: 단계 오류, 직원 CLI의 stderr 끝부분(실패한 실행만), 실패한 셸·도구 호출의 출력. 성공한 명령의 출력은 보지 않습니다.
+- 실패한 명령 출력에서만 찾은 서명은 약한 증거입니다. 단계 오류가 따로 설명하면(rate limit, 권한 거부, 취소 등) 그쪽을 따릅니다.
+- 서명 추가: `labhq/facilities/signatures.yaml`에 항목(`id`, `engine`, `pattern`, `cause`, `hint`, `fix`)을 넣고 `tests/fixtures/environment_signatures.yaml`에 실제 문구 예시를 하나 이상 둡니다. `pattern`은 대소문자를 무시하는 정규식이고 `^`는 줄 첫머리입니다. 도구가 찍는 오류 줄 첫머리에 맞추면 그 문구를 인용한 grep 출력(`파일:줄:`)이나 pytest diff(`E `)에 걸리지 않습니다. `fix`는 비워 둡니다(다음 단계의 `facilities_fix` 자리).
 
 ## 직원과 도구
 
@@ -761,6 +780,7 @@ labhq/
   gateway/      server (FastAPI · WS · REST)
   orchestrator/ cso (브리핑 → 계획 → DAG → 리뷰 → 보고)
   recruit/      paper2agent (채용 → 수습 → 계약)
+  facilities/   signatures (환경 실패 오류 서명 표)
 vocab/        산출 데이터 종류 key(output_types.yaml) · 선언 정규화(declare) · optional subset loader
 agents/core/*.yaml       정규직 11명 (bioinfo-agent 포함)
 agents/contract/         파견직 계약서 (+ 템플릿, 호스팅 AlphaGenome 예시)

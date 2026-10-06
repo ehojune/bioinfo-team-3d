@@ -17,7 +17,7 @@ import httpx
 
 from .. import __version__
 from ..models import TaskResult
-from ..orchestrator.cso import failure_kind
+from ..orchestrator.cso import environment_problem, failure_kind
 from ..util import short
 from .github import GitHubClient, GitHubHTTPError, MAX_BODY, publish_clean, root_zone_restricted
 
@@ -136,6 +136,9 @@ def build_record(hub: "Hub", rid: str) -> dict:
                                        for p in result.get("outputs") or []],
                       "missing_outputs": result.get("missing_outputs") or [],
                       "revision_failed": result.get("revision_failed"),
+                      **({"environment": environment} if (environment := (
+                          None if result.get("ok") or not result.get("task_id") or not result.get("agent_id")
+                          else environment_problem(result))) else {}),
                       "engine_cli_version": next((run.get("engine_cli_version") for run in runs.values()
                                                   if isinstance(run, dict) and run.get("engine_cli_version")), None)})
     for ev in events:

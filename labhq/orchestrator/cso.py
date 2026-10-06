@@ -22,6 +22,7 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
+from ..facilities import signatures as env_signatures
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
                       question_detail_lines, questions_summary, reference_dirs, render_references)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
@@ -1072,6 +1073,10 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
             shown = ", ".join(str(path) for path in paths[:5])
             suffix = f" (+{len(paths) - 5}개)" if len(paths) > 5 else ""
             lines.append(f"- {sid}: Evidence 경로 불일치 {len(paths)}건: {shown}{suffix}")
+        ok = result.ok if isinstance(result, TaskResult) else result.get("ok")
+        environment = None if ok else environment_problem(result)
+        if environment:
+            lines.append(f"- {sid}: {env_signatures.problem_text(environment)}")
         errors = result.tool_errors if isinstance(result, TaskResult) else result.get("tool_errors") or []
         if errors:
             first = str(errors[0]).splitlines()[0].strip() or "tool failed"
@@ -1740,12 +1745,17 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
     Outcome                                      Kind
     Successful result                            None
     Known engine login expiry                   login
+    Environment signature in the error, error   environment
+      kind or CLI stderr (labhq/facilities)
     Offline, timeout, empty result/CLI stream,  transient
       explicit rate-limit/overload/5xx/network signal
     Policy/approval/budget/cancel/invalid input, terminal
       ordinary nonzero exit, other error
+    Environment signature only in a failed       environment
+      command's output, no other rule matched
 
-    An exit code alone is never evidence that another run is safe.
+    An exit code alone is never evidence that another run is safe. An environment failure is not retried: the same
+    PC fails the same way until someone installs or frees what is missing (#35).
     """
     if isinstance(outcome, asyncio.CancelledError):
         return "terminal"
@@ -1768,6 +1778,10 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "login"
     if outcome.quota_reset_at is not None or is_quota_error("", error):
         return "quota"
+    strong = _strong_environment(outcome, engine)
+    # The PI's cancel stays terminal even when the stopped CLI's stderr held a signature.
+    if strong and (strong.get("source") == "error" or "cancel" not in error):
+        return "environment"
     if any(word in error for word in ("policy", "permission", "denied", "approval", "auth",
                                       "budget", "cancel", "ineligibletier", "401")):
         return "terminal"
@@ -1787,7 +1801,30 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "transient"
     if re.search(r"\b5\d{2}\b|\b5xx\b", error):
         return "transient"
+    if outcome.environment and outcome.environment.get("source") == "command":
+        return "environment"  # a failed command the agent did not get past, and nothing else explains the failure
     return "terminal"
+
+
+def _strong_environment(outcome: TaskResult, engine: str) -> dict | None:
+    """An environment signature in the step's own error or error kind, or one the runner read in the CLI's stderr."""
+    found = env_signatures.match(engine, outcome.error, error_kind=outcome.error_kind)
+    if found:
+        return found.record("error")
+    env = outcome.environment
+    return env if env and env.get("source") != "command" else None
+
+
+def environment_problem(outcome: TaskResult | dict | None, engine: str = "") -> dict | None:
+    """The environment signature ({id, cause, hint, source}) of a failed step, or None when it failed otherwise."""
+    if isinstance(outcome, dict):
+        try:
+            outcome = TaskResult.model_validate(outcome)
+        except ValueError:
+            return None
+    if not isinstance(outcome, TaskResult) or failure_kind(outcome, engine) != "environment":
+        return None
+    return _strong_environment(outcome, engine) or outcome.environment
 
 
 def holds_session(entry: dict, agent_id: str, session_id: str | None, workdir: str | None) -> bool:
@@ -2445,6 +2482,8 @@ class Orchestrator:
                     previous_workdir = res.workdir or previous_workdir
                     if res.session_id and self.hub.supports_resume(current.agent_id):
                         previous_session = res.session_id
+                    if kind == "environment":  # the record the step result, its event and the report show (#35)
+                        res = res.model_copy(update={"environment": environment_problem(res, engine)})
                 if res.tool_errors:
                     tool_errors.extend(res.tool_errors)
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
@@ -2986,10 +3025,13 @@ class Orchestrator:
                         outcome = previous.model_copy(update={"revision_failed":
                             f"{outcome.error_kind or failure_kind(outcome) or 'terminal'}: {outcome.error or 'unknown error'}"})
                     results[sid] = outcome
+                    environment = None if outcome.ok else environment_problem(outcome)
                     await self._emit(rid, "request.step_done", {"step_id": sid, "ok": results[sid].ok,
                                                                 "agent_id": by_id[sid]["agent_id"],
                                                                 "attempts": self.attempts.get(rid, {}).get(sid, 0),
-                                                                "reason": results[sid].error})
+                                                                "reason": results[sid].error,
+                                                                **({"environment": environment} if environment
+                                                                   else {})})
                     res = results[sid]
                     question = blocking_question(res)
                     if res.ok and question:
@@ -3377,6 +3419,9 @@ class Orchestrator:
                 return "not run; re-send the request once the steps above are fixed."
             if skipped(r):
                 return "fix the failed upstream step(s) above, then re-send the request."
+            environment = environment_problem(r)
+            if environment:
+                return env_signatures.problem_text(environment)
             if r.missing_outputs:
                 return f"produce the missing outputs in {r.workdir_id or 'the work folder'}, then re-run this step."
             if (r.error_kind or failure_kind(r)) == "transient":

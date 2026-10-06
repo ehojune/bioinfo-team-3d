@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 
 from ..util import short
-from .base import AgentAdapter, role_footer, RunContext, RunState, expand_env, record_model_id, wrap_cwd
+from .base import (AgentAdapter, role_footer, RunContext, RunState, expand_env, note_failed_output, record_model_id,
+                   wrap_cwd)
 from .owned import write_owned
 
 APPROVAL_MAP = {"plan": "plan", "acceptEdits": "auto_edit", "auto": "auto_edit",
@@ -69,6 +70,7 @@ class GeminiAdapter(AgentAdapter):
         elif typ == "tool_use":
             await ctx.emit("agent.tool", {"name": ev.get("tool_name"), "input": short(ev.get("parameters"), 400)})
         elif typ == "tool_result" and ev.get("status") not in (None, "success"):
+            note_failed_output(st, ev.get("output") or ev.get("error"))
             await ctx.emit("agent.tool_error", {"text": short(ev.get("output") or ev.get("error"), 400)})
         elif typ == "error":
             st.error = ev.get("message") or "gemini error"

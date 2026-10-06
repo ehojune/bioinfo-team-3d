@@ -1,0 +1,66 @@
+# Environment failure signatures (#35 stage 2). A failed step whose error, CLI stderr tail or failed shell command
+# output matches one of these is an `environment` failure: labhq does not retry it and shows "환경 문제: cause — hint".
+#
+# Fields
+#   id          stable name, used in events and records
+#   engine      any, or one engine (claude_code, codex, gemini, antigravity, cli, mock)
+#   pattern     Python regex, case-insensitive and multi-line (^ and $ are line ends). Anchor it to the start of the
+#               tool's own error line where you can: `grep` output starts with a file name and a pytest diff with
+#               "E ", so an anchored pattern does not fire on a log that merely quotes the phrase.
+#   error_kind  optional: a TaskResult.error_kind that means this signature without any text match
+#   cause       one line, Korean: what is wrong
+#   hint        one line, Korean: what the PI does next, with the command when there is one
+#   fix         empty for now: the place for a stage-3 `facilities_fix` allowlist id
+#
+# Every pattern needs a real-wording example in tests/fixtures/environment_signatures.yaml.
+
+- id: python_module_missing
+  engine: any
+  pattern: '^\s*(?:ModuleNotFoundError|ImportError): No module named\b|^(?:[a-z]:\\)?[^:\n]*python[\d.]*(?:\.exe)?: No module named\b'
+  cause: Python 모듈이 설치돼 있지 않습니다
+  hint: '단계가 쓴 Python 환경에 패키지를 설치하세요(`<python> -m pip install <패키지>` 또는 conda·venv 확인)'
+  fix:
+
+- id: command_not_found
+  engine: any
+  pattern: >-
+    ^[^\s:]*sh(?:\.exe)?: (?:line \d+: |\d+: )?[^:\n]+: (?:command )?not found\s*$|^zsh: command not found: |^'[^'\n]+' is not recognized as an internal or external command|The term '[^'\n]+' is not recognized as (?:the|a) name of a cmdlet
+  cause: 명령(프로그램)을 찾지 못했습니다
+  hint: 'runner PC에 그 도구를 설치하거나 PATH에 넣으세요. 확인: `labhq doctor`'
+  fix:
+
+- id: r_package_missing
+  engine: any
+  pattern: '^\s*(?:Error\b[^\n]*?:\s*)?there is no package called\b'
+  cause: R 패키지가 설치돼 있지 않습니다
+  hint: 'R에서 `install.packages("<패키지>")` 또는 `BiocManager::install("<패키지>")`로 설치하세요'
+  fix:
+
+- id: disk_full
+  engine: any
+  pattern: '(?:^|:\s)(?:\[Errno 28\]\s)?(?:No space left on device|There is not enough space on the disk)|(?:^|:\s)ENOSPC\b'
+  cause: 디스크 공간이 부족합니다
+  hint: '작업 폴더(`runner.workspace_root`)가 있는 디스크를 비우고 요청을 다시 보내세요'
+  fix:
+
+- id: network_name_resolution
+  engine: any
+  pattern: 'Could not resolve host\b|getaddrinfo failed|\bProxyError\b'
+  cause: 네트워크 이름 풀이 또는 프록시 접속에 실패했습니다
+  hint: 'runner PC의 인터넷·DNS·프록시(`HTTPS_PROXY`)를 확인하세요. Codex 직원이면 sandbox가 네트워크를 막았는지도 보세요'
+  fix:
+
+- id: docker_daemon_down
+  engine: any
+  pattern: 'Cannot connect to the Docker daemon\b'
+  cause: Docker 데몬에 연결하지 못했습니다
+  hint: 'Docker Desktop(또는 WSL의 dockerd)을 켜고 `docker info`로 확인하세요'
+  fix:
+
+- id: codex_sandbox_setup
+  engine: codex
+  error_kind: sandbox_setup_required
+  pattern: '^Codex elevated sandbox setup is required\b'
+  cause: 직원 Codex 홈의 elevated sandbox 준비가 필요합니다
+  hint: 'PI가 `labhq doctor`가 보여 주는 명령으로 직원 CODEX_HOME의 sandbox를 준비하세요(UAC 승인은 PI만, #382)'
+  fix:

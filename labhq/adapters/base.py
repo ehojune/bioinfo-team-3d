@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
 from ..util import extract_json, merge_staff_env, short
@@ -339,6 +340,20 @@ async def pending_uac_prompts() -> bool:
         return False
     return b"consent.exe" in out.lower()
 
+FAILED_OUTPUTS_KEPT = 20
+FAILED_OUTPUT_CHARS = 4000
+
+
+def note_failed_output(st: "RunState", output: Any) -> None:
+    """Keep the end of a failed tool call's output for the environment signatures (#35). Claude sends a tool result's
+    content as text blocks; other engines send a string."""
+    if isinstance(output, list):
+        output = "\n".join(str(block.get("text", "")) if isinstance(block, dict) else str(block) for block in output)
+    text = "" if output is None else str(output)
+    if text.strip():
+        st.failed_outputs.append(text[-FAILED_OUTPUT_CHARS:])
+
+
 @dataclass
 class RunState:
     text_parts: list[str] = field(default_factory=list)
@@ -357,6 +372,8 @@ class RunState:
     model_id: str | None = None
     commands_ran: bool = False  # a shell command ran to exit 0 (engines that report commands)
     stop_reason: str | None = None  # the adapter saw a failure more turns cannot fix: labhq ends the process tree
+    # Tails of failed tool calls' output, newest last (#35): environment signatures read them, never successful output.
+    failed_outputs: deque = field(default_factory=lambda: deque(maxlen=FAILED_OUTPUTS_KEPT))
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
@@ -701,6 +718,9 @@ class AgentAdapter(ABC):
             res.error = f"{res.error}: {short(stderr, 500)}"
         if returncode not in (0, None) and not res.error:
             res.error = f"exit {returncode}: " + " | ".join(list(stderr_tail)[-5:])
+        # The CLI's own stderr counts only when the run failed; a failed command's output counts either way, because
+        # an agent that gave up after "No module named x" can still exit 0 with its outputs missing (#35).
+        res.environment = env_signatures.scan_run(self.engine, stderr_tail if not res.ok else (), st.failed_outputs)
         return res
 
     @staticmethod

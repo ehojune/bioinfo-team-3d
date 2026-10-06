@@ -20,6 +20,8 @@ function cardFor(step, status, detail, options) {
   list(card, '산출물', detail.outputs);
   list(card, '누락 산출물', detail.missing_outputs, 'missing');
   list(card, '리뷰 지적', detail.review_issues, 'review');
+  // Environment failure (#35): what is missing on the runner PC and what to do, above the raw error.
+  if (detail.environment) add(card, 'p', `환경 문제: ${detail.environment.cause || detail.environment.id || ''}${detail.environment.hint ? ` — ${detail.environment.hint}` : ''}`, 'task-error task-environment');
   if (detail.error) add(card, 'p', detail.error, 'task-error');
   if (detail.text) add(card, 'p', detail.text, 'task-result');
   if (status === 'waiting_quota') {
