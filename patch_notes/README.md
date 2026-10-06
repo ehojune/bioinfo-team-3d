@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:31 | [`6e88a89`](https://github.com/ehojune/bioinfo-team-3d/pull/438/commits/6e88a89) | 연구 lane 보고서도 남은 P2·P3 지적 원문을 실행 기록에 두고, "수치는 한 번"을 결과 통계로 한정했다(seed·버전은 방법 요약에 그대로, 리뷰 반영). |
+| 12:02 | [`0b4bfab`](https://github.com/ehojune/bioinfo-team-3d/pull/438/commits/0b4bfab) | 보고서 본문의 리뷰 참고가 제목 수준과 상관없이 한 번만 나오고 P3는 건수만 적는다. 보고서 프롬프트에 분량 기준(본문 약 4,000자, 수치는 결과에 한 번)을 넣었다. |
 | 11:32 | [`b081c30`](https://github.com/ehojune/bioinfo-team-3d/pull/437/commits/b081c30) | setup을 마친 홈인데 sandbox 계정이 없어졌으면(Codex 재설치) 거부하고, PI Codex 설정에 sandbox 키가 없어도 doctor가 알린다(리뷰 반영). |
 | 11:04 | [`1a1a93e`](https://github.com/ehojune/bioinfo-team-3d/pull/437/commits/1a1a93e) | 직원 Codex 홈의 elevated sandbox 준비가 낡았으면(빈 marker, 다른 홈이 공용 계정 비밀번호를 바꿈) 승인 창 대신 실행 전에 거부하고, 첫 setup 오류에서 Codex를 끝낸다. doctor는 PI Codex 홈도 elevated면 알린다. |
 | 05:48 | [`11670c2`](https://github.com/ehojune/bioinfo-team-3d/pull/436/commits/11670c2) | 인계 문서의 10-06 시각을 바로잡았다. |

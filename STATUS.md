@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-06 · #373 — 보고서 본문 줄이기
+
+- 결론: 벤치 C t6 보고서 본문 12,600자(Astra 3,100자) 중 약 2,000자가 `리뷰 참고` 두 벌이었다. 모델이 쓴 H1 절을 labhq가 지우지 못했다. 이 중복을 없애고 분량 기준을 프롬프트에 넣었다.
+- 바뀐 것: 리뷰 참고 절은 제목 수준과 상관없이 하나, P2는 한 줄씩, P3는 건수 한 줄. 일반·연구 보고서 프롬프트에 본문 약 4,000자 목표·수치 한 번·방법 요약 8줄 안팎·한계는 결론을 바꿀 것만. manual 보고서 절.
+- 실행한 것: 새 test 1건, 보고서 관련 test 50개 파일 1822 passed·6 skipped, `scripts/check_public.sh`.
+- 미해결: 효과는 다음 벤치(t6 재실행)에서 본문 길이와 읽기 점수로 잰다.
+- 근거: `labhq/orchestrator/cso.py` `_review_reference`·`_with_review_reference`·`SYNTH_PROMPT`.
+
 ## 2026-10-06 · #382 — 낡은 직원 Codex sandbox는 승인 창 대신 실행 전에 거부
 
 - 결론: 한 PC의 elevated Codex 홈 둘이 공용 sandbox 계정 비밀번호를 번갈아 바꿔 승인 창(UAC)이 반복됐다(PI 결정 안 A, #435). labhq는 이제 직원 홈이 낡았는지 실행 전에 알아보고 Codex를 띄우지 않는다.
