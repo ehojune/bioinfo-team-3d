@@ -912,6 +912,8 @@ class Runner:
         async with semaphore:
             await emit("agent.status", {"state": "working", "task": task.meta.get("title") or short(task.prompt, 120)})
             zones = self._zones()
+            preclean_started: float | None = None
+            preclean_record: dict | None = None
             if reused:
                 reason = None
                 try:
@@ -932,6 +934,12 @@ class Runner:
                     await emit("agent.status", {"state": "error", "error": short(error, 200)})
                     await emit("task.result", result.model_dump(mode="json"))
                     return result
+                proposal = task.meta.get("facilities_fix")
+                if task.meta.get("kind") == "facilities_fix" and facility_fixes.is_workspace_cache(proposal):
+                    # An ENOSPC workspace cannot accept even our event log or manifest. Keep the queued events in
+                    # memory, clear the allowlisted cache first, then create/register TaskWorkspace and flush them.
+                    preclean_started = time.time()
+                    preclean_record = await facility_fixes.execute(proposal, workspace_dir)
                 ws = TaskWorkspace(self.ws_root, task, agent, workspace_dir)
                 for event in self.event_buffers.pop(task.id, []):  # before any later event (#193)
                     ws.append_event(event)
@@ -939,12 +947,11 @@ class Runner:
                 self.task_req[task.id] = task.request_id
             assert ws is not None
             if task.meta.get("kind") == "facilities_fix":
-                started = time.time()
+                started = preclean_started or time.time()
                 proposal = task.meta.get("facilities_fix")
                 ws.update_run(task.id, started_at=started, kind="facilities_fix",
                               fix_id=proposal.get("fix_id") if isinstance(proposal, dict) else None)
-                record = await facility_fixes.execute(
-                    proposal, ws.dir, task.meta.get("upstream_steps") or {}, self.ws_root.resolve())
+                record = preclean_record or await facility_fixes.execute(proposal, ws.dir)
                 result = TaskResult(task_id=task.id, agent_id=agent.id, ok=bool(record.get("ok")),
                                     text=record.get("action") or "", cost_usd=0.0, cost_known=True,
                                     error=record.get("error"), facilities_fix=record,

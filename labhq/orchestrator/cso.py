@@ -2667,21 +2667,26 @@ class Orchestrator:
                 res = res.model_copy(update={"facilities_fix": record})
             else:
                 if not record:
-                    fix_task = Task(agent_id=task.agent_id, request_id=rid, prompt="",
-                                    meta={**task.meta, "kind": "facilities_fix", "step_id": key,
-                                          "parent_task": res.task_id, "title": f"{key}: 승인된 환경 수정",
-                                          "facilities_fix": propose,
-                                          **({"workdir": res.workdir} if res.workdir else {})})
-                    try:
-                        fixed = await self.hub.dispatch(fix_task)
-                    except (asyncio.CancelledError, KeyboardInterrupt):
-                        raise
-                    except Exception as exc:
-                        fixed = TaskResult(task_id=fix_task.id, agent_id=task.agent_id, ok=False,
-                                           error=f"facilities fix dispatch failed: {exc}")
-                    record = fixed.facilities_fix or {**propose, "ok": fixed.ok,
-                                                       "status": "succeeded" if fixed.ok else "failed",
-                                                       **({"error": fixed.error} if fixed.error else {})}
+                    if propose["execution"] in {"python_package", "r_package"}:
+                        instruction = facility_fixes.retry_instruction(propose)
+                        record = {**propose, "ok": True, "status": "succeeded",
+                                  "mode": "task_local_instruction", "instruction": instruction}
+                    else:
+                        fix_task = Task(agent_id=task.agent_id, request_id=rid, prompt="",
+                                        meta={**task.meta, "kind": "facilities_fix", "step_id": key,
+                                              "parent_task": res.task_id, "title": f"{key}: 승인된 환경 수정",
+                                              "facilities_fix": propose,
+                                              **({"workdir": res.workdir} if res.workdir else {})})
+                        try:
+                            fixed = await self.hub.dispatch(fix_task)
+                        except (asyncio.CancelledError, KeyboardInterrupt):
+                            raise
+                        except Exception as exc:
+                            fixed = TaskResult(task_id=fix_task.id, agent_id=task.agent_id, ok=False,
+                                               error=f"facilities fix dispatch failed: {exc}")
+                        record = fixed.facilities_fix or {**propose, "ok": fixed.ok,
+                                                           "status": "succeeded" if fixed.ok else "failed",
+                                                           **({"error": fixed.error} if fixed.error else {})}
                     remember = getattr(self.hub, "record_facilities_fix", None)
                     if callable(remember):
                         await remember(rid, key, record)
@@ -2689,11 +2694,16 @@ class Orchestrator:
                     res = res.model_copy(update={"facilities_fix": record})
                 else:
                     can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
+                    repair_instruction = (record.get("instruction") or
+                                          (facility_fixes.retry_instruction(propose)
+                                           if propose["execution"] in {"python_package", "r_package"} else ""))
+                    retry_note = (repair_instruction + "\n\n" if repair_instruction else
+                                  "The PI approved and the runner completed the allowlisted environment fix. ")
                     retry = task.model_copy(update={
                         "id": new_id("task"),
                         "prompt": continuation_prompt(
-                            task, "The PI approved and the runner completed the allowlisted environment fix. "
-                                  "Retry the same task once now.", resumable=can_resume, previous_result=res,
+                            task, retry_note + "Retry the same task once now.",
+                            resumable=can_resume, previous_result=res,
                             context_chars=self.cfg.context_chars_per_step),
                         "context": "", "resume_session_id": res.session_id if can_resume else None,
                         "meta": {**task.meta, "parent_task": res.task_id, "facilities_rerun": True,

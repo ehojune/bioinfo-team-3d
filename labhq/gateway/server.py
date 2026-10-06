@@ -228,6 +228,7 @@ class Hub:
         self.recovered_tasks: set[str] = set()
         self.quota_events: dict[str, asyncio.Event] = {}
         self.login_events: dict[str, asyncio.Event] = {}
+        self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
@@ -517,9 +518,23 @@ class Hub:
         if changed:
             self._sync_hold_status(req)
             self.save_request(rid)
-        # A still-open phone card is already durable. Do not restart the orchestration until the PI answers;
-        # resolve_approval() wakes it. This also keeps the request/card visibly waiting across a gateway restart.
-        if any(entry.get("status") == "waiting" for entry in facilities.values()):
+        # A still-open phone card is durable, but its old event-loop timer is not. Restore the remaining interval;
+        # the timeout path saves a decision and wakes this request just like an approve/decline response.
+        waiting = [entry for entry in facilities.values() if entry.get("status") == "waiting"]
+        for entry in waiting:
+            approval_id = str(entry.get("approval_id") or "")
+            approval_entry = self.approvals.get(approval_id)
+            if not approval_entry:
+                continue
+            approval = ApprovalRequest.model_validate(approval_entry["approval"])
+            remaining = approval.created_at + approval.timeout_s - time.time()
+            if remaining <= 0:
+                await self._expire_restored_facilities_approval(approval_id)
+                return
+            if approval_id not in self.facilities_timeout_tasks:
+                self.facilities_timeout_tasks[approval_id] = asyncio.create_task(
+                    self._wait_restored_facilities_timeout(approval_id, remaining))
+        if waiting:
             return
         facilities_resume = bool(facilities) and facilities_hold
         if not req.get("quota_waits") and not req.get("login_waits") and not facilities_resume:
@@ -527,6 +542,34 @@ class Hub:
             self.save_request(rid)
             return
         await self.resume_when_ready(rid)
+
+    def _cancel_facilities_timeout(self, approval_id: str) -> None:
+        task = self.facilities_timeout_tasks.pop(approval_id, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _wait_restored_facilities_timeout(self, approval_id: str, remaining: float) -> None:
+        try:
+            await asyncio.sleep(remaining)
+            await self._expire_restored_facilities_approval(approval_id)
+        except asyncio.CancelledError:
+            return
+        finally:
+            self.facilities_timeout_tasks.pop(approval_id, None)
+
+    async def _expire_restored_facilities_approval(self, approval_id: str) -> None:
+        entry = self.approvals.pop(approval_id, None)
+        if entry is None or entry["approval"].get("kind") != "facilities_fix":
+            return
+        self.store.delete("approval", approval_id)
+        answer = {"approved": False, "note": "timed out", "state": "timed_out"}
+        self.store.put("approval_decision", approval_id,
+                       {"approval": entry["approval"], **answer, "decided_at": time.time()})
+        approval = entry["approval"]
+        await self.publish({"type": "approval.resolved", "ts": time.time(),
+                            "request_id": approval.get("request_id"),
+                            "data": {"id": approval_id, **answer}})
+        await self.resume_held_request(approval["request_id"])
 
     async def resume_quota_request(self, rid: str) -> None:
         """After a gateway restart, recover at once without a PI approval.
@@ -1727,7 +1770,7 @@ class Hub:
         fixes = req_state.setdefault("facilities_fixes", {})
         saved = fixes.get(step_id)
         if saved and saved.get("status") in {"declined", "timed_out", "failed", "succeeded"}:
-            return {"approved": saved.get("status") == "succeeded", **saved}
+            return {**saved, "approved": saved.get("status") == "succeeded"}
         approval_id = saved.get("approval_id") if saved else None
         decision = self.store.get("approval_decision", approval_id) if approval_id else None
         if decision:
@@ -1751,9 +1794,13 @@ class Hub:
             approval = ApprovalRequest.model_validate(entry["approval"])
         else:
             detail = {key: proposal[key] for key in
-                      ("action", "reason", "signature_id", "fix_id", "command") if key in proposal}
+                      ("action", "reason", "signature_id", "fix_id", "package", "command")
+                      if key in proposal}
+            package = detail.get("package")
+            summary = (f"이 단계 전용 폴더에 {package} 설치 후 한 번 다시 실행할까요?" if package else
+                       f"{step_id} 환경 문제를 고친 뒤 같은 단계를 한 번 다시 돌릴까요?")
             approval = ApprovalRequest(kind="facilities_fix", request_id=rid,
-                                       summary=f"{step_id} 환경 문제를 고친 뒤 같은 단계를 한 번 다시 돌릴까요?",
+                                       summary=summary,
                                        detail={"step_id": step_id, **detail},
                                        timeout_s=self.s.policy.approvals.timeout_s)
             fut = asyncio.get_running_loop().create_future()
@@ -1774,6 +1821,7 @@ class Hub:
         try:
             answer = await asyncio.wait_for(asyncio.shield(fut), remaining)
         except asyncio.TimeoutError:
+            self._cancel_facilities_timeout(approval.id)
             self.approvals.pop(approval.id, None)
             self.store.delete("approval", approval.id)
             answer = {"approved": False, "note": "timed out", "state": "timed_out"}
@@ -1804,6 +1852,7 @@ class Hub:
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None) -> None:
+        self._cancel_facilities_timeout(approval_id)
         entry = self.approvals.pop(approval_id, None)
         if entry is None:
             raise KeyError(approval_id)
@@ -1829,12 +1878,13 @@ class Hub:
         elif entry["approval"].get("kind") == "facilities_fix":
             rid = entry["approval"]["request_id"]
             step_id = (entry["approval"].get("detail") or {}).get("step_id")
+            facilities_hold = self.requests[rid].get("status") == "waiting_facilities_fix"
             saved = (self.requests[rid].get("facilities_fixes") or {}).get(step_id)
             if saved is not None:
                 saved.update(status="approved" if approved else "declined", approved=approved, note=note)
                 self._sync_hold_status(self.requests[rid])
                 self.save_request(rid)
-            if approved and self.requests[rid].get("status") == "waiting_facilities_fix":
+            if facilities_hold:
                 asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),

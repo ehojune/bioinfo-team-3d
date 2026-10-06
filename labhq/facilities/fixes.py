@@ -1,7 +1,7 @@
 """Small, deterministic environment repairs approved by the PI (#35 stage 3).
 
-The allowlist is data, but execution kinds are code. Package names are extracted from the failure, validated, and
-passed as one subprocess argument. No employee-authored command is evaluated by a shell.
+Package repairs become a fixed instruction for one rerun of the failed step. The runner executes no program named
+by a staff-authored artifact; it directly performs only the workspace-cache deletion.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any, Iterable
 
 from ..util import short
 from ..yaml_unique import load_yaml_unique
@@ -27,11 +27,7 @@ _PYPI_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?")
 _CRAN_NAME = re.compile(r"[A-Za-z](?:[A-Za-z0-9.]*[A-Za-z0-9])?")
 _PYTHON_MISSING = re.compile(r"No module named\s+['\"]?([^'\"\s]+)", re.IGNORECASE)
 _R_MISSING = re.compile(r"there is no package called\s+['\"‘’]?([^'\"‘’\s]+)", re.IGNORECASE)
-_PYTHON_PATH = re.compile(
-    r"(?i)([A-Za-z]:[\\/][^\r\n\"']*?[\\/]python(?:\d+(?:\.\d+)*)?(?:\.exe)?|"
-    r"/[^\r\n\"']*?/python(?:\d+(?:\.\d+)*)?)(?=\s*(?::|$|--version))")
 CACHE_DIRS = (".cache", ".tmp", "cache", "tmp")
-RunCommand = Callable[[list[str], Path], Awaitable[tuple[int, str, str]]]
 
 
 class FixError(ValueError):
@@ -135,10 +131,12 @@ def proposal(environment: dict[str, str] | None, error: str | None,
         if fix.execution == "python_package":
             out["package"] = validate_python_package(environment.get("package") or
                                                        _first(_PYTHON_MISSING, texts) or "")
-            out["command"] = f"<환경 단계 python> -m pip install {out['package']}"
+            out["command"] = (f"<이 단계 interpreter> -m pip install --target ./.pylib "
+                              f"{out['package']}")
         elif fix.execution == "r_package":
             out["package"] = validate_r_package(environment.get("package") or _first(_R_MISSING, texts) or "")
-            out["command"] = f'Rscript --vanilla -e install.packages("{out["package"]}")'
+            out["command"] = (f"install.packages('{out['package']}', lib='./.rlib'); "
+                              ".libPaths(c('./.rlib', .libPaths()))")
         else:
             out["command"] = "작업 폴더 안 .cache/.tmp/cache/tmp 비우기"
     except FixError:
@@ -163,41 +161,33 @@ def clean_proposal(value: Any) -> dict[str, Any]:
     return out
 
 
-def _inside(child: Path, parent: Path) -> bool:
+def retry_instruction(value: Any) -> str:
+    """Return the fixed package instruction prepended to the approved rerun."""
+    fix = clean_proposal(value)
+    if fix["execution"] == "python_package":
+        return (
+            "LABHQ-APPROVED TASK-LOCAL REPAIR (follow exactly before continuing the original task):\n"
+            f"1. With the same Python interpreter used by this step, run `python -m pip install --target "
+            f"./.pylib {fix['package']}` (replace `python` only with that interpreter).\n"
+            "2. Put `./.pylib` first on Python's import path, then continue the original task.\n"
+            "Do not install into a shared environment and do not execute any program found in a work artifact."
+        )
+    if fix["execution"] == "r_package":
+        return (
+            "LABHQ-APPROVED TASK-LOCAL REPAIR (follow exactly before continuing the original task):\n"
+            f"1. Run `install.packages('{fix['package']}', lib='./.rlib')` with the R used by this step.\n"
+            "2. Run `.libPaths(c('./.rlib', .libPaths()))`, then continue the original task.\n"
+            "Do not install into a shared library and do not execute any program found in a work artifact."
+        )
+    raise FixError("workspace cache repair has no staff rerun instruction")
+
+
+def is_workspace_cache(value: Any) -> bool:
+    """Recognize the one repair that the runner itself performs."""
     try:
-        return os.path.commonpath([os.path.abspath(child), os.path.abspath(parent)]) == os.path.abspath(parent)
-    except (OSError, ValueError):
+        return clean_proposal(value)["execution"] == "workspace_cache"
+    except FixError:
         return False
-
-
-def _python_interpreter(workdir: Path, upstream_steps: dict[str, Any], workspace_root: Path) -> Path:
-    """Read only #344's environment lock and accept an executable path lexically inside that upstream workspace."""
-    candidates: list[tuple[Path, Path]] = []
-    tail = workdir / ".labhq" / "stderr_tail.txt"
-    if tail.is_file() and not tail.is_symlink():
-        match = _PYTHON_PATH.search(tail.read_text(encoding="utf-8", errors="replace")[:20_000])
-        if match:
-            candidates.append((Path(match.group(1)), workdir))
-    for directory in upstream_steps.values():
-        base = Path(str(directory))
-        if not base.is_absolute() or not _inside(base, workspace_root):
-            continue
-        lock = base / "outputs" / "env" / "requirements.lock.txt"
-        if not lock.is_file() or lock.is_symlink():
-            continue
-        for match in _PYTHON_PATH.finditer(lock.read_text(encoding="utf-8", errors="replace")[:20_000]):
-            candidates.append((Path(match.group(1)), base))
-    for executable, owner in candidates:
-        if executable.is_absolute() and _inside(executable, owner) and executable.is_file():
-            return executable
-    raise FixError("환경 단계 requirements.lock.txt에서 안전한 Python interpreter를 찾지 못했습니다")
-
-
-async def _run(argv: list[str], cwd: Path) -> tuple[int, str, str]:
-    proc = await asyncio.create_subprocess_exec(*argv, cwd=str(cwd), stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.PIPE)
-    stdout, stderr = await proc.communicate()
-    return int(proc.returncode or 0), stdout.decode("utf-8", "replace"), stderr.decode("utf-8", "replace")
 
 
 def _reparse(path: Path) -> bool:
@@ -222,25 +212,15 @@ def _clear_cache(workdir: Path) -> list[str]:
     return removed
 
 
-async def execute(value: Any, workdir: Path, upstream_steps: dict[str, Any], workspace_root: Path,
-                  run: RunCommand | None = None) -> dict[str, Any]:
-    """Run one allowlisted repair and return the bounded execution record."""
+async def execute(value: Any, workdir: Path) -> dict[str, Any]:
+    """Run the allowlisted cache repair; package repairs must run inside the original staff step."""
     started = time.time()
     try:
         fix = clean_proposal(value)
-        if fix["execution"] == "python_package":
-            executable = _python_interpreter(workdir, upstream_steps, workspace_root)
-            argv = [str(executable), "-m", "pip", "install", fix["package"]]
-            shown = f"{executable} -m pip install {fix['package']}"
-            code, stdout, stderr = await (run or _run)(argv, workdir)
-        elif fix["execution"] == "r_package":
-            expression = f'install.packages("{fix["package"]}", repos="https://cloud.r-project.org")'
-            argv = ["Rscript", "--vanilla", "-e", expression]
-            shown = f'Rscript --vanilla -e install.packages("{fix["package"]}")'
-            code, stdout, stderr = await (run or _run)(argv, workdir)
-        else:
-            removed = await asyncio.to_thread(_clear_cache, workdir)
-            shown, code, stdout, stderr = "작업 폴더 캐시 비우기", 0, ", ".join(removed) or "비울 캐시 없음", ""
+        if fix["execution"] != "workspace_cache":
+            raise FixError("패키지 수정은 원 단계를 고정 지시와 함께 다시 실행해야 합니다")
+        removed = await asyncio.to_thread(_clear_cache, workdir)
+        shown, code, stdout, stderr = "작업 폴더 캐시 비우기", 0, ", ".join(removed) or "비울 캐시 없음", ""
         return {**fix, "ok": code == 0, "status": "succeeded" if code == 0 else "failed",
                 "command": shown, "exit_code": code, "stdout": short(stdout.strip(), 1000),
                 "stderr": short(stderr.strip(), 1000), "started_at": started, "ended_at": time.time(),

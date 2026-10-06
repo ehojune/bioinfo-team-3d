@@ -1,14 +1,14 @@
-# PI-approved environment repairs (#35 stage 3). The runner implements each execution kind with fixed argv;
-# values extracted from errors are validated before a card is shown and again before execution.
+# PI-approved environment repairs (#35 stage 3). Package repairs become a fixed task-local rerun instruction;
+# only workspace-cache deletion is executed directly by the runner.
 
 - id: install_python_package
   signatures: [python_module_missing]
-  action: 단계가 쓰는 Python 환경에 빠진 패키지를 설치합니다
+  action: 이 단계 전용 .pylib에 빠진 Python 패키지를 설치합니다
   execution: python_package
 
 - id: install_r_package
   signatures: [r_package_missing]
-  action: runner의 R 환경에 빠진 CRAN 패키지를 설치합니다
+  action: 이 단계 전용 .rlib에 빠진 CRAN 패키지를 설치합니다
   execution: r_package
 
 - id: clear_workspace_cache
