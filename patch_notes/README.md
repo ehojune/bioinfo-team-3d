@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:45 | [`e61f997`](https://github.com/ehojune/bioinfo-team-3d/pull/444/commits/e61f997) | HANDOFF 작업 큐와 PI 결정을 10-06 오후 상태로 갱신(#382 안 A, |
 | 14:09 | [`e02e75e`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/e02e75e) | 통제 구역 목록 test가 입력 walker의 descriptor 나열도 실제 폴더로 기록해 Linux에서 통과한다 |
 | 13:49 | [`930a578`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/930a578) | 상위 project 폴더를 거쳐 들어가는 실행 폴더는 입력에서 빼고, 실패·취소된 단계도 실행 전 입력 hash를 남긴다(리뷰 반영) |
 | 13:39 | [`085b791`](https://github.com/ehojune/bioinfo-team-3d/pull/442/commits/085b791) | 입력을 직원 CLI 실행 전에 hash하고 실행 중 바뀐 파일을 표시하며, cache는 열린 파일의 ID와 POSIX ctime까지 맞을 때만 쓴다(리뷰 반영) |
