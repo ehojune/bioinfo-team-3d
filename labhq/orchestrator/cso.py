@@ -261,6 +261,7 @@ Request: {request}"""
 PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
+ENV_LOCK_OUTPUT = "outputs/env/requirements.lock.txt"
 ENV_STEP_RULE = ("If the work needs packages the runner does not have, plan one environment step first: it creates a "
                  "virtual environment in its own workspace, installs only packages the PI approved with "
                  "`pip install --only-binary=:all:`, and saves "
@@ -2902,9 +2903,10 @@ class Orchestrator:
                               "revision": self.hub.requests.get(rid, {}).get("pending_revisions", {})
                               .get(step["id"], {}).get("revision", 0),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
-                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
-                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
-                               "outputs": step.get("outputs", []),
+                              "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
+                              "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
+                              "outputs": step.get("outputs", []),
+                              "environment_step": ENV_LOCK_OUTPUT in step.get("outputs", []),
                                **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),

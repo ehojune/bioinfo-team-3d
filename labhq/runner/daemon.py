@@ -1071,6 +1071,7 @@ class Runner:
             env = {
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
+                "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
                 PRIVATE_PATHS_ENV: os.pathsep.join(private.paths),
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",

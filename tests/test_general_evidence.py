@@ -86,6 +86,31 @@ async def test_runner_collects_tool_error_first_lines_only_for_general_steps(tmp
 
 
 @pytest.mark.asyncio
+async def test_runner_tells_the_approval_gate_which_task_owns_environment_install(tmp_path, monkeypatch):
+    settings = Settings()
+    for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
+        setattr(settings.runner, name, str(tmp_path / name))
+    runner = Runner(settings)
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.claude_code,
+                      builtin_mcp=["approval"])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+    seen = []
+
+    class Adapter:
+        async def run(self, ctx):
+            approval = next(server for server in ctx.mcp_servers if server.name == "labhq_approval")
+            seen.append((ctx.env["LABHQ_ENVIRONMENT_STEP"], approval.env["LABHQ_ENVIRONMENT_STEP"]))
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    await runner.run_task(Task(id="env", request_id="r", agent_id="worker", prompt="work",
+                               meta={"kind": "step", "environment_step": True}))
+    await runner.run_task(Task(id="analysis", request_id="r", agent_id="worker", prompt="work",
+                               meta={"kind": "step", "environment_step": False}))
+    assert seen == [("1", "1"), ("0", "0")]
+
+
+@pytest.mark.asyncio
 async def test_general_report_warns_without_copying_long_tool_output():
     hub = FakeHub(lambda task: None)
     hub.requests["r"]["plan"] = {"steps": [{"id": "A", "agent_id": "worker"}]}

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import shlex
@@ -45,6 +46,42 @@ async def test_approval_prompt_contract(tmp_path):
             # "ask" with an unreachable broker must fail closed
             risky = await session.call_tool("approval_prompt", {"tool_name": "Bash", "input": {"command": "rm -rf /tmp/x"}})
     assert json.loads(risky.content[0].text)["behavior"] == "deny"
+
+
+async def _install_gate(tmp_path: Path, command: str, *, environment_step: bool) -> dict:
+    tmp_path.mkdir(exist_ok=True)
+    params = StdioServerParameters(command=sys.executable, args=["-m", "labhq.tools.approval_mcp"], env={
+        **os.environ, **ENV, "LABHQ_WORKDIR": str(tmp_path),
+        "LABHQ_ENVIRONMENT_STEP": "1" if environment_step else "0",
+    })
+    async with stdio_client(params) as streams:
+        async with ClientSession(streams[0], streams[1]) as session:
+            await session.initialize()
+            result = await session.call_tool("approval_prompt", {
+                "tool_name": "Bash", "input": {"command": command}})
+    return json.loads(result.content[0].text)
+
+
+async def test_parallel_steps_cannot_install_into_the_shared_environment(tmp_path):
+    command = "/shared/env/bin/python -m pip install scanpy"
+    decisions = await asyncio.gather(*(
+        _install_gate(tmp_path / step, command, environment_step=False) for step in ("left", "right")))
+    assert [decision["behavior"] for decision in decisions] == ["deny", "deny"]
+    assert all("Only the environment step" in decision["message"] for decision in decisions)
+
+
+async def test_environment_step_and_task_local_package_installs_are_allowed(tmp_path):
+    shared = await _install_gate(
+        tmp_path / "env", "./.venv/bin/python -m pip install --only-binary=:all: scanpy",
+        environment_step=True)
+    local_python = await _install_gate(
+        tmp_path / "python", "python -m pip install --target ./.pylib scanpy", environment_step=False)
+    local_r = await _install_gate(
+        tmp_path / "r", "Rscript -e \"install.packages('limma', lib='./.rlib')\"", environment_step=False)
+    local_r_env = await _install_gate(
+        tmp_path / "r-env", "$env:R_LIBS_USER='./.rlib'; Rscript -e \"install.packages('limma')\"",
+        environment_step=False)
+    assert shared["behavior"] == local_python["behavior"] == local_r["behavior"] == local_r_env["behavior"] == "allow"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX chgrp and setgid directory modes required")

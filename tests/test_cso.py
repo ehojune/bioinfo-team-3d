@@ -2668,6 +2668,33 @@ def test_plan_prompts_ask_for_one_environment_step():
     assert ENV_STEP_RULE in PLAN_PROMPT and ENV_STEP_RULE in RESEARCH_PLAN_PROMPT
 
 
+@pytest.mark.asyncio
+async def test_environment_step_alone_is_marked_when_parallel_consumers_share_it(tmp_path):
+    """The two consumers run in parallel but the runner gate sees only the lock producer as an installer."""
+    async def dispatch(task):
+        workdir = tmp_path / task.meta["step_id"]
+        workdir.mkdir(exist_ok=True)
+        return result(task, text="done", workdir=str(workdir), outputs=task.meta.get("outputs", []))
+
+    hub = FakeHub(dispatch)
+    steps = [
+        {"id": "env", "agent_id": "worker", "instruction": "Create the environment",
+         "depends_on": [], "outputs": ["outputs/env/requirements.lock.txt"]},
+        {"id": "left", "agent_id": "worker", "instruction": "Analyze left", "depends_on": ["env"],
+         "outputs": []},
+        {"id": "right", "agent_id": "worker", "instruction": "Analyze right", "depends_on": ["env"],
+         "outputs": []},
+    ]
+    outcomes = {}
+    await Orchestrator(hub).run_dag("r", "Original request", steps, outcomes)
+
+    by_step = {task.meta["step_id"]: task for task in hub.calls}
+    assert by_step["env"].meta["environment_step"] is True
+    assert by_step["left"].meta["environment_step"] is False
+    assert by_step["right"].meta["environment_step"] is False
+    assert all(outcomes[step].ok for step in ("env", "left", "right"))
+
+
 def test_question_object_is_found_beside_a_larger_unrelated_object():
     """A large object with a raw newline, read leniently, must not hide the escaped question (PR #343 review)."""
     from labhq.orchestrator.cso import blocking_question

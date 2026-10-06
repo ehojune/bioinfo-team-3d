@@ -242,10 +242,11 @@ WORKSPACE_WRITE_RULES = (
     "- Wait for every command to finish and verify its result before ending your turn; ending the turn stops "
     "background work and finishes the step with only the outputs present then. Use labhq_hpc tools for long-running "
     "compute, or ask the PI before proceeding.\n"
-    "- If the plan has an environment step, run packages from its interpreter, by the path it reported. For an extra "
-    "package the PI "
-    "approved, install it into ./.pylib in your own workspace (python -m pip install --target ./.pylib ...) and put "
-    "./.pylib first on PYTHONPATH; never write into another step's workspace.\n")
+    "- If the plan has an environment step, run packages from its interpreter, by the path it reported, but never "
+    "install into that shared environment. For an extra package the PI approved, install it into ./.pylib in your "
+    "own workspace (python -m pip install --target ./.pylib ...) and put ./.pylib first on PYTHONPATH. For R use "
+    "./.rlib explicitly; never write into another step's workspace. Record task-local Python packages with "
+    "`python -m pip freeze --path ./.pylib` (or the package table from ./.rlib) in outputs/env/<step id>.txt.\n")
 
 
 def private_paths_section(labels: list[str] | tuple[str, ...], saved_output_open: bool = False) -> str:
