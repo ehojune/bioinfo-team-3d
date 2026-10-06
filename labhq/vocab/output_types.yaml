@@ -639,3 +639,143 @@ terms:
     ok: ["normalized expression microarray matrix for contrast testing"]
     not: ["raw CEL preprocessing", "RNA-seq counts", "DNA methylation array data"]
     review: "PI 2026-10-04"
+  # 2026-10-06 additions (#420): topic candidates backed by 3 or more of the 133 surveyed sources, PI choice A.
+  # The count and source kinds per key are in docs/reference/topic_candidates_420.tsv.
+  proteomics:
+    branch: topic
+    definition: "mass-spectrometry protein identification, quantification and comparison"
+    ok: ["label-free LC-MS/MS quantification", "TMT-labelled proteome comparison"]
+    not: ["single-cell proteomics", "metaproteomics of microbial communities", "antibody-panel imaging"]
+    review: "PI 2026-10-06 (#420)"
+  proteomics_dia:
+    branch: topic
+    definition: "data-independent-acquisition proteomics processing and quantification"
+    ok: ["DIA-NN library-free search", "spectral-library DIA quantification"]
+    not: ["DDA label-free search", "targeted SRM/PRM assays"]
+    review: "PI 2026-10-06 (#420)"
+  single_cell_proteomics:
+    branch: topic
+    definition: "protein identification and quantification at single-cell resolution"
+    ok: ["SCoPE2 single-cell mass spectrometry", "plexDIA single-cell proteomes"]
+    not: ["CITE-seq antibody counts alongside RNA", "bulk proteomics"]
+    review: "PI 2026-10-06 (#420)"
+  spatial_proteomics:
+    branch: topic
+    definition: "spatially resolved protein measurement and tissue proteome analysis"
+    ok: ["imaging mass cytometry", "CODEX multiplexed immunofluorescence"]
+    not: ["spatial transcriptomics", "bulk proteomics of dissected tissue"]
+    review: "PI 2026-10-06 (#420)"
+  metaproteomics:
+    branch: topic
+    definition: "protein identification and quantification in microbial communities"
+    ok: ["gut microbiome metaproteome", "environmental community protein profiling"]
+    not: ["single-organism proteomics", "metagenomic functional profiling from DNA"]
+    review: "PI 2026-10-06 (#420)"
+  metabolomics:
+    branch: topic
+    definition: "small-molecule measurement processing and comparative metabolite analysis"
+    ok: ["untargeted LC-MS metabolomics", "NMR metabolite profiling"]
+    not: ["spatial metabolomics", "proteomics"]
+    review: "PI 2026-10-06 (#420)"
+  spatial_metabolomics:
+    branch: topic
+    definition: "spatially resolved metabolite measurement and analysis"
+    ok: ["MALDI imaging of tissue metabolites", "DESI mass-spectrometry imaging"]
+    not: ["untargeted LC-MS metabolomics", "spatial transcriptomics"]
+    review: "PI 2026-10-06 (#420)"
+  gwas:
+    branch: topic
+    definition: "genome-wide association testing and downstream locus interpretation"
+    ok: ["case-control GWAS with mixed models", "fine-mapping of GWAS loci"]
+    not: ["germline variant calling", "eQTL mapping"]
+    review: "PI 2026-10-06 (#420)"
+  structural_variant_calling:
+    branch: topic
+    definition: "detection and genotyping of large insertions, deletions and rearrangements"
+    ok: ["long-read SV calling", "short-read SV genotyping across a cohort"]
+    not: ["small-variant calling", "copy-number segmentation from arrays"]
+    review: "PI 2026-10-06 (#420)"
+  de_novo_genome_assembly:
+    branch: topic
+    definition: "reference-free assembly and polishing of non-bacterial genomes"
+    ok: ["HiFi plant genome assembly", "telomere-to-telomere human assembly"]
+    not: ["bacterial isolate assembly", "metagenome assembly", "reference-guided consensus"]
+    review: "PI 2026-10-06 (#420)"
+  genome_annotation:
+    branch: topic
+    definition: "gene and feature annotation of assembled genomes"
+    ok: ["eukaryotic gene prediction with RNA evidence", "repeat and gene annotation of a new assembly"]
+    not: ["variant annotation", "functional enrichment of a gene list"]
+    review: "PI 2026-10-06 (#420)"
+  pangenomics:
+    branch: topic
+    definition: "multi-genome or graph-reference construction, genotyping and comparison"
+    ok: ["pangenome graph construction", "genotyping against a graph reference"]
+    not: ["single-reference variant calling", "bacterial core-genome phylogeny only"]
+    review: "PI 2026-10-06 (#420)"
+  phylogenetics:
+    branch: topic
+    definition: "sequence-based tree inference, placement and comparative evolution analysis"
+    ok: ["maximum-likelihood tree from a multiple alignment", "phylogenetic placement of new sequences"]
+    not: ["taxonomic profiling of metagenomes", "population structure PCA"]
+    review: "PI 2026-10-06 (#420)"
+  hi_c:
+    branch: topic
+    definition: "chromosome-conformation contact, loop, compartment and domain analysis"
+    ok: ["Hi-C contact map with TADs and loops", "Micro-C compartment analysis"]
+    not: ["ChIP-seq peak calling", "Hi-C scaffolding of a genome assembly"]
+    review: "PI 2026-10-06 (#420)"
+  spatial_epigenomics:
+    branch: topic
+    definition: "spatial profiling and analysis of epigenetic features"
+    ok: ["spatial ATAC-seq", "spatial CUT&Tag"]
+    not: ["bulk ATAC-seq", "spatial transcriptomics"]
+    review: "PI 2026-10-06 (#420)"
+  multi_omics_integration:
+    branch: topic
+    definition: "joint statistical analysis of distinct omics layers or assays"
+    ok: ["MOFA+ factors across RNA, methylation and proteomics", "matched transcriptome-proteome integration"]
+    not: ["a single assay analysed alone", "single-cell multiome from the same cells"]
+    review: "PI 2026-10-06 (#420)"
+  single_cell_multiome:
+    branch: topic
+    definition: "joint single-cell analysis of RNA, chromatin, protein or other modalities measured in the same cells"
+    ok: ["10x Multiome RNA+ATAC", "CITE-seq RNA and surface protein"]
+    not: ["single-cell RNA-seq alone", "bulk multi-omics integration"]
+    review: "PI 2026-10-06 (#420)"
+  spatial_multiomics:
+    branch: topic
+    definition: "joint spatial analysis of two or more molecular modalities"
+    ok: ["spatial RNA and protein on the same section", "spatial ATAC and RNA co-profiling"]
+    not: ["spatial transcriptomics alone", "non-spatial multi-omics integration"]
+    review: "PI 2026-10-06 (#420)"
+  perturb_seq:
+    branch: topic
+    definition: "pooled perturbation screens with single-cell molecular readouts"
+    ok: ["CRISPRi Perturb-seq", "pooled CROP-seq screen"]
+    not: ["bulk CRISPR screen read counts", "single-cell RNA-seq without perturbations"]
+    review: "PI 2026-10-06 (#420)"
+  immune_repertoire_sequencing:
+    branch: topic
+    definition: "BCR, TCR or other adaptive immune-receptor repertoire analysis"
+    ok: ["bulk TCR-beta repertoire diversity", "single-cell paired BCR clonotypes"]
+    not: ["HLA typing", "general single-cell RNA-seq clustering"]
+    review: "PI 2026-10-06 (#420)"
+  metagenomic_functional_profiling:
+    branch: topic
+    definition: "gene, pathway and functional profiling from metagenomic data"
+    ok: ["HUMAnN pathway abundance", "functional gene family profiles"]
+    not: ["taxonomic profiling", "metatranscriptomic activity"]
+    review: "PI 2026-10-06 (#420)"
+  metagenome_binning:
+    branch: topic
+    definition: "grouping metagenomic contigs into metagenome-assembled genomes"
+    ok: ["MAG binning with coverage and composition", "bin refinement and quality scoring"]
+    not: ["metagenome assembly without binning", "isolate genome assembly"]
+    review: "PI 2026-10-06 (#420)"
+  metatranscriptomics:
+    branch: topic
+    definition: "RNA sequencing of microbial communities for activity and function"
+    ok: ["gut microbiome metatranscriptome", "community gene expression profiling"]
+    not: ["metagenomic DNA profiling", "host bulk RNA-seq"]
+    review: "PI 2026-10-06 (#420)"

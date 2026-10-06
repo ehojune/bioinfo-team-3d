@@ -216,7 +216,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 ### topic 점검표와 선행 연구 기준
 
-점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`이고, 승인된 topic 20개에 모두 항목이 있습니다. 항목의 근거 문헌은 [topic 점검표 근거](reference/topic_checklists_sources.md)에 있습니다. 요청이 두 topic을 선언했는데 같은 id의 점검 내용이 다르면(ATAC와 ChIP의 `library_qc` 등) 두 점검을 ` / `로 이어 답 하나로 받습니다. 새 항목은 먼저 `output_types.yaml`의 승인된 topic key 아래에 넣고 test를 보탭니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption` 답은 보고서 한계에 한 줄씩 남습니다. `not_applicable`은 요청에 해당하지 않는 점검이라 한계로 쓰지 않고 보고서 본문에서 뺍니다. 해당하는데 못 한 점검(예: 독립 코호트가 없음)은 `assumption: <이유>`로 답합니다(벤치 C, #373).
+점검표는 `labhq/vocab/topic_checklists.yaml`의 `topic → [{id, check, why}]`이고, 처음 승인된 topic 20개에는 모두 항목이 있고, #420으로 더한 23개는 아직 없습니다(근거 문헌을 붙여 PI 검토 뒤 넣습니다). 항목의 근거 문헌은 [topic 점검표 근거](reference/topic_checklists_sources.md)에 있습니다. 요청이 두 topic을 선언했는데 같은 id의 점검 내용이 다르면(ATAC와 ChIP의 `library_qc` 등) 두 점검을 ` / `로 이어 답 하나로 받습니다. 새 항목은 먼저 `output_types.yaml`의 승인된 topic key 아래에 넣고 test를 보탭니다. PLAN의 답은 `checklist: {id: "step:<step id>" | "assumption: <한 줄>" | "not_applicable: <이유>"}`입니다. 일반 lane은 누락 시 한 번 고친 뒤 경고로 진행하고, 연구 lane은 PLAN 검증 오류로 멈춥니다. `assumption` 답은 보고서 한계에 한 줄씩 남습니다. `not_applicable`은 요청에 해당하지 않는 점검이라 한계로 쓰지 않고 보고서 본문에서 뺍니다. 해당하는데 못 한 점검(예: 독립 코호트가 없음)은 `assumption: <이유>`로 답합니다(벤치 C, #373).
 
 계획 전 `orchestrator.precedent_agent`가 비서실장과 병렬로 최근 논문·best-practice review 2–4편에서 같은 assay·질문 유형의 필수·권장 분석을 찾습니다. 필수 항목은 `precedent.<n>` 점검표가 되고, 범위 밖 권장 항목은 PLAN `suggested_next`에 남습니다. 실패하면 경고만 남기고 계획하며, 저장된 조사 결과는 재시작 때 다시 돌리지 않습니다. 리뷰와 단독 처리도 같은 목록을 받고, 보고서는 인용을 붙인 `선행 연구 기준` 절로 한 일·못 한 일·다음 분석을 나눕니다.
 
@@ -492,7 +492,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 | 말 | 뜻 |
 |---|---|
 | 의미 모델 | 끝난 요청의 기록을 묶은 지도. 출처 모델(#136)은 "이 결과를 누가 만들었고 다시 써도 되나", 객체 뷰는 "누가 무엇을 맡았고 무엇이 승인을 기다리나"에 답한다 |
-| 온톨로지 | 지도에 쓰는 낱말 사전. labhq 어휘(`labhq/vocab/output_types.yaml`)는 data 30·format 28·operation 22·topic 20, 총 100개 key다(PI 검토 2026-10-04). branch 상한은 36·32·24·24다 |
+| 온톨로지 | 지도에 쓰는 낱말 사전. labhq 어휘(`labhq/vocab/output_types.yaml`)는 data 30·format 28·operation 22·topic 43, 총 123개 key다(PI 검토 2026-10-04, topic 23개는 2026-10-06 #420). branch 상한은 data 36·format 32·operation 24이고 topic은 상한이 없다(PI 2026-10-05). 계획 프롬프트에는 topic 이름만 들어가고, 조사에서 나온 별칭(`hic` → `hi_c` 등)은 승인된 키로 바뀐다 |
 | EDAM | 생물정보학 공용 ontology. 100개 key 중 68개가 EDAM 용어 65개에 이어진다(`edam_subset.yaml`). 판정은 로컬 key로 하고 EDAM ID는 메타데이터로만 붙인다 |
 | 데이터 종류 선언 | CSO가 단계 산출에 종류 key를 적는다(`plan.declare_output_types`, 기본 꺼짐). 선언이 없으면 아래 판정은 모두 "모름"이다 |
 | 입력–방법 맞춤 | 단계 입력의 선언 종류를 로컬 관계표(`labhq/research/semantics_input_fit.yaml`)와 대조해 맞음·틀림·모름 개수만 센다. 막지 않는다 |

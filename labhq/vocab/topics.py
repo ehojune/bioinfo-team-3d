@@ -7,6 +7,17 @@ from typing import Any
 from . import Vocab
 
 
+# Spellings the #420 survey found for an approved key (docs/reference/topic_candidates_420.tsv, status merge_into).
+# A plan that writes one gets the approved key; an alias whose key is not approved stays unknown.
+ALIASES = {
+    "genome_assembly": "de_novo_genome_assembly", "eukaryotic_genome_assembly": "de_novo_genome_assembly",
+    "hic": "hi_c", "multiomics_integration": "multi_omics_integration",
+    "pangenome_analysis": "pangenomics", "pangenome_genomics": "pangenomics", "pangenome_graphs": "pangenomics",
+    "perturbation_response_prediction": "perturb_seq", "single_cell_multiomics": "single_cell_multiome",
+    "structural_variant_analysis": "structural_variant_calling",
+}
+
+
 def normalize(raw: Any, vocab: Vocab) -> tuple[list[str], list[str]]:
     """Return sorted unique topic keys and sorted unknown values without echoing them in warnings."""
     if not isinstance(raw, list):
@@ -14,6 +25,8 @@ def normalize(raw: Any, vocab: Vocab) -> tuple[list[str], list[str]]:
     known: set[str] = set()
     unknown: set[str] = set()
     for value in raw:
+        if isinstance(value, str) and not vocab.is_key("topic", value):
+            value = ALIASES.get(value, value)
         if isinstance(value, str) and vocab.is_key("topic", value):
             known.add(value)
         elif isinstance(value, str) and value:

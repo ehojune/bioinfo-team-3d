@@ -96,13 +96,13 @@ Before planning, the prior-research staff pull the analyses that must be done fr
 
 **Same bar at every handoff**
 
-The CSO writes a domain tag (topic key) on every plan. The key is picked from the 20 topics of a PI-reviewed vocabulary (100 keys, 68 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
+The CSO writes a domain tag (topic key) on every plan. The key is picked from the 43 topics of a PI-reviewed vocabulary (123 keys, 79 of them linked to the [EDAM](https://github.com/edamontology/edamontology) ontology). The topics were widened from a survey of 63 papers, 4 textbooks and 66 web sources ([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). Code uses that key to choose a checklist and passes the same list to planning, review, and single-staff runs, and items answered by assumption are left in the report's "Limitations". The research lane's (off by default) domain rule packs attach by the same key.
 
 <details><summary>Evidence and limits</summary>
 
 <sub>Evidence: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390) (topic required, 100-key vocabulary) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369) (a bypass where one line in the plan text dropped the domain rules, closed with a topic check)</sub>
 
-<sub>Limits: The checklist covers 20 domains and 60 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). The 17 newly added domains have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
+<sub>Limits: The checklist covers 20 domains and 60 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). The 23 domains added in #420 have no checklist yet. The 17 newly added domains have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
 
 </details>
 

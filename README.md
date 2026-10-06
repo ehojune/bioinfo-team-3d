@@ -94,13 +94,13 @@ AI가 인용을 지어내거나 잘못 읽는 실수(hallucination)를 보고서
 
 **일을 넘겨도 기준은 같다**
 
-CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(100키, 그중 68키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 20개에서 고릅니다. 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
+CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 검토한 어휘(123키, 그중 79키는 [EDAM](https://github.com/edamontology/edamontology) 온톨로지와 연결)의 topic 43개에서 고릅니다. topic은 논문 63편·교과서 4권·웹 자료 66건을 조사해 넓혔습니다([#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). 코드는 그 키로 점검표를 골라 계획·리뷰·단독 처리에 같은 목록을 넘기고, 가정으로 답한 항목은 보고서 '한계'에 남깁니다. 연구 lane(기본 꺼짐)의 분야 규칙 pack도 같은 키로 붙습니다.
 
 <details><summary>근거와 한계</summary>
 
 <sub>근거: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390)(topic 필수, 어휘 100키) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369)(계획 문장 한 줄로 분야 규칙이 빠지던 우회 → topic 판정으로 닫음)</sub>
 
-<sub>한계: 점검표는 20개 분야, 60항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). 새로 넣은 17개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
+<sub>한계: 점검표는 20개 분야, 60항목입니다([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). #420으로 더한 23개 분야는 아직 점검표가 없습니다. 새로 넣은 17개 분야는 실제 요청에서 돌지 않았습니다. 누락이 줄었는지는 재지 않았습니다. 이름표 사이 관계를 쓰는 의미 모델은 기본 꺼짐인 [그림자 단계](#어노테이션시맨틱온톨로지)이고, 단순 SQL 기준선보다 낫다는 결과는 없습니다.</sub>
 
 </details>
 

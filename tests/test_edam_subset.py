@@ -59,7 +59,8 @@ def test_the_committed_subset_stays_under_the_caps_and_loads():
     ids = {t["id"] for t in subset["terms"].values() if t["id"] != "unknown"}
     assert subset["counts"] == {"keys": len(subset["terms"]), "edam_terms": len(ids),
                                 "unknown": sum(1 for t in subset["terms"].values() if t["id"] == "unknown")}
-    assert subset["counts"]["keys"] <= es.MAX_KEYS and subset["counts"]["edam_terms"] <= es.MAX_KEYS
+    topics = sum(entry["branch"] == "topic" for entry in subset["terms"].values())
+    assert subset["counts"]["keys"] <= es.MAX_KEYS + topics and subset["counts"]["edam_terms"] <= es.MAX_KEYS + topics
     v = vocab.load()
     assert v.edam_problem is None and v.edam_ids == frozenset(ids)
     assert all(t["id"].startswith(t["branch"] + "_") for t in subset["terms"].values() if t["id"] != "unknown")

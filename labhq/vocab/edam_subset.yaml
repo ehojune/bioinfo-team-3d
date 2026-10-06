@@ -8,12 +8,12 @@ source:
   license: https://creativecommons.org/licenses/by-sa/4.0
 generator:
   script: scripts/edam_subset.py
-  script_sha256: b02169f928373c25c2a93616ad2afacc455c091278bc95293109eba63e924c21
-  map_sha256: 192f27748c659da0d1d2172443201188c1481614fee776148b595f4d5f07a9a3
+  script_sha256: 9af0008acff8cbee78387364e3e500cc6ecb3b0ae9b77953f997bb3e2c5efb51
+  map_sha256: d9c23e90ee7581325e421f9817a26ab29135b8530d6929238beb2b6e7c82062b
 counts:
-  keys: 100
-  edam_terms: 65
-  unknown: 32
+  keys: 123
+  edam_terms: 75
+  unknown: 44
 terms:
   raw_counts:
     branch: data
@@ -777,3 +777,176 @@ terms:
     id: unknown
     reason: deprecated
     candidate: Gene expression and microarray
+  proteomics:
+    branch: topic
+    id: topic_0121
+    label: Proteomics
+    ancestors:
+    - topic_0003
+    - topic_3391
+    - topic_4019
+  proteomics_dia:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  single_cell_proteomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  spatial_proteomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  metaproteomics:
+    branch: topic
+    id: topic_4060
+    label: Metaproteomics
+    ancestors:
+    - topic_0003
+    - topic_0121
+    - topic_3391
+    - topic_4019
+  metabolomics:
+    branch: topic
+    id: topic_3172
+    label: Metabolomics
+    ancestors:
+    - topic_0003
+    - topic_3391
+    - topic_4019
+  spatial_metabolomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  gwas:
+    branch: topic
+    id: topic_3517
+    label: GWAS study
+    ancestors:
+    - topic_0003
+    - topic_3678
+  structural_variant_calling:
+    branch: topic
+    id: topic_3175
+    label: Structural variation
+    ancestors:
+    - topic_0003
+    - topic_0077
+    - topic_0199
+    - topic_0622
+    - topic_0654
+    - topic_3053
+    - topic_3070
+    - topic_3307
+    - topic_3321
+    - topic_3391
+    - topic_4019
+  de_novo_genome_assembly:
+    branch: topic
+    id: topic_0196
+    label: Sequence assembly
+    ancestors:
+    - topic_0003
+    - topic_0080
+    - topic_3307
+    - topic_4019
+  genome_annotation:
+    branch: topic
+    id: unknown
+    reason: deprecated
+    candidate: Genome annotation
+  pangenomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  phylogenetics:
+    branch: topic
+    id: topic_3293
+    label: Phylogenetics
+    ancestors:
+    - topic_0003
+    - topic_0080
+    - topic_0084
+    - topic_3070
+    - topic_3299
+    - topic_3307
+    - topic_4019
+  hi_c:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  spatial_epigenomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  multi_omics_integration:
+    branch: topic
+    id: topic_4021
+    label: Multiomics
+    ancestors:
+    - topic_0003
+    - topic_3391
+    - topic_4019
+  single_cell_multiome:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  spatial_multiomics:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  perturb_seq:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  immune_repertoire_sequencing:
+    branch: topic
+    id: topic_3948
+    label: Immunoinformatics
+    ancestors:
+    - topic_0003
+    - topic_0605
+    - topic_0804
+    - topic_3344
+    - topic_4019
+  metagenomic_functional_profiling:
+    branch: topic
+    id: topic_3174
+    label: Metagenomics
+    ancestors:
+    - topic_0003
+    - topic_0610
+    - topic_0622
+    - topic_3391
+    - topic_3855
+    - topic_4019
+  metagenome_binning:
+    branch: topic
+    id: unknown
+    reason: no_candidate
+    candidate: null
+  metatranscriptomics:
+    branch: topic
+    id: topic_3941
+    label: Metatranscriptomics
+    ancestors:
+    - topic_0003
+    - topic_0203
+    - topic_0622
+    - topic_3053
+    - topic_3070
+    - topic_3307
+    - topic_3308
+    - topic_3321
+    - topic_3391
+    - topic_4019

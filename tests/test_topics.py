@@ -29,7 +29,15 @@ def test_topics_are_sorted_deduplicated_and_prompted_with_definitions():
 
     compact = topics.prompt_rule(V, include_definitions=False)
     assert "bulk_rna_seq" in compact and V.terms["bulk_rna_seq"].definition not in compact
-    assert len(compact) < 800
+    assert len(compact) < 1500  # 43 topic names (#420)
+
+
+def test_survey_aliases_map_to_their_approved_topic():
+    normalized, unknown = topics.normalize(["hic", "genome_assembly", "proteomics", "protein_structure"], V)
+    assert normalized == ["de_novo_genome_assembly", "hi_c", "proteomics"]
+    assert unknown == ["protein_structure"]  # its key (protein_structure_analysis) was not adopted
+    assert all(V.is_key("topic", key) for key in topics.ALIASES.values())
+    assert not any(V.is_key("topic", alias) for alias in topics.ALIASES)
 
 
 def test_general_lane_drops_unknown_topics_with_a_bounded_warning():

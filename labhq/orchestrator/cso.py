@@ -3794,7 +3794,10 @@ class Orchestrator:
                                                     max_steps=self.cfg.max_steps, question_rule=QUESTION_RULE,
                                                     lab_scope=self._lab_scope(),
                                                     output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
-                                                    topics_rule=topic_types.prompt_rule(topic_vocab)
+                                                    # Names only (PI 2026-10-05, #420): 43+ topics with
+                                                    # definitions would crowd the plan prompt.
+                                                    topics_rule=topic_types.prompt_rule(topic_vocab,
+                                                                                        include_definitions=False)
                                                     if topic_vocab else "")
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         schema = plan_schema(vocab is not None)
@@ -4193,7 +4196,8 @@ class Orchestrator:
                             trigger=why, retired=", ".join(unfinished) or "none", drop_rule=drop_rule,
                             used=", ".join(sorted(used)), max_steps=self.cfg.max_steps,
                             output_types_rule=output_types.prompt_rule(vocab) if vocab else "",
-                            topics_rule=topic_types.prompt_rule(topic_vocab) if topic_vocab else "",
+                            topics_rule=(topic_types.prompt_rule(topic_vocab, include_definitions=False)
+                                         if topic_vocab else ""),
                             empty_rule=empty_rule, question_rule=QUESTION_RULE, request=text,
                             plan=json.dumps(req.get("plan") or {"steps": steps}, ensure_ascii=False),
                             results=self.format_results(steps, results, n)) +
