@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · 한국어 Windows UTF-8 모드에서 키 파일 권한 검사가 멈추던 문제
+
+- 결론: `labhq init`의 AlphaGenome 키 쓰기와 doctor의 계정 확인이 `whoami`·`icacls` 출력을 콘솔 코드 페이지로 읽는다. 전에는 `PYTHONUTF8=1`(인스턴스를 띄우는 방식)에서 한국어 출력(CP949)을 UTF-8로 읽다 실패해 키 쓰기가 멈추고 doctor는 계정을 잃었다.
+- 바뀐 것: `labhq/tools/annot_keys.py`(`CONSOLE` 인코딩), `labhq/doctor.py`(whoami), `tests/test_annot_keys_console.py`.
+- 실행한 것: `PYTHONUTF8=1` pytest `tests/test_annot_regulatory.py`·doctor test·새 test 통과. 고치기 전에는 이 PC에서 `test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of_everything`가 `UnicodeDecodeError`로 실패했다.
+- 미해결: 없음.
+- 근거: 이 PR.
+
 ## 2026-10-07 · 어휘·topic·점검표 표 (#453)
 
 - 결론: PI 요청대로 topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보는 md 하나(`docs/vocabulary.md`)를 README에서 링크했다.
