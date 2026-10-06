@@ -35,7 +35,7 @@ labhq = ["config/*.yaml", "web/*", "web/ui/*", "web/lab3d/*", "web/lab3d/src/*",
          "bench_data/cases/*.yaml", "bench_data/references/*.md", "bench_data/references/*.tsv",
          "bench_data/checks/*.py",
          "research/packs/*.yaml", "research/semantics_v1.yaml", "research/semantics_input_fit.yaml",
-         "vocab/*.yaml", "vocab/NOTICE.md",
+         "vocab/*.yaml", "vocab/*.tsv", "vocab/NOTICE.md",
          "web/vendor/three/*", "web/vendor/three/build/*", "web/vendor/three/examples/jsm/*/*"]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,22 @@
+result	resource	use
+variants	Ensembl VEP	consequence and transcript effect
+variants	gnomAD	population allele frequency
+variants	ClinVar	clinical significance
+variants	dbSNP	rsID and known variant identity
+variants	AlphaGenome	predicted regulatory effect of non-coding variants
+variants	COSMIC	somatic mutation recurrence in cancer
+genes	Open Targets	target-disease association evidence
+genes	DisGeNET	gene-disease associations
+genes	GTEx	tissue expression and eQTL
+genes	Human Protein Atlas	tissue and cell-type protein expression
+genes	MSigDB	gene sets for enrichment
+genes	Reactome	pathway membership
+genes	STRING	protein interaction partners
+regions	ChIP-Atlas	public ChIP/ATAC peaks and enrichment at regions or genes
+regions	ENCODE	candidate cis-regulatory elements
+regions	JASPAR	transcription factor motifs
+proteins	UniProt	protein function and features
+proteins	AlphaFold DB	predicted structure
+compounds	ChEMBL	bioactivity and mechanism
+literature	PubMed	published evidence
+literature	bioRxiv	recent preprints
