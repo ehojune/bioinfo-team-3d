@@ -129,6 +129,26 @@ def research_ledgers(req: Mapping[str, Any]) -> dict[str, Any]:
     return {sid: (results.get(sid) or {}).get("structured") for sid in steps if isinstance(sid, str)}
 
 
+def ledger_binding_problems(req: Mapping[str, Any]) -> list[str]:
+    """Completed research step ledgers that name another plan than the one frozen at CP1 (PR #448 review).
+
+    A continuation keeps a reused result as a copy bound to the new plan, and puts the earlier plan back when it
+    ends before any step ran; anything else is a record that pairs results with a plan they did not run under. The
+    stored plan is not hashed again here: an old record must not fail on a later serializer."""
+    contract = req.get("research_contract")
+    if not isinstance(contract, Mapping) or not isinstance(contract.get("plan_sha256"), str):
+        return []
+    frozen = contract["plan_sha256"]
+    problems: list[str] = []
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    for sid, ledger in research_ledgers(req).items():
+        result = results.get(sid)
+        bound = ledger.get("plan_sha256") if isinstance(ledger, Mapping) else None
+        if isinstance(result, Mapping) and result.get("ok") and isinstance(bound, str) and bound != frozen:
+            problems.append(f"{sid}: 단계 ledger가 고정 계획 {frozen[:12]}가 아니라 {bound[:12]}에 묶여 있습니다")
+    return problems
+
+
 def _receipt(req: Mapping[str, Any]) -> dict[str, Any]:
     contract = req.get("research_contract") if isinstance(req.get("research_contract"), Mapping) else {}
     receipt = (contract.get("checkpoints") or {}).get("cp2") if isinstance(contract.get("checkpoints"), Mapping) \
@@ -210,6 +230,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 for row in files if row["status"] in PROBLEM_STATUSES]
     if report_check and report_check["rerun"]:
         problems += [f"보고서 앵커: {problem}" for problem in report_check["rerun"]["problems"]]
+    problems += [f"계획 결속: {problem}" for problem in ledger_binding_problems(req)]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,

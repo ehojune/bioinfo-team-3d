@@ -29,11 +29,14 @@ from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
 from ..request_status import is_terminal_request
-from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, bind_result_artifacts,
+from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
+                                 bind_result_artifacts,
                                  canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
+                                 plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
+from ..research import continuation as research_continuation
 from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
                               packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs,
                               select_legacy_applied_packs)
@@ -636,7 +639,7 @@ Return one issue per problem with:
 - problem, and request: the specific fix
 Answer the domain pack reviewer questions below as issues where they find a problem.
 Use verdict "revise" only when there is at least one P1 issue; otherwise "accept". labhq does not re-run the frozen
-plan: a revise ends the request, and a fixed plan needs a new CP1 approval.
+plan: after a revise the PI may continue through a new plan, approved at a new CP1, that carries your P1 issues.
 Check the declared topic checklist, its plan answers and Analysis precedents supplied below. File an issue for
 anything omitted or handled incorrectly; it is P1 when fixing it would change a conclusion.
 
@@ -1102,11 +1105,8 @@ def _research_protocol_digest(plan: dict) -> str:
     """The frozen question and protocol a research step must follow, whole: a clipped middle could drop the very
     criterion the step needs (PR #358 review). A step instruction names a rule ("after the low-expression filter")
     without its criteria (8th mock trial: the analyst invented its own filter)."""
-    brief = plan.get("brief") or {}
-    digest = {"question": brief.get("question"), "scope": brief.get("scope"),
-              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
-              "pack_values": plan.get("pack_values") or {}}
-    return json.dumps(digest, ensure_ascii=False)
+    # The same fields a continuation compares before it reuses a step (research/continuation.py).
+    return json.dumps(research_continuation.frozen_context(plan), ensure_ascii=False)
 
 
 def _research_issue_lines(issues: list[dict]) -> list[str]:
@@ -2367,8 +2367,17 @@ class Orchestrator:
             unknown.add("recorded-before-classification")
 
     # ---------- one agent step, including HPC hibernate/wake cycles ----------
+    def _with_research_round(self, task: Task) -> Task:
+        """A continuation round's tasks carry ``research_round`` (2 and up), so restart recovery never hands a step,
+        plan or review the result of the same id from an earlier round (gateway ``_matches_recovery``)."""
+        contract = ((self.hub.requests.get(task.request_id or "") or {}).get("research_contract") or {})
+        round_no = int(contract.get("round") or 1)
+        if round_no <= 1 or "research_round" in task.meta:
+            return task
+        return task.model_copy(update={"meta": {**task.meta, "research_round": round_no}})
+
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
-        task = self._with_request_identity(task)
+        task = self._with_research_round(self._with_request_identity(task))
         rid = task.request_id or ""
         initial_attempt = first_attempt
         engine = str((self.hub.agents.get(task.agent_id) or {}).get("engine") or "")
@@ -3134,6 +3143,21 @@ class Orchestrator:
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
                          "plan needs a new CP1 approval of its hash.", serialized(), ok=False)
             return
+        # CP2 approves these ledgers as results of the plan frozen at CP1, so each must validate under it. A reused
+        # continuation result is a copy rebound to the new plan (``carry_over``); this catches any other drift
+        # (PR #448 review).
+        unbound = self._unbound_research_results(req, steps, results)
+        if unbound:
+            contract["failure"] = {"steps": sorted(unbound), "plan_sha256": contract["plan_sha256"],
+                                   "unbound_results": unbound}
+            req["outcome"] = "research_failed"
+            self.hub.save_request(rid)
+            self._finish(rid, self.report_results(steps, results, n) +
+                         "\n\nResearch stopped before CP2: these step results do not validate under the frozen plan "
+                         f"{contract['plan_sha256'][:12]}:\n" +
+                         "\n".join(f"- {sid}: {'; '.join(problems)}" for sid, problems in sorted(unbound.items())),
+                         serialized(), ok=False)
+            return
         ledgers = {s["id"]: results[s["id"]].structured for s in steps}
         ancestors = step_ancestors(steps)
         refused: list[dict[str, str]] = []
@@ -3175,6 +3199,17 @@ class Orchestrator:
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                   "results": ledgers}
+        carried = contract.get("continuation") or {}
+        reuse_lines: list[str] = []
+        if carried.get("plan_sha256") == contract["plan_sha256"]:  # a continuation round (#90)
+            detail["continuation"] = {key: carried.get(key) for key in
+                                      ("round", "from_plan_sha256", "reuse", "reused_from", "refused_reuse")}
+            reuse_lines.append(f"Continuation round {carried.get('round')}: reused from plan "
+                               f"{str(carried.get('from_plan_sha256'))[:12]} with output hashes checked again, "
+                               "each result rebound to this plan: "
+                               f"{', '.join(carried.get('reuse') or []) or 'none'}.")
+            reuse_lines += [f"- reuse refused, re-ran {row['step_id']}: {row['reason']}"
+                            for row in carried.get("refused_reuse") or []]
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         if recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]:
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
@@ -3195,14 +3230,16 @@ class Orchestrator:
                 cp2 = read_evidence_decision(decision)
             decided = cp2 or "unreadable"
             note = str(decision.get("note") or "").strip()
+            # Kept per step in the receipt: a continuation reuses a step together with its salvage records (#90).
+            salvage = contract.pop("result_salvage", None) or {}
             contract.setdefault("checkpoints", {})["cp2"] = {
                 "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
                 "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                 "plan_sha256": contract["plan_sha256"], "asks": asks,
                 **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
-                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs}
-            contract.pop("result_salvage", None)
+                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                **({"result_salvage": salvage} if salvage else {})}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
         audit = f"CP2 evidence review: {decided}."
@@ -3215,6 +3252,8 @@ class Orchestrator:
         if unsupported:
             audit += "\nUnsupported claims:\n" + "\n".join(
                 f"- {row['step_id']}/{row['claim_id']}: {row['reason']}" for row in unsupported)
+        if reuse_lines:
+            audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
             audit += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
         elif decided == "unreadable":
@@ -3241,8 +3280,9 @@ class Orchestrator:
                                artifact_sha256: dict[str, str | None]) -> None:
         """After CP2 approval: one research review, then the CSO's report and its claim-anchor check (#58 ③⑤).
 
-        The plan stays frozen, so a review that asks for revision ends the request; a fixed plan needs a new CP1
-        approval. The review is saved in the contract and reused after a restart; the report is written again.
+        The plan stays frozen, so a review that asks for revision ends the request unless the PI continues through
+        a new plan and CP1 (``_research_continue``). The review is saved in the contract and reused after a
+        restart; the report is written again.
         Failed lookups are attached to every report here, whether or not the CSO listed them (#58 ④).
         """
         req = self.hub.requests[rid]
@@ -3278,6 +3318,9 @@ class Orchestrator:
                 packs=render_pack_review(packs),
                 ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)) + \
                 plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
+            carried = contract.get("continuation") or {}
+            if carried.get("plan_sha256") == plan_hash:
+                prompt += research_continuation.review_prompt(carried.get("p1_issues") or [])
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
                 reply = await self.run_step(Task(
@@ -3302,9 +3345,13 @@ class Orchestrator:
             self.hub.save_request(rid)
         issues = _research_issue_lines(review["issues"])
         if review["verdict"] == "revise":
+            note = await self._research_continue(rid, review, results)
+            if note is None:  # the PI continued: a new plan, CP1 and run took this request over
+                return
             end("research_review_revise", "\n".join([
                 cp2_report, "", f"Research review ({reviewer}): revise.", *issues,
-                "labhq does not re-run a frozen research PLAN; a fixed plan needs a new CP1 approval of its hash."]),
+                "labhq does not re-run a frozen research PLAN; a fixed plan needs a new CP1 approval of its hash.",
+                *([note] if note else [])]),
                 False, review)
             return
 
@@ -3356,6 +3403,151 @@ class Orchestrator:
                                                              [*claim_check, *review_record, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
+
+    async def _research_continue(self, rid: str, review: dict, results: dict[str, TaskResult]) -> str | None:
+        """After a research review "revise": ask the PI whether to continue through a new CP1 (#90, #58).
+
+        Returns None when the PI continued (this request then re-plans and runs again here), else a line for the
+        revise report ("" when no card was shown). The decision is saved with the plan hash it answers, so a restart
+        neither asks again nor forgets an approval. On approval the finished round (plan, results, CP2 receipt,
+        review) is archived in ``research_contract.rounds`` in the same save that raises ``round``; the results stay
+        in place until the new plan is adopted (``_adopt_continuation_plan``).
+        """
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        plan_hash = contract["plan_sha256"]
+        rounds = list(contract.get("rounds") or [])
+        decided = contract.get("continue_decision") or {}
+        if decided.get("plan_sha256") != plan_hash:
+            limit = self.hub.s.research.revise_continuations
+            if len(rounds) >= limit:
+                return (f"이어 가기 상한(research.revise_continuations={limit})에 닿아 새 CP1을 묻지 않았습니다."
+                        if limit else "")
+            issues = research_continuation.p1_issues(review)
+            round_no = len(rounds) + 2
+            decision = await self.hub.request_approval(
+                kind=research_continuation.CONTINUE_GATE, request_id=rid,
+                summary=(f"연구 리뷰가 revise(P1 {len(issues)}건)로 끝났습니다. 리뷰 지적을 넣은 새 계획으로 "
+                         f"이어 갈까요({round_no}차)? 승인하면 CSO가 새 계획을 쓰고 새 CP1을 받습니다. 사양이 같고 "
+                         "산출 hash가 그대로인 완료 단계는 다시 돌리지 않습니다. 거절하면 지금처럼 끝납니다."),
+                detail={"gate": research_continuation.CONTINUE_GATE, "plan_sha256": plan_hash, "round": round_no,
+                        "limit": limit, "p1_issues": issues})
+            approved = bool(decision.get("approved"))
+            decided = {"plan_sha256": plan_hash, "decision": "approved" if approved else "declined",
+                       "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
+                       "note": str(decision.get("note") or "").strip(),
+                       **({"state": decision["state"]} if decision.get("state") else {})}
+            contract["continue_decision"] = decided
+            if approved:
+                # Everything this round's frozen plan owns, so an unstarted continuation can put it back whole.
+                rounds.append({**research_continuation.archive_round(
+                    req, {sid: result.model_dump(mode="json") for sid, result in results.items()}),
+                    "round": len(rounds) + 1})
+                contract["rounds"] = rounds
+                contract["round"] = round_no
+                contract["continuation"] = {"round": round_no, "from_plan_sha256": plan_hash, "p1_issues": issues,
+                                            "approval_id": decision.get("approval_id")}
+            self.hub.save_request(rid)
+        if decided.get("decision") != "approved":
+            return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
+                    else "PI가 새 CP1로 이어 가기를 거절했습니다.")
+        await self._emit(rid, "request.continued", {"round": contract.get("round"), "from_plan_sha256": plan_hash})
+        await self.run_request(rid, continuation=True)
+        return None
+
+    def _adopt_continuation_plan(self, rid: str, plan: dict, pack_hashes: dict[str, str]) -> None:
+        """Pair the new plan with the previous round's results: keep only reusable steps' results (#90).
+
+        Called before the save that stores the new plan, so a restart sees the plan and its pruned results together.
+        The reuse is not final until the output hashes are checked after the new CP1 (``_verify_research_reuse``).
+        ``pack_hashes`` is the pack snapshot the new plan is frozen with; a changed pack re-runs every step.
+
+        The previous round's CP1 approval, CP2 receipt, review and continue decision are dropped in the same save:
+        they are keyed by plan_sha256, and a new plan byte-identical to the revised one (a P1 execution mistake in an
+        unchanged step) has the same hash. Kept, they would skip the new CP1 and CP2, reuse the "revise" review and
+        continue again without the PI (PR #448 review). The round archive in ``rounds`` keeps them."""
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        carry = research_continuation.carry_over(contract["rounds"][-1], plan, pack_hashes,
+                                                 carried.get("p1_issues") or [])
+        carried.update(plan_sha256=research_plan_sha256(plan), verified=False)
+        carried.pop("refused_reuse", None)
+        contract["pack_snapshot"] = dict(pack_hashes)  # the new plan's packs, saved with it
+        for key in ("approval", "review", "continue_decision"):
+            contract.pop(key, None)
+        (contract.get("checkpoints") or {}).pop("cp2", None)
+        self._apply_carry(rid, carry, set(req.get("step_decisions") or {}) | set(req.get("pending_revisions") or {}))
+        req["pending_questions"] = []
+
+    def _apply_carry(self, rid: str, carry: research_continuation.Carry, also_forget: set[str] = frozenset()) -> None:
+        """Make ``carry`` the request's state: only the reused steps' results, each bound to the current plan, their
+        salvage rows (CP2 shows them again) and the reuse record; every other step starts fresh (#90)."""
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        contract["continuation"].update(reuse=carry.reuse, rerun=carry.rerun, reused_from=carry.reused_from)
+        if carry.salvage:
+            contract["result_salvage"] = carry.salvage
+        else:
+            contract.pop("result_salvage", None)
+        req["results"] = carry.results
+        self._forget_step_state(rid, (set(carry.rerun) | set(also_forget)) - set(carry.reuse))
+
+    def _forget_step_state(self, rid: str, steps: set[str]) -> None:
+        """A step that runs again in a continuation starts fresh: no earlier PI decision, pending revision or
+        attempt count, so it never resumes an earlier round's session in that round's work folder (#90)."""
+        req = self.hub.requests[rid]
+        for key in ("step_decisions", "pending_revisions"):
+            entries = req.get(key) or {}
+            for sid in [sid for sid in entries if sid in steps]:
+                entries.pop(sid)
+        for sid in steps:
+            self.attempts.get(rid, {}).pop(sid, None)
+
+    async def _verify_research_reuse(self, rid: str, plan: dict) -> None:
+        """After the new CP1, before dispatch: hash every reused step's recorded outputs again (#90).
+
+        A step whose files changed, vanished or cannot be checked on this PC, and every step below it, loses its
+        reused result and runs. The decision is ``carry_over`` again, from the round archive and the frozen pack
+        snapshot, with the hash refusals added: the same rule as at adoption, so a restart in between agrees with it,
+        and reuse can only shrink from what the CP1 card showed."""
+        req = self.hub.requests[rid]
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        saved = req.get("results") or {}
+        reused = [sid for sid in carried.get("reuse") or [] if sid in saved]
+        try:
+            hashes = (await asyncio.to_thread(research_continuation.verify_reuse,
+                                              {sid: saved[sid] for sid in reused}, self.hub.s)
+                      if reused else {})
+        except Exception as error:  # nothing reused that labhq could not check
+            hashes = {sid: f"hash check failed: {type(error).__name__}: {error}" for sid in reused}
+        refused = {sid: f"output hash check: {why}" for sid, why in hashes.items()}
+        adopted = carried.get("rerun") or {}
+        refused.update({step["id"]: adopted.get(step["id"]) or "not reused at CP1" for step in plan.get("steps") or []
+                        if step["id"] not in reused and step["id"] not in refused})
+        carry = research_continuation.carry_over(contract["rounds"][-1], plan, contract.get("pack_snapshot"),
+                                                 carried.get("p1_issues") or [], refused=refused)
+        # A refused step runs fresh, not as the round-1 session in the folder whose file changed (PR #448 review).
+        self._apply_carry(rid, carry)
+        carried.update(verified=True, refused_reuse=[{"step_id": sid, "reason": carry.rerun[sid]}
+                                                     for sid in reused if sid not in carry.reuse])
+        self.hub.save_request(rid)
+
+    @staticmethod
+    def _unbound_research_results(req: dict, steps: list[dict],
+                                  results: dict[str, TaskResult]) -> dict[str, list[str]]:
+        """{step: problems} for each result that does not validate under the request's frozen plan, which must hash
+        to the contract's CP1-frozen plan_sha256."""
+        frozen = ResearchPlan.model_validate(req["plan"])
+        if research_plan_sha256(frozen) != req["research_contract"]["plan_sha256"]:
+            return {s["id"]: ["the request plan does not hash to the CP1-frozen plan_sha256"] for s in steps}
+        unbound: dict[str, list[str]] = {}
+        for step in steps:
+            problems = research_result_errors(results[step["id"]].structured, plan=frozen)
+            if problems:
+                unbound[step["id"]] = problems
+        return unbound
 
     def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                           refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
@@ -3595,15 +3787,18 @@ class Orchestrator:
         return True
 
     # ---------- request entry point ----------
-    async def run_request(self, rid: str, resume: bool = False) -> None:
+    async def run_request(self, rid: str, resume: bool = False, continuation: bool = False) -> None:
+        """``continuation``: a research request whose review ended "revise" goes on in this process through a new
+        plan and CP1 (``_research_continue``); its running cost is kept, and no briefing runs again."""
         req = self.hub.requests[rid]
         refs = reference_meta(req)
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
         text = req["text"] + render_references(req.get("references")) + "".join(
             "\n\nPI clarification (questions and answer):\n" + qa_text(c) for c in req.get("clarifications") or [])
-        self.cost[rid] = float(req.get("cost_usd") or 0)
-        self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
-        self._seed_cost(rid, req)
+        if not continuation:
+            self.cost[rid] = float(req.get("cost_usd") or 0)
+            self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
+            self._seed_cost(rid, req)
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
@@ -3680,10 +3875,17 @@ class Orchestrator:
                     "approval": approval,
                 }
                 self.hub.save_request(rid)
+                plan_hash = req["research_contract"]["plan_sha256"]
+                carried = req["research_contract"].get("continuation") or {}
+                # This plan continues a revised one and its reuse is not yet checked against the files (#90).
+                reuse_pending = carried.get("plan_sha256") == plan_hash and not carried.get("verified")
                 if approval.get("status") != "approved":
-                    plan_hash = req["research_contract"]["plan_sha256"]
                     summary = ("CP1 research plan approval: approve the frozen question, methods, completion/stop "
                                f"conditions, data boundary, and selected packs. plan_sha256={plan_hash}")
+                    if reuse_pending:
+                        summary = (f"이어 가기 {carried.get('round')}차 계획(리뷰 P1 반영). 재사용: "
+                                   f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
+                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     decision = await self.hub.request_approval(
                         kind="research_plan", request_id=rid, summary=summary[:700],
                         detail={"gate": "research_plan", "target_sha256": plan_hash,
@@ -3692,7 +3894,10 @@ class Orchestrator:
                                 "warnings": plan.get("warnings") or [],
                                 "protocol_revision": plan["protocol"]["revision"],
                                 "packs": plan["protocol"]["packs"],
-                                "scope_status": plan["intake"]["scope_status"]})
+                                "scope_status": plan["intake"]["scope_status"],
+                                **({"continuation": {key: carried.get(key) for key in
+                                                     ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")}}
+                                   if reuse_pending else {})})
                     approval = freeze_plan(plan, decision)
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
                     req["research_contract"]["approval"] = approval
@@ -3708,6 +3913,8 @@ class Orchestrator:
                     self._finish(rid, "Research plan frozen and approved. Evidence checkpoint is off, so the "
                                  "request stops before employee dispatch.", {}, ok=True)
                     return False
+                if reuse_pending:
+                    await self._verify_research_reuse(rid, plan)
                 req["outcome"] = "research_running"
                 self.hub.save_request(rid)
                 return True
@@ -3777,7 +3984,13 @@ class Orchestrator:
                 brief_job = (asyncio.create_task(self.run_step(Task(
                     agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
                     meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
-                             if cos and cos in known else None)
+                             if cos and cos in known and not continuation else None)
+                # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90).
+                carried = (req.get("research_contract") or {}).get("continuation") or {}
+                rounds = (req.get("research_contract") or {}).get("rounds") or []
+                continuation_note = (research_continuation.plan_prompt(
+                    rounds[-1]["plan"], rounds[-1]["plan_sha256"], carried.get("p1_issues") or [],
+                    int(carried.get("round") or 2)) if continuation and research_lane and rounds else "")
                 precedent_job = None
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:
@@ -3863,6 +4076,7 @@ class Orchestrator:
                                          if topic_vocab else ""))
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         prompt += reuse_advisory  # semantics-hook
+                        prompt += continuation_note
                         schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
                     else:
                         vocab = self._output_vocab()
@@ -3906,7 +4120,7 @@ class Orchestrator:
                     # engine that does not enforce the schema: an out request must not run unasked (#346 review).
                     req["scope_first"] = scope_verdict(plan)
                 # semantics-shadow: begin (#149 decision 15 advisory A/B)
-                if research_lane:
+                if research_lane and not continuation:  # the A/B arm was fixed by the request's first plan
                     service = getattr(self.hub, "semantics_" + "shadow", None)
                     if service is not None:
                         try:
@@ -4067,6 +4281,8 @@ class Orchestrator:
                             plan, plan_res.structured if isinstance(plan_res.structured, dict)
                             else extract_json(plan_res.text) or {})
                     req["plan"] = validated.model_dump(mode="json")
+                    if continuation:  # saved below with the plan, so a restart sees both or neither
+                        self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     warnings: list[str] = []
@@ -4607,6 +4823,10 @@ class Orchestrator:
             self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review)
         except Exception as e:
+            if self._continuation_unstarted(req):
+                # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
+                self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}")
+                return
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             execution = []
             if req.get("plan", {}).get("steps"):
@@ -4632,9 +4852,53 @@ class Orchestrator:
             else:
                 await self._emit(rid, "request.failed", failed)
 
+    @staticmethod
+    def _continuation_unstarted(req: dict) -> bool:
+        """A continuation round is on and none of its steps has been dispatched (its reuse is not verified yet)."""
+        contract = req.get("research_contract") or {}
+        carried = contract.get("continuation") or {}
+        return bool(carried and not carried.get("verified") and contract.get("rounds"))
+
+    @staticmethod
+    def _unstarted_continuation_end(req: dict, report: str, results: dict,
+                                    review: dict | None) -> tuple[str, dict, dict | None]:
+        """A continuation round that ends before its new CP1 let any step run (#90, PR #448 review).
+
+        A rejected or timed-out CP1, a failed or invalid plan, or an error ends the request as the revise it
+        continued: outcome ``research_review_revise``, the previous round's review on top, and its results kept,
+        so the record and ``labhq verify`` still show what ran. The previous round's plan, hash, CP1 approval, pack
+        snapshot and CP2 receipt come back with them (``restore_round``): the results never ran under the new draft,
+        which stays in ``continuation.declined_plan`` (PR #448 review). Why the round ended is kept in
+        ``continuation.ended_before_dispatch``."""
+        if not Orchestrator._continuation_unstarted(req):
+            return report, results, review
+        contract = req["research_contract"]
+        carried = contract["continuation"]
+        previous = contract["rounds"][-1]
+        stored = previous.get("review") or {}
+        reason = (report.strip().splitlines() or ["-"])[0]
+        draft = research_continuation.restore_round(req, previous)
+        if draft:
+            carried["declined_plan"] = draft
+        # Results of a round that never dispatched are not step results: a failed plan task or a refused budget
+        # card arrives as results={"plan": ...}. Keep it for diagnosis here, not beside the restored steps (PR #448).
+        step_ids = {str(s.get("id")) for s in (req.get("plan") or {}).get("steps") or [] if isinstance(s, dict)}
+        stray = {key: value for key, value in (results or {}).items() if key not in step_ids}
+        results = {key: value for key, value in (results or {}).items() if key in step_ids}
+        carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason,
+                                            **({"task_results": stray} if stray else {})}
+        req["outcome"] = "research_review_revise"
+        report = "\n".join([
+            f"이어 가기 {carried.get('round')}차가 단계 실행 전에 끝났습니다: {reason}",
+            f"{previous.get('round')}차 결과와 리뷰가 이 요청의 결과입니다.", "",
+            f"Research review ({stored.get('reviewer') or '-'}): revise.",
+            *_research_issue_lines(stored.get("issues") or []), "", report])
+        return report, {**(previous.get("results") or {}), **results}, review or (stored or None)
+
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
+        report, results, review = self._unstarted_continuation_end(req, report, results, review)
         report, report_appendix = _split_report_appendix(report)
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
             report_appendix = _appendix_sections(report_appendix, [report])

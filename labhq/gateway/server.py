@@ -807,6 +807,8 @@ class Hub:
                     int(entry.get("parse_attempt", prior_meta.get("parse_attempt")) or 0) ==
                     int(task.meta.get("parse_attempt") or 0) and
                     entry.get("parent_task") == task.meta.get("parent_task") and
+                    # A research continuation re-runs step ids of an earlier round under a new CP1 (#90).
+                    prior_meta.get("research_round") == task.meta.get("research_round") and
                     # A consult belongs to one ask; another ask's consult is not its prior attempt.
                     prior_meta.get("ask_id") == task.meta.get("ask_id"))
 

@@ -27,7 +27,7 @@ from urllib.parse import quote, unquote, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from labhq.evidence.claims import independent_groups, normalize_artifact_path, normalize_id, normalize_uri
-from labhq.research.contract import ResearchPlan, ResearchResult, validate_research_result
+from labhq.research.contract import ResearchPlan, ResearchResult, task_round_plan, validate_research_result
 import labhq.vocab as output_vocab
 from labhq.vocab import declare as output_types
 from labhq.yaml_unique import UniqueKeyError
@@ -217,8 +217,8 @@ def read_records(root: Path, *, state_db: Path, observed: Path | None = None, re
         structured = result.get("structured")
         rid = body.get("request_id")
         if structured and rid in plans:
-            try:
-                results[tid] = validate_research_result(structured, plan=plans[rid])
+            try:  # an earlier research round's task ran under that round's plan (#90 continuation)
+                results[tid] = validate_research_result(structured, plan=task_round_plan(requests[rid], body)[0])
             except (ValidationError, ValueError) as exc:
                 detail = f"{exc.error_count()} errors" if isinstance(exc, ValidationError) else str(exc)
                 raise RecordsError(f"state task {tid}: research result invalid ({detail})") from None
@@ -301,8 +301,9 @@ def records_from_rows(requests: Mapping[str, Any], tasks: Mapping[str, Any], *,
         structured = (body.get("result") or {}).get("structured")
         rid = body.get("request_id")
         if structured and rid in plans and body.get("step_id"):
-            try:
-                results[tid] = validate_research_result(structured, plan=plans[rid])
+            try:  # an earlier research round's task ran under that round's plan (#90 continuation)
+                results[tid] = validate_research_result(structured,
+                                                        plan=task_round_plan(kept_requests[rid], body)[0])
             except (ValidationError, ValueError):
                 invalid += 1
                 continue
@@ -719,6 +720,18 @@ def _set_field(row: dict, name: str, judged: Judged, p: Projection) -> None:
 _CURRENT_VOCAB = object()
 
 
+def _run_plan(records: Records, rid: Any, task: Mapping[str, Any]) -> tuple[dict, Any]:
+    """The plan and plan_sha256 a task ran under. A research request that continued after a review "revise" keeps
+    each earlier round's plan in its round archive, and a task of that round ran under it (#90)."""
+    request = records.requests.get(rid) or {}
+    plan, plan_hash = records.plans.get(rid) or {}, (request.get("research_contract") or {}).get("plan_sha256")
+    if rid in records.plans and isinstance(request.get("research_contract"), dict):
+        ran, ran_hash = task_round_plan(request, dict(task))
+        if isinstance(ran, dict):
+            plan, plan_hash = ran, ran_hash
+    return plan, plan_hash
+
+
 def project(model: SemanticModel, records: Records, *, types_vocab: Any = _CURRENT_VOCAB) -> Projection:
     """Project records onto the model. Pure: reads ``records``, returns a new Projection.
 
@@ -747,9 +760,8 @@ def project(model: SemanticModel, records: Records, *, types_vocab: Any = _CURRE
                 workdir_ids[result["workdir"]] = ws
         manifest = records.manifests.get(result.get("workdir") or "")
         meta = judge_run_meta(task, manifest, tid)
-        plan = records.plans.get(rid) or {}
-        method, packs = judge_method(((records.requests.get(rid) or {}).get("research_contract") or {}).get("plan_sha256"),
-                                     task.get("step_id"), (plan.get("protocol") or {}).get("packs") or [])
+        plan, plan_hash = _run_plan(records, rid, task)
+        method, packs = judge_method(plan_hash, task.get("step_id"), (plan.get("protocol") or {}).get("packs") or [])
         agent_id = (task.get("payload") or {}).get("agent_id")
         row: dict[str, Any] = {"id": run, "request": rid, "step": task.get("step_id"), "task_id": tid, "workspace": ws,
                                "agent": judge_identity("agent", agent_id) or UNKNOWN}
@@ -846,7 +858,7 @@ def project(model: SemanticModel, records: Records, *, types_vocab: Any = _CURRE
             p.add_edge(row["agent"], "performs", run, "reported")
         if row["method"] != UNKNOWN:
             p.add_edge(run, "uses_method", row["method"], "declared")
-        plan = records.plans.get(row["request"]) or {}
+        plan = _run_plan(records, row["request"], records.tasks.get(row["task_id"]) or {})[0]
         step = next((s for s in plan.get("steps") or [] if s.get("id") == row["step"]), None)
         used: list[str] = []
         for ref in (step or {}).get("input_refs") or []:
