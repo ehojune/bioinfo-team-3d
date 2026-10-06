@@ -682,6 +682,38 @@ async def test_resume_keeps_execution_on_after_the_evidence_checkpoint_is_switch
     assert set(hub.requests["r"]["results"]) == {"s1"}
 
 
+@pytest.mark.asyncio
+async def test_a_plan_frozen_before_reasoned_skips_resumes_and_records_the_reasonless_item(monkeypatch):
+    # PR #452 review: CP1 approved "not_applicable: none" under the old rule; a restart after the upgrade must not
+    # fail the approved run. The frozen plan stays as approved and the request names the item without a reason.
+    from labhq.vocab import topic_checklists
+    import sys
+
+    old_plan = valid_plan()
+    old_plan["checklist"]["qc"] = "not_applicable: none"
+    monkeypatch.setattr(sys.modules[__name__], "valid_plan", lambda: copy.deepcopy(old_plan))
+    monkeypatch.setattr(topic_checklists, "PLACEHOLDER_REASONS", frozenset())  # the rule before #446
+    settings = _settings()
+    approve = {"approved": True, "choice": "approve", "note": ""}
+    decisions = [CP1, approve]
+    hub = _research_hub(settings, decisions)
+    await Orchestrator(hub).run_request("r")
+    frozen = copy.deepcopy(hub.requests["r"]["plan"])
+    hub.requests["r"]["research_contract"].pop("checkpoints")
+    _interrupt(hub)
+    monkeypatch.undo()
+    decisions.append(dict(approve))
+    calls, approvals = len(hub.calls), len(hub.approvals)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert hub.requests["r"]["status"] == "done", hub.requests["r"].get("error")
+    assert [item["kind"] for item in hub.approvals[approvals:]] == ["research_evidence"]
+    assert hub.calls[calls:] == []
+    assert hub.requests["r"]["outcome"] == "evidence_approved"
+    assert hub.requests["r"]["plan"] == frozen
+    assert hub.requests["r"]["checklist_reasonless"] == ["qc"]
+
+
 # ---------- P1: a research step may stop for a PI decision before its ledger is checked ----------
 
 @pytest.mark.asyncio

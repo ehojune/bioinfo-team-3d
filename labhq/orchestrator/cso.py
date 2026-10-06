@@ -543,6 +543,9 @@ would change a conclusion; P2 means the conclusion stays the same but its eviden
 Use verdict "revise" only when there is at least one P1 issue; otherwise use "accept".
 Check the declared topic checklist and Analysis precedents supplied below. File an issue for anything omitted or
 handled incorrectly; it is P1 when fixing it would change a conclusion.
+A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
+issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
+merely because it was skipped.
 
 Request: {request}
 
@@ -642,6 +645,9 @@ Use verdict "revise" only when there is at least one P1 issue; otherwise "accept
 plan: after a revise the PI may continue through a new plan, approved at a new CP1, that carries your P1 issues.
 Check the declared topic checklist, its plan answers and Analysis precedents supplied below. File an issue for
 anything omitted or handled incorrectly; it is P1 when fixing it would change a conclusion.
+A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
+issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
+merely because it was skipped.
 
 Request: {request}
 
@@ -1063,9 +1069,12 @@ def _appendix_sections(existing: str, sections: list[str]) -> str:
     return EXECUTION_APPENDIX_TITLE + (("\n\n" + "\n\n".join(parts)) if parts else "")
 
 
-def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict]) -> str:
+def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | dict], plan: Any = None) -> str:
     """Short deterministic warnings for ordinary reports; tool payloads never pass their first bounded line."""
     lines = []
+    skips = checklist_skip_line(plan)
+    if skips:
+        lines.append(skips)
     for step in steps:
         sid = step["id"]
         result = results.get(sid)
@@ -1576,7 +1585,7 @@ def analysis_precedents_text(record: Any) -> str:
         return "Analysis precedents:\n- unavailable; continue without precedent requirements."
     lines = ["Analysis precedents:", "Papers:"]
     lines.extend(f"- {row.get('title')}: {_citations(row)}" for row in record.get("papers") or [])
-    lines.append("Required analyses (each id must be answered in `checklist`):")
+    lines.append("Required analyses (answer each id in `checklist`; if one cannot be done, say why):")
     lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
                  for row in record.get("required") or [])
     lines.append("Recommended analyses:")
@@ -1612,6 +1621,42 @@ def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.Checkli
     ids = [step.get("id") for step in steps if isinstance(step, dict) and isinstance(step.get("id"), str)]
     return topic_checklists.answer_errors(body.get("checklist"),
                                           required_checklist_items(body, catalog, precedents), ids)
+
+
+def checklist_skip_warnings(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                             precedents: Any) -> list[str]:
+    """One warning per required check the plan answered assumption with a reason (PI 2026-10-07, #446)."""
+    body = plan if isinstance(plan, dict) else {}
+    return topic_checklists.skip_warnings(body.get("checklist"), required_checklist_items(body, catalog, precedents))
+
+
+def with_checklist_skip_warnings(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
+                                 precedents: Any) -> Any:
+    """The plan with exactly the skip warnings of its current checklist, one per item.
+
+    Earlier skip warnings (a re-plan's old plan, a CSO that copied them) are dropped first, so a check the new plan
+    does, or skips for a changed reason, is not still counted (PR #452 review)."""
+    if not isinstance(plan, dict):
+        return plan
+    prefix = topic_checklists.SKIP_WARNING + " "
+    current = checklist_skip_warnings(plan, catalog, precedents)
+    previous = plan.get("warnings") or []
+    kept = [warning for warning in previous if not (isinstance(warning, str) and warning.startswith(prefix))]
+    if not current and len(kept) == len(previous):
+        return plan
+    return {**plan, "warnings": [*kept, *current]}
+
+
+def checklist_skip_line(plan: Any) -> str:
+    """The report warning preview line counting the skip warnings the plan carries."""
+    body = plan if isinstance(plan, dict) else {}
+    prefix = topic_checklists.SKIP_WARNING + " "
+    names = [str(warning)[len(prefix):].split(":", 1)[0] for warning in body.get("warnings") or []
+             if isinstance(warning, str) and warning.startswith(prefix)]
+    if not names:
+        return ""
+    shown = ", ".join(names[:8]) + (f" (+{len(names) - 8}개)" if len(names) > 8 else "")
+    return f"- 점검표: 못 한 점검 {len(names)}건 (이유는 계획 경고와 한계): {shown}"
 
 
 def checklist_meta(catalog: dict[str, list[topic_checklists.ChecklistItem]]) -> dict[str, Any]:
@@ -3943,6 +3988,21 @@ class Orchestrator:
                     if req.get("checklist_contract"):
                         stored_problems = checklist_errors(req["plan"], checklist_catalog,
                                                            req.get("analysis_precedents"))
+                        # A plan approved at CP1 before #446 may skip with a placeholder reason ("none", "n/a")
+                        # the old rule accepted. The approval stands; the request records which items lack a reason
+                        # instead of failing on restart (PR #452 review). The frozen plan itself is not changed.
+                        frozen_answers = req["plan"].get("checklist") or {}
+                        reasonless = [item for item in (problem.split(" must ", 1)[0].removeprefix("checklist.")
+                                                        for problem in stored_problems
+                                                        if " must answer with a reason" in problem)
+                                      if isinstance(frozen_answers.get(item), str) and
+                                      topic_checklists.ANSWER.fullmatch(frozen_answers[item].strip())]
+                        if reasonless:
+                            req["checklist_reasonless"] = reasonless
+                            self.hub.save_request(rid)
+                        stored_problems = [problem for problem in stored_problems
+                                           if problem.split(" must ", 1)[0].removeprefix("checklist.")
+                                           not in reasonless]
                         if stored_problems:
                             raise ValueError("frozen research plan checklist invalid: " +
                                              "; ".join(stored_problems))
@@ -4264,6 +4324,9 @@ class Orchestrator:
                         plan = prepare_research_declarations(plan, vocab, type_stats)
                         problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         if not problems:
+                            # Part of the frozen plan, so CP1 shows them and the hash covers them (#446).
+                            plan = with_checklist_skip_warnings(plan, checklist_catalog,
+                                                                req.get("analysis_precedents"))
                             validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
                                                                active_packs=pack_snapshot(candidate_packs),
                                                                expected_intake=intake, pack_definitions=candidate_packs)
@@ -4367,7 +4430,8 @@ class Orchestrator:
                                 if self.cfg.wait_for_clarification:
                                     self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
                                     return
-                    req["plan"] = {**plan, "steps": steps, "warnings": warnings}
+                    req["plan"] = with_checklist_skip_warnings({**plan, "steps": steps, "warnings": warnings},
+                                                               checklist_catalog, req.get("analysis_precedents"))
                     if vocab is not None:
                         req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                     # The verdict of the plan that runs, else the first one given (#36, #346 review)
@@ -4631,6 +4695,8 @@ class Orchestrator:
                     req["plan"]["warnings"].append("checklist unanswered after re-plan: " +
                                                    ", ".join(problem.split(" must ", 1)[0]
                                                              for problem in replan_checklist_problems))
+                req["plan"] = with_checklist_skip_warnings(req["plan"], checklist_catalog,
+                                                           req.get("analysis_precedents"))
                 if vocab is not None:
                     req["output_types_stats"] = {**type_stats, "vocab": vocab.sha256}
                 if review_progress is not None:
@@ -4790,7 +4856,7 @@ class Orchestrator:
                 agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
                 prompt=SYNTH_PROMPT.format(request=text, results=self.format_results(steps, results, n),
                                            review=short(review, 3000),
-                                           warnings=general_report_warnings(steps, results) or "(none)",
+                                           warnings=general_report_warnings(steps, results, req.get("plan")) or "(none)",
                                            assumptions=_assumptions_prompt(req.get("plan"))) +
                        plan_report_context(req.get("plan"), checklist_catalog,
                                            req.get("analysis_precedents")) +
@@ -4921,7 +4987,7 @@ class Orchestrator:
                             (f"; 원인: {route['reason']}" if route.get("reason") else ""))
         if req.get("plan", {}).get("steps") and results:
             if not req.get("research_contract"):
-                warnings = general_report_warnings(req["plan"]["steps"], results)
+                warnings = general_report_warnings(req["plan"]["steps"], results, req["plan"])
                 if warnings:
                     metadata.append(warnings)
                     report = _execution_warning_summary(report)
