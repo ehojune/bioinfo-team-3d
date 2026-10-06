@@ -1415,7 +1415,9 @@ async def test_task_cost_survives_restart_once_per_task(tmp_path):
 @pytest.mark.asyncio
 async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
     s = settings(tmp_path)
-    s.gateway.resume_wait_s = 0.15
+    # Long for the first request: it must still be waiting when the runner joins. A 0.15 s wait ran out before the
+    # assertion on slow CI runners (10-06: Python 3.10 and Windows jobs saw "interrupted").
+    s.gateway.resume_wait_s = 30
     first = Hub(s)
     first.requests["r1"] = {"id": "r1", "status": "running", "mode": "direct",
                             "agent_id": "a", "text": "work"}
@@ -1431,7 +1433,11 @@ async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
 
     hub.orchestrator.run_step = fake_step
     await hub.resolve_approval(aid, True)
-    await asyncio.sleep(0.03)
+    for _ in range(200):  # the status flips first, then the waiting event goes out
+        if (hub.requests["r1"]["status"] == "waiting_for_runner"
+                and any(e["type"] == "request.resume_waiting" for e in hub.events)):
+            break
+        await asyncio.sleep(0.01)
     assert hub.requests["r1"]["status"] == "waiting_for_runner" and calls == []
     assert any(e["type"] == "request.resume_waiting" for e in hub.events)
     socket = CaptureSocket()
@@ -1446,11 +1452,12 @@ async def test_resume_waits_for_runner_and_reoffers_after_timeout(tmp_path):
                             "agent_id": "missing", "text": "work"}
     hub.save_request("r2")
     hub.store.close()
+    s.gateway.resume_wait_s = 0.15  # short for the second request: no runner offers "missing", so it must time out
     timeout_hub = Hub(s)
     timeout_aid = next(aid for aid, e in timeout_hub.approvals.items()
                        if e["approval"].get("request_id") == "r2")
     await timeout_hub.resolve_approval(timeout_aid, True)
-    for _ in range(50):
+    for _ in range(500):
         if any(e["type"] == "request.resume_timeout" for e in timeout_hub.events):
             break
         await asyncio.sleep(0.01)
