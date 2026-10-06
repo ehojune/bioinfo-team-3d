@@ -755,6 +755,31 @@ def test_write_key_leaves_an_owner_only_file(tmp_path):
     assert path.read_text(encoding="utf-8").strip() == FAKE_KEY + "2"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows ACLs")
+def test_write_key_drops_explicit_entries_already_on_the_key_folder(tmp_path, monkeypatch):
+    # A GitHub runner's temp folder hands SYSTEM, Administrators and OWNER RIGHTS down as entries that dropping
+    # inheritance does not remove (PR #450); seeding explicit ones here gives the same starting point on any PC.
+    import subprocess
+
+    folder = tmp_path / "secrets"
+    folder.mkdir()
+    seeded = subprocess.run(["icacls", str(folder), "/grant", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+                             "*S-1-5-32-545:(OI)(CI)RX", "*S-1-1-0:(OI)(CI)R"], capture_output=True, text=True)
+    assert seeded.returncode == 0
+    account, _sid = annot_keys.current_account()
+    assert len([name for name, _rights in annot_keys.acl_entries(folder) if name.lower() != account.lower()]) >= 4
+    # The check still refuses a folder whose access was not narrowed, and leaves nothing behind.
+    with monkeypatch.context() as patch:
+        patch.setattr(annot_keys, "_set_owner_only_dacl", lambda *a, **kw: None)
+        with pytest.raises(annot_keys.KeyFileError, match="다른 계정"):
+            annot_keys.write_key(folder / "alphagenome_api_key", FAKE_KEY)
+    assert list(folder.iterdir()) == []
+    annot_keys.write_key(folder / "alphagenome_api_key", FAKE_KEY)
+    _owner_only(folder / "alphagenome_api_key")
+    entries = annot_keys.acl_entries(folder)
+    assert entries and all(name.lower() == account.lower() and "(I)" not in rights for name, rights in entries)
+
+
 def test_write_key_refuses_a_folder_it_would_lock_others_out_of(tmp_path, monkeypatch):
     shared = tmp_path / "labhq-home"
     (shared / "state").mkdir(parents=True)
