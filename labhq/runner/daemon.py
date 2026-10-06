@@ -497,6 +497,11 @@ class Runner:
             servers.append(McpServerSpec(name="labhq_hpc", command=sys.executable,
                                          args=["-m", "labhq.tools.hpc_mcp"], env=env,
                                          timeout_s=timeout_s))
+        if "annot" in agent.builtin_mcp:
+            # Read-only public lookups: no per-call approval, also for variants from restricted zones (PI 2026-10-06).
+            servers.append(McpServerSpec(name="labhq_annot", command=sys.executable,
+                                         args=["-m", "labhq.tools.annot_mcp"], env=env,
+                                         auto_approve=True, timeout_s=timeout_s))
         if allow_ask and agent.engine != Engine.antigravity:
             servers.append(McpServerSpec(name="labhq_ask", command=sys.executable,
                                          args=["-m", "labhq.tools.ask_mcp"], env=env,

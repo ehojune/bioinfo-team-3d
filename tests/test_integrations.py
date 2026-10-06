@@ -81,7 +81,7 @@ def test_repository_badges_name_exact_targets_at_readme_top():
                    "Codex 웹 검색", "bioinfo:bioinfo-analyze", "PR gate"):
         assert all(absent not in label for label in top), absent
     assert "Codex: 직원 3명 · gpt-6-astra/gpt-6-luna/gpt-6.1-sol" in top
-    assert "labhq MCP: approval · ask · hpc" in top and "Python: 3.10+" in top
+    assert "labhq MCP: annot · approval · ask · hpc" in top and "Python: 3.10+" in top
     assert "코드: GPL-3.0" in top and "문서·데이터: CC BY-SA 4.0" in top  # #252: one badge per license file
     generated = block(text, BADGES_START, BADGES_END)
     assert str(ROOT) not in text and not re.search(r"(?<![A-Za-z])[A-Za-z]:[\\/]|/Users/|/home/", generated)

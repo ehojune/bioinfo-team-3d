@@ -1,7 +1,7 @@
 result	resource	use
-variants	Ensembl VEP	consequence and transcript effect
-variants	gnomAD	population allele frequency
-variants	ClinVar	clinical significance
+variants	Ensembl VEP	consequence and transcript effect (labhq_annot vep tool)
+variants	gnomAD	population allele frequency (labhq_annot gnomad tool)
+variants	ClinVar	clinical significance (labhq_annot clinvar tool)
 variants	dbSNP	rsID and known variant identity
 variants	AlphaGenome	predicted regulatory effect of non-coding variants
 variants	COSMIC	somatic mutation recurrence in cancer

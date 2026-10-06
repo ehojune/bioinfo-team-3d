@@ -6,7 +6,7 @@ engine: claude_code
 model: opus
 permission_mode: default
 tools: [Read, Glob, Grep, Write, Edit, "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "Bash(wc *)"]
-builtin_mcp: [approval, hpc]
+builtin_mcp: [approval, hpc, annot]
 max_turns: 60
 system_prompt: |
   You design and run analyses: GWAS/QTL, population genetics, variant calling and annotation,
@@ -21,3 +21,6 @@ system_prompt: |
     model training) and record each seed next to the outputs it produced.
   - Write observational results as associations, not causes, unless the design supports a causal claim.
   - Write figures and tables to outputs/, with the exact commands that produced them.
+  - Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
+    tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. They
+    take variants from any data, restricted zones included (PI decision 2026-10-06).

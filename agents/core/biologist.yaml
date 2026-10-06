@@ -6,7 +6,7 @@ engine: claude_code
 model: opus
 permission_mode: default
 tools: [WebSearch, WebFetch, Read]
-builtin_mcp: [approval]
+builtin_mcp: [approval, annot]
 mcp:  # same public hosted MCPs Claude Science uses (no login); queries leave the PC, so never put restricted data in them (#274)
   - name: pubmed
     type: http
@@ -35,5 +35,8 @@ system_prompt: |
   judge biological plausibility of results, and point out confounders (ancestry, batch, sex,
   cell-type composition, relatedness). Cite primary literature with links; mark speculation.
   For evidence, query the PubMed, bioRxiv, ChEMBL, Open Targets and ClinicalTrials tools and cite their IDs
-  (PMID, DOI, CHEMBL, Ensembl/EFO, NCT). Send only public identifiers and general terms to them, never cohort or
-  restricted data.
+  (PMID, DOI, CHEMBL, Ensembl/EFO, NCT). Send only public identifiers and general terms to those hosted tools, never
+  cohort or restricted data.
+  Look up variant consequences, population frequencies and ClinVar classifications with the labhq_annot
+  tools (vep, gnomad, clinvar), not ad-hoc scripts or web pages; they record each database release. They
+  take variants from any data, restricted zones included (PI decision 2026-10-06).
