@@ -55,6 +55,9 @@ class RunnerSettings(BaseModel):
     reference_scan_max_entries: int = Field(default=20000, ge=1)
     reference_scan_max_depth: int = Field(default=16, ge=0)
     output_hash_max_bytes: int = Field(default=512 * 1024 * 1024, ge=0)
+    # Input provenance uses the reference walker caps above. Cached hashes do not consume the per-step byte cap.
+    input_hash_max_file_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=0)
+    input_hash_max_total_bytes: int = Field(default=20 * 1024 * 1024 * 1024, ge=0)
     # Windows: staff Python trusts the OS store too, so an institution's TLS inspection root works (9th mock trial).
     system_ca_bundle: bool = True
     # A consult or follow-up lists every entry it could write to (workspace, writable project/upstream/reference

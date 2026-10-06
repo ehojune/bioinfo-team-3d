@@ -55,7 +55,7 @@ from .codex_sandbox import SandboxWatch
 from .hpc_jobs import submit_job
 from .integrity import ReadOnlyWatch, watch_roots
 from .system_ca import CA_ENV, system_ca_pem
-from .workspace import TaskWorkspace, nearest_tool_use_id, restricted_zones
+from .workspace import InputHashCache, TaskWorkspace, nearest_tool_use_id, portable_input_path, restricted_zones
 
 log = logging.getLogger("labhq.runner")
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -182,6 +182,8 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self.ws_root = settings.path(settings.runner.workspace_root)
+        self.input_hash_cache = InputHashCache(
+            settings.path(settings.runner.state_dir) / "input-sha256-cache.json")
         self.sem = asyncio.Semaphore(settings.runner.max_parallel)
         self.consult_sem = asyncio.Semaphore(settings.runner.consult_parallel)
         self.reference_write_warned: set[str] = set()
@@ -1193,6 +1195,37 @@ class Runner:
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
         result.workdir_id = ws.dir.name
+        # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
+        # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
+        upstream_roots: dict[str, tuple[Path, str]] = {}
+        upstream_steps = task.meta.get("upstream_steps")
+        upstream_steps = upstream_steps if isinstance(upstream_steps, dict) else {}
+        for step_id, directory in upstream_steps.items():
+            if not INPUT_STEP_ID.fullmatch(str(step_id)):
+                continue
+            try:
+                upstream_roots[os.path.normcase(str(Path(str(directory)).resolve()))] = (
+                    Path(str(directory)).resolve() / "outputs", f"inputs/{step_id}")
+            except (OSError, RuntimeError, ValueError):
+                continue
+        input_roots: list[tuple[Path, str]] = []
+        for directory in [*extra_dirs, *read_dirs]:
+            try:
+                path = Path(directory).resolve()
+            except (OSError, RuntimeError, ValueError):
+                path = Path(directory)
+            upstream = upstream_roots.get(os.path.normcase(str(path)))
+            input_roots.append(upstream or (path, portable_input_path(path)))
+        hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
+        input_files, input_notes = await asyncio.to_thread(
+            ws.scan_input_records, input_roots, zones, list(hash_private.paths),
+            self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth,
+            self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
+            self.input_hash_cache)
+        ws.update_run(task.id, input_files=input_files,
+                      **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
+        for note in input_notes:
+            await emit("agent.log", {"level": "warn", "text": note})
         declared = task.meta.get("outputs", [])
         found = []
         for name in declared:

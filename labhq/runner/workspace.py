@@ -14,11 +14,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import platform
 import shutil
+import threading
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -59,6 +62,104 @@ def _case_sensitive(path: Path) -> bool:
 
 
 log = logging.getLogger("labhq.runner")
+
+
+def portable_input_path(path: str | os.PathLike, home: str | os.PathLike | None = None) -> str:
+    """A stable input spelling: forward slashes, and ``~`` for the runner account's home."""
+    raw = str(path)
+    home_raw = str(home if home is not None else Path.home())
+    windows = bool(ntpath.splitdrive(raw)[0]) or raw.startswith("\\\\")
+    pathmod = ntpath if windows else os.path
+    normalized = pathmod.normpath(raw)
+    normalized_home = pathmod.normpath(home_raw)
+    try:
+        common = pathmod.commonpath([normalized, normalized_home])
+    except ValueError:
+        common = ""
+    equal = (ntpath.normcase(common) == ntpath.normcase(normalized_home) if windows
+             else common == normalized_home)
+    if equal:
+        relative = pathmod.relpath(normalized, normalized_home)
+        return "~" if relative == "." else "~/" + relative.replace("\\", "/")
+    return normalized.replace("\\", "/")
+
+
+class InputHashCache:
+    """One runner-state cache keyed by (real path, size, mtime_ns)."""
+
+    SCHEMA = 1
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._lock = threading.Lock()
+        self._loaded = False
+        self._dirty = False
+        self._entries: dict[str, str] = {}
+        self._paths: dict[str, str] = {}
+
+    @staticmethod
+    def _key(path: Path, size: int, mtime_ns: int) -> str:
+        actual = os.path.normcase(os.path.abspath(str(path)))
+        return json.dumps([actual, int(size), int(mtime_ns)], ensure_ascii=False, separators=(",", ":"))
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("schema") != self.SCHEMA or not isinstance(data.get("entries"), dict):
+                raise ValueError("invalid input hash cache")
+            entries: dict[str, str] = {}
+            paths: dict[str, str] = {}
+            for key, value in data["entries"].items():
+                decoded = json.loads(key)
+                if (not isinstance(decoded, list) or len(decoded) != 3 or not isinstance(decoded[0], str)
+                        or not isinstance(decoded[1], int) or not isinstance(decoded[2], int)
+                        or not isinstance(value, str) or len(value) != 64):
+                    raise ValueError("invalid input hash cache entry")
+                int(value, 16)
+                entries[str(key)] = value
+                paths[decoded[0]] = str(key)
+            self._entries, self._paths = entries, paths
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError):
+            self._entries = {}
+            self._paths = {}
+            self._dirty = True
+
+    def get(self, path: Path, size: int, mtime_ns: int) -> str | None:
+        with self._lock:
+            self._load()
+            return self._entries.get(self._key(path, size, mtime_ns))
+
+    def put(self, path: Path, size: int, mtime_ns: int, sha256: str) -> None:
+        with self._lock:
+            self._load()
+            actual = os.path.normcase(os.path.abspath(str(path)))
+            if old := self._paths.get(actual):
+                self._entries.pop(old, None)
+            key = self._key(path, size, mtime_ns)
+            self._entries[key] = sha256
+            self._paths[actual] = key
+            self._dirty = True
+
+    def save(self) -> None:
+        with self._lock:
+            self._load()
+            if not self._dirty:
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.path.with_name(f".{self.path.name}.{uuid.uuid4().hex}.tmp")
+            try:
+                temp.write_text(json.dumps({"schema": self.SCHEMA, "entries": self._entries},
+                                           ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                os.replace(temp, self.path)
+                self._dirty = False
+            finally:
+                with suppress(OSError):
+                    temp.unlink()
 
 
 def restricted_zones(settings: Any) -> list[Path]:
@@ -276,50 +377,160 @@ class TaskWorkspace:
                 max_entries if max_files is None else max_files,
                 detailed=True, hash_max_bytes=hash_max_bytes)
 
+    def scan_input_records(self, roots: list[tuple[Path, str]], restricted: list[Path], private: list[Path],
+                           max_entries: int, max_depth: int, hash_max_file_bytes: int,
+                           hash_max_total_bytes: int, cache: InputHashCache) -> tuple[list[dict[str, Any]], list[str]]:
+        """Record files exposed outside this task workspace, without following links or protected folders."""
+        found: list[dict[str, Any]] = []
+        notes: list[str] = []
+        counters = {"entries": 0, "files": 0}
+        hash_state = {"bytes": 0, "limit": hash_max_total_bytes}
+        blocked = [(Path(path), "restricted") for path in restricted]
+        blocked += [(Path(path), "private") for path in private]
+        seen: set[str] = set()
+
+        def inside(path: Path) -> str | None:
+            for protected, reason in blocked:
+                try:
+                    if path == protected or path.is_relative_to(protected):
+                        return reason
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            return None
+
+        for raw_root, shown_root in roots:
+            root = Path(raw_root)
+            lexical = Path(os.path.abspath(str(root)))
+            key = os.path.normcase(str(lexical))
+            if key in seen:
+                continue
+            seen.add(key)
+            if reason := inside(lexical):
+                found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                              "sha256": None, "skipped": reason})
+                continue
+            try:
+                if not os.path.lexists(root):
+                    found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                                  "sha256": None, "skipped": "missing"})
+                    continue
+                if _is_link(root) or not root.is_dir():
+                    found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                                  "sha256": None, "skipped": "link" if _is_link(root) else "not_directory"})
+                    continue
+                top = HeldDir.hold(root)
+            except OSError:
+                found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                              "sha256": None, "skipped": "unreadable"})
+                continue
+            with top:
+                try:
+                    real_root = root.resolve()
+                    if not top.same_as(real_root):
+                        raise OSError("input root changed")
+                    if reason := inside(real_root):
+                        found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                                      "sha256": None, "skipped": reason})
+                        continue
+                except (OSError, RuntimeError, ValueError):
+                    found.append({"path": shown_root, "size": None, "mtime_ns": None,
+                                  "sha256": None, "skipped": "unreadable"})
+                    continue
+                rows, note = self._list_outputs(
+                    top, root, real_root, [], max_entries, max_depth, max_entries,
+                    detailed=True, hash_max_bytes=hash_max_file_bytes, prefix=PurePath(shown_root),
+                    exclude_results=False, blocked=blocked, cache=cache, hash_state=hash_state,
+                    input_mode=True, counters=counters)
+                found.extend(rows)
+                if note:
+                    notes.append(note)
+        try:
+            cache.save()
+        except OSError:
+            notes.append("입력 sha256 cache를 runner 상태 폴더에 저장하지 못했습니다")
+        return found, list(dict.fromkeys(notes))
+
     def _list_outputs(self, top: HeldDir, root: Path, real_root: Path, zones: list[Path], max_entries: int,
                       max_depth: int, max_files: int, *, detailed: bool = False,
-                      hash_max_bytes: int | None = None) -> tuple[list, str | None]:
-        try:  # never through a link or FIFO the agent put in its place (#165): no runs read then
-            text = read_owned(self.dir, "manifest.json")
-            runs = json.loads(text).get("runs") if text is not None else None
-        except (ValueError, AttributeError):
-            runs = None
-        runs = runs if isinstance(runs, dict) else {}
-        own = {"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
+                      hash_max_bytes: int | None = None, prefix: PurePath | None = None,
+                      exclude_results: bool = True, blocked: list[tuple[Path, str]] | None = None,
+                      cache: InputHashCache | None = None, hash_state: dict[str, int] | None = None,
+                      input_mode: bool = False, counters: dict[str, int] | None = None) -> tuple[list, str | None]:
+        """Shared bounded held-directory walker for output collection and external input provenance."""
+        prefix = prefix or PurePath("outputs")
+        if exclude_results:
+            try:  # never through a link or FIFO the agent put in its place (#165): no runs read then
+                text = read_owned(self.dir, "manifest.json")
+                runs = json.loads(text).get("runs") if text is not None else None
+            except (ValueError, AttributeError):
+                runs = None
+            runs = runs if isinstance(runs, dict) else {}
+        else:
+            runs = {}
+        own = ({"RESULT.md", f"RESULT_{self.task.id}.md", *(f"RESULT_{tid}.md" for tid in runs)}
+               if exclude_results else set())
         own_names = own if _case_sensitive(root) else {name.casefold() for name in own}
         own_name = (lambda name: name) if own_names is own else str.casefold
         found: list[Any] = []
         note: str | None = None  # a folder left out; the listing goes on without it
-        seen = 0
+        counters = counters if counters is not None else {"entries": 0, "files": 0}
+        blocked = blocked or []
+
+        def blocked_reason(path: Path) -> str | None:
+            for protected, reason in blocked:
+                try:
+                    if path == protected or path.is_relative_to(protected):
+                        return reason
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            return None
 
         def walk(folder: HeldDir, relative: PurePath, depth: int) -> str | None:
             """List one held folder, then its subfolders in name order; the reason the listing stops, if it does."""
-            nonlocal note, seen
-            shown = PurePath("outputs", relative).as_posix()
+            nonlocal note
+            shown = PurePath(prefix, relative).as_posix()
             try:
-                entries = sorted(folder.entries(max_entries - seen + 1), key=lambda e: e.name)
+                entries = sorted(folder.entries(max_entries - counters["entries"] + 1), key=lambda e: e.name)
             except OSError:
-                note = note or f"{shown} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+                note = note or (f"{shown} 폴더를 읽을 수 없어 " +
+                                ("입력 목록이 불완전합니다" if input_mode else "산출 목록이 불완전합니다"))
                 return None
             folders = []
             for entry in entries:
-                seen += 1
-                if seen > max_entries:
-                    return f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다"
+                counters["entries"] += 1
+                if counters["entries"] > max_entries:
+                    return (f"입력 항목이 상한 {max_entries}개를 넘어 입력 목록이 불완전합니다" if input_mode
+                            else f"outputs 아래 항목이 상한 {max_entries}개를 넘어 산출 목록이 불완전합니다")
                 if not _utf8_name(entry.name):
                     # A CP949 name unpacked on Linux: the result could not be sent as JSON text and the run would fail.
-                    note = note or "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다"
+                    note = note or ("UTF-8로 읽을 수 없는 이름의 파일·폴더는 입력 목록에서 뺐습니다" if input_mode
+                                    else "UTF-8로 읽을 수 없는 이름의 파일·폴더는 산출 목록에서 뺐습니다")
                     continue
-                path = PurePath("outputs", relative, entry.name).as_posix()
+                path = PurePath(prefix, relative, entry.name).as_posix()
                 own_result = depth == 0 and own_name(entry.name) in own_names
                 if entry.kind is None or own_result:
                     continue
+                actual = real_root / relative / entry.name
+                if input_mode and (reason := blocked_reason(actual)):
+                    if counters["files"] >= max_files:
+                        return f"입력 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
+                    found.append({"path": path, "size": None, "mtime_ns": None,
+                                  "sha256": None, "skipped": reason})
+                    counters["files"] += 1
+                    continue
                 if entry.kind == "link":
                     if detailed:
-                        if len(found) >= max_files:
-                            return f"산출 파일이 상한 {max_files}개를 넘어 관찰 산출물 manifest가 불완전합니다"
-                        found.append({"path": path, "size": entry.size, "mtime_ns": entry.mtime_ns,
-                                      "sha256": None, "link": True, "reason": "링크는 해시하지 않음"})
+                        if counters["files"] >= max_files:
+                            return (f"입력 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
+                                    if input_mode else
+                                    f"산출 파일이 상한 {max_files}개를 넘어 관찰 산출물 manifest가 불완전합니다")
+                        if input_mode:
+                            found.append({"path": path, "size": None, "mtime_ns": None,
+                                          "sha256": None, "skipped": "link"})
+                        else:
+                            found.append({"path": path, "size": entry.size, "mtime_ns": entry.mtime_ns,
+                                          "sha256": None, "link": True, "reason": "링크는 해시하지 않음"})
+                        counters["files"] += 1
                     continue  # record the link itself when requested, never follow it
                 if overlaps_zone(real_root / relative / entry.name, zones):
                     continue  # inside a restricted zone, or a folder holding one
@@ -328,15 +539,37 @@ class TaskWorkspace:
                             entry.ident is not None and entry.ident[0] != top.dev):
                         continue
                     if depth + 1 > max_depth:
-                        note = note or f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다"
+                        note = note or (f"입력 폴더 깊이가 상한 {max_depth}단계를 넘어 입력 목록이 불완전합니다"
+                                        if input_mode else
+                                        f"outputs 폴더 깊이가 상한 {max_depth}단계를 넘어 산출 목록이 불완전합니다")
                         continue
                     folders.append(entry)
                 elif entry.kind == "file":
-                    if len(found) >= max_files:
-                        return f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
+                    if counters["files"] >= max_files:
+                        return (f"입력 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다"
+                                if input_mode else f"산출 파일이 상한 {max_files}개를 넘어 앞의 {max_files}개만 기록합니다")
                     if not detailed:
                         found.append(path)
+                        counters["files"] += 1
                         continue
+                    if input_mode:
+                        size, mtime_ns = int(entry.size or 0), int(entry.mtime_ns or 0)
+                        record = {"path": path, "size": size, "mtime_ns": mtime_ns, "sha256": None}
+                        if hash_max_bytes is not None and size > hash_max_bytes:
+                            record["skipped"] = "too_large"
+                            found.append(record)
+                            counters["files"] += 1
+                            continue
+                        if cache is not None and (cached := cache.get(actual, size, mtime_ns)):
+                            record.update(sha256=cached, cached=True)
+                            found.append(record)
+                            counters["files"] += 1
+                            continue
+                        if hash_state is not None and hash_state["bytes"] + size > hash_state["limit"]:
+                            record["skipped"] = "total_limit"
+                            found.append(record)
+                            counters["files"] += 1
+                            continue
                     try:
                         fd = folder.open_read_file(entry.name)
                         with os.fdopen(fd, "rb") as stream:
@@ -346,10 +579,19 @@ class TaskWorkspace:
                             # ino and (POSIX) ctime only tell a replaced or rewritten file from an untouched one
                             # when size and mtime were kept (`cp -p`, atomic replace); the run baseline compares
                             # them and the published record drops them.
-                            record: dict[str, Any] = {"path": path, "size": info.st_size,
-                                                      "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
-                                                      "ctime_ns": None if os.name == "nt" else info.st_ctime_ns}
-                            if hash_max_bytes is not None:
+                            if input_mode:
+                                record = {"path": path, "size": info.st_size,
+                                          "mtime_ns": info.st_mtime_ns, "sha256": None}
+                            else:
+                                record = {"path": path, "size": info.st_size,
+                                          "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
+                                          "ctime_ns": None if os.name == "nt" else info.st_ctime_ns}
+                            if input_mode and hash_max_bytes is not None and info.st_size > hash_max_bytes:
+                                record.update(sha256=None, skipped="too_large")
+                            elif (input_mode and hash_state is not None
+                                  and hash_state["bytes"] + info.st_size > hash_state["limit"]):
+                                record.update(sha256=None, skipped="total_limit")
+                            elif hash_max_bytes is not None:
                                 if info.st_size > hash_max_bytes:
                                     record.update(sha256=None,
                                                   reason=f"output_hash_max_bytes 상한 초과 ({hash_max_bytes})")
@@ -363,26 +605,45 @@ class TaskWorkspace:
                                         read += len(chunk)
                                     after = os.fstat(stream.fileno())
                                     if read > hash_max_bytes:
-                                        record.update(sha256=None, reason=(
-                                            f"해시하는 동안 output_hash_max_bytes 상한({hash_max_bytes})을 넘음"))
+                                        if input_mode:
+                                            record.update(sha256=None, skipped="too_large")
+                                        else:
+                                            record.update(sha256=None, reason=(
+                                                f"해시하는 동안 output_hash_max_bytes 상한({hash_max_bytes})을 넘음"))
                                     elif (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns) \
                                             or read != info.st_size:
-                                        record.update(sha256=None, reason="해시하는 동안 파일이 바뀜")
+                                        if input_mode:
+                                            record.update(sha256=None, skipped="changed")
+                                        else:
+                                            record.update(sha256=None, reason="해시하는 동안 파일이 바뀜")
                                     else:
                                         record["sha256"] = digest.hexdigest()
+                                        if input_mode and cache is not None:
+                                            cache.put(actual, info.st_size, info.st_mtime_ns, record["sha256"])
+                                    if input_mode and hash_state is not None:
+                                        hash_state["bytes"] += read
                             found.append(record)
+                            counters["files"] += 1
                     except OSError:
-                        note = note or f"{path}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
+                        if input_mode:
+                            found.append({"path": path, "size": entry.size, "mtime_ns": entry.mtime_ns,
+                                          "sha256": None, "skipped": "unreadable"})
+                            counters["files"] += 1
+                        else:
+                            note = note or f"{path}를 안전하게 열지 못해 관찰 산출물 manifest가 불완전합니다"
             for entry in folders:  # a folder's files first, then its subfolders in name order
                 sub = relative / entry.name
                 try:
                     child = folder.child(entry.name, expect=entry.ident)
                 except NotPlainFolder:
-                    note = note or (f"{PurePath('outputs', sub).as_posix()} 폴더가 목록을 만드는 사이 링크나 다른 "
-                                    "폴더로 바뀌어 산출 목록에서 뺐습니다")
+                    shown_sub = PurePath(prefix, sub).as_posix()
+                    note = note or (f"{shown_sub} 폴더가 목록을 만드는 사이 링크나 다른 폴더로 바뀌어 " +
+                                    ("입력 목록에서 뺐습니다" if input_mode else "산출 목록에서 뺐습니다"))
                     continue
                 except OSError:
-                    note = note or f"{PurePath('outputs', sub).as_posix()} 폴더를 읽을 수 없어 산출 목록이 불완전합니다"
+                    shown_sub = PurePath(prefix, sub).as_posix()
+                    note = note or (f"{shown_sub} 폴더를 읽을 수 없어 " +
+                                    ("입력 목록이 불완전합니다" if input_mode else "산출 목록이 불완전합니다"))
                     continue
                 with child:
                     stop = walk(child, sub, depth + 1)

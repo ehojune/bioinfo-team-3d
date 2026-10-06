@@ -10,6 +10,7 @@ import platform
 import re
 import shlex
 import shutil
+from collections import Counter
 from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -32,6 +33,8 @@ MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",
     "rewritten", "remaining_absolute_paths", "rewritten_files",
 )
+INPUT_FIELDS = ("step_id", "path", "size", "mtime_ns", "sha256", "skipped", "cached")
+MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
@@ -136,23 +139,24 @@ def _open_recorded_output(outputs: HeldDir, path: PurePosixPath) -> Iterator[tup
                 os.close(fd)
 
 
-def _held_workdir(stack: ExitStack, root: Path, result: Mapping[str, Any]) -> tuple[HeldDir, Path] | tuple[None, str]:
+def _held_workdir(stack: ExitStack, root: Path,
+                  result: Mapping[str, Any]) -> tuple[HeldDir, Path, dict[str, Any]] | tuple[None, str, dict]:
     """Hold one same-host workdir inside the configured root, or return its local lookup failure."""
     workdir, reason = locate_workdir(root, result)
     if workdir is None:
-        return None, str(reason)
+        return None, str(reason), {}
     try:
         held = stack.enter_context(HeldDir.hold(workdir))
         real_root, real_workdir = root.resolve(), workdir.resolve()
         if (real_workdir == real_root or not real_workdir.is_relative_to(real_root)
                 or not held.same_as(real_workdir)):
-            return None, "runner.workspace_root 밖이거나 바뀐 작업 폴더"
+            return None, "runner.workspace_root 밖이거나 바뀐 작업 폴더", {}
         fd = held.open_read_file("manifest.json")
         with os.fdopen(fd, "rb") as source:
-            manifest = json.loads(source.read(1024 * 1024 + 1).decode("utf-8"))
+            manifest = json.loads(source.read(MANIFEST_MAX_BYTES + 1).decode("utf-8"))
         if not isinstance(manifest, dict) or manifest.get("host") != platform.node():
             raise RemoteRunnerBundle(REMOTE_RUNNER_NOTE)
-        return held, real_workdir
+        return held, real_workdir, manifest
     except RemoteRunnerBundle:
         raise
     except (OSError, UnicodeError, ValueError) as exc:
@@ -333,7 +337,8 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
         "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
-        "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치", "",
+        "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
+        "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
         "## 단계 순서", "",
     ]
     if steps:
@@ -371,6 +376,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     _clear_owned_dir(temp, requests_root)
     temp.mkdir()
     rows: list[dict[str, Any]] = []
+    input_rows: list[dict[str, Any]] = []
     workdirs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
@@ -450,7 +456,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 if not isinstance(result, Mapping):
                     continue
                 recorded = _recorded_outputs(result)
-                held, workdir_or_reason = _held_workdir(stack, root, result)
+                held, workdir_or_reason, manifest = _held_workdir(stack, root, result)
                 if held is None:
                     for index, (raw, safe, _expected) in enumerate(recorded, 1):
                         relative = (PurePosixPath("steps", step_id, *safe.parts).as_posix() if safe is not None
@@ -463,6 +469,22 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 workdir = Path(workdir_or_reason)
                 found_workdirs += 1
                 workdirs.append((step_id, workdir))
+                task_id = str(result.get("task_id") or "")
+                run = (manifest.get("runs") or {}).get(task_id) if task_id else None
+                records = run.get("input_files") if isinstance(run, Mapping) else None
+                for record in records or []:
+                    if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
+                        continue
+                    input_path = record["path"]
+                    if input_path == "inputs" or input_path.startswith("inputs/"):
+                        input_path = PurePosixPath("steps", step_id, input_path).as_posix()
+                    input_rows.append({
+                        "step_id": step_id, "path": input_path,
+                        "size": "" if record.get("size") is None else record.get("size"),
+                        "mtime_ns": "" if record.get("mtime_ns") is None else record.get("mtime_ns"),
+                        "sha256": record.get("sha256") or "", "skipped": record.get("skipped") or "",
+                        "cached": "yes" if record.get("cached") is True else "",
+                    })
                 try:
                     outputs = stack.enter_context(held.child("outputs"))
                 except (NotPlainFolder, OSError):
@@ -495,6 +517,18 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 rows.append(copy_output(step_id, outputs, workdir, path, None, python_command))
         if not found_workdirs:
             raise OSError("단계 작업 폴더를 하나도 찾지 못했습니다")
+
+        with (temp / "INPUTS.tsv").open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=INPUT_FIELDS, delimiter="\t", lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(input_rows)
+        input_hashed = sum(bool(row["sha256"]) for row in input_rows)
+        input_skipped = sum(bool(row["skipped"]) for row in input_rows)
+        skipped_by_reason = Counter(str(row["skipped"]) for row in input_rows if row["skipped"])
+        input_summary = f"입력 {input_hashed}개 hash, {input_skipped}개 생략"
+        if skipped_by_reason:
+            input_summary += " (" + ", ".join(
+                f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
         report = str(req.get("report") or "")
         appendix = str(req.get("report_appendix") or "")
@@ -542,12 +576,14 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied)
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(["## 재현 등급", "", f"- `{grade}`", *(f"- {reason}" for reason in grade_reasons),
+                                    f"- {input_summary}",
                                     "- `replayable`: 기록 산출이 모두 있고, 데이터를 낸 단계마다 스크립트, 스크립트를 쓴 "
                                     "단계마다 환경 기록이 있으며 스크립트에 절대경로가 없음",
                                     "- `rerun_verified`는 다른 곳에서 다시 돌린 기록이 있을 때만 줍니다. 아직 그런 기록은 "
                                     "없습니다.", ""]))
         bundle_note = ["", "## 요청 묶음 변환", "", f"- 절대경로를 바꾼 파일: {rewritten_files}개",
                        f"- 재현 등급: {grade}" + (f" ({'; '.join(grade_reasons)})" if grade_reasons else "")]
+        bundle_note.append(f"- {input_summary}")
         bundle_note.append("- 남은 절대경로: " + (", ".join(sorted(remaining)) if remaining else "없음"))
         if replaced:
             bundle_note.append(f"- 대체되어 제외한 판: {len(replaced)}개")
@@ -555,7 +591,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         with appendix_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(bundle_note) + "\n")
 
-        generated = [temp / "README.md", temp / "report.md", appendix_path,
+        generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
                      *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else [])]
         for path in generated:
             relative = path.relative_to(temp).as_posix()

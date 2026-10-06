@@ -20,6 +20,8 @@ runner:
   task_timeout_s: 21600
   job_poll_s: 60
   reference_roots: []              # 참고 자료 path가 들어갈 수 있는 러너 쪽 폴더(읽기 전용). 프로젝트 local_dir은 자동 포함
+  input_hash_max_file_bytes: 2147483648    # 단계 입력 파일 하나의 sha256 읽기 상한(2 GiB)
+  input_hash_max_total_bytes: 21474836480  # 단계마다 cache miss 입력을 읽는 누적 상한(20 GiB)
   system_ca_bundle: true          # Windows: 직원 Python이 OS 신뢰 저장소도 믿게(기관 TLS 검사 장비). 직접 SSL_CERT_FILE을 정하면 그대로 둠
 
 engines:
