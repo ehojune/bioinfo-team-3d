@@ -1,0 +1,110 @@
+"""The AlphaGenome API key file (#435, PI decision 2026-10-06).
+
+`labhq init` asks for the key once and writes it here; the labhq_annot MCP server reads it at start. The key never
+goes into the repository, the config (only the file's location, `annot.alphagenome_key_file`), logs, prompts, events,
+doctor output or the MCP command line. A file and not an environment variable: staff processes inherit the runner's
+environment, so a key there would be one `echo` away from the agent and its transcript.
+
+The file is readable by the runner account only: POSIX mode 0600 in a 0700 folder; on Windows the folder and the
+file lose inherited access and grant full control to the current account alone (checked after writing).
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import uuid
+from pathlib import Path
+
+from ..settings import Settings
+
+_KEY = re.compile(r"^[A-Za-z0-9_\-.]{10,200}$")
+_ACE = re.compile(r"^(?P<account>\S.*?):(?P<rights>(?:\([A-Z,]+\))+)\s*$")
+
+
+class KeyFileError(OSError):
+    """The key file could not be written with owner-only access (nothing is left behind)."""
+
+
+def key_path(settings: Settings) -> Path:
+    return settings.path(settings.annot.alphagenome_key_file)
+
+
+def read_key(settings: Settings) -> str | None:
+    """The key, or None when the file is missing, unreadable or empty."""
+    try:
+        text = key_path(settings).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    return text or None
+
+
+def has_key(settings: Settings) -> bool:
+    return read_key(settings) is not None
+
+
+def valid_key(key: str) -> bool:
+    """A pasted key: one token of letters, digits, `_`, `-` or `.` (Google API keys look like `AIza...`)."""
+    return bool(_KEY.match(key))
+
+
+def current_account() -> tuple[str, str]:
+    """(DOMAIN\\user, SID) of the process token from `whoami`, not the spoofable USERNAME variable (#304)."""
+    out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=30,
+                         check=True).stdout
+    match = re.search(r"\"([^\"]+)\",\"(S-1-[0-9-]+)\"", out)
+    if not match:
+        raise KeyFileError("현재 계정을 읽지 못했습니다")
+    return match.group(1), match.group(2)
+
+
+def acl_entries(path: Path) -> list[tuple[str, str]]:
+    """(account, rights) for every ACE `icacls` lists on `path`, e.g. ("PC\\me", "(F)") or (.., "(I)(F)")."""
+    out = subprocess.run(["icacls", str(path)], capture_output=True, text=True, timeout=60).stdout
+    entries = []
+    for number, line in enumerate(out.splitlines()):
+        text = line[len(str(path)):] if number == 0 and line.startswith(str(path)) else line
+        match = _ACE.match(text.strip())
+        if match:
+            entries.append((match.group("account").strip(), match.group("rights")))
+    return entries
+
+
+def _windows_owner_only(path: Path, account: str, sid: str, folder: bool) -> None:
+    """Drop inherited ACEs, grant the account full control, and check that nothing else is left."""
+    grant = f"*{sid}:(OI)(CI)(F)" if folder else f"*{sid}:(F)"
+    result = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", grant],
+                            capture_output=True, text=True, timeout=60)
+    if result.returncode != 0:
+        raise KeyFileError(f"icacls가 접근 권한을 바꾸지 못했습니다(exit {result.returncode})")
+    entries = acl_entries(path)
+    others = [name for name, _rights in entries if name.lower() != account.lower() and name != f"*{sid}"]
+    if not entries or others or any("(I)" in rights for _name, rights in entries):
+        raise KeyFileError(f"키 {'폴더' if folder else '파일'}에 다른 계정의 접근이 남아 있습니다({len(others)}개)")
+
+
+def write_key(path: Path, key: str) -> None:
+    """Write `key` so only the runner account can read it. On any failure nothing new is left at `path`."""
+    folder = path.parent
+    folder.mkdir(parents=True, exist_ok=True)
+    temporary = folder / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        if os.name == "nt":
+            account, sid = current_account()
+            # The folder first: a file created in it afterwards never has wider access, even for a moment.
+            _windows_owner_only(folder, account, sid, folder=True)
+            temporary.write_text(key + "\n", encoding="utf-8")
+            _windows_owner_only(temporary, account, sid, folder=False)
+        else:
+            os.chmod(folder, 0o700)
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                out.write(key + "\n")
+            os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    except (OSError, subprocess.SubprocessError) as exc:
+        temporary.unlink(missing_ok=True)
+        if isinstance(exc, KeyFileError):
+            raise
+        raise KeyFileError(f"키 파일을 runner 계정 전용으로 쓰지 못했습니다: {type(exc).__name__}") from exc

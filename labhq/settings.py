@@ -412,6 +412,14 @@ class ResearchSettings(BaseModel):
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
 
+class AnnotSettings(BaseModel):
+    """labhq_annot lookups (#435). The AlphaGenome API key lives only in this file, which `labhq init` writes for the
+    runner account alone (POSIX 0600, Windows without inherited access); the config holds the location, never the
+    key. No key file: the alphagenome tool is not registered."""
+
+    alphagenome_key_file: str = "~/.labhq/secrets/alphagenome_api_key"
+
+
 class GitHubSettings(BaseModel):
     token_env: str = "GITHUB_TOKEN"  # token is read from this env var on the gateway host, never from YAML
     api_url: str = "https://api.github.com"
@@ -460,6 +468,7 @@ class Settings(BaseModel):
     research: ResearchSettings = ResearchSettings()
     pi_profile: PiProfileSettings = PiProfileSettings()
     github: GitHubSettings = GitHubSettings()
+    annot: AnnotSettings = AnnotSettings()
     dev_log: DevLogSettings = DevLogSettings()
     projects: list[ProjectSettings] = []
     semantics: Any = None  # semantics-hook: off | shadow, read only by labhq.research.semantics_shadow (#150)

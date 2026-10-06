@@ -123,6 +123,11 @@ def _labhq_entries(settings: Settings, home: str) -> list[tuple[str, str]]:
     staff = staff_claude_config_dir(settings, home)
     if staff:
         entries.append((staff, _label(staff, home)))
+    # The AlphaGenome key (#435): only the labhq_annot server reads it, never the staff member.
+    key = _expand(settings.annot.alphagenome_key_file, home)
+    key = key if os.path.isabs(key) else str(settings.path(key))
+    if os.path.lexists(key):
+        entries.append((key, _label(key, home)))
     return entries
 
 

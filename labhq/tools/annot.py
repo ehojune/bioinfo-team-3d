@@ -49,7 +49,10 @@ GNOMAD_MAX_PER_CALL = 50  # 10 queries per minute: 50 new variants take about 5 
 CLINVAR_MAX_PER_CALL = 200
 CLINVAR_RETMAX = 50  # a span search near a hotspot (BRCA1 c.68_69del) returns about 20 records
 ESUMMARY_BATCH = 100
-MIN_INTERVAL_S = {"ensembl": 1 / 15, "gnomad": 6.0, "ncbi": 1 / 3}
+# ChIP-Atlas, ENCODE, GTEx and AlphaGenome publish no hard limit beyond ENCODE's 10 per second; these stay well under it
+# (annot_regulatory.py).
+MIN_INTERVAL_S = {"ensembl": 1 / 15, "gnomad": 6.0, "ncbi": 1 / 3,
+                  "chipatlas": 1.0, "encode": 0.1, "gtex": 0.25, "alphagenome": 1.0}
 RETRY_STATUS = frozenset({429, 502, 503, 504})
 MAX_ATTEMPTS = 5
 MAX_WAIT_S = 120.0  # a Retry-After longer than this (an hourly quota spent) fails the lookup instead of waiting
@@ -240,7 +243,7 @@ class Cache:
 
 @dataclass
 class Item:
-    variant: Variant | None
+    variant: Any  # Variant here; a region, gene or gene/variant query in annot_regulatory
     raw: object
     error: str | None = None
     answer: object = None
@@ -285,9 +288,10 @@ class Annotator:
                 self.cache.put(tool, Cache.key(tool, release, options, item.variant.key), item.answer, queried_at)
 
     def _finish(self, tool: str, db: str, release: str, url: str, options: dict, items: list[Item],
-                summarize: Callable[[Item], dict], note: str | None = None) -> dict:
+                summarize: Callable[[Item], dict], note: str | None = None, cache: bool = True) -> dict:
         queried_at = _now()
-        self._to_cache(tool, release, options, items, queried_at)
+        if cache:  # False when the caller cached each answer under its own release (ChIP-Atlas target files)
+            self._to_cache(tool, release, options, items, queried_at)
         request_sha256 = _sha256({"tool": tool, "options": options,
                                   "inputs": [item.raw if isinstance(item.raw, str) else repr(item.raw)
                                              for item in items]})
