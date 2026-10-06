@@ -2384,6 +2384,31 @@ async def test_p2_only_review_is_done_without_revision_and_report_keeps_the_issu
 
 
 @pytest.mark.asyncio
+async def test_review_reference_appears_once_whatever_heading_the_model_used_and_counts_p3():
+    """Bench C t6 (#373): the model wrote "# 리뷰 참고" and labhq appended "## 리뷰 참고" beside it."""
+    review = {
+        "verdict": "revise",
+        "scores": {"addresses_question": 4, "evidence": 3, "thoroughness": 4},
+        "issues": [{"step_id": "A", "priority": "P2", "problem": "evidence is thin", "request": "say so"},
+                   {"step_id": "A", "priority": "P3", "problem": "typo in table", "request": "fix"},
+                   {"step_id": "B", "priority": "P3", "problem": "unit spelling", "request": "fix"}],
+    }
+    body = "# 결론과 권고\nok\n\n# 리뷰 참고\n- P2 · A: evidence is thin\n- P3 · A: typo in table\n\n# 한계\nnone"
+    hub = unresolved_hub(lambda task: result(task, text=body), review=review)
+    hub.s.orchestrator.max_revisions = 0
+
+    await Orchestrator(hub).run_request("r")
+
+    report = hub.requests["r"]["report"]
+    assert report.count("리뷰 참고") == 1
+    assert "- P2 · A: evidence is thin" in report and "typo in table" not in report
+    assert "- P3(표현) 2건: 실행 기록 참고" in report
+    assert "# 한계\nnone" in report  # the model's later sections survive the removal
+    synthesis = kinds(hub, "synthesis")[0].prompt
+    assert "do not write that section" in synthesis and "about 4,000 characters" in synthesis
+
+
+@pytest.mark.asyncio
 async def test_review_replan_and_revision_feedback_use_only_p1_issues():
     reviews = [{
         "verdict": "revise",

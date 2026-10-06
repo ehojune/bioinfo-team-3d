@@ -585,6 +585,9 @@ SYNTH_PROMPT = """Write the final report for the PI.
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with evidence and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including reviewer concerns and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
+The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
+number once, in "결과", and refer to it elsewhere instead of repeating it; keep "방법 요약" to about eight lines, and
+under "한계" keep only what could change the conclusion.
 Do not turn a failed lookup into evidence or proof of absence. LabHQ stores warnings, review records and execution
 details in the separate execution record; do not copy their details into the body. When the warning preview is not
 "(none)", summarize its importance in one line under "한계" and end that line with "실행 기록 참고".
@@ -614,8 +617,8 @@ UNRESOLVED_REVIEW_NOTE = (
     "stores every open issue verbatim in the separate execution record.")
 
 REVIEW_REFERENCE_NOTE = (
-    "\n\nThe remaining P2 and P3 issues do not change the conclusion. End with a section titled \"리뷰 참고\", "
-    "using one short line per issue without copying the review request or presenting it as completed work.")
+    "\n\nThe remaining P2 and P3 issues do not change the conclusion. LabHQ appends a \"리뷰 참고\" section with "
+    "one line per P2 issue and the P3 count, so do not write that section or repeat those issues elsewhere.")
 
 # The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
 RESEARCH_REVIEW_PROMPT = """You are the scientific reviewer of a research request that ran under a frozen,
@@ -686,6 +689,9 @@ Claim anchors (labhq checks them by machine):
 Use these sections in this order: 1) "결론과 권고", 2) "결과" with claim anchors and file paths, 3) "방법 요약"
 including seeds and tool and data versions, 4) "한계" including not-established claims and what would change the
 conclusion. Put concrete next steps in the recommendation. Start with the report's first heading: no preamble.
+The PI reads the body once (#373): aim for about 4,000 characters, longer only when the results need it. State each
+number once, in "결과", and refer to it elsewhere instead of repeating it; keep "방법 요약" to about eight lines, and
+under "한계" keep only what could change the conclusion.
 When Analysis precedents are supplied below, add a short "선행 연구 기준" section: one cited line for each required
 analysis done or not done (with the reason), and put omitted recommended analyses under "다음에 할 수 있는 분석".
 Under "한계", include one line for every checklist answer that used assumption. Do not list checks that do not apply
@@ -1006,14 +1012,21 @@ def _execution_warning_summary(report: str) -> str:
 
 
 def _review_reference(review: dict | None) -> str:
-    """One short PI-facing line per P2/P3 issue; requests and verbatim text stay in the appendix."""
-    rows = [issue for issue in (review or {}).get("issues") or []
-            if isinstance(issue, dict) and issue.get("priority") in {"P2", "P3"}]
-    if not rows:
+    """One short PI-facing line per P2 issue and a count of P3 (wording-only) issues (#373); requests and verbatim
+    text stay in the appendix."""
+    issues = [issue for issue in (review or {}).get("issues") or [] if isinstance(issue, dict)]
+    p2 = [issue for issue in issues if issue.get("priority") == "P2"]
+    p3 = sum(issue.get("priority") == "P3" for issue in issues)
+    if not p2 and not p3:
         return ""
-    return "## 리뷰 참고\n" + "\n".join(
-        f"- {issue['priority']} · {issue.get('step_id') or '-'}: {short(issue.get('problem') or '-', 180)}"
-        for issue in rows)
+    lines = [f"- P2 · {issue.get('step_id') or '-'}: {short(issue.get('problem') or '-', 180)}" for issue in p2]
+    if p3:
+        lines.append(f"- P3(표현) {p3}건: 실행 기록 참고")
+    return "## 리뷰 참고\n" + "\n".join(lines)
+
+
+# Any heading level: a model that wrote "# 리뷰 참고" kept its copy beside labhq's (bench C t6, #373).
+REVIEW_REFERENCE_HEADING = re.compile(r"(?m)^#{1,6}[ \t]*리뷰 참고[ \t]*$")
 
 
 def _with_review_reference(report: str, review: dict | None) -> str:
@@ -1027,7 +1040,7 @@ def _with_review_reference(report: str, review: dict | None) -> str:
     if len(blocks) == 1 and not report[blocks[0].end():].strip():
         benchmark = blocks[0].group(0)
         report = report[:blocks[0].start()].rstrip()
-    report = re.sub(r"(?ms)^## 리뷰 참고\s*$.*?(?=^## |\Z)", "", report).rstrip()
+    report = re.sub(r"(?ms)^#{1,6}[ \t]*리뷰 참고[ \t]*$.*?(?=^#{1,6} |\Z)", "", report).rstrip()
     report = report + "\n\n" + reference
     return report + (("\n\n" + benchmark) if benchmark else "")
 
@@ -3254,7 +3267,7 @@ class Orchestrator:
         if check["problems"]:
             body = _execution_warning_summary(body)
         body_reference = _review_reference(review)
-        if body_reference and "## 리뷰 참고" not in body:
+        if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = body.rstrip() + "\n\n" + body_reference
         report = body.rstrip() + "\n\n" + _appendix_sections(model_appendix, [*claim_check, cp2_audit])
         end("report_incomplete" if check["problems"] else "research_reported", report,
@@ -4496,7 +4509,7 @@ class Orchestrator:
             body = (final.text if final.ok else self.report_results(steps, results, n) +
                     f"\n\nSynthesis failed: {final.error}")
             reference = _review_reference(review)
-            if reference and "## 리뷰 참고" not in body:
+            if reference and not REVIEW_REFERENCE_HEADING.search(body):
                 body = body.rstrip() + "\n\n" + reference
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             self._finish(rid, report, serialized_results(),
