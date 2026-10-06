@@ -1072,6 +1072,8 @@ class Runner:
                 "LABHQ_BROKER_URL": self.broker.url, "LABHQ_BROKER_TOKEN": broker_token,
                 "LABHQ_TASK_ID": task.id, "LABHQ_AGENT_ID": agent.id, "LABHQ_WORKDIR": str(ws.dir),
                 "LABHQ_ENVIRONMENT_STEP": "1" if task.meta.get("environment_step") is True else "0",
+                "LABHQ_SHARED_ENVIRONMENT_PROTECTED": (
+                    "1" if task.meta.get("shared_environment_protected") is True else "0"),
                 "LABHQ_EXTRA_ROOTS": os.pathsep.join(extra_dirs),
                 PRIVATE_PATHS_ENV: os.pathsep.join(private.paths),
                 PRIVATE_ENABLED_ENV: "1" if private.enabled else "0",
@@ -1140,6 +1142,8 @@ class Runner:
                 private_paths=list(private.paths),
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
+                shared_environment_protected=task.meta.get("shared_environment_protected") is True,
+                environment_step=task.meta.get("environment_step") is True,
                 use_permission_tool="approval" in agent.builtin_mcp,
                 record_run=lambda **fields: ws.update_run(task.id, **fields),
                 resume_baseline=self._resume_baseline(task, agent, ws),

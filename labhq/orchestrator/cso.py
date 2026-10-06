@@ -2805,6 +2805,8 @@ class Orchestrator:
         req_state = self.hub.requests.get(rid)
         research_plan = ((req_state or {}).get("plan") if
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
+        shared_environment_protected = any(
+            ENV_LOCK_OUTPUT in step.get("outputs", []) for step in steps)
         # PI answers to blocking questions survive a gateway restart (the re-run step still needs them).
         decisions: dict[str, Any] = dict((req_state or {}).get("step_decisions") or {})
         sem = asyncio.Semaphore(self.cfg.max_parallel_steps)
@@ -2907,6 +2909,7 @@ class Orchestrator:
                               "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
                               "outputs": step.get("outputs", []),
                               "environment_step": ENV_LOCK_OUTPUT in step.get("outputs", []),
+                              "shared_environment_protected": shared_environment_protected,
                                **({"general_result_contract": True} if not research_plan else {}),
                                **self._type_meta(step),
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),

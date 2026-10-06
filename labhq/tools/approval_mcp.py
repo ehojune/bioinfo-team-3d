@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from ..policy import WRITE_LIKE, evaluate_tool
+from ..environment_install import shared_environment_install_denial
 from ..private_paths import gate_private_paths, resolve_private_paths
 from ..settings import Settings
 from ..util import short
@@ -30,6 +30,7 @@ AGENT = os.environ.get("LABHQ_AGENT_ID")
 WORKDIR_INPUT = os.environ.get("LABHQ_WORKDIR", ".")
 WORKDIR = str(Path(WORKDIR_INPUT).resolve())
 ENVIRONMENT_STEP = os.environ.get("LABHQ_ENVIRONMENT_STEP") == "1"
+SHARED_ENVIRONMENT_PROTECTED = os.environ.get("LABHQ_SHARED_ENVIRONMENT_PROTECTED") == "1"
 EXTRA_ROOTS = [p for p in os.environ.get("LABHQ_EXTRA_ROOTS", "").split(os.pathsep) if p]
 # The runner sets this task's list (possibly empty) and switch; without them the gate works both out itself.
 PRIVATE = gate_private_paths(os.environ, lambda: resolve_private_paths(S, [WORKDIR_INPUT, WORKDIR, *EXTRA_ROOTS]))
@@ -43,56 +44,6 @@ def _allow(tool_input: dict) -> str:
 
 def _deny(message: str) -> str:
     return json.dumps({"behavior": "deny", "message": message})
-
-
-_PIP_INSTALL = re.compile(r"(?:^|\s)(?:-m\s+)?pip(?:\d+(?:\.\d+)*)?(?:\.exe)?\s+install\b", re.IGNORECASE)
-_PIP_TARGET = re.compile(r"(?:--target(?:=|\s+)|-t\s+)(\"[^\"]+\"|'[^']+'|[^\s;&|]+)", re.IGNORECASE)
-_R_INSTALL = re.compile(r"\b(?:install\.packages|BiocManager::install)\s*\(", re.IGNORECASE)
-_R_LIBRARY = re.compile(
-    r"(?:\bR_LIBS_USER\b\s*=|\$env:R_LIBS_USER\s*=|\blib\s*=\s*)(\"[^\"]+\"|'[^']+'|[^\s,;)]+)",
-    re.IGNORECASE,
-)
-
-
-def _task_library(path: str, name: str, workdir: str) -> bool:
-    value = path.strip().strip("\"'")
-    if any(mark in value for mark in ("$", "%", "`")):
-        return False
-    normalized = value.replace("\\", "/").rstrip("/")
-    if normalized in {name, f"./{name}"}:
-        return True
-    try:
-        return Path(value).is_absolute() and Path(value).resolve() == (Path(workdir) / name).resolve()
-    except (OSError, RuntimeError, ValueError):
-        return False
-
-
-def shared_environment_install_denial(tool_name: str, tool_input: dict[str, Any], *,
-                                      environment_step: bool, workdir: str) -> str | None:
-    """Reject a visible package install that would mutate an environment shared by parallel steps.
-
-    The environment step is the sole shared installer. Other steps may install only into their task-local
-    Python/R library. This is deliberately a command gate, not a shell sandbox; engines without the Claude
-    permission hook receive the same rule as an instruction.
-    """
-    if environment_step or tool_name not in {"Bash", "PowerShell"}:
-        return None
-    command = str(tool_input.get("command") or "")
-    r_libraries = _R_LIBRARY.findall(command)
-    for segment in re.split(r"&&|\|\||[;\r\n]", command):
-        if _PIP_INSTALL.search(segment):
-            targets = _PIP_TARGET.findall(segment)
-            if not targets or not all(_task_library(target, ".pylib", workdir) for target in targets):
-                return ("Only the environment step may modify the shared Python environment. Install the extra "
-                        "package in this step with `python -m pip install --target ./.pylib ...` and record "
-                        "`python -m pip freeze --path ./.pylib` in outputs/env/<step>.txt.")
-        if _R_INSTALL.search(segment):
-            if not r_libraries or not all(_task_library(path, ".rlib", workdir) for path in r_libraries):
-                return ("Only the environment step may modify the shared R library. Install the extra package "
-                        "with `lib='./.rlib'` (or task-local R_LIBS_USER) and record that library's package table "
-                        "in outputs/env/<step>.txt.")
-    return None
-
 
 
 def _text_only_tool():
@@ -110,7 +61,8 @@ async def approval_prompt(tool_name: str, input: dict[str, Any] | None = None,
                           tool_use_id: str | None = None) -> str:
     """Decide whether a tool call may run. Returns a JSON string with behavior allow|deny."""
     install_denial = shared_environment_install_denial(
-        tool_name, input or {}, environment_step=ENVIRONMENT_STEP, workdir=WORKDIR)
+        tool_name, input or {}, protected=SHARED_ENVIRONMENT_PROTECTED,
+        environment_step=ENVIRONMENT_STEP, workdir=WORKDIR)
     if install_denial:
         return _deny(install_denial)
     d = evaluate_tool(tool_name, input or {}, S.policy,

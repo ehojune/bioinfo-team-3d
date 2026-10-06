@@ -665,7 +665,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 - Antigravity 1.2.11은 호출 단위 승인 훅이 없습니다. 헤드리스 도구 거부는 `denied_actions`에만 남을 수 있습니다. 통제 데이터 접근 직원에게 지정하지 마세요.
 - Claude Code 2.1.282는 로그아웃 상태에서 `is_error: true`와 `subtype: success`를 함께 냅니다.
 - `--permission-prompt-tool` 응답은 텍스트 블록 하나여야 합니다. mcp 2.x가 붙이는 구조화 결과가 있으면 Claude가 거부해서, 승인 도구는 구조화 출력을 끕니다.
-- 공유 환경 설치 차단은 Claude 승인 게이트가 직접 본 `pip install`·`install.packages` 명령에만 강제됩니다. Codex·Gemini·Antigravity와 셸 script 안의 간접 설치는 공통 지침에만 기대므로 공유 environment를 OS 권한으로 read-only로 만들지는 못합니다.
+- 공유 환경 설치 차단은 Claude 승인 게이트가 직접 본 Python·R package manager 명령에만 강제됩니다. 실행 파일은 경로의 basename으로 판정하고 R은 설치 호출별 `lib=`를 확인합니다. Codex·Gemini·Antigravity와 셸 script 안의 간접 설치는 공통 지침에만 기대므로 공유 environment를 OS 권한으로 read-only로 만들지는 못합니다.
 - Claude는 권한 규칙을 POSIX로 정규화한 경로와 대조합니다. Windows에서는 `Read(//c/Users/...)`만 막히므로 labhq가 드라이브 경로를 그 형태로 바꿉니다.
 - Windows에서 작업 폴더가 TEMP 아래면 Claude의 Bash(Git Bash)는 그 폴더를 `/tmp/...`로 보여 주고, Claude 파일 도구는 같은 표기를 `C:\tmp\...`에 씁니다(2.1.282 실측, `tests/fixtures/real/claude_code/claude_windows_write_paths.json`). 승인 게이트는 Git Bash 뜻이 작업 폴더 안이면 그 경로로 고쳐 허용하고, 아니면 실제로 쓸 `C:\tmp\...`를 보여 주며 승인을 받습니다. TMP·TEMP가 없거나 서로 다르면 고치지 않습니다(#219). 사전 허용된 Read는 게이트를 거치지 않아 `/tmp/...` 읽기는 "파일 없음"으로 끝납니다.
 - 직원 CLI는 PI 개인 설정 없이 뜹니다(`isolate_user_config`). 기본 실행은 PI 계정이고 개인 파일은 [PI 개인 경로](#pi-개인-경로)로 막습니다. OS 권한으로 막으려면 [runner 전용 계정 절차](runner-account.md)(고급·선택)를 따르세요.

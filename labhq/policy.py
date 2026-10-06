@@ -17,6 +17,7 @@ from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
 from .settings import SCHEDULER_JOB_COMMANDS, PolicySettings
+from .environment_install import installation_capable_shell_rule
 
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -976,7 +977,8 @@ def _root_rules(tool: str, roots: Iterable[str | os.PathLike]) -> list[str]:
 
 
 def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.PathLike],
-                         read_roots: Iterable[str | os.PathLike] | None = None) -> list[str]:
+                         read_roots: Iterable[str | os.PathLike] | None = None,
+                         shared_environment_gate: bool = False) -> list[str]:
     """`--allowedTools` with bare Write/Edit narrowed to `Edit(//root/**)` rules for the write roots (#219).
 
     A bare `Write` pre-approves every path, so the gate never saw Claude write `C:/tmp/...` on Windows
@@ -994,6 +996,8 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
     """
     tools = list(tools)
+    if shared_environment_gate:
+        tools = [tool for tool in tools if not installation_capable_shell_rule(tool)]
     read_rules: list[str] = []
     if read_roots is not None:
         if any(rule_tool(t) in READ_LIKE for t in tools):

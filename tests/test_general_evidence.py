@@ -99,15 +99,20 @@ async def test_runner_tells_the_approval_gate_which_task_owns_environment_instal
     class Adapter:
         async def run(self, ctx):
             approval = next(server for server in ctx.mcp_servers if server.name == "labhq_approval")
-            seen.append((ctx.env["LABHQ_ENVIRONMENT_STEP"], approval.env["LABHQ_ENVIRONMENT_STEP"]))
+            seen.append((ctx.env["LABHQ_ENVIRONMENT_STEP"], approval.env["LABHQ_ENVIRONMENT_STEP"],
+                         ctx.env["LABHQ_SHARED_ENVIRONMENT_PROTECTED"],
+                         approval.env["LABHQ_SHARED_ENVIRONMENT_PROTECTED"],
+                         ctx.environment_step, ctx.shared_environment_protected))
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
     await runner.run_task(Task(id="env", request_id="r", agent_id="worker", prompt="work",
-                               meta={"kind": "step", "environment_step": True}))
+                               meta={"kind": "step", "environment_step": True,
+                                     "shared_environment_protected": True}))
     await runner.run_task(Task(id="analysis", request_id="r", agent_id="worker", prompt="work",
-                               meta={"kind": "step", "environment_step": False}))
-    assert seen == [("1", "1"), ("0", "0")]
+                               meta={"kind": "step", "environment_step": False,
+                                     "shared_environment_protected": True}))
+    assert seen == [("1", "1", "1", "1", True, True), ("0", "0", "1", "1", False, True)]
 
 
 @pytest.mark.asyncio

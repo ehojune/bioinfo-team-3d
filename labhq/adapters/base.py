@@ -301,6 +301,9 @@ class RunContext:
     private_enabled: bool = False
     # Folders inside an active path that this Claude task may read (its project folder in the staff config folder).
     private_open_reads: list[str] = field(default_factory=list)
+    # A request with one shared environment sends non-owner install-capable shell rules through approval.
+    shared_environment_protected: bool = False
+    environment_step: bool = False
     use_permission_tool: bool = False
     plugin_provenance: list[dict] = field(default_factory=list)  # set by preflight; recorded in the run manifest
     record_run: Callable[..., None] | None = None  # runner hook: persist run fields before the CLI starts

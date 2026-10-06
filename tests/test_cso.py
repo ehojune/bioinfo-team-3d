@@ -2692,6 +2692,7 @@ async def test_environment_step_alone_is_marked_when_parallel_consumers_share_it
     assert by_step["env"].meta["environment_step"] is True
     assert by_step["left"].meta["environment_step"] is False
     assert by_step["right"].meta["environment_step"] is False
+    assert all(by_step[step].meta["shared_environment_protected"] is True for step in by_step)
     assert all(outcomes[step].ok for step in ("env", "left", "right"))
 
 
