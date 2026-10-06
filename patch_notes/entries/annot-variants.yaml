@@ -1,0 +1,5 @@
+pr: 449
+rows:
+- sha: 'cd9e439'
+  at: 2026-10-06 17:10
+  text: 'labhq_annot MCP: 직원이 변이를 Ensembl VEP·gnomAD·ClinVar에서 조회하고, 결과마다 DB 판본·조회 시각·요청 hash를 남긴다(한도 지킴·캐시)'
