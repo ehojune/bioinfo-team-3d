@@ -17,8 +17,8 @@ from pathlib import Path, PurePath
 
 from ..policy import claude_allowed_tools
 from ..util import short
-from .base import (AgentAdapter, role_footer, RunContext, RunState, child_config_dirs, expand_env, note_failed_output,
-                   record_model_id, wrap_cwd)
+from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
+                   note_command_ok, note_failed_output, record_model_id, wrap_cwd)
 from .owned import case_sensitive_directory
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
@@ -320,12 +320,18 @@ class ClaudeCodeAdapter(AgentAdapter):
                     await ctx.emit("agent.log", {"text": short(block["text"], 2000),
                                                  "subagent": bool(ev.get("parent_tool_use_id"))})
                 elif block.get("type") == "tool_use":
+                    if block.get("name") in SHELL_TOOLS and block.get("id"):
+                        st.shell_calls.add(block["id"])
                     await ctx.emit("agent.tool", {"name": block.get("name"), "input": short(block.get("input"), 400)})
         elif typ == "user":
             for block in (ev.get("message") or {}).get("content") or []:
-                if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("is_error"):
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                if block.get("is_error"):
                     note_failed_output(st, block.get("content"))
                     await ctx.emit("agent.tool_error", {"text": short(block.get("content"), 400)})
+                elif block.get("tool_use_id") in st.shell_calls:
+                    note_command_ok(st)
         elif typ == "result":
             st.result_seen = True
             st.final_text = ev.get("result")

@@ -90,6 +90,7 @@ def test_a_result_field_from_another_runner_is_bounded():
 
 STDERR = env.by_id("disk_full").record("stderr")
 COMMAND = env.by_id("python_module_missing").record("command")
+DOCKER_STDERR = env.by_id("docker_daemon_down").record("stderr")
 
 
 @pytest.mark.parametrize("outcome,kind", [
@@ -105,6 +106,12 @@ COMMAND = env.by_id("python_module_missing").record("command")
     (_failed("permission denied", environment=COMMAND), "terminal"),
     (_failed("cancelled", environment=COMMAND), "terminal"),
     (_failed("cancelled", environment=STDERR), "terminal"),
+    # a stderr-only signature is older than an explicit transient signal in the error (PR #447 review)
+    (_failed("timeout after 600s", environment=DOCKER_STDERR), "transient"),
+    (_failed("exit 1: HTTP 429 too many requests", environment=DOCKER_STDERR), "transient"),
+    (_failed("runner restarted", environment=DOCKER_STDERR), "transient"),
+    # an engine limit is its own cause, whatever command the agent last tripped on
+    (_failed("error_max_turns", error_kind="error_max_turns", environment=COMMAND), "terminal"),
     (TaskResult(task_id="t", agent_id="a", ok=True, text="done", environment=COMMAND), None),
 ])
 def test_environment_kind(outcome, kind):
@@ -161,9 +168,30 @@ async def test_step_done_and_reports_show_the_environment_problem():
     assert done["B"]["environment"]["id"] == "python_module_missing"
     report = Orchestrator.report_results(steps, results, 2000)
     assert "Next: 환경 문제: Docker 데몬에 연결하지 못했습니다 — " in report
-    assert "Next: 환경 문제: Python 모듈이 설치돼 있지 않습니다 — " in report
+    # a failed command's output is weaker than the missing output itself: Next asks for the output (PR #447 review)
+    assert results["B"].missing_outputs == ["de.tsv"]
+    assert "Next: 환경 문제: Python 모듈" not in report and "Next: produce the missing outputs" in report
     warnings = general_report_warnings(steps, results)
     assert "- A: 환경 문제: Docker 데몬" in warnings and "- B: 환경 문제: Python 모듈" in warnings
+
+
+def test_skipped_dependents_are_not_environment_problems(tmp_path):
+    upstream = _failed("exit 1: OSError: [Errno 28] No space left on device")
+    skipped = _failed(f"skipped: upstream s1: {upstream.error}")
+    assert environment_problem(upstream)["id"] == "disk_full" and environment_problem(skipped) is None
+    steps = [{"id": "s1", "agent_id": "worker", "instruction": "x", "depends_on": []},
+             {"id": "s2", "agent_id": "worker", "instruction": "y", "depends_on": ["s1"]}]
+    warnings = general_report_warnings(steps, {"s1": upstream, "s2": skipped})
+    assert "- s1: 환경 문제" in warnings and "- s2: 환경 문제" not in warnings
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    hub = create_app(settings).state.hub
+    hub.requests["r1"] = {"id": "r1", "text": "분석", "mode": "orchestrate", "status": "failed", "created_at": 1.0,
+                          "plan": {"steps": steps},
+                          "results": {"s1": upstream.model_dump(mode="json"), "s2": skipped.model_dump(mode="json")}}
+    assert list(hub.request_summary(hub.requests["r1"])["step_environment"]) == ["s1"]
+    details = hub.request_step_details("r1", hub.requests["r1"])
+    assert "environment" in details["s1"] and "environment" not in details["s2"]
 
 
 @pytest.mark.asyncio
@@ -289,3 +317,72 @@ def test_claude_tool_result_blocks_are_kept_for_signatures(tmp_path):
     asyncio.run(adapter.handle_line(line, state, _ctx(tmp_path, settings, [], Engine.claude_code)))
     found = env.scan_run("claude_code", [], state.failed_outputs)
     assert found and found["id"] == "command_not_found" and found["source"] == "command"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_command_the_agent_got_past_is_not_evidence(tmp_path):
+    traceback = "ModuleNotFoundError: No module named 'scanpy'\n"
+    res = await _run_codex(tmp_path, [_command(traceback, 1), _command("Successfully installed scanpy\n", 0)])
+    assert not res.ok and res.environment is None
+    assert failure_kind(res, "codex") == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_only_the_last_failed_command_counts(tmp_path):
+    later = _command("KeyError: 'condition'\n", 1)
+    res = await _run_codex(tmp_path, [_command("ModuleNotFoundError: No module named 'scanpy'\n", 1), later])
+    assert res.environment is None
+
+
+def _claude_lines(adapter, state, ctx, events):
+    import asyncio
+    for event in events:
+        asyncio.run(adapter.handle_line(json.dumps(event), state, ctx))
+
+
+def _claude_tool(tool_id, name):
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tool_id, "name": name,
+                                                          "input": {}}]}}
+
+
+def _claude_result(tool_id, text, is_error):
+    return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                                     "is_error": is_error, "content": text}]}}
+
+
+def test_claude_shell_success_clears_the_failed_output_but_other_tools_do_not(tmp_path):
+    settings = Settings()
+    adapter = get_adapter(Engine.claude_code, settings)
+    ctx = _ctx(tmp_path, settings, [], Engine.claude_code)
+    failed = [_claude_tool("t1", "Bash"), _claude_result("t1", "ModuleNotFoundError: No module named 'x'", True)]
+    state = RunState()
+    _claude_lines(adapter, state, ctx, [*failed, _claude_tool("t2", "Write"), _claude_result("t2", "ok", False)])
+    assert env.scan_run("claude_code", [], state.failed_outputs)["id"] == "python_module_missing"
+    state = RunState()
+    _claude_lines(adapter, state, ctx, [*failed, _claude_tool("t3", "Bash"), _claude_result("t3", "done", False)])
+    assert env.scan_run("claude_code", [], state.failed_outputs) is None
+
+
+def test_gemini_and_antigravity_shell_success_clears_the_failed_output(tmp_path):
+    import asyncio
+    settings = Settings()
+    gemini = get_adapter(Engine.gemini, settings)
+    ctx = _ctx(tmp_path, settings, [], Engine.gemini)
+    state = RunState()
+    for event in [{"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "a", "parameters": {}},
+                  {"type": "tool_result", "tool_id": "a", "status": "error", "output": "bash: samtools: command not found"},
+                  {"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "b", "parameters": {}},
+                  {"type": "tool_result", "tool_id": "b", "status": "success", "output": "ok"}]:
+        asyncio.run(gemini.handle_line(json.dumps(event), state, ctx))
+    assert env.scan_run("gemini", [], state.failed_outputs) is None
+    agy = get_adapter(Engine.antigravity, settings)
+    ctx = _ctx(tmp_path, settings, [], Engine.antigravity)
+    state = RunState()
+
+    def step(state_name, **info):
+        return {"event": "step_update", "step_update": {"step_type": "tool", "state": state_name,
+                                                         "tool_name": "run_command", "tool_info": info}}
+    asyncio.run(agy.handle_line(json.dumps(step("ERROR", error="bash: samtools: command not found")), state, ctx))
+    assert env.scan_run("antigravity", [], state.failed_outputs)["id"] == "command_not_found"
+    asyncio.run(agy.handle_line(json.dumps(step("DONE", output="ok")), state, ctx))
+    assert env.scan_run("antigravity", [], state.failed_outputs) is None

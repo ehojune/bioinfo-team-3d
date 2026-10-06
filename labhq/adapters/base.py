@@ -340,8 +340,9 @@ async def pending_uac_prompts() -> bool:
         return False
     return b"consent.exe" in out.lower()
 
-FAILED_OUTPUTS_KEPT = 20
+FAILED_OUTPUTS_KEPT = 1  # only the last failed command counts, and only until a later command succeeds (PR #447)
 FAILED_OUTPUT_CHARS = 4000
+SHELL_TOOLS = frozenset({"Bash", "PowerShell", "run_shell_command", "run_command", "shell"})
 
 
 def note_failed_output(st: "RunState", output: Any) -> None:
@@ -352,6 +353,11 @@ def note_failed_output(st: "RunState", output: Any) -> None:
     text = "" if output is None else str(output)
     if text.strip():
         st.failed_outputs.append(text[-FAILED_OUTPUT_CHARS:])
+
+
+def note_command_ok(st: "RunState") -> None:
+    """A shell command exited 0 after the failed one: the agent got past it, so the failed output is not evidence."""
+    st.failed_outputs.clear()
 
 
 @dataclass
@@ -372,8 +378,10 @@ class RunState:
     model_id: str | None = None
     commands_ran: bool = False  # a shell command ran to exit 0 (engines that report commands)
     stop_reason: str | None = None  # the adapter saw a failure more turns cannot fix: labhq ends the process tree
-    # Tails of failed tool calls' output, newest last (#35): environment signatures read them, never successful output.
+    # The tail of the last failed tool call's output (#35), cleared when a later shell command succeeds: environment
+    # signatures read it, never successful output.
     failed_outputs: deque = field(default_factory=lambda: deque(maxlen=FAILED_OUTPUTS_KEPT))
+    shell_calls: set = field(default_factory=set)  # tool call ids of shell tools, for engines that pair by id
 
 
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:

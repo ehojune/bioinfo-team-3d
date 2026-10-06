@@ -26,6 +26,10 @@ OPTIONAL = ("error_kind",)
 SOURCES = ("error", "stderr", "command")
 SCAN_CHARS = 20_000  # tail of each text that is matched; the conclusion of a traceback is at its end
 _EXIT_PREFIX = re.compile(r"^exit -?\d+: ")
+# Lines that quote text rather than report it (PR #447 review): a pytest failure ("E   ..." or "> source line"), a
+# compiler or grep -n hit ("path:12: ..."), and a grep hit in a log, text or source file ("logs/run1.log: ...").
+_QUOTING_LINE = re.compile(r"^(?:E\s|\s*>|(?:[a-z]:)?[^\s:'\"]+:\d+:|(?:[a-z]:)?[^\s:'\"]*[/\\][^\s:'\"]*"
+                           r"\.(?:log|txt|out|err|py|r|sh|md|ya?ml|json|tsv|csv|ipynb):)", re.IGNORECASE)
 
 
 class SignatureError(ValueError):
@@ -109,7 +113,8 @@ def _lines(text: str) -> str:
     """A step error joins the stderr tail with " | " after "exit N: " (BaseAdapter.run). Put each part back on its
     own line so a pattern anchored with ^ sees the tool's own error line."""
     text = text[-SCAN_CHARS:]
-    return "\n".join(_EXIT_PREFIX.sub("", part) for part in text.replace(" | ", "\n").splitlines())
+    parts = (_EXIT_PREFIX.sub("", part) for part in text.replace(" | ", "\n").splitlines())
+    return "\n".join(part for part in parts if not _QUOTING_LINE.match(part))
 
 
 def match(engine: str, text: str | None, *, error_kind: str | None = None) -> Signature | None:
@@ -126,15 +131,14 @@ def match(engine: str, text: str | None, *, error_kind: str | None = None) -> Si
 
 
 def scan_run(engine: str, stderr_lines: Iterable[str], failed_outputs: Iterable[Any]) -> dict[str, str] | None:
-    """Runner side: the CLI's stderr tail first, then failed command outputs, most recent first."""
+    """Runner side: the CLI's stderr tail first, then the last failed command's output. The adapters clear that output
+    when a later shell command succeeds, so a failure the agent got past is not evidence (PR #447 review)."""
     found = match(engine, "\n".join(str(line) for line in stderr_lines))
     if found:
         return found.record("stderr")
-    for output in reversed(list(failed_outputs)):
-        found = match(engine, str(output))
-        if found:
-            return found.record("command")
-    return None
+    last = list(failed_outputs)[-1:]
+    found = match(engine, str(last[0])) if last else None
+    return found.record("command") if found else None
 
 
 def clean_record(value: Any) -> dict[str, str] | None:

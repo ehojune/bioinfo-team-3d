@@ -313,17 +313,19 @@ runner PC에 무언가 없어서 실패한 단계는 `environment` 실패입니�
 | 서명 | 무엇 |
 |---|---|
 | `python_module_missing` | `ModuleNotFoundError`, `No module named` |
-| `command_not_found` | `command not found`, `is not recognized as an internal or external command` |
+| `command_not_found` | `command not found`, `is not recognized as an internal or external command`, 한국어 Windows의 `내부 또는 외부 명령`·`용어가 cmdlet` |
 | `r_package_missing` | `there is no package called` |
-| `disk_full` | `No space left on device`, `ENOSPC`, `There is not enough space on the disk` |
-| `network_name_resolution` | `Could not resolve host`, `getaddrinfo failed`, `ProxyError` |
+| `disk_full` | `No space left on device`, `ENOSPC`, `There is not enough space on the disk`, `디스크 공간이 부족합니다` |
+| `network_name_resolution` | `Could not resolve host`, `getaddrinfo failed`·`ENOTFOUND`, `ProxyError` |
 | `docker_daemon_down` | `Cannot connect to the Docker daemon` |
 | `codex_sandbox_setup` | Codex 직원 홈의 elevated sandbox 준비 필요(`sandbox_setup_required`) |
 
 - 로그인 만료(`login`)와 한도(`quota`)를 먼저 가립니다. 로그인 만료는 지금처럼 로그인 대기로 갑니다.
 - 보는 곳은 실패 문구뿐입니다: 단계 오류, 직원 CLI의 stderr 끝부분(실패한 실행만), 실패한 셸·도구 호출의 출력. 성공한 명령의 출력은 보지 않습니다.
-- 실패한 명령 출력에서만 찾은 서명은 약한 증거입니다. 단계 오류가 따로 설명하면(rate limit, 권한 거부, 취소 등) 그쪽을 따릅니다.
-- 서명 추가: `labhq/facilities/signatures.yaml`에 항목(`id`, `engine`, `pattern`, `cause`, `hint`, `fix`)을 넣고 `tests/fixtures/environment_signatures.yaml`에 실제 문구 예시를 하나 이상 둡니다. `pattern`은 대소문자를 무시하는 정규식이고 `^`는 줄 첫머리입니다. 도구가 찍는 오류 줄 첫머리에 맞추면 그 문구를 인용한 grep 출력(`파일:줄:`)이나 pytest diff(`E `)에 걸리지 않습니다. `fix`는 비워 둡니다(다음 단계의 `facilities_fix` 자리).
+- 실패한 명령 출력은 마지막 실패 하나만 봅니다. 그 뒤에 성공한 셸 명령이 있으면(예: `pip install` 뒤) 증거에서 뺍니다.
+- 실패한 명령 출력이나 CLI stderr에서만 찾은 서명은 약한 증거입니다. 단계 오류가 따로 설명하면(timeout, rate limit, 5xx, 권한 거부, 취소, turn 한도 등) 그쪽을 따릅니다. 산출물이 빠졌으면 `Next:`는 산출물을 먼저 말합니다.
+- 건너뛴 단계(`skipped`)는 위 단계의 오류를 옮겨 적을 뿐이라 따로 환경 문제로 세지 않습니다.
+- 서명 추가: `labhq/facilities/signatures.yaml`에 항목(`id`, `engine`, `pattern`, `cause`, `hint`, `fix`)을 넣고 `tests/fixtures/environment_signatures.yaml`에 실제 문구 예시를 하나 이상 둡니다. `pattern`은 대소문자를 무시하는 정규식이고 `^`는 줄 첫머리입니다. 도구가 찍는 오류 줄 첫머리에 맞춥니다. 문구를 인용만 하는 줄(pytest의 `E `·`>`, `파일:줄:`, `logs/x.log:` 같은 grep 출력)은 맞추기 전에 뺍니다. Windows 문구는 영어와 한국어 둘 다 넣습니다. `fix`는 비워 둡니다(다음 단계의 `facilities_fix` 자리).
 
 ## 직원과 도구
 
