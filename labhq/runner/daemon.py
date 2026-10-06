@@ -1138,6 +1138,43 @@ class Runner:
                 # Again after prepare(): the adapter's own files (Codex AGENTS.md) are not the agent's writes.
                 before_spawn=before_spawn,
             )
+            # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
+            # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
+            upstream_roots: dict[str, tuple[Path, str]] = {}
+            upstream_steps = task.meta.get("upstream_steps")
+            upstream_steps = upstream_steps if isinstance(upstream_steps, dict) else {}
+            for step_id, directory in upstream_steps.items():
+                if not INPUT_STEP_ID.fullmatch(str(step_id)):
+                    continue
+                try:
+                    upstream_roots[os.path.normcase(str(Path(str(directory)).resolve()))] = (
+                        Path(str(directory)).resolve() / "outputs", f"inputs/{step_id}")
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            input_roots: list[tuple[Path, str]] = []
+            own_dir = os.path.normcase(str(ws.dir.resolve()))
+            for directory in [*extra_dirs, *read_dirs]:
+                try:
+                    path = Path(directory).resolve()
+                except (OSError, RuntimeError, ValueError):
+                    path = Path(directory)
+                # A follow-up that reuses this workspace lists it among its folders; the step's own files
+                # (manifest, events, RESULT) are not inputs and change during every run.
+                if os.path.normcase(str(path)) == own_dir or os.path.normcase(str(path)).startswith(own_dir + os.sep):
+                    continue
+                upstream = upstream_roots.get(os.path.normcase(str(path)))
+                input_roots.append(upstream or (path, portable_input_path(path)))
+            hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
+
+            async def scan_inputs() -> tuple[list[dict[str, Any]], list[str]]:
+                return await asyncio.to_thread(
+                    ws.scan_input_records, input_roots, zones, list(hash_private.paths),
+                    self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth,
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
+                    self.input_hash_cache)
+
+            # Hash before the CLI starts (PR #442 review): writable inputs (project and upstream folders) may change.
+            input_files, input_notes = await scan_inputs()
             ws.update_run(task.id, started_at=time.time(), runner_id=self.s.runner.id,
                           engine=agent.engine.value, model=agent.model,
                           engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
@@ -1195,33 +1232,17 @@ class Runner:
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
         result.workdir_id = ws.dir.name
-        # External folders exposed to this step are its reproducibility inputs. Upstream outputs use the same
-        # inputs/<step> spelling the bundle restores; other runner paths use ~/... under the runner account.
-        upstream_roots: dict[str, tuple[Path, str]] = {}
-        upstream_steps = task.meta.get("upstream_steps")
-        upstream_steps = upstream_steps if isinstance(upstream_steps, dict) else {}
-        for step_id, directory in upstream_steps.items():
-            if not INPUT_STEP_ID.fullmatch(str(step_id)):
-                continue
-            try:
-                upstream_roots[os.path.normcase(str(Path(str(directory)).resolve()))] = (
-                    Path(str(directory)).resolve() / "outputs", f"inputs/{step_id}")
-            except (OSError, RuntimeError, ValueError):
-                continue
-        input_roots: list[tuple[Path, str]] = []
-        for directory in [*extra_dirs, *read_dirs]:
-            try:
-                path = Path(directory).resolve()
-            except (OSError, RuntimeError, ValueError):
-                path = Path(directory)
-            upstream = upstream_roots.get(os.path.normcase(str(path)))
-            input_roots.append(upstream or (path, portable_input_path(path)))
-        hash_private = resolve_private_paths(self.s, [], cwd=ws.dir)
-        input_files, input_notes = await asyncio.to_thread(
-            ws.scan_input_records, input_roots, zones, list(hash_private.paths),
-            self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth,
-            self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes,
-            self.input_hash_cache)
+        # The record keeps what the step read: hashes taken before the run. A writable input the step changed gets
+        # changed_during_step, and its hash stays the one from before (PR #442 review).
+        after_files, after_notes = await scan_inputs()
+        after = {row["path"]: row.get("sha256") for row in after_files}
+        for row in input_files:
+            if row.get("sha256") and after.get(row["path"]) != row["sha256"]:
+                row["changed_during_step"] = True
+        changed = sum(bool(row.get("changed_during_step")) for row in input_files)
+        if changed:
+            input_notes.append(f"입력 파일 {changed}개가 단계 실행 중에 바뀌었습니다(기록된 hash는 실행 전 내용)")
+        input_notes = list(dict.fromkeys([*input_notes, *after_notes]))
         ws.update_run(task.id, input_files=input_files,
                       **({"input_files_incomplete": "; ".join(input_notes)} if input_notes else {}))
         for note in input_notes:

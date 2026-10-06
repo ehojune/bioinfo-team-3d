@@ -84,10 +84,17 @@ def portable_input_path(path: str | os.PathLike, home: str | os.PathLike | None 
     return normalized.replace("\\", "/")
 
 
-class InputHashCache:
-    """One runner-state cache keyed by (real path, size, mtime_ns)."""
+def input_file_ident(info: os.stat_result) -> tuple[int, int, int]:
+    """What tells a replaced or rewritten file apart when size and mtime were kept (`cp -p`, os.utime): the file id
+    read from the open handle, and on POSIX the change time. Windows exposes no change time, so an in-place rewrite
+    that restores size and mtime there still looks unchanged (PR #442 review)."""
+    return int(info.st_dev), int(info.st_ino), 0 if os.name == "nt" else int(info.st_ctime_ns)
 
-    SCHEMA = 1
+
+class InputHashCache:
+    """One runner-state cache keyed by (real path, size, mtime_ns, device, file id, POSIX ctime)."""
+
+    SCHEMA = 2
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -98,9 +105,10 @@ class InputHashCache:
         self._paths: dict[str, str] = {}
 
     @staticmethod
-    def _key(path: Path, size: int, mtime_ns: int) -> str:
+    def _key(path: Path, size: int, mtime_ns: int, ident: tuple[int, int, int]) -> str:
         actual = os.path.normcase(os.path.abspath(str(path)))
-        return json.dumps([actual, int(size), int(mtime_ns)], ensure_ascii=False, separators=(",", ":"))
+        return json.dumps([actual, int(size), int(mtime_ns), *(int(v) for v in ident)],
+                          ensure_ascii=False, separators=(",", ":"))
 
     def _load(self) -> None:
         if self._loaded:
@@ -114,8 +122,8 @@ class InputHashCache:
             paths: dict[str, str] = {}
             for key, value in data["entries"].items():
                 decoded = json.loads(key)
-                if (not isinstance(decoded, list) or len(decoded) != 3 or not isinstance(decoded[0], str)
-                        or not isinstance(decoded[1], int) or not isinstance(decoded[2], int)
+                if (not isinstance(decoded, list) or len(decoded) != 6 or not isinstance(decoded[0], str)
+                        or not all(isinstance(v, int) and not isinstance(v, bool) for v in decoded[1:])
                         or not isinstance(value, str) or len(value) != 64):
                     raise ValueError("invalid input hash cache entry")
                 int(value, 16)
@@ -129,18 +137,18 @@ class InputHashCache:
             self._paths = {}
             self._dirty = True
 
-    def get(self, path: Path, size: int, mtime_ns: int) -> str | None:
+    def get(self, path: Path, size: int, mtime_ns: int, ident: tuple[int, int, int]) -> str | None:
         with self._lock:
             self._load()
-            return self._entries.get(self._key(path, size, mtime_ns))
+            return self._entries.get(self._key(path, size, mtime_ns, ident))
 
-    def put(self, path: Path, size: int, mtime_ns: int, sha256: str) -> None:
+    def put(self, path: Path, size: int, mtime_ns: int, ident: tuple[int, int, int], sha256: str) -> None:
         with self._lock:
             self._load()
             actual = os.path.normcase(os.path.abspath(str(path)))
             if old := self._paths.get(actual):
                 self._entries.pop(old, None)
-            key = self._key(path, size, mtime_ns)
+            key = self._key(path, size, mtime_ns, ident)
             self._entries[key] = sha256
             self._paths[actual] = key
             self._dirty = True
@@ -560,16 +568,6 @@ class TaskWorkspace:
                             found.append(record)
                             counters["files"] += 1
                             continue
-                        if cache is not None and (cached := cache.get(actual, size, mtime_ns)):
-                            record.update(sha256=cached, cached=True)
-                            found.append(record)
-                            counters["files"] += 1
-                            continue
-                        if hash_state is not None and hash_state["bytes"] + size > hash_state["limit"]:
-                            record["skipped"] = "total_limit"
-                            found.append(record)
-                            counters["files"] += 1
-                            continue
                     try:
                         fd = folder.open_read_file(entry.name)
                         with os.fdopen(fd, "rb") as stream:
@@ -582,6 +580,16 @@ class TaskWorkspace:
                             if input_mode:
                                 record = {"path": path, "size": info.st_size,
                                           "mtime_ns": info.st_mtime_ns, "sha256": None}
+                                ident = input_file_ident(info)
+                                # The cache is consulted only with the identity read from this open handle: a
+                                # listing's size and mtime cannot tell a same-size replacement (PR #442 review).
+                                if (cache is not None and not (hash_max_bytes is not None
+                                                               and info.st_size > hash_max_bytes)
+                                        and (cached := cache.get(actual, info.st_size, info.st_mtime_ns, ident))):
+                                    record.update(sha256=cached, cached=True)
+                                    found.append(record)
+                                    counters["files"] += 1
+                                    continue
                             else:
                                 record = {"path": path, "size": info.st_size,
                                           "mtime_ns": info.st_mtime_ns, "ino": info.st_ino,
@@ -619,7 +627,7 @@ class TaskWorkspace:
                                     else:
                                         record["sha256"] = digest.hexdigest()
                                         if input_mode and cache is not None:
-                                            cache.put(actual, info.st_size, info.st_mtime_ns, record["sha256"])
+                                            cache.put(actual, info.st_size, info.st_mtime_ns, ident, record["sha256"])
                                     if input_mode and hash_state is not None:
                                         hash_state["bytes"] += read
                             found.append(record)
