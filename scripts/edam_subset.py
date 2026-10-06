@@ -47,7 +47,7 @@ LICENSE = "https://creativecommons.org/licenses/by-sa/4.0"
 MAX_BYTES = 32 * 1024 ** 2
 MAX_DEPTH = 64
 MAX_ANCESTORS = 256
-MAX_KEYS = 116
+MAX_KEYS = 92  # data 36 + format 32 + operation 24; topics have no cap (PI 2026-10-05, #420) and add one each
 
 NS_EDAM = "http://edamontology.org/"
 NS_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
@@ -255,12 +255,13 @@ def build(owl: bytes, *, source_sha: str, expect_sha: str = SHA256, map_path: Pa
     if set(candidates) != set(branches):
         raise SubsetError(f"{map_path.name}: keys differ from {local_path.name}: "
                           f"{sorted(set(candidates) ^ set(branches))}")
-    if len(branches) > MAX_KEYS:
-        raise SubsetError(f"{len(branches)} keys; at most {MAX_KEYS}")
+    limit = MAX_KEYS + sum(branch == "topic" for branch in branches.values())
+    if len(branches) > limit:
+        raise SubsetError(f"{len(branches)} keys; at most {limit}")
     terms = {key: resolve(onto, branches[key], candidates[key]) for key in branches}
     ids = sorted({t["id"] for t in terms.values() if t["id"] != "unknown"})
-    if len(ids) > MAX_KEYS:
-        raise SubsetError(f"{len(ids)} distinct EDAM terms; at most {MAX_KEYS}")
+    if len(ids) > limit:
+        raise SubsetError(f"{len(ids)} distinct EDAM terms; at most {limit}")
     body = {
         "source": {"url": URL, "release": RELEASE, "version_info": VERSION_INFO, "sha256": source_sha,
                    "license": LICENSE},

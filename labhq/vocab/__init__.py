@@ -29,9 +29,10 @@ log = logging.getLogger("labhq.vocab")
 VOCAB_DIR = Path(__file__).parent
 LOCAL_FILE = "output_types.yaml"
 SUBSET_FILE = "edam_subset.yaml"
-BRANCH_LIMITS = {"data": 36, "format": 32, "operation": 24, "topic": 24}
+# topic has no cap (PI 2026-10-05, #420): each key still needs its own review, and plan prompts list topic names only.
+BRANCH_LIMITS: dict[str, int | None] = {"data": 36, "format": 32, "operation": 24, "topic": None}
 BRANCHES = tuple(BRANCH_LIMITS)
-MAX_EDAM_TERMS = sum(BRANCH_LIMITS.values())
+MAX_EDAM_TERMS = sum(limit for limit in BRANCH_LIMITS.values() if limit)  # plus one per topic key, see parse_subset
 MAX_FILE_BYTES = 256 * 1024
 KEY = re.compile(r"^[a-z][a-z0-9_]{1,31}$")
 EXTENSION = re.compile(r"^\.[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*$")
@@ -148,7 +149,7 @@ def parse_local(data: Any, where: str = LOCAL_FILE) -> tuple[dict[str, Term], st
         raise VocabError(f"{where}: needs at least one key")
     for branch, limit in BRANCH_LIMITS.items():
         count = sum(term.branch == branch for term in terms.values())
-        if count > limit:
+        if limit is not None and count > limit:
             raise VocabError(f"{where}: {branch} has {count} keys; at most {limit} allowed")
     claimed: dict[str, str] = {}
     for term in terms.values():
@@ -184,7 +185,7 @@ def parse_subset(data: Any, terms: Mapping[str, Term]) -> tuple[dict[str, tuple[
             mapping[key] = (edam, None)
         else:
             raise ValueError("subset_id")
-    if len({m[0] for m in mapping.values() if m[0]}) > MAX_EDAM_TERMS:
+    if len({m[0] for m in mapping.values() if m[0]}) > MAX_EDAM_TERMS + sum(t.branch == "topic" for t in terms.values()):
         raise ValueError("subset_too_many_terms")
     interpretation = {"release": source["release"], "sha256": source["sha256"],
                       "terms": {k: {"id": v[0] or UNKNOWN, "reason": v[1]} for k, v in sorted(mapping.items())}}

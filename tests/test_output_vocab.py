@@ -39,11 +39,11 @@ def subset_for(local_dir, overrides=None):
 def test_packaged_vocabulary_loads_with_counts_under_the_cap():
     v = vocab.load()
     counts = v.counts()
-    assert vocab.BRANCH_LIMITS == {"data": 36, "format": 32, "operation": 24, "topic": 24}
-    assert vocab.MAX_EDAM_TERMS == 116
-    assert counts["keys"] == 100
-    assert counts["edam_terms"] <= vocab.MAX_EDAM_TERMS
-    assert (counts["data"], counts["format"], counts["operation"], counts["topic"]) == (30, 28, 22, 20)
+    assert vocab.BRANCH_LIMITS == {"data": 36, "format": 32, "operation": 24, "topic": None}
+    assert vocab.MAX_EDAM_TERMS == 92
+    assert counts["keys"] == 123
+    assert counts["edam_terms"] <= vocab.MAX_EDAM_TERMS + counts["topic"]
+    assert (counts["data"], counts["format"], counts["operation"], counts["topic"]) == (30, 28, 22, 43)
     reviewed = {"genomic_features", "normalized_expression", "transformed_expression", "variant_annotations"}
     assert reviewed <= set(v.keys("data"))
     assert "features" not in v.terms
@@ -81,7 +81,15 @@ def test_bad_local_file_is_refused(vdir, mutate, match):
         vocab.load(vdir)
 
 
-@pytest.mark.parametrize("branch", ["data", "format", "operation", "topic"])
+def test_topic_branch_has_no_cap(vdir):
+    """PI 2026-10-05 (#420): topics are not capped; the other branches keep theirs."""
+    path = vdir / vocab.LOCAL_FILE
+    extra = "".join(f"  extra_topic_{i}:\n    branch: topic\n    definition: x\n" for i in range(60))
+    path.write_text(path.read_text(encoding="utf-8") + extra, encoding="utf-8")
+    assert vocab.load(vdir).counts()["topic"] >= 60
+
+
+@pytest.mark.parametrize("branch", ["data", "format", "operation"])
 def test_more_than_the_branch_cap_is_refused(vdir, branch):
     path = vdir / vocab.LOCAL_FILE
     current = vocab.load(vdir).counts()[branch]

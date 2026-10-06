@@ -104,3 +104,26 @@ candidates:
   bacterial_genome_assembly: null
   alternative_splicing: RNA splicing
   microarray_expression: Gene expression and microarray
+  proteomics: Proteomics
+  proteomics_dia: null
+  single_cell_proteomics: null
+  spatial_proteomics: null
+  metaproteomics: Metaproteomics
+  metabolomics: Metabolomics
+  spatial_metabolomics: null
+  gwas: GWAS study
+  structural_variant_calling: Structural variation
+  de_novo_genome_assembly: Sequence assembly
+  genome_annotation: Genome annotation
+  pangenomics: null
+  phylogenetics: Phylogenetics
+  hi_c: null
+  spatial_epigenomics: null
+  multi_omics_integration: Multiomics
+  single_cell_multiome: null
+  spatial_multiomics: null
+  perturb_seq: null
+  immune_repertoire_sequencing: Immunoinformatics
+  metagenomic_functional_profiling: Metagenomics
+  metagenome_binning: null
+  metatranscriptomics: Metatranscriptomics
