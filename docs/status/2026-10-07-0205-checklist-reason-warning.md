@@ -5,3 +5,10 @@
 - 실행한 것: 바꾼 모듈을 import하는 test 파일 43개 1645 passed·4 skipped, 전체 suite 4197 passed·55 skipped, `node tests/web_checklist_skip.cjs`, `scripts/check_public.sh`.
 - 미해결: 없음. manual의 기존 점검표 문단은 topic-papers PR과의 충돌을 줄이려고 손대지 않았다(새 문단은 절 끝).
 - 근거: `tests/test_topic_checklists_precedents.py`, `tests/web_checklist_skip.cjs`.
+
+### 리뷰 반영 (35f62e7)
+
+- 재계획: `with_checklist_skip_warnings`가 옛 `점검 못 함` 경고를 지우고 현재 점검표 것만 붙인다. 이제 하는 점검의 경고가 남거나 이유가 바뀐 항목이 두 건으로 세어지지 않는다.
+- 웹 피드: 같은 요청에서 이미 보인 생략 경고는 재계획 `request.plan`에서 다시 올리지 않는다.
+- 재시작: #446 전에 CP1 승인된 연구 계획의 자리표시 이유(`not_applicable: none` 등)는 실패 대신 요청의 `checklist_reasonless`에 남긴다. 동결 계획은 hash 때문에 바꾸지 않는다.
+- 실행한 것: 바꾼 모듈을 import하는 test 파일 44개 1704 passed·6 skipped, 전체 suite 4199 passed·55 skipped, `node tests/web_checklist_skip.cjs`. 새 test 셋은 옛 코드에서 실패함을 확인했다.
