@@ -14,8 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:48 | [`195418c`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/195418c) | CLI stderr의 옛 환경 서명은 권한 거부·승인·예산 같은 명시적 원인에 양보하고, Antigravity 오류 객체의 message와 직원 CLI 실행 파일 누락(executable not found)도 환경 문제로 잡는다 (#35) |
 | 17:45 | [`c695ab8`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/c695ab8) | 주석 MCP가 도구 호출 사이에도 서비스별 요청 간격을 지킨다(리뷰 반영) |
 | 17:31 | [`6a43504`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/6a43504) | labhq_annot 리뷰 반영: ClinVar가 VCF indel을 구간으로 찾고 repeat 안 같은 allele을 exact로 맞춘다. gnomAD chrM은 mtDNA query로, gnomAD 캐시는 30일. 같은 요청을 반복해도 앞 결과 파일을 덮어쓰지 않는다 |
+| 17:29 | [`c3be2fa`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/c3be2fa) | 환경 서명이 한국어 Windows 문구를 잡고, 인용만 한 줄·건너뛴 단계·이미 넘어간 실패 명령·timeout 같은 일시 오류는 환경 문제로 세지 않는다 (#35) |
+| 17:14 | [`9f3b7f0`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/9f3b7f0) | 단계 실패에 environment 종류와 오류 서명 표를 넣고, 재시도 대신 "환경 문제: 원인 — 할 일"을 웹·보고서·labhq status에 보인다 (#35) |
 | 17:10 | [`cd9e439`](https://github.com/ehojune/bioinfo-team-3d/pull/449/commits/cd9e439) | labhq_annot MCP: 직원이 변이를 Ensembl VEP·gnomAD·ClinVar에서 조회하고, 결과마다 DB 판본·조회 시각·요청 hash를 남긴다(한도 지킴·캐시) |
 | 16:28 | [`e1a4aac`](https://github.com/ehojune/bioinfo-team-3d/pull/445/commits/e1a4aac) | 모든 계획이 결과 종류별 공개 자원 목록(public_resources.tsv)을 참고로 받고, 목록 밖 자원도 필요하면 계획하며 조회 자원의 판본을 기록한다 |
 | 14:45 | [`e61f997`](https://github.com/ehojune/bioinfo-team-3d/pull/444/commits/e61f997) | HANDOFF 작업 큐와 PI 결정을 10-06 오후 상태로 갱신(#382 안 A, |
