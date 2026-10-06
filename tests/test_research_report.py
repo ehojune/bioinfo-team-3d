@@ -10,6 +10,7 @@ from tests.test_research_cp2 import CP1, _interrupt, _settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
 APPROVE = {"approved": True, "choice": "approve", "note": ""}
+DECLINE = {"approved": False, "note": ""}  # the continuation card after a revise (#90)
 ACCEPT = {"verdict": "accept", "issues": [
     {"step_id": "s1", "claim_id": "c1", "priority": "P2", "category": "no_comparator",
      "evidence_quote": "donor-level effect", "problem": "no external cohort", "request": "state the single cohort"}]}
@@ -64,7 +65,7 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
     hub.agents["sci_reviewer"] = {"id": "sci_reviewer", "name": "sci_reviewer", "role": "test", "engine": "mock"}
-    decisions = [CP1, APPROVE]
+    decisions = [CP1, APPROVE, DECLINE]
 
     async def approval(**kwargs):
         hub.approvals.append(kwargs)
@@ -239,6 +240,13 @@ async def test_review_revise_ends_the_request_without_a_report():
     assert report.index("the file has no effect column") < report.index("wording")  # P1 before P3
     assert "new CP1 approval" in report
     assert "report_check" not in req["research_contract"]
+    # The PI was offered a continuation and declined it: the request ends as before (#90).
+    card = hub.approvals[-1]
+    assert card["kind"] == "research_continue" and card["detail"]["round"] == 2
+    assert [issue["priority"] for issue in card["detail"]["p1_issues"]] == ["P1"]
+    assert "PI가 새 CP1로 이어 가기를 거절했습니다." in report
+    assert req["research_contract"]["continue_decision"]["decision"] == "declined"
+    assert "rounds" not in req["research_contract"] or req["research_contract"]["rounds"] == []
 
 
 @pytest.mark.asyncio

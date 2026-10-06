@@ -48,7 +48,7 @@
 | v0.25 | 운영 | #435 | PI 소통 창구(2): 결정 대기와 진행 보고. #298은 2026-10-06에 닫고 남은 일을 옮김 |
 | v0.25 | 실측 | #276 #37 | 실제 Codex 장시간 MCP probe, 로그의 token 노출(폰 원격 접속은 보류) |
 | v0.25 | 진행 | #382 | Windows에서 두 CODEX_HOME의 sandbox 재설정 반복. 10-06 새벽 UAC 창 27개가 쌓여 Codex 셸이 무기한 멈춤(PI가 05:40쯤 승인). 멈춤 경고는 #433. 원인: 한 PC에 elevated 홈이 둘. PI 결정 A(직원 홈만 elevated, 10-06): PI가 Codex 설정 변경·직원 홈 준비 한 번. 탐지는 #437(낡은 직원 홈은 실행 전 거부, doctor). 남은 것: 개인 경로를 Codex deny-read로(브랜치 준비, A 적용 뒤 canary 실측) |
-| v0.5 | 1/2 | #90 #58 | 실제 CLI 연구 lane 완주: 10차 `research_reported`(앵커 58·문제 0, `labhq verify` exit 0). 두 번째 완주가 남음(11차 GSE19804는 리뷰가 문헌 추출 실수를 잡아 revise). #58 ①~⑥ 완료. 남은 것: CP3·CP4, revise 뒤 이어 가기(새 CP1에 리뷰 지적·완료 단계 재사용) |
+| v0.5 | 1/2 | #90 #58 | 실제 CLI 연구 lane 완주: 10차 `research_reported`(앵커 58·문제 0, `labhq verify` exit 0). 두 번째 완주가 남음(11차 GSE19804는 리뷰가 문헌 추출 실수를 잡아 revise). #58 ①~⑥ 완료. revise 뒤 이어 가기(새 CP1에 리뷰 P1·완료 단계 재사용)는 research-revise-continue PR. 남은 것: CP3·CP4, 이어 가기 실측 |
 | v0.5 | 진행 | #423 | 재현성: inputs/ 링크·미보고 산출·`link_inputs.py`(#429), 묶음 재현 등급(#431), 환경 기록 규칙(#432) 병합. 입력 sha256(#442: 실행 전 hash, cache는 파일 ID까지). 남은 것: `rerun_verified` |
 | v0.5 | 진행 | #420 | topic 확장: 출처 133개 조사(#439), PI A로 23개 채택(#440, topic 43개, 상한 없음, 프롬프트엔 이름만). 남은 것: 새 23개 topic 점검표(근거 문헌, PI 검토) |
 | v0.5 | 다음 | #35 | 시설팀: PI 결정 A(내부 구조, A2A는 #79 때). 1단계 #433 병합. 다음: environment 실패 종류·오류 서명 표(Codex 레인 지시서 준비) → 시설팀 직원(Codex read-only)과 `facilities_fix` allowlist |

@@ -408,6 +408,8 @@ class ResearchSettings(BaseModel):
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     result_corrections: int = Field(default=2, ge=0)  # retry only invalid result JSON; never rerun the step
     finish_turns: int = Field(default=1, ge=0)  # a step past its turn limit continues once with half the limit
+    # After a review "revise", the PI may continue through a new CP1 this many times per request; 0 ends at revise.
+    revise_continuations: int = Field(default=2, ge=0)
     pack_dirs: list[str] = []
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan
 
