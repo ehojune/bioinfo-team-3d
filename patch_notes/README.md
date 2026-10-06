@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 20:11 | [`5676cd7`](https://github.com/ehojune/bioinfo-team-3d/pull/450/commits/5676cd7) | Windows에서 AlphaGenome 키 폴더와 파일의 ACL을 현재 계정 항목 하나로 통째로 새로 쓴다. 폴더에 미리 있던 명시 항목(SYSTEM·Administrators 등) 때문에 CI runner에서 키 저장이 거부되던 문제를 고쳤다 |
+| 19:49 | [`fc3e403`](https://github.com/ehojune/bioinfo-team-3d/pull/450/commits/fc3e403) | ChIP-Atlas request_id에 제출 때 release를 묶어, 그 사이 갱신됐으면 제출 때 release로 기록하고 캐시하지 않는다. AlphaGenome client 호출은 매번 새 daemon thread에서 돌고, 시간이 초과돼 멈춘 thread가 4개 쌓이면 새 호출을 바로 거부한다 |
+| 19:18 | [`2a1ba2d`](https://github.com/ehojune/bioinfo-team-3d/pull/450/commits/2a1ba2d) | AlphaGenome 구간은 요청 구간만 요약하고 연결 시간 제한·전용 thread·기본 100KB를 둔다. GTEx는 조직마다 eQTL을 받고, ChIP-Atlas request_id는 입력과 묶어 확인하며, 키 파일 폴더가 공용이면 저장을 거부한다 |
+| 18:32 | [`efa23b0`](https://github.com/ehojune/bioinfo-team-3d/pull/450/commits/efa23b0) | labhq_annot에 ChIP-Atlas(enrichment·target genes)·ENCODE cCRE·GTEx 조회와 AlphaGenome 예측을 더한다. AlphaGenome 키는 labhq init이 한 번 묻고 runner 계정만 읽는 파일에 둔다(없으면 도구 미등록) |
 | 18:31 | [`1a0e1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/448/commits/1a0e1c8) | 실행 전에 끝난 이어 가기에서 계획 task 결과는 단계 결과가 아니라 진단 기록에 남긴다(리뷰 반영) |
 | 18:19 | [`6d98308`](https://github.com/ehojune/bioinfo-team-3d/pull/448/commits/6d98308) | 이어 가기에서 재사용한 결과는 새 계획에 다시 묶여 CP2·verify를 통과하고, pack 정의가 바뀌면 모든 단계가 다시 돈다. 실행 전에 끝나면 이전 차수 계획과 승인까지 되돌린다. |
 | 17:48 | [`195418c`](https://github.com/ehojune/bioinfo-team-3d/pull/447/commits/195418c) | CLI stderr의 옛 환경 서명은 권한 거부·승인·예산 같은 명시적 원인에 양보하고, Antigravity 오류 객체의 message와 직원 CLI 실행 파일 누락(executable not found)도 환경 문제로 잡는다 (#35) |
