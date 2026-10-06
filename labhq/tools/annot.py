@@ -2,8 +2,10 @@
 
 Every result carries `source: {db, release_or_version, url, queried_at, request_sha256}`. The same record, without
 the input variants (only their count and the request hash), is appended to the task's
-`outputs/annotation_queries.jsonl`; the full database answer goes to `outputs/annotation/<tool>-<hash>.json`.
-Answers are cached per (tool, release, options, variant) under the runner state folder, so a new release asks again.
+`outputs/annotation_queries.jsonl`; the full database answer goes to
+`outputs/annotation/<tool>-<request hash>-<content hash>.json`, so a repeated request never overwrites an earlier one.
+Answers are cached per (tool, release, options, variant) under the runner state folder, so a new release asks again;
+gnomAD answers also expire after 30 days.
 
 Variants from restricted zones are looked up like any other (PI decision 2026-10-06): no warning, approval or refusal.
 
@@ -13,6 +15,8 @@ API formats and limits (checked 2026-10-06):
 - gnomAD GraphQL (https://gnomad.broadinstitute.org/api): `variant(variantId|rsid, dataset)`, one variant per
   query; the gnomAD team asks for at most 10 queries per minute.
 - NCBI E-utilities: 3 requests per second without an API key. ClinVar build and last update from einfo.
+  A VCF-style allele is searched by its span (`a:b[chrpos38]`); ClinVar indexes an indel from its first changed base.
+- gnomAD serves mtDNA through `mitochondrial_variant(variant_id, dataset)`; `variant` answers "not found" for chrM.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ VEP_BATCH = 200  # Ensembl's POST limit for vep/:species/{region,hgvs,id}
 VEP_OPTIONS = {"canonical": 1, "hgvs": 1, "mane": 1}
 GNOMAD_MAX_PER_CALL = 50  # 10 queries per minute: 50 new variants take about 5 minutes
 CLINVAR_MAX_PER_CALL = 200
-CLINVAR_RETMAX = 20
+CLINVAR_RETMAX = 50  # a span search near a hotspot (BRCA1 c.68_69del) returns about 20 records
 ESUMMARY_BATCH = 100
 MIN_INTERVAL_S = {"ensembl": 1 / 15, "gnomad": 6.0, "ncbi": 1 / 3}
 RETRY_STATUS = frozenset({429, 502, 503, 504})
@@ -51,7 +55,10 @@ MAX_ATTEMPTS = 5
 MAX_WAIT_S = 120.0  # a Retry-After longer than this (an hourly quota spent) fails the lookup instead of waiting
 
 # Part of every cache key: raise it when a query or answer shape changes, so old answers are not reused.
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2
+# gnomAD names no release finer than the dataset ID and has republished data under one ID (v4.0 to v4.1), so its
+# answers also age out.
+CACHE_MAX_AGE_S = {"gnomad": 30 * 24 * 3600.0}
 QUERY_LOG = "outputs/annotation_queries.jsonl"
 RESULT_DIR = "outputs/annotation"
 
@@ -121,6 +128,19 @@ def _sha256(value: object) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _age_s(queried_at: object) -> float | None:
+    """Seconds since a `_now()` stamp; None when it is missing or unreadable."""
+    if not isinstance(queried_at, str):
+        return None
+    try:
+        then = datetime.fromisoformat(queried_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        return None
+    return (datetime.now(timezone.utc) - then).total_seconds()
 
 
 def _retry_after(response: httpx.Response) -> float | None:
@@ -194,7 +214,14 @@ class Cache:
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        return value if isinstance(value, dict) and "answer" in value else None
+        if not isinstance(value, dict) or "answer" not in value:
+            return None
+        max_age = CACHE_MAX_AGE_S.get(tool)
+        if max_age is not None:
+            age = _age_s(value.get("queried_at"))
+            if age is None or age > max_age:
+                return None
+        return value
 
     def put(self, tool: str, key: str, answer: object, queried_at: str) -> None:
         path = self._path(tool, key)
@@ -293,12 +320,17 @@ class Annotator:
     def _record(self, tool: str, source: dict, counts: dict, full: dict) -> dict:
         if self.workdir is None:
             return {"record_error": "LABHQ_WORKDIR가 없어 기록하지 않았습니다"}
-        relative = f"{RESULT_DIR}/{tool}-{source['request_sha256'][:12]}.json"
+        text = json.dumps(full, ensure_ascii=False, indent=1) + "\n"
+        result_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        # Named by content too: a repeated request (same inputs, newer release or time) gets its own file, so every
+        # log line keeps pointing at the answer it describes.
+        relative = f"{RESULT_DIR}/{tool}-{source['request_sha256'][:12]}-{result_sha256[:12]}.json"
         try:
-            write_owned(self.workdir, relative, json.dumps(full, ensure_ascii=False, indent=1) + "\n")
+            write_owned(self.workdir, relative, text)
             # Only counts and the request hash: the variant list stays in the result file above, not the log.
             append_owned(self.workdir, QUERY_LOG, json.dumps(
-                {"tool": tool, **source, **counts, "result_file": relative}, ensure_ascii=False) + "\n")
+                {"tool": tool, **source, **counts, "result_file": relative, "result_sha256": result_sha256},
+                ensure_ascii=False) + "\n")
         except (OwnedPathError, OSError) as exc:
             return {"record_error": f"조회 기록을 남기지 못했습니다: {exc}"}
         return {"full_result": relative, "query_log": QUERY_LOG}
@@ -446,13 +478,16 @@ class Annotator:
 
     async def _gnomad_one(self, variant: Variant, dataset: str) -> dict:
         variables: dict[str, Any] = {"dataset": dataset}
+        query, field = GNOMAD_QUERY, "variant"
         if variant.kind == "rsid":
             variables["rsid"] = variant.key
+        elif variant.chrom == "MT":  # the nuclear `variant` query answers "not found" for every chrM variant
+            query, field = GNOMAD_MITO_QUERY, "mitochondrial_variant"
+            variables["variantId"] = f"M-{variant.pos}-{variant.ref}-{variant.alt}"
         else:
-            chrom = "M" if variant.chrom == "MT" else variant.chrom
-            variables["variantId"] = f"{chrom}-{variant.pos}-{variant.ref}-{variant.alt}"
+            variables["variantId"] = f"{variant.chrom}-{variant.pos}-{variant.ref}-{variant.alt}"
         response = await self.http.request("gnomad", "POST", GNOMAD_URL,
-                                           json={"query": GNOMAD_QUERY, "variables": variables},
+                                           json={"query": query, "variables": variables},
                                            headers={"Content-Type": "application/json"})
         try:
             body = response.json()
@@ -461,9 +496,9 @@ class Annotator:
         if not isinstance(body, dict):
             raise LookupFailed(f"HTTP {response.status_code}, 알 수 없는 응답")
         errors = [str(e.get("message", e)) if isinstance(e, dict) else str(e) for e in body.get("errors") or []]
-        variant_data = (body.get("data") or {}).get("variant") if isinstance(body.get("data"), dict) else None
+        variant_data = (body.get("data") or {}).get(field) if isinstance(body.get("data"), dict) else None
         if variant_data:
-            return {"found": True, "variant": variant_data}
+            return {"found": True, field: variant_data}
         if errors and all("not found" in message.lower() for message in errors):
             return {"found": False}
         if errors:
@@ -583,6 +618,11 @@ GNOMAD_QUERY = (
     "variant(variantId: $variantId, rsid: $rsid, dataset: $dataset) { "
     "variant_id reference_genome chrom pos ref alt rsids "
     f"exome {{ {GNOMAD_FIELDS} }} genome {{ {GNOMAD_FIELDS} }} }} }}")
+# Checked live 2026-10-06: gnomad_r4 and gnomad_r3 serve the v3.1 mtDNA calls; gnomad_r2_1 answers with an error.
+GNOMAD_MITO_QUERY = (
+    "query LabhqMitoVariant($variantId: String!, $dataset: DatasetId!) { "
+    "mitochondrial_variant(variant_id: $variantId, dataset: $dataset) { "
+    "variant_id reference_genome pos ref alt rsids filters an ac_het ac_hom max_heteroplasmy } }")
 
 
 def _vep_entry(variant: Variant, token: str) -> str:
@@ -641,6 +681,17 @@ def _gnomad_summary(item: Item) -> dict:
     answer = item.answer if isinstance(item.answer, dict) else {}
     if not answer.get("found"):
         return {"found": False, "meaning": "이 dataset에서 관찰되지 않았습니다(조회는 성공)"}
+    mito = answer.get("mitochondrial_variant")
+    if isinstance(mito, dict):
+        an = mito.get("an")
+
+        def share(count: object) -> float | None:
+            return count / an if isinstance(count, int) and isinstance(an, int) and an else None
+        return {"found": True, "variant_id": mito.get("variant_id"), "rsids": mito.get("rsids") or [],
+                "mitochondrial": {"an": an, "ac_het": mito.get("ac_het"), "ac_hom": mito.get("ac_hom"),
+                                  "af_het": share(mito.get("ac_het")), "af_hom": share(mito.get("ac_hom")),
+                                  "max_heteroplasmy": mito.get("max_heteroplasmy"),
+                                  "filters": mito.get("filters") or []}}
     variant = answer.get("variant") or {}
     exome, genome = _frequency(variant.get("exome")), _frequency(variant.get("genome"))
     ac = sum(x["ac"] for x in (exome, genome) if x and isinstance(x["ac"], int))
@@ -652,7 +703,9 @@ def _gnomad_summary(item: Item) -> dict:
 def _clinvar_term(variant: Variant, assembly: str) -> str:
     if variant.kind == "vcf":
         field = "chrpos38" if assembly == "GRCh38" else "chrpos37"
-        return f"{variant.chrom}[chr] AND {variant.pos}[{field}]"
+        start, end = _clinvar_span(variant)
+        where = f"{start}[{field}]" if start == end else f"{start}:{end}[{field}]"
+        return f"{variant.chrom}[chr] AND {where}"
     if variant.kind == "rsid":
         return variant.key
     if variant.kind == "vcv":  # [clv_acc] finds no VCV accession (checked 2026-10-06); all fields does
@@ -660,12 +713,50 @@ def _clinvar_term(variant: Variant, assembly: str) -> str:
     return f'"{variant.key}"[varnam]'
 
 
+def _clinvar_span(variant: Variant) -> tuple[int, int]:
+    """1-based positions to search. ClinVar indexes an indel from its first changed base, not from the VCF padding
+    base (c.68_69del at 17:43124027:ACT:A is found at 43124028-43124029, checked 2026-10-06). The span keeps the
+    padding base and one base after the reference allele, so an insertion's flanking bases are covered too."""
+    if len(variant.ref) == len(variant.alt):
+        return variant.pos, variant.pos + len(variant.ref) - 1
+    return variant.pos, variant.pos + len(variant.ref)
+
+
+def _trim(pos0: int, deleted: str, inserted: str) -> tuple[int, str, str]:
+    """SPDI-style allele with the shared prefix and then the shared suffix removed."""
+    shared = 0
+    while shared < min(len(deleted), len(inserted)) and deleted[shared] == inserted[shared]:
+        shared += 1
+    pos0, deleted, inserted = pos0 + shared, deleted[shared:], inserted[shared:]
+    while deleted and inserted and deleted[-1] == inserted[-1]:
+        deleted, inserted = deleted[:-1], inserted[:-1]
+    return pos0, deleted, inserted
+
+
 def _spdi_of(variant: Variant) -> tuple[int, str, str]:
     """VCF-style allele as SPDI position (0-based) and trimmed alleles, for comparing with ClinVar canonical_spdi."""
-    shared = 0
-    while shared < min(len(variant.ref), len(variant.alt)) and variant.ref[shared] == variant.alt[shared]:
-        shared += 1
-    return variant.pos - 1 + shared, variant.ref[shared:], variant.alt[shared:]
+    return _trim(variant.pos - 1, variant.ref, variant.alt)
+
+
+def _same_allele(first: tuple[int, str, str], second: tuple[int, str, str]) -> bool:
+    """Whether two SPDI alleles make the same sequence. The reference over both spans comes from their deleted
+    bases, so a left-aligned input matches ClinVar's fully justified repeat indel (CTCT>CT) without a genome."""
+    (p, d, i), (q, e, j) = first, second
+    lo, hi = min(p, q), max(p + len(d), q + len(e))
+    reference: list[str | None] = [None] * (hi - lo)
+    for start, bases in ((p, d), (q, e)):
+        for offset, base in enumerate(bases):
+            slot = start - lo + offset
+            if reference[slot] not in (None, base):
+                return False
+            reference[slot] = base
+    if any(base is None for base in reference):
+        return False  # the two edits do not touch: different variants
+    sequence = "".join(base for base in reference if base is not None)
+
+    def apply(start: int, length: int, inserted: str) -> str:
+        return sequence[:start - lo] + inserted + sequence[start - lo + length:]
+    return apply(p, len(d), i) == apply(q, len(e), j)
 
 
 def _classification(doc: dict, field: str) -> dict | None:
@@ -697,12 +788,14 @@ def _clinvar_record(doc: dict, variant: Variant, assembly: str) -> dict:
     if spdi:
         record["canonical_spdi"] = spdi
     if variant.kind == "vcf":
-        exact = False
+        # canonical_spdi is GRCh38 only, so a GRCh37 search cannot compare alleles.
+        record["match"] = "not_compared"
         if assembly == "GRCh38" and isinstance(spdi, str) and spdi.count(":") == 3:
             _seq, pos0, deleted, inserted = spdi.split(":")
-            exact = pos0.isdigit() and (int(pos0), deleted.upper(), inserted.upper()) == _spdi_of(variant)
-        # ClinVar's canonical SPDI is GRCh38 and fully justified: an indel in a repeat may differ from the input.
-        record["match"] = "exact" if exact else "same_position"
+            if pos0.isdigit():
+                # Untrimmed on purpose: the justified span holds the whole repeat the input may sit anywhere in.
+                same = _same_allele((int(pos0), deleted.upper(), inserted.upper()), _spdi_of(variant))
+                record["match"] = "exact" if same else "other_allele"
     return record
 
 
@@ -716,6 +809,15 @@ def _clinvar_summary(item: Item, assembly: str) -> dict:
     out: dict[str, Any] = {"found": bool(records), "count": answer.get("count", len(records)), "records": records}
     if not records:
         out["meaning"] = "ClinVar에 이 검색어로 등록된 항목이 없습니다(조회는 성공)"
+    elif item.variant.kind == "vcf" and assembly == "GRCh38":
+        out["exact_match"] = any(r.get("match") == "exact" for r in records)
+        if not out["exact_match"]:
+            out["meaning"] = ("입력 allele과 같은 ClinVar 항목은 없습니다. records는 같은 구간의 다른 변이입니다"
+                              "(조회는 성공)")
+    elif item.variant.kind == "vcf":
+        out["meaning"] = "GRCh37 위치 검색은 allele을 비교하지 않습니다. records의 title로 같은 변이인지 확인하세요"
     if isinstance(out["count"], int) and out["count"] > len(records):
         out["truncated"] = f"검색 결과 {out['count']}개 중 {len(records)}개만 가져왔습니다"
+        if out.get("exact_match") is False:
+            out["truncated"] += ". 같은 변이가 나머지에 있을 수 있으니 HGVS나 rsID로 다시 찾으세요"
     return out

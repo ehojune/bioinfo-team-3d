@@ -1,5 +1,6 @@
 """labhq_annot (#435 C ②): Ensembl VEP, gnomAD and ClinVar lookups with every HTTP call faked."""
 
+import hashlib
 import json
 import os
 import sys
@@ -186,6 +187,16 @@ def gnomad_handler(seen):
         body = json.loads(request.content)
         seen.append(body["variables"])
         variables = body["variables"]
+        if "mitochondrial_variant" in body["query"]:  # gnomAD's mtDNA query (live answer for m.3243A>G, 2026-10-06)
+            if variables.get("variantId") == "M-3243-A-G":
+                return httpx.Response(200, json={"data": {"mitochondrial_variant": {
+                    "variant_id": "M-3243-A-G", "reference_genome": "GRCh38", "pos": 3243, "ref": "A", "alt": "G",
+                    "rsids": ["rs199474657"], "filters": [], "an": 56383, "ac_het": 6, "ac_hom": 0,
+                    "max_heteroplasmy": 0.464}}})
+            return httpx.Response(200, json={"errors": [{"message": "Variant not found"}],
+                                             "data": {"mitochondrial_variant": None}})
+        if variables.get("variantId", "").startswith("M-"):
+            return httpx.Response(200, json={"errors": [{"message": "Variant not found"}], "data": {"variant": None}})
         if variables.get("variantId") == "1-55051215-G-GA" or variables.get("rsid") == "rs121908120":
             population = [{"id": "afr", "ac": 1, "an": 100, "homozygote_count": 0, "hemizygote_count": 0},
                           {"id": "XX", "ac": 1, "an": 60, "homozygote_count": 0, "hemizygote_count": 0},
@@ -236,6 +247,37 @@ async def test_gnomad_caps_new_lookups_per_call_and_retries(tmp_path, monkeypatc
     assert clock.sleeps.count(10.0) == annot.MAX_ATTEMPTS - 1
 
 
+async def test_gnomad_sends_mitochondrial_variants_to_the_mtdna_query(tmp_path):
+    seen = []
+    annotator, calls, _clock = make(gnomad_handler(seen), tmp_path)
+    result = await annotator.gnomad(["chrM:3243:A:G", "MT:3244:A:T", "1:55051215:G:GA"])
+    melas, absent, nuclear = result["results"]
+    assert melas["found"] is True and melas["rsids"] == ["rs199474657"]
+    assert melas["mitochondrial"]["ac_het"] == 6 and melas["mitochondrial"]["af_het"] == pytest.approx(6 / 56383)
+    assert melas["mitochondrial"]["max_heteroplasmy"] == 0.464 and melas["mitochondrial"]["af_hom"] == 0
+    assert absent["ok"] and absent["found"] is False and nuclear["found"] is True
+    queries = [json.loads(c.content)["query"] for c in calls]
+    assert ["mitochondrial_variant(" in q for q in queries] == [True, True, False]
+    assert seen[0] == {"dataset": "gnomad_r4", "variantId": "M-3243-A-G"}
+
+
+async def test_gnomad_cache_ages_out_because_the_dataset_id_is_its_only_release(tmp_path):
+    seen = []
+    first, _calls, _clock = make(gnomad_handler(seen), tmp_path)
+    await first.gnomad(["3:1:A:G", "3:2:A:G"])
+    again, _calls, _clock = make(gnomad_handler(seen), tmp_path)
+    assert (await again.gnomad(["3:1:A:G", "3:2:A:G"]))["n_cached"] == 2 and len(seen) == 2
+    entries = sorted((tmp_path / "cache" / "gnomad").rglob("*.json"))
+    assert len(entries) == 2
+    stale = json.loads(entries[0].read_text(encoding="utf-8"))
+    stale["queried_at"] = "2026-01-01T00:00:00Z"  # older than the 30-day limit
+    entries[0].write_text(json.dumps(stale), encoding="utf-8")
+    later, _calls, _clock = make(gnomad_handler(seen), tmp_path)
+    result = await later.gnomad(["3:1:A:G", "3:2:A:G"])
+    assert result["n_cached"] == 1 and len(seen) == 3  # only the aged entry is asked again
+    assert annot.CACHE_MAX_AGE_S["gnomad"] == 30 * 24 * 3600 and "clinvar" not in annot.CACHE_MAX_AGE_S
+
+
 def clinvar_handler(lastupdate="2026/10/05 03:12", terms=None):
     docs = {
         "17661": {"uid": "17661", "accession": "VCV000017661", "title": "NM_007294.4(BRCA1):c.5096G>A (p.Arg1699Gln)",
@@ -247,7 +289,15 @@ def clinvar_handler(lastupdate="2026/10/05 03:12", terms=None):
         "99": {"uid": "99", "accession": "VCV000000099", "title": "other allele at the same position",
                "germline_classification": {"description": "Benign"},
                "variation_set": [{"canonical_spdi": "NC_000017.11:43045711:T:G"}]},
+        # BRCA1 c.68_69del as ClinVar holds it (live 2026-10-06): fully justified over the CTCT repeat.
+        "17662": {"uid": "17662", "accession": "VCV000017662", "title": "NM_007294.4(BRCA1):c.68_69del (p.Glu23fs)",
+                  "germline_classification": {"description": "Pathogenic"},
+                  "variation_set": [{"canonical_spdi": "NC_000017.11:43124027:CTCT:CT"}]},
+        "55667": {"uid": "55667", "accession": "VCV000055667", "title": "another variant at the padding base",
+                  "germline_classification": {"description": "Uncertain significance"},
+                  "variation_set": [{"canonical_spdi": "NC_000017.11:43124026:A:G"}]},
     }
+    span = ["55667", "17662"]
 
     def handler(request):
         query = {k: v[0] for k, v in parse_qs(request.url.query.decode()).items()}
@@ -260,7 +310,12 @@ def clinvar_handler(lastupdate="2026/10/05 03:12", terms=None):
             if terms is not None:
                 terms.append(query["term"])
             ids = {"17[chr] AND 43045712[chrpos38]": ["17661", "99"], "rs80357906": ["17661"],
-                   "VCV000017661": ["17661"]}.get(query["term"], [])
+                   "VCV000017661": ["17661"],
+                   # The padding base alone (43124027) does not find 17662; the span does.
+                   "17[chr] AND 43124027[chrpos38]": ["55667"],
+                   "17[chr] AND 43124027:43124030[chrpos38]": span,
+                   "17[chr] AND 43124029:43124032[chrpos38]": span,
+                   "17[chr] AND 41276044:41276047[chrpos37]": span}.get(query["term"], [])
             return httpx.Response(200, json={"esearchresult": {"count": str(len(ids)), "idlist": ids}})
         if name == "esummary.fcgi":
             ids = query["id"].split(",")
@@ -275,7 +330,7 @@ async def test_clinvar_classifications_with_version_and_match(tmp_path):
     result = await annotator.clinvar(["17:43045712:T:C", "rs80357906", "VCV000017661", "17661", "3:5:A:G", "??"])
     assert result["source"]["release_or_version"] == "ClinVar Build261005-0312.1, last update 2026/10/05 03:12"
     rows = result["results"]
-    assert [r["match"] for r in rows[0]["records"]] == ["exact", "same_position"]
+    assert [r["match"] for r in rows[0]["records"]] == ["exact", "other_allele"] and rows[0]["exact_match"] is True
     top = rows[0]["records"][0]
     assert top["germline_classification"]["description"] == "Pathogenic" and top["genes"] == ["BRCA1"]
     assert top["traits"] == ["Hereditary breast ovarian cancer"]
@@ -287,6 +342,42 @@ async def test_clinvar_classifications_with_version_and_match(tmp_path):
     assert all(s == pytest.approx(1 / 3) for s in clock.sleeps) and clock.sleeps  # 3 requests a second
 
 
+async def test_clinvar_vcf_deletion_searches_its_span_and_matches_the_justified_allele(tmp_path):
+    terms = []
+    annotator, _calls, _clock = make(clinvar_handler(terms=terms), tmp_path)
+    # Left-aligned and right-shifted forms of c.68_69del, then a 1 bp deletion in the same repeat.
+    result = await annotator.clinvar(["17:43124027:ACT:A", "17:43124029:TCT:T", "17:43124027:ACT:AC"])
+    assert terms == ["17[chr] AND 43124027:43124030[chrpos38]", "17[chr] AND 43124029:43124032[chrpos38]",
+                     "17[chr] AND 43124027:43124030[chrpos38]"]
+    left, right, other = result["results"]
+    for row in (left, right):
+        assert row["exact_match"] is True and "meaning" not in row
+        assert [(r["accession"], r["match"]) for r in row["records"]] == [("VCV000017662", "exact"),
+                                                                        ("VCV000055667", "other_allele")]
+    assert other["found"] is True and other["exact_match"] is False and "같은 ClinVar 항목은 없습니다" in other["meaning"]
+    assert {r["match"] for r in other["records"]} == {"other_allele"}
+    grch37 = await annotator.clinvar(["17:41276044:ACT:A"], assembly="GRCh37")
+    row = grch37["results"][0]
+    assert terms[-1] == "17[chr] AND 41276044:41276047[chrpos37]"
+    assert {r["match"] for r in row["records"]} == {"not_compared"} and "exact_match" not in row
+    assert "GRCh37" in row["meaning"]
+
+
+def test_same_allele_handles_repeats_duplications_and_distinct_edits():
+    # ClinVar NC_000017.11:43057062:GGG:GGGG (c.5266dup) against a left- or right-aligned VCF insertion.
+    dup = (43057062, "GGG", "GGGG")
+    assert annot._same_allele(dup, annot._spdi_of(annot.parse_variant("17:43057062:T:TG")))
+    assert annot._same_allele(dup, (43057065, "", "G"))
+    assert not annot._same_allele(dup, (43057062, "", "GG"))
+    assert not annot._same_allele(dup, (43057062, "", "C"))
+    longer = (100, "CTCTCT", "CTCT")  # a CT deletion anywhere in a three-unit repeat
+    assert annot._same_allele(longer, (100, "CT", "")) and annot._same_allele(longer, (104, "CT", ""))
+    assert not annot._same_allele(longer, (101, "T", ""))  # a 1 bp deletion is another variant
+    assert not annot._same_allele((10, "A", "G"), (20, "A", "G"))  # edits that do not touch
+    assert not annot._same_allele((10, "A", "G"), (10, "C", "G"))  # the two disagree on the reference
+    assert annot._spdi_of(annot.parse_variant("1:100:ACT:AT")) == (100, "C", "")  # prefix and suffix trimmed
+
+
 async def test_clinvar_cache_follows_the_clinvar_update(tmp_path):
     terms = []
     first, _calls, _clock = make(clinvar_handler(terms=terms), tmp_path)
@@ -295,6 +386,23 @@ async def test_clinvar_cache_follows_the_clinvar_update(tmp_path):
     assert (await same.clinvar(["rs80357906"]))["n_cached"] == 1 and len(terms) == 1
     updated, _calls, _clock = make(clinvar_handler(lastupdate="2026/10/12 03:10", terms=terms), tmp_path)
     assert (await updated.clinvar(["rs80357906"]))["n_cached"] == 0 and len(terms) == 2
+
+
+async def test_repeated_request_keeps_each_answer_its_log_line_cites(tmp_path):
+    first, _calls, _clock = make(clinvar_handler(), tmp_path)
+    one = await first.clinvar(["rs80357906"])
+    updated, _calls, _clock = make(clinvar_handler(lastupdate="2026/10/12 03:10"), tmp_path)
+    two = await updated.clinvar(["rs80357906"])
+    assert one["source"]["request_sha256"] == two["source"]["request_sha256"]
+    assert one["full_result"] != two["full_result"]
+    lines = [json.loads(line) for line in
+             (tmp_path / "work" / annot.QUERY_LOG).read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 2
+    for line in lines:
+        text = (tmp_path / "work" / line["result_file"]).read_text(encoding="utf-8")
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest() == line["result_sha256"]
+        assert json.loads(text)["source"]["release_or_version"] == line["release_or_version"]
+    assert "2026/10/05" in lines[0]["release_or_version"] and "2026/10/12" in lines[1]["release_or_version"]
 
 
 async def test_unreachable_service_fails_the_call(tmp_path):
