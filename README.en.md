@@ -102,7 +102,7 @@ The CSO writes a domain tag (topic key) on every plan. The key is picked from th
 
 <sub>Evidence: [#390](https://github.com/ehojune/bioinfo-team-3d/pull/390) (topic required, 100-key vocabulary) · [#369](https://github.com/ehojune/bioinfo-team-3d/issues/369) (a bypass where one line in the plan text dropped the domain rules, closed with a topic check)</sub>
 
-<sub>Limits: The checklist covers 20 domains and 60 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402)). The 23 domains added in #420 have no checklist yet. The 17 newly added domains have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
+<sub>Limits: The checklist covers 43 domains and 124 items ([#402](https://github.com/ehojune/bioinfo-team-3d/pull/402), [#420](https://github.com/ehojune/bioinfo-team-3d/issues/420)). The 40 domains beyond the first three have not run on real requests. Whether omissions decreased has not been measured. The semantic model, which uses relations between tags, is a [shadow stage](#annotation-semantics-ontology) that is off by default, and no result shows it beats a plain SQL baseline.</sub>
 
 </details>
 
@@ -169,7 +169,7 @@ Records get meaning in three layers. The lower the layer, the firmer; the higher
 | Semantics | Agreements on what to judge with the tags | Hash freeze of the PI-approved plan (CP1), rule packs per analysis type (single-cell DE, bulk tumor-vs-normal; applied by the request's topic key), a match / mismatch / unknown verdict on whether a step's input fits the method, report evidence anchors |
 | Ontology | Relations between tags | Only a few parent-child relations. The map that groups a finished request into a provenance model ("who made it, and can it be reused") and an object view ("who owns what, and what awaits approval") is computed only as a shadow |
 
-The shadow computation is off by default and only records even when on. `semantics: ab` gives reuse candidates to only half of research requests as a reference in the CSO plan, so the effect can be compared. The vocabulary is being widened to cover bioinformatics requests in general (#375). Details are in the [manual](docs/manual.md#%EC%9D%98%EB%AF%B8-%EB%AA%A8%EB%8D%B8%EA%B3%BC-%EC%98%A8%ED%86%A8%EB%A1%9C%EC%A7%80).
+The shadow computation is off by default and only records even when on. `semantics: ab` gives reuse candidates to only half of research requests as a reference in the CSO plan, so the effect can be compared. The vocabulary is being widened to cover bioinformatics requests in general (#375). Details are in the [manual](docs/manual.md#%EC%9D%98%EB%AF%B8-%EB%AA%A8%EB%8D%B8%EA%B3%BC-%EC%98%A8%ED%86%A8%EB%A1%9C%EC%A7%80); every topic, checklist item and vocabulary key is in the [vocabulary tables](docs/vocabulary.md) (Korean).
 
 ## Getting started on the web
 
@@ -248,6 +248,7 @@ Each version has pass criteria, and meeting them moves it on to the next version
 | [Manual](docs/manual.md) | Readers who want depth: command line, config, safety measures, the research lane, known limits |
 | [PI Q&A](docs/pi-qa.md) | What the PI asked, the answers, and the decisions made |
 | [Research protocol](docs/research_protocol.md) | The research lane's contract and checkpoints |
+| [Vocabulary, topics, checklists](docs/vocabulary.md) (Korean) | Readers who want tables of what each topic is, its checklist, and the key vocabulary terms |
 | [Patch notes](patch_notes/README.md) | What changed |
 | [AGENTS.md](AGENTS.md) · [HANDOFF.md](HANDOFF.md) | Agents developing this repository |
 

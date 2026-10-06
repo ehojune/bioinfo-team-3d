@@ -2,6 +2,7 @@
 
 <root>/<YYYY-MM-DD>/<task_id>_<agent_id>/
   TASK.md          instruction + teammates' context, exactly as sent
+  *.tsv            reference tables the hub sends with the task (task.meta["workspace_files"], e.g. checklists)
   manifest.json    provenance: agent spec hash, engine/model, timings, cost, session, exit
   events.jsonl     every event (audit log)
   jobs.jsonl       HPC jobs submitted from this task
@@ -17,6 +18,7 @@ import logging
 import ntpath
 import os
 import platform
+import re
 import shutil
 import threading
 import time
@@ -39,6 +41,9 @@ INLINE_LIMIT = 48_000  # longer prompts are passed by reference to TASK.md (argv
 # A direct run lists at most this many files: the shadow hashes no more per request (HASH_MAX_FILES, #221).
 OUTPUT_SCAN_MAX_FILES = 200
 TOOL_USE_MATCH_WINDOW_NS = 5_000_000_000
+# A reference table the hub sends with a task: a plain lowercase .tsv name, nothing labhq itself writes (#420).
+REFERENCE_FILE = re.compile(r"^[a-z][a-z0-9_]{0,63}[.]tsv$")
+REFERENCE_FILE_MAX_CHARS = 256_000
 WRITE_TOOLS = frozenset({"Write", "Edit", "Bash", "PowerShell"})
 
 
@@ -217,6 +222,22 @@ class TaskWorkspace:
         self.prompt_pointer = (f"Read {name} in the current directory (it is long) and carry out the instruction "
                                f"there.\n\nInstruction summary: {t.prompt[:2000]}")
         return body if len(body) <= INLINE_LIMIT else self.prompt_pointer
+
+    def write_reference_files(self, files: Any) -> list[str]:
+        """Write the reference tables named in ``task.meta["workspace_files"]`` next to TASK.md (#420).
+
+        The plan prompt names the topic checklist file instead of carrying every topic's checks. Returns the
+        names refused (bad name, not text, too long); a write failure raises like TASK.md does."""
+        if not isinstance(files, dict):
+            return [] if files is None else ["workspace_files is not a mapping"]
+        refused = []
+        for name, text in files.items():
+            if not (isinstance(name, str) and REFERENCE_FILE.fullmatch(name) and isinstance(text, str)
+                    and len(text) <= REFERENCE_FILE_MAX_CHARS):
+                refused.append(str(name)[:80])
+                continue
+            write_owned(self.dir, name, text)
+        return refused
 
     def link_inputs(self, upstream: dict[str, Path]) -> dict[str, str]:
         """Point ``inputs/<step id>`` at each upstream step's ``outputs/`` folder (#423).

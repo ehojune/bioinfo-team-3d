@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · 한국어 Windows UTF-8 모드에서 키 파일 권한 검사가 멈추던 문제
+
+- 결론: `labhq init`의 AlphaGenome 키 쓰기와 doctor의 계정 확인이 `whoami`·`icacls` 출력을 콘솔 코드 페이지로 읽는다. 전에는 `PYTHONUTF8=1`(인스턴스를 띄우는 방식)에서 한국어 출력(CP949)을 UTF-8로 읽다 실패해 키 쓰기가 멈추고 doctor는 계정을 잃었다.
+- 바뀐 것: `labhq/tools/annot_keys.py`(`CONSOLE` 인코딩), `labhq/doctor.py`(whoami), `tests/test_annot_keys_console.py`.
+- 실행한 것: `PYTHONUTF8=1` pytest `tests/test_annot_regulatory.py`·doctor test·새 test 통과. 고치기 전에는 이 PC에서 `test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of_everything`가 `UnicodeDecodeError`로 실패했다.
+- 미해결: 없음.
+- 근거: 이 PR.
+
+## 2026-10-07 · 어휘·topic·점검표 표 (#453)
+
+- 결론: PI 요청대로 topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보는 md 하나(`docs/vocabulary.md`)를 README에서 링크했다.
+- 바뀐 것: `scripts/vocab_tables.py`(원본 `labhq/vocab/`에서 생성, `--write`·`--check`), `docs/vocabulary.md`(topic 43·점검표 124항목·data 30·format 28·operation 22·공개 자원 21), `tests/test_vocab_tables.py`(어긋나면 실패), README·영문 README 링크, HANDOFF 작업 방식 한 줄.
+- 실행한 것: `tests/test_vocab_tables.py`·`tests/test_integrations.py` 36 passed, `scripts/check_public.sh`.
+- 미해결: 없음.
+- 근거: PR #453.
+
 ## 2026-10-07 · #382 — 개인 경로를 Codex sandbox 읽기 거부로
 
 - 결론: 안 A 적용 뒤 직원 홈(elevated)에서 실측했다. 개인 경로가 Codex sandbox의 읽기 거부로 걸리고(canary `Access is denied`), 작업 폴더·`--add-dir` 쓰기는 그대로이며 승인 창은 뜨지 않았다.
@@ -61,6 +77,14 @@
 - 실행한 것: 전체 `pytest -q` 4096 passed·54 skipped, 바꾼 곳 test 511 passed, `scripts/check_public.sh`.
 - 미해결: 없음.
 - 근거: PR #447 리뷰 지적, `tests/test_environment_signatures.py`.
+
+## 2026-10-06 · #420 — 새 topic 23개 점검표
+
+- 결론: #420으로 채택한 topic 23개에 점검표 65항목을 넣었다(전체 43 topic·125항목). 리뷰 지적대로 계획 프롬프트에는 점검표 대신 작업 폴더 `topic_checklists.tsv` 이름만 싣는다(점검표 부분 10,400자 → 643자). 병합 전에 PI가 항목을 검토한다.
+- 바뀐 것: `labhq/vocab/topic_checklists.yaml`, `docs/reference/topic_checklists_sources.md`(topic별 근거 한 줄), `topic_checklists.py`(TSV·짧은 규칙·누락 오류에 점검 내용), `cso.py`(계획·재계획 Task에 TSV), 러너 `workspace.py`·`daemon.py`(TASK.md 전에 TSV 쓰기), 점검표 test, README·README.en·manual.
+- 실행한 것: 근거 PMID 87개 esummary 제목 대조(87 ok), 점검표·공개 자원 test 27 passed, 점검표·작업 폴더 관련 test 13개 파일 253 passed·32 skipped, 전체 suite 4010 passed·54 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음. 낡은 러너는 TSV를 쓰지 않지만, 그때도 답 누락 고침 요청이 점검 내용을 담는다.
+- 근거: #420, PR #440, PR #446.
 
 ## 2026-10-06 · #435 C ① — 계획마다 공개 자원 목록
 

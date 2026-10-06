@@ -1,0 +1,5 @@
+pr: 454
+rows:
+- sha: 'ef64690'
+  at: 2026-10-07 02:29
+  text: '한국어 Windows에서 PYTHONUTF8=1이면 키 파일 권한 검사와 doctor 계정 확인이 whoami·icacls 출력을 못 읽던 것을 콘솔 코드 페이지로 읽게 고쳤다.'
