@@ -4,6 +4,45 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · #446 — topic별 근거 논문 묶음
+
+- 결론: topic 43개 모두 근거 논문 10편 이상(최소 20, 최대 82), 모두 1255편이다. 30편 미만은 6개(`viral_genomics` 20, `metaproteomics` 23, `microarray_expression` 24, `amplicon_sequencing` 25, `metagenome_assembly` 28, `metatranscriptomics` 29).
+- 바뀐 것: `docs/reference/topic_papers.tsv`·`topic_papers.md` 추가, reference README·README·README.en·manual에 한 줄씩 연결.
+- 실행한 것: 1255개 PMID 전부 NCBI esummary 대조(제목 단어 50% 이상 겹침) → 1255 ok·0 제외, `scripts/check_public.sh`, `pytest -q`.
+- 미해결: 30편 목표(PI 결정)는 위 6개 topic이 남았다.
+- 근거: `docs/reference/topic_papers.md`.
+
+## 2026-10-07 · 한국어 Windows UTF-8 모드에서 키 파일 권한 검사가 멈추던 문제
+
+- 결론: `labhq init`의 AlphaGenome 키 쓰기와 doctor의 계정 확인이 `whoami`·`icacls` 출력을 콘솔 코드 페이지로 읽는다. 전에는 `PYTHONUTF8=1`(인스턴스를 띄우는 방식)에서 한국어 출력(CP949)을 UTF-8로 읽다 실패해 키 쓰기가 멈추고 doctor는 계정을 잃었다.
+- 바뀐 것: `labhq/tools/annot_keys.py`(`CONSOLE` 인코딩), `labhq/doctor.py`(whoami), `tests/test_annot_keys_console.py`.
+- 실행한 것: `PYTHONUTF8=1` pytest `tests/test_annot_regulatory.py`·doctor test·새 test 통과. 고치기 전에는 이 PC에서 `test_with_a_key_the_server_offers_alphagenome_and_keeps_the_key_out_of_everything`가 `UnicodeDecodeError`로 실패했다.
+- 미해결: 없음.
+- 근거: 이 PR.
+
+## 2026-10-07 · 어휘·topic·점검표 표 (#453)
+
+- 결론: PI 요청대로 topic이 무엇인지, topic별 점검표, 핵심 단어(어휘 키)를 표로 보는 md 하나(`docs/vocabulary.md`)를 README에서 링크했다.
+- 바뀐 것: `scripts/vocab_tables.py`(원본 `labhq/vocab/`에서 생성, `--write`·`--check`), `docs/vocabulary.md`(topic 43·점검표 124항목·data 30·format 28·operation 22·공개 자원 21), `tests/test_vocab_tables.py`(어긋나면 실패), README·영문 README 링크, HANDOFF 작업 방식 한 줄.
+- 실행한 것: `tests/test_vocab_tables.py`·`tests/test_integrations.py` 36 passed, `scripts/check_public.sh`.
+- 미해결: 없음.
+- 근거: PR #453.
+
+## 2026-10-07 · #446 — 점검표: 가능하면 하고, 못 하면 이유와 경고 (#452)
+
+- 결론: topic 점검표는 자료가 허락하는 점검을 하고, 못 한 점검은 `assumption: <못 한 이유>`로 답한다. 이유가 있는 생략은 받아들이고 항목마다 경고 `점검 못 함 <topic>/<id>: <이유>`를 한 번 띄운다. 이유가 비었거나 자리표시(`-`, `n/a`, `없음` 등)인 답은 누락과 같아 기존 교정 경로를 탄다. 승인 카드나 실행 중단은 없다.
+- 바뀐 것: `labhq/vocab/topic_checklists.py`(자리표시 판정, `skipped`·`skip_warnings`, 계획 규칙 문구), `labhq/orchestrator/cso.py`(일반·연구·재계획 경로의 경고, `보고서 경고` 건수, 일반·연구 리뷰 프롬프트), `labhq/web/state.js`(피드 alert 한 줄씩), manual 점검표 절 끝 한 문단과 로드맵, HANDOFF PI 결정 2줄·#420 행. 연구 lane은 이유 있는 `assumption`을 전에도 통과시켰고 test로 확인했다. 경고는 동결 계획에 들어가 CP1 hash에 포함된다.
+- 실행한 것: 바꾼 모듈을 import하는 test 파일 43개 1645 passed·4 skipped, 전체 suite 4197 passed·55 skipped, `node tests/web_checklist_skip.cjs`, `scripts/check_public.sh`.
+- 미해결: 없음. manual의 기존 점검표 문단은 topic-papers PR과의 충돌을 줄이려고 손대지 않았다(새 문단은 절 끝).
+- 근거: `tests/test_topic_checklists_precedents.py`, `tests/web_checklist_skip.cjs`.
+
+### 리뷰 반영 (35f62e7)
+
+- 재계획: `with_checklist_skip_warnings`가 옛 `점검 못 함` 경고를 지우고 현재 점검표 것만 붙인다. 이제 하는 점검의 경고가 남거나 이유가 바뀐 항목이 두 건으로 세어지지 않는다.
+- 웹 피드: 같은 요청에서 이미 보인 생략 경고는 재계획 `request.plan`에서 다시 올리지 않는다.
+- 재시작: #446 전에 CP1 승인된 연구 계획의 자리표시 이유(`not_applicable: none` 등)는 실패 대신 요청의 `checklist_reasonless`에 남긴다. 동결 계획은 hash 때문에 바꾸지 않는다.
+- 실행한 것: 바꾼 모듈을 import하는 test 파일 44개 1704 passed·6 skipped, 전체 suite 4199 passed·55 skipped, `node tests/web_checklist_skip.cjs`. 새 test 셋은 옛 코드에서 실패함을 확인했다.
+
 ## 2026-10-07 · #382 — 개인 경로를 Codex sandbox 읽기 거부로
 
 - 결론: 안 A 적용 뒤 직원 홈(elevated)에서 실측했다. 개인 경로가 Codex sandbox의 읽기 거부로 걸리고(canary `Access is denied`), 작업 폴더·`--add-dir` 쓰기는 그대로이며 승인 창은 뜨지 않았다.

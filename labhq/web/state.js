@@ -116,6 +116,7 @@ function req(rid) {
     Object.defineProperty(q, 'bundleStatus', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleGrade', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
+    Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -337,6 +338,13 @@ function apply(ev, replay = false) {
     case 'request.plan': {
       const q = req(rid); setPlan(q, d); q.phase = 'execute';
       feed({ who: 'cso', text: `계획을 세웠어요: ${(d.steps || []).length}단계${(d.recruit || []).length ? ', 파견직 채용 제안 1건' : ''}` }, ts, rid);
+      // #446: each topic checklist item the plan could not do reaches the PI with its reason, one line each.
+      // A re-plan re-sends the whole list; only a warning not shown before for this request is posted.
+      for (const w of d.warnings || []) {
+        if (typeof w !== 'string' || !w.startsWith('점검 못 함 ') || q.skipWarningsShown.has(w)) continue;
+        q.skipWarningsShown.add(w);
+        feed({ who: 'cso', text: short(w, 300), cls: 'alert' }, ts, rid);
+      }
       break;
     }
     case 'request.route': {

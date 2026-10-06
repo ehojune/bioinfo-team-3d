@@ -28,6 +28,7 @@
 | Codex 직원 | 개인 `~/.codex/AGENTS.md`가 있는 PC는 직원 전용 `CODEX_HOME`에 로그인해야 preflight를 통과한다. 개인 skill 폴더는 여전히 읽히는데 PI는 괜찮다고 했다(#55) |
 | 문서 나눔 | `README.md`는 처음 써 보는 사람(웹으로 시작, 10KB 안팎), `docs/manual.md`는 깊이 보려는 사람, `docs/pi-qa.md`는 PI 질문·결정이다. 동작을 바꾸면 manual의 해당 절을 고치고 README에는 쌓지 않는다 |
 | 연결된 도구 표·배지 | 직원 설정을 바꾸면 `python scripts/integrations.py --write`로 README 배지와 manual의 표를 갱신하고 `--check`로 확인한다. 배지는 같은 설정과 `pyproject.toml`·`labhq/settings.py`·`.github/workflows`에서 만든다 |
+| 어휘·점검표 표 | `labhq/vocab/`의 어휘·점검표·공개 자원을 고치면 `python scripts/vocab_tables.py --write`로 `docs/vocabulary.md`를 다시 만든다. `tests/test_vocab_tables.py`가 어긋남을 잡는다 |
 | 느린 test | 90초 MCP 실측은 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`. CI에서는 별도 job(`pytest-slow`)이 돌린다 |
 | 실측 fixture | Windows 11 실측 스트림은 `tests/fixtures/real/`에 있다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact` |
 | PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |
@@ -50,7 +51,7 @@
 | v0.25 | 진행 | #382 | Windows에서 두 CODEX_HOME의 sandbox 재설정 반복. 10-06 새벽 UAC 창 27개가 쌓여 Codex 셸이 무기한 멈춤(PI가 05:40쯤 승인). 멈춤 경고는 #433. 원인: 한 PC에 elevated 홈이 둘. PI 결정 A(직원 홈만 elevated, 10-06): PI가 Codex 설정 변경·직원 홈 준비 한 번. 탐지는 #437(낡은 직원 홈은 실행 전 거부, doctor). 남은 것: 개인 경로를 Codex deny-read로(브랜치 준비, A 적용 뒤 canary 실측) |
 | v0.5 | 1/2 | #90 #58 | 실제 CLI 연구 lane 완주: 10차 `research_reported`(앵커 58·문제 0, `labhq verify` exit 0). 두 번째 완주가 남음(11차 GSE19804는 리뷰가 문헌 추출 실수를 잡아 revise). #58 ①~⑥ 완료. revise 뒤 이어 가기(새 CP1에 리뷰 P1·완료 단계 재사용)는 research-revise-continue PR. 남은 것: CP3·CP4, 이어 가기 실측 |
 | v0.5 | 진행 | #423 | 재현성: inputs/ 링크·미보고 산출·`link_inputs.py`(#429), 묶음 재현 등급(#431), 환경 기록 규칙(#432) 병합. 입력 sha256(#442: 실행 전 hash, cache는 파일 ID까지). 남은 것: `rerun_verified` |
-| v0.5 | 진행 | #420 | topic 확장: 출처 133개 조사(#439), PI A로 23개 채택(#440, topic 43개, 상한 없음, 프롬프트엔 이름만). 남은 것: 새 23개 topic 점검표(근거 문헌, PI 검토) |
+| v0.5 | 진행 | #420 | topic 확장: 출처 133개 조사(#439), PI A로 23개 채택(#440, topic 43개, 상한 없음, 프롬프트엔 이름만). 남은 것: 새 23개 topic 점검표(근거 문헌, PI 검토), topic별 근거 논문 topic당 10편(v0.5)·30편(v0.9, PI 결정 2026-10-07) |
 | v0.5 | 다음 | #35 | 시설팀: PI 결정 A(내부 구조, A2A는 #79 때). 1단계 #433 병합. 다음: environment 실패 종류·오류 서명 표(Codex 레인 지시서 준비) → 시설팀 직원(Codex read-only)과 `facilities_fix` allowlist |
 | v0.5 | 다음 | #221 #150 #151 #149 | 산출 종류 선언을 켜기 전 probe, 의미 모델 그림자·A/B 판단 창 |
 | v0.5 | 다음 | #57 #300 | 웹 Command Center 6–8, 새 pipeline 기여를 PI에게 묻기 |
@@ -67,6 +68,8 @@
 
 | 날짜 | 결정 | 기록 |
 |---|---|---|
+| 2026-10-07 | topic 점검표는 지나치게 엄격하지 않게: 자료가 허락하는 점검은 하고, 못 하면 계획에 이유를 적고 labhq가 경고한다 | #446 |
+| 2026-10-07 | topic별 근거 논문 수: v0.5에 topic당 10편, v0.9에 topic당 30편 | #446, #420 |
 | 2026-10-06 | Codex sandbox 승인 창: 안 A(직원 홈만 elevated, PI 홈 unelevated). 한 PC에 elevated 홈은 하나 | #435, #382 |
 | 2026-10-06 | topic 후보 중 출처 3개 이상인 23개 채택(A) | #435, #420 |
 | 2026-10-06 | 시설팀은 내부 구조 먼저(A). A2A는 외부 agent와 공생(#79) 때 | #298, #35 |

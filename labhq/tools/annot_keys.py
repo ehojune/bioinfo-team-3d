@@ -26,6 +26,9 @@ from ..settings import Settings
 
 _KEY = re.compile(r"^[A-Za-z0-9_\-.]{10,200}$")
 _ACE = re.compile(r"^(?P<account>\S.*?):(?P<rights>(?:\([A-Z,]+\))+)\s*$")
+# whoami and icacls print in the console code page (CP949 on Korean Windows), not UTF-8: under Python UTF-8 mode
+# (PYTHONUTF8=1, how the instances start) text=True failed to decode it and left stdout None.
+CONSOLE = {"encoding": "oem", "errors": "replace"} if os.name == "nt" else {}
 
 
 class KeyFileError(OSError):
@@ -57,7 +60,7 @@ def valid_key(key: str) -> bool:
 def current_account() -> tuple[str, str]:
     """(DOMAIN\\user, SID) of the process token from `whoami`, not the spoofable USERNAME variable (#304)."""
     out = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True, timeout=30,
-                         check=True).stdout
+                         check=True, **CONSOLE).stdout
     match = re.search(r"\"([^\"]+)\",\"(S-1-[0-9-]+)\"", out)
     if not match:
         raise KeyFileError("현재 계정을 읽지 못했습니다")
@@ -66,7 +69,7 @@ def current_account() -> tuple[str, str]:
 
 def acl_entries(path: Path) -> list[tuple[str, str]]:
     """(account, rights) for every ACE `icacls` lists on `path`, e.g. ("PC\\me", "(F)") or (.., "(I)(F)")."""
-    out = subprocess.run(["icacls", str(path)], capture_output=True, text=True, timeout=60).stdout
+    out = subprocess.run(["icacls", str(path)], capture_output=True, text=True, timeout=60, **CONSOLE).stdout
     entries = []
     for number, line in enumerate(out.splitlines()):
         text = line[len(str(path)):] if number == 0 and line.startswith(str(path)) else line
