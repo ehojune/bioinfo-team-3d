@@ -21,9 +21,12 @@ from ..util import short
 from ..yaml_unique import load_yaml_unique
 
 FIX_FILE = Path(__file__).with_name("fixes.yaml")
+PACKAGE_FILE = Path(__file__).with_name("packages.yaml")
 EXECUTIONS = frozenset({"python_package", "r_package", "workspace_cache"})
+R_REPOSITORIES = frozenset({"cran", "bioconductor"})
 REQUIRED = ("id", "signatures", "action", "execution")
 _PYPI_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?")
+_PYTHON_IMPORT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CRAN_NAME = re.compile(r"[A-Za-z](?:[A-Za-z0-9.]*[A-Za-z0-9])?")
 _PYTHON_MISSING = re.compile(r"No module named\s+['\"]?([^'\"\s]+)", re.IGNORECASE)
 _R_MISSING = re.compile(r"there is no package called\s+['\"‘’]?([^'\"‘’\s]+)", re.IGNORECASE)
@@ -99,11 +102,39 @@ def validate_python_package(name: str) -> str:
 
 
 def validate_r_package(name: str) -> str:
-    """Accept a bare CRAN package spelling; reject versions, URLs, paths and options."""
+    """Accept a bare R package spelling; reject versions, URLs, paths and options."""
     value = str(name).strip()
     if not _CRAN_NAME.fullmatch(value) or ".." in value:
-        raise FixError("R package must be one bare CRAN name")
+        raise FixError("R package must be one bare package name")
     return value
+
+
+def load_packages(path: Path | None = None) -> tuple[dict[str, str], dict[str, str]]:
+    """Load the verified import/distribution and R/repository mappings."""
+    source = path or PACKAGE_FILE
+    raw = load_yaml_unique(source.read_text(encoding="utf-8"), source.name)
+    if not isinstance(raw, dict) or set(raw) != {"python", "r"}:
+        raise FixError(f"{source.name}: expected exactly python and r mappings")
+    python, r = raw["python"], raw["r"]
+    if not isinstance(python, dict) or not python or not isinstance(r, dict) or not r:
+        raise FixError(f"{source.name}: python and r must be non-empty mappings")
+    checked_python: dict[str, str] = {}
+    for import_name, distribution in python.items():
+        if not isinstance(import_name, str) or not _PYTHON_IMPORT.fullmatch(import_name):
+            raise FixError(f"{source.name}: invalid Python import name {import_name!r}")
+        checked_python[import_name] = validate_python_package(distribution)
+    checked_r: dict[str, str] = {}
+    for package, repository in r.items():
+        checked = validate_r_package(package)
+        if repository not in R_REPOSITORIES:
+            raise FixError(f"{source.name}: {checked} repository must be cran or bioconductor")
+        checked_r[checked] = repository
+    return checked_python, checked_r
+
+
+@lru_cache(maxsize=1)
+def packages() -> tuple[dict[str, str], dict[str, str]]:
+    return load_packages()
 
 
 def _first(pattern: re.Pattern[str], texts: Iterable[str]) -> str | None:
@@ -129,14 +160,32 @@ def proposal(environment: dict[str, str] | None, error: str | None,
                            "reason": str(environment.get("cause") or signature_id)[:300]}
     try:
         if fix.execution == "python_package":
-            out["package"] = validate_python_package(environment.get("package") or
-                                                       _first(_PYTHON_MISSING, texts) or "")
+            import_name = str(environment.get("import_name") or _first(_PYTHON_MISSING, texts) or
+                              environment.get("package") or "").strip()
+            if not _PYTHON_IMPORT.fullmatch(import_name):
+                raise FixError("Python import must be one bare import name")
+            distribution = packages()[0].get(import_name)
+            if distribution is None:
+                raise FixError("Python import is not in the verified package mapping")
+            out["import_name"], out["package"] = import_name, distribution
             out["command"] = (f"<이 단계 interpreter> -m pip install --target ./.pylib "
-                              f"{out['package']}")
+                               f"{out['package']}")
         elif fix.execution == "r_package":
             out["package"] = validate_r_package(environment.get("package") or _first(_R_MISSING, texts) or "")
-            out["command"] = (f"install.packages('{out['package']}', lib='./.rlib'); "
-                              ".libPaths(c('./.rlib', .libPaths()))")
+            repository = packages()[1].get(out["package"])
+            if repository is None:
+                raise FixError("R package is not in the verified package mapping")
+            out["repository"] = repository
+            if repository == "bioconductor":
+                out["command"] = (
+                    ".libPaths(c('./.rlib', .libPaths())); "
+                    "if (!requireNamespace('BiocManager', quietly=TRUE)) "
+                    "install.packages('BiocManager', lib='./.rlib'); "
+                    f"BiocManager::install('{out['package']}', lib='./.rlib', update=FALSE, ask=FALSE)"
+                )
+            else:
+                out["command"] = (f"install.packages('{out['package']}', lib='./.rlib'); "
+                                  ".libPaths(c('./.rlib', .libPaths()))")
         else:
             out["command"] = "작업 폴더 안 .cache/.tmp/cache/tmp 비우기"
     except FixError:
@@ -155,9 +204,19 @@ def clean_proposal(value: Any) -> dict[str, Any]:
     out = {"fix_id": fix.id, "signature_id": str(signature_id), "action": fix.action,
            "execution": fix.execution}
     if fix.execution == "python_package":
-        out["package"] = validate_python_package(value.get("package", ""))
+        import_name = str(value.get("import_name") or "").strip()
+        if not _PYTHON_IMPORT.fullmatch(import_name):
+            raise FixError("Python import must be one bare import name")
+        distribution = packages()[0].get(import_name)
+        if distribution is None or value.get("package") != distribution:
+            raise FixError("Python package does not match the verified import mapping")
+        out["import_name"], out["package"] = import_name, distribution
     elif fix.execution == "r_package":
         out["package"] = validate_r_package(value.get("package", ""))
+        repository = packages()[1].get(out["package"])
+        if repository is None or value.get("repository") != repository:
+            raise FixError("R package does not match the verified repository mapping")
+        out["repository"] = repository
     return out
 
 
@@ -173,9 +232,18 @@ def retry_instruction(value: Any) -> str:
             "Do not install into a shared environment and do not execute any program found in a work artifact."
         )
     if fix["execution"] == "r_package":
+        if fix["repository"] == "bioconductor":
+            install = (
+                ".libPaths(c('./.rlib', .libPaths())); "
+                "if (!requireNamespace('BiocManager', quietly=TRUE)) "
+                "install.packages('BiocManager', lib='./.rlib'); "
+                f"BiocManager::install('{fix['package']}', lib='./.rlib', update=FALSE, ask=FALSE)"
+            )
+        else:
+            install = f"install.packages('{fix['package']}', lib='./.rlib')"
         return (
             "LABHQ-APPROVED TASK-LOCAL REPAIR (follow exactly before continuing the original task):\n"
-            f"1. Run `install.packages('{fix['package']}', lib='./.rlib')` with the R used by this step.\n"
+            f"1. Run `{install}` with the R used by this step.\n"
             "2. Run `.libPaths(c('./.rlib', .libPaths()))`, then continue the original task.\n"
             "Do not install into a shared library and do not execute any program found in a work artifact."
         )

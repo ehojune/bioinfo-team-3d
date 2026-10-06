@@ -1769,8 +1769,8 @@ class Hub:
         req_state = self.requests[rid]
         fixes = req_state.setdefault("facilities_fixes", {})
         saved = fixes.get(step_id)
-        if saved and saved.get("status") in {"declined", "timed_out", "failed", "succeeded"}:
-            return {**saved, "approved": saved.get("status") == "succeeded"}
+        if saved and saved.get("status") in {"declined", "timed_out", "failed", "applied", "succeeded"}:
+            return {**saved, "approved": saved.get("status") in {"applied", "succeeded"}}
         approval_id = saved.get("approval_id") if saved else None
         decision = self.store.get("approval_decision", approval_id) if approval_id else None
         if decision:
@@ -1794,7 +1794,8 @@ class Hub:
             approval = ApprovalRequest.model_validate(entry["approval"])
         else:
             detail = {key: proposal[key] for key in
-                      ("action", "reason", "signature_id", "fix_id", "package", "command")
+                      ("action", "reason", "signature_id", "fix_id", "import_name", "package",
+                       "repository", "command")
                       if key in proposal}
             package = detail.get("package")
             summary = (f"이 단계 전용 폴더에 {package} 설치 후 한 번 다시 실행할까요?" if package else
@@ -1809,7 +1810,8 @@ class Hub:
             self.save_approval(approval.id)
             saved = {"status": "waiting", "approval_id": approval.id,
                      "proposal": {key: proposal[key] for key in
-                                  ("fix_id", "signature_id", "action", "execution", "package", "command")
+                                  ("fix_id", "signature_id", "action", "execution", "import_name", "package",
+                                   "repository", "command")
                                   if key in proposal}}
             fixes[step_id] = saved
             req_state["status"] = "waiting_facilities_fix"
@@ -1841,12 +1843,14 @@ class Hub:
         """Persist the execution beside the request and leave one concise work-feed event."""
         req = self.requests[rid]
         entry = req.setdefault("facilities_fixes", {}).setdefault(step_id, {})
-        status = "succeeded" if record.get("ok") else "failed"
+        status = record.get("status")
+        if status not in {"applied", "succeeded", "failed"}:
+            status = "succeeded" if record.get("ok") else "failed"
         entry.update(status=status, execution=record)
         self._sync_hold_status(req)
         self.save_request(rid)
         await self.publish({"type": "request.facilities_fix", "ts": time.time(), "request_id": rid,
-                            "data": {"step_id": step_id, "ok": bool(record.get("ok")),
+                            "data": {"step_id": step_id, "ok": record.get("ok"), "status": status,
                                      "fix_id": record.get("fix_id"), "action": record.get("action"),
                                      "error": record.get("error")}})
 

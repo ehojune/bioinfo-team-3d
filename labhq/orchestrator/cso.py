@@ -2705,16 +2705,18 @@ class Orchestrator:
             # when the gateway restarts while the approval or repair is in flight.
             key = turn_key(task)
             decision = await approve_fix(rid, key, propose)
-            record = decision.get("execution") if decision.get("status") == "succeeded" else None
+            record = (decision.get("execution")
+                      if decision.get("status") in {"applied", "succeeded"} else None)
             if not decision.get("approved"):
                 record = {**propose, "ok": False, "status": decision.get("status") or "declined",
                           "approval_id": decision.get("approval_id"), "note": decision.get("note") or ""}
                 res = res.model_copy(update={"facilities_fix": record})
             else:
+                remember = getattr(self.hub, "record_facilities_fix", None)
                 if not record:
                     if propose["execution"] in {"python_package", "r_package"}:
                         instruction = facility_fixes.retry_instruction(propose)
-                        record = {**propose, "ok": True, "status": "succeeded",
+                        record = {**propose, "ok": None, "status": "applied",
                                   "mode": "task_local_instruction", "instruction": instruction}
                     else:
                         fix_task = Task(agent_id=task.agent_id, request_id=rid, prompt="",
@@ -2732,10 +2734,10 @@ class Orchestrator:
                         record = fixed.facilities_fix or {**propose, "ok": fixed.ok,
                                                            "status": "succeeded" if fixed.ok else "failed",
                                                            **({"error": fixed.error} if fixed.error else {})}
-                    remember = getattr(self.hub, "record_facilities_fix", None)
                     if callable(remember):
                         await remember(rid, key, record)
-                if not record.get("ok"):
+                can_rerun = record.get("status") == "applied" or bool(record.get("ok"))
+                if not can_rerun:
                     res = res.model_copy(update={"facilities_fix": record})
                 else:
                     can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
@@ -2755,8 +2757,20 @@ class Orchestrator:
                                  **({"workdir": res.workdir} if res.workdir else {})},
                     })
                     retried = await dispatch_turn(retry, max_attempts=1)
+                    final_record = record
+                    if propose["execution"] in {"python_package", "r_package"}:
+                        rerun_environment = None if retried.ok else environment_problem(retried, engine)
+                        if retried.ok:
+                            final_record = {**record, "ok": True, "status": "succeeded"}
+                        elif (rerun_environment and
+                              rerun_environment.get("id") == propose.get("signature_id")):
+                            final_record = {**record, "ok": False, "status": "failed",
+                                            "error": retried.error or rerun_environment.get("cause") or
+                                                     "same environment failure after repair"}
+                        if final_record is not record and callable(remember):
+                            await remember(rid, key, final_record)
                     res = retried.model_copy(update={
-                        "facilities_fix": record,
+                        "facilities_fix": final_record,
                         "tool_errors": list(dict.fromkeys([*res.tool_errors, *retried.tool_errors])),
                     })
         overrides = task.meta.get("agent_overrides") or {}

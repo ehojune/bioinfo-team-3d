@@ -8,7 +8,7 @@
 
 - id: install_r_package
   signatures: [r_package_missing]
-  action: 이 단계 전용 .rlib에 빠진 CRAN 패키지를 설치합니다
+  action: 이 단계 전용 .rlib에 검증된 R 패키지를 설치합니다
   execution: r_package
 
 - id: clear_workspace_cache

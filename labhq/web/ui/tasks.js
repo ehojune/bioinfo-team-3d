@@ -22,7 +22,12 @@ function cardFor(step, status, detail, options) {
   list(card, '리뷰 지적', detail.review_issues, 'review');
   // Environment failure (#35): what is missing on the runner PC and what to do, above the raw error.
   if (detail.environment) add(card, 'p', `환경 문제: ${detail.environment.cause || detail.environment.id || ''}${detail.environment.hint ? ` — ${detail.environment.hint}` : ''}`, 'task-error task-environment');
-  if (detail.facilities_fix) add(card, 'p', `환경 수정 ${detail.facilities_fix.ok ? '완료' : '실패'}: ${detail.facilities_fix.action || detail.facilities_fix.fix_id || ''}`, detail.facilities_fix.ok ? 'task-meta' : 'task-error');
+  if (detail.facilities_fix) {
+    const fix = detail.facilities_fix, status = fix.status || (fix.ok ? 'succeeded' : 'failed');
+    const label = status === 'applied' ? '적용' : status === 'succeeded' ? '성공' : '실패';
+    add(card, 'p', `환경 수정 ${label}: ${(status === 'failed' ? fix.error : fix.action) || fix.fix_id || ''}`,
+      status === 'failed' ? 'task-error' : 'task-meta');
+  }
   if (detail.error) add(card, 'p', detail.error, 'task-error');
   if (detail.text) add(card, 'p', detail.text, 'task-result');
   if (status === 'waiting_quota') {

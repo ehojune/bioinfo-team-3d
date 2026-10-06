@@ -399,7 +399,7 @@ function apply(ev, replay = false) {
       break;
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
-    case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id); detail.facilities_fix = { ...d }; feed({ who: 'facilities', text: d.ok ? `환경 수정 완료: ${short(d.action || d.fix_id || '', 120)}` : `환경 수정 실패: ${short(d.error || d.fix_id || '', 120)}`, cls: d.ok ? '' : 'alert' }, ts, rid); break; }
+    case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
     case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
