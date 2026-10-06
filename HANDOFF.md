@@ -28,6 +28,7 @@
 | Codex 직원 | 개인 `~/.codex/AGENTS.md`가 있는 PC는 직원 전용 `CODEX_HOME`에 로그인해야 preflight를 통과한다. 개인 skill 폴더는 여전히 읽히는데 PI는 괜찮다고 했다(#55) |
 | 문서 나눔 | `README.md`는 처음 써 보는 사람(웹으로 시작, 10KB 안팎), `docs/manual.md`는 깊이 보려는 사람, `docs/pi-qa.md`는 PI 질문·결정이다. 동작을 바꾸면 manual의 해당 절을 고치고 README에는 쌓지 않는다 |
 | 연결된 도구 표·배지 | 직원 설정을 바꾸면 `python scripts/integrations.py --write`로 README 배지와 manual의 표를 갱신하고 `--check`로 확인한다. 배지는 같은 설정과 `pyproject.toml`·`labhq/settings.py`·`.github/workflows`에서 만든다 |
+| 어휘·점검표 표 | `labhq/vocab/`의 어휘·점검표·공개 자원을 고치면 `python scripts/vocab_tables.py --write`로 `docs/vocabulary.md`를 다시 만든다. `tests/test_vocab_tables.py`가 어긋남을 잡는다 |
 | 느린 test | 90초 MCP 실측은 `LABHQ_SLOW_TESTS=1 pytest -q tests/test_long_mcp_call.py`. CI에서는 별도 job(`pytest-slow`)이 돌린다 |
 | 실측 fixture | Windows 11 실측 스트림은 `tests/fixtures/real/`에 있다. 재캡처: `python scripts/probe_engines.py antigravity --output-dir <저장소 밖 경로> --redact` |
 | PI에게 물을 때 | 지금 무엇이 일어나고, 각 선택이 PI에게 무엇을 바꾸는지를 먼저 한 줄씩 쓴다. 비슷한 말(개발 기록 저장소 vs 프로젝트별 저장소)은 구분해 쓴다 |

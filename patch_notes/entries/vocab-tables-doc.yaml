@@ -1,0 +1,8 @@
+pr: 453
+rows:
+- sha: "52174cd"
+  at: 2026-10-07 02:05
+  text: "topic·점검표·어휘 키·공개 자원을 표로 모은 docs/vocabulary.md를 원본에서 생성하고(scripts/vocab_tables.py), README에서 링크한다."
+- sha: "578e2b2"
+  at: 2026-10-07 02:06
+  text: "#446 병합 뒤 표를 점검표 124항목으로 다시 생성했다."
