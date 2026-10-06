@@ -217,3 +217,244 @@ alternative_splicing:
   - id: event_support
     check: 주요 이벤트는 sashimi plot이나 독립 증거로 확인하거나 후보로 표시한다
     why: 단일 도구의 이벤트 호출은 인공물을 포함한다
+
+proteomics:
+  - id: fdr_control
+    check: target-decoy로 PSM·peptide·protein 수준 FDR(보통 1%)을 정하고 protein inference 규칙을 밝힌다
+    why: 동정 오류는 단백질 수준으로 갈수록 쌓이기 때문이다
+  - id: missing_values
+    check: 결측값의 성격(검출 한계 아래인지 무작위인지)에 맞는 대체 방법과 정규화를 밝힌다
+    why: 저풍부 단백질의 결측은 무작위가 아니어서 대체 방식이 차등 결과를 바꾼다
+  - id: batch
+    check: MS run 순서·TMT plex 같은 처리 batch와 비교 집단의 교락을 확인하고 모형에 넣거나 한계로 보고한다
+    why: 기기 drift와 plex 차이를 생물학적 차이로 해석하지 않기 위해서다
+
+proteomics_dia:
+  - id: spectral_library
+    check: spectral library 방식(실험 library, 예측, library-free)과 분석 소프트웨어·판본을 밝힌다
+    why: library 출처가 동정 수와 FDR 추정을 바꾼다
+  - id: fdr_control
+    check: precursor·protein FDR을 run 단위와 실험 전체 단위로 나눠 보고한다
+    why: run이 많으면 run별 1% FDR이 실험 전체에서 부풀려진다
+  - id: missing_values
+    check: 결측값의 성격(검출 한계 아래인지 무작위인지)에 맞는 대체 방법과 정규화를 밝힌다
+    why: 저풍부 단백질의 결측은 무작위가 아니어서 대체 방식이 차등 결과를 바꾼다
+
+single_cell_proteomics:
+  - id: carrier_blank
+    check: carrier 채널 배율과 빈 웰(blank) 대조를 밝히고 blank 대비 세포 신호를 보고한다
+    why: carrier가 과하면 단일세포 정량이 왜곡되고, blank 없이는 배경 신호를 가를 수 없다
+  - id: cell_qc
+    check: 세포별 QC 기준(동정 peptide·단백질 수, 반복 peptide의 CV)과 제외한 세포 수를 밝힌다
+    why: 품질 낮은 세포가 군집이나 집단 차이처럼 보일 수 있기 때문이다
+  - id: batch
+    check: 분석 batch(LC-MS run, TMT plex, plate)와 세포 유형·조건의 교락을 확인하고 모형에 넣는다
+    why: 단일세포 자료는 결측이 많아 batch 효과가 생물학적 군집처럼 보이기 쉽다
+
+spatial_proteomics:
+  - id: antibody_validation
+    check: 항체 패널의 검증(대조 조직, 단독 염색과의 비교)과 클론을 밝힌다
+    why: 검증되지 않은 항체 신호는 실제 단백질 분포를 보장하지 않는다
+  - id: segmentation_qc
+    check: 세포 분할 방법과 분할 품질 확인 방식을 밝힌다
+    why: 분할 오류가 이웃 세포 신호를 섞어 가짜 공발현을 만든다
+  - id: spillover
+    check: 채널 간 spillover 보정 여부와 방법(spillover 행렬 등)을 밝힌다
+    why: 채널 간 신호 번짐이 공발현 세포 유형처럼 보이기 때문이다
+
+metaproteomics:
+  - id: search_database
+    check: 검색 단백질 DB의 구성(짝 metagenome 유래 등)·크기, 숙주 단백질 포함 여부, FDR 기준을 밝힌다
+    why: DB가 시료와 맞지 않거나 지나치게 크면 동정 수와 FDR 추정이 무너진다
+  - id: peptide_attribution
+    check: 분류군·기능 배정에서 여러 분류군이 공유하는 peptide 처리 규칙(LCA 등)과 도구·DB 판본을 밝힌다
+    why: 공유 peptide를 한 분류군에 몰아주면 조성이 왜곡된다
+
+metabolomics:
+  - id: qc_samples
+    check: pooled QC와 blank를 run 전체에 넣고 QC의 RSD 기준으로 feature를 거르며 신호 drift를 보정한다
+    why: 기기 신호 drift와 오염 feature가 집단 차이처럼 보일 수 있기 때문이다
+  - id: batch
+    check: 주입 순서를 무작위로 하고 분석 batch와 비교 집단의 교락을 확인한다
+    why: 주입 순서와 batch가 집단과 겹치면 기술 차이와 생물학적 차이를 가를 수 없다
+  - id: annotation_confidence
+    check: 대사체 동정은 확신 수준(MSI level 1–4 등)과 근거(표준품, MS/MS 일치)를 함께 보고한다
+    why: 질량만 맞춘 추정 주석을 확정 동정으로 읽지 않게 하기 위해서다
+
+spatial_metabolomics:
+  - id: annotation_confidence
+    check: 대사체 주석은 질량 정확도와 FDR 통제 주석(METASPACE 등)으로 하고 FDR 수준을 밝힌다
+    why: 고해상도 질량만으로는 이성질체와 우연 일치를 거를 수 없다
+  - id: background_normalization
+    check: 매트릭스·조직 밖 영역 신호를 배경으로 확인해 빼고 정규화 방법(TIC 등)을 밝힌다
+    why: 매트릭스 peak와 이온화 차이가 공간 패턴처럼 보이기 때문이다
+
+gwas:
+  - id: sample_variant_qc
+    check: 시료 QC(결측률, 성별 불일치, 혈연, 이형접합도)와 변이 QC(call rate, MAF, HWE), imputation 품질 기준을 밝힌다
+    why: 유전형 오류와 시료 혼동이 거짓 연관을 만든다
+  - id: population_structure
+    check: 주성분이나 혼합모형으로 집단 구조와 혈연을 보정하고 genomic inflation(λGC 또는 LDSC intercept)을 보고한다
+    why: 집단 계층화가 표현형과 겹치면 거짓 연관이 생긴다
+  - id: significance_replication
+    check: 유전체 전체 유의수준(5×10⁻⁸)을 쓰고 독립 표본 재현 여부를 밝힌다
+    why: 수백만 번 검정에서 나온 단일 연구 신호는 재현 전까지 후보다
+
+structural_variant_calling:
+  - id: caller_benchmark
+    check: SV caller와 판본을 밝히고 GIAB SV benchmark 같은 기준으로 정밀도·민감도를 확인하거나 못 한 이유를 밝힌다
+    why: caller마다 SV 종류·크기별 성능이 크게 다르다
+  - id: merge_criteria
+    check: caller 결과나 여러 시료의 SV를 합칠 때 병합 기준(breakpoint 거리, 크기 일치)과 도구를 밝힌다
+    why: 병합 기준에 따라 SV 수와 시료 간 공유 여부가 달라진다
+  - id: validation
+    check: 주요 SV는 read 시각화·long read·PCR 같은 독립 증거로 확인하거나 후보로 표시한다
+    why: 반복 서열 영역의 SV 호출은 거짓 양성이 많다
+
+de_novo_genome_assembly:
+  - id: contiguity_completeness
+    check: contig·scaffold N50, 전체 크기, BUSCO 완결성과 lineage 판본을 보고한다
+    why: 연속성과 완결성이 assembly로 답할 수 있는 질문을 정한다
+  - id: base_accuracy
+    check: k-mer 기반 QV(Merqury 등)로 염기 정확도를 보고하고 phasing을 했으면 그 정확도도 밝힌다
+    why: 연속성이 좋아도 염기 오류가 많으면 유전자 모델과 변이가 틀어진다
+  - id: contamination
+    check: 오염 서열 점검(FCS-GX, BlobToolKit 등)과 세포기관 서열 분리 방식을 밝힌다
+    why: 오염 contig가 그 생물의 유전자처럼 해석될 수 있다
+
+genome_annotation:
+  - id: repeat_masking
+    check: 유전자 예측 전에 종 맞춤 반복서열 library로 soft-masking하고 방법을 밝힌다
+    why: 반복서열과 transposon이 가짜 유전자 모델을 만든다
+  - id: evidence_support
+    check: 유전자 모델을 RNA-seq·단백질 증거로 뒷받침하고 쓴 증거와 도구(BRAKER, MAKER 등)를 밝힌다
+    why: ab initio 예측만으로는 유전자 구조 오류가 많다
+  - id: annotation_completeness
+    check: 주석 단백질 세트의 BUSCO 완결성과 근거 일치 지표(AED 등)를 보고한다
+    why: 주석이 빠뜨린 유전자를 없는 유전자로 해석하지 않기 위해서다
+
+pangenomics:
+  - id: graph_construction
+    check: pangenome 구성 방법(Minigraph-Cactus, PGGB 등)과 넣은 haplotype, 기준 좌표계를 밝힌다
+    why: 구성 방법과 기준 좌표계에 따라 그래프와 변이 표현이 달라진다
+  - id: input_assembly_quality
+    check: 넣은 assembly들의 품질(QV, 완결성)과 phasing 여부를 보고한다
+    why: assembly 오류가 그래프에서 가짜 변이로 남는다
+  - id: gene_family_thresholds
+    check: 유전자 단위 pangenome이면 core·accessory 정의 임계값과 clustering 기준, 주석 오류 보정 여부를 밝힌다
+    why: 임계값과 주석 오류가 accessory 유전자 수를 크게 바꾼다
+
+phylogenetics:
+  - id: alignment_trimming
+    check: 다중 정렬 도구와 정렬 다듬기(trimAl 등) 기준을 밝힌다
+    why: 정렬 오류와 잘 정렬되지 않은 구간이 계통수 위상을 바꾼다
+  - id: model_selection
+    check: 치환 모형을 모형 선택(ModelFinder 등)으로 고르고 밝힌다
+    why: 맞지 않는 모형은 가지 길이와 위상을 틀리게 추정한다
+  - id: branch_support
+    check: 가지 지지도(bootstrap, UFBoot, SH-aLRT)를 보고하고 지지가 낮은 가지를 결론에 쓰지 않는다
+    why: 지지 낮은 분기는 자료가 뒷받침하지 않는다
+  - id: recombination
+    check: 세균·바이러스 계통이면 재조합 구간을 찾아 빼거나(Gubbins 등) 한계로 밝힌다
+    why: 재조합 구간은 하나의 계통수를 따르지 않아 위상과 가지 길이를 왜곡한다
+
+hi_c:
+  - id: library_qc
+    check: valid pair 비율, cis/trans 비, 장거리 cis 비율, 중복률을 보고한다
+    why: 라이브러리 품질이 나쁘면 접촉 행렬이 잡음으로 채워진다
+  - id: normalization_resolution
+    check: 행렬 정규화(ICE, KR 등)와 분석 해상도를 밝히고 그 해상도가 depth로 뒷받침되는지 보고한다
+    why: depth에 비해 해상도가 높으면 loop·TAD 호출이 불안정하다
+  - id: replicate_reproducibility
+    check: 반복 간 재현성(HiCRep 등)을 보고하고 조건 비교는 반복을 갖춘 방법으로 한다
+    why: 반복 없이 접촉 차이를 판정할 수 없다
+
+spatial_epigenomics:
+  - id: library_qc
+    check: 스팟별 단편 수, TSS enrichment, FRiP을 보고하고 조직 밖 스팟을 뺀다
+    why: 스팟당 단편이 적어 품질 차이가 공간 패턴처럼 보이기 쉽다
+  - id: section_replicates
+    check: 공간 변이·영역 비교는 공간 자기상관을 고려한 방법으로 하고, 절편·시료 단위 반복을 밝힌다
+    why: 스팟을 독립 반복으로 세면 유의성이 부풀려진다
+
+multi_omics_integration:
+  - id: sample_matching
+    check: 오믹스 사이 시료 짝(같은 개체·시점)을 확인하고 한 오믹스에만 있는 시료의 처리 방식을 밝힌다
+    why: 짝이 틀리거나 빠진 시료를 몰래 버리면 통합 결과가 왜곡된다
+  - id: per_omics_preprocessing
+    check: 오믹스별 정규화·batch 보정을 통합 전에 따로 하고, 인자·군집마다 각 오믹스의 기여를 보고한다
+    why: 규모가 큰 한 오믹스가 통합 결과를 지배할 수 있다
+  - id: cross_validation
+    check: 지도 통합 모형(DIABLO 등)은 교차검증으로 성능을 보고하고 특징 선택을 검증 fold 안에서 한다
+    why: 같은 자료로 고르고 평가하면 성능이 부풀려진다
+
+single_cell_multiome:
+  - id: modality_qc
+    check: 세포마다 modality별 QC(RNA의 UMI·미토콘드리아 비율, ATAC의 TSS enrichment·단편 수, 단백질의 배경 보정)를 함께 적용하고 기준을 밝힌다
+    why: 한 modality만 걸러 남은 저품질 세포가 통합 군집을 흐린다
+  - id: pseudobulk
+    check: 공여자 간 비교는 세포가 아니라 공여자 단위(pseudobulk 등)로 한다
+    why: 세포를 독립 생물학적 반복으로 세는 오류를 막기 위해서다
+  - id: peak_gene_links
+    check: peak–유전자 연결은 GC·접근성 배경을 보정한 상관으로 구하고 조절 관계는 독립 증거 없이 단정하지 않는다
+    why: 같은 세포의 상관은 인과 조절을 보여 주지 않는다
+
+spatial_multiomics:
+  - id: registration
+    check: 절편·modality 사이 정합(registration) 방법과 정합 오차를 밝힌다
+    why: 정합이 어긋나면 서로 다른 위치의 신호를 짝지어 해석하게 된다
+  - id: section_replicates
+    check: 공간 변이·영역 비교는 공간 자기상관을 고려한 방법으로 하고, 절편·시료 단위 반복을 밝힌다
+    why: 스팟을 독립 반복으로 세면 유의성이 부풀려진다
+
+perturb_seq:
+  - id: guide_assignment
+    check: 세포별 guide 배정 기준(UMI 임계값)과 guide가 없거나 여럿인 세포의 처리, MOI를 밝힌다
+    why: 잘못 배정된 세포가 섞이면 교란 효과가 희석되거나 뒤섞인다
+  - id: perturbation_efficiency
+    check: 표적 유전자의 knockdown·knockout 효율을 확인하고 교란을 피한 세포(Mixscape 등)를 처리한다
+    why: 교란되지 않은 세포가 섞이면 효과를 과소추정한다
+  - id: nontargeting_controls
+    check: 효과는 같은 batch의 non-targeting guide 세포와 비교해 판정한다
+    why: 배양·batch 차이를 교란 효과로 오인하지 않기 위해서다
+
+immune_repertoire_sequencing:
+  - id: umi_error_correction
+    check: UMI로 PCR·시퀀싱 오류와 증폭 편향을 보정하고 consensus 기준을 밝힌다
+    why: 증폭 오류가 가짜 clonotype과 부풀린 다양성을 만든다
+  - id: germline_annotation
+    check: V(D)J 배정 도구와 germline 참조 판본(IMGT 등)을 밝히고 AIRR 표준 형식으로 결과를 남긴다
+    why: 참조 판본에 따라 유전자 배정과 체세포 돌연변이 판정이 달라진다
+  - id: diversity_depth
+    check: 다양성·clonality 비교는 시료 간 read·세포 수를 맞추거나(rarefaction 등) 표본 크기 영향을 밝힌다
+    why: 다양성 지표는 표본 크기에 크게 좌우된다
+
+metagenomic_functional_profiling:
+  - id: database_version
+    check: 기능 주석 데이터베이스(UniRef, KEGG, eggNOG 등)와 판본, 도구를 밝힌다
+    why: 데이터베이스 판본이 배정되는 기능과 경로를 바꾼다
+  - id: unmapped_fraction
+    check: 시료별로 기능이 배정된 read 비율과 미배정 비율을 보고한다
+    why: 배정률 차이가 기능 풍부도 차이처럼 보일 수 있다
+  - id: compositional_analysis
+    check: 상대 풍부도는 조성 자료에 맞는 방법(CLR 변환 등)으로 비교하고 시퀀싱 깊이 차이를 처리한다
+    why: 비율 자료를 그대로 비교하면 거짓 상관이 생긴다
+
+metagenome_binning:
+  - id: bin_quality
+    check: MAG의 완결성·오염(CheckM 등)과 품질 등급(MIMAG)을 보고한다
+    why: 오염된 bin은 존재하지 않는 유전체를 만든다
+  - id: binning_refinement
+    check: binning 도구, 여러 시료의 coverage 사용 여부, bin 정제(DAS Tool 등) 방법을 밝힌다
+    why: binning 방식에 따라 회수되는 유전체 수와 오염이 크게 다르다
+  - id: dereplication
+    check: 시료 간 중복 MAG 제거 기준(ANI 95% 등)과 분류 도구·DB 판본(GTDB-Tk 등)을 밝힌다
+    why: 같은 유전체를 여러 번 세거나 판본마다 다른 분류명을 쓰지 않기 위해서다
+
+metatranscriptomics:
+  - id: rrna_host_removal
+    check: rRNA 제거(실험·in silico)와 숙주 read 제거 뒤 남은 read 비율을 보고한다
+    why: rRNA와 숙주 read가 남으면 미생물 전사 신호가 묻힌다
+  - id: dna_normalization
+    check: 전사 차이는 짝 metagenome의 DNA 풍부도로 보정해 발현 변화와 분류군 풍부도 변화를 구분한다
+    why: 분류군이 늘어난 것을 발현이 늘어난 것으로 오인하지 않기 위해서다

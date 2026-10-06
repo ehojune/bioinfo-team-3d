@@ -77,6 +77,22 @@ def test_topic_checklist_loads_known_topics_and_rejects_an_unknown_key(tmp_path)
         topic_checklists.load(bad)
 
 
+def test_every_approved_topic_has_checks_with_a_cited_basis():
+    # #420: the 23 topics added on 2026-10-06 got their items too. Every topic but the first three (from the PR #395
+    # mock-study record) has a row in the sources table, and the whole catalog in the plan prompt stays bounded.
+    from labhq import vocab
+
+    terms = vocab.load()
+    approved = [key for key in terms.terms if terms.is_key("topic", key)]
+    loaded = topic_checklists.load()
+    assert sorted(loaded) == sorted(approved)
+    assert all(len(loaded[topic]) >= 2 for topic in approved)
+    sources = Path("docs/reference/topic_checklists_sources.md").read_text(encoding="utf-8")
+    cited = {line.split("|")[1].strip() for line in sources.splitlines() if line.startswith("| ")}
+    assert set(approved) - cited == {"bulk_rna_seq", "microarray_expression", "single_cell_rna_seq"}
+    assert len(topic_checklists.prompt_rule(loaded)) < 11_000  # 125 checks; the next step is #420's per-topic file
+
+
 def test_one_id_under_two_declared_topics_keeps_both_checks(tmp_path):
     path = tmp_path / "shared.yaml"
     path.write_text("atac_seq:\n  - id: library_qc\n    check: report FRiP\n    why: noise\n"
