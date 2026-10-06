@@ -122,6 +122,27 @@ async def test_vep_waits_out_429_and_paces_requests(tmp_path):
     assert all(s > 0 for s in clock.sleeps)
 
 
+async def test_pace_carries_across_annotators_that_share_it(tmp_path):
+    """PR #449 review: the MCP server builds an Annotator per tool call; the pace must outlive it."""
+    clock, pace, calls = FakeTime(), {}, []
+    (tmp_path / "work").mkdir(exist_ok=True)
+
+    def record(request):
+        calls.append(request)
+        return vep_handler()(request)
+
+    async def one_call():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(record))
+        annotator = annot.Annotator(client, tmp_path / "work", None, sleep=clock.sleep, clock=clock.clock, pace=pace)
+        return await annotator.vep(["1:100:A:G"])
+
+    await one_call()
+    waited = len(clock.sleeps)
+    await one_call()  # a second tool call right after: its first request still waits for Ensembl's interval
+    assert len(clock.sleeps) > waited and clock.sleeps[waited] > 0
+    assert set(pace) == {"ensembl"}
+
+
 async def test_vep_spent_quota_fails_instead_of_waiting_an_hour(tmp_path):
     annotator, _calls, clock = make(vep_handler(throttle=(1, 3600)), tmp_path)
     with pytest.raises(annot.LookupFailed, match="요청 한도"):

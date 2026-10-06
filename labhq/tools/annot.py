@@ -156,9 +156,10 @@ class Http:
     """Paced requests with retries. One pace per service: Ensembl, gnomAD and NCBI have separate limits."""
 
     def __init__(self, client: httpx.AsyncClient, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, last: dict[str, float] | None = None) -> None:
         self.client, self.sleep, self.clock = client, sleep, clock
-        self.last: dict[str, float] = {}
+        # The MCP server passes one dict for its whole life, so back-to-back tool calls keep the pace (PR #449 review).
+        self.last: dict[str, float] = {} if last is None else last
 
     async def _pace(self, service: str) -> None:
         last = self.last.get(service)
@@ -249,8 +250,8 @@ class Item:
 class Annotator:
     def __init__(self, client: httpx.AsyncClient, workdir: Path | None, cache_dir: Path | None,
                  sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-                 clock: Callable[[], float] = time.monotonic) -> None:
-        self.http = Http(client, sleep, clock)
+                 clock: Callable[[], float] = time.monotonic, pace: dict[str, float] | None = None) -> None:
+        self.http = Http(client, sleep, clock, pace)
         self.workdir = Path(workdir) if workdir else None
         self.cache = Cache(cache_dir)
 

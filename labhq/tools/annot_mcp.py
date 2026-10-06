@@ -34,10 +34,15 @@ server = make_server(
 )
 
 
+# Last request time per service for this server process: each tool call builds a new Annotator, and a fresh pace
+# would send its first request without waiting (gnomAD 10/min, NCBI 3/s; PR #449 review).
+PACE: dict[str, float] = {}
+
+
 async def _run(method: str, *args: object) -> str:
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
                                  headers={"User-Agent": annot.USER_AGENT}) as client:
-        annotator = annot.Annotator(client, WORKDIR, CACHE_DIR)
+        annotator = annot.Annotator(client, WORKDIR, CACHE_DIR, pace=PACE)
         try:
             result = await getattr(annotator, method)(*args)
         except (annot.LookupFailed, ValueError) as exc:
