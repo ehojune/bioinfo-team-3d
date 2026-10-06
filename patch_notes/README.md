@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-10-07
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:37 | [`8860134`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/8860134) | Windows elevated sandbox의 Codex 직원 실행은 개인 경로를 permission profile의 읽기 거부로 받는다(실측에서 canary 읽기 거부, 승인 창 0). 기본 개인 경로에 ~/.gemini·~/.env를 더했다. |
+| 01:37 | [`02ff93f`](https://github.com/ehojune/bioinfo-team-3d/pull/451/commits/02ff93f) | doctor가 직원 Codex 홈이 낡았을 때도 다른 elevated 홈을 알리고, 안내에 한 PC 한 elevated 홈 규칙을 적는다. |
+
 ## 2026-10-06
 
 | 시간 | 커밋 | 주요 변경사항 |

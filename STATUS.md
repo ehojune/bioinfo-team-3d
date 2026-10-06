@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-07 · #382 — 개인 경로를 Codex sandbox 읽기 거부로
+
+- 결론: 안 A 적용 뒤 직원 홈(elevated)에서 실측했다. 개인 경로가 Codex sandbox의 읽기 거부로 걸리고(canary `Access is denied`), 작업 폴더·`--add-dir` 쓰기는 그대로이며 승인 창은 뜨지 않았다.
+- 바뀐 것: Codex 격리 실행의 `-s` → permission profile(`extends` + `filesystem` deny), 기본 개인 경로 `~/.gemini`·`~/.env`, doctor의 다른 elevated 홈 경고가 낡은 직원 홈에서도 나옴, manual.
+- 실행한 것: 실측 2건(`:workspace`, `:read-only`), 관련 test 560 passed·2 skipped, `scripts/check_public.sh`.
+- 미해결: 없음. PI 홈은 unelevated라 PI 본인 Codex와 총괄 위임에는 deny-read가 없다(안 A의 대가).
+- 근거: PR #451 본문 실측 표, 직원 홈 `.sandbox/deny_read_acl_state.json`.
+
 ## 2026-10-06 · #435 C ③ — labhq_annot 조절 영역·발현·AlphaGenome (#450)
 
 - 결론: 직원이 ChIP-Atlas(enrichment·target genes), ENCODE cCRE, GTEx(발현·eQTL)를 내장 도구로 조회하고, 키가 있으면 AlphaGenome 예측도 부른다. 판본 기록·조회 로그·결과 파일·캐시는 #449와 같은 틀이다. 통제 구역 데이터의 변이·영역도 경고·승인 없이 조회한다(PI 결정 10-06).
