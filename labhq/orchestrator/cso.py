@@ -884,6 +884,7 @@ def format_roster(agents: list[dict]) -> str:
                      f"({a['engine']}/{a.get('model') or 'default'}); {access}; "
                      f"tools={allowed or builtin or 'default'}; denied={a.get('disallowed_tools') or []}; "
                      f"labhq_hpc={'yes' if a.get('hpc_tools') else 'no'}; "
+                     f"{'labhq_annot=yes (VEP, gnomAD, ClinVar lookups); ' if 'annot' in (a.get('builtin_mcp') or []) else ''}"
                      f"max_turns={a.get('max_turns') or 'unlimited'}{tools}")
     return "\n".join(lines)
 

@@ -220,7 +220,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 계획 전 `orchestrator.precedent_agent`가 비서실장과 병렬로 최근 논문·best-practice review 2–4편에서 같은 assay·질문 유형의 필수·권장 분석을 찾습니다. 필수 항목은 `precedent.<n>` 점검표가 되고, 범위 밖 권장 항목은 PLAN `suggested_next`에 남습니다. 실패하면 경고만 남기고 계획하며, 저장된 조사 결과는 재시작 때 다시 돌리지 않습니다. 리뷰와 단독 처리도 같은 목록을 받고, 보고서는 인용을 붙인 `선행 연구 기준` 절로 한 일·못 한 일·다음 분석을 나눕니다.
 
-모든 계획은 결과 종류(변이·유전자·영역·단백질·화합물·문헌)별 공개 자원 목록도 받습니다(`labhq/vocab/public_resources.tsv`, PI 결정 2026-10-06). 결과가 특정 변이·유전자·영역을 가리키면 맞는 자원에서 조회하는 단계를 넣고 자원의 판본을 기록하게 합니다. 목록은 참고일 뿐이고, CSO는 목록 밖 자원(COSMIC, DisGeNET 등)도 필요하면 계획합니다. 자원을 더하려면 TSV에 `result·resource·use` 한 줄을 넣습니다. 조회를 도구로 하는 labhq 주석 MCP는 다음 단계(#435)입니다.
+모든 계획은 결과 종류(변이·유전자·영역·단백질·화합물·문헌)별 공개 자원 목록도 받습니다(`labhq/vocab/public_resources.tsv`, PI 결정 2026-10-06). 결과가 특정 변이·유전자·영역을 가리키면 맞는 자원에서 조회하는 단계를 넣고 자원의 판본을 기록하게 합니다. 목록은 참고일 뿐이고, CSO는 목록 밖 자원(COSMIC, DisGeNET 등)도 필요하면 계획합니다. 자원을 더하려면 TSV에 `result·resource·use` 한 줄을 넣습니다. 변이는 직원이 [공개 자원 조회 도구](#공개-자원-조회-도구)로 조회합니다.
 
 ### 요청 묶음
 
@@ -258,7 +258,7 @@ flowchart LR
   G --- O[CSO 오케스트레이터<br/>DAG · 리뷰 · 예산]
   R[Runner 데몬<br/>워크스테이션 / HPC 로그인 노드] -->|outbound /ws/runner| G
   R --> E1[claude -p] & E2[codex exec] & E3[gemini -p] & E4[agy -p]
-  E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · labhq_ask · 파견직 논문 MCP]
+  E1 & E2 & E3 --> T[MCP: labhq_hpc · labhq_approval · labhq_ask · labhq_annot · 파견직 논문 MCP]
   T --> B[로컬 브로커 127.0.0.1] --> R
   T --> H[(SGE / PBS / Slurm)]
 ```
@@ -335,6 +335,7 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 <!-- integrations:start -->
 | 종류 | 이름 | 무엇 | 쓰는 직원 | 출처 |
 |---|---|---|---|---|
+| 내장 MCP | labhq_annot | 변이 주석 조회: Ensembl VEP·gnomAD·ClinVar (판본 기록·캐시) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [lit_scout](../agents/core/lit_scout.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_approval | PI 승인 요청 | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_ask | 막히면 CSO·시설팀·동료·PI에게 묻고 같은 세션으로 이어 가기 (CSO 먼저, 위험한 것만 PI) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [biologist](../agents/core/biologist.yaml), [chief_of_staff](../agents/core/chief_of_staff.yaml), [cso](../agents/core/cso.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [lit_scout](../agents/core/lit_scout.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml), [recruiter](../agents/core/recruiter.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
 | 내장 MCP | labhq_hpc | HPC 제출·감시 (scheduler가 none이 아닐 때) | [analyst](../agents/core/analyst.yaml), [bioinfo-agent](../agents/core/bioinfo-agent.yaml), [data_steward](../agents/core/data_steward.yaml), [engineer](../agents/core/engineer.yaml), [qc_reviewer](../agents/core/qc_reviewer.yaml) | [runner](../labhq/runner/daemon.py) · [직원 설정](../agents/core/) |
@@ -350,6 +351,23 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | 엔진 기능 | Codex | 직원 실행 엔진 | [engineer](../agents/core/engineer.yaml), [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [직원 설정](../agents/core/) |
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../agents/core/lit_scout.yaml), [sci_reviewer](../agents/core/sci_reviewer.yaml) | [adapter](../labhq/adapters/codex.py) · [직원 설정](../agents/core/) |
 <!-- integrations:end -->
+
+### 공개 자원 조회 도구
+
+`labhq_annot`은 변이를 공개 DB에서 조회하는 내장 MCP입니다(#435). `builtin_mcp`에 `annot`이 있는 직원(analyst·bioinfo-agent·biologist·lit_scout)에게 붙고, 이어 묻기·상담 같은 읽기 전용 실행에는 붙지 않습니다.
+
+| 도구 | DB | 받는 것 | 판본 기록 |
+|---|---|---|---|
+| `vep(variants, assembly, species)` | Ensembl REST VEP | `chr:pos:ref:alt`·HGVS·rsID | `/info/data`의 Ensembl release (GRCh37은 grch37 서버) |
+| `gnomad(variants, dataset)` | gnomAD GraphQL | `chr:pos:ref:alt`·rsID. chrM은 mtDNA 전용 query로 보냄(heteroplasmy 포함) | dataset ID (예: `gnomad_r4`) |
+| `clinvar(variants_or_ids, assembly)` | NCBI E-utilities ClinVar | 위 셋 + VCV 번호·Variation ID | einfo의 build와 last update |
+
+- 형식이 틀린 항목은 그 항목만 오류로 돌아오고 나머지는 조회합니다. 항목 오류는 조회 실패이고, `found: false`는 조회에 성공했는데 DB에 없다는 뜻입니다.
+- 한도: VEP는 200개씩 나눠 보내고, 429면 `Retry-After`만큼 기다려 다시 보냅니다(최대 5회, 2분이 넘는 대기는 실패로 돌려줌). gnomAD는 분당 10회라 한 호출에 새 변이 50개까지, ClinVar는 초당 3회로 보냅니다. 속도 조절은 도구 프로세스마다 따로라 여러 직원이 동시에 부르면 합이 한도를 넘을 수 있고, 그때는 재시도가 받습니다.
+- ClinVar에 `chr:pos:ref:alt`를 주면 VCF padding base부터 ref 끝 다음 base까지 구간으로 찾습니다. ClinVar는 indel을 처음 바뀐 base에 색인하기 때문입니다. record마다 `match`가 붙습니다: `exact`(같은 allele, repeat 안에서 위치가 달라도 같은 변이면 exact), `other_allele`(같은 구간의 다른 변이), `not_compared`(GRCh37이라 비교 못 함). GRCh38에서 같은 allele이 없으면 `exact_match: false`와 그 뜻이 붙습니다. VCF는 left-normalise된 것으로 봅니다.
+- 결과마다 `source: {db, release_or_version, url, queried_at, request_sha256}`가 붙습니다. 같은 내용이 작업 폴더 `outputs/annotation_queries.jsonl`에 한 줄씩 쌓이고(변이 목록은 넣지 않고 개수와 hash만), DB 응답 전체는 `outputs/annotation/<도구>-<요청 hash>-<내용 hash>.json`에 남아 요청 묶음에 들어갑니다. 같은 요청을 다시 해도 앞 파일을 덮어쓰지 않고, 로그 줄의 `result_sha256`으로 파일을 확인할 수 있습니다.
+- 캐시: 같은 (도구, 판본, 옵션, 변이)의 답은 `runner.state_dir/annot_cache`에서 다시 씁니다. 판본이 바뀌면 다시 묻습니다. gnomAD는 API가 dataset보다 세밀한 판본을 주지 않으므로 캐시를 30일만 씁니다. gnomAD의 신선도는 시간 기준입니다.
+- 통제 구역 데이터에서 나온 변이도 조회합니다. 경고·승인·거부를 붙이지 않습니다(PI 결정 2026-10-06). 그래서 Claude는 `--allowedTools`, Codex는 approve 모드로 승인 없이 부릅니다.
 
 ### 역할·엔진·도구를 나눈 기준
 
@@ -539,7 +557,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
   `job_group` 제출은 외부 parent traversal을 먼저 확인한 뒤 `jobs`·`logs`·`hpc_out`을 만듭니다.
   스케줄러 명령은 `PATH`·`HOME`·locale과 `SGE_*`·`PBS_*`·`SLURM_*`·`SBATCH_*` 같은 스케줄러 변수만 받습니다. 그래서 `#$ -V`·`#PBS -V`도 broker token이나 API key를 잡에 넘기지 못합니다.
   로그인 노드에서만 qsub·sbatch가 된다면 `ssh_host` 지정 — 이때 작업공간은 공유 파일시스템에 있어야 합니다.
-- **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`),
+- **직원** (`agents/core/*.yaml`): `engine`, `model`, `effort`(Claude Code·Codex만), `tools`(사전 허용), `builtin_mcp`(`approval`, `hpc`, `annot`),
   `permission_mode`, `project_dirs`.
   쓰기 범위는 [승인 게이트와 쓰기 범위](#승인-게이트와-쓰기-범위)에 있습니다.
   `labhq_ask`는 모든 MCP 지원 직원에게 자동으로 붙습니다. 대상은 `cso`, `facilities`, `colleague:<agent_id>`, `pi`입니다. `facilities`가 roster에 없으면 CSO가 답하되, 재시작 전에 `facilities`가 받던 질의는 그 runner 재접속을 `gateway.resume_wait_s`까지 기다려 같은 상담을 이어받습니다(#113).

@@ -6,7 +6,7 @@
 [![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![SLURM: HPC scheduler](https://img.shields.io/static/v1?label=SLURM&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
-[![labhq MCP: approval · ask · hpc](https://img.shields.io/static/v1?label=labhq%20MCP&message=approval%20%C2%B7%20ask%20%C2%B7%20hpc&color=5B5BD6&logo=modelcontextprotocol)](docs/manual.md#연결된-도구)
+[![labhq MCP: annot · approval · ask · hpc](https://img.shields.io/static/v1?label=labhq%20MCP&message=annot%20%C2%B7%20approval%20%C2%B7%20ask%20%C2%B7%20hpc&color=5B5BD6&logo=modelcontextprotocol)](docs/manual.md#연결된-도구)
 [![ChEMBL: MCP · compound search](https://img.shields.io/static/v1?label=ChEMBL&message=MCP%20%C2%B7%20compound%20search&color=007EC6)](https://www.ebi.ac.uk/chembl/)
 [![ClinicalTrials.gov: MCP · trial search](https://img.shields.io/static/v1?label=ClinicalTrials.gov&message=MCP%20%C2%B7%20trial%20search&color=007EC6)](https://clinicaltrials.gov/)
 [![Open Targets: MCP · target search](https://img.shields.io/static/v1?label=Open%20Targets&message=MCP%20%C2%B7%20target%20search&color=007EC6)](https://platform.opentargets.org/)

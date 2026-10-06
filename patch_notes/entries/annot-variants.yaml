@@ -1,0 +1,11 @@
+pr: 449
+rows:
+- sha: 'cd9e439'
+  at: 2026-10-06 17:10
+  text: 'labhq_annot MCP: 직원이 변이를 Ensembl VEP·gnomAD·ClinVar에서 조회하고, 결과마다 DB 판본·조회 시각·요청 hash를 남긴다(한도 지킴·캐시)'
+- sha: '6a43504'
+  at: 2026-10-06 17:31
+  text: 'labhq_annot 리뷰 반영: ClinVar가 VCF indel을 구간으로 찾고 repeat 안 같은 allele을 exact로 맞춘다. gnomAD chrM은 mtDNA query로, gnomAD 캐시는 30일. 같은 요청을 반복해도 앞 결과 파일을 덮어쓰지 않는다'
+- sha: "c695ab8"
+  at: 2026-10-06 17:45
+  text: 주석 MCP가 도구 호출 사이에도 서비스별 요청 간격을 지킨다(리뷰 반영)

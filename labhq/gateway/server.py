@@ -1134,10 +1134,11 @@ class Hub:
     @staticmethod
     def _agent_mcp(agent: dict) -> list[str]:
         """The servers the runner wires (`RunnerDaemon._mcp_servers`, PR #410 review): HPC only with a scheduler,
-        labhq_ask for every engine but Antigravity, then the agent's own servers."""
+        labhq_annot when listed, labhq_ask for every engine but Antigravity, then the agent's own servers."""
         builtin = agent.get("builtin_mcp", [])
         return [*(["labhq_approval"] if "approval" in builtin else []),
                 *(["labhq_hpc"] if "hpc" in builtin and agent.get("scheduler", "none") != "none" else []),
+                *(["labhq_annot"] if "annot" in builtin else []),
                 *(["labhq_ask"] if agent.get("engine") != "antigravity" else []),
                 *agent.get("mcp", [])]
 
