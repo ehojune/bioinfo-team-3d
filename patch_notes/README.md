@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:12 | [`1122f55`](https://github.com/ehojune/bioinfo-team-3d/pull/487/commits/1122f55) | 연구 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 수집 산출 목록을 주고 고치게 한다. 교정이 안 되면 지금처럼 CP2가 거부한다(v0.5 시운전 8차, #485). |
 | 06:39 | [`d51c84a`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/d51c84a) | POSIX 시험이 container에서 zombie로 남은 손자 프로세스를 끝난 것으로 본다(#486 리뷰). |
 | 06:35 | [`6d51920`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/6d51920) | 버전에 답하지 않는 interpreter는 package import 조사를 건너뛰고, POSIX에서도 timeout된 probe의 process group을 끊는다(#486 리뷰). |
 | 06:25 | [`1748376`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/1748376) | runner의 버전·Python 조사가 응답 없는 실행 파일(Store python3 별칭)에서도 제한 시간 + 1초 안에 돌아온다(v0.5 시운전 7차). |

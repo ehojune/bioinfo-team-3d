@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · #487 — 연구 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 교정 (#485)
+
+- 결론: v0.5 시운전 8차(req_7ccde78be0)에서 qc_data 판정 근거가 계획에 없는 `outputs/qc/data_qc_checks.json`을 인용했다. 이 파일은 수집되지 않아 CP2에서 거부됐고, claim은 unsupported가 됐다. 리뷰어도 같은 점을 P2로 짚었다. 이제 단계 결과 교정 루프에서 원장이 계약을 통과한 뒤 CP2와 같은 결속 검사를 한 번 돌린다. 거부될 근거가 있으면 수집 산출 목록을 주고 인용을 고치게 한다. 이 교정이 실패하거나, 수집 안 된 파일만 새로 쓰거나, 인용을 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 지금처럼 거부한다. 교정 질문은 단계당 한 번이다. 미보고 산출 목록에서 `__pycache__` 아래 파일은 뺀다(관찰 기록에는 남음).
+- 바뀐 것: `labhq/orchestrator/cso.py`(`ancestor_artifacts`로 CP2와 같은 조상 산출 목록, `unbound_evidence_problems`, 교정 루프의 `bindable` 폴백), `labhq/runner/daemon.py`(미보고 산출에서 `__pycache__` 제외), `docs/manual.md` 연구 lane 절, 시험 `tests/test_research_cp2.py` 4건·`tests/test_observed_outputs.py` 1건, `tests/test_research_report.py`는 합성 호출을 순서 대신 kind로 찾음.
+- 실행한 것: 새 시험이 고치기 전 코드에서 실패, 고친 뒤 통과. 전체 pytest(Windows) 4736 passed·59 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `tests/test_research_cp2.py::test_a_citation_of_an_uncollected_file_gets_a_correction_before_cp2`, `::test_a_binding_correction_never_fails_a_step_that_passed`.
+
 ## 2026-10-08 · #486 — runner probe가 어떤 경우에도 제한 시간 안에 돌아옴
 
 - 결론: v0.5 시운전 7차(req_030729b6b3)가 "no runner hosts cso"로 즉시 실패했다. 두 runner가 gateway에 붙기 전에 PATH의 `python3 --version`을 조사하는데, Store Python Install Manager가 만든 `python3` 실행 별칭이 응답하지 않았다. faulthandler로 보니 `Popen` 안의 CreateProcess에서 돌아오지 않았다. 그래서 `Popen`·`wait`의 timeout으로는 막을 수 없다. 조사를 데몬 스레드에서 돌리고, 호출한 쪽은 `timeout + 1초` 뒤 `(None, "")`로 넘어가고, 끊는 일은 그 스레드가 이어서 한다. 실제 별칭으로 재보니 이전 코드는 150초 안에 돌아오지 않았고, 처음 고친 판(끊기까지 기다림)은 14.0초였다. 14초면 e2e 시험의 runner 등록 대기 15초를 넘어서, 끊기를 기다리지 않게 바꿨다.
