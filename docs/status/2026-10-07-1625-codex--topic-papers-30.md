@@ -27,4 +27,8 @@
 - `scripts/vocab_tables.py --check`, `scripts/check_public.sh` 통과.
 - Windows 전체 pytest: 4453 passed, 56 skipped. 단일 basetemp 종료 삭제 확인. 첫 실행의 ledger 기록 실패 1건은 단독 재실행과 전체 재실행에서 통과했습니다.
 
+## 남은 지적
+
+- P2: 영문 README의 옛 수치는 후속 #463으로 넘깁니다.
+
 🤖 Generated with Codex for the labhq dev lead

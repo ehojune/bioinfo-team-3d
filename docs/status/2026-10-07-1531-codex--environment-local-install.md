@@ -2,7 +2,7 @@
 
 ## 결론
 
-환경 단계도 자기 작업 폴더 안 환경에만 설치합니다. 공유 환경을 쓰는 모든 shell 호출은 승인 게이트를 거칩니다.
+환경 단계에서 판별되는 설치 명령은 작업 폴더 환경만 예외로 허용합니다. 남은 parser P1은 #461로 넘겼습니다.
 
 ## 바뀐 것
 
@@ -16,13 +16,13 @@
 
 - R 직접 판정: 157 passed·1 skipped.
 - Windows 전체 pytest: 4453 passed·56 skipped. 단일 basetemp는 종료 뒤 삭제했습니다.
-- WSL 관련 검사: 399 passed·2 skipped·9 failed. 실패는 DrvFS의 기존 POSIX 권한 검사이며 CI에서 다시 확인합니다.
+- WSL 관련 검사: 399 passed·2 skipped·9 failed. 실패는 DrvFS의 기존 POSIX 권한 검사입니다. Linux 3.10·3.12 CI는 통과했습니다.
 - `scripts/check_public.sh` 통과. patch notes·status 검사도 통과했습니다. 프롬프트 SHA 두 값을 갱신했고 정확한 비교와 schema 기대값은 유지했습니다.
 - 실제 설치·labhq 요청·직원 CLI 호출은 하지 않았습니다.
 
 ## 남은 지적
 
-인용된 중첩 shell 본문은 후속 #461로 넘깁니다. 간접 script·상속된 installer 설정·검사 뒤 파일시스템 변경은 기존 직접 명령 가드의 범위 밖입니다.
+봇 P1인 비리터럴 설치 인자·subshell cwd 복원과 인용된 중첩 shell 본문은 후속 #461로 넘깁니다. 같은 parser 부류는 구조 수정 한 번 뒤 병합한다는 작업 규칙을 따릅니다. 간접 script·상속된 installer 설정·검사 뒤 파일시스템 변경은 기존 직접 명령 가드의 범위 밖입니다.
 
 Fixes #458
 
