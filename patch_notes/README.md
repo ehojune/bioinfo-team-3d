@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:24 | [`779e900`](https://github.com/ehojune/bioinfo-team-3d/pull/462/commits/779e900) | PMID 검증 논문 31편을 더해 43 topic 모두 30편 이상을 채우고 README·manual·근거표 수치를 맞춘다. |
 | 15:31 | [`edff5de`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/edff5de) | R CMD INSTALL도 명시한 로컬 library에만 설치하며 소비 단계는 자기 .rlib로 한정한다. |
 | 15:14 | [`fef0b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/fef0b0d) | 공유 환경의 모든 shell 호출을 게이트로 보내고 wrapper·분기·실행 치환과 Windows 경로 이탈을 판별한다. |
 | 14:41 | [`e1edba9`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/e1edba9) | 환경 단계 설치를 작업 폴더 환경으로 한정하고 Claude 승인 경로와 venv·uv·conda 명령을 검증. |
