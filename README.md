@@ -1,4 +1,4 @@
-# labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.25)
+# labhq — 혼자 운영하는 바이오인포 연구소 HQ (v0.5)
 
 <!-- badges:start -->
 [![Claude Code: 직원 8명 · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=%EC%A7%81%EC%9B%90%208%EB%AA%85%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
@@ -230,7 +230,7 @@ GitHub URL·DOI·데이터 경로는 **참고** 버튼으로 붙입니다.
 | 버전 | 목표 |
 |---|---|
 | v0.25 | PI가 공개 데이터로 labhq를 시험한다 — **2026-10-04 선언** |
-| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 |
+| v0.5 | PI가 자기 공개 데이터로 로컬에서 연구한다 — **2026-10-08 선언** |
 | v0.75 | PI가 HPC에서 공개 데이터로 연구한다 |
 | v0.9 | PI가 통제 데이터로 연구한다(HPC 위) |
 | v0.95 | 다른 연구자가 문서만 보고 설치해 공개 데이터로 한 건을 끝낸다 |
