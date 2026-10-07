@@ -38,6 +38,32 @@ _DATA_COMMANDS = frozenset({"echo", "printf", "write-output", "write-host", "cat
 _POSIX_SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
 _POWERSHELLS = frozenset({"pwsh", "powershell"})
 _NESTED_SHELL_DEPTH = 3
+_POSIX_SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrsD")
+_POWERSHELL_OPTIONS = {
+    "-command": "command",
+    "-encodedcommand": "encoded",
+    "-file": "file",
+    "-configurationname": "value",
+    "-custompipename": "value",
+    "-executionpolicy": "value",
+    "-inputformat": "value",
+    "-outputformat": "value",
+    "-settingsfile": "value",
+    "-windowstyle": "value",
+    "-workingdirectory": "value",
+    "-login": "flag",
+    "-mta": "flag",
+    "-namedpipeservermode": "flag",
+    "-nologo": "flag",
+    "-noninteractive": "flag",
+    "-noprofile": "flag",
+    "-noprofileloadtime": "flag",
+    "-servermode": "flag",
+    "-socketserver": "flag",
+    "-sshservermode": "flag",
+    "-sta": "flag",
+}
+_CMD_FLAGS = re.compile(r"/(?:[dqas]|[auefv]:(?:on|off))$", re.IGNORECASE)
 
 
 def executable_basename(token: str) -> str:
@@ -206,38 +232,180 @@ def _installer_name_visible(text: str) -> bool:
     return bool(re.search(rf"(?<![A-Za-z0-9_])(?:{names})(?:\.exe)?(?![A-Za-z0-9_])", text, re.IGNORECASE))
 
 
-def _nested_shell_body(executable: str, args: list[str], valid: bool) -> tuple[str, str, bool, bool] | None:
-    """Return body, parser kind, extractability, and unconditional denial for nested shells."""
+def _powershell_option_kind(option: str) -> str | None:
+    folded = option.casefold()
+    if folded == "-c":
+        return "command"
+    if folded == "-ec":
+        return "encoded"
+    matches = {kind for name, kind in _POWERSHELL_OPTIONS.items() if name.startswith(folded)}
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _fully_nonliteral_body(body: str, tool_name: str) -> bool:
+    value = body.strip()
+    if tool_name == "PowerShell":
+        return bool(re.fullmatch(r"\$(?:env:)?[A-Za-z_][\w:]*|\$\{[^}]+\}|\$\(.+\)", value, re.DOTALL))
+    return bool(re.fullmatch(
+        r"\$(?:[A-Za-z_]\w*|\d+|[@*#?!_-])|\$\{[^}]+\}|\$\(.+\)|`[^`]+`|%[^%]+%|![^!]+!",
+        value, re.DOTALL))
+
+
+def _positional_index(word: str) -> int | None:
+    match = re.fullmatch(r"\$(\d+)|\$\{(\d+)\}|\$[@*]|\$\{[@*](?::(\d+))?\}", word)
+    if not match:
+        return None
+    if match.group(1) or match.group(2):
+        return int(match.group(1) or match.group(2))
+    return int(match.group(3) or 1)
+
+
+def _positional_command_candidate(token: str, args: list[str], positional: list[str]) -> str | None:
+    """Expand only positional parameters used as an executable or installer selector."""
+    index = _positional_index(token)
+    if index is not None:
+        return " ".join(positional[index:])
+    executable = executable_basename(token)
+    folded = [arg.casefold() for arg in args]
+    selector_index: int | None = None
+    prefix: list[str] = [token]
+    if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
+        selector_index = next((i for i, arg in enumerate(args) if not arg.startswith("-")), None)
+        if selector_index is not None:
+            prefix.extend(args[:selector_index])
+    elif _PYTHON.fullmatch(executable):
+        module_index = next((i for i, arg in enumerate(folded) if arg == "-m"), None)
+        if module_index is not None and module_index + 1 < len(args):
+            selector_index = module_index + 1
+            prefix.extend(args[:selector_index])
+    elif executable == "uv":
+        pip_index = next((i for i, arg in enumerate(folded) if arg == "pip"), None)
+        if pip_index is not None:
+            selector_index = next(
+                (i for i in range(pip_index + 1, len(args)) if not args[i].startswith("-")), None)
+            if selector_index is not None:
+                prefix.extend(args[:selector_index])
+    elif executable == "r":
+        selector_index = next((i for i, arg in enumerate(args) if not arg.startswith("-")), None)
+        if selector_index is not None:
+            prefix.extend(args[:selector_index])
+    if selector_index is None:
+        return None
+    index = _positional_index(args[selector_index])
+    if index is None:
+        return None
+    return " ".join([*prefix, *positional[index:]])
+
+
+def _positional_commands(body: str, positional: list[str]) -> tuple[str, list[str]]:
+    """Separate body segments whose command position is supplied by bash positional arguments."""
+    remaining: list[str] = []
+    candidates: list[str] = []
+    for segment in _segments(body):
+        stripped = segment.strip()
+        if not stripped:
+            continue
+        token, args, _ = _shell_invocation(stripped, "Bash")
+        candidate = _positional_command_candidate(token, args, positional)
+        if candidate is None:
+            remaining.append(stripped)
+        elif candidate:
+            candidates.append(candidate)
+    return "; ".join(remaining), candidates
+
+
+def _nested_shell_body(
+        executable: str, args: list[str], valid: bool,
+) -> tuple[str, str, bool, bool, list[str]] | None:
+    """Return body, parser kind, extractability, unconditional denial, and positional arguments."""
     option_index: int | None = None
+    unknown_option = False
+    joins_remainder = False
+    positional: list[str] = []
     if executable in _POSIX_SHELLS:
-        option_index = next((i for i, arg in enumerate(args)
-                             if arg == "-c" or arg.startswith("-") and "c" in arg[1:]), None)
         nested_tool = "Bash"
-        joins_remainder = False
+        i = 0
+        while i < len(args):
+            option = args[i]
+            if option == "--":
+                break
+            if option in {"-o", "-O", "+O", "--rcfile", "--init-file"}:
+                i += 2
+                continue
+            if option.startswith(("--rcfile=", "--init-file=")):
+                i += 1
+                continue
+            if option.startswith("--"):
+                i += 1
+                continue
+            if option.startswith("+"):
+                unknown_option |= len(option) < 2 or any(char not in _POSIX_SHELL_FLAGS for char in option[1:])
+                i += 1
+                continue
+            if option.startswith("-"):
+                flags = option[1:]
+                known = bool(flags) and all(char == "c" or char in _POSIX_SHELL_FLAGS for char in flags)
+                if "c" in flags and known:
+                    option_index = i
+                    break
+                unknown_option |= not known
+                i += 1
+                continue
+            break
     elif executable in _POWERSHELLS:
-        encoded = next((i for i, arg in enumerate(args)
-                        if arg.casefold() in {"-encodedcommand", "-enc", "-e"}), None)
-        if encoded is not None:
-            body = args[encoded + 1] if encoded + 1 < len(args) else ""
-            return body, "PowerShell", False, True
-        option_index = next((i for i, arg in enumerate(args)
-                             if arg.casefold() in {"-c", "-command"}), None)
         nested_tool = "PowerShell"
         joins_remainder = True
+        i = 0
+        while i < len(args):
+            option = args[i]
+            if option == "--":
+                break
+            if not option.startswith("-"):
+                break
+            kind = _powershell_option_kind(option)
+            if kind == "encoded":
+                body = args[i + 1] if i + 1 < len(args) else ""
+                return str(body), nested_tool, False, True, []
+            if kind == "file":
+                return "", nested_tool, True, False, []
+            if kind == "command":
+                option_index = i
+                break
+            if kind == "value":
+                i += 2
+                continue
+            if kind == "flag":
+                i += 1
+                continue
+            unknown_option = True
+            i += 1
     elif executable == "cmd":
-        option_index = next((i for i, arg in enumerate(args) if arg.casefold() in {"/c", "/k"}), None)
         nested_tool = "Bash"
         joins_remainder = True
+        for i, option in enumerate(args):
+            if option.casefold() in {"/c", "/k"}:
+                option_index = i
+                break
+            if not option.startswith("/"):
+                break
+            unknown_option |= not bool(_CMD_FLAGS.fullmatch(option))
     else:
         return None
     if option_index is None:
-        return None
+        return "", nested_tool, True, False, []
+    if unknown_option:
+        return "", nested_tool, False, True, []
     if option_index + 1 >= len(args):
-        return "", nested_tool, False, False
-    body = " ".join(args[option_index + 1:]) if joins_remainder else args[option_index + 1]
-    body_words, body_valid = _literal_words(str(body), nested_tool)
-    extractable = valid and body_valid and not any(_nonliteral_word(word) for word in body_words)
-    return body, nested_tool, extractable, False
+        return "", nested_tool, False, True, []
+    if joins_remainder:
+        body = " ".join(args[option_index + 1:])
+    else:
+        body = args[option_index + 1]
+        positional = args[option_index + 2:]
+    _, body_valid = _literal_words(str(body), nested_tool)
+    fully_dynamic = _fully_nonliteral_body(str(body), nested_tool)
+    extractable = valid and body_valid and not fully_dynamic
+    return str(body), nested_tool, extractable, fully_dynamic, positional
 
 
 def _foreign_windows_path(value: str) -> bool:
@@ -573,11 +741,13 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         install_environment_override |= bool(_INSTALL_REDIRECT_ENV.search(segment))
         token, args, understood = _shell_invocation(segment, tool_name)
         executable = executable_basename(token)
+        if _nonliteral_word(token) and not _R_ENV_ONLY.fullmatch(segment):
+            return _ENVIRONMENT_DENIAL
         if _dynamic_installer_syntax(token, args):
             return _ENVIRONMENT_DENIAL
         nested = _nested_shell_body(executable, args, understood)
         if nested is not None:
-            body, nested_tool, extractable, unconditional = nested
+            body, nested_tool, extractable, unconditional, positional = nested
             if unconditional:
                 return _ENVIRONMENT_DENIAL
             if not extractable or depth >= _NESTED_SHELL_DEPTH:
@@ -585,6 +755,16 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
                 if (_installer_name_visible(candidate) or
                         not extractable and _installation_syntax(segment, tool_name)):
                     return _ENVIRONMENT_DENIAL
+                continue
+            if positional:
+                body, positional_candidates = _positional_commands(body, positional)
+                for candidate in positional_candidates:
+                    denial = _shared_environment_install_denial(
+                        nested_tool, candidate, environment_step=environment_step,
+                        workdir=workdir, cwd=cwd, depth=depth + 1)
+                    if denial:
+                        return denial
+            if not body:
                 continue
             denial = _shared_environment_install_denial(
                 nested_tool, body, environment_step=environment_step, workdir=workdir, cwd=cwd, depth=depth + 1)

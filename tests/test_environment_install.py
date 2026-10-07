@@ -352,9 +352,37 @@ def test_nested_shell_installations_fail_closed(tmp_path, command, environment_s
     assert denial(tmp_path, command, environment_step=environment_step)
 
 
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    "bash --norc -c 'pip install scanpy'",
+    "bash --rcfile shell.rc -c 'pip install scanpy'",
+    "bash --init-file=shell.rc -c 'pip install scanpy'",
+    "bash -o pipefail -c 'pip install scanpy'",
+    "bash -lc 'pip install scanpy'",
+    "pwsh -NoProfile -Comm 'pip install scanpy'",
+    "powershell -ec cABpAHAA",
+    "cmd /C pip install scanpy",
+])
+def test_nested_shell_option_grammars_find_install_bodies(tmp_path, command, environment_step):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    "bash -Q -c 'python script.py'",
+    "pwsh -Bogus -Command 'python script.py'",
+    "cmd /Z /C python script.py",
+    'bash -c "$CMD"',
+])
+def test_unknown_shell_options_and_wholly_dynamic_bodies_fail_closed(tmp_path, command, environment_step):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
 @pytest.mark.parametrize("environment_step,command", [
     (True, "bash -c '$0 \"$@\"' pip install --target /tmp/out scanpy"),
     (False, "bash -c '\"$1\" \"${@:2}\"' ignored pip install --target ./other scanpy"),
+    (True, "bash -c 'pip \"$1\"' ignored install scanpy"),
+    (False, "bash -c 'python -m \"$1\" \"${@:2}\"' ignored pip install --target ./other scanpy"),
 ])
 def test_dynamic_nested_shell_body_checks_positional_arguments(tmp_path, environment_step, command):
     assert denial(tmp_path, command, environment_step=environment_step)
@@ -363,6 +391,18 @@ def test_dynamic_nested_shell_body_checks_positional_arguments(tmp_path, environ
 @pytest.mark.parametrize("environment_step", [True, False])
 def test_noninstall_nested_shell_body_remains_allowed(tmp_path, environment_step):
     assert denial(tmp_path, "bash -c 'python script.py'", environment_step=environment_step) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", '''bash -c 'python script.py "$INPUT"' '''),
+    ("Bash", '''bash -lc 'Rscript a.R "$x" > out.txt' '''),
+    ("PowerShell", 'pwsh -Command "python s.py $env:X"'),
+    ("PowerShell", "pwsh -File analysis.ps1 pip install scanpy"),
+    ("Bash", '''bash -c '$0 "$@"' python script.py "$INPUT"'''),
+])
+def test_nested_shell_analysis_arguments_may_expand(tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
 
 
 @pytest.mark.parametrize("environment_step", [True, False])
