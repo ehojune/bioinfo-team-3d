@@ -267,3 +267,78 @@ def test_unprotected_requests_and_non_shell_tools_keep_their_existing_behavior(t
                                      "printf '%s' '`pip install scanpy`'"])
 def test_literal_installation_instructions_are_data(tmp_path, command):
     assert denial(tmp_path, command) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    "pip ${ACTION:-install} scanpy",
+    'pip "$ACTION" scanpy',
+    'pip "$env:ACTION" scanpy',
+    'pip "$(get-action)" scanpy',
+    'pip `get-action` scanpy',
+    'python -m "$MODULE" install scanpy',
+    'python -m pip "$ACTION" scanpy',
+    'uv pip "$ACTION" scanpy',
+    'conda "$ACTION" -p ./conda-env scanpy',
+    'R "$MODE" INSTALL -l ./r-library package.tar.gz',
+    '"$PIP" install --target ./.pylib scanpy',
+    '"$PY" -m pip install --target ./.pylib scanpy',
+])
+def test_nonliteral_installer_selectors_fail_closed(tmp_path, command, environment_step):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("command,environment_step", [
+    ("(cd nested; true); pip install --target .. scanpy", True),
+    ("{ cd nested; true; }; pip install --target .. scanpy", True),
+    ("(cd nested; true); conda install -p .. scanpy", True),
+    ("(cd nested; true); uv pip install --python ../python scanpy", True),
+    ("(cd nested; true); pip install --target ../.pylib scanpy", False),
+    ("{ cd nested; true; }; pip install --target ../.pylib scanpy", False),
+    ("(cd nested; true); R CMD INSTALL -l ../.rlib package.tar.gz", False),
+])
+def test_group_directory_changes_do_not_escape_their_scope(tmp_path, command, environment_step):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step,library,template", [
+    (True, "packages", 'pip install --target "{target}" scanpy'),
+    (True, "conda-env", 'conda install -p "{target}" scanpy'),
+    (True, ".venv/python", 'uv pip install --python "{target}" scanpy'),
+    (False, ".pylib", 'pip install --target "{target}" scanpy'),
+    (False, ".rlib", 'R CMD INSTALL -l "{target}" package.tar.gz'),
+])
+def test_group_local_absolute_targets_remain_allowed(tmp_path, environment_step, library, template):
+    target = tmp_path / library
+    command = f'(cd nested; {template.format(target=target)})'
+    assert denial(tmp_path, command, environment_step=environment_step) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    "bash -c 'pip install scanpy'",
+    "sh -c 'pip install scanpy'",
+    "zsh -c 'pip install scanpy'",
+    "dash -c 'pip install scanpy'",
+    "pwsh -Command 'pip install scanpy'",
+    "pwsh -Command pip install scanpy",
+    "powershell -c 'pip install scanpy'",
+    "cmd /c 'pip install scanpy'",
+    "cmd /c pip install scanpy",
+    "cmd /k 'pip install scanpy'",
+    "powershell -EncodedCommand cABpAHAA",
+    "bash -c \"$SETUP; pip install scanpy\"",
+    "cmd /c cmd /c cmd /c cmd /c pip install scanpy",
+])
+def test_nested_shell_installations_fail_closed(tmp_path, command, environment_step):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+def test_noninstall_nested_shell_body_remains_allowed(tmp_path, environment_step):
+    assert denial(tmp_path, "bash -c 'python script.py'", environment_step=environment_step) is None
+
+
+def test_nested_shell_local_install_destinations_remain_allowed(tmp_path):
+    assert denial(tmp_path, "bash -c 'pip install --target ./packages scanpy'") is None
+    assert denial(tmp_path, "bash -c 'pip install --target ./.pylib scanpy'", environment_step=False) is None
