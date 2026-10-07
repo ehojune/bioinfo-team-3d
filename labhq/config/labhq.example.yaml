@@ -168,7 +168,7 @@ pi_profile:
 
 # 연구 계약 pilot은 opt-in입니다. evidence_checkpoint를 켜야 승인된 연구 step을 실행합니다.
 research:
-  enabled: false              # pilot을 켜려면 true 한 줄로 변경
+  enabled: false              # 켜려면 enabled·evidence_checkpoint를 true로, active_packs도 함께
   evidence_checkpoint: false  # true면 CP1 뒤 연구 단계를 실행하고 CP2 승인 뒤 리뷰·보고서까지
   live_source_check: false     # true면 CP2와 labhq verify에서 Crossref·NCBI를 live 조회
   live_source_contact: ""      # API User-Agent/mailto에 넣을 관리자 email(선택)

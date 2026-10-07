@@ -14,11 +14,13 @@
 
 길이와 직원 수는 판정 기준이 아니다. API의 `work_kind=auto|simple|research`로 PI가 명시할 수 있다. pilot을 켠 상태에서 `research + direct`는 실행하지 않고 `orchestrate` 또는 `plan_only` 재접수를 요구한다. 단순 작업에도 출처·실패·데이터 경계는 지킨다.
 
-설정은 한 줄로 켠다.
+설정은 세 키를 함께 켠다. `enabled`만 켜면 CP1에서 계획을 동결한 뒤 단계를 실행하지 않고 끝난다. 오타 키는 시작할 때 오류다. `labhq doctor`의 `research lane` 행이 지금 상태를 알려 준다.
 
 ```yaml
 research:
   enabled: true
+  evidence_checkpoint: true      # CP1 뒤 단계를 실행하고 CP2·리뷰·보고서까지
+  active_packs: [bulk_tumor_normal@3, single_cell_de@3]
 ```
 
 ## 2. 동결 PLAN 계약

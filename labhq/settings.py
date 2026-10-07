@@ -407,6 +407,9 @@ class LabSettings(BaseModel):
 class ResearchSettings(BaseModel):
     """Opt-in research contract pilot."""
 
+    # A misspelled key (`evidence_checkpiont`) used to load silently and leave the lane half on (readiness R1).
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = False
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     live_source_check: bool = False  # Crossref/NCBI verification before CP2 and in labhq verify
