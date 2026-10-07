@@ -878,6 +878,34 @@ def step_ancestors(steps: list[dict]) -> dict[str, set[str]]:
     return ancestors
 
 
+def ancestor_artifacts(steps: list[dict], ancestors: dict[str, set[str]], results: dict[str, TaskResult],
+                       step_id: str) -> list[tuple]:
+    """Collected outputs of every finished ancestor, as bind_result_artifacts reads them.
+
+    Any ancestor counts: an interpretation step reads the analyses its QC step checked, not only the QC verdict
+    (8th mock trial: 6 of 8 refusals cited a grandparent's file)."""
+    return [(results[d].workdir_id, results[d].workdir, list(results[d].outputs), dict(results[d].output_sha256))
+            for d in (s["id"] for s in steps if s["id"] in ancestors[step_id])
+            if d in results and results[d].ok]
+
+
+def unbound_evidence_problems(ledger: dict[str, Any], result: TaskResult, upstream: list[tuple]) -> list[str]:
+    """Evidence CP2 would refuse because it cites a file labhq did not collect, as correction problems (#485).
+
+    v0.5 trial (2026-10-08): a QC verdict cited a JSON file the step wrote but the plan never declared; CP2 refused it
+    and the claim lost its support with no turn left to point it at the collected verdict file."""
+    bound = bind_result_artifacts(ledger, outputs=list(result.outputs), upstream=upstream,
+                                  output_sha256=dict(result.output_sha256))
+    if not bound["refused_evidence"]:
+        return []
+    collected = ", ".join(result.outputs) or "none"
+    return [*(f"evidence {row['evidence_id']} {row['reason']}; CP2 would refuse it"
+              for row in bound["refused_evidence"]),
+            f"Cite only files labhq collected: this step's outputs ({collected}) or an earlier step's artifact as "
+            "<workdir_id>/<path>, or remove the row and every link that needs it. A file the plan did not declare "
+            "is not collected, and no file written now is collected."]
+
+
 def merged_turn(first: TaskResult, later: TaskResult) -> TaskResult:
     """A later turn of the same step in the same workspace. The runner lists and hashes the declared outputs as they
     are after that turn, so that view replaces the first turn's: a file the later turn removed, or grew past the hash
@@ -3113,6 +3141,19 @@ class Orchestrator:
                             contract.pop("result_salvage", None)
                     self.hub.save_request(rid)
 
+                # The last result that passed the contract and only cited a file labhq did not collect (#485). An
+                # optional correction that fails, touches no collected file but writes others, or ends worse falls
+                # back to it: asking to re-point a citation never fails a step that would have passed before.
+                bindable: tuple[Any, TaskResult] | None = None
+
+                def accept(ledger: Any, via: TaskResult) -> TaskResult:
+                    save_salvage([], [])
+                    return original.model_copy(update={
+                        "structured": ledger.model_dump(mode="json"),
+                        "session_id": via.session_id or original.session_id,
+                        "workdir": via.workdir or original.workdir,
+                    })
+
                 for correction in range(limit + 1):
                     asked = blocking_question(current)
                     structured = (current.structured if isinstance(current.structured, dict)
@@ -3126,13 +3167,17 @@ class Orchestrator:
                         validated_result = validate_research_result(structured, plan=research_plan)
                         if validated_result.step_id != step["id"]:
                             problems = [f"research result step_id {validated_result.step_id} does not match {step['id']}"]
+                    if not problems and validated_result is not None and correction < limit and bindable is None:
+                        # Asked once: a row still unbound after that, or after the last correction, stays for CP2
+                        # to refuse; it never fails the step.
+                        problems = unbound_evidence_problems(validated_result.model_dump(mode="json"), original,
+                                                             ancestor_artifacts(steps, ancestors, results, step["id"]))
+                        if problems:
+                            bindable = (validated_result, current)
                     if not problems and validated_result is not None:
-                        save_salvage([], [])
-                        return original.model_copy(update={
-                            "structured": validated_result.model_dump(mode="json"),
-                            "session_id": current.session_id or original.session_id,
-                            "workdir": current.workdir or original.workdir,
-                        })
+                        return accept(validated_result, current)
+                    if correction == limit and bindable is not None:
+                        return accept(*bindable)
                     if correction == limit:
                         # A result that still asks the PI a blocking question is never salvaged into CP2: the
                         # employee said it cannot go on without that decision (PR #353 review).
@@ -3166,6 +3211,8 @@ class Orchestrator:
                               **({"workdir": current.workdir} if current.workdir else {})},
                     )
                     current = await self.run_step(correction_task)
+                    if not current.ok and bindable is not None:
+                        return accept(*bindable)
                     if not current.ok:
                         return current.model_copy(update={
                             "outputs": original.outputs, "output_sha256": original.output_sha256,
@@ -3173,6 +3220,9 @@ class Orchestrator:
                             "workdir": current.workdir or original.workdir,
                             "workdir_id": current.workdir_id or original.workdir_id,
                         })
+                    if (current.unreported_outputs and bindable is not None
+                            and not set(current.unreported_outputs) & set(original.outputs)):
+                        return accept(*bindable)  # collected files and their hashes are untouched
                     if current.unreported_outputs:
                         # A correction only rewrites the result JSON. A file it changed would no longer match the
                         # hash CP2 binds evidence to, so the step fails instead (PR #352 review).
@@ -3353,14 +3403,9 @@ class Orchestrator:
                         for row in step_refused if row.get("row_type") == "evidence"]
             unsupported += [{"step_id": step["id"], **row}
                             for row in salvaged.get("unsupported_claims") or []]
-            # Any ancestor's collected output is verified: an interpretation step reads the analyses its QC
-            # step checked, not only the QC verdict (8th mock trial: 6 of 8 refusals cited a grandparent's file).
-            upstream = [(results[d].workdir_id, results[d].workdir, list(results[d].outputs),
-                         dict(results[d].output_sha256))
-                        for d in (s["id"] for s in steps if s["id"] in ancestors[step["id"]])
-                        if d in results and results[d].ok]
             bound = bind_result_artifacts(result.structured if isinstance(result.structured, dict) else {},
-                                           outputs=list(result.outputs), upstream=upstream,
+                                           outputs=list(result.outputs),
+                                           upstream=ancestor_artifacts(steps, ancestors, results, step["id"]),
                                            output_sha256=dict(result.output_sha256))
             refused += [{"step_id": step["id"], **row} for row in bound["refused_evidence"]]
             unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]

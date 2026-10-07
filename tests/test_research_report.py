@@ -221,7 +221,8 @@ async def test_a_claim_resting_only_on_refused_evidence_is_not_offered_for_citat
     hub = _hub(artifact_path="outputs/missing.tsv")
     await Orchestrator(hub).run_request("r")
 
-    synthesis = hub.calls[3].prompt
+    # The step first gets one correction for the uncollected citation (#485), which leaves it unchanged.
+    synthesis = next(task.prompt for task in hub.calls if task.meta["kind"] == "synthesis")
     citable = synthesis.split("Citable claims:", 1)[1].split("Claims that cannot be cited:", 1)[0]
     assert "[[claim:s1/c1]]" not in citable
 

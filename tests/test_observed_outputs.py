@@ -77,6 +77,23 @@ async def test_manifest_hashes_declared_and_unreported_fake_cli_outputs(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_bytecode_caches_are_observed_but_not_unreported(tmp_path, monkeypatch):
+    """v0.5 trial (#485): outputs/lib/__pycache__ came up as files the employee did not report."""
+    def write(workdir):
+        _write(workdir, "outputs/lib/pairde.py", b"x = 1\n")
+        _write(workdir, "outputs/lib/__pycache__/pairde.cpython-312.pyc", b"\x00")
+        _write(workdir, "outputs/__pycache__x/kept.txt", b"kept\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task(outputs=["lib/pairde.py"]))
+
+    assert result.unreported_outputs == ["outputs/__pycache__x/kept.txt"]
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    observed = manifest["runs"][result.task_id]["observed_outputs"]
+    assert "outputs/lib/__pycache__/pairde.cpython-312.pyc" in {row["path"] for row in observed}
+
+
+@pytest.mark.asyncio
 async def test_claude_post_tool_hook_ids_the_nearest_observed_output_write(tmp_path, monkeypatch):
     from labhq.hooks.tool_use import record_post_tool_use
 
