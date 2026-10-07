@@ -20,6 +20,7 @@ from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCES
                             build_ro_crate, verify_bundle_copy)
 from labhq.settings import Settings
 import labhq.request_bundle as request_bundle_module
+import labhq.ro_crate as ro_crate_module
 
 
 def digest(path: Path) -> str:
@@ -953,6 +954,61 @@ def test_ro_crate_rejects_parent_path_components_after_uri_decoding(value):
         build_ro_crate({"id": value}, [], [], {})
 
 
+UNSAFE_BUNDLE_PATHS = [
+    "../../x", "//server/share/x", "C:/outside/x", r"\\?\C:\outside\x",
+    "file:///outside/x", "safe.txt:ads",
+]
+
+
+@pytest.mark.parametrize("relative", UNSAFE_BUNDLE_PATHS)
+def test_plain_file_rejects_unsafe_paths_before_filesystem_access(tmp_path, monkeypatch, relative):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("filesystem access happened before lexical validation")
+
+    monkeypatch.setattr("labhq.adapters.owned.is_link", unexpected)
+    monkeypatch.setattr(Path, "is_file", unexpected)
+    monkeypatch.setattr(Path, "resolve", unexpected)
+
+    with pytest.raises(OSError, match="unsafe bundle path"):
+        ro_crate_module._plain_file(tmp_path, relative)
+
+
+@pytest.mark.parametrize("source", ["manifest", "crate"])
+@pytest.mark.parametrize("relative", UNSAFE_BUNDLE_PATHS)
+def test_verify_rejects_unsafe_declared_paths_before_opening_them(
+        tmp_path, monkeypatch, source, relative):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    if source == "manifest":
+        path = bundle / "MANIFEST.tsv"
+        with path.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            fields, rows = reader.fieldnames, list(reader)
+        next(row for row in rows if row["relative_path"] == "README.md")["relative_path"] = relative
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    else:
+        path = bundle / METADATA_FILE
+        crate = json.loads(path.read_text(encoding="utf-8"))
+        next(entity for entity in crate["@graph"] if entity.get("@id") == "README.md")["@id"] = relative
+        path.write_text(json.dumps(crate), encoding="utf-8")
+
+    original = ro_crate_module._plain_file
+
+    def guarded_open(root, candidate):
+        assert candidate != relative
+        return original(root, candidate)
+
+    monkeypatch.setattr(ro_crate_module, "_plain_file", guarded_open)
+    report = verify_bundle_copy(bundle)
+
+    assert report["problems"]
+    assert any("안전하지" in problem or "unsafe local entity id" in problem
+               for problem in report["problems"])
+
+
 @pytest.mark.parametrize("target", ["payload", "manifest", "crate"])
 def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, target):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
@@ -1032,6 +1088,38 @@ def test_verify_rejects_a_link_or_junction_inside_the_bundle(tmp_path):
         data_dir.rmdir()
 
 
+def test_verify_detects_an_unregistered_file_in_the_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    write(bundle / "injected.txt", "not inventoried\n")
+
+    report = verify_bundle_copy(bundle)
+
+    assert any("MANIFEST에 등록되지 않은 파일" in problem and "injected.txt" in problem
+               for problem in report["problems"])
+
+
+def test_verify_detects_an_unregistered_link_without_following_it(tmp_path):
+    settings, request, tasks, _upstream, outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    target = outside.parent
+    link = bundle / "injected-link"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory links are unavailable")
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link 또는 junction" in problem and "injected-link" in problem
+                   for problem in report["problems"])
+    finally:
+        link.rmdir()
+
+
 def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
     settings = configured(tmp_path)
     request = {"id": "old_bundle", "status": "done", "results": {}, "plan": {"steps": []}}
@@ -1043,6 +1131,28 @@ def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
     assert report["exit_code"] == 0
     assert report["request_bundle"]["present"] is True
     assert report["request_bundle"]["crate"] is False
+
+
+def test_recorded_bundle_missing_from_disk_is_a_problem(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "deleted_bundle", "status": "done", "results": {}, "plan": {"steps": []},
+               "bundle_path": str(Path(settings.runner.workspace_root) / "requests" / "deleted_bundle")}
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert report["request_bundle"]["present"] is False
+    assert any("기록된 묶음 폴더가 없습니다" in problem for problem in report["problems"])
+
+
+def test_unrecorded_missing_bundle_keeps_the_previous_verdict(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "old_without_bundle", "status": "done", "results": {}, "plan": {"steps": []}}
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["present"] is False
 
 
 def test_new_bundle_missing_ro_crate_is_a_problem(tmp_path):

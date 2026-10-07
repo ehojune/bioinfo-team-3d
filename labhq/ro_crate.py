@@ -275,27 +275,41 @@ def write_ro_crate(path: Path, req: Mapping[str, Any], rows: list[Mapping[str, A
 def _local_id(identifier: Any) -> str | None:
     if not isinstance(identifier, str) or identifier in ("./", METADATA_FILE):
         return None
-    parsed = urlsplit(identifier)
-    if parsed.scheme or parsed.netloc or identifier.startswith("#"):
+    if identifier.startswith("#"):
         return None
-    if parsed.query or parsed.fragment or "\\" in identifier:
+    try:
+        parsed = urlsplit(identifier)
+        if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError
+        parts = _bundle_relative_parts(unquote(parsed.path))
+    except ValueError:
         raise ValueError(f"unsafe local entity id: {identifier}")
-    decoded = unquote(parsed.path)
-    path = PurePosixPath(decoded)
-    if path.is_absolute() or not path.parts or any(part in ("", ".", "..") for part in path.parts):
-        raise ValueError(f"unsafe local entity id: {identifier}")
-    return path.as_posix()
+    return "/".join(parts)
+
+
+def _bundle_relative_parts(relative: str) -> tuple[str, ...]:
+    """Validate an untrusted bundle path without touching the filesystem."""
+    if not isinstance(relative, str) or not relative or "\\" in relative or ":" in relative or "\0" in relative:
+        raise ValueError("unsafe bundle path")
+    parts = tuple(relative.split("/"))
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("unsafe bundle path")
+    return parts
 
 
 def _plain_file(root: Path, relative: str) -> Path:
     from .adapters.owned import is_link
 
+    try:
+        parts = _bundle_relative_parts(relative)
+    except ValueError:
+        raise OSError(f"unsafe bundle path: {relative}") from None
     path = root
-    for part in PurePosixPath(relative).parts:
+    for part in parts:
         path = path / part
         if is_link(path):
             raise OSError(f"link or junction: {relative}")
-    if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
+    if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
         raise OSError(f"missing or outside bundle: {relative}")
     return path
 
@@ -315,11 +329,58 @@ def _read_manifest(root: Path) -> tuple[dict[str, dict[str, str]], list[str]]:
         relative = row.get("relative_path")
         if not relative:
             problems.append("묶음 MANIFEST.tsv에 relative_path가 없는 행이 있습니다")
-        elif relative in found:
-            problems.append(f"묶음 MANIFEST.tsv 경로가 중복됩니다: {relative}")
-        else:
+        elif relative == "." and row.get("status") == "summary":
             found[relative] = row
+        else:
+            try:
+                _bundle_relative_parts(relative)
+            except ValueError:
+                problems.append(f"묶음 MANIFEST.tsv 경로가 안전하지 않습니다: {relative}")
+                continue
+            if relative in found:
+                problems.append(f"묶음 MANIFEST.tsv 경로가 중복됩니다: {relative}")
+            else:
+                found[relative] = row
     return found, problems
+
+
+def _bundle_inventory(root: Path) -> tuple[set[str], list[str]]:
+    """List plain files without following symlinks or Windows junctions."""
+    from .adapters.owned import is_link
+
+    files: set[str] = set()
+    problems: list[str] = []
+    pending: list[tuple[Path, tuple[str, ...]]] = [(root, ())]
+    while pending:
+        directory, parent_parts = pending.pop()
+        try:
+            with os.scandir(directory) as scanned:
+                entries = sorted(scanned, key=lambda item: item.name)
+        except OSError as exc:
+            relative = "/".join(parent_parts) or "."
+            problems.append(f"묶음 폴더를 열거하지 못했습니다: {relative} ({exc})")
+            continue
+        for entry in entries:
+            parts = (*parent_parts, entry.name)
+            relative = "/".join(parts)
+            try:
+                _bundle_relative_parts(relative)
+            except ValueError:
+                problems.append(f"묶음 트리 경로가 안전하지 않습니다: {relative}")
+                continue
+            path = Path(entry.path)
+            try:
+                if is_link(path):
+                    problems.append(f"묶음 트리에 link 또는 junction이 있습니다: {relative}")
+                elif entry.is_dir(follow_symlinks=False):
+                    pending.append((path, parts))
+                elif entry.is_file(follow_symlinks=False):
+                    files.add(relative)
+                else:
+                    problems.append(f"묶음 트리에 일반 파일이나 폴더가 아닌 항목이 있습니다: {relative}")
+            except OSError as exc:
+                problems.append(f"묶음 트리 항목을 확인하지 못했습니다: {relative} ({exc})")
+    return files, problems
 
 
 def _expected_input_values(root: Path) -> tuple[dict[str, tuple[str, str]], int]:
@@ -432,6 +493,10 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
         problems.append("RO-Crate root Dataset의 Process Run Crate 선언이 올바르지 않습니다")
     manifest, manifest_problems = _read_manifest(root)
     problems.extend(manifest_problems)
+    inventory, inventory_problems = _bundle_inventory(root)
+    problems.extend(inventory_problems)
+    problems.extend(f"MANIFEST에 등록되지 않은 파일이 있습니다: {relative}"
+                    for relative in sorted(inventory - {"MANIFEST.tsv"} - manifest.keys()))
     files: dict[str, Mapping[str, Any]] = {}
     for entity in entities:
         types = entity.get("@type")
