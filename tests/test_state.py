@@ -787,6 +787,48 @@ async def test_control_phase_recovers_exact_task_identity(tmp_path, meta, comple
 
 
 @pytest.mark.asyncio
+async def test_resumed_request_does_not_replay_its_own_earlier_call(tmp_path):
+    # A resumed request re-plans after a clarify answer with a second plan call of the same identity. Recovery adopts
+    # only tasks dispatched before the resume; replaying the first plan ended a trial request as "still requires PI
+    # clarification" right after the PI answered (2026-10-07).
+    s = settings(tmp_path)
+    s.gateway.resume_wait_s = 0
+    hub = Hub(s)
+    hub.requests["r"] = {"id": "r", "mode": "orchestrate", "text": "study", "status": "interrupted"}
+    hub.save_request("r")
+    socket = CaptureSocket()
+    hub.register_runner("local", socket, [{"id": agent} for agent in sorted(hub.resume_agents("r") | {"cso"})],
+                        "inc")
+    texts = []
+
+    async def answer(seq):
+        for _ in range(100):
+            sends = [m for m in socket.sent if m.get("type") == "task.dispatch"]
+            if len(sends) >= seq:
+                break
+            await asyncio.sleep(0.01)
+        assert len(sends) >= seq, "the second plan call never reached the runner"
+        tid = sends[seq - 1]["task"]["id"]
+        result = TaskResult(task_id=tid, agent_id="cso", ok=True, text=f"plan {seq}")
+        await hub.on_runner_message("local", {"type": "task.result", "runner_seq": seq, "request_id": "r",
+                                              "task_id": tid, "data": result.model_dump(mode="json")})
+
+    async def resumed(rid, resume=False):
+        for seq in (1, 2):
+            call = asyncio.create_task(hub.dispatch(Task(agent_id="cso", request_id=rid, prompt=f"plan {seq}",
+                                                         meta={"kind": "plan", "attempt": 2})))
+            await answer(seq)
+            texts.append((await asyncio.wait_for(call, 1)).text)
+
+    hub.orchestrator.run_request = resumed
+    await hub.resume_when_ready("r")
+
+    assert texts == ["plan 1", "plan 2"]
+    assert len([m for m in socket.sent if m.get("type") == "task.dispatch"]) == 2
+    assert "r" not in hub.recovery_started
+
+
+@pytest.mark.asyncio
 async def test_failed_revision_fallback_is_durable(tmp_path):
     s = settings(tmp_path)
     hub = Hub(s)

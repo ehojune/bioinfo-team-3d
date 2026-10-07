@@ -225,6 +225,9 @@ class Hub:
         self.terminal_tasks: dict[str, asyncio.Task] = {}
         self.pending_committed: deque[tuple[dict, tuple[WebSocket, ...]]] = deque()
         self.recovery_steps: set[str] = set()
+        # When each resume began: only a task dispatched before it is a prior attempt to adopt. A task this run
+        # dispatched itself (the re-plan after a clarify answer) must not replay its own earlier call.
+        self.recovery_started: dict[str, float] = {}
         self.recovered_tasks: set[str] = set()
         self.quota_events: dict[str, asyncio.Event] = {}
         self.login_events: dict[str, asyncio.Event] = {}
@@ -856,9 +859,13 @@ class Hub:
     def recovery_attempt(self, task: Task) -> int:
         if task.request_id not in self.recovery_steps:
             return 1
-        matches = [(tid, entry) for tid, entry in self.store.all("task").items()
-                   if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
-        return max((int(entry.get("attempt") or 1) for _, entry in matches), default=1)
+        return max((int(entry.get("attempt") or 1) for _, entry in self._recovery_matches(task)), default=1)
+
+    def _recovery_matches(self, task: Task) -> list[tuple[str, dict]]:
+        started = self.recovery_started.get(task.request_id, float("inf"))
+        return [(tid, entry) for tid, entry in self.store.all("task").items()
+                if self._matches_recovery(task, entry) and tid not in self.recovered_tasks and
+                float(entry.get("dispatched_at") or 0) < started]
 
     @staticmethod
     def _matches_recovery(task: Task, entry: dict) -> bool:
@@ -962,11 +969,13 @@ class Hub:
                 self.save_request(rid)
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
                                     "data": {"agents": sorted(self.resume_agents(rid))}})
+                self.recovery_started[rid] = time.time()
                 self.recovery_steps.add(rid)
                 try:
                     await self.orchestrator.run_request(rid, resume=True)
                 finally:
                     self.recovery_steps.discard(rid)
+                    self.recovery_started.pop(rid, None)
                 return
             if missing != previous:
                 await self.publish({"type": "request.resume_waiting", "ts": time.time(), "request_id": rid,
@@ -1383,8 +1392,7 @@ class Hub:
     async def dispatch(self, task: Task) -> TaskResult:
         sid = task.meta.get("step_id") or task.meta.get("kind")
         if sid and task.request_id in self.recovery_steps:
-            matches = [(tid, entry) for tid, entry in self.store.all("task").items()
-                       if self._matches_recovery(task, entry) and tid not in self.recovered_tasks]
+            matches = self._recovery_matches(task)
             if not matches and task.meta.get("kind") == "direct":
                 checkpoint = self.store.get("step_checkpoint", f"{task.request_id}:direct")
                 if checkpoint and checkpoint.get("result"):
