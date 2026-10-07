@@ -837,6 +837,7 @@ def test_ro_crate_is_deterministic_and_uses_the_pinned_profiles(tmp_path):
 
     assert (second / METADATA_FILE).read_bytes() == first_bytes
     assert crate["@context"] == INLINE_CONTEXT
+    assert INLINE_CONTEXT["conformsTo"] == "http://purl.org/dc/terms/conformsTo"
     assert entities[METADATA_FILE]["conformsTo"] == [{"@id": RO_CRATE_PROFILE},
                                                         {"@id": PROCESS_RUN_PROFILE}]
     assert entities["./"]["identifier"] == request["id"]
@@ -1197,6 +1198,59 @@ def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
     assert report["exit_code"] == 0
     assert report["request_bundle"]["present"] is True
     assert report["request_bundle"]["crate"] is False
+
+
+def test_verify_detects_manifested_crate_and_readme_removed_together(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    (bundle / METADATA_FILE).unlink()
+    (bundle / "README.md").unlink()
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("MANIFEST에 기록된 ro-crate-metadata.json이 없습니다" in problem
+               for problem in report["problems"])
+    assert any("MANIFEST에 기록된 README.md가 없습니다" in problem
+               for problem in report["problems"])
+
+
+def test_verify_reports_unreadable_readme_before_legacy_fallback(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    (bundle / METADATA_FILE).unlink()
+    (bundle / "README.md").write_bytes(b"\xff")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("README.md를 읽지 못했습니다" in problem for problem in report["problems"])
+
+
+def test_verify_requires_bundle_folder_and_identifier_to_match_request_id(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    report = verify_bundle_copy(bundle, "request_a")
+
+    assert any("묶음 폴더 이름이 요청 ID와 다릅니다" in problem for problem in report["problems"])
+    assert any("root Dataset identifier가 요청 ID와 다릅니다" in problem
+               for problem in report["problems"])
+
+
+def test_verify_request_rejects_another_requests_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    request["id"] = "request_a"
+    expected_bundle = bundle.with_name(request["id"])
+    bundle.rename(expected_bundle)
+    request["bundle_path"] = str(expected_bundle)
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("root Dataset identifier가 요청 ID와 다릅니다" in problem
+               for problem in report["problems"])
 
 
 def test_recorded_bundle_missing_from_disk_is_a_problem(tmp_path):

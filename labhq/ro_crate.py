@@ -25,7 +25,7 @@ _DRIVE_PATH = re.compile(r"(?i)(?:^|[^A-Za-z0-9_])[A-Z]:[\\/]")
 _POSIX_PATH = re.compile(r"(?:^|[\s=(\[{:>\"'`])/(?!/)")
 _PROTECTED = frozenset({"private", "restricted"})
 _SCHEMA_TERMS = (
-    "about", "actionStatus", "applicationCategory", "contentSize", "conformsTo", "datePublished",
+    "about", "actionStatus", "applicationCategory", "contentSize", "datePublished",
     "description", "encodingFormat", "endTime", "hasPart", "identifier", "instrument", "license",
     "measurementTechnique", "mentions", "name", "propertyID", "result", "softwareVersion", "startTime",
     "unitText", "value", "valueReference", "variableMeasured", "version",
@@ -36,6 +36,7 @@ INLINE_CONTEXT = {
     "File": "schema:MediaObject",
     "sha256": "https://w3id.org/ro/terms/workflow-run#sha256",
     **{term: f"schema:{term}" for term in _SCHEMA_TERMS},
+    "conformsTo": "http://purl.org/dc/terms/conformsTo",
 }
 
 
@@ -407,7 +408,7 @@ def _expected_input_values(root: Path) -> tuple[dict[str, tuple[str, str]], int]
     return expected, recorded
 
 
-def verify_bundle_copy(root: Path) -> dict[str, Any]:
+def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> dict[str, Any]:
     """Check a request-bundle copy. Old bundles without the format marker remain compatible."""
     from .adapters.owned import is_link
 
@@ -420,6 +421,11 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
         return report
     report["present"] = True
     problems: list[str] = report["problems"]
+    expected_request_id = root.name if expected_request_id is None else expected_request_id
+    if root.name != expected_request_id:
+        problems.append(
+            f"요청 묶음 폴더 이름이 요청 ID와 다릅니다: {root.name} != {expected_request_id}"
+        )
     try:
         if is_link(root.parent):
             problems.append("요청 묶음 부모가 link 또는 junction입니다")
@@ -430,11 +436,21 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
     try:
         metadata = _plain_file(root, METADATA_FILE)
     except FileNotFoundError:
+        manifest, _manifest_problems = _read_manifest(root)
         try:
             marked = FORMAT_MARKER in _plain_file(root, "README.md").read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            marked = False
-        if marked:
+        except FileNotFoundError:
+            if "README.md" in manifest:
+                problems.append("MANIFEST에 기록된 README.md가 없습니다")
+            if METADATA_FILE in manifest:
+                problems.append(f"MANIFEST에 기록된 {METADATA_FILE}이 없습니다")
+            return report
+        except (OSError, UnicodeError) as exc:
+            problems.append(f"README.md를 읽지 못했습니다: {exc}")
+            if METADATA_FILE in manifest:
+                problems.append(f"MANIFEST에 기록된 {METADATA_FILE}이 없습니다")
+            return report
+        if marked or METADATA_FILE in manifest:
             problems.append(f"새 요청 묶음에 {METADATA_FILE}이 없습니다")
         return report
     except OSError as exc:
@@ -496,6 +512,11 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
     if not isinstance(root_entity, Mapping) or root_entity.get("@type") != "Dataset" \
             or root_entity.get("conformsTo") != _ref(PROCESS_RUN_PROFILE):
         problems.append("RO-Crate root Dataset의 Process Run Crate 선언이 올바르지 않습니다")
+    if isinstance(root_entity, Mapping) and root_entity.get("identifier") != expected_request_id:
+        problems.append(
+            "RO-Crate root Dataset identifier가 요청 ID와 다릅니다: "
+            f"{root_entity.get('identifier')} != {expected_request_id}"
+        )
     manifest, manifest_problems = _read_manifest(root)
     problems.extend(manifest_problems)
     inventory, inventory_problems = _bundle_inventory(root)

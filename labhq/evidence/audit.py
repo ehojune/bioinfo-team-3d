@@ -237,7 +237,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     if _SAFE_REQUEST_ID.fullmatch(request_id):
         from ..ro_crate import verify_bundle_copy
 
-        request_bundle = verify_bundle_copy(root / "requests" / request_id)
+        request_bundle = verify_bundle_copy(root / "requests" / request_id, request_id)
         if req.get("bundle_path") and not request_bundle["present"]:
             request_bundle["problems"].append("요청에 기록된 묶음 폴더가 없습니다")
         problems += [f"요청 묶음 사본: {problem}" for problem in request_bundle["problems"]]
