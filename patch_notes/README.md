@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:25 | [`1ce2356`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/1ce2356) | 설정 폴더가 Windows junction이어도 거부한다(#483 리뷰 P2). |
+| 04:19 | [`6122b62`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/6122b62) | Windows 명령줄이 TASK 파일 포인터로도 넘치면 Claude 직원의 --settings를 작업 폴더 옆 .labhq-settings/<task>.json으로 넘긴다(v0.5 시운전 결과 QC 단계). |
 | 03:42 | [`caba362`](https://github.com/ehojune/bioinfo-team-3d/pull/481/commits/caba362) | sed의 붙여 쓴 option·따옴표 script를 한 shell word로 해석하고, 미확정 sed·curl·wget option은 원문 검사로 되돌림 |
 | 03:11 | [`6048f4b`](https://github.com/ehojune/bioinfo-team-3d/pull/481/commits/6048f4b) | 따옴표·quoted heredoc의 redirect 오탐을 줄이고 sed·curl·wget의 실제 쓰기 대상을 판별 |
 | 02:58 | [`5600f04`](https://github.com/ehojune/bioinfo-team-3d/pull/480/commits/5600f04) | 단계에 간접 조상 단계의 산출도 inputs/로 연결하고 읽기 폴더에 넣는다. 간접 조상은 프롬프트에 파일 목록만 싣는다(v0.5 시운전 전처리 단계 입력 누락). |
