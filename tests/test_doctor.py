@@ -434,6 +434,16 @@ def test_doctor_says_whether_the_research_lane_runs_end_to_end(research, status,
     assert (row["name"], row["status"]) == ("research lane", status) and phrase in row["detail"]
 
 
+def test_doctor_fails_the_research_row_on_a_pack_the_gateway_would_refuse():
+    """#492 review: a retired or misspelled `id@version` passed as ok while the gateway refuses to start."""
+    from labhq.settings import Settings
+
+    settings = Settings.model_validate({"research": {"enabled": True, "evidence_checkpoint": True,
+                                                     "active_packs": ["bulk_tumor_normal@99"]}})
+    row = doctor._research_row(settings)
+    assert row["status"] == "fail" and "bulk_tumor_normal@99" in row["detail"]
+
+
 def test_a_misspelled_research_key_is_an_error_not_a_silent_default():
     from pydantic import ValidationError
 

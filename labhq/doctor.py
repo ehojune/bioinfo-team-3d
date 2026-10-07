@@ -27,6 +27,7 @@ from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner import codex_sandbox
 from .runner.versions import _probe, _version
+from .research.packs import check_configured_packs
 from .settings import Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
 from .util import parent_claude_markers
@@ -64,6 +65,11 @@ def _research_row(settings: Settings) -> dict:
     """Whether the v0.5 research lane runs end to end; `enabled` alone freezes the plan at CP1 and stops there
     (readiness R1, 2026-10-08)."""
     research = settings.research
+    try:
+        check_configured_packs(settings)  # the gateway refuses to start on the same error (#492 review)
+    except (ValueError, OSError) as exc:
+        return _row("config", "research lane", "fail", f"pack 설정 오류: {exc}",
+                    "research.active_packs를 고치세요. gateway는 이 설정으로 시작하지 않습니다.")
     if not research.enabled:
         return _row("config", "research lane", "ok", "꺼짐: 요청은 일반 lane으로 갑니다",
                     "켜려면 research.enabled·evidence_checkpoint를 true로 하고 active_packs를 넣은 뒤 다시 시작하세요"
