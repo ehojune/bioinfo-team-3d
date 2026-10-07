@@ -3,3 +3,6 @@ rows:
 - sha: "1d06b0b"
   at: 2026-10-07 22:43
   text: "설치 판별을 비리터럴 인자, 그룹 cwd, 중첩 shell까지 fail closed로 확장"
+- sha: "13a183d"
+  at: 2026-10-07 22:56
+  text: "brace cwd와 동적 중첩 shell을 닫고 따옴표 출처 기반 설치 판별로 오탐 제거"
