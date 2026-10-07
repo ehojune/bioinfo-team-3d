@@ -1,9 +1,12 @@
 """Run each real adapter against a fake CLI that replays that CLI's JSON event stream."""
 
 import errno
+import os
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 from labhq.adapters import get_adapter
 from labhq.adapters.base import RunContext
@@ -244,3 +247,43 @@ async def test_settings_stay_inline_when_the_command_fits(tmp_path, monkeypatch)
     assert res.ok, res.error
     assert argv[argv.index("--settings") + 1].startswith("{")
     assert not (tmp_path / ".labhq-settings").exists()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+async def test_settings_file_refuses_a_linked_settings_folder(tmp_path, monkeypatch, kind):
+    # A junction is not a symlink to Path.is_symlink(): the settings must not be written through either (PR #483).
+    from labhq.adapters import base
+    monkeypatch.setattr(base, "command_line_limit", lambda: 6000, raising=False)
+    s = Settings()
+    s.engines.claude_code.bin = sys.executable
+    s.engines.claude_code.prefix_args = [str(_fake_cli(tmp_path, "claude"))]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.claude_code, model="m", tools=["Read"],
+                      system_prompt="ROLE")
+    task = Task(agent_id="a1", prompt="long", output_schema={"type": "object"})
+    wd = tmp_path / "runs" / "task_1"
+    wd.mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / "runs" / ".labhq-settings"
+    if kind == "symlink":
+        try:
+            link.symlink_to(elsewhere, target_is_directory=True)
+        except OSError:
+            pytest.skip("symlinks need privileges here")
+    else:
+        if os.name != "nt":
+            pytest.skip("junctions are Windows only")
+        import _winapi
+        _winapi.CreateJunction(str(elsewhere), str(link))
+
+    async def emit(t, d):
+        pass
+
+    deny = [f"Read(//c:/private/folder-{i}/**)" for i in range(300)]
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    ctx = RunContext(task=task, agent=agent, workdir=wd, settings=s, mcp_servers=[], env={}, emit=emit,
+                     prompt=pointer, prompt_pointer=pointer, claude_settings={"permissions": {"deny": deny}})
+    res = await get_adapter(Engine.claude_code, s).run(ctx)
+
+    assert not res.ok and "not a plain folder" in res.error
+    assert list(elsewhere.iterdir()) == []

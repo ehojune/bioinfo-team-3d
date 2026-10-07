@@ -20,7 +20,7 @@ from ..policy import claude_allowed_tools
 from ..util import short
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
-from .owned import case_sensitive_directory
+from .owned import case_sensitive_directory, is_link
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
@@ -184,9 +184,12 @@ class ClaudeCodeAdapter(AgentAdapter):
         rewrite its permission rules (a shell write there reaches the gate). The name is the task id; a rerun
         replaces it."""
         folder = Path(ctx.workdir).resolve().parent / ".labhq-settings"
-        if folder.is_symlink() or (folder.exists() and not folder.is_dir()):
+        # is_link also catches a Windows junction, which is_symlink() misses (PR #483 review).
+        if os.path.lexists(folder) and (is_link(folder) or not folder.is_dir()):
             raise ValueError("the settings folder next to the workspace is not a plain folder")
         folder.mkdir(exist_ok=True)
+        if is_link(folder):  # replaced between the check and mkdir
+            raise ValueError("the settings folder next to the workspace is not a plain folder")
         path = folder / f"{ctx.task.id}.json"
         temporary = folder / f".{ctx.task.id}.{os.getpid()}.tmp"
         temporary.write_text(value, encoding="utf-8")
