@@ -6,3 +6,6 @@ rows:
 - sha: "13a183d"
   at: 2026-10-07 22:56
   text: "brace cwd와 동적 중첩 shell을 닫고 따옴표 출처 기반 설치 판별로 오탐 제거"
+- sha: "4dab138"
+  at: 2026-10-07 23:26
+  text: "중첩 shell option 문법과 위치별 비리터럴 판별을 구조화"
