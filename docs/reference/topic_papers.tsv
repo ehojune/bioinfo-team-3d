@@ -26,6 +26,7 @@ pmid	first_author	year	journal	kind	topics	title	why
 32859275	Lu	2020	Microbiome	method	amplicon_sequencing,metagenomic_taxonomy	Ultrafast and accurate 16S rRNA microbial community analysis using Kraken 2.	16S 앰플리콘 분류에 Kraken 2·Bracken을 적용해 정확도를 검증
 33193131	Straub	2020	Front Microbiol	benchmark	amplicon_sequencing	Interpretations of Environmental Microbial Community Studies Are Biased by the Selected 16S rRNA (Gene) Amplicon Sequencing Pipeline.	파이프라인 선택이 결과를 바꾼다는 비교와 nf-core/ampliseq 제시
 31341288	Bolyen	2019	Nat Biotechnol	protocol	amplicon_sequencing	Reproducible, interactive, scalable and extensible microbiome data science using QIIME 2.	출처 추적이 되는 앰플리콘 분석 표준 플랫폼
+31269198	Callahan	2019	Nucleic Acids Res	method	amplicon_sequencing	High-throughput amplicon sequencing of the full-length 16S rRNA gene with single-nucleotide resolution.	PacBio CCS와 DADA2로 전장 16S의 ASV를 추론하고 모의군집에서 단일염기 해상도를 검증했다.
 29773078	Bokulich	2018	Microbiome	method	amplicon_sequencing	Optimizing taxonomic classification of marker-gene amplicon sequences with QIIME 2's q2-feature-classifier plugin.	앰플리콘 분류기 설정을 벤치마크로 최적화한 근거
 29795328	Knight	2018	Nat Rev Microbiol	guideline	amplicon_sequencing,metagenomic_taxonomy,metagenomic_functional_profiling	Best practices for analysing microbiomes.	실험 설계부터 앰플리콘·샷건 분석과 통계까지 모범 사례를 정리
 30497919	Eisenhofer	2018	Trends Microbiol	guideline	amplicon_sequencing,metagenomic_taxonomy	Contamination in Low Microbial Biomass Microbiome Studies: Issues and Recommendations.	저바이오매스 시료의 오염 대조와 보고 권고안
@@ -36,10 +37,14 @@ pmid	first_author	year	journal	kind	topics	title	why
 28928718	Hugerth	2017	Front Microbiol	review	amplicon_sequencing	Analysing Microbial Community Composition through Amplicon Sequencing: From Sampling to Hypothesis Testing.	샘플링부터 가설 검정까지 앰플리콘 분석 전 과정 리뷰
 29187837	Gloor	2017	Front Microbiol	review	amplicon_sequencing,metagenomic_taxonomy	Microbiome Datasets Are Compositional: And This Is Not Optional.	조성 데이터라서 로그비 변환 기반 분석이 필요하다는 근거
 27214047	Callahan	2016	Nat Methods	method	amplicon_sequencing	DADA2: High-resolution sample inference from Illumina amplicon data.	오류 모델로 앰플리콘 서열 변이(ASV)를 추론하는 표준 방법
+27781170	Rognes	2016	PeerJ	method	amplicon_sequencing	VSEARCH: a versatile open source tool for metagenomics.	앰플리콘 처리에 쓰는 read 병합·군집화·키메라 탐지 기능을 USEARCH와 비교했다.
 24699258	McMurdie	2014	PLoS Comput Biol	guideline	amplicon_sequencing	Waste not, want not: why rarefying microbiome data is inadmissible.	희박화(rarefying)가 차등 검정에 부적절함을 보인 논문
 23955772	Edgar	2013	Nat Methods	method	amplicon_sequencing	UPARSE: highly accurate OTU sequences from microbial amplicon reads.	키메라 제거와 OTU 군집화의 대표 방법
+23630581	McMurdie	2013	PLoS One	method	amplicon_sequencing	phyloseq: an R package for reproducible interactive analysis and graphics of microbiome census data.	앰플리콘 군집 자료의 필터링·집약·다양성·UniFrac·좌표화 분석을 R에서 재현하도록 묶었다.
+23793624	Kozich	2013	Appl Environ Microbiol	method	amplicon_sequencing	Development of a dual-index sequencing strategy and curation pipeline for analyzing amplicon sequence data on the MiSeq Illumina sequencing platform.	16S 이중 인덱스와 read 병합 절차를 모의군집으로 검증하고 세 표적 영역의 오류를 비교했다.
 22933715	Klindworth	2012	Nucleic Acids Res	benchmark	amplicon_sequencing	Evaluation of general 16S ribosomal RNA gene PCR primers for classical and next-generation sequencing-based diversity studies.	16S 프라이머 쌍의 범위를 평가해 프라이머 선택 근거를 제시
 23193283	Quast	2012	Nucleic Acids Res	method	amplicon_sequencing	The SILVA ribosomal RNA gene database project: improved data processing and web-based tools.	16S/18S 분류 참조로 쓰는 SILVA rRNA DB
+22402401	Caporaso	2012	ISME J	protocol	amplicon_sequencing	Ultra-high-throughput microbial community analysis on the Illumina HiSeq and MiSeq platforms.	군집 앰플리콘 시퀀싱 프로토콜을 제시하고 HiSeq·MiSeq와 표적 영역 간 결과를 비교했다.
 19801464	Schloss	2009	Appl Environ Microbiol	method	amplicon_sequencing	Introducing mothur: open-source, platform-independent, community-supported software for describing and comparing microbial communities.	앰플리콘 처리의 고전적 표준 플랫폼 mothur
 39255248	Cheng	2024	Genomics Proteomics Bioinformatics	review	atac_seq,cut_and_run	Review and Evaluate the Bioinformatics Analysis Strategies of ATAC-seq and CUT&Tag Data.	ATAC-seq·CUT&Tag 분석 전략 리뷰와 평가
 37274120	Wolpe	2023	NAR Genom Bioinform	method	atac_seq	Correction of transposase sequence bias in ATAC-seq data with rule ensemble modeling.	ATAC-seq 전위효소 서열 편향 보정
@@ -484,7 +489,9 @@ pmid	first_author	year	journal	kind	topics	title	why
 35534630	Feng	2022	Nat Methods	method	metagenome_assembly,pacbio_long_read	Metagenome assembly of high-fidelity long reads with hifiasm-meta.	HiFi 리드로 원형 완전 세균 유전체를 복원하는 메타게놈 조립기
 30815668	Ayling	2020	Brief Bioinform	review	metagenome_assembly	New approaches for metagenome assembly with short reads.	짧은 리드 메타게놈 조립 알고리즘과 한계를 정리한 리뷰
 33020656	Kolmogorov	2020	Nat Methods	method	metagenome_assembly,ont_long_read,pacbio_long_read	metaFlye: scalable long-read metagenome assembly using repeat graphs.	오류 많은 장리드로 메타게놈을 조립하는 대표 방법
+32042169	Moss	2020	Nat Biotechnol	method	metagenome_assembly	Complete, closed bacterial genomes from microbiomes using nanopore sequencing.	나노포어 조립과 단리드 보정으로 복잡한 군집에서 원형 유전체를 복원하는 Lathe
 28968737	Olson	2019	Brief Bioinform	review	metagenome_assembly,metagenome_binning	Metagenomic assembly through the lens of validation: recent advances in assessing and improving the quality of genomes assembled from metagenomes.	조립·MAG 품질 검증과 오류 보정 방법을 정리한 리뷰
+31359005	Bertrand	2019	Nat Biotechnol	method	metagenome_assembly	Hybrid metagenomic assembly enables high-resolution analysis of resistance determinants and mobile elements in human microbiomes.	장·단 리드를 합쳐 반복서열과 균주 변이를 처리하는 메타게놈 조립기 OPERA-MS
 28099457	Vollmers	2017	PLoS One	benchmark	metagenome_assembly	Comparing and Evaluating Metagenome Assembly Tools from a Microbiologist's Perspective - Not Only Size Matters!	메타게놈 조립기들을 생물학적 활용 관점에서 비교한 평가
 28298430	Nurk	2017	Genome Res	method	metagenome_assembly	metaSPAdes: a new versatile metagenomic assembler.	짧은 리드 메타게놈 조립의 표준 조립기로 균주 변이가 섞인 그래프 처리법을 제시
 28898207	Quince	2017	Nat Biotechnol	review	metagenome_assembly,metagenome_binning,metagenomic_taxonomy,metagenomic_functional_profiling	Shotgun metagenomics, from sampling to analysis.	샘플링부터 조립·비닝·프로파일링까지 샷건 메타게놈 분석 전 과정을 정리한 리뷰
@@ -549,15 +556,22 @@ pmid	first_author	year	journal	kind	topics	title	why
 27852649	Kim	2016	Genome Res	method	metagenomic_taxonomy	Centrifuge: rapid and sensitive classification of metagenomic sequences.	압축 인덱스로 메모리를 줄인 메타게놈 리드 분류기
 26418763	Truong	2015	Nat Methods	method	metagenomic_taxonomy	MetaPhlAn2 for enhanced metagenomic taxonomic profiling.	클레이드 특이 마커 유전자 기반 프로파일링 방법
 24580807	Wood	2014	Genome Biol	method	metagenomic_taxonomy	Kraken: ultrafast metagenomic sequence classification using exact alignments.	정확한 k-mer 일치로 LCA 분류를 하는 Kraken 원 논문
+38934547	Tanca	2024	mSystems	benchmark	metaproteomics	Benchmarking low- and high-throughput protein cleanup and digestion methods for human fecal metaproteomics.	사람 분변 메타단백체의 FASP·SP3·S-Trap 정제와 소화법을 비교한 평가
 35242286	Blakeley-Ruiz	2022	Comput Struct Biotechnol J	review	metaproteomics	Considerations for constructing a protein sequence database for metaproteomics.	metaproteomics용 단백질 서열 데이터베이스 구성 지침
 33630960	Salvato	2021	PLoS Pathog	review	metaproteomics	Five key aspects of metaproteomics as a tool to understand functional interactions in host-associated microbiomes.	숙주 연관 미생물군 metaproteomics의 다섯 가지 핵심 고려사항
 34911965	Van Den Bossche	2021	Nat Commun	benchmark	metaproteomics	Critical Assessment of MetaProteome Investigation (CAMPI): a multi-laboratory comparison of established workflows.	다기관 metaproteomics 워크플로 비교 벤치마크(CAMPI)
 34930457	Van Den Bossche	2021	Microbiome	guideline	metaproteomics	The Metaproteomics Initiative: a coordinated approach for propelling the functional characterization of microbiomes.	metaproteomics 표준화를 위한 Metaproteomics Initiative 제안
+32859984	Schiebenhoefer	2020	Nat Protoc	protocol	metaproteomics	A complete and flexible workflow for metaproteomics data analysis based on MetaProteomeAnalyzer and Prophane.	단백질 DB 구성부터 검색·그룹화·주석까지 안내하는 메타단백체 분석 프로토콜
+30649171	Tang	2020	Brief Bioinform	method	metaproteomics	ANPELA: analysis and performance assessment of the label-free quantification workflow for metaproteomic studies.	메타단백체의 정량·정규화·결측 처리 조합을 평가하는 ANPELA
+33170893	Sajulga	2020	PLoS One	benchmark	metaproteomics	Survey of metaproteomics software tools for functional microbiome analysis.	같은 메타단백체 자료로 여섯 도구의 기능 주석 결과와 정확도를 비교한 평가
 31002542	Schiebenhoefer	2019	Expert Rev Proteomics	review	metaproteomics,multi_omics_integration	Challenges and promise at the interface of metaproteomics and genomics: an overview of recent progress in metaproteogenomic data analysis.	metagenome과 metaproteome을 잇는 metaproteogenomics 분석 리뷰
 31117019	Kleiner	2019	mSystems	review	metaproteomics	Metaproteomics: Much More than Measuring Gene Expression in Microbial Communities.	metaproteomics로 측정할 수 있는 군집 기능·생물량 범위 리뷰
 31235611	Easterly	2019	Mol Cell Proteomics	method	metaproteomics	metaQuantome: An Integrated, Quantitative Metaproteomics Approach Reveals Connections Between Taxonomy and Protein Function in Complex Microbiomes.	분류군·기능을 함께 정량하는 metaproteomics 분석 metaQuantome
 31755272	Aakko	2019	J Proteome Res	method	metaproteomics,proteomics_dia	Data-Independent Acquisition Mass Spectrometry in Metaproteomics of Gut Microbiota-Implementation and Computational Analysis.	장내 미생물 metaproteomics에 DIA를 적용한 구현과 분석
+31727118	Werner	2019	Biol Direct	method	metaproteomics	mPies: a novel metaproteomics tool for the creation of relevant protein databases and automatized protein annotation.	시료에 맞는 단백질 검색 DB와 단백질 그룹별 분류·기능 주석을 만드는 mPies
+30837968	Hinzke	2019	Front Microbiol	benchmark	metaproteomics	More Is Not Always Better: Evaluation of 1D and 2D-LC-MS/MS Methods for Metaproteomics.	모의 군집에서 1D·2D LC 분리법의 동정 깊이와 재현성을 비교한 평가
 30465426	Gurdeep Singh	2018	J Proteome Res	method	metaproteomics	Unipept 4.0: Functional Analysis of Metaproteome Data.	펩타이드 기반 분류·기능 분석 Unipept 4.0
+29844191	Kleiner	2018	Proc Natl Acad Sci U S A	method	metaproteomics	Metaproteomics method to determine carbon sources and assimilation pathways of species in microbial communities.	군집 내 종별 탄소 동위원소 비율을 단백질에서 측정하는 direct protein-SIF 방법
 28663049	Heyer	2017	J Biotechnol	review	metaproteomics	Challenges and perspectives of metaproteomic data analysis.	metaproteomics 데이터 분석의 난제와 해법 리뷰
 29146960	Kleiner	2017	Nat Commun	method	metaproteomics	Assessing species biomass contributions in microbial communities via metaproteomics.	metaproteomics로 군집 내 종별 생물량 기여를 추정하는 방법
 29197424	Cheng	2017	Microbiome	method	metaproteomics	MetaLab: an automated pipeline for metaproteomic data analysis.	metaproteomics 자동 분석 파이프라인 MetaLab
@@ -585,6 +599,7 @@ pmid	first_author	year	journal	kind	topics	title	why
 27199545	Aguiar-Pulido	2016	Evol Bioinform Online	review	metatranscriptomics,metagenomic_taxonomy,metabolomics	Metagenomics, Metatranscriptomics, and Metabolomics Approaches for Microbiome Analysis	마이크로바이옴 메타게놈·메타전사체·대사체 접근 비교 리뷰
 27723761	Heintz-Buschart	2016	Nat Microbiol	landmark	metatranscriptomics,multi_omics_integration,metaproteomics	Integrated multi-omics of the human gut microbiome in a case study of familial type 1 diabetes	메타게놈·메타전사체·메타단백체 통합 분석 사례
 27986083	Narayanasamy	2016	Genome Biol	method	metatranscriptomics,metagenome_assembly,metagenome_binning	IMP: a pipeline for reproducible reference-independent integrated metagenomic and metatranscriptomic analyses	메타게놈·메타전사체 통합 재현 가능 파이프라인
+27211518	Martinez	2016	Sci Rep	method	metatranscriptomics	MetaTrans: an open-source pipeline for metatranscriptomics.	QC·rRNA 제거·기능 매핑·발현 차이 분석을 묶은 메타전사체 파이프라인 MetaTrans
 24843156	Franzosa	2014	Proc Natl Acad Sci U S A	landmark	metatranscriptomics,metagenomic_functional_profiling	Relating the metatranscriptome and metagenome of the human gut	장내 메타전사체와 메타게놈의 관계를 처음 정량
 25411636	Celaj	2014	Microbiome	benchmark	metatranscriptomics	Comparison of assembly algorithms for improving rate of metatranscriptomic functional annotation	메타전사체 조립 도구 비교와 기능 주석률
 22931831	Moran	2013	ISME J	review	metatranscriptomics	Sizing up metatranscriptomics	메타전사체 시퀀싱 깊이·설계 고려사항
@@ -600,16 +615,22 @@ pmid	first_author	year	journal	kind	topics	title	why
 20688976	Carvalho	2010	Bioinformatics	method	microarray_expression	A framework for oligonucleotide microarray preprocessing	oligo 패키지의 어레이 전처리 체계
 20838408	Leek	2010	Nat Rev Genet	review	microarray_expression,bulk_rna_seq	Tackling the widespread and critical impact of batch effects in high-throughput data	고처리량 발현 데이터의 배치 효과 진단·보정 리뷰
 19106121	Kauffmann	2008	Bioinformatics	method	microarray_expression	arrayQualityMetrics--a bioconductor package for quality assessment of microarray data	마이크로어레이 품질 평가 보고 도구
+18467348	Du	2008	Bioinformatics	method	microarray_expression	lumi: a pipeline for processing Illumina microarray.	Illumina 발현 어레이의 반복 bead를 활용해 분산 안정화·정규화·품질 평가를 수행한다.
 17496320	Davis	2007	Bioinformatics	method	microarray_expression	GEOquery: a bridge between the Gene Expression Omnibus (GEO) and BioConductor	GEO 어레이 행렬을 R로 가져오는 도구
 17907809	Leek	2007	PLoS Genet	method	microarray_expression,bulk_rna_seq	Capturing heterogeneity in gene expression studies by surrogate variable analysis	숨은 교란 요인을 잡는 surrogate variable analysis
+17586828	Dunning	2007	Bioinformatics	method	microarray_expression	beadarray: R classes and methods for Illumina bead-based data.	Illumina 어레이의 bead 원자료에서 품질 평가·배경 보정·정규화·요약을 수행하는 도구다.
 16369572	Allison	2006	Nat Rev Genet	review	microarray_expression	Microarray data analysis: from disarray to consolidation and consensus	마이크로어레이 설계·정규화·검정의 합의된 절차 리뷰
 16632515	Johnson	2006	Biostatistics	method	microarray_expression,bulk_rna_seq	Adjusting batch effects in microarray expression data using empirical Bayes methods	경험적 베이즈 배치 보정(ComBat)
 16964229	MAQC Consortium	2006	Nat Biotechnol	benchmark	microarray_expression	The MicroArray Quality Control (MAQC) project shows inter- and intraplatform reproducibility of gene expression measurements	플랫폼 간 어레이 발현 재현성을 검증한 MAQC
+16284200	Dai	2005	Nucleic Acids Res	method	microarray_expression	Evolving gene/transcript definitions significantly alter the interpretation of GeneChip data.	갱신된 유전자·전사체 주석으로 probe set을 다시 묶고 차등 발현 결과가 달라짐을 확인했다.
 15461798	Gentleman	2004	Genome Biol	method	microarray_expression	Bioconductor: open software development for computational biology and bioinformatics	어레이 분석 생태계 Bioconductor 원논문
 16646809	Smyth	2004	Stat Appl Genet Mol Biol	method	microarray_expression	Linear models and empirical bayes methods for assessing differential expression in microarray experiments	마이크로어레이 DE의 moderated t 검정(limma) 원논문
+14960456	Gautier	2004	Bioinformatics	method	microarray_expression	affy--analysis of Affymetrix GeneChip data at the probe level.	Affymetrix 발현 어레이의 probe 강도를 처리하는 affy 패키지와 사용법을 제시했다.
+14960458	Cope	2004	Bioinformatics	benchmark	microarray_expression	A benchmark for Affymetrix GeneChip expression measures.	희석·spike-in 데이터로 Affymetrix probe 요약값의 성능을 비교하는 평가 체계를 제시했다.
 12538238	Bolstad	2003	Bioinformatics	method	microarray_expression	A comparison of normalization methods for high density oligonucleotide array data based on variance and bias	어레이 quantile 정규화 비교와 제안
 12883005	Storey	2003	Proc Natl Acad Sci U S A	method	microarray_expression,bulk_rna_seq	Statistical significance for genomewide studies	유전체 규모 다중검정의 q-value
 12925520	Irizarry	2003	Biostatistics	method	microarray_expression	Exploration, normalization, and summaries of high density oligonucleotide array probe level data	RMA 전처리·요약 방법
+12169536	Huber	2002	Bioinformatics	method	microarray_expression	Variance stabilization applied to microarray data calibration and to the quantification of differential expression.	발현 강도에 따른 분산 차이를 줄이는 VSN을 여러 어레이 플랫폼에서 검증했다.
 11309499	Tusher	2001	Proc Natl Acad Sci U S A	method	microarray_expression	Significance analysis of microarrays applied to the ionizing radiation response	어레이 DE 유의성 분석(SAM)과 FDR 추정
 11726920	Brazma	2001	Nat Genet	guideline	microarray_expression	Minimum information about a microarray experiment (MIAME)-toward standards for microarray data	마이크로어레이 실험 보고 최소 정보 표준(MIAME)
 33402734	Cantini	2021	Nat Commun	benchmark	multi_omics_integration	Benchmarking joint multi-omics dimensionality reduction approaches for the study of cancer.	joint dimensionality reduction 기반 multi-omics 통합 방법 벤치마크
@@ -1239,12 +1260,19 @@ pmid	first_author	year	journal	kind	topics	title	why
 24970577	Layer	2014	Genome Biol	method	structural_variant_calling	LUMPY: a probabilistic framework for structural variant discovery.	LUMPY: 확률적 통합 SV 발견
 22962449	Rausch	2012	Bioinformatics	method	structural_variant_calling,somatic_wgs_wes	DELLY: structural variant discovery by integrated paired-end and split-read analysis.	DELLY: paired-end·split-read 통합 SV 발견
 21324876	Abyzov	2011	Genome Res	method	structural_variant_calling,germline_wgs_wes	CNVnator: an approach to discover, genotype, and characterize typical and atypical CNVs from family and population genome sequencing.	CNVnator: 리드 심도 기반 CNV 발견·유전형
+35252269	Lambisia	2022	Front Med (Lausanne)	protocol	viral_genomics	Optimization of the SARS-CoV-2 ARTIC Network V4 Primers and Whole Genome Sequencing Protocol.	ARTIC V4의 primer 농도를 조정해 amplicon 탈락 구간의 depth와 SARS-CoV-2 유전체 회수율을 개선한다.
 33471068	Posada-Céspedes	2021	Bioinformatics	method	viral_genomics	V-pipe: a computational pipeline for assessing viral genetic diversity from high-throughput data.	바이러스 유전 다양성(준종) 분석 end-to-end 파이프라인
 33522966	Guo	2021	Microbiome	method	viral_genomics,metagenome_assembly	VirSorter2: a multi-classifier, expert-guided approach to detect diverse DNA and RNA viruses.	메타게놈 contig에서 DNA·RNA 바이러스를 가려내는 다중 분류기
 33972780	Turakhia	2021	Nat Genet	method	viral_genomics,phylogenetics	Ultrafast Sample placement on Existing tRees (UShER) enables real-time phylogenetics for the SARS-CoV-2 pandemic.	대규모 SARS-CoV-2 계통수에 새 서열을 빠르게 배치하는 UShER
 34527285	O'Toole	2021	Virus Evol	method	viral_genomics	Assignment of epidemiological lineages in an emerging pandemic using the pangolin tool.	pangolin으로 SARS-CoV-2 계통을 배정하는 방법과 한계
+34281604	Fritz	2021	Genome Biol	method	viral_genomics	Haploflow: strain-resolved de novo assembly of viral genomes.	Haploflow는 de Bruijn 그래프의 coverage 차이를 이용해 혼합 검체에서 바이러스 strain별 유전체를 조립한다.
+34214168	Knyazev	2021	Nucleic Acids Res	method	viral_genomics	Accurate assembly of minority viral haplotypes from next-generation sequencing through efficient noise reduction.	CliqueSNV는 서로 연결된 변이쌍으로 시퀀싱 잡음을 줄여 소수 바이러스 haplotype을 복원한다.
+34581669	Jaworski	2021	Elife	method	viral_genomics	Tiled-ClickSeq for targeted sequencing of complete coronavirus genomes with simultaneous capture of RNA recombination and minority variants.	Tiled-ClickSeq는 coronavirus 전장 시퀀싱에서 소수 변이와 RNA 재조합 접합부를 함께 포착한다.
+34379527	Lam	2021	J Clin Microbiol	benchmark	viral_genomics	SARS-CoV-2 Genome Sequencing Methods Differ in Their Abilities To Detect Variants from Low-Viral-Load Samples.	낮은 바이러스량에서 세 가지 SARS-CoV-2 전장 시퀀싱법의 유전체 coverage와 저빈도 변이 검출 성능을 비교한다.
 32669681	Rambaut	2020	Nat Microbiol	landmark	viral_genomics,phylogenetics	A dynamic nomenclature proposal for SARS-CoV-2 lineages to assist genomic epidemiology.	SARS-CoV-2 Pango 계통 명명 체계를 정의한 논문
 33349699	Nayfach	2020	Nat Biotechnol	method	viral_genomics,metagenome_assembly	CheckV assesses the quality and completeness of metagenome-assembled viral genomes.	메타게놈에서 복원한 바이러스 유전체의 완성도·오염 평가 도구
+32448124	Schäffer	2020	BMC Bioinformatics	method	viral_genomics	VADR: validation and annotation of virus sequence submissions to GenBank.	VADR은 RefSeq 모델로 바이러스 유전체를 주석하고 GenBank 제출 서열의 오류를 점검한다.
+32151775	Eliseev	2020	Infect Genet Evol	benchmark	viral_genomics	Evaluation of haplotype callers for next-generation sequencing of viruses.	진화 모형으로 만든 바이러스 집단에서 haplotype 복원 도구 12개의 정확도와 다양성 추정 편향을 비교한다.
 30621750	Grubaugh	2019	Genome Biol	method	viral_genomics	An amplicon-based sequencing framework for accurately measuring intrahost virus diversity using PrimalSeq and iVar.	amplicon 바이러스 시퀀싱의 primer trimming과 숙주 내 변이 검출 기준(iVar)
 30918369	Chiu	2019	Nat Rev Genet	review	viral_genomics,metagenomic_taxonomy	Clinical metagenomics.	임상 메타게놈 시퀀싱 병원체 검출 방법과 검증 리뷰
 29790939	Hadfield	2018	Bioinformatics	method	viral_genomics,phylogenetics	Nextstrain: real-time tracking of pathogen evolution.	병원체 유전체 실시간 계통 추적 파이프라인 Nextstrain
@@ -1254,3 +1282,6 @@ pmid	first_author	year	journal	kind	topics	title	why
 28382917	Shu	2017	Euro Surveill	landmark	viral_genomics	GISAID: Global initiative on sharing all influenza data - from vision to reality.	인플루엔자·SARS-CoV-2 유전체 공유 플랫폼 GISAID 소개
 28538739	Quick	2017	Nat Protoc	protocol	viral_genomics,ont_long_read	Multiplex PCR method for MinION and Illumina sequencing of Zika and other virus genomes directly from clinical samples.	tiled multiplex PCR로 임상검체 바이러스 전장 유전체를 MinION·Illumina로 읽는 ARTIC 프로토콜
 29129921	Gardy	2017	Nat Rev Genet	review	viral_genomics,phylogenetics	Towards a genomics-informed, real-time, global pathogen surveillance system.	유전체 기반 실시간 병원체 감시 체계의 구성 요소 리뷰
+28396522	Baaijens	2017	Genome Res	method	viral_genomics	De novo assembly of viral quasispecies using overlap graphs.	SAVAGE는 read overlap 그래프로 고품질 참조 유전체 없이 숙주 내 바이러스 haplotype을 복원한다.
+27595578	Shepard	2016	BMC Genomics	method	viral_genomics	Viral deep sequencing needs an adaptive approach: IRMA, the iterative refinement meta-assembler.	IRMA는 참조 서열을 반복 보정하며 바이러스 유전체를 조립하고 소수 변이와 변이 간 연결을 분석한다.
+25178459	Verbist	2015	Bioinformatics	method	viral_genomics	VirVarSeq: a low-frequency virus variant detection pipeline for Illumina sequencing using adaptive base-calling accuracy filtering.	VirVarSeq는 검체별 염기 품질 필터와 codon 단위 호출로 저빈도 바이러스 변이의 위양성을 줄인다.
