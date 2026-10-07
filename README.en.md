@@ -178,34 +178,42 @@ The shadow computation is off by default and only records even when on. `semanti
 ```bash
 git clone https://github.com/ehojune/bioinfo-team-3d.git
 cd bioinfo-team-3d
-pip install -e ".[dev]"
-labhq demo --web
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\labhq demo --web
 ```
 
-Open the printed `http://127.0.0.1:8787/?token=…` and the office with the mock team at work appears. To view it on a phone, put the PC and phone on the same Wi-Fi, run `labhq demo --web --phone`, and open the printed `/3d` URL.
+On POSIX, use `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, and `./labhq.sh demo --web`. If 8787 is busy, the demo selects a free port.
 
 ### 2. Install and configure
 
 You need: Python 3.10 or later, Git, and the CLIs you will use as staff (Claude Code, Codex), installed and logged in. CLIs installed with npm also need Node.js.
 
 ```bash
-labhq init                                   # create the config file and gateway token, then check
-export LABHQ_CONFIG=$PWD/config/labhq.yaml   # PowerShell: $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
-labhq doctor                                 # check config, engines, staff, and compute tools
+.\labhq init
+.\labhq -c config\labhq.yaml doctor
 ```
 
 `labhq init` asks for the HPC and bioinfo-agent paths. If you need a login folder dedicated to staff, it also tells you the login commands a person has to type.
 
 ### 3. Start it
 
-Run these in two terminals. The `export` in step 2 applies only to that terminal, so set `LABHQ_CONFIG` again in the new terminal (or put it in front of the command, as in `labhq --config config/labhq.yaml runner`). If you forget, that side comes up with the default token and the gateway and runner cannot connect to each other.
+Run this from a fresh PowerShell or cmd window. `labhq.cmd` calls the repository's `.venv` Python directly, so PowerShell ExecutionPolicy does not apply.
 
-```bash
-labhq gateway   # stores requests, approvals, and events, and opens the web office
-labhq runner    # actually runs the staff CLIs. Uses only an outbound connection to the gateway
+```powershell
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
 ```
 
-In a third terminal, run `labhq open` to open the web office already logged in (the token is not printed to the screen). To open it yourself, go to `http://127.0.0.1:8787/?token=<client_token>`. `client_token` is the `gateway.client_token` value in the config file, and once opened it is saved on that device.
+`up` detaches the gateway and runner from the window and keeps their logs and PID files under the state directory. Run `down` with the same config to stop them. On POSIX, use `./labhq.sh -c config/labhq.yaml up`, then `open`.
+
+**After restarting the PC**
+
+```powershell
+cd <labhq repository>
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
+```
 
 ### 4. First request
 

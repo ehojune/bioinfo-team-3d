@@ -29,7 +29,7 @@ from .runner import codex_sandbox
 from .runner.versions import _probe, _version
 from .settings import Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
-from .util import parent_claude_markers
+from .util import is_windows_app_alias_dir, parent_claude_markers
 
 SOURCES = {
     "ENA": "https://www.ebi.ac.uk/ena/browser/home",
@@ -349,6 +349,17 @@ def staff_python(environ: Mapping[str, str] | None = None) -> str:
     return sys.executable
 
 
+def _python3_alias_row(environ: Mapping[str, str] | None = None) -> dict | None:
+    path = (environ if environ is not None else os.environ).get("PATH")
+    found = shutil.which("python3", path=path)
+    if not found or not is_windows_app_alias_dir(found):
+        return None
+    return _row(
+        "staff", "python3 PATH", "warn", "Windows 앱 실행 별칭",
+        "Windows 설정 > 앱 > 고급 앱 설정 > 앱 실행 별칭에서 python3를 끄세요.",
+    )
+
+
 def staff_python_summary(environ: Mapping[str, str] | None = None) -> dict:
     """`local_software_summary` of the PATH interpreter staff should use, with the command that runs it.
 
@@ -407,6 +418,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     else:
         rows.append(_row("config", "file", "ok" if config else "warn",
                          _safe_path(config) if config else "defaults", "Set --config for this host."))
+    python3_alias = _python3_alias_row()
+    if python3_alias:
+        rows.append(python3_alias)
     # Only a named runner account proves isolation; an owner mismatch alone is not evidence (#304 review).
     expected = (settings.runner.os_account or "").strip()
     if expected:

@@ -62,12 +62,12 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 API 키·클러스터 없이 돌아갑니다.
 
 ```bash
-pip install -e ".[dev]"
-labhq demo --web   # mock 팀이 계속 일하는 사무실을 브라우저로: 출력되는 http://127.0.0.1:8787/?token=… 열기
-labhq demo         # 같은 흐름을 터미널 로그로
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\labhq demo --web
 ```
 
-폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
+POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다. 폰은 `--phone`을 더합니다.
 게이트웨이 없이 UI만 보려면 `python -m http.server --directory labhq/web 8000` 뒤 `http://127.0.0.1:8000/?demo=1`을 엽니다.
 
 ## 설치와 첫 설정
@@ -75,16 +75,13 @@ labhq demo         # 같은 흐름을 터미널 로그로
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
-labhq init                                        # 첫 설치 설정과 doctor 점검
-export LABHQ_CONFIG=$PWD/config/labhq.yaml
+.\labhq init
+.\labhq -c config\labhq.yaml doctor
 ```
 
 PowerShell:
 
-```powershell
-labhq init
-$env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
-```
+POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
@@ -108,14 +105,21 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 ## 띄우기와 접속
 
 ```bash
-labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 요청·승인·이벤트를 로컬 SQLite에 저장
-labhq runner                 # 워크스테이션 또는 HPC 로그인 노드. 게이트웨이로 outbound 접속
-labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1회)
-
-# 브라우저: http://<gateway>:8787/?token=<client_token>  (토큰은 한 번만, 이후 기기에 저장)
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
 ```
 
-`client_token`은 설정 파일의 `gateway.client_token` 값입니다. gateway는 기본으로 `127.0.0.1:8787`에서만 받으므로, 다른 기기에서 열려면 `gateway.host`·`port`를 바꿉니다.
+Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더의 `logs/`와 PID 파일로 관리합니다. `down`은 그 PID만 종료합니다. POSIX에서는 `./labhq.sh`를 씁니다.
+
+**PC를 다시 켰을 때**
+
+```powershell
+cd <labhq 저장소>
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
+```
+
+설정 경로가 없거나 gateway client token이 `change-me` 기본값이면 시작하지 않습니다. `open`과 다른 API 명령은 gateway가 꺼졌거나 HTTP 오류가 나면 traceback 대신 한 줄과 exit 2를 돌려줍니다.
 오프라인 데모를 폰으로 보려면 PC와 폰이 같은 Wi-Fi에 있어야 합니다([웹 사무실](#웹-사무실)).
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
 (러너는 재접속 루프로 대기). 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
@@ -170,6 +174,7 @@ labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교" 
 labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
 labhq watch                  # 실시간 이벤트
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
+labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
 labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14
 labhq talent                 # 인재풀
@@ -672,7 +677,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 첫 실행 때 확인할 것도 여기 있습니다.
 
-- runner는 gateway에 붙기 전에 엔진 CLI와 PATH의 Python(`python3`·`python`·`py`)을 짧게 조사합니다. 응답하지 않는 실행 파일은 몇 초 뒤 프로세스 트리째 끊고 "미보고"로 둡니다. 끊기지 않는 프로세스여도 runner는 조사 시간 + 1초 뒤 넘어가고, 그 프로세스는 남을 수 있습니다. Windows Store의 Python Install Manager가 만든 `python3` 실행 별칭이 `--version`에 답하지 않아 두 runner가 연결 전에 멈춘 적이 있습니다(2026-10-08).
+- runner와 직원 CLI의 PATH에서는 Windows Store·Python Install Manager 실행 별칭 폴더를 뺍니다. doctor가 PATH의 `python3` 별칭을 찾으면 Windows 앱 실행 별칭에서 끄는 법을 경고합니다.
 - Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
 - Codex 0.155.0-alpha.16의 `exec` 기본 승인 정책 `never`는 MCP 호출을 실패시켰습니다 (#24135). labhq 내장 MCP에만 `default_tools_approval_mode="approve"`를 설정하고 도구 안에서 폰 승인을 받습니다.

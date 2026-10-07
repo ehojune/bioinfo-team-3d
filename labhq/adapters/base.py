@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 from ..facilities import signatures as env_signatures
 from ..models import AgentSpec, McpServerSpec, Task, TaskResult
 from ..settings import Settings
-from ..util import extract_json, merge_staff_env, short
+from ..util import extract_json, merge_staff_env, short, without_windows_app_aliases
 from .owned import OwnedPathError, plain_directory, write_owned
 from .read_only import (labhq_workspace_paths, read_only_engine_env, read_only_launch_error, read_only_mismatch,
                         read_only_workspace_error)
@@ -773,7 +773,7 @@ class AgentAdapter(ABC):
         engine = self.engine_env()
         if ctx.read_only:
             engine = read_only_engine_env(engine)[0]
-        env = merge_staff_env(dict(os.environ), engine, ctx.env)
+        env = without_windows_app_aliases(merge_staff_env(dict(os.environ), engine, ctx.env))
         # Staff never hold a GitHub credential: gh reads GH_TOKEN before GITHUB_TOKEN, so drop every name it uses (#301).
         drop = {self.settings.github.token_env.casefold(), *(name.casefold() for name in GITHUB_TOKEN_NAMES)}
         return {key: value for key, value in env.items() if key.casefold() not in drop}
