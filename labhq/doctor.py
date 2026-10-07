@@ -382,10 +382,15 @@ def local_software_summary(python_executable: str) -> dict:
     rscript = shutil.which("Rscript")
     r_code, r_raw = _probe([rscript, "--version"], dict(os.environ), timeout=3) if rscript else (None, "")
     py_code, py_raw = _probe([python_executable, "--version"], dict(os.environ), timeout=3)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = {name: pool.submit(_import_available, python_executable, import_name)
-                   for name, import_name in LOCAL_PYTHON_PACKAGES.items()}
-        packages = {name: future.result() for name, future in futures.items()}
+    if py_code != 0:
+        # No package probes for an interpreter that does not answer `--version`: the Store `python3` alias that hung
+        # the runners (2026-10-08) would cost every import probe its full timeout before the runner connects.
+        packages = {name: False for name in LOCAL_PYTHON_PACKAGES}
+    else:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {name: pool.submit(_import_available, python_executable, import_name)
+                       for name, import_name in LOCAL_PYTHON_PACKAGES.items()}
+            packages = {name: future.result() for name, future in futures.items()}
     return {
         "r": {"available": r_code == 0, "version": _version(r_raw) if r_code == 0 else None},
         "python": {"version": _version(py_raw) if py_code == 0 else "unreported", "packages": packages},
