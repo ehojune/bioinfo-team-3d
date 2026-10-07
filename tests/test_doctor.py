@@ -417,3 +417,27 @@ def test_cso_capabilities_name_the_python_command():
     assert "Python=3.12.10 run as `python`" in line and "R=missing" in line
     odd = _format_local_software({"python": {"version": "3.12.10", "command": "rm -rf /", "packages": {}}})
     assert "rm -rf" not in odd  # only the three known command names are shown
+
+
+@pytest.mark.parametrize(("research", "status", "phrase"), [
+    ({}, "ok", "일반 lane"),
+    ({"enabled": True}, "warn", "CP1 승인 뒤 단계를 실행하지 않고"),
+    ({"enabled": True, "evidence_checkpoint": True, "active_packs": ["bulk_tumor_normal@3"]}, "ok",
+     "bulk_tumor_normal@3"),
+])
+def test_doctor_says_whether_the_research_lane_runs_end_to_end(research, status, phrase):
+    """Readiness R1 (2026-10-08): the PI config had no research block, and `enabled` alone stops after CP1."""
+    from labhq.settings import Settings
+
+    settings = Settings.model_validate({"research": research})
+    row = doctor._research_row(settings)
+    assert (row["name"], row["status"]) == ("research lane", status) and phrase in row["detail"]
+
+
+def test_a_misspelled_research_key_is_an_error_not_a_silent_default():
+    from pydantic import ValidationError
+
+    from labhq.settings import Settings
+
+    with pytest.raises(ValidationError, match="evidence_checkpiont"):
+        Settings.model_validate({"research": {"enabled": True, "evidence_checkpiont": True}})
