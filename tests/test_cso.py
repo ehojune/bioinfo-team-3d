@@ -595,6 +595,8 @@ def test_environment_rule_uses_binary_wheels_and_falls_back_without_asking_pi():
     from labhq.orchestrator.cso import ENV_STEP_RULE, PLAN_PROMPT, REPLAN_PROMPT, RESEARCH_PLAN_PROMPT
 
     assert "pip install --only-binary=:all:" in ENV_STEP_RULE
+    assert ".venv/bin/python -m pip install" in ENV_STEP_RULE
+    assert ".venv/Scripts/python.exe -m pip install" in ENV_STEP_RULE
     assert "alternative" in ENV_STEP_RULE
     assert "do not ask the PI" in ENV_STEP_RULE
     assert "outputs/env/" in ENV_STEP_RULE

@@ -561,20 +561,41 @@ def test_no_shell_rule_is_pre_approved_and_reads_narrow_to_task_roots_while_priv
     assert all(probes[k]["pre_approved"] for k in ("scoped_read_inside", "scoped_read_grep", "scoped_read_glob"))
 
 
-def test_shared_environment_gate_removes_only_install_capable_shell_rules_with_private_paths_off(tmp_path):
-    tools = ["Read", "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "PowerShell(Get-Content *)"]
-    protected = _allowed(tmp_path, tools, [], shared_environment=True)
-    assert protected == ["Read", "Bash(ls *)", "PowerShell(Get-Content *)"]
-    assert _allowed(tmp_path, tools, [], shared_environment=True, environment_step=True) == tools
+@pytest.mark.parametrize("environment_step", [False, True], ids=["consumer", "owner"])
+def test_shared_environment_gate_removes_all_shell_rules_with_private_paths_off(tmp_path, environment_step):
+    tools = ["Read", "Bash", "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "Bash(echo *)", "PowerShell",
+             "PowerShell(Get-Content *)", "PowerShell(Write-Output *)", "WebSearch", "mcp__web__search"]
+    protected = _allowed(tmp_path, tools, [], shared_environment=True, environment_step=environment_step)
+    assert protected == ["Read", "WebSearch", "mcp__web__search"]
     assert _allowed(tmp_path, tools, []) == tools
 
 
+@pytest.mark.parametrize("environment_step", [False, True], ids=["consumer", "owner"])
+@pytest.mark.parametrize("rule,tool,command", [
+    ("Bash(ls *)", "Bash", "ls outputs && python -m pip install scanpy"),
+    ("Bash(cat *)", "Bash", "cat notes.md; Rscript -e 'install.packages(\"limma\")'"),
+    ("Bash(echo *)", "Bash", "echo ready\npython -m pip install scanpy"),
+    ("PowerShell(Get-Content *)", "PowerShell", "Get-Content notes.md; python -m pip install scanpy"),
+])
+def test_shared_environment_shell_chains_cannot_skip_the_gate(tmp_path, environment_step, rule, tool, command):
+    assert _claude_matches(rule, tool, command)  # even a noninstaller prefix pre-approves the complete chain
+    allowed = _allowed(tmp_path, ["WebSearch", rule], [], shared_environment=True,
+                       environment_step=environment_step)
+    assert allowed == ["WebSearch"]
+    assert not any(_claude_matches(candidate, tool, command) for candidate in allowed)
+
+
+@pytest.mark.parametrize("environment_step", [False, True], ids=["consumer", "owner"])
 @pytest.mark.parametrize("tool,command", [
     ("Bash", "python script.py --out outputs/x.tsv"), ("Bash", "Rscript analysis.R"), ("Bash", "ls outputs"),
     ("Bash", "cat /work/t1/notes.md"), ("PowerShell", "Get-Content notes.md"), ("Bash", "python -c \"print(1)\""),
 ])
-def test_the_gate_allows_plain_workdir_commands_without_a_pi_prompt(tool, command):
+def test_the_gate_allows_plain_workdir_commands_without_a_pi_prompt(tmp_path, tool, command, environment_step):
+    allowed = _allowed(tmp_path, ["Read", "WebSearch", f"{tool}(*)"], [], shared_environment=True,
+                       environment_step=environment_step)
+    assert allowed == ["Read", "WebSearch"]  # protected shell reaches the gate before this allow decision
     assert _gate(tool, {"command": command}).action == "allow"
+    assert _gate(tool, {"command": command}, private=[]).action == "allow"
     for tool_name, tool_input in (("Read", {"file_path": "notes.md"}), ("Grep", {"pattern": "x", "path": "."}),
                                   ("Glob", {"pattern": "outputs/*.tsv"})):
         assert _gate(tool_name, tool_input).action == "allow"
