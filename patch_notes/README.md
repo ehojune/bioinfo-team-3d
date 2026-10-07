@@ -16,9 +16,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 04:25 | [`1ce2356`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/1ce2356) | 설정 폴더가 Windows junction이어도 거부한다(#483 리뷰 P2). |
 | 04:19 | [`6122b62`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/6122b62) | Windows 명령줄이 TASK 파일 포인터로도 넘치면 Claude 직원의 --settings를 작업 폴더 옆 .labhq-settings/<task>.json으로 넘긴다(v0.5 시운전 결과 QC 단계). |
+| 04:18 | [`3626ebd`](https://github.com/ehojune/bioinfo-team-3d/pull/477/commits/3626ebd) | 미등록 DOI·PMID·PMCID를 결함으로 판정하고 감사 재검증에 단계별 관찰 산출물 hash를 전달 |
 | 03:42 | [`caba362`](https://github.com/ehojune/bioinfo-team-3d/pull/481/commits/caba362) | sed의 붙여 쓴 option·따옴표 script를 한 shell word로 해석하고, 미확정 sed·curl·wget option은 원문 검사로 되돌림 |
+| 03:34 | [`ac20d6a`](https://github.com/ehojune/bioinfo-team-3d/pull/477/commits/ac20d6a) | DOI·PMID·PMCID 본 조회와 선택 보강을 분리하고 CP2 출처 판정을 감사 묶음에 보존 |
 | 03:11 | [`6048f4b`](https://github.com/ehojune/bioinfo-team-3d/pull/481/commits/6048f4b) | 따옴표·quoted heredoc의 redirect 오탐을 줄이고 sed·curl·wget의 실제 쓰기 대상을 판별 |
 | 02:58 | [`5600f04`](https://github.com/ehojune/bioinfo-team-3d/pull/480/commits/5600f04) | 단계에 간접 조상 단계의 산출도 inputs/로 연결하고 읽기 폴더에 넣는다. 간접 조상은 프롬프트에 파일 목록만 싣는다(v0.5 시운전 전처리 단계 입력 누락). |
+| 02:42 | [`804b796`](https://github.com/ehojune/bioinfo-team-3d/pull/477/commits/804b796) | 재인용·검사 미완료·재개 후 신규 결함과 출처 보강 실패를 판정에 반영 |
+| 02:01 | [`aafc985`](https://github.com/ehojune/bioinfo-team-3d/pull/477/commits/aafc985) | 실시간 출처 검증과 철회·정정 판정을 CP2와 labhq verify에 연결 |
 | 01:54 | [`23b4c73`](https://github.com/ehojune/bioinfo-team-3d/pull/478/commits/23b4c73) | 결과 원장 salvage가 오류의 설명 조각과 실패·0건 조회를 근거로 단 링크에서 포기하지 않게 했다. 0건 안내는 계산된 0을 quantities로 적는 길을 보인다(v0.5 시운전 annotation 실패). |
 | 01:50 | [`8bdffe2`](https://github.com/ehojune/bioinfo-team-3d/pull/476/commits/8bdffe2) | manual 요청 묶음 절에 Windows rename 재시도 동작을 적었다(#476 리뷰 P1). |
 | 01:47 | [`a863fc4`](https://github.com/ehojune/bioinfo-team-3d/pull/476/commits/a863fc4) | 요청 묶음을 임시 폴더에서 최종 폴더로 옮길 때 Windows 잠금(WinError 5)이면 짧게 네 번 다시 시도한다(v0.5 시운전 묶음 유실). |
