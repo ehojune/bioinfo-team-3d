@@ -1,23 +1,22 @@
 ## 결론
 
-v0.5 시운전에서 읽기와 작업 폴더 안 쓰기만 하던 curl·sed pipeline과 quoted heredoc script 작성이 승인 카드를 띄운 오탐을 고쳤습니다.
+PR #481의 봇 리뷰 P1을 `caba362`에서 고쳤습니다. sed·curl·wget option을 확정하지 못하면 따옴표를 가리지 않고 원문을 검사합니다.
 
 ## 바뀐 것
 
-- 따옴표와 quoted heredoc의 `>`는 같은 줄에 인수를 실행할 수 있는 명령이 없을 때 데이터로 처리합니다. 불확실한 명령은 raw scan을 유지합니다.
-- sed의 `w`·`W`·`s///w`·`-i` 쓰기를 따로 찾고, `e`·`s///e`·`-f`·변수 script는 raw scan으로 남깁니다.
-- curl·wget의 출력 옵션을 쓰기 대상으로 잡고, config 옵션은 raw scan을 유지합니다.
-- 실제 시운전 두 건과 shell 실행·sed·curl·wget 반대 사례를 회귀 test로 고정했습니다.
+- `-e'…'`·`-e"…"`·`--expression='…'`처럼 붙은 shell word 조각을 합쳐 sed script로 판별합니다.
+- 알려진 sed option과 묶음을 명시해 해석하고, 변수·미지원 option·script file은 fail closed로 처리합니다.
+- curl·wget도 확인한 option만 데이터 인수로 다루며, config와 미지원 option은 원문 검사로 돌립니다.
 
 ## 실행한 것
 
-- 관련 policy·gate test: 241 passed.
-- Windows 전체 pytest: 4691 passed, 57 skipped. 첫 실행의 비관련 WinError 5 한 건은 단독 통과 뒤 전체 재실행에서 재발하지 않았습니다.
+- 관련 policy test: 252 passed.
+- Windows 전체 pytest: 4702 passed, 57 skipped.
 - `scripts/check_public.sh`, `git diff --check` 통과.
 
 ## 미해결
 
-없음.
+push 뒤 CI 확인 전입니다.
 
 Closes #479
 
