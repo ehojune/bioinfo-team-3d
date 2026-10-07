@@ -1,0 +1,5 @@
+pr: 471
+rows:
+- sha: "37028f6"
+  at: 2026-10-07 23:33
+  text: "요청 묶음에 RO-Crate metadata와 사본 무결성 검사를 추가"
