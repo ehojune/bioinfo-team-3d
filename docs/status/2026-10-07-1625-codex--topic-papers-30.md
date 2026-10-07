@@ -29,6 +29,6 @@
 
 ## 남은 지적
 
-- P2: 영문 README의 옛 수치는 후속 #463으로 넘깁니다.
+- P2: README.en.md의 옛 논문 수치(20/1255)를 30/1286으로 맞추는 후속 작업이 남습니다.
 
 🤖 Generated with Codex for the labhq dev lead

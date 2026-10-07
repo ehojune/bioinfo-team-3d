@@ -17,9 +17,9 @@ Paper2Agent 설치 갱신에서 원본 누락·복사 실패가 기존 skill을 
 - Windows 전체 pytest: 4467 passed, 56 skipped. 단일 basetemp 종료 삭제 확인.
 - scripts/check_public.sh 통과.
 
-## 미해결
+## 남은 지적
 
-- P2: rename 완료 직후 상태 기록 전에 중단되는 구간의 복구는 후속 #465로 넘깁니다. 현재 회귀는 동기 복사·교체 오류를 검증했습니다.
+- P2: rename 완료 직후 상태 기록 전 중단 구간의 복구가 남습니다. 현재 회귀는 동기 복사·교체 오류를 검증했습니다.
 
 #424의 source commit 고정·license·hash·외부 전송 계약은 별도 범위입니다. 이 PR은 설치 실패 버그만 다루며 #424를 닫지 않습니다.
 
