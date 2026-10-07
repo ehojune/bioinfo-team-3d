@@ -444,6 +444,90 @@ async def test_cso_uses_topics_to_freeze_the_matching_pack_and_its_basis():
     assert request["research_contract"]["pack_applicability"] == request["plan"]["pack_applicability"]
 
 
+async def test_cso_spellings_of_pack_and_checklist_keys_reach_cp1_without_a_correction():
+    # The v0.5 trial CSO wrote the pack id without @version and checklist answers as topic.id (2026-10-07).
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def reply(task):
+        plan = valid_plan(pack_values={"bulk_tumor_normal": valid_bulk_values()[BULK_PACK]},
+                          topics=["microarray_expression"])
+        plan["checklist"] = {f"microarray_expression.{key}" if index % 2 else f"microarray_expression/{key}": value
+                             for index, (key, value) in enumerate(plan["checklist"].items())}
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                  text="Compare bulk tumor and normal expression")
+    await Orchestrator(hub).run_request("r")
+
+    request = hub.requests["r"]
+    assert request.get("outcome") == "plan_approved", json.dumps(request, default=str, indent=2)
+    assert len(hub.calls) == 1
+    assert list(request["plan"]["pack_values"]) == [BULK_PACK]
+    assert set(request["plan"]["checklist"]) == {"batch", "pairing", "gene_set_test", "independent_validation",
+                                                 "probe_mapping"}
+
+
+async def test_wrong_pack_key_correction_names_the_applied_pack_not_an_empty_snapshot():
+    # A wrong key once made the correction say "must equal the configured snapshot: []"; the CSO then dropped its
+    # pack values and the request failed (v0.5 trial, 2026-10-07).
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.active_packs = [BULK_PACK]
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    prompts = []
+
+    async def reply(task):
+        prompts.append(task.prompt)
+        key = "bulk_tumor_normal@9" if len(prompts) == 1 else BULK_PACK
+        plan = valid_plan(pack_values={key: valid_bulk_values()[BULK_PACK]}, topics=["microarray_expression"])
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                  text="Compare bulk tumor and normal expression")
+    await Orchestrator(hub).run_request("r")
+
+    assert len(prompts) == 2
+    correction = prompts[1][prompts[1].index("The previous research PLAN failed validation"):]
+    assert f"the applied pack keys are ['{BULK_PACK}']" in correction
+    assert f"configured snapshot: ['{BULK_PACK}']" in correction
+    assert "configured snapshot: []" not in correction
+    assert hub.requests["r"].get("outcome") == "plan_approved"
+
+
+def test_key_normalization_keeps_exact_keys_and_ambiguous_ids():
+    from labhq.research.packs import normalize_pack_keys
+    from labhq.vocab.topic_checklists import ChecklistItem, normalize_answers
+
+    two_versions = _selected(LEGACY_BULK_PACK, BULK_PACK)
+    assert normalize_pack_keys(two_versions, {"bulk_tumor_normal": {}}) == {"bulk_tumor_normal": {}}
+    one = _selected(BULK_PACK)
+    assert normalize_pack_keys(one, {"bulk_tumor_normal": 1}) == {BULK_PACK: 1}
+    assert normalize_pack_keys(one, {"bulk_tumor_normal": 1, BULK_PACK: 2}) == {"bulk_tumor_normal": 1, BULK_PACK: 2}
+
+    catalog = {"microarray_expression": [ChecklistItem("batch", "c", "w", "microarray_expression")],
+               "bulk_rna_seq": [ChecklistItem("batch", "c2", "w2", "bulk_rna_seq")]}
+    topics = ["microarray_expression"]
+    assert normalize_answers({"microarray_expression.batch": "step:s1"}, topics, catalog) == {"batch": "step:s1"}
+    # An exact answer leaves the alias as an extra key; validation reads only the exact one.
+    both = {"batch": "step:s2", "microarray_expression/batch": "step:s1"}
+    assert normalize_answers(both, topics, catalog) == both
+    # Only a declared topic's alias is re-keyed; anything else is left for validation to report.
+    assert normalize_answers({"bulk_rna_seq.batch": "step:s1"}, topics, catalog) == {"bulk_rna_seq.batch": "step:s1"}
+    # Two declared topics share the id: the same answer merges, different answers are not silently dropped.
+    two = ["microarray_expression", "bulk_rna_seq"]
+    same = {"microarray_expression.batch": "step:s1", "bulk_rna_seq.batch": "step:s1"}
+    assert normalize_answers(same, two, catalog) == {"batch": "step:s1"}
+    split = {"microarray_expression.batch": "step:s1", "bulk_rna_seq.batch": "step:s2"}
+    assert normalize_answers(split, two, catalog) == split
+    from labhq.vocab.topic_checklists import answer_errors, requirements
+    assert answer_errors(normalize_answers(split, two, catalog), requirements(two, catalog), ["s1", "s2"])
+
+
 async def test_empty_topics_warning_is_frozen_and_visible_on_the_cp1_card():
     settings = Settings()
     settings.research.enabled = True

@@ -389,6 +389,27 @@ def assess_pack_applicability(configured: dict[str, LoadedPack], topics: Any, pa
     return applied, decisions, warnings
 
 
+def normalize_pack_keys(configured: dict[str, LoadedPack], pack_values: Any) -> Any:
+    """Re-key a value written under a bare pack id to its one configured ``id@version`` key.
+
+    The v0.5 trial CSO wrote ``bulk_tumor_normal`` for ``bulk_tumor_normal@3`` (2026-10-07). Only an id with exactly
+    one configured version is re-keyed, and never when the exact key is also present: the version stays the
+    snapshot's, not the planner's guess."""
+    if not isinstance(pack_values, dict):
+        return pack_values
+    versions: dict[str, list[str]] = {}
+    for key in configured:
+        versions.setdefault(key.split("@", 1)[0], []).append(key)
+    normalized: dict[str, Any] = {}
+    for key, value in pack_values.items():
+        exact = versions.get(key) if isinstance(key, str) and "@" not in key else None
+        if exact and len(exact) == 1 and exact[0] not in pack_values:
+            normalized[exact[0]] = value
+        else:
+            normalized[key] = value
+    return normalized
+
+
 def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *, topics: Any) \
         -> dict[str, LoadedPack]:
     """Topic-conditioned packs apply by topics alone; a legacy string-condition pack keeps the pre-topic answer
@@ -399,7 +420,8 @@ def select_applied_packs(configured: dict[str, LoadedPack], pack_values: Any, *,
     legacy = {key for key, loaded in configured.items() if isinstance(loaded.pack.applies_when, str)}
     unknown = sorted(set(pack_values) - set(applied) - legacy)
     if unknown:
-        raise ValueError(f"research plan supplied values for packs that do not apply: {unknown}")
+        raise ValueError(f"research plan supplied values for packs that do not apply: {unknown}; "
+                         f"the applied pack keys are {sorted(set(applied) | legacy)}")
     missing = sorted((set(applied) | legacy) - set(pack_values))
     if missing:
         raise ValueError(f"research plan pack_values is missing applied packs: {missing}; a pack without a topic "
