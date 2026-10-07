@@ -1,0 +1,5 @@
+pr: 477
+rows:
+- sha: "aafc985"
+  at: 2026-10-08 02:01
+  text: "실시간 출처 검증과 철회·정정 판정을 CP2와 labhq verify에 연결"
