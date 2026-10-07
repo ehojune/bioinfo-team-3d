@@ -11,8 +11,10 @@ or dist/<repo>-mcp.zip with a USAGE.md.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,6 +25,8 @@ from ..util import extract_json, short, slugify
 
 if TYPE_CHECKING:
     from ..runner.daemon import Runner
+
+log = logging.getLogger(__name__)
 
 _STR_OR_NULL = {"type": ["string", "null"]}
 OFFER_SCHEMA: dict[str, Any] = {
@@ -77,20 +81,62 @@ def skill_installed(engine: str = "claude_code") -> bool:
 
 
 def install_skill(source: str, cache: Path) -> list[Path]:
-    """git clone Paper2Agent and copy skills/paper2agent to Claude Code and Codex skill dirs."""
+    """Prepare both Paper2Agent copies before replacing either installed skill."""
     repo = cache / "Paper2Agent"
     if (repo / ".git").exists():
         subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], check=True)
     else:
         cache.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "clone", "--depth", "1", source, str(repo)], check=True)
-    out = []
-    for engine in ("claude_code", "codex"):
-        dst = skill_path(engine)
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(repo / "skills" / "paper2agent", dst)
-        out.append(dst)
+    skill = repo / "skills" / "paper2agent"
+    if not skill.is_dir() or not (skill / "SKILL.md").is_file():
+        raise FileNotFoundError(f"Paper2Agent source skill is missing SKILL.md: {skill}")
+    out = [skill_path(engine) for engine in ("claude_code", "codex")]
+    staged: list[tuple[Path, Path]] = []
+    published: set[Path] = set()
+    backups: set[Path] = set()
+    complete = False
+    try:
+        for dst in out:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            stage = Path(tempfile.mkdtemp(prefix=".paper2agent-", dir=dst.parent))
+            staged.append((dst, stage))
+            shutil.copytree(skill, stage / "new")
+            if not (stage / "new" / "SKILL.md").is_file():
+                raise FileNotFoundError(f"Staged Paper2Agent skill is missing SKILL.md: {stage / 'new'}")
+        for dst, stage in staged:
+            if dst.exists() or dst.is_symlink():
+                dst.rename(stage / "backup")
+                backups.add(dst)
+            (stage / "new").rename(dst)
+            published.add(dst)
+        complete = True
+    except BaseException as install_error:
+        recovery: list[str] = []
+        for dst, stage in reversed(staged):
+            try:
+                if dst in published:
+                    if dst.is_symlink() or not dst.is_dir():
+                        dst.unlink()
+                    else:
+                        shutil.rmtree(dst)
+                if dst in backups:
+                    (stage / "backup").rename(dst)
+                    backups.remove(dst)
+            except OSError:
+                recovery.append(str(stage / "backup") if dst in backups else str(dst))
+        if recovery:
+            raise RuntimeError("Paper2Agent update failed; rollback needs manual recovery. "
+                               "Preserved paths: " + ", ".join(recovery)) from install_error
+        raise
+    finally:
+        for dst, stage in staged:
+            # A failed rollback must never clean up the only remaining copy of an old installation.
+            if complete or dst not in backups:
+                try:
+                    shutil.rmtree(stage)
+                except OSError as cleanup_error:
+                    log.warning("Paper2Agent staging cleanup failed; inspect %s: %s", stage, cleanup_error)
     return out
 
 
