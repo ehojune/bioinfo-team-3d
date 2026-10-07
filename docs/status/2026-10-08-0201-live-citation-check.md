@@ -2,23 +2,24 @@
 
 ## 결론
 
-Crossref·doi.org·NCBI를 조회하는 live resolver를 추가하고, 철회 상태를 CP2와 `labhq verify`에 연결했다.
+봇 리뷰 P1 4건과 P2 1건을 `804b796`에서 고쳤다. 새 live 결함은 CP2 승인과 감사 성공을 그대로 통과하지 않는다.
 
 ## 바뀐 것
 
-- 인용 논문의 철회는 결함, 철회 공지·정정·우려 표명은 경고로 구분한다.
-- 네트워크 실패와 timeout은 `requires_verification`으로 남긴다.
-- 기본값은 꺼짐이며, 실제 응답 fixture를 쓰는 무네트워크 테스트를 추가했다.
+- DOI·PMID 재인용은 중복 근거와 claim을 CP2에서 거부하고 `labhq verify` 문제로 센다.
+- 미지원 ID·URI와 미완료 조회는 감사 exit 0이 아닌 `검사 미완료`로 보인다.
+- 재개 시 live 요약이 바뀌면 CP2를 다시 열고, 같으면 기존 결정을 유지한다.
+- Crossref 철회 판정은 NCBI 보강 실패 뒤에도 보존한다. 불완전한 PubMed 200 응답은 `invalid_response`다.
 
 ## 실행한 것
 
-- Windows 전체 pytest: 4669 passed, 57 skipped.
-- 관련 pytest: 163 passed, 2 skipped. 최종 집중 테스트: 8 passed.
-- `scripts/check_public.sh` 통과.
+- 지적 회귀 테스트: 수정 전 6 failed, 수정 후 6 passed. 관련 pytest: 155 passed.
+- Windows 전체 pytest: 4677 passed, 57 skipped.
+- `scripts/check_public.sh`, 패치노트·목차 검사 통과.
 
 ## 미해결
 
-- CI 전체 결과를 확인 중이다.
+- push 뒤 CI 전체 결과를 확인한다.
 
 Closes #422
 
