@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:39 | [`d51c84a`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/d51c84a) | POSIX 시험이 container에서 zombie로 남은 손자 프로세스를 끝난 것으로 본다(#486 리뷰). |
+| 06:35 | [`6d51920`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/6d51920) | 버전에 답하지 않는 interpreter는 package import 조사를 건너뛰고, POSIX에서도 timeout된 probe의 process group을 끊는다(#486 리뷰). |
+| 06:25 | [`1748376`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/1748376) | runner의 버전·Python 조사가 응답 없는 실행 파일(Store python3 별칭)에서도 제한 시간 + 1초 안에 돌아온다(v0.5 시운전 7차). |
 | 04:25 | [`1ce2356`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/1ce2356) | 설정 폴더가 Windows junction이어도 거부한다(#483 리뷰 P2). |
 | 04:19 | [`6122b62`](https://github.com/ehojune/bioinfo-team-3d/pull/483/commits/6122b62) | Windows 명령줄이 TASK 파일 포인터로도 넘치면 Claude 직원의 --settings를 작업 폴더 옆 .labhq-settings/<task>.json으로 넘긴다(v0.5 시운전 결과 QC 단계). |
 | 04:18 | [`3626ebd`](https://github.com/ehojune/bioinfo-team-3d/pull/477/commits/3626ebd) | 미등록 DOI·PMID·PMCID를 결함으로 판정하고 감사 재검증에 단계별 관찰 산출물 hash를 전달 |
