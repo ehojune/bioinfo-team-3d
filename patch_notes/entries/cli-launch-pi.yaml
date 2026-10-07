@@ -1,0 +1,5 @@
+pr: 493
+rows:
+- sha: "fde575f"
+  at: 2026-10-08 08:47
+  text: "PI가 새 터미널에서 gateway와 runner를 한 번에 띄우고 CLI 오류를 복구할 수 있게 함"
