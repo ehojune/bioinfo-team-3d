@@ -465,6 +465,9 @@ def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> di
         if not isinstance(crate, dict) or not isinstance(crate.get("@graph"), list):
             raise ValueError("@graph is not an array")
         _assert_private_strings_absent(crate)
+    except RecursionError:  # JSON nested past Python's recursion limit (PR #471 review)
+        problems.append("RO-Crate JSON 구조가 올바르지 않습니다: nested too deeply")
+        return report
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         problems.append(f"RO-Crate JSON 구조가 올바르지 않습니다: {exc}")
         return report
@@ -544,7 +547,12 @@ def verify_bundle_copy(root: Path, expected_request_id: str | None = None) -> di
     for relative, row in sorted(manifest.items()):
         if relative == ".":
             continue
-        recorded_file = relative in inventory or row.get("status") in recorded_statuses
+        # A file the crate declares is checked whatever its MANIFEST status says: deleting it and editing only the
+        # status to "not copied: missing" must not skip the check (#475).
+        declared_file = relative in files and relative != METADATA_FILE
+        if declared_file and row.get("status") not in recorded_statuses:
+            problems.append(f"MANIFEST status가 RO-Crate 기록과 다릅니다: {relative} ({row.get('status')})")
+        recorded_file = relative in inventory or row.get("status") in recorded_statuses or declared_file
         size = str(row.get("size") or "")
         sha256 = str(row.get("sha256") or "")
         valid_fields = True
