@@ -35,12 +35,23 @@ def test_a_timed_out_probe_ends_the_grandchild_it_started(tmp_path):
     pid = int(marker.read_text())
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if not _running(pid):
             return
         time.sleep(0.1)
     raise AssertionError(f"grandchild {pid} still runs after the probe timed out")
+
+
+def _running(pid: int) -> bool:
+    """A zombie has ended: where PID 1 does not reap orphans (a container), a killed grandchild stays one (#486)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stat:
+            return stat.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return True
 
 
 def test_a_probe_returns_even_when_ending_the_child_never_returns(monkeypatch):
