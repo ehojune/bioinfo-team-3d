@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:31 | [`edff5de`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/edff5de) | R CMD INSTALL도 명시한 로컬 library에만 설치하며 소비 단계는 자기 .rlib로 한정한다. |
+| 15:14 | [`fef0b0d`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/fef0b0d) | 공유 환경의 모든 shell 호출을 게이트로 보내고 wrapper·분기·실행 치환과 Windows 경로 이탈을 판별한다. |
+| 14:41 | [`e1edba9`](https://github.com/ehojune/bioinfo-team-3d/pull/460/commits/e1edba9) | 환경 단계 설치를 작업 폴더 환경으로 한정하고 Claude 승인 경로와 venv·uv·conda 명령을 검증. |
 | 05:10 | [`264de92`](https://github.com/ehojune/bioinfo-team-3d/pull/459/commits/264de92) | 로그인 대기 test의 상한을 0.2초에서 1초로 늘려, CI 부하에서 재시도 한 번이 안 들어가 흔들리던 것을 막았다. |
 | 04:28 | [`bcf3429`](https://github.com/ehojune/bioinfo-team-3d/pull/457/commits/bcf3429) | 검증된 Python·R 패키지 매핑과 승인 재실행 상태 전이를 추가 |
 | 03:52 | [`afa2e05`](https://github.com/ehojune/bioinfo-team-3d/pull/456/commits/afa2e05) | main 병합: 로드맵 v0.5 행에서 동시 설치 경합(이 PR)과 topic별 근거 논문(#455)을 남은 것에서 끝난 것으로 옮겼다. |
