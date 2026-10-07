@@ -4,6 +4,31 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 2026-10-08 · PR #474
+
+## 결론
+
+봇 리뷰 P1 두 건을 고쳤다. 출력 없는 직원 CLI는 도구 호출과 하위 명령이 모두 없다고 확인될 때만 종료한다.
+
+## 바뀐 것
+
+- Codex의 tool item과 Claude의 `tool_use`·`tool_result`를 짝지어 완료되지 않은 호출 수를 센다.
+- 호출이 0이고 process tree에도 실행 중인 명령이 없을 때만 transient로 끝낸다. 스트림을 해석할 수 없으면 끝내지 않는다.
+- UAC와 process 조회 실패는 감시를 끝내지 않고 다시 확인한다. 같은 상태의 경고는 반복하지 않는다.
+
+## 실행한 것
+
+- Windows 전체 pytest: 4611 passed, 56 skipped.
+- 관련 어댑터 pytest: 72 passed. `scripts/check_public.sh` 통과.
+
+## 미해결
+
+- CI와 후속 봇 판단은 총괄이 이어받는다.
+
+Closes #473
+
+🤖 Generated with Codex (gpt-5) for the labhq dev lead
+
 ## 2026-10-07 · #470 — 계획의 pack·점검표 키 표기 정규화와 교정 안내 수정
 
 - 결론: v0.5 두 번째 시운전(`req_bb9f96f460`)이 CP1 전에 실패한 원인을 고쳤다. CSO가 쓴 `bulk_tumor_normal`(판 없음)과 `microarray_expression.batch`(topic.id)를 검증 전에 정확한 키로 바꾼다. 틀린 pack 키의 교정 안내는 이제 topic이 적용한 pack을 기대값으로 보인다. 전에는 `[]`를 보여 CSO가 pack 값을 지웠다.
