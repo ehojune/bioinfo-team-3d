@@ -16,6 +16,7 @@ import pytest
 
 from labhq import cli
 from labhq.evidence.audit import BUNDLE_FILES, NO_FILES_LINE
+from labhq.evidence.verify import StaticResolver
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
@@ -32,7 +33,8 @@ def _settings(tmp_path: Path) -> Settings:
 
 
 async def _run(tmp_path: Path, monkeypatch, write, *, outputs: tuple[str, ...] = ("table.tsv",),
-               hash_max_bytes: int | None = None) -> tuple[Settings, TaskResult]:
+               hash_max_bytes: int | None = None, step_id: str = "s1",
+               task_id: str = "task-v") -> tuple[Settings, TaskResult]:
     """One step through the real runner with a fake CLI, so the record is what the daemon writes (#334)."""
     settings = _settings(tmp_path)
     if hash_max_bytes is not None:
@@ -49,8 +51,8 @@ async def _run(tmp_path: Path, monkeypatch, write, *, outputs: tuple[str, ...] =
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text="done")
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: FakeCli())
-    result = await runner.run_task(Task(id="task-v", request_id="req_v", agent_id="analyst", prompt="write",
-                                        meta={"kind": "step", "step_id": "s1", "outputs": list(outputs)}))
+    result = await runner.run_task(Task(id=task_id, request_id="req_v", agent_id="analyst", prompt="write",
+                                        meta={"kind": "step", "step_id": step_id, "outputs": list(outputs)}))
     return settings, result
 
 
@@ -262,6 +264,107 @@ def test_live_verify_resolves_artifact_from_observed_hash_and_detects_change(tmp
     resolution = report["source_verification"][0]["evidence"][0]["resolution"]
     assert code == 1 and resolution["status"] == "conflicting"
     assert any(problem.startswith("live source:") for problem in report["problems"])
+
+
+def test_live_verify_resolves_a_grandparent_artifact(tmp_path, monkeypatch, capsys):
+    settings, source = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/source.tsv", BODY),
+        outputs=("source.tsv",), step_id="source", task_id="task-source"))
+    _settings_bridge, bridge = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/bridge.txt", b"checked\n"),
+        outputs=("bridge.txt",), step_id="bridge", task_id="task-bridge"))
+    _settings_consumer, consumer = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/summary.txt", b"summary\n"),
+        outputs=("summary.txt",), step_id="consumer", task_id="task-consumer"))
+    settings.research.live_source_check = True
+    monkeypatch.setattr("labhq.evidence.verify.LiveSourceResolver", lambda **_kwargs: StaticResolver({}))
+    digest = hashlib.sha256(BODY).hexdigest()
+    cited = row("e1", artifact="a1", kind="experimental")
+    cited["source"]["version"] = digest
+    ledger = build([claim("c1")], [cited], [link("c1", "e1")]).model_dump(mode="json")
+    ledger["step_id"] = "consumer"
+    ledger["artifact_refs"] = [{"artifact_id": "a1", "path": f"{source.workdir_id}/outputs/source.tsv"}]
+    request = _request(
+        consumer, outcome="research_reported",
+        plan={"steps": [
+            {"id": "source", "depends_on": []},
+            {"id": "bridge", "depends_on": ["source"]},
+            {"id": "consumer", "depends_on": ["bridge"]},
+        ]},
+        research_contract={"plan_sha256": "b" * 64},
+        results={
+            "source": source.model_dump(mode="json"),
+            "bridge": bridge.model_dump(mode="json"),
+            "consumer": {**consumer.model_dump(mode="json"), "structured": ledger},
+        })
+
+    code, out = _verify(monkeypatch, capsys, settings, request, "--json")
+    report = json.loads(out)
+    resolution = report["source_verification"][0]["evidence"][0]["resolution"]
+
+    assert code == 0 and resolution["status"] == "found"
+    assert resolution["record"]["version"] == digest
+
+
+def test_live_verify_does_not_resolve_an_unrelated_step_artifact(tmp_path, monkeypatch, capsys):
+    settings, unrelated = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/source.tsv", BODY),
+        outputs=("source.tsv",), step_id="unrelated", task_id="task-unrelated"))
+    _settings_consumer, consumer = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/summary.txt", b"summary\n"),
+        outputs=("summary.txt",), step_id="consumer", task_id="task-consumer"))
+    settings.research.live_source_check = True
+    monkeypatch.setattr("labhq.evidence.verify.LiveSourceResolver", lambda **_kwargs: StaticResolver({}))
+    cited = row("e1", artifact="a1", kind="experimental")
+    ledger = build([claim("c1")], [cited], [link("c1", "e1")]).model_dump(mode="json")
+    ledger["step_id"] = "consumer"
+    ledger["artifact_refs"] = [
+        {"artifact_id": "a1", "path": f"{unrelated.workdir_id}/outputs/source.tsv"}]
+    request = _request(
+        consumer, outcome="research_reported",
+        plan={"steps": [
+            {"id": "unrelated", "depends_on": []},
+            {"id": "consumer", "depends_on": []},
+        ]},
+        research_contract={"plan_sha256": "b" * 64},
+        results={
+            "unrelated": unrelated.model_dump(mode="json"),
+            "consumer": {**consumer.model_dump(mode="json"), "structured": ledger},
+        })
+
+    code, out = _verify(monkeypatch, capsys, settings, request, "--json")
+    report = json.loads(out)
+    resolution = report["source_verification"][0]["evidence"][0]["resolution"]
+
+    assert code == 1 and resolution["status"] == "not_found"
+    assert any(problem.startswith("live source:") for problem in report["problems"])
+
+
+def test_upstream_artifact_mapping_stays_off_with_live_check_disabled(tmp_path, monkeypatch, capsys):
+    settings, source = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/source.tsv", BODY),
+        outputs=("source.tsv",), step_id="source", task_id="task-source"))
+    _settings_consumer, consumer = asyncio.run(_run(
+        tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/summary.txt", b"summary\n"),
+        outputs=("summary.txt",), step_id="consumer", task_id="task-consumer"))
+    monkeypatch.setattr("labhq.evidence.verify.LiveSourceResolver",
+                        lambda **_kwargs: pytest.fail("live resolver must stay off"))
+    request = _request(
+        consumer, outcome="research_reported",
+        plan={"steps": [
+            {"id": "source", "depends_on": []},
+            {"id": "consumer", "depends_on": ["source"]},
+        ]},
+        research_contract={"plan_sha256": "b" * 64},
+        results={
+            "source": source.model_dump(mode="json"),
+            "consumer": consumer.model_dump(mode="json"),
+        })
+
+    code, out = _verify(monkeypatch, capsys, settings, request, "--json")
+    report = json.loads(out)
+
+    assert code == 0 and report["source_verification"] == []
 
 
 async def test_verify_table_and_bundle_show_tool_use_id(tmp_path, monkeypatch, capsys):
