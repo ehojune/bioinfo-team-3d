@@ -522,19 +522,32 @@ def _sed_script_writes(script: str) -> list[str] | None:
     return targets
 
 
-def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str]] | None:
-    """Return (script writes, in-place inputs), or None for -f, expansion, e, or unfamiliar options."""
-    scripts: list[str] = []
-    inputs: list[str] = []
+@dataclass(frozen=True)
+class _SedCommand:
+    writes: tuple[str, ...]
+    in_place_inputs: tuple[str, ...]
+    text_is_data: bool
+
+
+def _sed_command(args: list[str], powershell: bool) -> _SedCommand | None:
+    """Parse options first, then distinguish scripts from input files independent of option order."""
+    scripts: list[str | None] = []
+    positionals: list[str | None] = []
     in_place = False
-    explicit_script = False
+    script_option = False
+    text_is_data = True
     options = True
     i = 0
     while i < len(args):
         raw = args[i]
         value = _literal_shell_word(raw, powershell)
         if value is None:
-            return None
+            if options and raw.startswith("-"):
+                return None
+            positionals.append(None)
+            text_is_data = False
+            i += 1
+            continue
         if options and value == "--":
             options = False
             i += 1
@@ -562,19 +575,26 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
                 i += 1
                 continue
             if flag == "--expression":
-                explicit_script = True
+                script_option = True
                 if not equal:
                     i += 1
                     if i >= len(args):
                         return None
                     attached = _literal_shell_word(args[i], powershell)
                 if attached is None:
-                    return None
+                    text_is_data = False
                 scripts.append(attached)
                 i += 1
                 continue
             if flag == "--file":
-                return None
+                script_option = True
+                text_is_data = False
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return None
+                i += 1
+                continue
             return None
         if options and value.startswith("-") and value != "-":
             j = 1
@@ -586,7 +606,7 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
                     in_place = True
                     j = len(value)  # the rest is the backup suffix
                 elif flag == "e":
-                    explicit_script = True
+                    script_option = True
                     attached = value[j + 1:]
                     if not attached:
                         i += 1
@@ -594,7 +614,7 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
                             return None
                         attached = _literal_shell_word(args[i], powershell)
                     if attached is None:
-                        return None
+                        text_is_data = False
                     scripts.append(attached)
                     j = len(value)
                 elif flag == "l":
@@ -608,26 +628,36 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
                         return None
                     j = len(value)
                 elif flag == "f":
-                    return None
+                    script_option = True
+                    text_is_data = False
+                    if j + 1 == len(value):
+                        i += 1
+                        if i >= len(args):
+                            return None
+                    j = len(value)
                 else:
                     return None
             i += 1
             continue
-        if not explicit_script and not scripts:
-            scripts.append(value)
-            explicit_script = True
-        else:
-            inputs.append(value)
+        positionals.append(value)
         i += 1
+    inputs = positionals
+    if not script_option:
+        if not positionals:
+            return _SedCommand((), (), False)
+        scripts.append(positionals[0])
+        inputs = positionals[1:]
     if not scripts:
-        return None
+        text_is_data = False
     writes: list[str] = []
     for script in scripts:
-        found = _sed_script_writes(script)
+        found = _sed_script_writes(script) if script is not None else None
         if found is None:
-            return None
-        writes.extend(found)
-    return writes, [value for value in inputs if value != "-"] if in_place else []
+            text_is_data = False
+        else:
+            writes.extend(found)
+    in_place_inputs = tuple(value for value in inputs if in_place and value not in {None, "-"})
+    return _SedCommand(tuple(writes), in_place_inputs, text_is_data)
 
 
 _CURL_LONG_SWITCHES = frozenset({
@@ -658,6 +688,9 @@ def _download_options_known(name: str, args: list[str], powershell: bool) -> boo
     short_switches, short_values = ((frozenset("sSLfIOkqgNi"), frozenset("oAbcdDeEFHmrTuUwxXyYz"))
                                      if name == "curl"
                                      else (frozenset("qcNS"), frozenset("OPoiUTtwQAR")))
+    output_longs = ({"--output", "--output-dir"} if name == "curl"
+                    else {"--output-document", "--directory-prefix"})
+    output_shorts = {"o"} if name == "curl" else {"O", "P"}
     i = 0
     options = True
     while i < len(args):
@@ -689,6 +722,8 @@ def _download_options_known(name: str, args: list[str], powershell: bool) -> boo
                     i += 1
                     if i >= len(args):
                         return False
+                    if flag in output_longs and values[i] is None:
+                        return False
                 i += 1
                 continue
             return False
@@ -704,6 +739,8 @@ def _download_options_known(name: str, args: list[str], powershell: bool) -> boo
                 if j + 1 == len(value):
                     i += 1
                     if i >= len(args):
+                        return False
+                    if flag in output_shorts and values[i] is None:
                         return False
                 j = len(value)
                 continue
@@ -734,7 +771,8 @@ def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     if base == "printf" and not powershell and any(arg.startswith("-v") for arg in values):
         return None  # 'printf -v' assigns a variable
     if base == "sed":
-        return "data" if _sed_command(args, powershell) is not None else None
+        parsed = _sed_command(args, powershell)
+        return "data" if parsed is not None and parsed.text_is_data else None
     if base in {"curl", "wget"}:
         return "data" if _download_options_known(base, args, powershell) else None
     return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
@@ -836,15 +874,18 @@ def _ps_writer_targets(args: list[str]) -> Iterator[str]:
             i += 2
 
 
-def _download_write_targets(name: str, args: list[str]) -> Iterator[str]:
-    values = [_word_value(arg) for arg in args]
+def _download_write_targets(name: str, args: list[str], powershell: bool) -> Iterator[str]:
+    values = [_literal_shell_word(arg, powershell) for arg in args]
     i = 0
     while i < len(values):
         word = values[i]
+        if word is None:
+            i += 1
+            continue
         fold = word.casefold()
         if name == "curl":
             if word in {"-o", "--output", "--output-dir"}:
-                if i + 1 < len(values):
+                if i + 1 < len(values) and values[i + 1] is not None:
                     yield values[i + 1]
                 i += 2
                 continue
@@ -856,7 +897,7 @@ def _download_write_targets(name: str, args: list[str]) -> Iterator[str]:
                 yield "."
         else:
             if word in {"-O", "-P"} or fold in {"--output-document", "--directory-prefix"}:
-                if i + 1 < len(values):
+                if i + 1 < len(values) and values[i + 1] is not None:
                     yield values[i + 1]
                 i += 2
                 continue
@@ -878,11 +919,11 @@ def _named_write_targets(raw_words: list[str], powershell: bool = False) -> Iter
     if plain_name == "sed":
         parsed = _sed_command(raw_words[1:], powershell)
         if parsed is not None:
-            yield from parsed[0]
-            yield from parsed[1]
+            yield from parsed.writes
+            yield from parsed.in_place_inputs
         return
     if plain_name in {"curl", "wget"}:
-        yield from _download_write_targets(plain_name, raw_words[1:])
+        yield from _download_write_targets(plain_name, raw_words[1:], powershell)
         return
     if name == "tee":  # bash tee writes every file argument; in PowerShell tee is Tee-Object
         yield from (word for word in words[1:] if not word.startswith("-"))
