@@ -6,3 +6,6 @@ rows:
   - sha: "6d51920"
     at: "2026-10-08 06:35"
     text: "버전에 답하지 않는 interpreter는 package import 조사를 건너뛰고, POSIX에서도 timeout된 probe의 process group을 끊는다(#486 리뷰)."
+  - sha: "d51c84a"
+    at: "2026-10-08 06:39"
+    text: "POSIX 시험이 container에서 zombie로 남은 손자 프로세스를 끝난 것으로 본다(#486 리뷰)."
