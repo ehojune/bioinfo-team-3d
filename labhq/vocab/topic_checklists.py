@@ -93,19 +93,28 @@ def normalize_answers(answers: Any, topics: Any, checklists: Mapping[str, list[C
     """Re-key answers written ``topic.id`` or ``topic/id`` (the TSV's two columns joined) to the bare id.
 
     The plan answers each id once, but a planner reading the topic and id columns often joins them; the v0.5 trial
-    plan was rejected twice for that spelling alone (2026-10-07). An exact id answer wins over an alias, and keys that
-    are not a declared topic's alias stay as they are."""
+    plan was rejected twice for that spelling alone (2026-10-07). Only an unambiguous alias is re-keyed: when an exact
+    id answer exists, or two topics sharing an id (``library_qc`` for ATAC and ChIP) were answered differently, every
+    key stays as written, so validation asks for the one joined answer instead of one topic's check being dropped
+    (PR #470 review)."""
     if not isinstance(answers, dict):
         return answers
     selected = set(topics) if isinstance(topics, list) else set()
     aliases = {f"{topic}{sep}{item.id}": item.id for topic, items in checklists.items() if topic in selected
                for item in items for sep in (".", "/")}
+    groups: dict[str, list[str]] = {}
+    for key in answers:
+        target = aliases.get(key) if isinstance(key, str) else None
+        if target is not None:
+            groups.setdefault(target, []).append(key)
+    renames = {key: target for target, keys in groups.items()
+               if target not in answers and len({repr(answers[key]) for key in keys}) == 1 for key in keys}
     normalized: dict[str, Any] = {}
     for key, value in answers.items():
-        target = aliases.get(key) if isinstance(key, str) else None
+        target = renames.get(key)
         if target is None:
             normalized[key] = value
-        elif target not in answers and target not in normalized:
+        elif target not in normalized:
             normalized[target] = value
     return normalized
 
