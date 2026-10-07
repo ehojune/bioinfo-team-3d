@@ -12,12 +12,12 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from labhq.evidence.audit import render_verify, verify_request
-from labhq.cli import main, render
+from labhq.cli import _verify, main, render
 from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
 from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCESS_RUN_PROFILE, RO_CRATE_PROFILE,
-                            verify_bundle_copy)
+                            build_ro_crate, verify_bundle_copy)
 from labhq.settings import Settings
 import labhq.request_bundle as request_bundle_module
 
@@ -757,11 +757,14 @@ def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
             return []
         if "status=running" in path:
             return []
-        return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1"}]
+        return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1",
+                 "bundle_warning": "RO-Crate metadata unavailable"}]
 
     monkeypatch.setattr("labhq.cli._api", api)
     main(["status"])
-    assert "요청 묶음: C:/runs/requests/r1" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "요청 묶음: C:/runs/requests/r1" in output
+    assert "경고: RO-Crate metadata unavailable" in output
 
 
 def _graded(tmp_path, files: dict[str, dict[str, str]], deps: dict[str, list[str]]):
@@ -930,6 +933,26 @@ def test_ro_crate_privacy_refusal_is_warning_only(tmp_path):
     assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
 
 
+def test_ro_crate_allows_consecutive_dots_inside_names():
+    crate = build_ro_crate(
+        {"id": "req..1"},
+        [{"relative_path": "sample..final.tsv", "status": "generated", "size": 1,
+          "sha256": "a" * 64}],
+        [],
+        {},
+    )
+
+    entities = {entity["@id"]: entity for entity in crate["@graph"]}
+    assert entities["./"]["identifier"] == "req..1"
+    assert "sample..final.tsv" in entities
+
+
+@pytest.mark.parametrize("value", ["../x", "a/../b", "%2e%2e/x", r"a\..\b"])
+def test_ro_crate_rejects_parent_path_components_after_uri_decoding(value):
+    with pytest.raises(ValueError, match="안전하지 않은 경로"):
+        build_ro_crate({"id": value}, [], [], {})
+
+
 @pytest.mark.parametrize("target", ["payload", "manifest", "crate"])
 def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, target):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
@@ -965,6 +988,26 @@ def test_verify_detects_dangling_and_duplicate_ro_crate_ids(tmp_path):
 
     assert any("reference가 해소되지" in problem for problem in report["problems"])
     assert any("@id가 중복" in problem for problem in report["problems"])
+
+
+@pytest.mark.parametrize(("reference", "message"), [
+    ("http://[", "reference URL이 올바르지"),
+    ([], "reference @id가 문자열이 아닙니다"),
+])
+def test_cli_verify_reports_invalid_reference_without_traceback(
+        tmp_path, monkeypatch, capsys, reference, message):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    crate["@graph"][1]["mentions"] = {"@id": reference}
+    (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+    monkeypatch.setattr("labhq.cli._api", lambda *_args, **_kwargs: request)
+
+    exit_code = _verify(settings, request["id"], as_json=True, bundle=None)
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == report["exit_code"] == 1
+    assert any(message in problem for problem in report["problems"])
 
 
 def test_verify_rejects_a_link_or_junction_inside_the_bundle(tmp_path):

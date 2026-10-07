@@ -68,7 +68,10 @@ def _iso_time(value: Any) -> str | None:
 
 def _unsafe_string(value: str) -> bool:
     lower = value.casefold()
-    return ("file:" in lower or ".." in value or value.startswith(("\\\\", "//"))
+    decoded = unquote(value)
+    has_parent = any(part == ".." for candidate in (value, decoded)
+                     for part in re.split(r"[\\/]", candidate))
+    return ("file:" in lower or has_parent or value.startswith(("\\\\", "//"))
             or bool(_DRIVE_PATH.search(value)) or bool(_POSIX_PATH.search(value)))
 
 
@@ -402,9 +405,18 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
             if isinstance(value, list):
                 pending.extend(value)
             elif isinstance(value, dict):
-                reference = value.get("@id")
-                if isinstance(reference, str) and not urlsplit(reference).scheme and reference not in known:
-                    problems.append(f"RO-Crate reference가 해소되지 않습니다: {reference}")
+                if "@id" in value:
+                    reference = value.get("@id")
+                    if not isinstance(reference, str):
+                        problems.append("RO-Crate reference @id가 문자열이 아닙니다")
+                    else:
+                        try:
+                            external = bool(urlsplit(reference).scheme)
+                        except ValueError as exc:
+                            problems.append(f"RO-Crate reference URL이 올바르지 않습니다: {reference} ({exc})")
+                        else:
+                            if not external and reference not in known:
+                                problems.append(f"RO-Crate reference가 해소되지 않습니다: {reference}")
                 pending.extend(item for key, item in value.items() if key != "@id")
     by_id = {item.get("@id"): item for item in entities if isinstance(item.get("@id"), str)}
     descriptor, root_entity = by_id.get(METADATA_FILE), by_id.get("./")

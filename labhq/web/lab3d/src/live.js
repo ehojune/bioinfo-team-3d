@@ -123,7 +123,8 @@ export function startLiveOffice(onState) {
         text(row, 'p', q.bundleStatus === 'incomplete'
           ? `요청 묶음(불완전): ${q.bundlePath} · 빠진 파일은 실행 기록과 MANIFEST.tsv에 있어요${grade}`
           : `요청 묶음: ${q.bundlePath}${grade}`);
-      } else if (q.bundleWarning) {
+      }
+      if (q.bundleWarning) {
         text(row, 'p', `요청 묶음 경고: ${q.bundleWarning}`);
       }
       for (const note of q.piNotes || []) {
