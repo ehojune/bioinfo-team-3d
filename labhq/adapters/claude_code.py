@@ -10,6 +10,7 @@ Flags used (see https://code.claude.com/docs/en/cli-reference): -p, --output-for
 from __future__ import annotations
 
 import hashlib
+import os
 import json
 import re
 import subprocess
@@ -19,7 +20,7 @@ from ..policy import claude_allowed_tools
 from ..util import short
 from .base import (AgentAdapter, role_footer, RunContext, RunState, SHELL_TOOLS, child_config_dirs, expand_env,
                    note_command_ok, note_failed_output, record_model_id, wrap_cwd)
-from .owned import case_sensitive_directory
+from .owned import case_sensitive_directory, is_link
 from .read_only import WORKSPACE_INSTRUCTION_RULES, workspace_instruction_paths
 
 PERMISSION_TOOL = "mcp__labhq_approval__approval_prompt"
@@ -176,6 +177,25 @@ class ClaudeCodeAdapter(AgentAdapter):
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         return [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]
 
+    def _settings_file(self, ctx: RunContext, value: str) -> Path:
+        """The --settings JSON as a file, for a command line that would overflow (Windows, 32,000 units).
+
+        It lives next to the workspace, not in it: the member's write rules cover only its own folder, so it cannot
+        rewrite its permission rules (a shell write there reaches the gate). The name is the task id; a rerun
+        replaces it."""
+        folder = Path(ctx.workdir).resolve().parent / ".labhq-settings"
+        # is_link also catches a Windows junction, which is_symlink() misses (PR #483 review).
+        if os.path.lexists(folder) and (is_link(folder) or not folder.is_dir()):
+            raise ValueError("the settings folder next to the workspace is not a plain folder")
+        folder.mkdir(exist_ok=True)
+        if is_link(folder):  # replaced between the check and mkdir
+            raise ValueError("the settings folder next to the workspace is not a plain folder")
+        path = folder / f"{ctx.task.id}.json"
+        temporary = folder / f".{ctx.task.id}.{os.getpid()}.tmp"
+        temporary.write_text(value, encoding="utf-8")
+        os.replace(temporary, path)
+        return path
+
     def prompt_pointer_error(self, ctx: RunContext) -> str | None:
         tools = ctx.agent.builtin_tools
         if (ctx.prompt_pointer and ctx.prompt == ctx.prompt_pointer and tools is not None
@@ -280,7 +300,8 @@ class ClaudeCodeAdapter(AgentAdapter):
                 # workspace (HPC wake-up) could otherwise carry memory files a previous run wrote.
                 settings["claudeMdExcludes"] += workspace_memory_excludes(ctx.workdir)
         if settings:
-            cmd += ["--settings", json.dumps(settings)]
+            value = json.dumps(settings)
+            cmd += ["--settings", str(self._settings_file(ctx, value)) if ctx.compact_command else value]
         if a.builtin_tools is not None:
             cmd += ["--tools", a.builtin_tools]
         if ctx.use_permission_tool and any(s.name == "labhq_approval" for s in ctx.mcp_servers):

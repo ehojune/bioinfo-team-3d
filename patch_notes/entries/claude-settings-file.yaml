@@ -1,0 +1,8 @@
+pr: 483
+rows:
+  - sha: "6122b62"
+    at: "2026-10-08 04:19"
+    text: "Windows 명령줄이 TASK 파일 포인터로도 넘치면 Claude 직원의 --settings를 작업 폴더 옆 .labhq-settings/<task>.json으로 넘긴다(v0.5 시운전 결과 QC 단계)."
+  - sha: "1ce2356"
+    at: "2026-10-08 04:25"
+    text: "설정 폴더가 Windows junction이어도 거부한다(#483 리뷰 P2)."
