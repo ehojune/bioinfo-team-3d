@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:58 | [`5600f04`](https://github.com/ehojune/bioinfo-team-3d/pull/480/commits/5600f04) | 단계에 간접 조상 단계의 산출도 inputs/로 연결하고 읽기 폴더에 넣는다. 간접 조상은 프롬프트에 파일 목록만 싣는다(v0.5 시운전 전처리 단계 입력 누락). |
 | 01:54 | [`23b4c73`](https://github.com/ehojune/bioinfo-team-3d/pull/478/commits/23b4c73) | 결과 원장 salvage가 오류의 설명 조각과 실패·0건 조회를 근거로 단 링크에서 포기하지 않게 했다. 0건 안내는 계산된 0을 quantities로 적는 길을 보인다(v0.5 시운전 annotation 실패). |
 | 01:50 | [`8bdffe2`](https://github.com/ehojune/bioinfo-team-3d/pull/476/commits/8bdffe2) | manual 요청 묶음 절에 Windows rename 재시도 동작을 적었다(#476 리뷰 P1). |
 | 01:47 | [`a863fc4`](https://github.com/ehojune/bioinfo-team-3d/pull/476/commits/a863fc4) | 요청 묶음을 임시 폴더에서 최종 폴더로 옮길 때 Windows 잠금(WinError 5)이면 짧게 네 번 다시 시도한다(v0.5 시운전 묶음 유실). |

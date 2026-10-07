@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · #480 — 단계에 간접 조상 단계의 산출도 inputs/로 연결
+
+- 결론: 단계의 입력 링크와 읽기 폴더를 직접 의존 단계에서 모든 조상 단계로 넓혔다. v0.5 시운전 `req_8433789745`의 전처리 단계가 간접 조상(fetch)의 산출을 못 찾아 실패한 원인이다.
+- 바뀐 것: `labhq/orchestrator/cso.py`(`input_steps`, `upstream_steps`·`upstream_dirs`, 간접 조상 파일 목록 맥락), `docs/manual.md` 한 문장, `tests/test_cso.py` 1건.
+- 실행한 것: 새 시험 수정 전 실패·수정 뒤 통과, 전체 pytest(Windows) 4669 passed·57 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음. 병합 뒤 인스턴스 재시작, 시운전 6차.
+- 근거: `tests/test_cso.py::test_a_step_gets_inputs_links_for_ancestors_it_reaches_through_other_steps`.
+
 ## 2026-10-08 · #478 — 결과 원장 salvage가 설명 조각과 실패 조회 링크에서 포기하지 않게 함
 
 - 결론: v0.5 시운전 `req_ce7c64089c`의 s10 annotation 원장이 교정 두 번 뒤 salvage까지 실패해 요청 전체가 끝났다. salvage는 이제 행 참조 없는 설명 조각을 건너뛰고, 실패·0건 조회를 근거로 단 링크만 거부한다. 실제 원장은 문제 행 하나와 그 링크만 빠지고 claim 둘이 남는다.
