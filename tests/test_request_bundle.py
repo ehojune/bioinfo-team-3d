@@ -11,11 +11,13 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from labhq.evidence.audit import verify_request
+from labhq.evidence.audit import render_verify, verify_request
 from labhq.cli import main, render
 from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
+from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCESS_RUN_PROFILE, RO_CRATE_PROFILE,
+                            verify_bundle_copy)
 from labhq.settings import Settings
 import labhq.request_bundle as request_bundle_module
 
@@ -113,6 +115,11 @@ def request_fixture(tmp_path: Path):
 def manifest_rows(bundle: Path) -> dict[str, dict[str, str]]:
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         return {row["relative_path"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+
+def crate_entities(bundle: Path) -> dict[str, dict]:
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    return {entity["@id"]: entity for entity in crate["@graph"]}
 
 
 @pytest.mark.parametrize("failure", ["changed", "missing", "link"])
@@ -812,3 +819,230 @@ def test_a_txt_data_output_without_a_script_is_not_replayable(tmp_path):
     built, _readme = _graded(tmp_path, {"count": {"outputs/counts.txt": "TP53 12\n", "outputs/notes.md": "# n\n"}}, {})
     assert built["grade"] == "documented"
     assert built["grade_reasons"] == ["스크립트 없이 데이터 산출만 있는 단계: count"]
+
+
+def test_ro_crate_is_deterministic_and_uses_the_pinned_profiles(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["finished_at"] = 1791352800
+
+    first = Path(build_request_bundle(request, settings, tasks)["path"])
+    first_bytes = (first / METADATA_FILE).read_bytes()
+    second = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((second / METADATA_FILE).read_text(encoding="utf-8"))
+    entities = {entity["@id"]: entity for entity in crate["@graph"]}
+
+    assert (second / METADATA_FILE).read_bytes() == first_bytes
+    assert crate["@context"] == INLINE_CONTEXT
+    assert entities[METADATA_FILE]["conformsTo"] == [{"@id": RO_CRATE_PROFILE},
+                                                        {"@id": PROCESS_RUN_PROFILE}]
+    assert entities["./"]["identifier"] == request["id"]
+    assert entities["./"]["conformsTo"] == {"@id": PROCESS_RUN_PROFILE}
+    assert entities["./"]["datePublished"] == "2026-10-07T06:00:00+00:00"
+    assert manifest_rows(second)[METADATA_FILE]["sha256"] == digest(second / METADATA_FILE)
+    assert "sha256" not in entities["MANIFEST.tsv"]
+
+
+def test_ro_crate_records_only_executed_steps_and_failed_status(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["plan"]["steps"].append({"id": "planned-only", "depends_on": []})
+    request["results"]["s2"]["ok"] = False
+    second_manifest = Path(request["results"]["s2"]["workdir"]) / "manifest.json"
+    second_manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "codex", "model": "gpt-test",
+        "runs": {"t-second": {"started_at": 1791352800, "ended_at": 1791352860,
+                                "engine_cli_version": "1.2.3"}},
+    }), encoding="utf-8")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    entities = crate_entities(bundle)
+    actions = [entity for entity in entities.values() if entity.get("@type") == "CreateAction"]
+
+    assert len(actions) == 2
+    assert not any("planned-only" in entity.get("name", "") for entity in actions)
+    failed = next(entity for entity in actions if entity["name"] == "Run step s2")
+    assert failed["actionStatus"] == {"@id": "https://schema.org/FailedActionStatus"}
+    assert failed["startTime"] == "2026-10-07T06:00:00+00:00"
+    assert failed["endTime"] == "2026-10-07T06:01:00+00:00"
+    assert "object" not in failed and "agent" not in failed
+    instrument = entities[failed["instrument"]["@id"]]
+    assert instrument["@type"] == "SoftwareApplication"
+    assert instrument["softwareVersion"] == "1.2.3"
+    assert not any(entity.get("@type") == "Person" for entity in entities.values())
+
+
+def test_input_inventory_is_context_not_action_object_and_private_rows_are_omitted(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s2"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "codex",
+        "runs": {"t-second": {"input_files": [
+            {"path": r"C:\visible\public.tsv", "size": 7, "mtime_ns": 1, "sha256": "a" * 64},
+            {"path": r"D:\controlled\patient.tsv", "skipped": "private"},
+            {"path": "/restricted/cohort.tsv", "skipped": "restricted"},
+        ]}},
+    }), encoding="utf-8")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate_text = (bundle / METADATA_FILE).read_text(encoding="utf-8")
+    entities = crate_entities(bundle)
+    action = next(entity for entity in entities.values() if entity.get("name") == "Run step s2")
+    scans = [entity for entity in entities.values()
+             if entity.get("@type") == "Observation" and str(entity.get("@id", "")).startswith("#input-scan-")]
+
+    assert "object" not in action
+    assert len(scans) == 1 and scans[0]["about"] == {"@id": action["@id"]}
+    assert "public.tsv" in crate_text and "a" * 64 in crate_text
+    assert "patient.tsv" not in crate_text and "cohort.tsv" not in crate_text
+    assert "C:\\visible" not in crate_text and "/restricted" not in crate_text
+    assert "protected item(s) were omitted" in scans[0]["description"]
+
+
+def test_output_uri_is_relative_encoded_and_case_preserving(tmp_path):
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-07" / "task_uri"
+    output = workdir / "outputs" / "Data" / "Case File.TXT"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node(), "engine": "mock"}))
+    write(output, "value\n")
+    request = {"id": "uri", "report": "ok", "report_appendix": "", "plan": {"steps": []},
+               "results": {"direct": {"task_id": "t", "ok": True, "workdir": str(workdir),
+                                        "workdir_id": workdir.name,
+                                        "outputs": ["outputs/Data/Case File.TXT"],
+                                        "output_sha256": {"outputs/Data/Case File.TXT": digest(output)}}}}
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    entities = crate_entities(bundle)
+
+    assert "steps/direct/outputs/Data/Case%20File.TXT" in entities
+    assert not any(str(identifier).startswith(("C:", "file:")) for identifier in entities)
+
+
+def test_ro_crate_privacy_refusal_is_warning_only(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s1"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({"host": platform.node(), "engine": r"C:\private\engine"}), encoding="utf-8")
+
+    built = build_request_bundle(request, settings, tasks)
+    bundle = Path(built["path"])
+
+    assert "crate_warning" in built
+    assert not (bundle / METADATA_FILE).exists()
+    assert FORMAT_MARKER in (bundle / "README.md").read_text(encoding="utf-8")
+    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("target", ["payload", "manifest", "crate"])
+def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, target):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    if target == "payload":
+        write(bundle / "steps/s1/outputs/data/input.tsv", "tampered\n")
+    elif target == "manifest":
+        path = bundle / "MANIFEST.tsv"
+        text = path.read_text(encoding="utf-8")
+        recorded = manifest_rows(bundle)["README.md"]["sha256"]
+        path.write_text(text.replace(recorded, "0" * 64, 1), encoding="utf-8")
+    else:
+        crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+        file_entity = next(entity for entity in crate["@graph"] if entity.get("sha256"))
+        file_entity["sha256"] = "0" * 64
+        (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("요청 묶음 사본" in problem for problem in report["problems"])
+
+
+def test_verify_detects_dangling_and_duplicate_ro_crate_ids(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    crate["@graph"][1]["mentions"] = {"@id": "#missing"}
+    crate["@graph"].append(dict(crate["@graph"][1]))
+    (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+
+    report = verify_bundle_copy(bundle)
+
+    assert any("reference가 해소되지" in problem for problem in report["problems"])
+    assert any("@id가 중복" in problem for problem in report["problems"])
+
+
+def test_verify_rejects_a_link_or_junction_inside_the_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    data_dir = bundle / "steps/s1/outputs/data"
+    outside = tmp_path / "junction-target"
+    write(outside / "input.tsv", "value\n7\n")
+    shutil.rmtree(data_dir)
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(data_dir))
+        else:
+            data_dir.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory links are unavailable")
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link or junction" in problem for problem in report["problems"])
+    finally:
+        data_dir.rmdir()
+
+
+def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "old_bundle", "status": "done", "results": {}, "plan": {"steps": []}}
+    bundle = Path(settings.runner.workspace_root) / "requests" / request["id"]
+    write(bundle / "README.md", "# old request bundle\n")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["present"] is True
+    assert report["request_bundle"]["crate"] is False
+
+
+def test_new_bundle_missing_ro_crate_is_a_problem(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "new_missing", "status": "done", "results": {}, "plan": {"steps": []}}
+    bundle = Path(settings.runner.workspace_root) / "requests" / request["id"]
+    write(bundle / "README.md", FORMAT_MARKER + "\n")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any(METADATA_FILE in problem for problem in report["problems"])
+
+
+def test_external_input_hash_is_compared_as_a_record_not_rehashed(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s1"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "mock",
+        "runs": {"t-first": {"input_files": [
+            {"path": "reference/source.tsv", "size": 10, "mtime_ns": 1, "sha256": "b" * 64},
+        ]}},
+    }), encoding="utf-8")
+    Path(build_request_bundle(request, settings, tasks)["path"])
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["external_input_hashes"] == 1
+    rendered = render_verify(report)
+    assert "기록끼리 1개 대조" in rendered and "원본 재해시 아님" in rendered
+
+
+@pytest.mark.skipif(not os.environ.get("LABHQ_ROCRATE_VALIDATOR"), reason="official validator CI job only")
+def test_official_ro_crate_validator_offline(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["finished_at"] = 1791352800
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    checked = subprocess.run([
+        "rocrate-validator", "validate", "--offline", "--no-auto-profile",
+        "--profile-identifier", "process-run-crate", "--requirement-severity", "REQUIRED",
+        "--skip-availability-check", "--no-paging", str(bundle),
+    ], capture_output=True, text=True)
+
+    assert checked.returncode == 0, checked.stdout + checked.stderr

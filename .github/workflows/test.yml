@@ -58,6 +58,22 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q --durations=15  # the 15 slowest tests, to find what to speed up
 
+  ro-crate-validator:
+    needs: changes
+    if: needs.changes.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      LABHQ_ROCRATE_VALIDATOR: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      # CI-only validator: roc-validator 0.12.2 is Apache-2.0; --offline forbids profile/context lookups.
+      - run: pip install -e ".[dev]" roc-validator==0.12.2
+      - run: pytest -q tests/test_request_bundle.py -k official_ro_crate_validator
+
   pytest-slow:
     # The real 90 s MCP call (#276) runs here, beside the suite, so a wall-clock timeout regression fails CI (#308).
     needs: changes

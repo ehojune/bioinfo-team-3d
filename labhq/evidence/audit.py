@@ -31,6 +31,7 @@ STATUS_KO = {OK: "일치", MISMATCH: "불일치", MISSING: "없음", UNREADABLE:
 PROBLEM_STATUSES = frozenset({MISMATCH, MISSING, UNREADABLE, UNCHECKED})
 BUNDLE_FILES = ("README.md", "report.md", "report_appendix.md", "claims.json", "artifacts.json")
 NO_FILES_LINE = "산출 파일 자체는 넣지 않았습니다(크기와 데이터 경계). 원본은 `artifacts.json`의 sha256으로 대조합니다."
+_SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 
 
 def _is_plain_dir(path: Path) -> bool:
@@ -231,10 +232,18 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     if report_check and report_check["rerun"]:
         problems += [f"보고서 앵커: {problem}" for problem in report_check["rerun"]["problems"]]
     problems += [f"계획 결속: {problem}" for problem in ledger_binding_problems(req)]
+    request_bundle = None
+    request_id = str(req.get("id") or "")
+    if _SAFE_REQUEST_ID.fullmatch(request_id):
+        from ..ro_crate import verify_bundle_copy
+
+        request_bundle = verify_bundle_copy(root / "requests" / request_id)
+        problems += [f"요청 묶음 사본: {problem}" for problem in request_bundle["problems"]]
     return {"request_id": req.get("id"), "text": req.get("text"), "status": req.get("status"),
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
             "unreported_outputs": unreported, "problems": problems, "reasons": reasons,
+            "request_bundle": request_bundle,
             "exit_code": 2 if reasons else 1 if problems else 0}
 
 
@@ -275,6 +284,19 @@ def render_verify(report: Mapping[str, Any]) -> str:
     if unreported:
         lines.append("보고하지 않은 산출(경고):")
         lines += [f"  - {sid}: {path}" for sid, paths in unreported.items() for path in paths]
+    request_bundle = report.get("request_bundle")
+    if request_bundle and request_bundle.get("present"):
+        if request_bundle.get("crate"):
+            lines.append("요청 묶음 사본: RO-Crate·MANIFEST·파일 대조 "
+                         + ("문제 없음" if not request_bundle["problems"]
+                            else f"문제 {len(request_bundle['problems'])}건"))
+            lines.append(f"외부 입력 hash: 기록끼리 {request_bundle.get('external_input_hashes', 0)}개 대조"
+                         "(원본 재해시 아님)")
+        else:
+            lines.append("요청 묶음 사본: " + (
+                f"RO-Crate 없음(문제 {len(request_bundle['problems'])}건)"
+                if request_bundle["problems"] else "RO-Crate 없는 이전 형식"
+            ))
     if report.get("bundle"):
         lines.append(f"감사 번들: {report['bundle']}")
     lines += [f"확인 못함: {reason}" for reason in report["reasons"]]
