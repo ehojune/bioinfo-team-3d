@@ -47,20 +47,39 @@ def executable_basename(token: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
-def _literal_words(segment: str) -> tuple[list[str], bool]:
-    """Tokenize literal words, including quoted pieces within one executable/option."""
+class _ShellWord(str):
+    """A dequoted shell word that remembers whether its source can expand."""
+
+    def __new__(cls, value: str, *, nonliteral: bool = False):
+        word = super().__new__(cls, value)
+        word.nonliteral = nonliteral
+        return word
+
+
+def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bool]:
+    """Tokenize words while retaining expansion provenance across quoted pieces."""
     words: list[str] = []
     token = ""
     quote = ""
     started = False
     escaped = False
-    for char in segment:
-        if escaped:
-            token += char
-            escaped = False
-        elif quote and char == "`":
-            escaped = True
-        elif char in "\"'":
+    nonliteral = False
+    i = 0
+    while i < len(segment):
+        char = segment[i]
+        next_char = segment[i + 1] if i + 1 < len(segment) else ""
+        powershell_escape = tool_name == "PowerShell" and char == "`" and quote != "'"
+        bash_escape = (tool_name != "PowerShell" and char == "\\" and quote != "'" and
+                       next_char and (next_char in '$`"\\' or not quote and next_char.isspace()))
+        if powershell_escape or bash_escape:
+            started = True
+            if not next_char:
+                escaped = True
+                break
+            token += next_char
+            i += 2
+            continue
+        if char in "\"'":
             if not quote:
                 quote = char
                 started = True
@@ -70,13 +89,16 @@ def _literal_words(segment: str) -> tuple[list[str], bool]:
                 token += char
         elif char.isspace() and not quote:
             if started:
-                words.append(token)
-                token, started = "", False
+                words.append(_ShellWord(token, nonliteral=nonliteral))
+                token, started, nonliteral = "", False, False
         else:
             token += char
             started = True
+            if quote != "'" and (char == "$" or char == "`" and tool_name != "PowerShell"):
+                nonliteral = True
+        i += 1
     if started:
-        words.append(token)
+        words.append(_ShellWord(token, nonliteral=nonliteral))
     return words, not quote and not escaped
 
 
@@ -91,9 +113,9 @@ def _executable_words(segment: str) -> tuple[str, list[str]]:
     return (executable_basename(words[0]), words[1:]) if words else ("", [])
 
 
-def _shell_invocation(segment: str) -> tuple[str, list[str], bool]:
+def _shell_invocation(segment: str, tool_name: str) -> tuple[str, list[str], bool]:
     """Unwrap a bounded shell grammar; unknown wrapper options remain untrusted."""
-    words, valid = _literal_words(segment.strip().lstrip("({ ").rstrip(")} "))
+    words, valid = _literal_words(segment.strip().lstrip("({ ").rstrip(")} "), tool_name)
     while words:
         token = words[0].casefold()
         if token in _SHELL_PREFIXES or token in {"&", "."} or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
@@ -119,9 +141,9 @@ def _shell_invocation(segment: str) -> tuple[str, list[str], bool]:
     return (words[0], words[1:], valid) if words else ("", [], valid)
 
 
-def _installation_syntax(segment: str) -> bool:
+def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
     """Find direct installer operands even when a wrapper/control form was not understood."""
-    words, valid = _literal_words(segment)
+    words, valid = _literal_words(segment, tool_name)
     if words and executable_basename(words[0]) in _DATA_COMMANDS:
         return False  # printed text and filename arguments are data, not shell invocations
     for i, word in enumerate(words):
@@ -140,6 +162,8 @@ def _installation_syntax(segment: str) -> bool:
 
 def _nonliteral_word(word: str) -> bool:
     """Whether a shell may replace any part of a word before execution."""
+    if isinstance(word, _ShellWord):
+        return word.nonliteral
     return "$" in word or "`" in word or bool(re.search(r"%[^%]+%", word))
 
 
@@ -174,10 +198,6 @@ def _dynamic_installer_syntax(token: str, args: list[str]) -> bool:
     if executable == "r":
         selectors = [arg for arg in args if not arg.startswith("-")][:2]
         return any(_nonliteral_word(arg) for arg in selectors)
-    if executable == "rscript":
-        for i, arg in enumerate(folded):
-            if arg in {"-e", "--expression"}:
-                return i + 1 == len(args) or _nonliteral_word(args[i + 1])
     return False
 
 
@@ -215,7 +235,9 @@ def _nested_shell_body(executable: str, args: list[str], valid: bool) -> tuple[s
     if option_index + 1 >= len(args):
         return "", nested_tool, False, False
     body = " ".join(args[option_index + 1:]) if joins_remainder else args[option_index + 1]
-    return body, nested_tool, valid and not _nonliteral_word(body), False
+    body_words, body_valid = _literal_words(str(body), nested_tool)
+    extractable = valid and body_valid and not any(_nonliteral_word(word) for word in body_words)
+    return body, nested_tool, extractable, False
 
 
 def _foreign_windows_path(value: str) -> bool:
@@ -374,7 +396,8 @@ def _r_calls(segment: str) -> Iterator[str]:
 
 def _task_library(path: str, name: str, workdir: str, cwd: Path | None = None) -> bool:
     value = path.strip().strip("\"'")
-    if _foreign_windows_path(value) or any(mark in value for mark in ("$", "%", "`")):
+    if (_foreign_windows_path(value) or ".." in value.replace("\\", "/").split("/") or
+            any(mark in value for mark in ("$", "%", "`"))):
         return False
     try:
         root = Path(workdir).resolve()
@@ -392,6 +415,7 @@ def _local_path(path: str, workdir: str, cwd: Path | None, *, interpreter: bool 
     """Resolve a literal destination below the task root, including directory links."""
     value = path.strip().strip("\"'")
     if (not value or _foreign_windows_path(value) or
+            ".." in value.replace("\\", "/").split("/") or
             any(mark in value for mark in ("$", "%", "`", "~", "*", "?", "[", "]", "(", ")"))):
         return None
     value = value.replace("\\", "/")
@@ -516,7 +540,7 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
 def _shared_environment_install_denial(tool_name: str, command: str, *, environment_step: bool,
                                        workdir: str, cwd: Path | None, depth: int) -> str | None:
     cwd_stack: list[Path | None] = []
-    group_stack: list[tuple[str, Path | None, int]] = []
+    group_stack: list[tuple[str, Path | None, int, bool]] = []
     install_environment_override = False
     pending_r_environment: list[str] = []
     segments = list(_segments(command))
@@ -529,15 +553,17 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         if not segment:
             continue
         if segment in {"(", "{"}:
-            group_stack.append((")" if segment == "(" else "}", cwd, len(cwd_stack)))
+            group_stack.append((")" if segment == "(" else "}", cwd, len(cwd_stack), segment == "("))
             continue
         if segment in {")", "}"}:
             if not group_stack or group_stack[-1][0] != segment:
                 if _installer_name_visible(command):
                     return _ENVIRONMENT_DENIAL
                 continue
-            _, cwd, stack_length = group_stack.pop()
-            del cwd_stack[stack_length:]
+            _, saved_cwd, stack_length, restores_state = group_stack.pop()
+            if restores_state:
+                cwd = saved_cwd
+                del cwd_stack[stack_length:]
             continue
         # A data command can still execute substitutions; literal single-quoted text remains data.
         if (_shell_expands(segment, tool_name) and
@@ -545,7 +571,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
             return _ENVIRONMENT_DENIAL
         # PowerShell assignments and shell exports can redirect a later command in the same tool call.
         install_environment_override |= bool(_INSTALL_REDIRECT_ENV.search(segment))
-        token, args, understood = _shell_invocation(segment)
+        token, args, understood = _shell_invocation(segment, tool_name)
         executable = executable_basename(token)
         if _dynamic_installer_syntax(token, args):
             return _ENVIRONMENT_DENIAL
@@ -555,7 +581,9 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
             if unconditional:
                 return _ENVIRONMENT_DENIAL
             if not extractable or depth >= _NESTED_SHELL_DEPTH:
-                if _installer_name_visible(body or segment):
+                candidate = segment if not extractable else body or segment
+                if (_installer_name_visible(candidate) or
+                        not extractable and _installation_syntax(segment, tool_name)):
                     return _ENVIRONMENT_DENIAL
                 continue
             denial = _shared_environment_install_denial(
@@ -568,7 +596,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         manager_create = environment_step and executable in {"conda", "mamba", "micromamba"} and "create" in args
         if ((not understood or not detected_install and not manager_create and executable not in _R) and
                 not (understood and executable in _DATA_COMMANDS | _LOCATION_COMMANDS)):
-            if _installation_syntax(segment):
+            if _installation_syntax(segment, tool_name):
                 return _ENVIRONMENT_DENIAL
         if executable in {"pushd", "push-location"}:
             cwd_stack.append(cwd)

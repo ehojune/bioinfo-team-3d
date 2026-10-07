@@ -301,6 +301,24 @@ def test_group_directory_changes_do_not_escape_their_scope(tmp_path, command, en
     assert denial(tmp_path, command, environment_step=environment_step)
 
 
+@pytest.mark.parametrize("environment_step,target", [
+    (True, "./packages"),
+    (False, "./.pylib"),
+])
+def test_brace_group_directory_changes_persist_in_the_current_shell(tmp_path, environment_step, target):
+    command = f"{{ cd ..; true; }}; pip install --target {target} scanpy"
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step,target", [
+    (True, "./packages"),
+    (False, "./.pylib"),
+])
+def test_subshell_directory_changes_are_restored(tmp_path, environment_step, target):
+    command = f"(cd ..; true); pip install --target {target} scanpy"
+    assert denial(tmp_path, command, environment_step=environment_step) is None
+
+
 @pytest.mark.parametrize("environment_step,library,template", [
     (True, "packages", 'pip install --target "{target}" scanpy'),
     (True, "conda-env", 'conda install -p "{target}" scanpy'),
@@ -334,9 +352,34 @@ def test_nested_shell_installations_fail_closed(tmp_path, command, environment_s
     assert denial(tmp_path, command, environment_step=environment_step)
 
 
+@pytest.mark.parametrize("environment_step,command", [
+    (True, "bash -c '$0 \"$@\"' pip install --target /tmp/out scanpy"),
+    (False, "bash -c '\"$1\" \"${@:2}\"' ignored pip install --target ./other scanpy"),
+])
+def test_dynamic_nested_shell_body_checks_positional_arguments(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
 @pytest.mark.parametrize("environment_step", [True, False])
 def test_noninstall_nested_shell_body_remains_allowed(tmp_path, environment_step):
     assert denial(tmp_path, "bash -c 'python script.py'", environment_step=environment_step) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "Rscript -e 'print(df$column)'"),
+    ("Bash", r'''Rscript -e "print(df\$column)"'''),
+    ("Bash", '''python -c "print('$x')"'''),
+    ("Bash", r"python -c 'print(\"$x\")'"),
+    ("Bash", "awk '{print $1}' data.tsv"),
+    ("Bash", "sed 's/$//' input.tsv"),
+    ("Bash", r"printf '%s\n' \$HOME"),
+    ("PowerShell", "Rscript -e 'print(df$column)'"),
+    ("PowerShell", "python -c 'print(\"$x\")'"),
+    ("PowerShell", "Write-Output `$HOME"),
+])
+def test_noninstall_data_dollars_do_not_become_dynamic_installers(tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool) is None
 
 
 def test_nested_shell_local_install_destinations_remain_allowed(tmp_path):
