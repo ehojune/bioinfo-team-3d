@@ -451,6 +451,9 @@ class RunContext:
     extra_dirs: list[str] = field(default_factory=list)
     # A short prompt that names the task file, used when `prompt` would make the command line too long (#222).
     prompt_pointer: str | None = None
+    # Set when the command line still overflows with the prompt pointer: an adapter that can moves its largest
+    # inline argument (Claude's --settings JSON) into a runner-owned file outside the workspace.
+    compact_command: bool = False
     # Readable, never writable (#36 path references). Claude gets --add-dir plus deny rules; Codex reads
     # outside its workspace without --add-dir, which would grant write access.
     read_dirs: list[str] = field(default_factory=list)
@@ -843,6 +846,11 @@ class AgentAdapter(ABC):
             if _command_too_long(cmd) and ctx.prompt_pointer and ctx.prompt != ctx.prompt_pointer:
                 # Windows refuses the process and Python reports a missing executable (#222): name the task file.
                 ctx.prompt = ctx.prompt_pointer
+                cmd, launcher = resolved(self.build_command(ctx))
+            if _command_too_long(cmd) and not ctx.compact_command:
+                # Still over with the pointer: the rest is settings, schema and per-folder rules. A step with many
+                # upstream folders crossed 32,000 that way in the v0.5 trial (2026-10-08).
+                ctx.compact_command = True
                 cmd, launcher = resolved(self.build_command(ctx))
         except ValueError as exc:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=str(exc))

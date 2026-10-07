@@ -204,3 +204,43 @@ async def test_command_line_limit_counts_utf16_code_units(tmp_path, monkeypatch)
     res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=pointer, prompt="\U0001F9EC" * 2500)
     assert res.ok, res.error
     assert argv[argv.index("-p") + 1] == pointer
+
+
+async def test_settings_move_to_a_file_when_the_pointer_is_not_enough(tmp_path, monkeypatch):
+    # v0.5 trial (2026-10-08): with the prompt already a pointer, settings, schema and per-folder rules still
+    # passed 32,000 units for a step with many upstream folders, and the QC step was refused.
+    from labhq.adapters import base
+    monkeypatch.setattr(base, "command_line_limit", lambda: 6000, raising=False)
+    s = Settings()
+    s.engines.claude_code.bin = sys.executable
+    s.engines.claude_code.prefix_args = [str(_fake_cli(tmp_path, "claude"))]
+    agent = AgentSpec(id="a1", name="A", role="r", engine=Engine.claude_code, model="m", tools=["Read"],
+                      system_prompt="ROLE")
+    task = Task(agent_id="a1", prompt="long", output_schema={"type": "object"})
+    wd = tmp_path / "runs" / "task_1"
+    wd.mkdir(parents=True)
+
+    async def emit(t, d):
+        pass
+
+    deny = [f"Read(//c:/private/folder-{i}/**)" for i in range(300)]
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    ctx = RunContext(task=task, agent=agent, workdir=wd, settings=s, mcp_servers=[], env={}, emit=emit,
+                     prompt=pointer, prompt_pointer=pointer, claude_settings={"permissions": {"deny": deny}})
+    res = await get_adapter(Engine.claude_code, s).run(ctx)
+
+    assert res.ok, res.error
+    argv = json.loads((tmp_path / "claude.argv").read_text())
+    value = argv[argv.index("--settings") + 1]
+    settings_file = Path(value)
+    assert settings_file.parent == (tmp_path / "runs" / ".labhq-settings").resolve()  # beside, not inside
+    assert deny[0] in json.loads(settings_file.read_text(encoding="utf-8"))["permissions"]["deny"]
+    assert not any(deny[0] in arg for arg in argv)
+
+
+async def test_settings_stay_inline_when_the_command_fits(tmp_path, monkeypatch):
+    pointer = "Read TASK.md in the current directory (it is long) and carry out the instruction there."
+    res, argv = await _run_long_prompt(tmp_path, monkeypatch, pointer=pointer)
+    assert res.ok, res.error
+    assert argv[argv.index("--settings") + 1].startswith("{")
+    assert not (tmp_path / ".labhq-settings").exists()

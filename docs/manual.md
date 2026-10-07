@@ -671,6 +671,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 첫 실행 때 확인할 것도 여기 있습니다.
 
+- Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
 - Codex 0.155.0-alpha.16의 `exec` 기본 승인 정책 `never`는 MCP 호출을 실패시켰습니다 (#24135). labhq 내장 MCP에만 `default_tools_approval_mode="approve"`를 설정하고 도구 안에서 폰 승인을 받습니다.
 - Codex의 output schema는 실행 직전에 strict 복사본으로 바꾸고, 응답의 optional `null`은 원래 schema에 따라 지운 뒤 검증합니다.
