@@ -1319,3 +1319,33 @@ def test_official_ro_crate_validator_offline(tmp_path):
     ], capture_output=True, text=True)
 
     assert checked.returncode == 0, checked.stdout + checked.stderr
+
+
+class _LockedRename:
+    """A temp bundle whose rename hits a Windows sharing lock a few times (WinError 5)."""
+
+    def __init__(self, failures):
+        self.failures, self.calls = failures, 0
+
+    def replace(self, target):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise PermissionError(13, "Access is denied")
+        return target
+
+
+def test_bundle_rename_retries_a_brief_windows_lock(monkeypatch):
+    # The v0.5 trial lost its bundle to one WinError 5 right after the copy (2026-10-08).
+    monkeypatch.setattr(request_bundle_module, "RENAME_RETRY_DELAYS", (0, 0, 0))
+    locked = _LockedRename(failures=2)
+    request_bundle_module._replace_dir(locked, Path("target"), windows=True)
+    assert locked.calls == 3
+
+
+@pytest.mark.parametrize("windows, failures, calls", [(True, 9, 4), (False, 1, 1)])
+def test_bundle_rename_gives_up_after_the_retries_or_off_windows(monkeypatch, windows, failures, calls):
+    monkeypatch.setattr(request_bundle_module, "RENAME_RETRY_DELAYS", (0, 0, 0))
+    locked = _LockedRename(failures=failures)
+    with pytest.raises(PermissionError):
+        request_bundle_module._replace_dir(locked, Path("target"), windows=windows)
+    assert locked.calls == calls
