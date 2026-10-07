@@ -1,0 +1,32 @@
+kind	id	check	detail	title
+method	PMID:27595578	ok	Viral deep sequencing needs an adaptive approach: IRMA, the iterative refinement meta-assembler.	Viral deep sequencing needs an adaptive approach: IRMA, the iterative refinement meta-assembler
+method	PMID:32448124	ok	VADR: validation and annotation of virus sequence submissions to GenBank.	VADR: validation and annotation of virus sequence submissions to GenBank
+method	PMID:28396522	ok	De novo assembly of viral quasispecies using overlap graphs.	De novo assembly of viral quasispecies using overlap graphs
+method	PMID:34281604	ok	Haploflow: strain-resolved de novo assembly of viral genomes.	Haploflow: strain-resolved de novo assembly of viral genomes
+method	PMID:34214168	ok	Accurate assembly of minority viral haplotypes from next-generation sequencing through efficient noise reduction.	Accurate assembly of minority viral haplotypes from next-generation sequencing through efficient noise reduction
+method	PMID:25178459	ok	VirVarSeq: a low-frequency virus variant detection pipeline for Illumina sequencing using adaptive base-calling accuracy	VirVarSeq: a low-frequency virus variant detection pipeline for Illumina sequencing using adaptive base-calling accuracy
+method	PMID:34581669	ok	Tiled-ClickSeq for targeted sequencing of complete coronavirus genomes with simultaneous capture of RNA recombination an	Tiled-ClickSeq for targeted sequencing of complete coronavirus genomes with simultaneous capture of RNA recombination an
+benchmark	PMID:32151775	ok	Evaluation of haplotype callers for next-generation sequencing of viruses.	Evaluation of haplotype callers for next-generation sequencing of viruses
+protocol	PMID:35252269	ok	Optimization of the SARS-CoV-2 ARTIC Network V4 Primers and Whole Genome Sequencing Protocol.	Optimization of the SARS-CoV-2 ARTIC Network V4 Primers and Whole Genome Sequencing Protocol
+benchmark	PMID:34379527	ok	SARS-CoV-2 Genome Sequencing Methods Differ in Their Abilities To Detect Variants from Low-Viral-Load Samples.	SARS-CoV-2 Genome Sequencing Methods Differ in Their Abilities To Detect Variants from Low-Viral-Load Samples
+protocol	PMID:32859984	ok	A complete and flexible workflow for metaproteomics data analysis based on MetaProteomeAnalyzer and Prophane.	A complete and flexible workflow for metaproteomics data analysis based on MetaProteomeAnalyzer and Prophane
+method	PMID:31727118	ok	mPies: a novel metaproteomics tool for the creation of relevant protein databases and automatized protein annotation.	mPies: a novel metaproteomics tool for the creation of relevant protein databases and automatized protein annotation
+method	PMID:30649171	ok	ANPELA: analysis and performance assessment of the label-free quantification workflow for metaproteomic studies.	ANPELA: analysis and performance assessment of the label-free quantification workflow for metaproteomic studies
+method	PMID:29844191	ok	Metaproteomics method to determine carbon sources and assimilation pathways of species in microbial communities.	Metaproteomics method to determine carbon sources and assimilation pathways of species in microbial communities
+benchmark	PMID:38934547	ok	Benchmarking low- and high-throughput protein cleanup and digestion methods for human fecal metaproteomics.	Benchmarking low- and high-throughput protein cleanup and digestion methods for human fecal metaproteomics
+benchmark	PMID:30837968	ok	More Is Not Always Better: Evaluation of 1D and 2D-LC-MS/MS Methods for Metaproteomics.	More Is Not Always Better: Evaluation of 1D and 2D-LC-MS/MS Methods for Metaproteomics
+benchmark	PMID:33170893	ok	Survey of metaproteomics software tools for functional microbiome analysis.	Survey of metaproteomics software tools for functional microbiome analysis
+method	PMID:31359005	ok	Hybrid metagenomic assembly enables high-resolution analysis of resistance determinants and mobile elements in human mic	Hybrid metagenomic assembly enables high-resolution analysis of resistance determinants and mobile elements in human mic
+method	PMID:32042169	ok	Complete, closed bacterial genomes from microbiomes using nanopore sequencing.	Complete, closed bacterial genomes from microbiomes using nanopore sequencing
+method	PMID:27211518	ok	MetaTrans: an open-source pipeline for metatranscriptomics.	MetaTrans: an open-source pipeline for metatranscriptomics
+method	PMID:12169536	ok	Variance stabilization applied to microarray data calibration and to the quantification of differential expression.	Variance stabilization applied to microarray data calibration and to the quantification of differential expression
+method	PMID:14960456	ok	affy--analysis of Affymetrix GeneChip data at the probe level.	affy--analysis of Affymetrix GeneChip data at the probe level
+benchmark	PMID:14960458	ok	A benchmark for Affymetrix GeneChip expression measures.	A benchmark for Affymetrix GeneChip expression measures
+method	PMID:16284200	ok	Evolving gene/transcript definitions significantly alter the interpretation of GeneChip data.	Evolving gene/transcript definitions significantly alter the interpretation of GeneChip data
+method	PMID:17586828	ok	beadarray: R classes and methods for Illumina bead-based data.	beadarray: R classes and methods for Illumina bead-based data
+method	PMID:18467348	ok	lumi: a pipeline for processing Illumina microarray.	lumi: a pipeline for processing Illumina microarray
+protocol	PMID:22402401	ok	Ultra-high-throughput microbial community analysis on the Illumina HiSeq and MiSeq platforms.	Ultra-high-throughput microbial community analysis on the Illumina HiSeq and MiSeq platforms
+method	PMID:23630581	ok	phyloseq: an R package for reproducible interactive analysis and graphics of microbiome census data.	phyloseq: an R package for reproducible interactive analysis and graphics of microbiome census data
+method	PMID:23793624	ok	Development of a dual-index sequencing strategy and curation pipeline for analyzing amplicon sequence data on the MiSeq 	Development of a dual-index sequencing strategy and curation pipeline for analyzing amplicon sequence data on the MiSeq
+method	PMID:27781170	ok	VSEARCH: a versatile open source tool for metagenomics.	VSEARCH: a versatile open source tool for metagenomics
+method	PMID:31269198	ok	High-throughput amplicon sequencing of the full-length 16S rRNA gene with single-nucleotide resolution.	High-throughput amplicon sequencing of the full-length 16S rRNA gene with single-nucleotide resolution
