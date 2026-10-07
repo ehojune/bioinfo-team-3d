@@ -12,6 +12,14 @@
 - 미해결: PI 설정에 실제로 켜는 일은 PI 결정 3(#435)을 따른다.
 - 근거: `tests/test_doctor.py::test_doctor_says_whether_the_research_lane_runs_end_to_end`, `::test_a_misspelled_research_key_is_an_error_not_a_silent_default`.
 
+## 2026-10-08 · #491 — sed·curl·wget 출력 경로 해석 보강 (#482)
+
+- 결론: sed 옵션 순서와 script 출처에 상관없이 `-i` 입력 파일을 쓰기 대상으로 잡고, curl·wget 출력 인수의 붙은 따옴표를 해석한다.
+- 바뀐 것: `labhq/policy.py`의 sed 2단계 인수 분류와 download literal 해석, `docs/manual.md` 승인 게이트 한 줄, `tests/test_shell_write_quotes.py` 회귀 시험.
+- 실행한 것: 관련 policy test 263 passed. Windows 전체 pytest 4747 passed·59 skipped. 첫 전체 실행의 무관한 임시파일 잠금 2건은 개별 재실행과 두 번째 전체 실행에서 통과. `scripts/check_public.sh` 통과.
+- 미해결: 없음.
+- 근거: `tests/test_shell_write_quotes.py::test_commands_that_execute_text_or_name_outputs_keep_their_write_targets`, `::test_text_that_only_looks_like_a_redirect_is_not_a_write`.
+
 ## 2026-10-08 · #490 — labhq verify가 조상 산출물 hash를 다시 확인 (#484)
 
 - 결론: live 출처 검증을 켠 `labhq verify`가 각 단계의 재해시 결과에 계획상 모든 조상 단계의 산출물을 `<workdir_id>/<path>`로 더한다. 비조상 단계와 실패한 단계는 제외한다. 원격 runner나 크기 상한으로 재해시하지 못한 파일의 기존 사유와 exit 판정은 유지한다.

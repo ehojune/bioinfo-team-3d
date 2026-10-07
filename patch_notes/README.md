@@ -16,6 +16,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 08:27 | [`116a693`](https://github.com/ehojune/bioinfo-team-3d/pull/492/commits/116a693) | doctor 연구 lane 행이 gateway가 시작을 거부할 pack 설정(오타·없는 판)을 fail로 알린다(#492 리뷰). |
 | 08:24 | [`6dd606c`](https://github.com/ehojune/bioinfo-team-3d/pull/492/commits/6dd606c) | labhq doctor가 연구 lane이 끝까지 도는지 알리고(enabled만 켜면 CP1에서 멈춤), research 오타 키는 시작 오류로. 문서는 세 키 형태로, pi-qa 옛 창구·상태를 바로잡음(PI 점검 R1 R25). |
+| 08:07 | [`d224874`](https://github.com/ehojune/bioinfo-team-3d/pull/491/commits/d224874) | sed -i 입력과 curl·wget 출력 경로의 옵션 순서·따옴표 해석을 보강 |
 | 07:57 | [`d93756a`](https://github.com/ehojune/bioinfo-team-3d/pull/490/commits/d93756a) | labhq verify live 검증에 계획상 조상 단계 산출물의 재해시 결과를 연결하고 범위 회귀 테스트를 추가 |
 | 07:43 | [`bb58398`](https://github.com/ehojune/bioinfo-team-3d/pull/489/commits/bb58398) | v0.5 선언: 연구 요청 2건이 CP2·리뷰·claim 앵커 보고서까지 가고 labhq verify exit 0. 버전 0.5.0, README·로드맵·HANDOFF 갱신. |
 | 07:29 | [`22b9f4c`](https://github.com/ehojune/bioinfo-team-3d/pull/488/commits/22b9f4c) | labhq verify가 RO-Crate에 선언된 파일을 MANIFEST status와 상관없이 검사하고, 너무 깊게 중첩된 metadata JSON을 오류 대신 문제로 적는다(#475). |
