@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
@@ -73,6 +74,97 @@ def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
 
     hub.request_approval = approval
     return hub
+
+
+@pytest.mark.asyncio
+async def test_live_source_check_marks_retracted_claim_in_card_and_appendix(monkeypatch):
+    settings = _settings()
+    settings.research.live_source_check = True
+    hub = _research_hub(settings, [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    original_reply = hub.reply
+
+    async def reply_with_doi(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["evidence"][0]["source"].update(
+                {"id_scheme": "doi", "id_value": "10.1021/am300292v", "accessed_at": "2026-10-08"})
+        return response
+
+    hub.reply = reply_with_doi
+    fixed = StaticResolver({("doi", "10.1021/am300292v"): [SourceRecord(
+        id_scheme="doi", id_value="10.1021/am300292v",
+        updates=[SourceUpdate(direction="updated_by", update_type="retraction",
+                              related={"id_scheme": "doi", "id_value": "10.1021/acsami.9b11759"})])]})
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    await Orchestrator(hub).run_request("r")
+
+    assert len(hub.approvals) == 2, {key: hub.requests["r"].get(key)
+                                     for key in ("outcome", "error", "report", "report_appendix")}
+    card = hub.approvals[1]["detail"]
+    assert card["source_verification"] == [
+        "s1/e1: doi:10.1021/am300292v found; defect=retracted_by doi:10.1021/acsami.9b11759",
+        "s1/e1: artifact:a1 requires_verification"]
+    assert any(row["claim_id"] == "c1" and "retracted_by" in row["reason"]
+               for row in card["unsupported_claims"])
+    appendix = hub.requests["r"]["report_appendix"]
+    assert "Live source verification:" in appendix and "defect=retracted_by" in appendix
+
+
+@pytest.mark.asyncio
+async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+
+    def forbidden(**_kwargs):
+        raise AssertionError("live resolver must stay off")
+
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", forbidden)
+    await Orchestrator(hub).run_request("r")
+    assert "source_verification" not in hub.approvals[1]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_live_recitation_refuses_duplicate_evidence_and_its_claim(monkeypatch):
+    settings = _settings()
+    settings.research.live_source_check = True
+    hub = _research_hub(settings, [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    original_reply = hub.reply
+    doi, pmid = "10.1145/3065386", "28937623"
+
+    async def reply_with_two_ids(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            first = response.structured["evidence"][0]
+            first.update(kind="literature_claim", source={"id_scheme": "doi", "id_value": doi,
+                         "accessed_at": "2026-10-08", "locator": "abstract"},
+                         independence_group="paper_a")
+            second = copy.deepcopy(first)
+            second.update(id="e2", source={"id_scheme": "pmid", "id_value": pmid,
+                          "accessed_at": "2026-10-08", "locator": "abstract"},
+                          independence_group="paper_b", slots=[])
+            response.structured["evidence"].append(second)
+            response.structured["links"].append({
+                "claim_id": "c1", "claim_revision": 1, "evidence_id": "e2", "relation": "supports",
+                "rationale": "the second identifier names the cited paper"})
+        return response
+
+    hub.reply = reply_with_two_ids
+    fixed = StaticResolver({
+        ("doi", doi): [SourceRecord(id_scheme="doi", id_value=doi,
+                                    same_as=[{"id_scheme": "pmid", "id_value": pmid}])],
+        ("pmid", pmid): [SourceRecord(id_scheme="pmid", id_value=pmid,
+                                      same_as=[{"id_scheme": "doi", "id_value": doi}])],
+    })
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    await Orchestrator(hub).run_request("r")
+
+    card = hub.approvals[1]["detail"]
+    assert any(row["evidence_id"] == "e2" and "re-citation" in row["reason"]
+               for row in card["refused_evidence"])
+    assert any(row["claim_id"] == "c1" and "re-citation" in row["reason"]
+               for row in card["unsupported_claims"])
+    assert any("recitation=" in line for line in card["source_verification"])
 
 
 # ---------- P1: artifact_refs bind to collected files ----------
@@ -713,6 +805,52 @@ async def test_resume_after_the_cp2_receipt_keeps_the_pi_decision():
     assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"] == receipt
     assert hub.requests["r"]["outcome"] == "evidence_revision_requested"
     assert "PI note: add a sensitivity check" in hub.requests["r"]["report"]
+
+
+@pytest.mark.asyncio
+async def test_resume_reopens_cp2_only_when_live_source_summary_changed(monkeypatch):
+    settings = _settings()
+    settings.research.live_source_check = True
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""},
+                 {"approved": False, "choice": "revise", "note": "new retraction"}]
+    hub = _research_hub(settings, decisions)
+    original_reply = hub.reply
+    doi = "10.1021/am300292v"
+
+    async def reply_with_doi(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["evidence"][0]["source"].update(
+                {"id_scheme": "doi", "id_value": doi, "accessed_at": "2026-10-08"})
+        return response
+
+    hub.reply = reply_with_doi
+    fixed = StaticResolver({("doi", doi): [SourceRecord(id_scheme="doi", id_value=doi)]})
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    await Orchestrator(hub).run_request("r")
+    first_receipt = copy.deepcopy(hub.requests["r"]["research_contract"]["checkpoints"]["cp2"])
+    assert first_receipt["source_verification"]
+
+    _interrupt(hub)
+    approvals = len(hub.approvals)
+    await Orchestrator(hub).run_request("r", resume=True)
+    assert len(hub.approvals) == approvals
+    assert hub.requests["r"]["research_contract"]["checkpoints"]["cp2"] == first_receipt
+
+    fixed.records[("doi", doi)] = [SourceRecord(
+        id_scheme="doi", id_value=doi,
+        updates=[SourceUpdate(direction="updated_by", update_type="retraction",
+                              related={"id_scheme": "doi", "id_value": "10.1021/acsami.9b11759"})])]
+    _interrupt(hub)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert len(hub.approvals) == approvals + 1
+    assert hub.approvals[-1]["summary"].startswith("Live source verification changed")
+    receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+    assert receipt["decision"] == "revision_requested"
+    assert receipt["source_verification"] != first_receipt["source_verification"]
+    assert any("retracted_by" in line for line in receipt["source_verification"])
 
 
 @pytest.mark.asyncio

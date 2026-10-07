@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ from labhq.evidence.audit import BUNDLE_FILES, NO_FILES_LINE
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from tests.test_evidence_verify import build, claim, link, row
 
 BODY = b"gene\tlog2fc\nCD276\t2.5\n"
 
@@ -215,6 +217,51 @@ async def test_bundle_holds_reports_and_audit_records_but_no_output_file(tmp_pat
     assert set(json.loads(contents["claims.json"])) >= {"ledgers", "artifact_sha256", "report_check"}
     assert contents["report.md"].decode() == "final report"
     assert contents["report_appendix.md"].decode() == full_appendix
+
+
+def test_bundle_keeps_cp2_source_verification_separate_when_live_recheck_is_off(tmp_path, monkeypatch, capsys):
+    request = _research("CD276 is up [[claim:s1/c1]].", [])
+    receipt = request["research_contract"]["checkpoints"]["cp2"]
+    receipt["source_verification"] = ["s1/e1: pmid:9500320 found; defect=retracted_by"]
+    receipt["source_verification_reports"] = [{"step_id": "s1", "ok": False}]
+    out_zip = tmp_path / "audit-cp2-source.zip"
+
+    code, _out = _verify(monkeypatch, capsys, _settings(tmp_path), request, "--bundle", str(out_zip))
+
+    assert code == 0
+    with zipfile.ZipFile(out_zip) as bundle:
+        claims = json.loads(bundle.read("claims.json"))
+    assert claims["source_verification"] == []
+    assert claims["cp2"]["source_verification"] == receipt["source_verification"]
+    assert claims["cp2"]["source_verification_reports"] == receipt["source_verification_reports"]
+
+
+def test_live_verify_resolves_artifact_from_observed_hash_and_detects_change(tmp_path, monkeypatch, capsys):
+    settings, result = asyncio.run(
+        _run(tmp_path, monkeypatch, lambda wd: _write(wd, "outputs/table.tsv", BODY)))
+    settings.research.live_source_check = True
+    digest = hashlib.sha256(BODY).hexdigest()
+    cited = row("e1", artifact="a1", kind="experimental")
+    cited["source"]["version"] = digest
+    ledger = build([claim("c1")], [cited], [link("c1", "e1")]).model_dump(mode="json")
+    ledger["artifact_refs"] = [{"artifact_id": "a1", "path": "outputs/table.tsv"}]
+    request = _request(
+        result, outcome="research_reported", plan={"steps": [{"id": "s1"}]},
+        research_contract={"plan_sha256": "b" * 64},
+        results={"s1": {**result.model_dump(mode="json"), "structured": ledger}})
+
+    code, out = _verify(monkeypatch, capsys, settings, request, "--json")
+    report = json.loads(out)
+    resolution = report["source_verification"][0]["evidence"][0]["resolution"]
+    assert code == 0 and resolution["status"] == "found" and resolution["record"]["version"] == digest
+
+    changed = BODY[:-2] + b"6\n"
+    (Path(result.workdir) / "outputs" / "table.tsv").write_bytes(changed)
+    code, out = _verify(monkeypatch, capsys, settings, request, "--json")
+    report = json.loads(out)
+    resolution = report["source_verification"][0]["evidence"][0]["resolution"]
+    assert code == 1 and resolution["status"] == "conflicting"
+    assert any(problem.startswith("live source:") for problem in report["problems"])
 
 
 async def test_verify_table_and_bundle_show_tool_use_id(tmp_path, monkeypatch, capsys):

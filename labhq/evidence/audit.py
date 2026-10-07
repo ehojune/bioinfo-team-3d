@@ -9,6 +9,7 @@ staff member wrote without reporting them. The bundle carries the records, never
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import json
@@ -176,6 +177,28 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
             "note": "" if same else "다시 돌린 결과가 기록된 검사와 다릅니다"}
 
 
+async def _live_source_reports(req: Mapping[str, Any], settings: Any,
+                               observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
+    from ..research.contract import ResearchResult
+    from .verify import LiveSourceResolver, verify_sources
+
+    resolver = LiveSourceResolver(contact=settings.research.live_source_contact,
+                                  request_timeout_s=settings.research.live_source_timeout_s)
+    parsed = [ResearchResult.model_validate(ledger) for ledger in research_ledgers(req).values()
+              if isinstance(ledger, Mapping)]
+    return list(await asyncio.gather(*(verify_sources(
+        result, resolver, observed_artifacts=observed_artifacts.get(result.step_id),
+        timeout_s=settings.research.live_source_timeout_s,
+        deadline_s=settings.research.live_source_deadline_s) for result in parsed)))
+
+
+def _run_live_source_reports(req: Mapping[str, Any], settings: Any,
+                             observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
+    if not settings.research.live_source_check or not isinstance(req.get("research_contract"), Mapping):
+        return []
+    return asyncio.run(_live_source_reports(req, settings, observed_artifacts))
+
+
 def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     """Compare a request's recorded outputs with the files on this PC. ``exit_code`` 0 clean, 1 problems, 2 when a
     step's work folder is not on this PC."""
@@ -190,6 +213,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     reasons: list[str] = []
     unreported: dict[str, list[str]] = {}
     scans: dict[str, tuple[list[dict[str, Any]], str | None]] = {}
+    observed_artifacts: dict[str, dict[str, str]] = {}
     for step_id, result in results.items():
         if not isinstance(result, Mapping):
             continue
@@ -216,6 +240,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
+        if note is None and all(isinstance(row.get("sha256"), str) for row in records):
+            observed_artifacts[str(step_id)] = {str(row["path"]): row["sha256"] for row in records}
         # A declared name matched a differently cased file on a case-insensitive volume when it was collected.
         key = (lambda name: name) if case_sensitive_directory(workdir / "outputs") else str.casefold
         by_path = {key(row["path"]): row for row in records}
@@ -227,11 +253,29 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                           **_compare(recorded.get(path), row, note, files_below=below,
                                      in_zone=row is None and overlaps_zone(workdir / path, zones))})
     report_check = rerun_report_check(req)
+    source_reports = _run_live_source_reports(req, settings, observed_artifacts)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]
     if report_check and report_check["rerun"]:
         problems += [f"보고서 앵커: {problem}" for problem in report_check["rerun"]["problems"]]
     problems += [f"계획 결속: {problem}" for problem in ledger_binding_problems(req)]
+    for checked in source_reports:
+        problems += [f"live source: {checked.step_id}/{evidence_id} 결함"
+                     for evidence_id in checked.defective_evidence]
+        problems += [f"live source: {claim.claim} " + "; ".join(claim.defects)
+                     for claim in checked.claims if claim.state == "defective"]
+        problems += [f"live source: {checked.step_id} 재인용 결함: {message}"
+                     for message in checked.recitations]
+        reasons += [f"live source: {checked.step_id}/{evidence_id} requires_verification"
+                    for evidence_id in checked.lookup_failures]
+        reasons += [f"live source: {checked.step_id}/{evidence.evidence_id} 검사 미완료 "
+                    f"({resolution.error_kind}: {resolution.detail})"
+                    for evidence in checked.evidence for resolution in evidence.resolutions
+                    if resolution.lookup == "skipped"]
+        reasons += [f"live source: {claim.claim} 검사 미완료"
+                    + (f" ({', '.join(claim.unverified_evidence)})" if claim.unverified_evidence else "")
+                    for claim in checked.claims if claim.state == "unverified"]
+    reasons = list(dict.fromkeys(reasons))
     request_bundle = None
     request_id = str(req.get("id") or "")
     if _SAFE_REQUEST_ID.fullmatch(request_id):
@@ -245,6 +289,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
             "outcome": req.get("outcome"), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "labhq_version": __version__, "files": files, "report_check": report_check,
             "unreported_outputs": unreported, "problems": problems, "reasons": reasons,
+            "source_verification": [checked.model_dump(mode="json") for checked in source_reports],
             "request_bundle": request_bundle,
             "exit_code": 2 if reasons else 1 if problems else 0}
 
@@ -286,6 +331,13 @@ def render_verify(report: Mapping[str, Any]) -> str:
     if unreported:
         lines.append("보고하지 않은 산출(경고):")
         lines += [f"  - {sid}: {path}" for sid, paths in unreported.items() for path in paths]
+    source_reports = report.get("source_verification") or []
+    if source_reports:
+        from .verify import VerificationReport, verification_lines
+
+        lines.append("Live source verification:")
+        lines += [f"  - {line}" for raw in source_reports
+                  for line in verification_lines(VerificationReport.model_validate(raw))]
     request_bundle = report.get("request_bundle")
     if request_bundle and request_bundle.get("present"):
         if request_bundle.get("crate"):
@@ -351,8 +403,11 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
               "ledgers": research_ledgers(req) if contract else {},
               "artifact_sha256": receipt.get("artifact_sha256") or {},
               "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
-                                                    "unsupported_claims", "unreported_outputs") if key in receipt},
-              "report_check": report.get("report_check")}
+                                                    "unsupported_claims", "unreported_outputs",
+                                                    "source_verification", "source_verification_reports")
+                      if key in receipt},
+              "report_check": report.get("report_check"),
+              "source_verification": report.get("source_verification") or []}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "tool_use_id", "workdir_id",
                                                  "path", "size", "recorded_sha256", "sha256", "status")}
                  for row in report["files"]]
