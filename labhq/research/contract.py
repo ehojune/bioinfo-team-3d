@@ -705,6 +705,13 @@ def _root_salvage_targets(problem: str, value: dict[str, Any]) -> list[tuple[str
         matches = [index for index, row in enumerate(links) if isinstance(row, dict)
                    and row.get("claim_id") == claim_id and row.get("evidence_id") == evidence_id]
         return [("link", index) for index in matches[1:]]
+    # A failed or empty lookup linked as support: the link is the defect, not the row. The row still records the
+    # attempt and may be the only one filling a required evidence slot (v0.5 trial, 2026-10-08).
+    lookup = re.match(r"evidence (\S+) is (?!linked\b)\w+$", problem)
+    if lookup:
+        evidence_id = lookup.group(1)
+        return [("link", index) for index, row in enumerate(links) if isinstance(row, dict)
+                and row.get("evidence_id") == evidence_id and row.get("relation") != "context"] or None
     same_source = re.match(r"evidence (\S+) and (\S+) cite the same source", problem)
     if same_source:
         row_id = same_source.group(2)
@@ -733,6 +740,13 @@ def _root_salvage_targets(problem: str, value: dict[str, Any]) -> list[tuple[str
     return None
 
 
+def _names_a_row(problem: str) -> bool:
+    """Whether a cross-row message part starts with a row reference, so it is its own problem."""
+    # "link it as context ..." is an explanation, not a link: a link reference is "link <claim>-><evidence>".
+    return bool(re.match(r"(?:(?:evidence|claim|(?:inference|hypothesis) row) [A-Za-z][\w.:@-]*"
+                         r"|link (?:to unknown claim|\S+->)|research result)", problem))
+
+
 def _validation_salvage_targets(error: ValidationError, value: dict[str, Any]) \
         -> list[tuple[str, int, str]] | None:
     targets: list[tuple[str, int, str]] = []
@@ -749,13 +763,17 @@ def _validation_salvage_targets(error: ValidationError, value: dict[str, Any]) \
             continue
         if loc:
             return None
+        mapped_before = False
         for problem in (part.strip() for part in message.split(";") if part.strip()):
-            if problem in {"link it as context or record it as a claim",
-                           "use partially_supported or contradicted"}:
-                continue  # continuation of the preceding row-local error
             mapped = _root_salvage_targets(problem, value)
             if not mapped:
+                if mapped_before and not _names_a_row(problem):
+                    # The explanation after "; " in one row-local error ("link it as context ...", "a failed or
+                    # empty lookup is neither evidence ..."). A fixed list of such phrases missed a new one and gave
+                    # up the whole salvage (v0.5 trial, 2026-10-08). A part that names a row is never skipped.
+                    continue
                 return None
+            mapped_before = True
             targets.extend((row_type, index, problem) for row_type, index in mapped)
     return targets or None
 

@@ -364,7 +364,9 @@ class Evidence(StrictModel):
                 raise ValueError(f"{self.kind} row {self.id} is not a retrieval and has no result_count")
             if self.status == "observed" and self.result_count == 0:
                 raise ValueError(f"evidence {self.id} counted 0 results but is observed; record a zero-result "
-                                 "search as not_found with source.query")
+                                 "search as not_found with source.query (it can then only be context, never "
+                                 "support), or, for a zero computed from an artifact such as no significant "
+                                 "pathways, drop result_count and put the zero in quantities")
             if self.status == "not_found" and self.result_count:
                 raise ValueError(f"evidence {self.id} is not_found but counted {self.result_count} results")
         if self.slots and not self.countable:
