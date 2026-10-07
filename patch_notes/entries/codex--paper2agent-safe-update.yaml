@@ -1,0 +1,5 @@
+pr: 464
+rows:
+  - sha: "937fe5b"
+    at: "2026-10-07 16:56"
+    text: "Paper2Agent 설치를 staging·rollback으로 갱신해 원본 누락과 복사·교체 실패에서 기존 skill을 보존한다."
