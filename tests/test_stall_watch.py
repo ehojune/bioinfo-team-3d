@@ -17,10 +17,11 @@ class _QuietProc:
 
     stdin = None
 
-    def __init__(self, quiet, *, finish=True, session_first=False):
+    def __init__(self, quiet, *, finish=True, session_first=False, prelude=()):
         self.quiet = quiet
         self.finish = finish
         self.session_first = session_first
+        self.prelude = prelude
         self.returncode = None
         self.pid = 41073
         self.done = asyncio.Event()
@@ -29,6 +30,8 @@ class _QuietProc:
     async def _out(self):
         if self.session_first:
             yield b'{"type":"thread.started","thread_id":"t1"}\n'
+        for line in self.prelude:
+            yield line
         if not self.finish:
             await self.done.wait()
             return
@@ -59,14 +62,15 @@ class _QuietProc:
         self.done.set()
 
 
-def _runner(tmp_path, monkeypatch, quiet, stall_warn_s, *, stall_retry_s=0, finish=True, session_first=False):
+def _runner(tmp_path, monkeypatch, quiet, stall_warn_s, *, stall_retry_s=0, finish=True, session_first=False,
+            prelude=()):
     settings = Settings()
     for name in ("state_dir", "workspace_root", "agents_dir", "talent_dir"):
         setattr(settings.runner, name, str(tmp_path / name))
     settings.engines.codex.env = {"CODEX_HOME": str(tmp_path / "codex-home")}
     settings.runner.stall_warn_s = stall_warn_s
     settings.runner.stall_retry_s = stall_retry_s
-    process = _QuietProc(quiet, finish=finish, session_first=session_first)
+    process = _QuietProc(quiet, finish=finish, session_first=session_first, prelude=prelude)
 
     async def fake_exec(*cmd, **kwargs):
         return process
@@ -128,6 +132,24 @@ def _fake_kill(monkeypatch, killed):
     monkeypatch.setattr(base.AgentAdapter, "_kill", staticmethod(kill))
 
 
+def test_tool_activity_pairs_codex_and_claude_calls():
+    codex = base._ToolActivity("codex")
+    codex.observe('{"type":"item.started","item":{"id":"m1","type":"mcp_tool_call"}}')
+    codex.observe('{"type":"item.started","item":{"call_id":"f1","type":"function_call"}}')
+    assert codex.interpretable and codex.active == 2
+    codex.observe('{"type":"item.completed","item":{"id":"m1","type":"mcp_tool_call"}}')
+    codex.observe('{"type":"item.completed","item":{"call_id":"f1","type":"function_call"}}')
+    assert codex.active == 0
+
+    claude = base._ToolActivity("claude_code")
+    claude.observe('{"type":"assistant","message":{"content":['
+                   '{"type":"tool_use","id":"toolu_1","name":"mcp__labhq_ask__ask"}]}}')
+    assert claude.interpretable and claude.active == 1
+    claude.observe('{"type":"user","message":{"content":['
+                   '{"type":"tool_result","tool_use_id":"toolu_1"}]}}')
+    assert claude.active == 0
+
+
 @pytest.mark.asyncio
 async def test_quiet_cli_without_a_command_is_ended_as_transient(tmp_path, monkeypatch):
     async def no_prompts():
@@ -149,6 +171,52 @@ async def test_quiet_cli_without_a_command_is_ended_as_transient(tmp_path, monke
     assert failure_kind(result) == "transient"
     assert "labhq가 끊고 다시 시도합니다" in _logs(runner)[0][1]
     assert "연구 lane에서 단계를 취소하면 요청이 실패" in _logs(runner)[0][1]
+
+
+@pytest.mark.asyncio
+async def test_started_mcp_call_without_completion_is_not_ended(tmp_path, monkeypatch):
+    async def no_prompts():
+        return False
+
+    killed = []
+    monkeypatch.setattr(base, "pending_uac_prompts", no_prompts)
+    monkeypatch.setattr(base, "_process_snapshot", lambda: _snapshot())
+    _fake_kill(monkeypatch, killed)
+    prelude = (b'{"type":"item.started","item":{"id":"call-1","type":"mcp_tool_call",'
+               b'"server":"labhq_approval","tool":"ask"}}\n',)
+    runner = _runner(tmp_path, monkeypatch, quiet=0.2, stall_warn_s=0.02, stall_retry_s=0.04,
+                     prelude=prelude)
+
+    result = await asyncio.wait_for(
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+
+    assert result.ok, result.error
+    assert killed == []
+
+
+@pytest.mark.asyncio
+async def test_completed_mcp_call_then_quiet_idle_cli_is_transient(tmp_path, monkeypatch):
+    async def no_prompts():
+        return False
+
+    killed = []
+    monkeypatch.setattr(base, "pending_uac_prompts", no_prompts)
+    monkeypatch.setattr(base, "_process_snapshot", lambda: _snapshot())
+    _fake_kill(monkeypatch, killed)
+    prelude = (
+        b'{"type":"item.started","item":{"id":"call-1","type":"mcp_tool_call",'
+        b'"server":"labhq_ask","tool":"ask"}}\n',
+        b'{"type":"item.completed","item":{"id":"call-1","type":"mcp_tool_call",'
+        b'"server":"labhq_ask","tool":"ask","status":"completed"}}\n',
+    )
+    runner = _runner(tmp_path, monkeypatch, quiet=60, stall_warn_s=0.02, stall_retry_s=0.04,
+                     finish=False, session_first=True, prelude=prelude)
+
+    result = await asyncio.wait_for(
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+
+    assert killed == [41073]
+    assert not result.ok and failure_kind(result) == "transient"
 
 
 @pytest.mark.asyncio
@@ -214,6 +282,33 @@ async def test_pending_uac_keeps_a_quiet_cli_running(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_uac_that_disappears_is_rechecked_then_cli_is_ended(tmp_path, monkeypatch):
+    checks = 0
+
+    async def prompts():
+        nonlocal checks
+        checks += 1
+        return checks < 4
+
+    killed = []
+    monkeypatch.setattr(base, "pending_uac_prompts", prompts)
+    monkeypatch.setattr(base, "_process_snapshot", lambda: _snapshot())
+    _fake_kill(monkeypatch, killed)
+    runner = _runner(tmp_path, monkeypatch, quiet=60, stall_warn_s=0.02, stall_retry_s=0.04,
+                     finish=False, session_first=True)
+
+    result = await asyncio.wait_for(
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+
+    assert checks >= 5
+    assert killed == [41073]
+    assert not result.ok and failure_kind(result) == "transient"
+    assert len(_logs(runner)) == 1
+    uac_logs = [text for _level, text in _logs(runner) if "UAC" in text]
+    assert len(uac_logs) == 1
+
+
+@pytest.mark.asyncio
 async def test_retry_shorter_than_warning_uses_the_warning_limit(tmp_path, monkeypatch):
     async def no_prompts():
         return False
@@ -249,3 +344,33 @@ async def test_unreadable_or_unknown_process_tree_is_not_ended(tmp_path, monkeyp
 
     assert result.ok, result.error
     assert killed == []
+
+
+@pytest.mark.asyncio
+async def test_temporary_process_snapshot_failure_is_rechecked(tmp_path, monkeypatch):
+    async def no_prompts():
+        return False
+
+    snapshots = 0
+
+    def snapshot():
+        nonlocal snapshots
+        snapshots += 1
+        return None if snapshots <= 2 else _snapshot()
+
+    killed = []
+    monkeypatch.setattr(base, "pending_uac_prompts", no_prompts)
+    monkeypatch.setattr(base, "_process_snapshot", snapshot)
+    _fake_kill(monkeypatch, killed)
+    runner = _runner(tmp_path, monkeypatch, quiet=60, stall_warn_s=0.02, stall_retry_s=0.04,
+                     finish=False, session_first=True)
+
+    result = await asyncio.wait_for(
+        runner.run_task(Task(agent_id="worker", request_id="r", prompt="q", meta={"kind": "step"})), 2)
+
+    assert snapshots >= 4
+    assert killed == [41073]
+    assert not result.ok and failure_kind(result) == "transient"
+    warnings = [e for e in runner.store.pending() if e["type"] == "agent.log"
+                and "process tree를 확인하지 못해" in e["data"].get("text", "")]
+    assert len(warnings) == 1

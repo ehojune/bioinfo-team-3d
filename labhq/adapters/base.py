@@ -551,6 +551,110 @@ class RunState:
     shell_calls: set = field(default_factory=set)  # tool call ids of shell tools, for engines that pair by id
 
 
+@dataclass
+class _ToolActivity:
+    """Fail-closed view of tool calls reported by the CLI output stream."""
+
+    engine: str
+    identified: set[str] = field(default_factory=set)
+    anonymous: dict[str, int] = field(default_factory=dict)
+    interpretable: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.interpretable = self.engine in {"codex", "claude_code"}
+
+    @property
+    def active(self) -> int:
+        return len(self.identified) + sum(self.anonymous.values())
+
+    def unreadable(self) -> None:
+        self.interpretable = False
+
+    def _change(self, kind: str, item: dict, started: bool) -> None:
+        call_id = item.get("id") or item.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            key = f"{kind}:{call_id}"
+            if started:
+                self.identified.add(key)
+            else:
+                self.identified.discard(key)
+            return
+        signature = json.dumps(
+            {key: item.get(key) for key in ("server", "tool", "name", "command")},
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+        key = f"{kind}:{signature}"
+        if started:
+            self.anonymous[key] = self.anonymous.get(key, 0) + 1
+        elif self.anonymous.get(key, 0) > 1:
+            self.anonymous[key] -= 1
+        else:
+            self.anonymous.pop(key, None)
+
+    def observe(self, line: str) -> None:
+        if not self.interpretable:
+            return
+        try:
+            event = json.loads(line)
+        except (TypeError, json.JSONDecodeError):
+            self.unreadable()
+            return
+        if not isinstance(event, dict):
+            self.unreadable()
+            return
+        if self.engine == "codex":
+            self._observe_codex(event)
+        elif self.engine == "claude_code":
+            self._observe_claude(event)
+
+    def _observe_codex(self, event: dict) -> None:
+        event_type = event.get("type")
+        if event_type not in {"item.started", "item.completed"}:
+            return
+        item = event.get("item")
+        if not isinstance(item, dict):
+            self.unreadable()
+            return
+        kind = item.get("type") or item.get("item_type")
+        if not isinstance(kind, str):
+            self.unreadable()
+            return
+        tool_kind = (kind in {"command_execution", "mcp_tool_call", "function_call", "custom_tool_call",
+                              "web_search"} or kind.endswith("_tool_call"))
+        if tool_kind:
+            self._change(kind, item, event_type == "item.started")
+        elif kind not in {"agent_message", "assistant_message", "reasoning", "file_change"}:
+            # A new started-item kind could be a tool the adapter does not yet understand.
+            self.unreadable()
+
+    def _observe_claude(self, event: dict) -> None:
+        event_type = event.get("type")
+        if event_type not in {"assistant", "user"}:
+            return
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            self.unreadable()
+            return
+        for block in content:
+            if not isinstance(block, dict):
+                self.unreadable()
+                return
+            block_type = block.get("type")
+            if block_type == "tool_use":
+                call_id = block.get("id")
+                if not isinstance(call_id, str) or not call_id:
+                    self.unreadable()
+                    return
+                self.identified.add(f"tool_use:{call_id}")
+            elif block_type == "tool_result":
+                call_id = block.get("tool_use_id")
+                if not isinstance(call_id, str) or not call_id:
+                    self.unreadable()
+                    return
+                self.identified.discard(f"tool_use:{call_id}")
+
+
 def token_counts(raw: dict | None, fields: tuple[str, ...]) -> dict[str, int]:
     """Keep only numeric counters observed in an engine's stream."""
     source = raw if isinstance(raw, dict) else {}
@@ -777,6 +881,7 @@ class AgentAdapter(ABC):
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.started_command = launcher
         st = RunState()
+        tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
         ended_after_result = False
@@ -791,9 +896,11 @@ class AgentAdapter(ABC):
                 line = raw.decode(errors="replace").strip()
                 if not line:
                     continue
+                tool_activity.observe(line)
                 try:
                     await self.handle_line(line, st, ctx)
                 except Exception as e:  # never let one odd line kill the run
+                    tool_activity.unreadable()
                     await ctx.emit("agent.log", {"level": "debug", "text": f"[unparsed] {short(line)} ({e})"})
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
@@ -846,6 +953,15 @@ class AgentAdapter(ABC):
             if warn_limit <= 0 and retry_limit <= 0:
                 return
             warned = False
+            reported_block: str | None = None
+
+            async def report_block(kind: str, level: str, text: str) -> None:
+                nonlocal reported_block
+                if kind == reported_block:
+                    return
+                reported_block = kind
+                await ctx.emit("agent.log", {"level": level, "text": text})
+
             while True:
                 quiet = time.monotonic() - last_output
                 if result_arrived.is_set() or proc.returncode is not None:
@@ -853,6 +969,7 @@ class AgentAdapter(ABC):
                 if not warned and warn_limit > 0 and quiet >= warn_limit:
                     minutes = max(1, int(quiet // 60))
                     if await pending_uac_prompts():
+                        reported_block = "uac"
                         retry_note = ((" UAC가 사라진 뒤 실행 중인 명령이 없으면 labhq가 끊고 다시 시도합니다. "
                                        "연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")
                                       if retry_limit > 0 else "")
@@ -873,19 +990,41 @@ class AgentAdapter(ABC):
                     if retry_limit <= 0:
                         return
                 if retry_limit > 0 and quiet >= retry_limit:
-                    if await pending_uac_prompts() is not False:
+                    uac = await pending_uac_prompts()
+                    if uac is True:
+                        await report_block("uac", "alert", "Windows 권한 알림(UAC)이 남아 있어 무응답 종료를 보류합니다")
+                        await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
+                        continue
+                    if uac is None:
+                        await report_block("uac-unknown", "warn", "Windows 권한 알림 상태를 확인하지 못해 무응답 종료를 보류하고 다시 확인합니다")
+                        await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
+                        continue
+                    if not tool_activity.interpretable:
+                        await report_block("stream-unknown", "warn", "CLI 출력 스트림의 도구 호출 상태를 해석할 수 없어 무응답 종료를 보류합니다")
                         return
+                    if tool_activity.active:
+                        await report_block("tool-active", "warn", "CLI 출력 스트림에 완료되지 않은 도구 호출이 있어 무응답 종료를 보류합니다")
+                        await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
+                        continue
                     idle = await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers)
-                    if idle is not True:
-                        return
+                    if idle is None:
+                        await report_block("tree-unknown", "warn", "process tree를 확인하지 못해 무응답 종료를 보류하고 다시 확인합니다")
+                        await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
+                        continue
+                    if idle is False:
+                        await report_block("command-active", "warn", "실행 중인 하위 명령이 있어 무응답 종료를 보류합니다")
+                        await asyncio.sleep(max(0.01, min(30.0, retry_limit / 4)))
+                        continue
                     observed = last_output
                     await asyncio.sleep(0.1)  # close the common command-start race before ending the tree
                     if last_output != observed or result_arrived.is_set() or proc.returncode is not None:
                         continue
                     if await pending_uac_prompts() is not False:
-                        return
+                        continue
+                    if not tool_activity.interpretable or tool_activity.active:
+                        continue
                     if await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers) is not True:
-                        return
+                        continue
                     minutes = max(1, math.ceil((time.monotonic() - last_output) / 60))
                     st.error = f"engine stream timed out: no output for {minutes} min and no running command"
                     await self._kill(proc)
