@@ -6,3 +6,6 @@ rows:
   - sha: "fef0b0d"
     at: "2026-10-07 15:14"
     text: "공유 환경의 모든 shell 호출을 게이트로 보내고 wrapper·분기·실행 치환과 Windows 경로 이탈을 판별한다."
+  - sha: "edff5de"
+    at: "2026-10-07 15:31"
+    text: "R CMD INSTALL도 명시한 로컬 library에만 설치하며 소비 단계는 자기 .rlib로 한정한다."
