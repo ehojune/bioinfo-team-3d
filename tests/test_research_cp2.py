@@ -185,6 +185,80 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
 
 
+def _rebinding_hub(correction_reply):
+    """A step whose first result cites an uncollected file; `correction_reply(hub, task, path)` answers the
+    correction the binding check asks for (#485)."""
+    holder = {}
+
+    async def reply(task):
+        hub = holder["hub"]
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
+        if task.meta["kind"] == "step":
+            result = _cp2_result(hub, task)
+            result["artifact_refs"][0]["path"] = "outputs/qc/checks.json"
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path],
+                              output_sha256={path: "a" * 64}, workdir="runs/s1", session_id="session-1")
+        return correction_reply(hub, task, path)
+
+    hub = holder["hub"] = MiniHub(_settings(), reply, mode="orchestrate", work_kind="research",
+                                    text="compare conditions")
+    decisions = [CP1, {"approved": True, "choice": "approve", "note": ""}]
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**decisions.pop(0), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_a_citation_of_an_uncollected_file_gets_a_correction_before_cp2():
+    """v0.5 trial (2026-10-08): a QC verdict cited a JSON file the plan never declared and CP2 refused it. The step
+    now gets a correction that names the collected outputs, and the re-pointed row reaches CP2 bound."""
+    def rebound(hub, task, path):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=_cp2_result(hub, task),
+                          workdir="runs/s1", session_id="session-1")
+
+    hub = _rebinding_hub(rebound)
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "result_correction"]
+    prompt = hub.calls[2].prompt
+    assert "outputs/qc/checks.json" in prompt and "CP2 would refuse it" in prompt
+    assert "this step's outputs (outputs/result1.tsv)" in prompt
+    card = hub.approvals[1]["detail"]
+    assert "refused_evidence" not in card and card["artifact_sha256"] == {"s1/a1": "a" * 64}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["failed", "wrote_other_file", "still_unbound"])
+async def test_a_binding_correction_never_fails_a_step_that_passed(outcome):
+    """The correction is optional: when it fails, writes only uncollected files, or keeps the citation, the step
+    keeps its valid result and CP2 refuses the row as before."""
+    def answer(hub, task, path):
+        if outcome == "failed":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="worker exited with code 1")
+        result = _cp2_result(hub, task)
+        result["artifact_refs"][0]["path"] = "outputs/qc/checks.json"
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, workdir="runs/s1",
+                          session_id="session-1",
+                          unreported_outputs=["outputs/qc/new.json"] if outcome == "wrote_other_file" else [])
+
+    hub = _rebinding_hub(answer)
+    await Orchestrator(hub).run_request("r")
+
+    kinds = [task.meta["kind"] for task in hub.calls]
+    assert kinds[:3] == ["plan", "step", "result_correction"]
+    assert kinds.count("result_correction") == 1
+    assert hub.requests["r"]["results"]["s1"]["ok"] is True
+    card = hub.approvals[1]["detail"]
+    assert [row["evidence_id"] for row in card["refused_evidence"]] == ["e1"]
+    assert "outputs/qc/checks.json" in card["refused_evidence"][0]["reason"]
+
+
 @pytest.mark.asyncio
 async def test_cp2_accepts_a_normalized_path_to_the_collected_output():
     hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}],

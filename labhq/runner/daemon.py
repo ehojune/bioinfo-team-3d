@@ -1318,7 +1318,11 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
-        result.unreported_outputs = sorted(row["path"] for row in observed_outputs if row["path"] not in collected)
+        # Bytecode caches are the interpreter's, not the employee's: 21 unreported files of the v0.5 trial included
+        # outputs/lib/__pycache__ (#485). They stay in the observed records.
+        result.unreported_outputs = sorted(row["path"] for row in observed_outputs
+                                           if row["path"] not in collected
+                                           and "__pycache__" not in row["path"].replace("\\", "/").split("/"))
         if result.unreported_outputs:
             await emit("agent.log", {"level": "warn", "text": (
                 "보고하지 않은 관찰 산출물: " + ", ".join(result.unreported_outputs))})
