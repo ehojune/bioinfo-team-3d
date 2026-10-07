@@ -6,7 +6,7 @@ redirect must still be found, and when the scanner is unsure it falls back to th
 
 import pytest
 
-from labhq.policy import _shell_write_targets, evaluate_tool
+from labhq.policy import _blank_non_syntax, _shell_write_targets, evaluate_tool
 from labhq.settings import DataZone, PolicySettings
 
 ROOTS = ["/work", "C:/work"]
@@ -33,6 +33,21 @@ TRIAL_BASH = (
     " python outputs/scripts/s7_network.py''')\n"
     "p.write_text(t, encoding='utf-8')\n"
     "EOF"
+)
+
+TRIAL_CURL_SED = (
+    "curl -s https://ftp.ncbi.nlm.nih.gov/geo/$u | "
+    "grep -o 'href=\"[^\"]*\"[^<]*<[^\\n]*' | sed 's/<[^>]*>//g' | "
+    "grep -v '^href=\"/' | head"
+)
+TRIAL_CAT_SCRIPT = (
+    "cd /work; mkdir -p outputs/scripts; "
+    "cat > outputs/scripts/s03_pairing.py <<'E'\n"
+    "import re\n"
+    "import subprocess\n"
+    "pattern = re.compile(r'(?:>|/)')\n"
+    "subprocess.run(['python', '--version'], check=True)\n"
+    "E"
 )
 
 
@@ -63,6 +78,8 @@ TRIAL_BASH = (
     ("PowerShell", "(Get-Content -Raw README.md).Replace('<s1 venv>\\Scripts\\python.exe', 'python') | Out-File x.md"),
     ("Bash", "cd outputs && " + TRIAL_BASH),
     ("Bash", 'git commit -m "move a -> /elsewhere/b"'),
+    ("Bash", TRIAL_CURL_SED),
+    ("Bash", TRIAL_CAT_SCRIPT),
 ])
 def test_text_that_only_looks_like_a_redirect_is_not_a_write(tool, command):
     assert _decide(tool, command).action == "allow"
@@ -185,6 +202,71 @@ def test_real_redirects_are_still_found(tool, command, target):
 ])
 def test_redirects_the_blanking_must_not_hide(tool, command):
     assert _decide(tool, command).action == "ask"
+
+
+@pytest.mark.parametrize("command,target", [
+    ("bash -c 'echo x > /etc/y'", "/etc/y"),
+    ('eval "echo x > /tmp/y"', "/tmp/y"),
+    ("xargs sh -c 'cat > /x'", "/x"),
+    ("ssh h 'echo > /x'", "/x"),
+    ("sed 'w /etc/x' f", "/etc/x"),
+    ("sed -n 's/a/b/w /tmp/o' f", "/tmp/o"),
+    ("sed -e 'w /tmp/a' -e 'W /tmp/b' f", "/tmp/a"),
+    ("sed -e 'w /tmp/a' -e 'W /tmp/b' f", "/tmp/b"),
+    ("sed -i s/a/b/ /etc/hosts", "/etc/hosts"),
+    ("curl -o /tmp/x URL", "/tmp/x"),
+    ("curl --output=/tmp/x URL", "/tmp/x"),
+    ("curl --output-dir /tmp -O URL", "/tmp"),
+    ("wget -O /tmp/x URL", "/tmp/x"),
+    ("wget -P /tmp URL", "/tmp"),
+])
+def test_commands_that_execute_text_or_name_outputs_keep_their_write_targets(command, target):
+    assert target in set(_shell_write_targets(command))
+    assert _decide("Bash", command).action == "ask"
+
+
+def test_a_sed_execute_command_keeps_the_raw_fallback():
+    command = "sed 'e echo x > /tmp/y' f"
+    assert "/tmp/y" in set(_shell_write_targets(command))
+    assert _decide("Bash", command).action == "ask"
+
+
+@pytest.mark.parametrize("command,target,raw_fallback", [
+    ("sed -e 's/a/b/' -e'e echo pwn > /etc/x'", "/etc/x", True),
+    ('sed -e \'s/a/b/\' -e"e echo pwn > /etc/x"', "/etc/x", True),
+    ("sed -e 's/a/b/' --expression='e echo pwn > /etc/x'", "/etc/x", True),
+    ("sed -ne 'e echo pwn > /etc/x'", "/etc/x", True),
+    ("sed -n -e's/x/y/w /etc/z'", "/etc/z", False),
+])
+def test_sed_option_and_quoted_script_fragments_are_not_mistaken_for_inputs(command, target, raw_fallback):
+    assert (_blank_non_syntax(command, powershell=False) is None) is raw_fallback
+    assert target in set(_shell_write_targets(command))
+    assert _decide("Bash", command).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "sed -nE 's/a/b/' f",
+    "sed -n -E -r -s -u -z -l 80 --posix --debug --sandbox -e 's/a/b/' f",
+    "sed --line-length=80 --regexp-extended --separate --unbuffered --null-data 's/a/b/' f",
+])
+def test_known_sed_option_forms_still_treat_a_literal_script_as_data(command):
+    assert _blank_non_syntax(command, powershell=False) is not None
+    assert _decide("Bash", command).action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    "sed 'e rm -rf /' f",
+    "sed 's/a/b/e' f",
+    'sed "$script" f',
+    "sed -f rules.sed 'f > /tmp/x'",
+    "sed --unknown='e echo x > /tmp/x' f",
+    "curl -K config 'URL > /tmp/x'",
+    "curl --config=config 'URL > /tmp/x'",
+    "curl --unknown='URL > /tmp/x'",
+    "wget --unknown='URL > /tmp/x'",
+])
+def test_commands_with_executable_or_unresolved_configuration_keep_the_raw_fallback(command):
+    assert _blank_non_syntax(command, powershell=False) is None
 
 
 @pytest.mark.parametrize("tool, command, expected", [

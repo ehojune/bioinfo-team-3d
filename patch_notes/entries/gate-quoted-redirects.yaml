@@ -1,4 +1,4 @@
-pr: 340
+pr: 481
 rows:
 - sha: ff24e21
   at: 2026-10-03 07:36
@@ -14,3 +14,9 @@ rows:
 - sha: 162b23a
   at: 2026-10-03 08:48
   text: 'README: 셸 쓰기 검사가 따옴표·heredoc 안의 > 를 다루는 방식'
+- sha: 6048f4b
+  at: 2026-10-08 03:11
+  text: 따옴표·quoted heredoc의 redirect 오탐을 줄이고 sed·curl·wget의 실제 쓰기 대상을 판별
+- sha: 'caba362'
+  at: 2026-10-08 03:42
+  text: 'sed의 붙여 쓴 option·따옴표 script를 한 shell word로 해석하고, 미확정 sed·curl·wget option은 원문 검사로 되돌림'

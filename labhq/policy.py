@@ -95,6 +95,13 @@ _INLINE_CODE_FLAGS = frozenset({"-c", "-e", "-p", "--eval", "--print", "-"})
 _PROCESS_CALL = re.compile(r"\b(?:system\w*|popen\w*|subprocess|create_subprocess\w*|spawn\w*|posix_spawn\w*|exec\w*|"
                            r"shell\w*|startfile|createprocess\w*|pipe|eval|getoutput|getstatusoutput|check_output|"
                            r"check_call|child_process|processx|__import__|import_module)\b", re.I)
+# These commands can execute an argument, a sourced file, or a wrapped command. They are kept out of the data-safe
+# set deliberately. Unknown commands are treated the same way: uncertainty keeps the raw scan rather than hiding it.
+_EXECUTES_ARGUMENTS = frozenset({
+    "bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "eval", "source", ".", "exec",
+    "xargs", "find", "parallel", "ssh", "su", "sudo", "env", "nohup", "timeout", "nice", "time", "watch",
+    "at", "crontab", "trap", "awk", "perl", "iex", "invoke-expression",
+})
 _BASH_WHOLE_WORD = re.compile(r"\$(?:\{[^{}()\[\]]*\}|\(\([^()]*\)\)|\[[^\[\]]*\])")  # ${..} $((..)) $[..]
 _BASH_REDIRECTION = re.compile(r"\d*(?:&>>?|[<>]&|<<<|<<-?|>>?|<>|[<>])\s*[^\s|;&<>()]*")
 _BASH_SEPARATOR = re.compile(r"[|;&\n()]|(?<!\S)[{}](?!\S)")
@@ -321,12 +328,400 @@ def _spans(text: str, separator: re.Pattern) -> Iterator[tuple[int, int]]:
     yield start, len(text)
 
 
+def _word_value(word: str) -> str:
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+        return word[1:-1]
+    return word
+
+
+def _literal_shell_word(word: str, powershell: bool) -> str | None:
+    """Return a shell word's literal value, or None when expansion can change it."""
+    value: list[str] = []
+    i = 0
+    while i < len(word):
+        quote = word[i]
+        if quote == "'":
+            i += 1
+            while True:
+                end = word.find("'", i)
+                if end < 0:
+                    return None
+                value.append(word[i:end])
+                if powershell and end + 1 < len(word) and word[end + 1] == "'":
+                    value.append("'")
+                    i = end + 2
+                    continue
+                i = end + 1
+                break
+            continue
+        if quote == '"':
+            i += 1
+            while i < len(word):
+                ch = word[i]
+                if ch == '"':
+                    if powershell and i + 1 < len(word) and word[i + 1] == '"':
+                        value.append('"')
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                if ch in "$`":
+                    return None
+                if not powershell and ch == "\\" and i + 1 < len(word) and word[i + 1] in '$`"\\':
+                    value.append(word[i + 1])
+                    i += 2
+                    continue
+                value.append(ch)
+                i += 1
+            else:
+                return None
+            continue
+        if quote in "$`*?[]{}":
+            return None
+        if not powershell and quote == "\\":
+            if i + 1 >= len(word):
+                return None
+            value.append(word[i + 1])
+            i += 2
+            continue
+        value.append(quote)
+        i += 1
+    return "".join(value)
+
+
+def _sed_delimited_end(script: str, start: int, delimiter: str) -> int | None:
+    i = start
+    while i < len(script):
+        if script[i] == "\\":
+            i += 2
+        elif script[i] == delimiter:
+            return i + 1
+        else:
+            i += 1
+    return None
+
+
+def _sed_skip_address(script: str, start: int) -> int:
+    """Skip the common sed address forms; return start when no address begins there."""
+    i = start
+    while i < len(script) and script[i] in " \t":
+        i += 1
+
+    def one(pos: int) -> int | None:
+        if pos >= len(script):
+            return None
+        if script[pos].isdigit():
+            while pos < len(script) and script[pos].isdigit():
+                pos += 1
+            return pos
+        if script[pos] == "$":
+            return pos + 1
+        if script[pos] == "/":
+            return _sed_delimited_end(script, pos + 1, "/")
+        if script[pos] == "\\" and pos + 1 < len(script):
+            return _sed_delimited_end(script, pos + 2, script[pos + 1])
+        if script[pos] in "+~" and pos + 1 < len(script) and script[pos + 1].isdigit():
+            pos += 2
+            while pos < len(script) and script[pos].isdigit():
+                pos += 1
+            return pos
+        return None
+
+    end = one(i)
+    if end is None:
+        return start
+    i = end
+    while i < len(script) and script[i] in " \t":
+        i += 1
+    if i < len(script) and script[i] in ",~":
+        i += 1
+        while i < len(script) and script[i] in " \t":
+            i += 1
+        end = one(i)
+        if end is None:
+            return start
+        i = end
+    while i < len(script) and script[i] in " \t":
+        i += 1
+    if i < len(script) and script[i] == "!":
+        i += 1
+        while i < len(script) and script[i] in " \t":
+            i += 1
+    return i
+
+
+def _sed_script_writes(script: str) -> list[str] | None:
+    """Return literal sed write targets, or None when the script executes code or cannot be proved safe."""
+    targets: list[str] = []
+    i = 0
+    simple = frozenset("acdDgGhHilLnNpPqQrRbBtTxvVyYzZF=:")
+    while i < len(script):
+        while i < len(script) and script[i] in " \t\r\n;{}":
+            i += 1
+        if i >= len(script):
+            break
+        if script[i] == "#":
+            end = script.find("\n", i)
+            i = len(script) if end < 0 else end + 1
+            continue
+        addressed = _sed_skip_address(script, i)
+        i = addressed if addressed != i else i
+        if i >= len(script):
+            return None
+        command = script[i]
+        i += 1
+        if command == "e":
+            return None
+        if command in "wW":
+            end = len(script)
+            for separator in (";", "\n"):
+                found = script.find(separator, i)
+                if found >= 0:
+                    end = min(end, found)
+            target = script[i:end].strip()
+            if not target:
+                return None
+            targets.append(target)
+            i = end + (end < len(script))
+            continue
+        if command == "s":
+            if i >= len(script) or script[i] in "\\\r\n":
+                return None
+            delimiter = script[i]
+            regex_end = _sed_delimited_end(script, i + 1, delimiter)
+            replacement_end = (_sed_delimited_end(script, regex_end, delimiter)
+                               if regex_end is not None else None)
+            if replacement_end is None:
+                return None
+            end = replacement_end
+            while end < len(script) and script[end] not in ";\n":
+                end += 1
+            flags = script[replacement_end:end]
+            k = 0
+            while k < len(flags):
+                if flags[k].isspace() or flags[k].isdigit() or flags[k] in "gIpMm":
+                    k += 1
+                elif flags[k] == "e":
+                    return None
+                elif flags[k] == "w":
+                    target = flags[k + 1:].strip()
+                    if not target:
+                        return None
+                    targets.append(target)
+                    k = len(flags)
+                else:
+                    return None
+            i = end + (end < len(script))
+            continue
+        if command not in simple:
+            return None
+        end = i
+        while end < len(script) and script[end] not in ";\n":
+            end += 1
+        i = end + (end < len(script))
+    return targets
+
+
+def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str]] | None:
+    """Return (script writes, in-place inputs), or None for -f, expansion, e, or unfamiliar options."""
+    scripts: list[str] = []
+    inputs: list[str] = []
+    in_place = False
+    explicit_script = False
+    options = True
+    i = 0
+    while i < len(args):
+        raw = args[i]
+        value = _literal_shell_word(raw, powershell)
+        if value is None:
+            return None
+        if options and value == "--":
+            options = False
+            i += 1
+            continue
+        if options and value.startswith("--"):
+            flag, equal, attached = value.partition("=")
+            if flag in {"--quiet", "--silent", "--debug", "--regexp-extended", "--separate", "--unbuffered",
+                        "--null-data", "--sandbox", "--posix", "--follow-symlinks", "--help", "--version"}:
+                if equal:
+                    return None
+                i += 1
+                continue
+            if flag == "--in-place":
+                in_place = True
+                i += 1
+                continue
+            if flag == "--line-length":
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return None
+                    attached = _literal_shell_word(args[i], powershell)
+                if attached is None or not attached.isdigit():
+                    return None
+                i += 1
+                continue
+            if flag == "--expression":
+                explicit_script = True
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return None
+                    attached = _literal_shell_word(args[i], powershell)
+                if attached is None:
+                    return None
+                scripts.append(attached)
+                i += 1
+                continue
+            if flag == "--file":
+                return None
+            return None
+        if options and value.startswith("-") and value != "-":
+            j = 1
+            while j < len(value):
+                flag = value[j]
+                if flag in "nErsuz":
+                    j += 1
+                elif flag == "i":
+                    in_place = True
+                    j = len(value)  # the rest is the backup suffix
+                elif flag == "e":
+                    explicit_script = True
+                    attached = value[j + 1:]
+                    if not attached:
+                        i += 1
+                        if i >= len(args):
+                            return None
+                        attached = _literal_shell_word(args[i], powershell)
+                    if attached is None:
+                        return None
+                    scripts.append(attached)
+                    j = len(value)
+                elif flag == "l":
+                    attached = value[j + 1:]
+                    if not attached:
+                        i += 1
+                        if i >= len(args):
+                            return None
+                        attached = _literal_shell_word(args[i], powershell)
+                    if attached is None or not attached.isdigit():
+                        return None
+                    j = len(value)
+                elif flag == "f":
+                    return None
+                else:
+                    return None
+            i += 1
+            continue
+        if not explicit_script and not scripts:
+            scripts.append(value)
+            explicit_script = True
+        else:
+            inputs.append(value)
+        i += 1
+    if not scripts:
+        return None
+    writes: list[str] = []
+    for script in scripts:
+        found = _sed_script_writes(script)
+        if found is None:
+            return None
+        writes.extend(found)
+    return writes, [value for value in inputs if value != "-"] if in_place else []
+
+
+_CURL_LONG_SWITCHES = frozenset({
+    "--compressed", "--fail", "--fail-with-body", "--globoff", "--head", "--include", "--insecure",
+    "--location", "--no-progress-meter", "--remote-header-name", "--remote-name", "--show-error", "--silent",
+})
+_CURL_LONG_VALUES = frozenset({
+    "--cacert", "--cert", "--connect-timeout", "--cookie", "--cookie-jar", "--data", "--data-binary",
+    "--data-raw", "--form", "--header", "--key", "--max-time", "--output", "--output-dir", "--proxy",
+    "--range", "--referer", "--request", "--resolve", "--retry", "--upload-file", "--url", "--user",
+    "--user-agent", "--write-out",
+})
+_WGET_LONG_SWITCHES = frozenset({
+    "--content-disposition", "--continue", "--no-check-certificate", "--quiet", "--server-response", "--spider",
+    "--timestamping", "--trust-server-names",
+})
+_WGET_LONG_VALUES = frozenset({
+    "--accept", "--directory-prefix", "--header", "--input-file", "--limit-rate", "--output-document",
+    "--output-file", "--post-data", "--post-file", "--reject", "--timeout", "--tries", "--user-agent", "--wait",
+})
+
+
+def _download_options_known(name: str, args: list[str], powershell: bool) -> bool:
+    """Prove every option form understood; operands with a literal non-option prefix may still contain expansion."""
+    values: list[str | None] = [_literal_shell_word(arg, powershell) for arg in args]
+    long_switches, long_values = ((_CURL_LONG_SWITCHES, _CURL_LONG_VALUES) if name == "curl"
+                                  else (_WGET_LONG_SWITCHES, _WGET_LONG_VALUES))
+    short_switches, short_values = ((frozenset("sSLfIOkqgNi"), frozenset("oAbcdDeEFHmrTuUwxXyYz"))
+                                     if name == "curl"
+                                     else (frozenset("qcNS"), frozenset("OPoiUTtwQAR")))
+    i = 0
+    options = True
+    while i < len(args):
+        raw, value = args[i], values[i]
+        if options and value == "--":
+            options = False
+            i += 1
+            continue
+        could_be_option = raw.startswith("-") or value is not None and value.startswith("-")
+        if options and value is None:
+            if could_be_option or not raw or raw[0] in "'$`":
+                return False
+            i += 1
+            continue
+        if not options or value is None or not value.startswith("-") or value == "-":
+            i += 1
+            continue
+        if value.startswith("--"):
+            flag, equal, _attached = value.partition("=")
+            if flag == "--config":
+                return False
+            if flag in long_switches:
+                if equal:
+                    return False
+                i += 1
+                continue
+            if flag in long_values:
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return False
+                i += 1
+                continue
+            return False
+        j = 1
+        while j < len(value):
+            flag = value[j]
+            if name == "curl" and flag == "K":
+                return False
+            if flag in short_switches:
+                j += 1
+                continue
+            if flag in short_values:
+                if j + 1 == len(value):
+                    i += 1
+                    if i >= len(args):
+                        return False
+                j = len(value)
+                continue
+            return False
+        i += 1
+    return True
+
+
 def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     """'data' if `name` reads its quoted arguments as text, 'inline' for an interpreter's inline code, else None."""
+    name = _word_value(name)
+    values = [_word_value(arg) for arg in args]
     base = re.split(r"[\\/]", name)[-1].casefold()
     base = base[:-4] if base.endswith(".exe") else base
+    if base in _EXECUTES_ARGUMENTS:
+        return None
     if _INTERPRETER.fullmatch(base):
-        for arg in args:
+        for arg in values:
             if arg in _INLINE_CODE_FLAGS:
                 break
             if arg == "-m" or not arg.startswith("-"):
@@ -335,9 +730,13 @@ def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     if name.casefold() not in (base, base + ".exe"):
         return None  # './cat' or 'C:\x\echo.exe' may be any program
     if base == "git":
-        return "data" if args and args[0] in _GIT_DATA_SUBCOMMANDS else None  # not 'git -c alias.x=!..'
-    if base == "printf" and not powershell and any(arg.startswith("-v") for arg in args):
+        return "data" if values and values[0] in _GIT_DATA_SUBCOMMANDS else None  # not 'git -c alias.x=!..'
+    if base == "printf" and not powershell and any(arg.startswith("-v") for arg in values):
         return None  # 'printf -v' assigns a variable
+    if base == "sed":
+        return "data" if _sed_command(args, powershell) is not None else None
+    if base in {"curl", "wget"}:
+        return "data" if _download_options_known(base, args, powershell) else None
     return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
 
 
@@ -401,7 +800,8 @@ def _quoted_text_is_data(command: str, skeleton: str, powershell: bool) -> bool:
             return False  # 'GIT_EDITOR=..' reaches later commands even without a prefix
         if blanked(*word.span()) or "$" in word.group():
             return False
-        kind = _data_command(word.group(), [w.group() for w in words[k + 1:]], powershell)
+        kind = _data_command(command[word.start():word.end()],
+                             [command[w.start():w.end()] for w in words[k + 1:]], powershell)
         if kind is None:
             return False
         inline = inline or kind == "inline"
@@ -436,10 +836,54 @@ def _ps_writer_targets(args: list[str]) -> Iterator[str]:
             i += 2
 
 
-def _named_write_targets(words: list[str]) -> Iterator[str]:
-    if not words:
+def _download_write_targets(name: str, args: list[str]) -> Iterator[str]:
+    values = [_word_value(arg) for arg in args]
+    i = 0
+    while i < len(values):
+        word = values[i]
+        fold = word.casefold()
+        if name == "curl":
+            if word in {"-o", "--output", "--output-dir"}:
+                if i + 1 < len(values):
+                    yield values[i + 1]
+                i += 2
+                continue
+            if fold.startswith(("--output=", "--output-dir=")):
+                yield word.split("=", 1)[1]
+            elif word.startswith("-o") and len(word) > 2:
+                yield word[2:]
+            elif word in {"-O", "--remote-name"}:
+                yield "."
+        else:
+            if word in {"-O", "-P"} or fold in {"--output-document", "--directory-prefix"}:
+                if i + 1 < len(values):
+                    yield values[i + 1]
+                i += 2
+                continue
+            if fold.startswith(("--output-document=", "--directory-prefix=")):
+                yield word.split("=", 1)[1]
+            elif word.startswith(("-O", "-P")) and len(word) > 2:
+                yield word[2:]
+        i += 1
+
+
+def _named_write_targets(raw_words: list[str], powershell: bool = False) -> Iterator[str]:
+    if not raw_words:
         return
+    words = [_word_value(word) for word in raw_words]
     name = words[0].casefold()
+    plain_name = name[:-4] if name.endswith(".exe") else name
+    if name not in {plain_name, plain_name + ".exe"}:
+        return
+    if plain_name == "sed":
+        parsed = _sed_command(raw_words[1:], powershell)
+        if parsed is not None:
+            yield from parsed[0]
+            yield from parsed[1]
+        return
+    if plain_name in {"curl", "wget"}:
+        yield from _download_write_targets(plain_name, raw_words[1:])
+        return
     if name == "tee":  # bash tee writes every file argument; in PowerShell tee is Tee-Object
         yield from (word for word in words[1:] if not word.startswith("-"))
         return
@@ -473,15 +917,15 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         return _REDIRECTION_SPAN.sub(lambda m: " " * len(m.group()), value)
 
     if text is None:
-        segments = [[m.group().strip("\"'") for m in _SHELL_WORD.finditer(segment)]
+        segments = [[m.group() for m in _SHELL_WORD.finditer(segment)]
                     for segment in re.split(r"[|;&\n]", unredirected(command))]
     else:
         words_text = unredirected(text)
-        segments = [[command[m.start():m.end()].strip("\"'")
-                     for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
+        segments = [[command[m.start():m.end()]
+                      for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
                     for seg in re.finditer(r"[^|;&\n]+", words_text)]
     for words in segments:
-        yield from _named_write_targets(words)
+        yield from _named_write_targets(words, powershell)
 
 
 @dataclass
