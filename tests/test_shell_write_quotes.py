@@ -231,13 +231,39 @@ def test_a_sed_execute_command_keeps_the_raw_fallback():
     assert _decide("Bash", command).action == "ask"
 
 
+@pytest.mark.parametrize("command,target,raw_fallback", [
+    ("sed -e 's/a/b/' -e'e echo pwn > /etc/x'", "/etc/x", True),
+    ('sed -e \'s/a/b/\' -e"e echo pwn > /etc/x"', "/etc/x", True),
+    ("sed -e 's/a/b/' --expression='e echo pwn > /etc/x'", "/etc/x", True),
+    ("sed -ne 'e echo pwn > /etc/x'", "/etc/x", True),
+    ("sed -n -e's/x/y/w /etc/z'", "/etc/z", False),
+])
+def test_sed_option_and_quoted_script_fragments_are_not_mistaken_for_inputs(command, target, raw_fallback):
+    assert (_blank_non_syntax(command, powershell=False) is None) is raw_fallback
+    assert target in set(_shell_write_targets(command))
+    assert _decide("Bash", command).action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    "sed -nE 's/a/b/' f",
+    "sed -n -E -r -s -u -z -l 80 --posix --debug --sandbox -e 's/a/b/' f",
+    "sed --line-length=80 --regexp-extended --separate --unbuffered --null-data 's/a/b/' f",
+])
+def test_known_sed_option_forms_still_treat_a_literal_script_as_data(command):
+    assert _blank_non_syntax(command, powershell=False) is not None
+    assert _decide("Bash", command).action == "allow"
+
+
 @pytest.mark.parametrize("command", [
     "sed 'e rm -rf /' f",
     "sed 's/a/b/e' f",
     'sed "$script" f',
     "sed -f rules.sed 'f > /tmp/x'",
+    "sed --unknown='e echo x > /tmp/x' f",
     "curl -K config 'URL > /tmp/x'",
     "curl --config=config 'URL > /tmp/x'",
+    "curl --unknown='URL > /tmp/x'",
+    "wget --unknown='URL > /tmp/x'",
 ])
 def test_commands_with_executable_or_unresolved_configuration_keep_the_raw_fallback(command):
     assert _blank_non_syntax(command, powershell=False) is None

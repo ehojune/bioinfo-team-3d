@@ -336,19 +336,57 @@ def _word_value(word: str) -> str:
 
 def _literal_shell_word(word: str, powershell: bool) -> str | None:
     """Return a shell word's literal value, or None when expansion can change it."""
-    if not word:
-        return ""
-    if len(word) >= 2 and word[0] == word[-1] == "'":
-        value = word[1:-1]
-        return value.replace("''", "'") if powershell else value
-    if len(word) >= 2 and word[0] == word[-1] == '"':
-        value = word[1:-1]
-        if "$" in value or "`" in value:
+    value: list[str] = []
+    i = 0
+    while i < len(word):
+        quote = word[i]
+        if quote == "'":
+            i += 1
+            while True:
+                end = word.find("'", i)
+                if end < 0:
+                    return None
+                value.append(word[i:end])
+                if powershell and end + 1 < len(word) and word[end + 1] == "'":
+                    value.append("'")
+                    i = end + 2
+                    continue
+                i = end + 1
+                break
+            continue
+        if quote == '"':
+            i += 1
+            while i < len(word):
+                ch = word[i]
+                if ch == '"':
+                    if powershell and i + 1 < len(word) and word[i + 1] == '"':
+                        value.append('"')
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                if ch in "$`":
+                    return None
+                if not powershell and ch == "\\" and i + 1 < len(word) and word[i + 1] in '$`"\\':
+                    value.append(word[i + 1])
+                    i += 2
+                    continue
+                value.append(ch)
+                i += 1
+            else:
+                return None
+            continue
+        if quote in "$`*?[]{}":
             return None
-        return value
-    if any(ch in word for ch in "'$`*?[]{}"):
-        return None
-    return word
+        if not powershell and quote == "\\":
+            if i + 1 >= len(word):
+                return None
+            value.append(word[i + 1])
+            i += 2
+            continue
+        value.append(quote)
+        i += 1
+    return "".join(value)
 
 
 def _sed_delimited_end(script: str, start: int, delimiter: str) -> int | None:
@@ -496,23 +534,31 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
         raw = args[i]
         value = _literal_shell_word(raw, powershell)
         if value is None:
-            if not scripts or in_place:
-                return None
-            inputs.append(_word_value(raw))
-            i += 1
-            continue
+            return None
         if options and value == "--":
             options = False
             i += 1
             continue
         if options and value.startswith("--"):
             flag, equal, attached = value.partition("=")
-            if flag in {"--quiet", "--silent", "--regexp-extended", "--separate", "--unbuffered", "--null-data",
-                        "--sandbox", "--posix"}:
+            if flag in {"--quiet", "--silent", "--debug", "--regexp-extended", "--separate", "--unbuffered",
+                        "--null-data", "--sandbox", "--posix", "--follow-symlinks", "--help", "--version"}:
+                if equal:
+                    return None
                 i += 1
                 continue
             if flag == "--in-place":
                 in_place = True
+                i += 1
+                continue
+            if flag == "--line-length":
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return None
+                    attached = _literal_shell_word(args[i], powershell)
+                if attached is None or not attached.isdigit():
+                    return None
                 i += 1
                 continue
             if flag == "--expression":
@@ -551,6 +597,16 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
                         return None
                     scripts.append(attached)
                     j = len(value)
+                elif flag == "l":
+                    attached = value[j + 1:]
+                    if not attached:
+                        i += 1
+                        if i >= len(args):
+                            return None
+                        attached = _literal_shell_word(args[i], powershell)
+                    if attached is None or not attached.isdigit():
+                        return None
+                    j = len(value)
                 elif flag == "f":
                     return None
                 else:
@@ -574,11 +630,86 @@ def _sed_command(args: list[str], powershell: bool) -> tuple[list[str], list[str
     return writes, [value for value in inputs if value != "-"] if in_place else []
 
 
-def _download_configured(args: list[str]) -> bool:
-    values = [_word_value(arg) for arg in args]
-    return any(value == "-K" or value.startswith("-K") and len(value) > 2
-               or value.casefold() == "--config" or value.casefold().startswith("--config=")
-               for value in values)
+_CURL_LONG_SWITCHES = frozenset({
+    "--compressed", "--fail", "--fail-with-body", "--globoff", "--head", "--include", "--insecure",
+    "--location", "--no-progress-meter", "--remote-header-name", "--remote-name", "--show-error", "--silent",
+})
+_CURL_LONG_VALUES = frozenset({
+    "--cacert", "--cert", "--connect-timeout", "--cookie", "--cookie-jar", "--data", "--data-binary",
+    "--data-raw", "--form", "--header", "--key", "--max-time", "--output", "--output-dir", "--proxy",
+    "--range", "--referer", "--request", "--resolve", "--retry", "--upload-file", "--url", "--user",
+    "--user-agent", "--write-out",
+})
+_WGET_LONG_SWITCHES = frozenset({
+    "--content-disposition", "--continue", "--no-check-certificate", "--quiet", "--server-response", "--spider",
+    "--timestamping", "--trust-server-names",
+})
+_WGET_LONG_VALUES = frozenset({
+    "--accept", "--directory-prefix", "--header", "--input-file", "--limit-rate", "--output-document",
+    "--output-file", "--post-data", "--post-file", "--reject", "--timeout", "--tries", "--user-agent", "--wait",
+})
+
+
+def _download_options_known(name: str, args: list[str], powershell: bool) -> bool:
+    """Prove every option form understood; operands with a literal non-option prefix may still contain expansion."""
+    values: list[str | None] = [_literal_shell_word(arg, powershell) for arg in args]
+    long_switches, long_values = ((_CURL_LONG_SWITCHES, _CURL_LONG_VALUES) if name == "curl"
+                                  else (_WGET_LONG_SWITCHES, _WGET_LONG_VALUES))
+    short_switches, short_values = ((frozenset("sSLfIOkqgNi"), frozenset("oAbcdDeEFHmrTuUwxXyYz"))
+                                     if name == "curl"
+                                     else (frozenset("qcNS"), frozenset("OPoiUTtwQAR")))
+    i = 0
+    options = True
+    while i < len(args):
+        raw, value = args[i], values[i]
+        if options and value == "--":
+            options = False
+            i += 1
+            continue
+        could_be_option = raw.startswith("-") or value is not None and value.startswith("-")
+        if options and value is None:
+            if could_be_option or not raw or raw[0] in "'$`":
+                return False
+            i += 1
+            continue
+        if not options or value is None or not value.startswith("-") or value == "-":
+            i += 1
+            continue
+        if value.startswith("--"):
+            flag, equal, _attached = value.partition("=")
+            if flag == "--config":
+                return False
+            if flag in long_switches:
+                if equal:
+                    return False
+                i += 1
+                continue
+            if flag in long_values:
+                if not equal:
+                    i += 1
+                    if i >= len(args):
+                        return False
+                i += 1
+                continue
+            return False
+        j = 1
+        while j < len(value):
+            flag = value[j]
+            if name == "curl" and flag == "K":
+                return False
+            if flag in short_switches:
+                j += 1
+                continue
+            if flag in short_values:
+                if j + 1 == len(value):
+                    i += 1
+                    if i >= len(args):
+                        return False
+                j = len(value)
+                continue
+            return False
+        i += 1
+    return True
 
 
 def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
@@ -605,7 +736,7 @@ def _data_command(name: str, args: list[str], powershell: bool) -> str | None:
     if base == "sed":
         return "data" if _sed_command(args, powershell) is not None else None
     if base in {"curl", "wget"}:
-        return None if _download_configured(args) else "data"
+        return "data" if _download_options_known(base, args, powershell) else None
     return "data" if base in (_PS_DATA_COMMANDS if powershell else _DATA_COMMANDS) else None
 
 
