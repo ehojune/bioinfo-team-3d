@@ -26,9 +26,10 @@ CANARY = "CANARY-7f3a-secret"
 # requires every permitted path to write the same declared filename. #373 bench A now declares analysis scripts and
 # result-determining references under outputs/. #373 direction 2 adds optional assumptions and the three-category
 # question rule. #420 adds 23 approved topics, so the topic rule this test renders grows. Off still adds nothing
-# related to output types.
+# related to output types. #458 makes the environment owner's venv interpreter explicit; the exact digest below
+# changes for that planned behavior while output-type declarations still add nothing when off.
 PLAN_SCHEMA_SHA = "a70326fd571c005ce9e956fcf7fe3a6217cf489f4aba3c780a03a40ca68bb284"
-PLAN_PROMPT_SHA = "2aa3f2319837f1f9ab1fc3c5c07ebd93514d826a4ef40b0f3edd5c6eb7305662"
+PLAN_PROMPT_SHA = "0da961910ac7d9fddf13a1f0c077fa31f6a97f3741368b3101224cad4baa9c29"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 

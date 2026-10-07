@@ -565,7 +565,7 @@ def test_shared_environment_gate_removes_only_install_capable_shell_rules_with_p
     tools = ["Read", "Bash(python *)", "Bash(Rscript *)", "Bash(ls *)", "PowerShell(Get-Content *)"]
     protected = _allowed(tmp_path, tools, [], shared_environment=True)
     assert protected == ["Read", "Bash(ls *)", "PowerShell(Get-Content *)"]
-    assert _allowed(tmp_path, tools, [], shared_environment=True, environment_step=True) == tools
+    assert _allowed(tmp_path, tools, [], shared_environment=True, environment_step=True) == protected
     assert _allowed(tmp_path, tools, []) == tools
 
 

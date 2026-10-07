@@ -1,0 +1,152 @@
+"""Environment owner exceptions must identify a destination inside that step's workspace."""
+
+import os
+import subprocess
+
+import pytest
+
+from labhq.environment_install import shared_environment_install_denial
+
+
+def denial(tmp_path, command, *, environment_step=True, tool="Bash", protected=True):
+    return shared_environment_install_denial(
+        tool, {"command": command}, protected=protected,
+        environment_step=environment_step, workdir=str(tmp_path))
+
+
+@pytest.mark.parametrize("command", [
+    "python -m venv .venv && ./.venv/bin/python -m pip install --only-binary=:all: scanpy",
+    r"python -m venv .venv; .\.venv\Scripts\python.exe -m pip install scanpy",
+    "./.venv/bin/pip install scanpy",
+    "python -m pip install --target ./packages scanpy",
+    "pip install --target=./packages scanpy",
+    "PIP_INDEX_URL=https://example.org/simple pip install --target ./packages scanpy",
+    "pip install -t./packages scanpy",
+    "pip install -t=./packages scanpy",
+    "pip install -t=/shared scanpy",  # pip's optparse keeps '=' as a literal local path component
+    "pip install --target ./first --target ./second scanpy",
+    "conda install -p ./conda-env scanpy",
+    "conda create --prefix=./conda-env python=3.12",
+    "mamba install -p./conda-env scanpy",
+    "conda install -p=./conda-env scanpy",
+    "micromamba install --prefix ./conda-env scanpy",
+    "uv pip --python .venv install scanpy",
+    "uv pip install --python ./.venv/bin/python scanpy",
+    "uv pip install --target ./packages scanpy",
+    "uv --directory ./nested pip install --python .venv scanpy",
+    "cd ./nested && python -m pip install --target ./packages scanpy",
+    "pushd ./nested; popd; ./.venv/bin/python -m pip install scanpy",
+    "Rscript -e \"install.packages('limma', lib='./r-library')\"",
+    "$env:R_LIBS_USER='./r-library'; Rscript -e \"BiocManager::install('limma')\"",
+])
+def test_environment_owner_allows_explicit_workspace_destinations(tmp_path, command):
+    assert denial(tmp_path, command) is None
+
+
+@pytest.mark.parametrize("command", [
+    "python -m pip install scanpy",
+    "pip install scanpy",
+    "uv pip install scanpy",
+    "/runner/env/bin/pip install scanpy",
+    r"C:\runner\env\Scripts\python.exe -m pip install scanpy",
+    "conda install scanpy",
+    "conda install -n base scanpy",
+    "conda install -p ./local -nbase scanpy",
+    "conda create -n shared python=3.12",
+    "mamba install -p ../shared scanpy",
+    "micromamba install --prefix /shared scanpy",
+    "pip install --target ../shared scanpy",
+    "conda install -p=/shared scanpy",
+    "conda install -p=../shared scanpy",
+    "uv pip install -t=/shared scanpy",
+    "pip install --target ./local/../../shared scanpy",
+    "pip install --target ./local --target /shared scanpy",
+    "pip install --target ./local --prefix /shared scanpy",
+    "./.venv/bin/python -m pip install --root /runner scanpy",
+    "./.venv/bin/python -m pip install --user scanpy",
+    "PIP_TARGET=/runner ./.venv/bin/python -m pip install scanpy",
+    "$env:PIP_TARGET='../shared'; ./.venv/Scripts/python.exe -m pip install scanpy",
+    "export PIP_PREFIX=../shared; true; ./.venv/bin/python -m pip install scanpy",
+    "uv pip install --python python scanpy",
+    "uv pip install --python 3.12 scanpy",
+    "uv pip install --python ../shared scanpy",
+    "uv pip install --python .venv --system scanpy",
+    "uv pip install --python .venv --python /runner/bin/python scanpy",
+    "uv --directory ../shared pip install --python .venv scanpy",
+    "uv pip install --target scanpy --python",
+    "pip install --target",
+    "pip install --target=$HOME/packages scanpy",
+    "cd .. && python -m pip install --target ./packages scanpy",
+    "Set-Location -LiteralPath ..; ./.venv/Scripts/python.exe -m pip install scanpy",
+    "cd $OTHER && pip install --target ./packages scanpy",
+    "(cd ..; pip install --target ./packages scanpy)",
+    "true & pip install scanpy",
+    "true & pip install --target ../shared scanpy",
+    "Rscript -e \"install.packages('limma')\"",
+    "Rscript -e \"install.packages('limma', lib='../shared')\"",
+    "Rscript -e \"install.packages('limma', lib=file.path('/shared'))\"",
+    "Rscript -e \"install.packages('limma', lib=.rlib)\"",
+    "Rscript -e \"install.packages('a', lib='./local'); install.packages('b')\"",
+])
+def test_environment_owner_rejects_shared_ambiguous_or_escaping_destinations(tmp_path, command):
+    assert "own workspace" in denial(tmp_path, command)
+
+
+def test_environment_owner_uses_shell_cwd_and_explicit_absolute_paths(tmp_path):
+    local = tmp_path / "packages"
+    assert denial(tmp_path, f'cd ..; pip install --target "{local}" scanpy') is None
+    assert denial(tmp_path, f'"{tmp_path}/.venv/Scripts/python.exe" -m pip install scanpy') is None
+    assert denial(tmp_path, r"& '.\.venv\Scripts\python.exe' -m pip install scanpy", tool="PowerShell") is None
+
+
+def test_consumers_still_require_their_own_fixed_library(tmp_path):
+    assert denial(tmp_path, "pip install --target ./.pylib scanpy", environment_step=False) is None
+    assert denial(tmp_path, "pip install --target ./other scanpy", environment_step=False)
+    assert denial(tmp_path, "cd ..; pip install --target ./.pylib scanpy", environment_step=False)
+    assert denial(tmp_path, "cd nested; Rscript -e \"install.packages('a', lib='./.rlib')\"",
+                  environment_step=False)
+
+
+def _directory_link(link, target):
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                       check=True, capture_output=True, text=True)
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+@pytest.mark.parametrize("folder,command,owner", [
+    (".venv", "./.venv/bin/python -m pip install scanpy", True),
+    ("packages", "pip install --target ./packages scanpy", True),
+    (".pylib", "pip install --target ./.pylib scanpy", False),
+    (".rlib", "Rscript -e \"install.packages('a', lib='./.rlib')\"", False),
+])
+def test_directory_links_cannot_redirect_installations_outside_the_step(tmp_path, folder, command, owner):
+    workspace = tmp_path / "step"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    _directory_link(workspace / folder, outside)
+    try:
+        assert denial(workspace, command, environment_step=owner)
+    finally:
+        # Remove just the link; pytest's temp cleanup must never traverse an outside junction.
+        if os.name == "nt":
+            (workspace / folder).rmdir()
+        else:
+            (workspace / folder).unlink()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX venv interpreters normally use a final executable symlink")
+def test_posix_venv_python_binary_link_does_not_escape_the_local_environment(tmp_path):
+    bin_dir = tmp_path / ".venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python").symlink_to("/usr/bin/python3")
+    assert denial(tmp_path, "./.venv/bin/python -m pip install scanpy")
+    (bin_dir.parent / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    assert denial(tmp_path, "./.venv/bin/python -m pip install scanpy") is None
+
+
+def test_unprotected_requests_and_non_shell_tools_keep_their_existing_behavior(tmp_path):
+    assert denial(tmp_path, "pip install scanpy", protected=False) is None
+    assert denial(tmp_path, "pip install scanpy", tool="Read") is None
