@@ -12,6 +12,14 @@
 - 미해결: 없음. 병합 뒤 인스턴스 재시작, 시운전 재제출.
 - 근거: `tests/test_research_bulk_pack.py::test_cso_spellings_of_pack_and_checklist_keys_reach_cp1_without_a_correction`, `::test_wrong_pack_key_correction_names_the_applied_pack_not_an_empty_snapshot`.
 
+## 2026-10-07 · #468 — 설치 명령 파서 fail closed
+
+- 결론: 두 번째 봇 리뷰 P1 두 건까지 고쳐 중첩 shell 판별 부류를 구조적으로 닫았다.
+- 바뀐 것: shell별 command option과 인자 소비를 구분하고, 실행 파일·subcommand·`-m` module·설치 목적지만 리터럴인지 검사한다. 일반 분석 인자의 변수 확장은 허용한다.
+- 실행한 것: 환경 파서 pytest 284 passed·1 skipped, Windows 전체 pytest 4594 passed·56 skipped, public 검사 통과.
+- 미해결: CI와 후속 봇 판단은 총괄이 이어받는다.
+- 근거: `labhq/environment_install.py`, `tests/test_environment_install.py`, `docs/manual.md`.
+
 ## 2026-10-07 · #467 — 재개한 요청이 재개 뒤 자기 호출을 다시 받지 않게 함
 
 - 결론: 재시작 뒤 재개된 요청은 재개 전에 보낸 task만 이어받는다. 재개 뒤 새로 보낸 같은 식별의 호출(clarify 답 뒤 재계획, A/B·교정 재계획)은 새로 돈다.
