@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · #488 — verify가 crate의 File을 MANIFEST status와 상관없이 검사하고 깊은 JSON을 문제로 적음 (#475)
+
+- 결론: PR #471 리뷰가 남긴 두 가지를 고쳤다. (1) 묶음 파일을 지우고 MANIFEST 행의 status만 `not copied: missing`으로 바꾸면 존재·hash 검사를 건너뛰어 `labhq verify`가 exit 0이었다. 이제 crate가 `File`로 선언한 경로는 status와 상관없이 검사하고, status가 crate 기록과 다르면 문제로 적는다. (2) 재귀 한도를 넘게 중첩된 `ro-crate-metadata.json`이 RecursionError traceback으로 끝났다. 이제 "nested too deeply" 문제 한 줄로 적는다.
+- 바뀐 것: `labhq/ro_crate.py`(`verify_bundle_copy`), `docs/manual.md` verify 절, `tests/test_request_bundle.py` 2건.
+- 실행한 것: 새 시험 2건이 기존 코드에서 실패(exit 0, RecursionError)하고 고친 뒤 통과. 전체 pytest(Windows) 4733 passed·59 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: MANIFEST·crate·payload를 모두 일관되게 고쳐 쓰면 여전히 알 수 없다. 서명이 없는 사본 검사의 한계다.
+- 근거: `tests/test_request_bundle.py::test_verify_checks_a_crate_file_whatever_its_manifest_status_says`, `::test_verify_reports_deeply_nested_crate_json_instead_of_crashing`.
+
 ## 2026-10-08 · #487 — 연구 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 교정 (#485)
 
 - 결론: v0.5 시운전 8차(req_7ccde78be0)에서 qc_data 판정 근거가 계획에 없는 `outputs/qc/data_qc_checks.json`을 인용했다. 이 파일은 수집되지 않아 CP2에서 거부됐고, claim은 unsupported가 됐다. 리뷰어도 같은 점을 P2로 짚었다. 이제 단계 결과 교정 루프에서 원장이 계약을 통과한 뒤 CP2와 같은 결속 검사를 한 번 돌린다. 거부될 근거가 있으면 수집 산출 목록을 주고 인용을 고치게 한다. 이 교정이 실패하거나, 수집 안 된 파일만 새로 쓰거나, 인용을 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 지금처럼 거부한다. 교정 질문은 단계당 한 번이다. 미보고 산출 목록에서 `__pycache__` 아래 파일은 뺀다(관찰 기록에는 남음).
