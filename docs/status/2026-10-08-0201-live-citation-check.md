@@ -2,18 +2,18 @@
 
 ## 결론
 
-세 번째이자 마지막 봇 리뷰의 P1·P2를 `ac20d6a`에서 고쳤다. 주 조회 결과와 CP2 당시 판정은 선택 보강·현재 재검증 실패 뒤에도 남는다.
+네 번째 봇 리뷰의 P1 두 건을 `3626ebd`에서 고쳤다. 미등록 출처와 현재 artifact hash를 `labhq verify`가 다시 정확히 판정한다.
 
 ## 바뀐 것
 
-- DOI는 Crossref, PMID는 PubMed ESummary, PMCID는 PMC ESummary를 먼저 조회한다.
-- alias·ID 변환·PubMed 보강 실패는 경고로 남기고, 확인한 존재·철회·정정 판정은 유지한다.
-- 감사 묶음은 CP2의 `source_verification`·구조화 report와 현재 재검증 결과를 따로 보존한다.
+- Crossref와 doi.org가 모두 404인 DOI는 PMID·PMCID 부재와 같이 `not_found` 결함이 된다.
+- 감사 재검증은 단계별 output scan의 `path → sha256`을 artifact 출처 검증에 넘긴다.
+- 관찰 hash가 인용 hash와 같으면 exit 0, 다르면 conflict와 exit 1이다.
 
 ## 실행한 것
 
-- 관련 pytest: 174 passed, 2 skipped.
-- Windows 전체 pytest: 4680 passed, 57 skipped.
+- 관련 pytest: 32 passed, 2 skipped.
+- Windows 전체 pytest: 4683 passed, 57 skipped.
 - `scripts/check_public.sh`, 패치노트·목차 검사 통과.
 
 ## 미해결
