@@ -3364,6 +3364,13 @@ class Orchestrator:
                 unsupported += [{"step_id": step["id"], "claim_id": claim.claim.split("@", 1)[0],
                                  "reason": "live source defect: " + "; ".join(claim.defects)}
                                 for claim in checked.claims if claim.state == "defective"]
+                for evidence_id, reason in zip(checked.recited_evidence, checked.recitations):
+                    refused.append({"step_id": step["id"], "evidence_id": evidence_id,
+                                    "reason": "live source defect: " + reason})
+                    unsupported += [
+                        {"step_id": step["id"], "claim_id": claim.claim.split("@", 1)[0],
+                         "reason": "live source defect: " + reason}
+                        for claim in checked.claims if evidence_id in claim.verified_evidence]
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
@@ -3389,12 +3396,20 @@ class Orchestrator:
             reuse_lines += [f"- reuse refused, re-ran {row['step_id']}: {row['reason']}"
                             for row in carried.get("refused_reuse") or []]
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
-        if recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]:
+        source_changed = (live_resolver is not None and bool(recorded.get("decision"))
+                          and recorded.get("plan_sha256") == contract["plan_sha256"]
+                          and list(recorded.get("source_verification") or []) != source_verification)
+        if source_changed:
+            detail["previous_source_verification"] = list(recorded.get("source_verification") or [])
+            summary = "Live source verification changed after the recorded CP2 decision. " + summary
+        if (recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]
+                and not source_changed):
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
             decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
             refused = recorded.get("refused_evidence") or []
             refused_rows = recorded.get("refused_rows") or []
             unsupported = recorded.get("unsupported_claims") or []
+            source_verification = recorded.get("source_verification") or source_verification
         else:
             cp2: str | None = None
             decision: dict[str, Any] = {}
@@ -3418,7 +3433,7 @@ class Orchestrator:
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                 **({"source_verification": source_verification,
-                    "source_verification_reports": source_reports} if source_verification else {}),
+                    "source_verification_reports": source_reports} if live_resolver is not None else {}),
                 **({"result_salvage": salvage} if salvage else {})}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)

@@ -258,8 +258,18 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                      for evidence_id in checked.defective_evidence]
         problems += [f"live source: {claim.claim} " + "; ".join(claim.defects)
                      for claim in checked.claims if claim.state == "defective"]
+        problems += [f"live source: {checked.step_id} 재인용 결함: {message}"
+                     for message in checked.recitations]
         reasons += [f"live source: {checked.step_id}/{evidence_id} requires_verification"
                     for evidence_id in checked.lookup_failures]
+        reasons += [f"live source: {checked.step_id}/{evidence.evidence_id} 검사 미완료 "
+                    f"({resolution.error_kind}: {resolution.detail})"
+                    for evidence in checked.evidence for resolution in evidence.resolutions
+                    if resolution.lookup == "skipped"]
+        reasons += [f"live source: {claim.claim} 검사 미완료"
+                    + (f" ({', '.join(claim.unverified_evidence)})" if claim.unverified_evidence else "")
+                    for claim in checked.claims if claim.state == "unverified"]
+    reasons = list(dict.fromkeys(reasons))
     request_bundle = None
     request_id = str(req.get("id") or "")
     if _SAFE_REQUEST_ID.fullmatch(request_id):

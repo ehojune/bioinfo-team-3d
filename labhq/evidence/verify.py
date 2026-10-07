@@ -61,6 +61,14 @@ class SourceUpdate(StrictModel):
     source: str | None = None
 
 
+class EnrichmentFailure(StrictModel):
+    """An optional alias/update lookup that failed after the cited record was found."""
+
+    stage: Literal["ncbi_id_converter", "pubmed_summary"]
+    error_kind: str
+    detail: str = ""
+
+
 class SourceRecord(StrictModel):
     id_scheme: str
     id_value: str
@@ -71,6 +79,7 @@ class SourceRecord(StrictModel):
     # cannot know a DOI row and a PMID row are one paper; the verifier reads it here (#168).
     same_as: list[RecordId] = []
     updates: list[SourceUpdate] = []
+    enrichment_failures: list[EnrichmentFailure] = []
 
 
 class Resolution(StrictModel):
@@ -232,12 +241,22 @@ class LiveSourceResolver:
             id_scheme="doi", id_value=str(message.get("DOI") or doi),
             title=_first_text(message.get("title")), url=str(message.get("URL") or f"https://doi.org/{doi}"),
             updates=_crossref_updates(message))
-        mapping = await self._id_converter(client, doi)
+        try:
+            mapping = await self._id_converter(client, doi)
+        except LookupFailed as error:
+            record.enrichment_failures.append(EnrichmentFailure(
+                stage="ncbi_id_converter", error_kind=error.kind, detail=error.detail))
+            return [record]
         if mapping:
             record.same_as = _record_ids(mapping, exclude=("doi", doi))
             pmid = mapping.get("pmid")
             if pmid:
-                summary = await self._pubmed_summary(client, str(pmid))
+                try:
+                    summary = await self._pubmed_summary(client, str(pmid))
+                except LookupFailed as error:
+                    record.enrichment_failures.append(EnrichmentFailure(
+                        stage="pubmed_summary", error_kind=error.kind, detail=error.detail))
+                    return [record]
                 if summary:
                     record.same_as = _dedupe_ids([*record.same_as, *_summary_ids(summary)], ("doi", doi))
                     record.updates = _dedupe_updates([*record.updates, *_pubmed_updates(summary)])
@@ -287,8 +306,12 @@ class LiveSourceResolver:
         _require_success(response)
         payload = _json_object(response)
         result = payload.get("result")
-        row = result.get(pmid) if isinstance(result, Mapping) else None
-        return row if isinstance(row, Mapping) and not row.get("error") else None
+        if not isinstance(result, Mapping):
+            raise LookupFailed("invalid_response", "PubMed response has no result object")
+        row = result.get(pmid)
+        if not isinstance(row, Mapping):
+            raise LookupFailed("invalid_response", f"PubMed response has no requested PMID {pmid}")
+        return None if row.get("error") else row
 
 
 def _retry_after(value: str | None) -> float:
@@ -440,6 +463,7 @@ class VerificationReport(StrictModel):
     warnings: list[str] = []
     # R05 across schemes: rows the authority maps to one work but that declare different independence groups.
     recitations: list[str] = []
+    recited_evidence: list[str] = []  # duplicate rows refused at CP2, in the order of ``recitations``
     ok: bool
 
 
@@ -605,6 +629,16 @@ def source_update_findings(record: SourceRecord | None) -> tuple[list[str], list
     return list(dict.fromkeys(defects)), list(dict.fromkeys(warnings))
 
 
+def source_record_findings(record: SourceRecord | None) -> tuple[list[str], list[str]]:
+    """Defects from the primary record plus warnings for optional enrichment that did not complete."""
+    defects, warnings = source_update_findings(record)
+    if record is not None:
+        warnings += [f"enrichment_unverified={failure.stage}:{failure.error_kind}"
+                     + (f": {failure.detail}" if failure.detail else "")
+                     for failure in record.enrichment_failures]
+    return defects, list(dict.fromkeys(warnings))
+
+
 def _resolve_artifact(artifact_id: str, cited_sha256: str | None, artifact_paths: Mapping[str, str],
                       observed: Mapping[str, set[str]] | None) -> Resolution:
     path = artifact_paths.get(artifact_id, "")
@@ -753,7 +787,7 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         defects: list[str] = []
         warnings: list[str] = []
         for resolution in resolutions:
-            found_defects, found_warnings = source_update_findings(resolution.record)
+            found_defects, found_warnings = source_record_findings(resolution.record)
             defects += found_defects
             warnings += found_warnings
         checks[row.id] = EvidenceCheck(evidence_id=row.id, source_location=row.source.locator,
@@ -797,7 +831,7 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
 
     defective = [eid for eid, check in checks.items()
                  if check.resolution.status in DEFECT_STATUSES or check.source_defects]
-    recitations = _recitations(result, checks, artifact_paths)
+    recitations, recited_evidence = _recitations(result, checks, artifact_paths)
     return VerificationReport(
         plan_sha256=result.plan_sha256, step_id=result.step_id,
         resolver=resolver.name if resolver else "none",
@@ -806,7 +840,7 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
                          if any(r.lookup == "failed" for r in check.resolutions)],
         defective_evidence=defective,
         warnings=[f"{eid}: {warning}" for eid, check in checks.items() for warning in check.source_warnings],
-        recitations=recitations,
+        recitations=recitations, recited_evidence=recited_evidence,
         ok=not defective and not recitations
         and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
 
@@ -817,17 +851,18 @@ def verification_lines(report: VerificationReport) -> list[str]:
     for check in report.evidence:
         for resolution in check.resolutions:
             findings = []
-            defects, warnings = source_update_findings(resolution.record)
+            defects, warnings = source_record_findings(resolution.record)
             findings += [f"defect={value}" for value in defects]
             findings += [f"warning={value}" for value in warnings]
             suffix = f"; {'; '.join(findings)}" if findings else ""
             lines.append(f"{report.step_id}/{check.evidence_id}: {resolution.id_scheme}:"
                          f"{resolution.id_value} {resolution.status}{suffix}")
+    lines += [f"{report.step_id}/independence: recitation={message}" for message in report.recitations]
     return lines
 
 
 def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
-                 artifact_paths: Mapping[str, str]) -> list[str]:
+                 artifact_paths: Mapping[str, str]) -> tuple[list[str], list[str]]:
     """The ledger's re-citation rule with the identifiers the authority added (#168).
 
     The ledger keys each row by the spellings it writes (``SourceRef.identities``) and already rejects two
@@ -835,6 +870,7 @@ def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
     one paper share a key here. Only found records count: an unchecked row keeps the keys it wrote.
     """
     errors: list[str] = []
+    duplicate_rows: list[str] = []
     first: dict[str, tuple[str, str]] = {}
     for row in result.evidence:
         if not (row.countable and row.source and row.independence_group):
@@ -853,5 +889,6 @@ def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
                 errors.append(f"evidence {seen[0]} and {row.id} cite one source ({key}, per the resolver) but "
                               f"declare independence groups {seen[1]} and {row.independence_group}; re-citation "
                               "is not independent")
+                duplicate_rows.append(row.id)
                 break
-    return errors
+    return errors, duplicate_rows

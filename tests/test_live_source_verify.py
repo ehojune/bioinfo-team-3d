@@ -7,10 +7,11 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import httpx
+import pytest
 
 from labhq.evidence.audit import render_verify, verify_request
-from labhq.evidence.verify import (LiveSourceResolver, SourceRecord, SourceUpdate, StaticResolver,
-                                   verify_sources)
+from labhq.evidence.verify import (LiveSourceResolver, LookupFailed, SourceRecord, SourceUpdate,
+                                   StaticResolver, verify_sources)
 from labhq.settings import Settings
 from tests.test_evidence_verify import build, by_claim, claim, link, row
 
@@ -169,6 +170,41 @@ def test_pubmed_error_record_is_not_found():
     assert by_claim(report)["c1@1"].state == "defective"
 
 
+@pytest.mark.parametrize("missing", ["result", "requested_row"])
+def test_incomplete_pubmed_response_is_invalid_not_not_found(missing):
+    def handle(request):
+        if "idconv" in request.url.path:
+            return idconv_missing(request)
+        payload = copy.deepcopy(fixture("pubmed_normal.json"))
+        if missing == "result":
+            payload.pop("result")
+        else:
+            payload["result"].pop("23193287")
+        return httpx.Response(200, request=request, json=payload)
+
+    with pytest.raises(LookupFailed, match="result object|requested PMID 23193287") as caught:
+        asyncio.run(resolver(handle).lookup("pmid", "23193287"))
+    assert caught.value.kind == "invalid_response"
+
+
+def test_crossref_retraction_survives_optional_ncbi_enrichment_timeout():
+    scenario = fixture("scenarios.json")
+
+    def handle(request):
+        if request.url.host == "api.crossref.org":
+            return httpx.Response(200, request=request, json=fixture("crossref_retracted.json"))
+        assert "idconv" in request.url.path and scenario["timeout"]["exception"] == "httpx.ReadTimeout"
+        raise httpx.ReadTimeout("recorded timeout", request=request)
+
+    report = verify_doi("10.1021/am300292v", resolver(handle))
+    resolution = report.evidence[0].resolution
+    assert resolution.status == "found" and resolution.record is not None
+    assert report.evidence[0].source_defects == ["retracted_by doi:10.1021/acsami.9b11759"]
+    assert resolution.record.enrichment_failures[0].stage == "ncbi_id_converter"
+    assert resolution.record.enrichment_failures[0].error_kind == "timeout"
+    assert any("enrichment_unverified=ncbi_id_converter:timeout" in warning for warning in report.warnings)
+
+
 def test_labhq_verify_calls_live_checks_only_when_enabled(tmp_path, monkeypatch):
     result = build([claim("c1")], [row("e1", "doi", "10.1021/am300292v")], [link("c1", "e1")])
     request = {"id": "req_live", "text": "check", "status": "done", "outcome": "research_reported",
@@ -192,3 +228,53 @@ def test_labhq_verify_calls_live_checks_only_when_enabled(tmp_path, monkeypatch)
     assert checked["exit_code"] == 1 and any("live source" in problem for problem in checked["problems"])
     rendered = render_verify(checked)
     assert "Live source verification:" in rendered and "defect=retracted_by" in rendered
+
+
+def test_labhq_verify_fails_for_skipped_live_source_and_shows_incomplete_check(tmp_path, monkeypatch):
+    result = build([claim("c1")], [row("e1", "geo", "GSE79973")], [link("c1", "e1")])
+    request = {"id": "req_skipped", "text": "check", "status": "done", "outcome": "research_reported",
+               "plan": {"steps": [{"id": "s1"}]},
+               "research_contract": {"plan_sha256": "b" * 64},
+               "results": {"s1": {"structured": result.model_dump(mode="json")}}}
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path)
+    settings.research.live_source_check = True
+    fixed = StaticResolver(schemes={"doi", "pmid", "pmcid"})
+    monkeypatch.setattr("labhq.evidence.verify.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    checked = verify_request(request, settings)
+
+    assert checked["exit_code"] == 2
+    assert any("검사 미완료" in reason and "unsupported_scheme" in reason for reason in checked["reasons"])
+    rendered = render_verify(checked)
+    assert "geo:GSE79973 requires_verification" in rendered and "확인 못함:" in rendered
+
+
+def test_labhq_verify_reports_cross_scheme_recitation_as_a_problem(tmp_path, monkeypatch):
+    doi = "10.1145/3065386"
+    pmid = "28937623"
+    result = build(
+        [claim("c1")],
+        [row("e1", "doi", doi, kind="literature_claim", group="paper_a"),
+         row("e2", "pmid", pmid, kind="literature_claim", group="paper_b")],
+        [link("c1", "e1"), link("c1", "e2")])
+    request = {"id": "req_recitation", "text": "check", "status": "done", "outcome": "research_reported",
+               "plan": {"steps": [{"id": "s1"}]},
+               "research_contract": {"plan_sha256": "b" * 64},
+               "results": {"s1": {"structured": result.model_dump(mode="json")}}}
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path)
+    settings.research.live_source_check = True
+    fixed = StaticResolver({
+        ("doi", doi): [SourceRecord(id_scheme="doi", id_value=doi,
+                                    same_as=[{"id_scheme": "pmid", "id_value": pmid}])],
+        ("pmid", pmid): [SourceRecord(id_scheme="pmid", id_value=pmid,
+                                      same_as=[{"id_scheme": "doi", "id_value": doi}])],
+    })
+    monkeypatch.setattr("labhq.evidence.verify.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    checked = verify_request(request, settings)
+
+    assert checked["exit_code"] == 1
+    assert any("재인용" in problem for problem in checked["problems"])
+    assert "recitation=" in render_verify(checked)
