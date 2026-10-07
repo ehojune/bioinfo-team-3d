@@ -17,7 +17,6 @@ from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
 from .settings import SCHEDULER_JOB_COMMANDS, PolicySettings
-from .environment_install import installation_capable_shell_rule
 
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -994,10 +993,13 @@ def claude_allowed_tools(tools: Iterable[str], write_roots: Iterable[str | os.Pa
     resolves real paths. Probed on Claude 2.1.282 (tests/fixtures/real/claude_code/claude_read_scope_alias.json):
     bare `Read` read a junction from the workdir into another folder, `Read(//workdir/**)` sent it to the
     permission prompt, and the same rule still pre-approved Grep and Glob inside the workdir.
+
+    Shared environments also leave every shell call to the gate: `Bash(ls *)` matches a following install
+    joined with `&&`, so narrowing only installer prefixes still skips the installation check.
     """
     tools = list(tools)
     if shared_environment_gate:
-        tools = [tool for tool in tools if not installation_capable_shell_rule(tool)]
+        tools = [tool for tool in tools if rule_tool(tool) not in SHELL_TOOLS]
     read_rules: list[str] = []
     if read_roots is not None:
         if any(rule_tool(t) in READ_LIKE for t in tools):

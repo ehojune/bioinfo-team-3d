@@ -102,6 +102,14 @@ async def test_environment_owner_flag_still_rejects_an_unscoped_install(tmp_path
     assert "own workspace" in decision["message"]
 
 
+@pytest.mark.parametrize("command", ["command pip install scanpy", "env pip install scanpy",
+                                     "if true; then pip install scanpy; fi"])
+async def test_environment_owner_wrapped_install_reaches_the_same_gate(tmp_path, command):
+    decision = await _install_gate(tmp_path, command, environment_step=True)
+    assert decision["behavior"] == "deny"
+    assert "own workspace" in decision["message"]
+
+
 async def test_environment_step_and_task_local_package_installs_are_allowed(tmp_path):
     shared = await _install_gate(
         tmp_path / "env", "./.venv/bin/python -m pip install --only-binary=:all: scanpy",
