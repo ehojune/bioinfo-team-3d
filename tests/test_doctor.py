@@ -342,6 +342,24 @@ def test_local_software_summary_is_platform_neutral_and_does_not_expose_paths(mo
     assert "private-user" not in json.dumps(summary)
 
 
+def test_an_interpreter_that_does_not_answer_its_version_gets_no_package_probes(monkeypatch):
+    """2026-10-08: the Store `python3` alias hung every call; eight import probes after a failed `--version` would
+    cost their full timeouts before the runner connects (PR #486 review)."""
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    calls = []
+
+    def probe(argv, env, timeout=5):
+        calls.append(argv)
+        return None, ""
+
+    monkeypatch.setattr(doctor, "_probe", probe)
+    summary = doctor.local_software_summary("/alias/python3")
+
+    assert calls == [["/alias/python3", "--version"]]
+    assert summary["python"] == {"version": "unreported",
+                                 "packages": {name: False for name in doctor.LOCAL_PYTHON_PACKAGES}}
+
+
 def test_staff_python_is_the_path_interpreter_not_labhqs_own(monkeypatch):
     """2026-10-04 T3 rerun: the runner summarized labhq's venv (no pandas) and the CSO asked to install pandas,
     while staff shells ran the PATH Python 3.12 that has it."""

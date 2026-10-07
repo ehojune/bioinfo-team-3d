@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import threading
@@ -35,7 +36,9 @@ def _run_probe(argv: list[str], env: dict[str, str], timeout: float) -> tuple[in
     """Output goes to temporary files, not pipes, so nothing waits for a pipe another process still holds."""
     try:
         with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-            proc = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+            # On POSIX the probe leads its own process group, so a timeout ends whatever it started too.
+            proc = subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                    **({} if os.name == "nt" else {"start_new_session": True}))
             try:
                 code = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -50,13 +53,18 @@ def _run_probe(argv: list[str], env: dict[str, str], timeout: float) -> tuple[in
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
-    """End a timed-out probe and, on Windows, whatever it started; every wait here is bounded."""
+    """End a timed-out probe and whatever it started; every wait here is bounded."""
     if os.name == "nt":
         try:
             killer = subprocess.Popen(["taskkill", "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             killer.wait(timeout=_KILL_GRACE)
         except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
             pass
     try:
         proc.kill()

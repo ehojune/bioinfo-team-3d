@@ -1,6 +1,9 @@
+import os
 import sys
 import threading
 import time
+
+import pytest
 
 from labhq.runner import versions
 from labhq.runner.versions import _probe
@@ -19,6 +22,25 @@ def test_a_probe_that_hangs_with_a_grandchild_returns_at_the_timeout():
     code, raw = _probe([sys.executable, "-c", HANGER], {}, timeout=1)
     assert (code, raw) == (None, "")
     assert time.monotonic() - started < 1 + versions._JOIN_SLACK + 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups; Windows ends the tree with taskkill /T")
+def test_a_timed_out_probe_ends_the_grandchild_it_started(tmp_path):
+    marker = tmp_path / "grandchild.pid"
+    script = ("import subprocess, sys, time\n"
+              "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+              f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+              "time.sleep(30)\n")
+    assert _probe([sys.executable, "-c", script], {}, timeout=1) == (None, "")
+    pid = int(marker.read_text())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"grandchild {pid} still runs after the probe timed out")
 
 
 def test_a_probe_returns_even_when_ending_the_child_never_returns(monkeypatch):
