@@ -22,6 +22,7 @@ from ..costs import cost_detail, format_cost, task_cost_item
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
                                      failed_lookups)
+from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
 from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
@@ -3317,6 +3318,13 @@ class Orchestrator:
         unsupported: list[dict[str, str]] = []
         artifact_sha256: dict[str, str | None] = {}
         unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
+        source_verification: list[str] = []
+        source_reports: list[dict[str, Any]] = []
+        live_resolver = None
+        if self.hub.s.research.live_source_check:
+            live_resolver = LiveSourceResolver(
+                contact=self.hub.s.research.live_source_contact,
+                request_timeout_s=self.hub.s.research.live_source_timeout_s)
         for step in steps:
             result = results[step["id"]]
             salvaged = (contract.get("result_salvage") or {}).get(step["id"]) or {}
@@ -3339,6 +3347,23 @@ class Orchestrator:
             unsupported += [{"step_id": step["id"], **row} for row in bound["unsupported_claims"]]
             artifact_sha256.update({f"{step['id']}/{artifact_id}": value
                                     for artifact_id, value in bound["artifact_sha256"].items()})
+            if live_resolver is not None:
+                parsed = validate_research_result(result.structured, plan=req["plan"])
+                checked = await verify_sources(
+                    parsed, live_resolver,
+                    timeout_s=self.hub.s.research.live_source_timeout_s,
+                    deadline_s=self.hub.s.research.live_source_deadline_s)
+                source_reports.append(checked.model_dump(mode="json"))
+                source_verification += verification_lines(checked)
+                for evidence_id in checked.defective_evidence:
+                    evidence_check = next(item for item in checked.evidence if item.evidence_id == evidence_id)
+                    reason = (", ".join(evidence_check.source_defects) or
+                              f"{evidence_check.resolution.status}: {evidence_check.resolution.detail}")
+                    refused.append({"step_id": step["id"], "evidence_id": evidence_id,
+                                    "reason": "live source defect: " + reason})
+                unsupported += [{"step_id": step["id"], "claim_id": claim.claim.split("@", 1)[0],
+                                 "reason": "live source defect: " + "; ".join(claim.defects)}
+                                for claim in checked.claims if claim.state == "defective"]
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
         summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
@@ -3349,6 +3374,7 @@ class Orchestrator:
                    **({"refused_rows": refused_rows} if refused_rows else {}),
                    **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
+                  **({"source_verification": source_verification} if source_verification else {}),
                   "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
                   "results": ledgers}
         carried = contract.get("continuation") or {}
@@ -3391,6 +3417,8 @@ class Orchestrator:
                 **({"refused_rows": refused_rows} if refused_rows else {}),
                 "refused_evidence": refused, "unsupported_claims": unsupported,
                 "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                **({"source_verification": source_verification,
+                    "source_verification_reports": source_reports} if source_verification else {}),
                 **({"result_salvage": salvage} if salvage else {})}
         req["outcome"] = f"evidence_{decided}"
         self.hub.save_request(rid)
@@ -3404,6 +3432,9 @@ class Orchestrator:
         if unsupported:
             audit += "\nUnsupported claims:\n" + "\n".join(
                 f"- {row['step_id']}/{row['claim_id']}: {row['reason']}" for row in unsupported)
+        source_audit = (("Live source verification:\n" +
+                         "\n".join(f"- {line}" for line in source_verification))
+                        if source_verification else "")
         if reuse_lines:
             audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
@@ -3416,13 +3447,16 @@ class Orchestrator:
         reviewer = self.cfg.reviewer_agent
         if decided == "approved" and reviewer and reviewer in self.hub.agents:
             receipt = contract["checkpoints"]["cp2"]
-            await self._research_report(rid, text, steps, results, n, serialized, packs, report, audit, ledgers,
+            review_audit = audit + (("\n" + source_audit) if source_audit else "")
+            await self._research_report(rid, text, steps, results, n, serialized, packs, report, review_audit, ledgers,
                                         refused=refused, unsupported=unsupported,
                                         artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256)
             return
         if decided == "approved":
             report += ("\nNo reviewer agent is configured (orchestrator.reviewer_agent), so the research review and "
                        "report did not run.")
+        if source_audit:
+            report = _append_report_metadata(report, [source_audit])
         self._finish(rid, report, serialized(), ok=decided == "approved")
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,

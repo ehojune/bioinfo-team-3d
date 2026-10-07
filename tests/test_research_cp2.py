@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
@@ -73,6 +74,53 @@ def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
 
     hub.request_approval = approval
     return hub
+
+
+@pytest.mark.asyncio
+async def test_live_source_check_marks_retracted_claim_in_card_and_appendix(monkeypatch):
+    settings = _settings()
+    settings.research.live_source_check = True
+    hub = _research_hub(settings, [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    original_reply = hub.reply
+
+    async def reply_with_doi(task):
+        response = await original_reply(task)
+        if task.meta["kind"] == "step" and response.ok:
+            response.structured["evidence"][0]["source"].update(
+                {"id_scheme": "doi", "id_value": "10.1021/am300292v", "accessed_at": "2026-10-08"})
+        return response
+
+    hub.reply = reply_with_doi
+    fixed = StaticResolver({("doi", "10.1021/am300292v"): [SourceRecord(
+        id_scheme="doi", id_value="10.1021/am300292v",
+        updates=[SourceUpdate(direction="updated_by", update_type="retraction",
+                              related={"id_scheme": "doi", "id_value": "10.1021/acsami.9b11759"})])]})
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", lambda **_kwargs: fixed)
+
+    await Orchestrator(hub).run_request("r")
+
+    assert len(hub.approvals) == 2, {key: hub.requests["r"].get(key)
+                                     for key in ("outcome", "error", "report", "report_appendix")}
+    card = hub.approvals[1]["detail"]
+    assert card["source_verification"] == [
+        "s1/e1: doi:10.1021/am300292v found; defect=retracted_by doi:10.1021/acsami.9b11759",
+        "s1/e1: artifact:a1 requires_verification"]
+    assert any(row["claim_id"] == "c1" and "retracted_by" in row["reason"]
+               for row in card["unsupported_claims"])
+    appendix = hub.requests["r"]["report_appendix"]
+    assert "Live source verification:" in appendix and "defect=retracted_by" in appendix
+
+
+@pytest.mark.asyncio
+async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+
+    def forbidden(**_kwargs):
+        raise AssertionError("live resolver must stay off")
+
+    monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", forbidden)
+    await Orchestrator(hub).run_request("r")
+    assert "source_verification" not in hub.approvals[1]["detail"]
 
 
 # ---------- P1: artifact_refs bind to collected files ----------

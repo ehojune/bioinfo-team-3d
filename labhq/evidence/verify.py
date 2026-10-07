@@ -6,9 +6,8 @@ timeout, or disabled lookup is ``requires_verification`` and never ``not_found``
 is neither evidence nor proof of absence. Resolving an ID also says nothing about whether the
 source supports the sentence; that stays with the reviewer (``support_review``).
 
-Live network resolvers are not part of this PR. ``resolver=None`` means live lookup is off. Lookups run
-concurrently under a cap and a report deadline, so a slow authority leaves sources unverified instead of
-holding the report for minutes (#116).
+``resolver=None`` means live lookup is off. Lookups run concurrently under a cap and a report deadline, so a
+slow authority leaves sources unverified instead of holding the report for minutes (#116, #422).
 """
 
 from __future__ import annotations
@@ -16,9 +15,12 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Literal, Protocol
+from urllib.parse import quote
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .claims import (  # noqa: F401 - ID_FORMATS stays importable from here
@@ -45,6 +47,20 @@ class RecordId(StrictModel):
     id_value: str
 
 
+class SourceUpdate(StrictModel):
+    """A post-publication update as seen from the cited record.
+
+    Crossref calls the original paper's direction ``updated-by`` and the notice's direction ``update-to``.
+    Keeping that direction prevents a retraction notice from being mistaken for a retracted research paper.
+    """
+
+    direction: Literal["updated_by", "update_to"]
+    update_type: str
+    related: RecordId | None = None
+    label: str | None = None
+    source: str | None = None
+
+
 class SourceRecord(StrictModel):
     id_scheme: str
     id_value: str
@@ -54,6 +70,7 @@ class SourceRecord(StrictModel):
     # The authority's own mapping to the same work under other schemes (DOI <-> PMID <-> PMCID). The ledger
     # cannot know a DOI row and a PMID row are one paper; the verifier reads it here (#168).
     same_as: list[RecordId] = []
+    updates: list[SourceUpdate] = []
 
 
 class Resolution(StrictModel):
@@ -133,11 +150,271 @@ class StaticResolver:
         return list(self.records.get(key, []))
 
 
+RETRYABLE_HTTP = frozenset({429, 500, 502, 503, 504})
+
+
+class LiveSourceResolver:
+    """Crossref/DOI and NCBI resolver. Each call is bounded and failures are never absence.
+
+    The optional transport and sleeper are seams for recorded-response tests; production uses httpx's network
+    transport and ``asyncio.sleep``. Only the status codes in ``RETRYABLE_HTTP`` are retried.
+    """
+
+    name = "crossref-ncbi"
+
+    def __init__(self, *, contact: str = "", request_timeout_s: float = 10.0, max_retries: int = 2,
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+        self.contact = contact.strip()
+        self.request_timeout_s = request_timeout_s
+        self.max_retries = max_retries
+        self.transport = transport
+        self.sleep = sleep
+
+    def supports(self, scheme: str) -> bool:
+        return scheme in {"doi", "pmid", "pmcid"}
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        agent = "labhq-source-verifier/1.0"
+        if self.contact:
+            agent += f" (mailto:{self.contact})"
+        return {"User-Agent": agent, "Accept": "application/json"}
+
+    def _params(self, **values: str) -> dict[str, str]:
+        params = {key: value for key, value in values.items() if value}
+        if self.contact:
+            params["email"] = self.contact
+        return params
+
+    async def lookup(self, scheme: str, value: str) -> list[SourceRecord]:
+        if not self.supports(scheme):
+            raise LookupFailed("resolver_error", f"unsupported source scheme {scheme}")
+        async with httpx.AsyncClient(timeout=self.request_timeout_s, headers=self._headers,
+                                     follow_redirects=False, transport=self.transport) as client:
+            if scheme == "doi":
+                return await self._lookup_doi(client, normalize_id(scheme, value))
+            return await self._lookup_ncbi(client, scheme, normalize_id(scheme, value))
+
+    async def _request(self, client: httpx.AsyncClient, method: str, url: str, **kwargs: object) -> httpx.Response:
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await client.request(method, url, **kwargs)
+            except httpx.TimeoutException as error:
+                raise LookupFailed("timeout", f"{method} {url} timed out") from error
+            except httpx.HTTPError as error:
+                raise LookupFailed("network", f"{method} {url} failed: {type(error).__name__}") from error
+            if response.status_code not in RETRYABLE_HTTP:
+                return response
+            if attempt == self.max_retries:
+                kind = "rate_limited" if response.status_code == 429 else "server"
+                raise LookupFailed(kind, f"{method} {url} returned HTTP {response.status_code}")
+            await self.sleep(_retry_after(response.headers.get("Retry-After")))
+        raise AssertionError("retry loop did not return")
+
+    async def _lookup_doi(self, client: httpx.AsyncClient, doi: str) -> list[SourceRecord]:
+        response = await self._request(client, "GET", f"https://api.crossref.org/works/{quote(doi, safe='')}",
+                                       params=self._params(mailto=self.contact))
+        message: Mapping[str, object] = {}
+        if response.status_code == 404:
+            fallback = await self._request(client, "HEAD", f"https://doi.org/{quote(doi, safe='/')}")
+            if fallback.status_code == 404:
+                return []
+            _require_success(fallback)
+        else:
+            _require_success(response)
+            payload = _json_object(response)
+            raw_message = payload.get("message")
+            if not isinstance(raw_message, Mapping):
+                raise LookupFailed("invalid_response", "Crossref response has no message object")
+            message = raw_message
+        record = SourceRecord(
+            id_scheme="doi", id_value=str(message.get("DOI") or doi),
+            title=_first_text(message.get("title")), url=str(message.get("URL") or f"https://doi.org/{doi}"),
+            updates=_crossref_updates(message))
+        mapping = await self._id_converter(client, doi)
+        if mapping:
+            record.same_as = _record_ids(mapping, exclude=("doi", doi))
+            pmid = mapping.get("pmid")
+            if pmid:
+                summary = await self._pubmed_summary(client, str(pmid))
+                if summary:
+                    record.same_as = _dedupe_ids([*record.same_as, *_summary_ids(summary)], ("doi", doi))
+                    record.updates = _dedupe_updates([*record.updates, *_pubmed_updates(summary)])
+                    record.title = record.title or _first_text(summary.get("title"))
+        return [record]
+
+    async def _lookup_ncbi(self, client: httpx.AsyncClient, scheme: str, value: str) -> list[SourceRecord]:
+        mapping = await self._id_converter(client, value)
+        if scheme == "pmcid" and not mapping:
+            return []
+        pmid = value if scheme == "pmid" else str((mapping or {}).get("pmid") or "")
+        summary = await self._pubmed_summary(client, pmid) if pmid else None
+        if scheme == "pmid" and summary is None:
+            return []
+        if mapping is None:
+            mapping = {"pmid": value}
+        if summary:
+            for alias in _summary_ids(summary):
+                mapping.setdefault(alias.id_scheme, alias.id_value)
+        record = SourceRecord(
+            id_scheme=scheme, id_value=value,
+            title=_first_text(summary.get("title")) if summary else None,
+            url=(f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else
+                 f"https://pmc.ncbi.nlm.nih.gov/articles/{value}/"),
+            same_as=_record_ids(mapping, exclude=(scheme, value)),
+            updates=_pubmed_updates(summary or {}))
+        return [record]
+
+    async def _id_converter(self, client: httpx.AsyncClient, value: str) -> dict[str, str] | None:
+        response = await self._request(
+            client, "GET", "https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/",
+            params=self._params(ids=value, format="json", tool="labhq"))
+        _require_success(response)
+        payload = _json_object(response)
+        records = payload.get("records")
+        if not isinstance(records, list) or not records or not isinstance(records[0], Mapping):
+            raise LookupFailed("invalid_response", "PMC ID Converter response has no records list")
+        row = records[0]
+        if row.get("errmsg"):
+            return None
+        return {key: str(row[key]) for key in ("doi", "pmid", "pmcid") if row.get(key) is not None}
+
+    async def _pubmed_summary(self, client: httpx.AsyncClient, pmid: str) -> Mapping[str, object] | None:
+        response = await self._request(
+            client, "GET", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+            params=self._params(db="pubmed", id=pmid, retmode="json", tool="labhq"))
+        _require_success(response)
+        payload = _json_object(response)
+        result = payload.get("result")
+        row = result.get(pmid) if isinstance(result, Mapping) else None
+        return row if isinstance(row, Mapping) and not row.get("error") else None
+
+
+def _retry_after(value: str | None) -> float:
+    if not value:
+        return 1.0
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+        except (TypeError, ValueError, OverflowError):
+            return 1.0
+
+
+def _require_success(response: httpx.Response) -> None:
+    if 200 <= response.status_code < 400:
+        return
+    if response.status_code in {401, 403}:
+        detail = f"{response.request.method} {response.request.url} returned HTTP {response.status_code}"
+        raise LookupFailed("auth", detail)
+    raise LookupFailed("invalid_response",
+                       f"{response.request.method} {response.request.url} returned HTTP {response.status_code}")
+
+
+def _json_object(response: httpx.Response) -> Mapping[str, object]:
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise LookupFailed("invalid_response", f"{response.request.url} returned invalid JSON") from error
+    if not isinstance(payload, Mapping):
+        raise LookupFailed("invalid_response", f"{response.request.url} returned non-object JSON")
+    return payload
+
+
+def _first_text(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and value and isinstance(value[0], str):
+        return value[0]
+    return None
+
+
+def _crossref_updates(message: Mapping[str, object]) -> list[SourceUpdate]:
+    updates: list[SourceUpdate] = []
+    for field, direction in (("updated-by", "updated_by"), ("update-to", "update_to")):
+        raw = message.get(field)
+        rows = raw if isinstance(raw, list) else [raw] if isinstance(raw, Mapping) else []
+        for row in rows:
+            if not isinstance(row, Mapping) or not row.get("type"):
+                continue
+            related = RecordId(id_scheme="doi", id_value=str(row["DOI"])) if row.get("DOI") else None
+            updates.append(SourceUpdate(direction=direction, update_type=str(row["type"]).casefold(),
+                                        related=related, label=str(row["label"]) if row.get("label") else None,
+                                        source=str(row["source"]) if row.get("source") else "crossref"))
+    return updates
+
+
+def _summary_ids(summary: Mapping[str, object]) -> list[RecordId]:
+    names = {"doi": "doi", "pubmed": "pmid", "pmc": "pmcid"}
+    rows = summary.get("articleids")
+    return [RecordId(id_scheme=names[str(row["idtype"])], id_value=str(row["value"]))
+            for row in rows if isinstance(row, Mapping) and row.get("idtype") in names and row.get("value")] \
+        if isinstance(rows, list) else []
+
+
+def _pubmed_updates(summary: Mapping[str, object]) -> list[SourceUpdate]:
+    types = {str(value).casefold() for value in summary.get("pubtype", []) if isinstance(value, str)} \
+        if isinstance(summary.get("pubtype"), list) else set()
+    direction: Literal["updated_by", "update_to"] | None = None
+    if "retracted publication" in types:
+        direction = "updated_by"
+    elif types & {"retraction of publication", "retraction notice"}:
+        direction = "update_to"
+    if direction is None:
+        return []
+    related: RecordId | None = None
+    references = summary.get("references")
+    expected = "retraction in" if direction == "updated_by" else "retraction of"
+    for row in references if isinstance(references, list) else []:
+        if not isinstance(row, Mapping) or str(row.get("reftype") or "").casefold() != expected:
+            continue
+        if row.get("pmid"):
+            related = RecordId(id_scheme="pmid", id_value=str(row["pmid"]))
+        match = re.search(r"\bdoi:\s*(10\.\S+)", str(row.get("refsource") or ""), re.IGNORECASE)
+        if match:
+            related = RecordId(id_scheme="doi", id_value=match.group(1).rstrip(".,;"))
+        break
+    return [SourceUpdate(direction=direction, update_type="retraction", related=related, source="pubmed")]
+
+
+def _record_ids(mapping: Mapping[str, str], *, exclude: tuple[str, str]) -> list[RecordId]:
+    return _dedupe_ids([RecordId(id_scheme=key, id_value=value) for key, value in mapping.items()
+                        if key in {"doi", "pmid", "pmcid"}], exclude)
+
+
+def _dedupe_ids(values: Iterable[RecordId], exclude: tuple[str, str]) -> list[RecordId]:
+    seen = {(exclude[0], normalize_id(*exclude))}
+    result: list[RecordId] = []
+    for value in values:
+        key = (value.id_scheme, normalize_id(value.id_scheme, value.id_value))
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+def _dedupe_updates(values: Iterable[SourceUpdate]) -> list[SourceUpdate]:
+    result: list[SourceUpdate] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for value in values:
+        related = value.related
+        key = (value.direction, value.update_type, related.id_scheme if related else "",
+               normalize_id(related.id_scheme, related.id_value) if related else "")
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
 class EvidenceCheck(StrictModel):
     evidence_id: str
     source_location: str | None  # where in the source the observation sits
     resolution: Resolution  # the worst of ``resolutions``: defect, then unverified, then found
     resolutions: list[Resolution]  # one per identifier the source carries (external ID or URI, artifact)
+    source_defects: list[str] = []
+    source_warnings: list[str] = []
 
 
 class ClaimCheck(StrictModel):
@@ -160,6 +437,7 @@ class VerificationReport(StrictModel):
     claims: list[ClaimCheck]
     lookup_failures: list[str]  # evidence ids whose lookup did not complete; not absence
     defective_evidence: list[str]  # evidence ids citing a not_found, malformed or conflicting source
+    warnings: list[str] = []
     # R05 across schemes: rows the authority maps to one work but that declare different independence groups.
     recitations: list[str] = []
     ok: bool
@@ -298,6 +576,33 @@ def _severity(resolution: Resolution) -> int:
     if resolution.status in DEFECT_STATUSES:
         return 2
     return 1 if resolution.status == "requires_verification" else 0
+
+
+RETRACTION_TYPES = frozenset({"retraction", "partial_retraction", "withdrawal", "removal"})
+CORRECTION_TYPES = frozenset({"correction", "corrigendum", "erratum"})
+CONCERN_TYPES = frozenset({"expression_of_concern"})
+
+
+def source_update_findings(record: SourceRecord | None) -> tuple[list[str], list[str]]:
+    """Defects and warnings for one found record; a notice is not the paper it updates."""
+    defects: list[str] = []
+    warnings: list[str] = []
+    if record is None:
+        return defects, warnings
+    for update in record.updates:
+        target = (f" {update.related.id_scheme}:{update.related.id_value}" if update.related else "")
+        if update.update_type in RETRACTION_TYPES:
+            if update.direction == "updated_by":
+                defects.append(f"retracted_by{target}".rstrip())
+            else:
+                warnings.append(f"is_retraction_notice{target}".rstrip())
+        elif update.update_type in CORRECTION_TYPES:
+            label = "corrected_by" if update.direction == "updated_by" else "is_correction_notice"
+            warnings.append(f"{label}{target}".rstrip())
+        elif update.update_type in CONCERN_TYPES:
+            label = "concern_raised_by" if update.direction == "updated_by" else "is_expression_of_concern"
+            warnings.append(f"{label}{target}".rstrip())
+    return list(dict.fromkeys(defects)), list(dict.fromkeys(warnings))
 
 
 def _resolve_artifact(artifact_id: str, cited_sha256: str | None, artifact_paths: Mapping[str, str],
@@ -445,8 +750,16 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         if not resolutions:
             continue
         worst = max(resolutions, key=_severity)  # max keeps the first of equal severity
+        defects: list[str] = []
+        warnings: list[str] = []
+        for resolution in resolutions:
+            found_defects, found_warnings = source_update_findings(resolution.record)
+            defects += found_defects
+            warnings += found_warnings
         checks[row.id] = EvidenceCheck(evidence_id=row.id, source_location=row.source.locator,
-                                       resolution=worst, resolutions=resolutions)
+                                       resolution=worst, resolutions=resolutions,
+                                       source_defects=list(dict.fromkeys(defects)),
+                                       source_warnings=list(dict.fromkeys(warnings)))
 
     groups = {row.id: row.independence_group for row in result.evidence}
     claim_checks: list[ClaimCheck] = []
@@ -462,6 +775,9 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
             if resolution.status in {"not_found", "conflicting", "insufficient"}:
                 defects.append(f"{link.evidence_id} {link.relation} via {resolution.id_scheme}:"
                                f"{resolution.id_value} which is {resolution.status}: {resolution.detail}")
+            elif checks[link.evidence_id].source_defects:
+                defects.append(f"{link.evidence_id} {link.relation}: "
+                               + ", ".join(checks[link.evidence_id].source_defects))
             elif resolution.status == "requires_verification":
                 unverified.append(link.evidence_id)
             elif link.relation == needed:
@@ -479,7 +795,8 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
             unverified_evidence=unverified, defects=defects,
             independent_groups=sorted({groups[e] for e in verified if groups.get(e)})))
 
-    defective = [eid for eid, check in checks.items() if check.resolution.status in DEFECT_STATUSES]
+    defective = [eid for eid, check in checks.items()
+                 if check.resolution.status in DEFECT_STATUSES or check.source_defects]
     recitations = _recitations(result, checks, artifact_paths)
     return VerificationReport(
         plan_sha256=result.plan_sha256, step_id=result.step_id,
@@ -487,9 +804,26 @@ async def verify_sources(result: "ResearchResult", resolver: SourceResolver | No
         evidence=list(checks.values()), claims=claim_checks,
         lookup_failures=[eid for eid, check in checks.items()
                          if any(r.lookup == "failed" for r in check.resolutions)],
-        defective_evidence=defective, recitations=recitations,
+        defective_evidence=defective,
+        warnings=[f"{eid}: {warning}" for eid, check in checks.items() for warning in check.source_warnings],
+        recitations=recitations,
         ok=not defective and not recitations
         and all(check.state in {"verified", "not_asserted"} for check in claim_checks))
+
+
+def verification_lines(report: VerificationReport) -> list[str]:
+    """Compact, stable lines shared by CP2, report appendices and ``labhq verify``."""
+    lines: list[str] = []
+    for check in report.evidence:
+        for resolution in check.resolutions:
+            findings = []
+            defects, warnings = source_update_findings(resolution.record)
+            findings += [f"defect={value}" for value in defects]
+            findings += [f"warning={value}" for value in warnings]
+            suffix = f"; {'; '.join(findings)}" if findings else ""
+            lines.append(f"{report.step_id}/{check.evidence_id}: {resolution.id_scheme}:"
+                         f"{resolution.id_value} {resolution.status}{suffix}")
+    return lines
 
 
 def _recitations(result: "ResearchResult", checks: Mapping[str, EvidenceCheck],
