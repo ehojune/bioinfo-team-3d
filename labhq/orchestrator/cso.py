@@ -2960,6 +2960,16 @@ class Orchestrator:
             await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
                                                             "upstream": upstream_ids or [], "reason": reason})
 
+        def input_steps(step: dict) -> list[str]:
+            """Direct dependencies, then every other ancestor in plan order.
+
+            A step may read an ancestor it reaches only through another step: the v0.5 trial's preprocessing read
+            the fetch step's matrix through the pairing and QC steps, found no inputs/<fetch> link and failed
+            (2026-10-08). Every ancestor's outputs are linked; only direct dependencies get their full result text.
+            """
+            direct = list(step["depends_on"])
+            return direct + [s["id"] for s in steps if s["id"] in ancestors[step["id"]] and s["id"] not in direct]
+
         def upstream(step: dict) -> str:
             parts = []
             for d in step["depends_on"]:
@@ -2975,6 +2985,14 @@ class Orchestrator:
                     parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
                                  f"Readable files (relative to your folder):\n{paths}\n"
                                  f"{clip(r.text, self.cfg.context_chars_per_step)}")
+            for d in input_steps(step)[len(step["depends_on"]):]:
+                r = results.get(d)
+                if r and r.ok and r.workdir and r.outputs:
+                    artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
+                    paths = "\n".join(input_relpath(d, path) or str(Path(r.workdir) / path) for path in r.outputs)
+                    parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
+                                 f"Declared output artifacts: {json.dumps(artifacts)}\n"
+                                 f"Readable files (relative to your folder):\n{paths}")
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
@@ -3031,9 +3049,10 @@ class Orchestrator:
                 # the revision round (12th mock trial). Always, not only when `feedback` names a dependency: after a
                 # restart mid-round a finished upstream revision is no longer in it (PR #368 review).
                 updates.append(f"[Current upstream results — they replace what you read before]\n{ctx}")
-            upstream_dirs = [results[d].workdir for d in step["depends_on"]
+            linked = input_steps(step)
+            upstream_dirs = [results[d].workdir for d in linked
                              if d in results and results[d].workdir and results[d].outputs]
-            upstream_steps = {d: results[d].workdir for d in step["depends_on"]
+            upstream_steps = {d: results[d].workdir for d in linked
                               if d in results and results[d].workdir and results[d].outputs}
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
