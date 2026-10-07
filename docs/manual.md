@@ -227,7 +227,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 
 ### 요청 묶음
 
-요청이 끝나면 terminal 상태와 보고서를 먼저 저장하고 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 생성 오류나 도중 재시작은 요청 결과를 바꾸지 않으며, 중단된 묶음은 자동 재시도하지 않습니다.
+요청이 끝나면 terminal 상태와 보고서를 먼저 저장하고 `runner.workspace_root/requests/<request_id>/`를 worker thread에서 한 번만 만듭니다. gateway와 runner가 같은 PC이고 단계 manifest의 host가 일치할 때만 생성합니다. 다른 PC이거나 단계 작업 폴더를 찾지 못하면 경로 대신 웹·CLI와 부록에 경고를 남깁니다. 마지막에 임시 폴더를 최종 폴더로 옮길 때 Windows 공유 잠금(WinError 5, 복사 직후 백신·색인기가 파일을 잡는 경우)이 나면 0.2·0.5·1·2초 간격으로 네 번까지 다시 시도하고, 그래도 안 되면 경고를 남깁니다. 생성 오류나 도중 재시작은 요청 결과를 바꾸지 않으며, 중단된 묶음은 자동 재시도하지 않습니다.
 
 | 경로 | 내용 |
 |---|---|
