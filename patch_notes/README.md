@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:21 | [`c108bb5`](https://github.com/ehojune/bioinfo-team-3d/pull/467/commits/c108bb5) | 재시작 뒤 재개한 요청은 재개 전에 보낸 task만 이어받는다. clarify 답 뒤 재계획이 첫 계획을 그대로 돌려받아 실패하던 것을 고쳤다. |
 | 22:14 | [`74ddf7a`](https://github.com/ehojune/bioinfo-team-3d/pull/466/commits/74ddf7a) | 영문 README의 topic 근거 논문 수치를 한국어 README와 같은 30편 이상·1286편으로 맞췄다(#462 남은 지적). |
 | 16:56 | [`937fe5b`](https://github.com/ehojune/bioinfo-team-3d/pull/464/commits/937fe5b) | Paper2Agent 설치를 staging·rollback으로 갱신해 원본 누락과 복사·교체 실패에서 기존 skill을 보존한다. |
 | 16:24 | [`779e900`](https://github.com/ehojune/bioinfo-team-3d/pull/462/commits/779e900) | PMID 검증 논문 31편을 더해 43 topic 모두 30편 이상을 채우고 README·manual·근거표 수치를 맞춘다. |
