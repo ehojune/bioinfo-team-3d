@@ -3,3 +3,6 @@ rows:
 - sha: "37028f6"
   at: 2026-10-07 23:33
   text: "요청 묶음에 RO-Crate metadata와 사본 무결성 검사를 추가"
+- sha: "7289039"
+  at: 2026-10-07 23:44
+  text: "RO-Crate 경고 표시와 변조된 reference 및 경로 component 검증을 보완"
