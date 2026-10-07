@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+import ntpath
 import os
 import re
 import shlex
@@ -33,6 +35,167 @@ _NPM_NODE_LINE = re.compile(
 
 
 GITHUB_TOKEN_NAMES = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")  # gh / git credentials
+
+
+@dataclass(frozen=True)
+class _ProcessInfo:
+    pid: int
+    ppid: int
+    name: str
+    command_line: str | None
+
+
+def _windows_process_snapshot() -> list[_ProcessInfo] | None:
+    """Read parent, image and command line together. Missing command lines stay unknown, never idle."""
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new();"
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | "
+        "ConvertTo-Json -Compress"
+    )
+    try:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        payload = json.loads(completed.stdout.decode("utf-8-sig"))
+    except (OSError, subprocess.SubprocessError, UnicodeError, json.JSONDecodeError):
+        return None
+    rows = payload if isinstance(payload, list) else [payload]
+    processes = []
+    for row in rows:
+        try:
+            processes.append(_ProcessInfo(pid=int(row["ProcessId"]), ppid=int(row["ParentProcessId"]),
+                                          name=str(row.get("Name") or ""),
+                                          command_line=row.get("CommandLine")))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return processes
+
+
+def _procfs_process_snapshot() -> list[_ProcessInfo] | None:
+    root = Path("/proc")
+    if not root.is_dir():
+        return None
+    processes = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat_line = (entry / "stat").read_text(encoding="utf-8", errors="surrogateescape")
+            close = stat_line.rfind(")")
+            if close < 0:
+                continue
+            fields = stat_line[close + 2:].split()
+            pid, ppid = int(entry.name), int(fields[1])
+            name = stat_line[stat_line.find("(") + 1:close]
+            try:
+                raw = (entry / "cmdline").read_bytes()
+                command_line = " ".join(part.decode("utf-8", errors="replace")
+                                        for part in raw.split(b"\0") if part)
+            except OSError:
+                command_line = None
+            processes.append(_ProcessInfo(pid, ppid, name, command_line))
+        except (OSError, IndexError, ValueError):
+            continue  # processes can exit while /proc is being read
+    return processes
+
+
+def _ps_process_snapshot() -> list[_ProcessInfo] | None:
+    """BSD/macOS fallback where /proc is absent."""
+    try:
+        completed = subprocess.run(
+            ["ps", "-ww", "-axo", "pid=,ppid=,comm=,args="], stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, timeout=10, check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    processes = []
+    for line in completed.stdout.decode("utf-8", errors="replace").splitlines():
+        fields = line.strip().split(None, 3)
+        if len(fields) < 3:
+            continue
+        try:
+            processes.append(_ProcessInfo(int(fields[0]), int(fields[1]), fields[2],
+                                          fields[3] if len(fields) == 4 else None))
+        except ValueError:
+            continue
+    return processes
+
+
+def _process_snapshot() -> list[_ProcessInfo] | None:
+    if os.name == "nt":
+        return _windows_process_snapshot()
+    if os.name == "posix":
+        return _procfs_process_snapshot() or _ps_process_snapshot()
+    return None
+
+
+def _executable_name(value: str) -> str:
+    return ntpath.basename(value.strip("\"'").replace("/", "\\")).casefold().removesuffix(".exe")
+
+
+def _command_tokens(command_line: str | None) -> list[str]:
+    if not command_line:
+        return []
+    try:
+        return [token.strip("\"'") for token in shlex.split(command_line, posix=os.name != "nt")]
+    except ValueError:
+        return []
+
+
+def _mcp_helper(process: _ProcessInfo, servers: list[McpServerSpec]) -> bool:
+    """Match only a configured stdio server's exact command and args; a loose name match is not enough."""
+    actual = _command_tokens(process.command_line)
+    for server in servers:
+        if server.type != "stdio" or not server.command:
+            continue
+        expected_name = _executable_name(os.path.expandvars(os.path.expanduser(server.command)))
+        expected_args = [os.path.expandvars(os.path.expanduser(arg)) for arg in server.args]
+        for index, token in enumerate(actual):
+            if _executable_name(token) != expected_name or len(actual) < index + 1 + len(expected_args):
+                continue
+            found = actual[index + 1:index + 1 + len(expected_args)]
+            if all((left.casefold() == right.casefold()) if os.name == "nt" else (left == right)
+                   for left, right in zip(found, expected_args)):
+                return True
+    return False
+
+
+def _idle_process_tree(root_pid: int, servers: list[McpServerSpec]) -> bool | None:
+    """True only when the CLI has no descendants except known resident helpers; None means unreadable."""
+    snapshot = _process_snapshot()
+    if snapshot is None:
+        return None
+    by_pid = {process.pid: process for process in snapshot}
+    if root_pid not in by_pid:
+        return None
+    children: dict[int, list[_ProcessInfo]] = {}
+    for process in snapshot:
+        children.setdefault(process.ppid, []).append(process)
+    pending = list(children.get(root_pid, []))
+    descendants = []
+    seen = set()
+    while pending:
+        process = pending.pop()
+        if process.pid in seen:
+            continue
+        seen.add(process.pid)
+        descendants.append(process)
+        pending.extend(children.get(process.pid, []))
+    for process in descendants:
+        name = _executable_name(process.name)
+        if name in {"conhost", "codex-code-mode-host"} or _mcp_helper(process, servers):
+            continue
+        if not name or process.command_line is None:
+            return None
+        return False
+    return True
 
 
 def _windows_descendants(root_pid: int) -> list[int]:
@@ -331,7 +494,7 @@ class RunContext:
 
 
 
-async def pending_uac_prompts() -> bool:
+async def pending_uac_prompts() -> bool | None:
     """Whether Windows shows UAC consent prompts now (consent.exe), which can hold a sandboxed CLI (#382)."""
     if os.name != "nt":
         return False
@@ -341,7 +504,7 @@ async def pending_uac_prompts() -> bool:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(proc.communicate(), 15)
     except (OSError, asyncio.TimeoutError):
-        return False
+        return None
     return b"consent.exe" in out.lower()
 
 FAILED_OUTPUTS_KEPT = 1  # only the last failed command counts, and only until a later command succeeds (PR #447)
@@ -676,25 +839,64 @@ class AgentAdapter(ABC):
                 pass  # the CLI ended or closed stdin; its exit and output say what happened
 
         async def stall_watch() -> None:
-            """Warn once when the CLI has been quiet for stall_warn_s (#382): on Windows, name pending UAC prompts."""
-            limit = self.settings.runner.stall_warn_s
-            if limit <= 0:
+            """Warn once, then end a certainly idle CLI tree so orchestration can retry it (#473)."""
+            warn_limit = self.settings.runner.stall_warn_s
+            configured_retry = self.settings.runner.stall_retry_s
+            retry_limit = max(configured_retry, warn_limit) if configured_retry > 0 else 0
+            if warn_limit <= 0 and retry_limit <= 0:
                 return
+            warned = False
             while True:
-                await asyncio.sleep(min(30.0, limit))
                 quiet = time.monotonic() - last_output
-                if quiet < limit or result_arrived.is_set():
-                    continue
-                minutes = max(1, int(quiet // 60))
-                if await pending_uac_prompts():
-                    await ctx.emit("agent.log", {"level": "alert", "text": (
-                        f"{self.engine} 출력이 {minutes}분째 없고 이 PC에 Windows 권한 알림(UAC)이 승인을 기다립니다. "
-                        "Codex sandbox 설정이면 승인 전까지 셸이 멈춥니다 — PC에서 알림을 확인하세요 (#382)")})
-                else:
-                    await ctx.emit("agent.log", {"level": "warn", "text": (
-                        f"{self.engine} 출력이 {minutes}분째 없습니다. 긴 명령을 돌리는 중일 수 있고, 멈췄다면 "
-                        "단계를 취소하세요")})
-                return
+                if result_arrived.is_set() or proc.returncode is not None:
+                    return
+                if not warned and warn_limit > 0 and quiet >= warn_limit:
+                    minutes = max(1, int(quiet // 60))
+                    if await pending_uac_prompts():
+                        retry_note = ((" UAC가 사라진 뒤 실행 중인 명령이 없으면 labhq가 끊고 다시 시도합니다. "
+                                       "연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")
+                                      if retry_limit > 0 else "")
+                        await ctx.emit("agent.log", {"level": "alert", "text": (
+                            f"{self.engine} 출력이 {minutes}분째 없고 이 PC에 Windows 권한 알림(UAC)이 승인을 기다립니다. "
+                            "Codex sandbox 설정이면 승인 전까지 셸이 멈춥니다 — PC에서 알림을 확인하세요 (#382)."
+                            f"{retry_note}")})
+                    elif retry_limit > 0:
+                        remaining = max(1, math.ceil(max(0, retry_limit - quiet) / 60))
+                        await ctx.emit("agent.log", {"level": "warn", "text": (
+                            f"{self.engine} 출력이 {minutes}분째 없습니다. 약 {remaining}분 뒤 실행 중인 명령이 없으면 "
+                            "labhq가 끊고 다시 시도합니다. 연구 lane에서 단계를 취소하면 요청이 실패로 끝납니다")})
+                    else:
+                        await ctx.emit("agent.log", {"level": "warn", "text": (
+                            f"{self.engine} 출력이 {minutes}분째 없습니다. 긴 명령을 돌리는 중일 수 있고, 멈췄다면 "
+                            "단계를 취소하세요")})
+                    warned = True
+                    if retry_limit <= 0:
+                        return
+                if retry_limit > 0 and quiet >= retry_limit:
+                    if await pending_uac_prompts() is not False:
+                        return
+                    idle = await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers)
+                    if idle is not True:
+                        return
+                    observed = last_output
+                    await asyncio.sleep(0.1)  # close the common command-start race before ending the tree
+                    if last_output != observed or result_arrived.is_set() or proc.returncode is not None:
+                        continue
+                    if await pending_uac_prompts() is not False:
+                        return
+                    if await asyncio.to_thread(_idle_process_tree, proc.pid, ctx.mcp_servers) is not True:
+                        return
+                    minutes = max(1, math.ceil((time.monotonic() - last_output) / 60))
+                    st.error = f"engine stream timed out: no output for {minutes} min and no running command"
+                    await self._kill(proc)
+                    return
+                due = []
+                if not warned and warn_limit > 0:
+                    due.append(warn_limit)
+                if retry_limit > 0:
+                    due.append(retry_limit)
+                delay = max(0.01, min(30.0, min(due) - quiet))
+                await asyncio.sleep(delay)
 
         drain = asyncio.gather(feed_stdin(), read_out(), read_err(), proc.wait())
         guard = asyncio.create_task(exit_guard())

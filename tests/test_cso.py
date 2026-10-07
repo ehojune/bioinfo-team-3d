@@ -695,6 +695,28 @@ async def test_timeout_retries_once_then_succeeds_with_two_attempts():
 
 
 @pytest.mark.asyncio
+async def test_idle_stream_timeout_retries_once_and_resumes_the_session():
+    calls = 0
+
+    async def dispatch(task):
+        nonlocal calls
+        calls += 1
+        return result(task, ok=calls == 2, text="done" if calls == 2 else "",
+                      error=("engine stream timed out: no output for 20 min and no running command"
+                             if calls == 1 else None), session_id="worker-session")
+
+    hub = FakeHub(dispatch)
+    hub.supports_resume = lambda agent_id: True
+    orch = Orchestrator(hub)
+    res = await orch.run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                   meta={"kind": "step", "step_id": "A"}))
+
+    assert res.ok and calls == 2 and orch.attempts["r"]["A"] == 2
+    assert hub.calls[1].resume_session_id == "worker-session"
+    assert [event["type"] for event in hub.events].count("request.step_retry") == 1
+
+
+@pytest.mark.asyncio
 async def test_runner_offline_retries_once_then_succeeds():
     calls = 0
 

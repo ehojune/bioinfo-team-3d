@@ -18,6 +18,8 @@ runner:
   talent_dir: ~/.labhq/talent       # 인재풀 (파견직 빌드 + 계약서 보관)
   broker_port: 8788
   task_timeout_s: 21600
+  stall_warn_s: 600                 # 이 시간 동안 출력이 없으면 한 번 경고(0이면 끔)
+  stall_retry_s: 1200               # 명령이 안 돌 때만 CLI를 끝내고 재시도(0이면 끔)
   job_poll_s: 60
   reference_roots: []              # 참고 자료 path가 들어갈 수 있는 러너 쪽 폴더(읽기 전용). 프로젝트 local_dir은 자동 포함
   input_hash_max_file_bytes: 2147483648    # 단계 입력 파일 하나의 sha256 읽기 상한(2 GiB)
