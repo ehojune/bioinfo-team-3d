@@ -1,7 +1,8 @@
-## 2026-10-07 · #469 — 요청 묶음 RO-Crate와 사본 검증
+## 2026-10-08 · #469 — 요청 묶음 RO-Crate와 사본 검증
 
-- 결론: PR #471 세 번째 봇 리뷰 P1 3건을 `c6afcff`에서 고쳤다.
-- 바뀐 것: MANIFEST 파일 행의 size·sha256 누락과 형식 오류를 문제로 처리하고, metadata 등 묶음 파일은 link·junction을 먼저 거부한다. POSIX symlink test 정리도 `unlink()`로 고쳤다.
-- 실행한 것: 관련 Python 77 passed·2 skipped, Windows 전체 4515 passed·57 skipped, Node CJS 28개, 공개·패치노트·목차 검사 통과.
-- 미해결: WSL Python에 pytest가 없어 POSIX 로컬 실행은 못 했다. CI 판단은 개발 총괄이 이어받는다.
-- 근거: `labhq/ro_crate.py`, `tests/test_request_bundle.py`, `docs/manual.md`.
+- 결론: PR #471의 validator 실패와 4차 리뷰 P1 두 건을 `7248895`에서 고쳤다.
+- 실패 원인: `conformsTo`가 `schema:conformsTo`로 확장돼 `dct:conformsTo`를 요구하는 `process-run-crate-0.5_2.1`(Root Data Entity conformsTo: "The Root Data Entity MUST reference a CreativeWork entity with an @id URI that is consistent with the versioned permalink of the profile")과 `ro-crate-1.1_5.3`(Metadata File Descriptor entity: `conformsTo` property: "The RO-Crate metadata file descriptor MUST have a `conformsTo` property with the RO-Crate specification version")이 실패했다.
+- 바뀐 것: `conformsTo`를 DCTERMS로 고쳤고, MANIFEST에 기록된 crate·README 누락과 README 읽기 실패를 문제로 처리한다. 묶음 폴더 이름과 root Dataset `identifier`도 요청 ID와 대조한다.
+- 실행한 것: `roc-validator==0.12.2` REQUIRED 42/42·exit 0, 관련 82 passed·1 skipped, Windows 전체 4519 passed·57 skipped, 공개 검사 통과.
+- 미해결: push 뒤 CI 결과 확인 전이다.
+- 근거: `labhq/ro_crate.py`, `labhq/evidence/audit.py`, `tests/test_request_bundle.py`, `docs/manual.md`.
