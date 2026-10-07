@@ -245,6 +245,60 @@ def test_refusing_evidence_also_refuses_derived_rows_and_their_links():
     assert any(row_type == "link" and "->derived:" in row_id for row_type, row_id in refused_ids)
 
 
+def _empty_lookup(result, *, artifact_id=None):
+    """A zero-result lookup linked as support, as the v0.5 trial annotation step wrote it (2026-10-08)."""
+    source = {"uri": "https://example.org/search", "query": "camera Hallmark FDR < 0.05", "accessed_at": "2026-10-08"}
+    if artifact_id:
+        source = {"artifact_id": artifact_id, "query": "camera Hallmark FDR < 0.05", "accessed_at": "2026-10-08"}
+    result["evidence"].append({
+        "id": "empty_lookup", "kind": "observation", "observation": "no significant pathways",
+        "status": "not_found", "result_count": 0, "source": source,
+        "directness": "indirect", "source_level": "primary", "independence_group": "lookup",
+        "assessment_reason": "the pathway table had no rows under the threshold",
+        "slots": list(result["evidence"][0]["slots"]),
+    })
+    result["links"].append({"claim_id": "c1", "claim_revision": 1, "evidence_id": "empty_lookup",
+                            "relation": "supports", "rationale": "no pathway passed the threshold"})
+    return result
+
+
+def test_a_failed_lookup_linked_as_support_is_salvaged_by_refusing_only_the_link():
+    # "evidence X is not_found; a failed or empty lookup is neither evidence nor proof of absence ..." is one
+    # cross-row message. The explanation after "; " was not on salvage's fixed list, so the whole step failed.
+    plan, result = _standalone_result()
+    value = _empty_lookup(result)
+    assert research_result_errors(value, plan=plan)
+
+    salvaged, refused, unsupported, problems = salvage_research_result(value, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [row.id for row in salvaged.evidence] == ["e1", "empty_lookup"]  # the attempt stays on record
+    assert [(link.claim_id, link.evidence_id) for link in salvaged.links] == [("c1", "e1")]
+    assert [row["row_type"] for row in refused] == ["link"] and "empty_lookup" in refused[0]["row_id"]
+
+
+def test_the_trial_ledger_with_a_missing_artifact_ref_is_salvaged_by_refusing_the_row():
+    plan, result = _standalone_result()
+    value = _empty_lookup(result, artifact_id="camera_hallmark")  # an upstream artifact not in artifact_refs
+
+    salvaged, refused, unsupported, problems = salvage_research_result(value, plan=plan, expected_step_id="s1")
+
+    assert problems == [] and salvaged is not None and unsupported == []
+    assert [row.id for row in salvaged.evidence] == ["e1"]
+    assert ("evidence", "empty_lookup") in {(row["row_type"], row["row_id"]) for row in refused}
+
+
+def test_an_unmappable_message_part_that_names_no_row_still_stops_salvage():
+    from labhq.research.contract import _validation_salvage_targets
+    from pydantic_core import InitErrorDetails, PydanticCustomError
+    from pydantic import ValidationError as PydanticValidationError
+
+    error = PydanticValidationError.from_exception_data("ResearchResult", [InitErrorDetails(
+        type=PydanticCustomError("value_error", "Value error, something is wrong; with no row named"),
+        loc=(), input={})])
+    assert _validation_salvage_targets(error, {"evidence": [], "claims": [], "links": []}) is None
+
+
 @pytest.mark.parametrize("change", ["json", "schema_version", "plan_sha256", "step_id", "required_slot"])
 def test_structural_result_defects_are_not_salvaged(change):
     plan, result = _standalone_result()
