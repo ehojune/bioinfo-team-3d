@@ -1,0 +1,918 @@
+{
+ "_source": "Trimmed from trial request req_7ccde78be0 (public GEO GSE19804 / GSE32863), 2026-10-08: long strings cut, all 22 claims and every link kept; plan_canonical re-serialized and target_sha256 recomputed after trimming.",
+ "request": {
+  "id": "req_7ccde78be0",
+  "text": "GEO GSE19804는 대만 비흡연 여성 폐선암 환자 60명의 종양과 인접 정상 폐 조직을 짝으로 잰 Affymetrix 발현 자료입니다. 종양과 정상 사이의 차등 발현 유전자를 짝 설계를 반영해 찾고, 경로 분석까지 해 주세요. 결론마다 근거 파일과 수치를 붙여 보고서로 정리해 주세요."
+ },
+ "research_plan": {
+  "id": "appr_486d85ff1a",
+  "kind": "research_plan",
+  "request_id": "req_7ccde78be0",
+  "summary": "CP1 research plan approval: approve the frozen question, methods, completion/stop conditions, data boundary, and selected packs. plan_sha256=36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+  "created_at": 1791403507.112608,
+  "timeout_s": 3600,
+  "agent_id": null,
+  "detail": {
+   "gate": "research_plan",
+   "target_sha256": "911671e7ee883d1a74b0033303a07f8c9474fbb58afc76aae88ee1ad844f8097",
+   "plan_canonical": "{\"brief\":{\"completion_conditions\":[\"120개 시료가 모두 pairing_table.tsv에 들어 있고, 각 시료가 검증된 쌍에 속하는지 제외되는지와 그 이유가 적혀 있다\",\"de_results_gene.tsv에 필터를 통과한 모든 유전자의 logFC, CI, moderated t, p, BH-FDR이 있다\",\"positive control SEMA5A의 방향과 FDR이 보고되어 있다\",\"pathway 결과 4개 표(CAMERA·ORA × Reactome·Hallmark)와 concordance.tsv가 있다\",\"GSE32863 일치도(부호 일치 비율, Spearman rho)가 보고되어 있다\",\"qc_reviewer가 데이터와 결과에 각각 PASS/WARN/FAIL 판정을 냈다\",\"report_ko.md의 모든 결론이 claim과 파일과 수치에 연결되어 있다\"],\"deliverables\":[\"유전자 단위 paired DE 전체 결과표(logFC, 95% CI, moderated t, p, BH-FDR)와 DEG 목록\",\"Reactome·Hallmark 경로 결과(CAMERA, ORA)와 두 방법 간 일치도 표\",\"sample QC, 짝 확인표, batch 교락 확인, probe→gene 규칙 기록\",\"GSE32863 독립 검증 일치도 표\",\"주요 유전자의 공개 자원 조회 결과와 각 자원의 버전\",\"결론마다 [[claim:...]], 파일 경로, 수치를 붙인 한국어 보고서\"],\"distinguishing_observations\":[\"p-value 히스토그램이 0 근처에 몰리는지, 균일한지\",\"scan date가 같은 쌍으로 제한해도 DEG의 logFC 부호와 크기가 유지되는지\",\"GSE32863에서 DEG 부호 일치 비율이 0.5보다 유의하게 큰지(binomial), logFC Spearman rho가 양수인지\",\"CAMERA와 ORA가 같은 경로를 같은 방향으로 지목하는지\",\"SEMA5A 하향(Lu 2010)이 재현되는지\",\"선암만 남긴 민감도 분석에서 DEG와 경로가 유지되는지\"],\"null_or_alternatives\":[\"H0: 짝 내 평균 log2 차이가 모든 유전자에서 0이다. 이 경우 p-value 분포가 균일하다.\",\"대안 1: 관찰된 차이가 tumor/normal 처리 batch(scan date) 교락에서 생긴다.\",\"대안 2: 차이가 조직 구성(종양 내 정상 폐포·면역세포 비율) 차이를 주로 반영한다. 세포 내재 발현 변화가 아닐 수 있다.\",\"대안 3: 결과가 GSE19804 cohort(비흡연 대만 여성)나 제출자 정규화에만 특이적이어서 독립 cohort에서 재현되지 않는다.\"],\"primary_hypothesis\":\"같은 환자 안에서 종양과 인접 정상 폐 조직의 log2 발현 차이는 다수 유전자에서 0이 아니다(BH-FDR<0.05, |log2FC|≥1). 이 차이는 세포주기·증식 경로 상향, 폐포/면역·혈관 관련 경로 하향 같은 일관된 경로 패턴으로 나타나며, 독립 짝 LUAD cohort에서도 같은 방향으로 재현된다.\",\"purpose\":\"PI가 요청한 짝 설계 DE와 경로 분석을 사전에 고정한 기준으로 재현 가능하게 수행한다. 결론마다 근거 파일 경로와 수치를 붙인 한국어 보고서를 만든다.\",\"question\":\"GSE19804(GPL570, 비흡연 대만 여성 NSCLC 60쌍)에서 환자 짝을 보존한 모형으로 종양 대 인접 정상 조직의 차등 발현 유전자는 무엇이고, 전체 순위 통계와 유의 유전자 목록에서 어떤 경로가 농축되는가? 이 결과는 독립 짝 LUAD cohort에서도 같은 방향으로 재현되는가?\",\"scope\":\"PI 결정(1a, 2a)에 따라 범위를 정했다. 주 분석은 GEO에 등록된 60쌍 전체이며, histology 메타데이터가 있으면 선암만 남긴 분석을 민감도 분석으로 한다. 깊이는 표준이다: paired DE, 민감도 분석, CAMERA+ORA를 2개 DB에, GSE32863 독립 검증, 공개 자원 조회. 공개 자료만 사용한다. 주 입력은 GEO series matrix의 제출자 정규화 값이다. runner에 R이 없어 CEL에서 RMA를 다시 하지 않으며, CEL은 header의 scan date를 읽어 batch를 확인하는 데만 쓴다. DE는 limma 방식의 moderated paired t를 numpy/scipy로 구현해 수행한다. 경로 분석은 Reactome과 MSigDB Hallmark를 대상으로 CAMERA 방식의 순위 기반 경쟁 검정과 ORA를 함께 한다. 생존 분석, hub gene/PPI 네트워크, 기계학습 모형은 범위 밖이다.\",\"study_type\":\"comparative\",\"subject\":\"GEO GSE19804: 비흡연 여성 NSCLC 환자 60명의 종양과 인접 정상 폐 조직 120 arrays, Affymetrix HG-U133 Plus 2.0 (GPL570). 독립 검증에는 GSE32863(짝 LUAD, Illumina)을 쓴다.\"},\"checklist\":{\"batch\":\"step:preprocess_qc\",\"gene_set_test\":\"step:pathway\",\"independent_validation\":\"step:validation_cohort\",\"pairing\":\"step:paired_de\",\"precedent.1\":\"step:paired_de\",\"precedent.2\":\"step:pathway\",\"probe_mapping\":\"step:preprocess_qc\"},\"clarifying_questions\":[],\"intake\":{\"confidence\":\"clear\",\"reason\":\"request asks for a new conclusion, hypothesis, or method choice\",\"scope_status\":\"in_scope\",\"source\":\"rule\",\"work_kind\":\"research\"},\"notes\":\"PI 답변(1a, 2a)을 반영해 계약을 확정했다. 60쌍 전체를 주 분석으로 하고, 선암만 남긴 분석은 민감도 분석으로 한다. 깊이는 표준이다. R 설치와 CEL RMA 재정규화는 범위 밖이다.\\n\\nCSO 설계 결정\\n(1) runner에 R과 statsmodels가 없다. 그래서 limma 방식 eBayes와 CAMERA를 engineer가 numpy/scipy로 구현하고 단위 테스트로 검증한 뒤 사용한다. 패키지 설치가 없어 environment step은 두지 않았다.\\n(2) 주 입력은 GEO series matrix의 제출자 정규화 값이다. CEL에서 RMA를 다시 하는 것보다 약한 경로이며, R이 없고 PI가 2a를 골랐기 때문이다. 보고서의 한계에 명시한다.\\n(3) 경로 분석의 주 검정은 짝을 보존하는 순위 기반 CAMERA이고, ORA는 보조다.\\n(4) 독립 검증은 GSE32863으로 한다. 플랫폼이 달라 부호 일치 분석만 한다.\\n(5) 원 연구의 normalization과 threshold는 확인되지 않았다. 그래서 원 연구 DEG 687개는 기술적 대조로만 쓴다.\\n(6) biologist는 읽기 전용이라 산출물을 쓸 수 없어 step에 배정하지 않았다.\\n(7) Positive control에는 PMID를 확신할 수 있는 SEMA5A 한 행만 넣었다.\\n\\n결론을 바꿀 관찰: 쌍 내 scan date 불일치가 tissue와 체계적으로 겹치는 경우, GSE32863에서 부호 일치 비율이 0.5 근처인 경우, SEMA5A 방향이 반대인 경우, 선암만 남긴 분석에서 결과가 크게 달라지는 경우.\",\"pack_applicability\":{\"bulk_tumor_normal@3\":{\"applied\":true,\"matched_topics\":[\"microarray_expression\"],\"reason\":\"topic_match\",\"topics_any\":[\"bulk_rna_seq\",\"microarray_expression\"]},\"single_cell_de@3\":{\"applied\":false,\"matched_topics\":[],\"reason\":\"no_topic_match\",\"topics_any\":[\"single_cell_rna_seq\"]}},\"pack_values\":{\"bulk_tumor_normal@3\":{\"acceptance\":{\"bulk_tumor_normal.core_analysis_unit\":\"환자(검증된 종양-정상 쌍)\",\"bulk_tumor_normal.core_comparison_groups\":\"tumor와 adjacent normal lung, 두 집단\",\"bulk_tumor_normal.core_estimand\":\"환자 내 log2(tumor) − log2(normal)의 평균을 유전자별로 추정한다\",\"bulk_tumor_normal.core_multiple_testing\":\"BH-FDR. DE는 전체 tested genes에 적용하고, 경로는 database와 방법마다 따로 적용한다\",\"bulk_tumor_normal.core_primary_outcomes\":\"유전자별 log2FC와 moderated paired t의 BH-FDR, DEG 집합, CAMERA 경로 FDR\",\"bulk_tumor_normal.core_sensitivity_analyses\":\"protocol.statistics.sensitivity_analyses에 7개 항목이 있다\",\"bulk_tumor_normal.core_statistics_applicable\":\"protocol.statistics.applicable=true\",\"bulk_tumor_normal.model_compatibility\":\"log2_normalized + complete + paired_t는 허용된 조합이다\",\"bulk_tumor_normal.pairing_from_metadata\":\"pairing=complete, pairing_evidence=sample_title;geo_characteristics (none 아님)\"},\"fields\":{\"de_threshold\":\"BH-FDR < 0.05 그리고 |log2FC| ≥ 1 (tumor − normal)\",\"expression_scale\":\"log2_normalized\",\"low_expression_filter\":\"AFFX- control probe를 제외한다. probe별 tumor 평균과 normal 평균 중 큰 값이 전체 probe 평균 log2 발현 분포의 25번째 백분위수 이상인 probe만 유지한다. series matrix가 log2가 아니면(99th percentile > 100) max(x,1)에 log2를 적용한 뒤 필터한다. gene 집약: 필터를 통과하고 한 유전자에만 매핑되는 probe 가운데 120 arrays 전체 평균 발현이 가장 높은 probe를 유전자당 하나 고른다. DE 결과와 무관하게 고른다.\",\"model_rule\":\"메타데이터로 1:1 확인된 쌍에만 moderated paired t를 쓴다. 60쌍이 모두 확인되면 60쌍으로 분석한다. 확인 실패 시료는 제외하되 확인된 쌍이 50쌍 이상이면 paired_t를 유지하고, 50쌍 미만이면 중단하고 재계획(mixed_model)한다. 검증 cohort GSE32863은 확인된 쌍이 20쌍 이상이면 paired_t, 아니면 unpaired moderated t를 쓰고 그 사실을 기록한다.\",\"pairing\":\"complete\",\"pairing_evidence\":\"sample_title;geo_characteristics\",\"positive_controls\":\"SEMA5A|down_in_first_condition|PMID:20802022\",\"primary_model\":\"paired_t\"},\"validators\":{\"bulk_tumor_normal.de_contract\":\"expression_scale=log2_normalized(series matrix가 log2가 아니면 사전 규칙대로 변환하고 기록), 저발현 필터는 25번째 백분위수 규칙, DE 기준은 FDR<0.05 & |log2FC|≥1로 고정했다. 다중검정과 민감도 분석은 protocol.statistics를 따른다.\",\"bulk_tumor_normal.pairing_definition\":\"짝은 GEO sample_title의 환자 번호와 geo_characteristics의 환자 ID만으로 정한다. 발현 유사도로는 정하지 않는다. data_steward가 pairing_table.tsv에 시료별 근거 필드를 기록한다. primary_model=paired_t, model_rule은 50쌍 기준으로 고정했다. analysis unit은 core protocol이 정한다.\",\"bulk_tumor_normal.positive_control_rows\":\"SEMA5A|down_in_first_condition|PMID:20802022 (Lu TP et al. 2010 CEBP, GSE19804 원 연구). first condition은 tumor이다. lit_scout가 PMID와 방향을 확인한다. 확인에 실패해도 행을 다른 것으로 바꾸지 않고 실패로 보고한다.\"}}},\"protocol\":{\"analysis_unit\":\"환자(종양-정상 쌍). 유전자 단위 결과는 환자 내 log2(tumor) − log2(normal) 차이로 추정한다.\",\"approval_conditions\":[\"CP1: PI가 이 계약을 승인해야 실행한다\",\"패키지·R 설치, 통제접근 자료, 범위(질환·시료) 변경은 새 CP1 승인이 필요하다\",\"CP2: PI가 증거를 승인한 뒤에만 최종 보고서를 확정한다\"],\"comparators\":[\"주 비교: 같은 환자의 tumor vs adjacent normal (tumor − normal)\",\"방법 비교: moderated paired t vs ordinary paired t vs unpaired moderated t(짝 무시 효과를 기술적으로만 보여줌)\",\"문헌 비교: 원 연구 DEG 687개와 PMC8523254의 169개(|log2FC|>2)는 기술적 대조로만 쓴다\",\"외부 비교: GSE32863 짝 LUAD\"],\"data_boundaries\":[\"공개 자료(GSE19804, GSE32863, GPL570/검증 플랫폼 annotation, Reactome, MSigDB Hallmark)만 사용한다. DUA 자료는 쓰지 않는다\",\"모든 산출물은 각 step 작업공간의 outputs/ 아래에 둔다. 임시 파일은 ./.tmp/에 둔다\",\"PI 개인 파일 경로는 접근하지 않는다\"],\"exclusion_criteria\":[\"메타데이터로 짝이 확인되지 않은 시료는 paired 주 분석에서 제외하고 목록으로 보고한다. 발현 유사도로 짝을 추정하지 않는다\",\"symbol이 없거나 여러 유전자에 매핑되는 probe\",\"저발현 필터를 통과하지 못한 probe\",\"QC flag 시료는 주 분석에서 제외하지 않는다. 그 시료가 속한 쌍을 뺀 민감도 분석만 한다\",\"비선암 시료는 주 분석에서 제외하지 않는다. 선암만 남긴 민감도 분석에서만 제외한다(PI 결정 1a)\"],\"not_applicable\":{},\"packs\":[{\"id\":\"bulk_tumor_normal\",\"sha256\":\"6c311747a791db3bb21f2651d701703d8983c5f7e292087e3ab657e68bd1efd2\",\"version\":\"3\"}],\"primary_metrics\":[\"유전자별 log2FC(tumor−normal)와 95% CI, moderated t, BH-FDR\",\"DEG 수(FDR<0.05 & |log2FC|≥1, 상향/하향)\",\"경로별 CAMERA FDR과 방향, ORA FDR과 odds ratio\",\"독립 cohort 부호 일치 비율과 logFC Spearman rho\"],\"resource_limits\":[\"runner 로컬 CPU, Python 3.12.10(pandas, numpy, scipy, matplotlib)만 사용한다. 새 패키지와 R은 설치하지 않는다(PI가 깊이 2a를 골라 R 설치는 범위 밖이다)\",\"다운로드는 공개 GEO/ArrayExpress FTP·HTTPS, Reactome, MSigDB 공개 GMT로 한정하며 총 약 1.5 GB 이하. CEL tar는 각 step의 ./.tmp/에 두고 header만 읽는다\",\"총 예산 USD 5 이내(표준 깊이 추정 USD 3–4, 약 60–90분)\"],\"revision\":1,\"selection_criteria\":[\"GSE19804의 120개 GSM 전체(종양 60, 정상 60). PI 결정 1a에 따라 histology와 무관하게 60쌍 전체가 주 분석 대상이다\",\"sample_title 또는 geo_characteristics로 같은 환자임이 확인된 종양-정상 쌍만 paired 주 분석에 넣는다\",\"probe: AFFX- control probe를 제외하고, GPL570 annotation에서 정확히 하나의 gene symbol(Entrez)에 매핑되는 probe\",\"검증 cohort: GSE32863 전체 시료. pairing은 같은 메타데이터 규칙으로 확인한다\"],\"statistics\":{\"analysis_unit\":\"환자(검증된 종양-정상 쌍)\",\"applicable\":true,\"comparison_groups\":[\"tumor (primary tumor tissue)\",\"adjacent normal lung tissue (같은 환자)\"],\"effect_size_and_interval\":\"log2FC(평균 짝 내 차이)와 moderated t 기반 95% CI(posterior 분산, df = d0 + n_pairs − 1). ORA는 odds ratio를 보고한다.\",\"estimand\":\"각 유전자에 대해, GSE19804 비흡연 여성 NSCLC 환자 집단에서 환자 내 log2 발현 차이(tumor − adjacent normal)의 평균\",\"missing_and_exclusions\":\"series matrix 결측값은 해당 쌍을 그 유전자에서만 제외한다(유전자별 n 기록). 짝이 확인되지 않은 시료는 주 분석에서 제외하고 목록으로 보고한다. QC flag는 제외하지 않고 민감도 분석에서만 다룬다.\",\"multiple_testing\":\"Benjamini-Hochberg FDR. DE는 필터를 통과한 모든 유전자에 한 번 적용한다. 경로는 database(Reactome, Hallmark)와 방법(CAMERA, ORA 상향, ORA 하향)마다 따로 적용한다. 유의 기준은 FDR<0.05이다.\",\"not_applicable\":{},\"primary_outcomes\":[\"유전자별 평균 짝 내 log2FC와 moderated paired t의 BH-FDR\",\"DEG 집합(FDR<0.05 & |log2FC|≥1)\",\"Reactome·Hallmark 경로의 CAMERA BH-FDR(주 경로 결과)\"],\"reason\":\"짝 설계에서 종양-정상 차이를 추론하는 비교 연구이므로 사전에 고정한 통계 계획이 필요하다.\",\"sensitivity_analyses\":[\"|log2FC| 기준 0(FDR만)과 2로 바꾸었을 때 DEG 수\",\"ordinary paired t(eBayes 없음)\",\"probe 단위 분석(gene 집약 없음)과 대체 집약(gene 내 probe 평균)\",\"QC flag 시료가 있는 쌍을 뺀 분석\",\"scan date가 같은 쌍만 넣은 분석(scan date를 얻었을 때)\",\"histology 메타데이터가 있으면 선암 쌍만 넣은 분석(PI 결정 1a)\",\"짝을 무시한 unpaired moderated t(짝 보존 효과를 보여주는 기술적 비교로만)\"]},\"stop_conditions\":[\"GSE19804 series matrix를 GEO FTP와 ArrayExpress 미러 모두에서 받지 못하면 중단하고 실패로 보고한다\",\"메타데이터로 확인된 쌍이 50쌍 미만이면 paired_t 주 분석을 하지 않고 중단한다. 재계획(mixed_model)이 필요하다고 보고한다\",\"series matrix 값의 scale(log2 여부)을 판정할 수 없으면 중단한다\",\"engineer 단위 테스트가 실패하면 DE를 실행하지 않는다\",\"data QC 판정이 FAIL이면 DE 이후 단계를 진행하지 않는다\"],\"validation_methods\":[\"Positive control: SEMA5A가 tumor에서 하향(PMID:20802022)이어야 한다. lit_scout가 PMID와 방향을 원문 기준으로 확인한다\",\"p-value 히스토그램, volcano, eBayes hyperparameter(d0, s0²)가 타당한지 확인\",\"engineer가 eBayes와 CAMERA 구현을 단위 테스트로 검증: d0→0일 때 scipy paired t와 일치, 시뮬레이션에서 d0와 s0 회복\",\"민감도 분석과 주 분석의 logFC 상관과 DEG 겹침\",\"GSE32863 독립 검증: 주 DEG 중 측정된 유전자의 부호 일치 비율(binomial test vs 0.5), logFC Spearman. Hallmark CAMERA 방향 일치\",\"CAMERA와 ORA 결과, Reactome과 Hallmark 결과 간 일치도\",\"qc_reviewer가 데이터 단계와 결과 단계에서 각각 PASS/WARN/FAIL 판정\"]},\"recruit\":[],\"schema_version\":2,\"steps\":[{\"agent_id\":\"bioinfo-agent\",\"checks\":[\"series matrix에 GSM 120개\",\"checksums.sha256에 모든 파일\"],\"claim_ids\":[\"c_data_obtained\"],\"depends_on\":[],\"evidence_slots\":[{\"description\":\"GSE19804 series matrix 파일, sha256, 출처 경로\",\"id\":\"series_matrix\",\"required\":true},{\"description\":\"GPL570 annotation과 GMT 2종의 버전/release\",\"id\":\"annotations_genesets\",\"required\":true},{\"description\":\"CEL header scan date 표(실패 시 실패 기록)\",\"id\":\"scan_dates\",\"required\":false},{\"description\":\"GSE32863 series matrix와 플랫폼 annotation\",\"id\":\"validation_data\",\"required\":false}],\"id\":\"fetch_data\",\"input_refs\":[],\"instruction\":\"Python urllib 스크립트 outputs/scripts/fetch.py로 공개 자료를 받는다(임시 파일은 ./.tmp/). (1) GSE19804 series matrix → outputs/data/GSE19804_series_matrix.txt.gz. 경로는 https://ftp.ncbi.nlm.nih.gov/geo/series/GSE19nnn/…\",\"outputs\":[\"outputs/scripts/fetch.py\",\"outputs/scripts/parse_metadata.py\",\"outputs/data/GSE19804_series_matrix.txt.gz\",\"outputs/data/GPL570.annot.gz\",\"outputs/data/cel_scan_dates.tsv\",\"outputs/data/validation_series_matrix.txt.gz\",\"outputs/data/validation_platform.annot.gz\",\"outputs/data/genesets/reactome.gmt\",\"outputs/data/genesets/hallmark.gmt\",\"outputs/data/sample_metadata_raw.tsv\",\"outputs/data/validation_sample_metadata_raw.tsv\",\"outputs/data/checksums.sha256\",\"outputs/data/fetch_log.md\"],\"phase\":\"evidence\"},{\"agent_id\":\"lit_scout\",\"checks\":[\"각 사실에 출처 URL/PMID\",\"실패한 조회는 실패로 기록\"],\"claim_ids\":[\"c_original_methods\",\"c_positive_control_source\"],\"depends_on\":[],\"evidence_slots\":[{\"description\":\"원 연구 방법 항목별 확인 여부와 출처\",\"id\":\"original_methods\",\"required\":true},{\"description\":\"SEMA5A 방향과 PMID 확인 결과\",\"id\":\"positive_control_verification\",\"required\":true},{\"description\":\"재분석 논문들의 cutoff와 DEG 수\",\"id\":\"reanalysis_table\",\"required\":false}],\"id\":\"lit_methods_controls\",\"input_refs\":[],\"instruction\":\"(1) GSE19804 원 연구(Lu TP et al. 2010 CEBP 19:2590)의 전처리, normalization, 짝 처리, threshold, 검증 방법을 PMC 저자 원고, 보충 자료, GEO data_processing 필드 등 다른 경로로 확인한다 → outputs/lit/original_study_methods.md. 확인하지 못한 …\",\"outputs\":[\"outputs/lit/original_study_methods.md\",\"outputs/lit/positive_controls_verified.tsv\",\"outputs/lit/reanalysis_thresholds.tsv\",\"outputs/lit/search_log.md\"],\"phase\":\"evidence\"},{\"agent_id\":\"engineer\",\"checks\":[\"모든 단위 테스트 통과 여부 명시\",\"numpy/scipy 버전 기록\"],\"claim_ids\":[\"c_lib_validated\"],\"depends_on\":[],\"evidence_slots\":[{\"description\":\"단위 테스트 출력과 통과/실패\",\"id\":\"test_results\",\"required\":true}],\"id\":\"build_stats_lib\",\"input_refs\":[],\"instruction\":\"numpy/scipy만 쓰는 Python 모듈 outputs/lib/pairde.py를 만든다. 들어갈 기능: (a) limma 방식 empirical Bayes moderated t. 짝 차이 행렬에 대한 one-sample 모형으로 하고, fitFDist는 trigamma 역함수로 d0와 s0²를 추정한다(non-robust). logFC, 95% C…\",\"outputs\":[\"outputs/lib/pairde.py\",\"outputs/lib/test_pairde.py\",\"outputs/lib/validation_report.md\"],\"phase\":\"plan\"},{\"agent_id\":\"data_steward\",\"checks\":[\"120개 GSM이 모두 pairing_table에 있음\",\"checksum 일치\"],\"claim_ids\":[\"c_pairing_verified\",\"c_cohort_composition\"],\"depends_on\":[\"fetch_data\"],\"evidence_slots\":[{\"description\":\"검증된 쌍 수와 시료별 근거\",\"id\":\"pairing\",\"required\":true},{\"description\":\"histology/stage/scan date 분포\",\"id\":\"composition\",\"required\":true},{\"description\":\"checksum 검증 결과\",\"id\":\"manifest\",\"required\":true}],\"id\":\"metadata_pairing\",\"input_refs\":[\"fetch_data:outputs/data/checksums.sha256\",\"fetch_data:outputs/data/sample_metadata_raw.tsv\",\"fetch_data:outputs/data/validation_sample_metadata_raw.tsv\",\"fetch_data:outputs/data/cel_scan_dates.tsv\",\"fetch_data:outputs/data/fetch_log.md\"],\"instruction\":\"fetch_data의 outputs/data/checksums.sha256을 sha256sum으로 다시 검증한다. outputs/data/sample_metadata_raw.tsv와 outputs/data/cel_scan_dates.tsv를 읽어 다음을 만든다. (1) outputs/manifest/pairing_table.tsv: GSM, tissue(…\",\"outputs\":[\"outputs/manifest/pairing_table.tsv\",\"outputs/manifest/sample_annotation.tsv\",\"outputs/manifest/validation_pairing_table.tsv\",\"outputs/manifest/data_manifest.tsv\",\"outputs/manifest/metadata_report.md\"],\"phase\":\"evidence\"},{\"agent_id\":\"analyst\",\"checks\":[\"scale 판정 근거 기록\",\"필터가 계약 값과 동일\"],\"claim_ids\":[\"c_scale_determined\",\"c_sample_qc\",\"c_batch_confounding\",\"c_probe_mapping\"],\"depends_on\":[\"fetch_data\",\"metadata_pairing\"],\"evidence_slots\":[{\"description\":\"expression scale 판정과 변환 여부\",\"id\":\"scale\",\"required\":true},{\"description\":\"QC 지표와 flag 시료\",\"id\":\"sample_qc\",\"required\":true},{\"description\":\"scan date와 tissue 교락표(scan date가 없으면 그 사실)\",\"id\":\"batch\",\"required\":true},{\"description\":\"probe→gene 규칙, annotation 판본, 유전자 수\",\"id\":\"mapping\",\"required\":true}],\"id\":\"preprocess_qc\",\"input_refs\":[\"fetch_data:outputs/data/GSE19804_series_matrix.txt.gz\",\"fetch_data:outputs/data/GPL570.annot.gz\",\"metadata_pairing:outputs/manifest/pairing_table.tsv\",\"metadata_pairing:outputs/manifest/sample_annotation.tsv\"],\"instruction\":\"스크립트 outputs/scripts/preprocess.py(python, pandas/numpy/scipy/matplotlib)로 다음을 한다. (1) GSE19804 series matrix 값의 scale을 판정한다. 99th percentile > 100이면 log2(max(x,1))을 적용한다. 판정 결과와 GEO data_processing …\",\"outputs\":[\"outputs/scripts/preprocess.py\",\"outputs/qc/sample_qc_metrics.tsv\",\"outputs/qc/sample_qc_plots.png\",\"outputs/qc/batch_confounding.tsv\",\"outputs/reference/filter_threshold.json\",\"outputs/reference/probe_level_log2_filtered.tsv.gz\",\"outputs/reference/probe_to_gene_map.tsv\",\"outputs/data/expression_gene_log2.tsv.gz\",\"outputs/qc/preprocess_report.md\",\"outputs/env/preprocess_qc.txt\"],\"phase\":\"analysis\"},{\"agent_id\":\"qc_reviewer\",\"checks\":[\"항목별 PASS/WARN/FAIL\",\"판정마다 파일과 수치 인용\"],\"claim_ids\":[\"c_data_qc_verdict\"],\"depends_on\":[\"metadata_pairing\",\"preprocess_qc\"],\"evidence_slots\":[{\"description\":\"데이터 QC 전체 판정과 항목별 판정\",\"id\":\"verdict\",\"required\":true}],\"id\":\"qc_data\",\"input_refs\":[\"metadata_pairing:outputs/manifest/pairing_table.tsv\",\"metadata_pairing:outputs/manifest/data_manifest.tsv\",\"metadata_pairing:outputs/manifest/metadata_report.md\",\"preprocess_qc:outputs/qc/sample_qc_metrics.tsv\",\"preprocess_qc:outputs/qc/sample_qc_plots.png\",\"preprocess_qc:outputs/qc/batch_confounding.tsv\",\"preprocess_qc:outputs/reference/filter_threshold.json\",\"preprocess_qc:outputs/reference/probe_to_gene_map.tsv\",\"preprocess_qc:outputs/qc/preprocess_report.md\"],\"instruction\":\"metadata_pairing과 preprocess_qc 산출물을 검토해 outputs/qc/data_qc_verdict.md에 항목별 PASS/WARN/FAIL과 근거 수치를 쓴다. 검토 항목: checksum 일치, 120 GSM 포함, 짝이 메타데이터 근거로만 정해졌는지, 검증된 쌍 수(≥50), scale 판정, 저발현 필터가 계약 값과 같은지(f…\",\"outputs\":[\"outputs/qc/data_qc_verdict.md\"],\"phase\":\"validation\"},{\"agent_id\":\"analyst\",\"checks\":[\"n_pairs가 verified 쌍 수와 같음\",\"threshold가 계약 값과 같음\"],\"claim_ids\":[\"c_deg_primary\",\"c_deg_sensitivity\",\"c_pvalue_distribution\"],\"depends_on\":[\"build_stats_lib\",\"qc_data\"],\"evidence_slots\":[{\"description\":\"전체 유전자 DE 표와 DEG 수(상향/하향)\",\"id\":\"de_table\",\"required\":true},{\"description\":\"d0, s0², p-value 분포\",\"id\":\"hyperparameters\",\"required\":true},{\"description\":\"민감도 분석 요약\",\"id\":\"sensitivity\",\"required\":true}],\"id\":\"paired_de\",\"input_refs\":[\"build_stats_lib:outputs/lib/pairde.py\",\"build_stats_lib:outputs/lib/validation_report.md\",\"preprocess_qc:outputs/data/expression_gene_log2.tsv.gz\",\"preprocess_qc:outputs/reference/probe_level_log2_filtered.tsv.gz\",\"preprocess_qc:outputs/reference/probe_to_gene_map.tsv\",\"preprocess_qc:outputs/qc/sample_qc_metrics.tsv\",\"metadata_pairing:outputs/manifest/pairing_table.tsv\",\"metadata_pairing:outputs/manifest/sample_annotation.tsv\",\"qc_data:outputs/qc/data_qc_verdict.md\"],\"instruction\":\"build_stats_lib의 outputs/lib/pairde.py를 import해 스크립트 outputs/scripts/run_de.py를 실행한다. qc_data가 FAIL이거나 build_stats_lib 테스트가 실패했으면 실행하지 않고 중단을 보고한다. 주 분석: pairing_table에서 verified 쌍 전체(PI 결정 1a: histo…\",\"outputs\":[\"outputs/scripts/run_de.py\",\"outputs/de/de_results_gene.tsv\",\"outputs/de/deg_list.tsv\",\"outputs/de/de_results_probe.tsv.gz\",\"outputs/reference/ebayes_hyperparameters.json\",\"outputs/de/de_plots.png\",\"outputs/de/sensitivity_results.tsv.gz\",\"outputs/de/sensitivity_summary.tsv\",\"outputs/de/de_report.md\"],\"phase\":\"analysis\"},{\"agent_id\":\"analyst\",\"checks\":[\"CAMERA가 paired 통계량을 사용\",\"ORA universe 명시\"],\"claim_ids\":[\"c_pathway_camera\",\"c_pathway_ora\",\"c_pathway_concordance\"],\"depends_on\":[\"paired_de\"],\"evidence_slots\":[{\"description\":\"CAMERA 유의 경로와 방향\",\"id\":\"camera\",\"required\":true},{\"description\":\"ORA 결과와 universe\",\"id\":\"ora\",\"required\":true},{\"description\":\"방법·DB 간 일치도\",\"id\":\"concordance\",\"required\":true}],\"id\":\"pathway\",\"input_refs\":[\"build_stats_lib:outputs/lib/pairde.py\",\"paired_de:outputs/de/de_results_gene.tsv\",\"paired_de:outputs/de/deg_list.tsv\",\"preprocess_qc:outputs/data/expression_gene_log2.tsv.gz\",\"metadata_pairing:outputs/manifest/pairing_table.tsv\",\"fetch_data:outputs/data/genesets/reactome.gmt\",\"fetch_data:outputs/data/genesets/hallmark.gmt\",\"fetch_data:outputs/data/fetch_log.md\"],\"instruction\":\"outputs/lib/pairde.py를 써서 스크립트 outputs/scripts/run_pathway.py를 실행한다. gene set은 fetch_data의 reactome.gmt와 hallmark.gmt이며, symbol로 매핑하고 크기 15–500으로 필터한다. 매핑률과 set 수는 outputs/reference/geneset_mapping_s…\",\"outputs\":[\"outputs/scripts/run_pathway.py\",\"outputs/reference/geneset_mapping_stats.tsv\",\"outputs/pathway/camera_reactome.tsv\",\"outputs/pathway/camera_hallmark.tsv\",\"outputs/pathway/ora_reactome.tsv\",\"outputs/pathway/ora_hallmark.tsv\",\"outputs/pathway/concordance.tsv\",\"outputs/pathway/pathway_report.md\"],\"phase\":\"analysis\"},{\"agent_id\":\"bioinfo-agent\",\"checks\":[\"사용한 모형과 쌍 수 기록\",\"공통 유전자 수 기록\"],\"claim_ids\":[\"c_external_replication\"],\"depends_on\":[\"paired_de\",\"pathway\",\"metadata_pairing\"],\"evidence_slots\":[{\"description\":\"부호 일치 비율, binomial p, Spearman rho\",\"id\":\"replication\",\"required\":true},{\"description\":\"Hallmark CAMERA 방향 일치\",\"id\":\"pathway_replication\",\"required\":false}],\"id\":\"validation_cohort\",\"input_refs\":[\"build_stats_lib:outputs/lib/pairde.py\",\"fetch_data:outputs/data/validation_series_matrix.txt.gz\",\"fetch_data:outputs/data/validation_platform.annot.gz\",\"fetch_data:outputs/data/genesets/hallmark.gmt\",\"metadata_pairing:outputs/manifest/validation_pairing_table.tsv\",\"paired_de:outputs/de/de_results_gene.tsv\",\"paired_de:outputs/de/deg_list.tsv\",\"pathway:outputs/pathway/camera_hallmark.tsv\"],\"instruction\":\"outputs/lib/pairde.py로 스크립트 outputs/scripts/run_validation.py를 실행해 GSE32863에 같은 규칙을 적용한다. 규칙: scale 판정, 같은 25th percentile 저발현 필터, 최고 평균 probe 집약. 매핑표는 outputs/reference/validation_probe_to_gene_map.…\",\"outputs\":[\"outputs/scripts/run_validation.py\",\"outputs/reference/validation_probe_to_gene_map.tsv\",\"outputs/validation/validation_de.tsv\",\"outputs/validation/concordance_summary.tsv\",\"outputs/validation/camera_hallmark_validation.tsv\",\"outputs/validation/validation_report.md\"],\"phase\":\"validation\"},{\"agent_id\":\"lit_scout\",\"checks\":[\"자원마다 버전과 날짜\",\"실패와 결과 없음 구분\"],\"claim_ids\":[\"c_public_context\"],\"depends_on\":[\"paired_de\",\"pathway\"],\"evidence_slots\":[{\"description\":\"상위 유전자의 공개 자원 주석\",\"id\":\"gene_context\",\"required\":true},{\"description\":\"자원 release/version\",\"id\":\"versions\",\"required\":true}],\"id\":\"public_lookup\",\"input_refs\":[\"paired_de:outputs/de/deg_list.tsv\",\"paired_de:outputs/de/de_results_gene.tsv\",\"pathway:outputs/pathway/camera_reactome.tsv\",\"pathway:outputs/pathway/camera_hallmark.tsv\"],\"instruction\":\"paired_de의 상위 DEG(상향 20, 하향 20, FDR 순)와 SEMA5A, 그리고 CAMERA 상위 경로 10개를 공개 자원에서 조회한다. 유전자는 Open Targets(lung adenocarcinoma association score), Human Protein Atlas(정상 폐/폐암 발현), GTEx(정상 lung TPM), PubMe…\",\"outputs\":[\"outputs/lookup/gene_annotations.tsv\",\"outputs/lookup/pathway_annotations.tsv\",\"outputs/lookup/resource_versions.tsv\",\"outputs/lookup/lookup_log.md\"],\"phase\":\"evidence\"},{\"agent_id\":\"qc_reviewer\",\"checks\":[\"항목별 판정과 인용\",\"positive control 방향을 PMID 근거와 대조\"],\"claim_ids\":[\"c_results_qc_verdict\",\"c_positive_control\"],\"depends_on\":[\"lit_methods_controls\",\"paired_de\",\"pathway\",\"validation_cohort\"],\"evidence_slots\":[{\"description\":\"결과 QC 전체 판정\",\"id\":\"verdict\",\"required\":true},{\"description\":\"SEMA5A 관찰값과 기대 방향 일치 여부\",\"id\":\"positive_control\",\"required\":true}],\"id\":\"qc_results\",\"input_refs\":[\"lit_methods_controls:outputs/lit/positive_controls_verified.tsv\",\"preprocess_qc:outputs/reference/filter_threshold.json\",\"paired_de:outputs/de/de_results_gene.tsv\",\"paired_de:outputs/de/deg_list.tsv\",\"paired_de:outputs/reference/ebayes_hyperparameters.json\",\"paired_de:outputs/de/de_plots.png\",\"paired_de:outputs/de/sensitivity_summary.tsv\",\"paired_de:outputs/de/de_report.md\",\"paired_de:outputs/scripts/run_de.py\",\"pathway:outputs/pathway/pathway_report.md\",\"pathway:outputs/pathway/concordance.tsv\",\"pathway:outputs/scripts/run_pathway.py\",\"validation_cohort:outputs/validation/concordance_summary.tsv\",\"validation_cohort:outputs/validation/validation_report.md\"],\"instruction\":\"결과를 검토해 outputs/qc/results_qc_verdict.md에 항목별 PASS/WARN/FAIL과 근거 수치를 쓴다. positive control은 별도 표 outputs/qc/positive_control_check.tsv에 쓴다: SEMA5A의 관찰 logFC/FDR, 기대 방향(lit_scout 확인 결과), 일치 여부. 검토 항목: …\",\"outputs\":[\"outputs/qc/results_qc_verdict.md\",\"outputs/qc/positive_control_check.tsv\"],\"phase\":\"validation\"},{\"agent_id\":\"analyst\",\"checks\":[\"모든 결론에 claim 태그, 파일, 수치\",\"관찰과 가설 구분\"],\"claim_ids\":[\"c_final_report\"],\"depends_on\":[\"qc_results\",\"public_lookup\",\"lit_methods_controls\"],\"evidence_slots\":[{\"description\":\"최종 보고서와 claim-evidence 표\",\"id\":\"report\",\"required\":true}],\"id\":\"report\",\"input_refs\":[\"lit_methods_controls:outputs/lit/original_study_methods.md\",\"lit_methods_controls:outputs/lit/reanalysis_thresholds.tsv\",\"metadata_pairing:outputs/manifest/metadata_report.md\",\"qc_data:outputs/qc/data_qc_verdict.md\",\"preprocess_qc:outputs/qc/preprocess_report.md\",\"paired_de:outputs/de/de_report.md\",\"paired_de:outputs/de/deg_list.tsv\",\"paired_de:outputs/de/sensitivity_summary.tsv\",\"pathway:outputs/pathway/pathway_report.md\",\"pathway:outputs/pathway/concordance.tsv\",\"validation_cohort:outputs/validation/validation_report.md\",\"validation_cohort:outputs/validation/concordance_summary.tsv\",\"public_lookup:outputs/lookup/gene_annotations.tsv\",\"public_lookup:outputs/lookup/resource_versions.tsv\",\"qc_results:outputs/qc/results_qc_verdict.md\",\"qc_results:outputs/qc/positive_control_check.tsv\"],\"instruction\":\"한국어 보고서 outputs/report/report_ko.md를 쓴다. 기술 용어와 유전자명은 영어로 둔다. 구성: 자료와 짝 확인, QC와 batch, 전처리와 probe mapping, paired DE 결과(DEG 수, 상위 유전자, positive control), 민감도 분석(선암만 남긴 분석 포함), 경로(CAMERA 주 결과, ORA 보조,…\",\"outputs\":[\"outputs/report/report_ko.md\",\"outputs/report/claim_evidence_table.tsv\"],\"phase\":\"report\"}],\"suggested_next\":[\"R/Bioconductor 설치를 승인받으면 CEL에서 RMA(oligo/affy)로 다시 정규화하고 limma로 교차검증한다. 제출자 정규화에 대한 의존을 없애기 위해서다(Nine quick tips, doi:10.1371/journal.pcbi.1010348).\",\"fgsea/GSEA preranked를 세 번째 경로 방법으로 추가해 방법 간 일치도를 넓힌다(doi:10.1093/bib/bbz158).\",\"조직 구성 효과를 분리하기 위해 deconvolution으로 세포 구성을 추정하고 보정하는 분석을 고려한다.\"],\"topics\":[\"microarray_expression\"]}",
+   "pack_applicability": {
+    "bulk_tumor_normal@3": {
+     "applied": true,
+     "topics_any": [
+      "bulk_rna_seq",
+      "microarray_expression"
+     ],
+     "matched_topics": [
+      "microarray_expression"
+     ],
+     "reason": "topic_match"
+    },
+    "single_cell_de@3": {
+     "applied": false,
+     "topics_any": [
+      "single_cell_rna_seq"
+     ],
+     "matched_topics": [],
+     "reason": "no_topic_match"
+    }
+   },
+   "warnings": [],
+   "protocol_revision": 1,
+   "packs": [
+    {
+     "id": "bulk_tumor_normal",
+     "version": "3",
+     "sha256": "6c311747a791db3bb21f2651d701703d8983c5f7e292087e3ab657e68bd1efd2"
+    }
+   ],
+   "scope_status": "in_scope"
+  }
+ },
+ "research_evidence": {
+  "id": "appr_2bb4315f85",
+  "kind": "research_evidence",
+  "request_id": "req_7ccde78be0",
+  "summary": "CP2 evidence review: 12 step(s), 22 claim(s), 31 evidence row(s), 1 refused. Choose approve, revise or deny.",
+  "created_at": 1791405450.9474828,
+  "timeout_s": 3600,
+  "agent_id": null,
+  "detail": {
+   "gate": "research_evidence",
+   "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+   "choices": [
+    "approve",
+    "revise",
+    "deny"
+   ],
+   "refused_evidence": [
+    {
+     "step_id": "qc_data",
+     "evidence_id": "e_verdict",
+     "reason": "cites artifact data_qc_checks at 'outputs/qc/data_qc_checks.json', which is neither a collected output of this step nor a verified upstream artifact"
+    }
+   ],
+   "unsupported_claims": [
+    {
+     "step_id": "qc_data",
+     "claim_id": "c_data_qc_verdict",
+     "reason": "supported rests only on refused evidence e_verdict"
+    }
+   ],
+   "unreported_outputs": {
+    "fetch_data": [
+     "outputs/env/fetch_data.txt"
+    ],
+    "lit_methods_controls": [],
+    "build_stats_lib": [
+     "outputs/lib/__pycache__/pairde.cpython-312.pyc",
+     "outputs/lib/__pycache__/test_pairde.cpython-312.pyc"
+    ],
+    "metadata_pairing": [
+     "outputs/env/metadata_pairing.txt",
+     "outputs/scripts/metadata_pairing.py"
+    ],
+    "preprocess_qc": [],
+    "qc_data": [
+     "outputs/env/qc_data.txt",
+     "outputs/qc/data_qc_checks.json",
+     "outputs/scripts/qc_data_check.py"
+    ],
+    "paired_de": [
+     "outputs/env/paired_de.txt"
+    ],
+    "pathway": [
+     "outputs/env/pathway.txt",
+     "outputs/reference/geneset_mapped_hallmark.gmt",
+     "outputs/reference/geneset_mapped_reactome.gmt",
+     "outputs/reference/hallmark_reactome_matched_pairs.tsv"
+    ],
+    "validation_cohort": [
+     "outputs/env/validation_cohort.txt"
+    ],
+    "public_lookup": [
+     "outputs/annotation/gtex-27a4910ac649-92356a76d9fa.json",
+     "outputs/annotation/gtex-27a4910ac649-eb9ee3cbbe41.json",
+     "outputs/annotation/gtex-eee0c3114a59-9ce2e3085c7e.json",
+     "outputs/annotation_queries.jsonl"
+    ],
+    "qc_results": [
+     "outputs/env/qc_results.txt",
+     "outputs/qc/qc_results_checks.json",
+     "outputs/scripts/qc_results_check.py"
+    ],
+    "report": []
+   },
+   "artifact_sha256": {
+    "fetch_data/fetch_py": "b747688fd8644f1b434eb3ea870cf3e6d66654bf6f2f03949e73f83cf0b17d54",
+    "fetch_data/parse_metadata_py": "4670d279c57ebc93d7f0d7bb375c1221f2c3ef8abb7af4c37d02f3baafa7056e",
+    "fetch_data/series_matrix": "e96b0974243acd941824aeae9db13cbfc30663b45cbd9342bb14dad0d1372e91"
+   },
+   "results": {
+    "fetch_data": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "fetch_data",
+     "claims": [
+      {
+       "id": "c_data_obtained",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "계획된 공개 자료를 모두 받았다. GSE19804 series matrix(120 GSM, GPL570)는 GEO FTP primary 경로로 받았다. GPL570 annotation, GSE32863 series matrix(116 GSM, GPL6884)와 GPL6884 annotation, Reactome GMT(DB version 97, 2868 sets), MSigDB Hallma…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_series_matrix",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "GSE19804_series_matrix.txt.gz를 GEO FTP primary 경로에서 받았다(21,530,998 bytes, sha25…"
+      },
+      {
+       "id": "e_annot_genesets",
+       "kind": "database_annotation",
+       "status": "observed",
+       "observation": "GPL570.annot.gz(Annotation_date Aug 09 2016, 8,471,521 bytes)를 받았다. Reactome GM…"
+      },
+      {
+       "id": "e_scan_dates",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "GSE19804_RAW.tar(631,982,080 bytes)를 ./.tmp/에 받았다. CEL.gz 120개 모두 version 4 bin…"
+      },
+      {
+       "id": "e_validation",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "GSE32863 series matrix를 받았다. matrix 디렉터리에는 파일이 하나뿐이었다(29,776,898 bytes, Series_…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_data_obtained",
+       "claim_revision": 1,
+       "evidence_id": "e_series_matrix",
+       "relation": "supports",
+       "rationale": "주 입력 series matrix를 primary 경로로 확보했다."
+      },
+      {
+       "claim_id": "c_data_obtained",
+       "claim_revision": 1,
+       "evidence_id": "e_annot_genesets",
+       "relation": "supports",
+       "rationale": "annotation과 GMT 2종을 version과 함께 확보했다."
+      },
+      {
+       "claim_id": "c_data_obtained",
+       "claim_revision": 1,
+       "evidence_id": "e_scan_dates",
+       "relation": "supports",
+       "rationale": "CEL 120개 모두에서 scan date를 얻었다."
+      },
+      {
+       "claim_id": "c_data_obtained",
+       "claim_revision": 1,
+       "evidence_id": "e_validation",
+       "relation": "supports",
+       "rationale": "검증 cohort 자료와 플랫폼 annotation을 확보했다."
+      }
+     ],
+     "not_established": [
+      "pairing, histology, expression scale(log2 여부)는 이 step에서 해석하지 않았다. 원시 표만 만들었고 판정…",
+      "GSE32863은 시료 116개(58쌍으로 추정)이지만, 쌍 확인은 하지 않았다."
+     ],
+     "failures": [
+      "Reactome primary URL https://reactome.org/download/current/ReactomePathways.gmt…"
+     ]
+    },
+    "lit_methods_controls": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "lit_methods_controls",
+     "claims": [
+      {
+       "id": "c_original_methods",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "Lu et al. 2010 reported 60 paired tumor/adjacent-normal samples on Affymetrix U133 Plus 2.0, used a paired t test, reported 687 DEGs, and validated findings by RT-PCR and immunohistochemistry. The accessible record did …"
+      },
+      {
+       "id": "c_positive_control_source",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "PMID 20802022 is the Lu et al. SEMA5A NSCLC paper and reports SEMA5A downregulation in tumor tissue."
+      }
+     ],
+     "evidence": [
+      {
+       "id": "original_methods",
+       "kind": "literature_claim",
+       "status": "observed",
+       "observation": "The PubMed record for PMID 20802022 describes 60 tumor/adjacent-normal pairs on…"
+      },
+      {
+       "id": "positive_control_verification",
+       "kind": "literature_claim",
+       "status": "observed",
+       "observation": "PMID 20802022 matches Lu et al., “Identification of a novel biomarker, SEMA5A, …"
+      },
+      {
+       "id": "reanalysis_table",
+       "kind": "literature_claim",
+       "status": "observed",
+       "observation": "The reanalysis table records Wang et al. (PMC8523254): limma, adjusted P<0.01 a…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_original_methods",
+       "claim_revision": 1,
+       "evidence_id": "original_methods",
+       "relation": "supports",
+       "rationale": "The article abstract and GEO series summary provide the coh…"
+      },
+      {
+       "claim_id": "c_positive_control_source",
+       "claim_revision": 1,
+       "evidence_id": "positive_control_verification",
+       "relation": "supports",
+       "rationale": "The exact PMID record identifies the paper and states that …"
+      }
+     ],
+     "not_established": [
+      "원 연구의 정확한 normalization 및 probe summarization 방법",
+      "원 연구에서 사용한 DEG p-value/FDR 또는 fold-change cutoff"
+     ],
+     "failures": [
+      "PubMed full-text 도구 호출은 유효하지 않은 PMC ID를 사용해 API_ERROR를 반환했다.",
+      "NCBI GEO 및 PMC 직접 페이지 열기에서 reCAPTCHA가 나타나 일부 세부사항을 검증하지 못했다."
+     ]
+    },
+    "build_stats_lib": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "build_stats_lib",
+     "claims": [
+      {
+       "id": "c_lib_validated",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "numpy/scipy 기반 pairde 통계 모듈을 구현했으며, 사전 지정된 5개 단위 테스트가 모두 통과했다."
+      }
+     ],
+     "evidence": [
+      {
+       "id": "test_results",
+       "kind": "experimental",
+       "status": "observed",
+       "observation": "최종 검증에서 5/5 테스트가 통과했다. scaled-F simulation의 추정치는 d0=8.0383514450, s0²=2.5038827…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_lib_validated",
+       "claim_revision": 1,
+       "evidence_id": "test_results",
+       "relation": "supports",
+       "rationale": "사전 지정된 일치성, hyperparameter 회복, 귀무 p-value 균일성, CAMERA 귀무 검정…"
+      }
+     ],
+     "not_established": [
+      "실제 GSE19804 자료에 대한 분석 성능은 이 라이브러리 구축 단계에서 평가하지 않았다.",
+      "limma R 패키지와의 결과 완전 동일성은 직접 검증하지 않았다."
+     ],
+     "failures": []
+    },
+    "metadata_pairing": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "metadata_pairing",
+     "claims": [
+      {
+       "id": "c_pairing_verified",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "GSE19804의 60쌍(120 GSM)이 sample_title 환자 번호와 geo_characteristics tissue로 모두 검증되었다(제외 0). 검증 cohort GSE32863은 57쌍이 검증되었고 2시료(GSM813507, GSM813518)는 짝이 없어 제외했다. 두 cohort 모두 paired_t 기준(주 50쌍, 검증 20쌍)을 충족한다."
+      },
+      {
+       "id": "c_cohort_composition",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "GSE19804는 histology와 smoking 필드가 메타데이터에 없어 선암 비율과 비흡연 여부를 알 수 없다. 60쌍 모두 같은 날 scan되었고(30개 날짜, tumor/normal 날짜 분포 동일) scan date는 tumor/normal과 교락되지 않는다. GSE32863은 전부 LUAD이나 흡연자(Current) 28쌍을 포함한다."
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_pairing",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "pairing_table.tsv: GSE19804 120 GSM 중 verified=yes 120, 제외 0, 60개 환자 모두 tumor 1…"
+      },
+      {
+       "id": "e_composition",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "GSE19804 sample_annotation.tsv: histology와 smoking은 not_in_metadata, gender fem…"
+      },
+      {
+       "id": "e_checksums",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "checksums.sha256의 9개 파일을 sha256sum -c와 hashlib으로 재계산: 9/9 OK, MISMATCH 0."
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_pairing_verified",
+       "claim_revision": 1,
+       "evidence_id": "e_pairing",
+       "relation": "supports",
+       "rationale": "60쌍과 57쌍이 메타데이터 규칙으로 검증되었다."
+      },
+      {
+       "claim_id": "c_pairing_verified",
+       "claim_revision": 1,
+       "evidence_id": "e_checksums",
+       "relation": "context",
+       "rationale": "입력 파일의 무결성이 재확인되었다."
+      },
+      {
+       "claim_id": "c_cohort_composition",
+       "claim_revision": 1,
+       "evidence_id": "e_composition",
+       "relation": "supports",
+       "rationale": "histology 부재, scan date 일치, 검증 cohort 흡연 구성의 직접 집계."
+      }
+     ],
+     "not_established": [
+      "GSE19804의 선암 비율(histology 메타데이터 없음)",
+      "GSE19804 시료의 비흡연 여부(시료 수준 smoking 필드 없음)"
+     ],
+     "failures": []
+    },
+    "preprocess_qc": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "preprocess_qc",
+     "claims": [
+      {
+       "id": "c_scale_determined",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "GSE19804 series matrix 값은 이미 log2 scale이다(99th percentile 12.338 ≤ 100, 범위 3.04–14.89, ≤0 값 0개). 사전 규칙에 따라 변환하지 않았다. GEO data_processing 문구(RMA, median polish, quantile normalization)와 일치한다."
+      },
+      {
+       "id": "c_sample_qc",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "120 array 중 2개가 median inter-array r < Q1−3×IQR(0.8739)로 flag되었다: GSM494596(tumor, P137, r=0.8235), GSM494654(normal, P135, r=0.8585). 서로 다른 환자이므로 flag 쌍 제외 민감도 분석은 P135와 P137 두 쌍을 뺀다. 주 분석에서는 제외하지 않았다. array 분포는 quanti…"
+      },
+      {
+       "id": "c_batch_confounding",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "scan date(30일)는 tissue와 교락되지 않는다. 모든 날짜에서 tumor 수와 normal 수가 같고, 60/60쌍이 같은 날 scan되었다. 다만 발현 PC 중 PC1, PC3, PC5가 scan date와 연관된다(Kruskal p 0.022, 5.1e-7, 3.2e-6; PC3 eta² 0.87). paired 모형에서는 날짜의 가산적 효과가 쌍 내 차이에서 상쇄된다."
+      },
+      {
+       "id": "c_probe_mapping",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "저발현 필터(기준값 log2 4.7498 = 비-AFFX probe 평균의 25번째 백분위수)를 54,613 probes 중 41,577개가 통과했다. 그중 단일 symbol·단일 Entrez probe 34,753개를 유전자당 전체 평균이 가장 높은 probe 하나로 모아 18,007개 유전자 × 120 arrays 행렬을 만들었다. annotation은 GPL570.annot Aug 0…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_scale",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "series matrix 54,675×120, 결측 0. min 3.0427, median 6.0284, p99 12.3379, max 14.…"
+      },
+      {
+       "id": "e_sample_qc",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "시료별 median inter-array Pearson r: 최소 0.8235, 중앙값 0.9437, Q1 0.92991, Q3 0.94856…"
+      },
+      {
+       "id": "e_batch",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "scan date 30일, 모든 날짜에서 n_tumor = n_normal(chi2 0.000, df 29, p 1). 쌍 내 scan dat…"
+      },
+      {
+       "id": "e_mapping",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "AFFX- 62개를 제외했다. 필터 기준값 4.7498(log2), 54,613 중 41,577 probes 통과, 13,036 탈락. GPL…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_scale_determined",
+       "claim_revision": 1,
+       "evidence_id": "e_scale",
+       "relation": "supports",
+       "rationale": "p99 12.34 ≤ 100이고 RMA 처리 문구와 일치한다."
+      },
+      {
+       "claim_id": "c_sample_qc",
+       "claim_revision": 1,
+       "evidence_id": "e_sample_qc",
+       "relation": "supports",
+       "rationale": "flag 기준과 flag 시료 2개를 직접 계산했다."
+      },
+      {
+       "claim_id": "c_batch_confounding",
+       "claim_revision": 1,
+       "evidence_id": "e_batch",
+       "relation": "supports",
+       "rationale": "교차표가 균형이고 60/60쌍이 같은 날 scan되었다. PC와 날짜 연관을 계산했다."
+      },
+      {
+       "claim_id": "c_probe_mapping",
+       "claim_revision": 1,
+       "evidence_id": "e_mapping",
+       "relation": "supports",
+       "rationale": "필터 기준값, 통과 수, 유전자 수, annotation 판본을 기록했다."
+      }
+     ],
+     "not_established": [
+      "날짜와 연관된 PC(PC1, PC3, PC5)가 순수한 scan batch 효과인지 환자 효과인지는 분리할 수 없다. 쌍이 같은 날 scan되…",
+      "flag 시료 2개(GSM494596, GSM494654)의 원인(RNA 품질, 조직 구성 등)은 확인하지 않았다. 민감도 분석에서는 P135…"
+     ],
+     "failures": []
+    },
+    "qc_data": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "qc_data",
+     "claims": [
+      {
+       "id": "c_data_qc_verdict",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "데이터 QC 전체 판정은 WARN(FAIL 없음)이다. checksum, 120 GSM, 60쌍(≥50), log2 scale, 필터 값, probe→gene 규칙은 PASS이고, 짝 근거(title 중심), QC flag 2시료, scan date–PC 연관, histology/smoking 메타데이터 부재는 WARN이다."
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_verdict",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "checksum 9/9 OK; 120 GSM = matrix 열; 60쌍 120/120 재현; p99 12.338 min 3.043; thre…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_data_qc_verdict",
+       "claim_revision": 1,
+       "evidence_id": "e_verdict",
+       "relation": "supports",
+       "rationale": "항목별 재계산이 판정의 근거이다."
+      }
+     ],
+     "not_established": [
+      "GSE19804 선암 비율과 비흡연 여부",
+      "날짜 연관 PC가 batch인지 환자 효과인지"
+     ],
+     "failures": []
+    },
+    "paired_de": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "paired_de",
+     "claims": [
+      {
+       "id": "c_deg_primary",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "GSE19804 검증된 60쌍 전체에 moderated paired t(tumor − normal)를 적용해 18,007 유전자를 검정했다. DEG(FDR<0.05 & |log2FC|≥1)는 1,185개(상향 384, 하향 801)였다. positive control SEMA5A는 tumor에서 하향이었다(logFC −1.44, 95% CI −1.63~−1.25, FDR 5.6e-20)."
+      },
+      {
+       "id": "c_pvalue_distribution",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "minor",
+       "statement": "eBayes hyperparameter는 d0=2.83, s0²=0.169였다. p-value 분포는 0 근처에 봉우리가 있고 나머지 구간은 평탄했다(π0≈0.21). 귀무 가정과 모순되는 이상 형태는 없었다."
+      },
+      {
+       "id": "c_deg_sensitivity",
+       "revision": 1,
+       "kind": "finding",
+       "status": "partially_supported",
+       "importance": "major",
+       "statement": "주 분석 DEG는 실행 가능한 민감도 분석 6개에서 대체로 안정적이었다. QC flag 쌍을 제외한 분석은 ρ=0.999, Jaccard 0.96, probe 단위 분석은 Jaccard 0.88, probe 평균 집약은 ρ=0.955, Jaccard 0.72였다. ordinary t와 unpaired t는 DEG 집합이 같았다. 선암만 남긴 분석은 histology 메타데이터가 없어 실행하…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_de_table",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "18,007 유전자 중 DEG 1,185(up 384, down 801)였고, FDR<0.05인 유전자는 12,000이었다. 상위 유전자는 S…"
+      },
+      {
+       "id": "e_hyper",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "d0=2.833, s0²=0.1693, total df=61.83이었다. 쌍 내 차이 분산 중앙값은 0.227이었다. 20-bin p-valu…"
+      },
+      {
+       "id": "e_sens",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "민감도 분석 결과는 다음과 같다. |lfc| 기준 0일 때 DEG 12,000, 기준 2일 때 162였다. ordinary paired t는 …"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_deg_primary",
+       "claim_revision": 1,
+       "evidence_id": "e_de_table",
+       "relation": "supports",
+       "rationale": "DE 표와 DEG 수, SEMA5A 결과를 직접 보여준다."
+      },
+      {
+       "claim_id": "c_pvalue_distribution",
+       "claim_revision": 1,
+       "evidence_id": "e_hyper",
+       "relation": "supports",
+       "rationale": "hyperparameter와 히스토그램 수치이다."
+      },
+      {
+       "claim_id": "c_deg_sensitivity",
+       "claim_revision": 1,
+       "evidence_id": "e_sens",
+       "relation": "supports",
+       "rationale": "민감도 분석 요약 수치와 실행 불가 사유이다."
+      }
+     ],
+     "not_established": [
+      "선암만 남긴 민감도 분석: GSE19804 메타데이터에 histology가 없어 실행하지 않았다(발현으로 추정하지 않음)",
+      "시료 수준의 비흡연 여부"
+     ],
+     "failures": [
+      "pairde.py 결함: paired_de/unpaired_de(moderate=False)가 s0_sq=None을 남겨 eBayes를 다시 …"
+     ]
+    },
+    "pathway": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "pathway",
+     "claims": [
+      {
+       "id": "c_pathway_camera",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "사전 지정한 주 경로 검정은 CAMERA였다. 짝 차이 residual로 추정한 inter-gene correlation을 썼고, 결과는 Reactome 1,351 sets와 Hallmark 50 sets 모두에서 FDR<0.05 경로가 0개였다(최소 FDR은 Reactome 0.094, Hallmark 0.188). 큰 일관 set에서 residual 상관이 높아(E2F_TARGETS ρ…"
+      },
+      {
+       "id": "c_pathway_ora",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "상향 DEG와 하향 DEG를 따로 hypergeometric ORA로 검정했다. universe는 해당 DB에 매핑된 검정 유전자로, Reactome 9,152개, Hallmark 4,082개다. Reactome은 상향 54 sets, 하향 12 sets가 FDR<0.05였다. Hallmark는 상향 9 sets, 하향 11 sets였다. 종양 상향에서는 증식(G2M OR 6.21, FDR…"
+      },
+      {
+       "id": "c_pathway_concordance",
+       "revision": 1,
+       "kind": "finding",
+       "status": "partially_supported",
+       "importance": "minor",
+       "statement": "주 CAMERA의 유의 set이 0개라서 FDR<0.05 기준의 CAMERA–ORA 겹침은 0이었고, 방향 일치는 계산할 수 없었다. set 전체 순위는 일치했다(CAMERA 통계량과 ORA 부호 점수의 Spearman ρ: Reactome 0.646, Hallmark 0.780). Hallmark–Reactome 대응 쌍(gene Jaccard≥0.2, 15쌍)의 CAMERA 통계량 ρ는…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_camera",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "CAMERA(추정 상관)는 Reactome 1,351 sets 중 FDR<0.05가 0개였다(최소 FDR 0.094, 명목 p<0.05는 16…"
+      },
+      {
+       "id": "e_ora",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "ORA universe는 Reactome 9,152, Hallmark 4,082 유전자였다. universe 안의 DEG는 Reactome 상…"
+      },
+      {
+       "id": "e_concordance",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "CAMERA–ORA의 FDR<0.05 겹침은 Reactome 0/66, Hallmark 0/17이었다. CAMERA 통계량과 ORA 부호 점수…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_pathway_camera",
+       "claim_revision": 1,
+       "evidence_id": "e_camera",
+       "relation": "supports",
+       "rationale": "CAMERA 결과 표와 구현 대조 수치이다."
+      },
+      {
+       "claim_id": "c_pathway_ora",
+       "claim_revision": 1,
+       "evidence_id": "e_ora",
+       "relation": "supports",
+       "rationale": "ORA 결과 표와 universe 수치이다."
+      },
+      {
+       "claim_id": "c_pathway_concordance",
+       "claim_revision": 1,
+       "evidence_id": "e_concordance",
+       "relation": "supports",
+       "rationale": "일치도 표 수치이다."
+      },
+      {
+       "claim_id": "c_pathway_ora",
+       "claim_revision": 1,
+       "evidence_id": "e_camera",
+       "relation": "context",
+       "rationale": "주 검정인 CAMERA는 ORA 유의 경로를 FDR<0.05로 지지하지 않는다."
+      }
+     ],
+     "not_established": [
+      "사전 지정 CAMERA 기준(FDR<0.05)으로 유의한 경로: 없음",
+      "CAMERA–ORA, Hallmark–Reactome 유의 경로의 방향 일치(사전 기준): 유의 set이 없어 평가 불가"
+     ],
+     "failures": []
+    },
+    "validation_cohort": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "validation_cohort",
+     "claims": [
+      {
+       "id": "c_external_replication",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "주 분석(GSE19804) DEG 중 GSE32863 검증 cohort(57쌍, moderated paired t)에서 측정된 1,106개의 97.4%(1,077개)가 같은 부호였다(binomial 단측 log10 p=−275.8). 이 1,106개 중 94.1%는 검증 FDR<0.05였고, 공통 14,877 유전자의 logFC Spearman ρ는 0.690이었다. Hallmark CAM…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_val_gene_concordance",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "주 DEG 1,185개 중 검증 cohort에서 측정된 것은 1,106개였다. 부호 일치는 1,077/1,106(0.974, Clopper-P…"
+      },
+      {
+       "id": "e_val_camera",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "검증 Hallmark CAMERA(추정 residual 상관, 50/50 sets)에서 FDR<0.05 set은 0개였다(최소 FDR은 GLY…"
+      },
+      {
+       "id": "e_val_setup",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "GSE32863 series matrix는 48,803 probes × 116이고 결측이 0이었다. p99가 12.888이어서 이미 log2로…"
+      },
+      {
+       "id": "e_neversmoker",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "사전 지정하지 않은 기술 분석이다. 검증 cohort의 비흡연 29쌍만으로 moderated paired t를 다시 적합했다. 결과는 부호 일…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_external_replication",
+       "claim_revision": 1,
+       "evidence_id": "e_val_gene_concordance",
+       "relation": "supports",
+       "rationale": "사전 지정 유전자 수준 지표(부호 일치, binomial, Spearman, 검증 FDR 비율)이다."
+      },
+      {
+       "claim_id": "c_external_replication",
+       "claim_revision": 1,
+       "evidence_id": "e_val_camera",
+       "relation": "supports",
+       "rationale": "Hallmark CAMERA 방향 일치 45/50, ρ 0.793이다. 다만 유의 set이 없어 사전 기준…"
+      },
+      {
+       "claim_id": "c_external_replication",
+       "claim_revision": 1,
+       "evidence_id": "e_val_setup",
+       "relation": "context",
+       "rationale": "규칙 적용과 모형 선택(57쌍 → paired) 기록이다."
+      },
+      {
+       "claim_id": "c_external_replication",
+       "claim_revision": 1,
+       "evidence_id": "e_neversmoker",
+       "relation": "context",
+       "rationale": "흡연 구성 차이에도 결과가 유지됨을 보이는 비사전 기술 분석이다."
+      }
+     ],
+     "not_established": [
+      "사전 기준의 Hallmark CAMERA 유의 경로 방향 일치: 두 cohort 모두 FDR<0.05 set이 0개라 평가할 수 없다",
+      "검증 cohort 비흡연 여성만의 재현: 비흡연 29쌍 기술 분석만 했고 성별 부분집합 분석은 하지 않았다"
+     ],
+     "failures": []
+    },
+    "public_lookup": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "public_lookup",
+     "claims": [
+      {
+       "id": "c_public_context",
+       "revision": 1,
+       "kind": "finding",
+       "status": "partially_supported",
+       "importance": "major",
+       "statement": "GTEx Analysis v10의 Lung median TPM을 41개 유전자에서 조회해 gene_annotations.tsv에 기록했다. PubMed 검색 결과와 CAMERA 경로 상위 순위도 같은 표와 pathway_annotations.tsv에 정리했으나, Open Targets 질환 연관 점수와 Human Protein Atlas 발현은 확보하지 못했고 Reactome/MSigDB …"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "e_gene_context",
+       "kind": "database_annotation",
+       "status": "observed",
+       "observation": "gene_annotations.tsv에는 방향별 상위 DEG 40개와 SEMA5A 1개가 기록되어 있다. GTEx Lung median TPM…"
+      },
+      {
+       "id": "e_pathway_context",
+       "kind": "database_annotation",
+       "status": "observed",
+       "observation": "pathway_annotations.tsv에는 Reactome 및 Hallmark CAMERA 결과의 상위 경로 10개씩과 방향 및 FDR을 …"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_public_context",
+       "claim_revision": 1,
+       "evidence_id": "e_gene_context",
+       "relation": "supports",
+       "rationale": "유전자별 공개 자원 조회 범위와 성공 및 미확보 상태가 표와 로그에 기록되어 있다."
+      },
+      {
+       "claim_id": "c_public_context",
+       "claim_revision": 1,
+       "evidence_id": "e_pathway_context",
+       "relation": "supports",
+       "rationale": "CAMERA 경로 순위와 FDR 및 원문 설명 검증 상태가 표에 기록되어 있다."
+      }
+     ],
+     "not_established": [
+      "Open Targets lung adenocarcinoma association scores for the queried genes",
+      "Human Protein Atlas normal lung and lung cancer expression values"
+     ],
+     "failures": [
+      "Open Targets entity search and schema retrieval were attempted; the initially s…",
+      "Human Protein Atlas lookup was unavailable because no HPA connector was exposed…"
+     ]
+    },
+    "qc_results": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "qc_results",
+     "claims": [
+      {
+       "id": "c_results_qc_verdict",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "결과 단계 QC 전체 판정은 WARN이다(FAIL 없음). 60쌍 보존, 필터·DEG 기준, DE 통계, ORA universe, 다중검정, 독립 검증은 재계산으로 PASS였다. WARN은 선암 민감도 분석 미실행, CAMERA 유의 경로 0개, 검증 경로 수준 평가 불가, 스크립트·라이브러리 경미 결함이다."
+      },
+      {
+       "id": "c_positive_control",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "SEMA5A는 tumor에서 하향(logFC -1.438, FDR 5.6e-20)으로 문헌 기대 방향(PMID:20802022)과 일치했다."
+      }
+     ],
+     "evidence": [
+      {
+       "id": "verdict",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "재계산: n_pairs=60 전 유전자, DEG 1,185(상향 384, 하향 801), BH 최대차 1.1e-6, 보고 d0=2.833/s0…"
+      },
+      {
+       "id": "positive_control",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "SEMA5A(205405_at) 주 분석 logFC -1.43757(95% CI -1.62683~-1.24831), FDR 5.61572e-2…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_results_qc_verdict",
+       "claim_revision": 1,
+       "evidence_id": "verdict",
+       "relation": "supports",
+       "rationale": "항목별 재계산 수치가 판정을 뒷받침한다."
+      },
+      {
+       "claim_id": "c_positive_control",
+       "claim_revision": 1,
+       "evidence_id": "positive_control",
+       "relation": "supports",
+       "rationale": "관찰 방향과 기대 방향이 일치하고 FDR<0.05이다."
+      }
+     ],
+     "not_established": [
+      "선암만 남긴 민감도 분석 결과(histology 메타데이터 없음)",
+      "사전 기준의 CAMERA 유의 경로 방향 일치(두 cohort 모두 유의 set 0개)"
+     ],
+     "failures": [
+      "binomial p 재계산에서 scipy binom.logsf가 underflow(-inf)해 log10 p는 업스트림 값(-275.8)만 있음"
+     ]
+    },
+    "report": {
+     "schema_version": 2,
+     "plan_sha256": "36fb55593d3949895dd4dc091512a9c7ccb64bc53e7a70f041fca8b3f8e3006c",
+     "step_id": "report",
+     "claims": [
+      {
+       "id": "c_final_report",
+       "revision": 1,
+       "kind": "finding",
+       "status": "supported",
+       "importance": "major",
+       "statement": "GSE19804 60쌍을 moderated paired t로 분석해 DEG 1,185개(상향 384, 하향 801; FDR<0.05 & |log2FC|≥1)를 얻었다. positive control SEMA5A는 tumor에서 하향이었다(logFC −1.438, FDR 5.6e-20). DEG 목록은 대부분의 민감도 분석에서 안정적이었다(Jaccard 0.72–1.0). GSE32863에서…"
+      }
+     ],
+     "evidence": [
+      {
+       "id": "report",
+       "kind": "observation",
+       "status": "observed",
+       "observation": "최종 한국어 보고서와 결론 16개의 claim-파일-수치 표를 작성했다. 핵심 수치: 60/60쌍 확인; DEG 1,185(384/801)/1…"
+      }
+     ],
+     "links": [
+      {
+       "claim_id": "c_final_report",
+       "claim_revision": 1,
+       "evidence_id": "report",
+       "relation": "supports",
+       "rationale": "보고서와 표가 각 결론의 수치와 근거 파일을 담고 있고, 그 수치는 qc_results 재계산과 일치한다."
+      }
+     ],
+     "not_established": [
+      "선암만 남긴 민감도 분석 결과(GSE19804 histology 메타데이터 없음)",
+      "원 연구의 normalization 및 DEG cutoff (687 대 1,185 차이의 원인)"
+     ],
+     "failures": []
+    }
+   }
+  }
+ }
+}
