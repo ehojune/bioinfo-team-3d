@@ -1,0 +1,17 @@
+pr: 471
+rows:
+- sha: 37028f6
+  at: 2026-10-07 23:33
+  text: 요청 묶음에 RO-Crate metadata와 사본 무결성 검사를 추가
+- sha: '7289039'
+  at: 2026-10-07 23:44
+  text: RO-Crate 경고 표시와 변조된 reference 및 경로 component 검증을 보완
+- sha: 13a9b91
+  at: 2026-10-08 00:10
+  text: 변조 경로를 파일 접근 전에 거부하고 묶음 실종 및 미등록 파일과 링크 검사를 추가
+- sha: c6afcff
+  at: 2026-10-08 00:42
+  text: MANIFEST 필수 필드 형식과 metadata link 선검증 및 POSIX link 정리를 보완
+- sha: '7248895'
+  at: 2026-10-08 01:06
+  text: RO-Crate conformsTo 매핑과 묶음 파일 및 요청 ID 검증을 수정

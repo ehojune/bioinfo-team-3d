@@ -696,7 +696,13 @@ class Hub:
             self.requests[rid]["bundle_path"] = data["bundle_path"] = bundled["path"]
             self.requests[rid]["bundle_status"] = data["bundle_status"] = bundled["status"]
             self.requests[rid]["bundle_grade"] = data["bundle_grade"] = bundled.get("grade")
-            self.requests[rid].pop("bundle_warning", None)
+            if bundled.get("crate_warning"):
+                warning = str(bundled["crate_warning"])
+                self.requests[rid]["bundle_warning"] = data["bundle_warning"] = warning
+                log.warning("request bundle RO-Crate unavailable for %s: %s", rid, warning)
+            else:
+                self.requests[rid].pop("bundle_warning", None)
+                data.pop("bundle_warning", None)
             return
         warning = str(outcome["warning"])
         if outcome.get("appendix"):

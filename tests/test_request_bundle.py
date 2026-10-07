@@ -11,13 +11,16 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
-from labhq.evidence.audit import verify_request
-from labhq.cli import main, render
+from labhq.evidence.audit import render_verify, verify_request
+from labhq.cli import _verify, main, render
 from labhq.gateway.server import Hub
 from labhq.orchestrator.cso import RESEARCH_STEP_PROMPT, STEP_PROMPT
 from labhq.request_bundle import build_request_bundle
+from labhq.ro_crate import (FORMAT_MARKER, INLINE_CONTEXT, METADATA_FILE, PROCESS_RUN_PROFILE, RO_CRATE_PROFILE,
+                            build_ro_crate, verify_bundle_copy)
 from labhq.settings import Settings
 import labhq.request_bundle as request_bundle_module
+import labhq.ro_crate as ro_crate_module
 
 
 def digest(path: Path) -> str:
@@ -113,6 +116,11 @@ def request_fixture(tmp_path: Path):
 def manifest_rows(bundle: Path) -> dict[str, dict[str, str]]:
     with (bundle / "MANIFEST.tsv").open(encoding="utf-8", newline="") as handle:
         return {row["relative_path"]: row for row in csv.DictReader(handle, delimiter="\t")}
+
+
+def crate_entities(bundle: Path) -> dict[str, dict]:
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    return {entity["@id"]: entity for entity in crate["@graph"]}
 
 
 @pytest.mark.parametrize("failure", ["changed", "missing", "link"])
@@ -750,11 +758,14 @@ def test_cli_status_shows_recent_bundle(monkeypatch, capsys):
             return []
         if "status=running" in path:
             return []
-        return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1"}]
+        return [{"id": "r1", "status": "done", "bundle_path": "C:/runs/requests/r1",
+                 "bundle_warning": "RO-Crate metadata unavailable"}]
 
     monkeypatch.setattr("labhq.cli._api", api)
     main(["status"])
-    assert "요청 묶음: C:/runs/requests/r1" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "요청 묶음: C:/runs/requests/r1" in output
+    assert "경고: RO-Crate metadata unavailable" in output
 
 
 def _graded(tmp_path, files: dict[str, dict[str, str]], deps: dict[str, list[str]]):
@@ -812,3 +823,499 @@ def test_a_txt_data_output_without_a_script_is_not_replayable(tmp_path):
     built, _readme = _graded(tmp_path, {"count": {"outputs/counts.txt": "TP53 12\n", "outputs/notes.md": "# n\n"}}, {})
     assert built["grade"] == "documented"
     assert built["grade_reasons"] == ["스크립트 없이 데이터 산출만 있는 단계: count"]
+
+
+def test_ro_crate_is_deterministic_and_uses_the_pinned_profiles(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["finished_at"] = 1791352800
+
+    first = Path(build_request_bundle(request, settings, tasks)["path"])
+    first_bytes = (first / METADATA_FILE).read_bytes()
+    second = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((second / METADATA_FILE).read_text(encoding="utf-8"))
+    entities = {entity["@id"]: entity for entity in crate["@graph"]}
+
+    assert (second / METADATA_FILE).read_bytes() == first_bytes
+    assert crate["@context"] == INLINE_CONTEXT
+    assert INLINE_CONTEXT["conformsTo"] == "http://purl.org/dc/terms/conformsTo"
+    assert entities[METADATA_FILE]["conformsTo"] == [{"@id": RO_CRATE_PROFILE},
+                                                        {"@id": PROCESS_RUN_PROFILE}]
+    assert entities["./"]["identifier"] == request["id"]
+    assert entities["./"]["conformsTo"] == {"@id": PROCESS_RUN_PROFILE}
+    assert entities["./"]["datePublished"] == "2026-10-07T06:00:00+00:00"
+    assert manifest_rows(second)[METADATA_FILE]["sha256"] == digest(second / METADATA_FILE)
+    assert "sha256" not in entities["MANIFEST.tsv"]
+
+
+def test_ro_crate_records_only_executed_steps_and_failed_status(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["plan"]["steps"].append({"id": "planned-only", "depends_on": []})
+    request["results"]["s2"]["ok"] = False
+    second_manifest = Path(request["results"]["s2"]["workdir"]) / "manifest.json"
+    second_manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "codex", "model": "gpt-test",
+        "runs": {"t-second": {"started_at": 1791352800, "ended_at": 1791352860,
+                                "engine_cli_version": "1.2.3"}},
+    }), encoding="utf-8")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    entities = crate_entities(bundle)
+    actions = [entity for entity in entities.values() if entity.get("@type") == "CreateAction"]
+
+    assert len(actions) == 2
+    assert not any("planned-only" in entity.get("name", "") for entity in actions)
+    failed = next(entity for entity in actions if entity["name"] == "Run step s2")
+    assert failed["actionStatus"] == {"@id": "https://schema.org/FailedActionStatus"}
+    assert failed["startTime"] == "2026-10-07T06:00:00+00:00"
+    assert failed["endTime"] == "2026-10-07T06:01:00+00:00"
+    assert "object" not in failed and "agent" not in failed
+    instrument = entities[failed["instrument"]["@id"]]
+    assert instrument["@type"] == "SoftwareApplication"
+    assert instrument["softwareVersion"] == "1.2.3"
+    assert not any(entity.get("@type") == "Person" for entity in entities.values())
+
+
+def test_input_inventory_is_context_not_action_object_and_private_rows_are_omitted(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s2"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "codex",
+        "runs": {"t-second": {"input_files": [
+            {"path": r"C:\visible\public.tsv", "size": 7, "mtime_ns": 1, "sha256": "a" * 64},
+            {"path": r"D:\controlled\patient.tsv", "skipped": "private"},
+            {"path": "/restricted/cohort.tsv", "skipped": "restricted"},
+        ]}},
+    }), encoding="utf-8")
+
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate_text = (bundle / METADATA_FILE).read_text(encoding="utf-8")
+    entities = crate_entities(bundle)
+    action = next(entity for entity in entities.values() if entity.get("name") == "Run step s2")
+    scans = [entity for entity in entities.values()
+             if entity.get("@type") == "Observation" and str(entity.get("@id", "")).startswith("#input-scan-")]
+
+    assert "object" not in action
+    assert len(scans) == 1 and scans[0]["about"] == {"@id": action["@id"]}
+    assert "public.tsv" in crate_text and "a" * 64 in crate_text
+    assert "patient.tsv" not in crate_text and "cohort.tsv" not in crate_text
+    assert "C:\\visible" not in crate_text and "/restricted" not in crate_text
+    assert "protected item(s) were omitted" in scans[0]["description"]
+
+
+def test_output_uri_is_relative_encoded_and_case_preserving(tmp_path):
+    settings = configured(tmp_path)
+    workdir = Path(settings.runner.workspace_root) / "2026-10-07" / "task_uri"
+    output = workdir / "outputs" / "Data" / "Case File.TXT"
+    write(workdir / "manifest.json", json.dumps({"host": platform.node(), "engine": "mock"}))
+    write(output, "value\n")
+    request = {"id": "uri", "report": "ok", "report_appendix": "", "plan": {"steps": []},
+               "results": {"direct": {"task_id": "t", "ok": True, "workdir": str(workdir),
+                                        "workdir_id": workdir.name,
+                                        "outputs": ["outputs/Data/Case File.TXT"],
+                                        "output_sha256": {"outputs/Data/Case File.TXT": digest(output)}}}}
+
+    bundle = Path(build_request_bundle(request, settings)["path"])
+    entities = crate_entities(bundle)
+
+    assert "steps/direct/outputs/Data/Case%20File.TXT" in entities
+    assert not any(str(identifier).startswith(("C:", "file:")) for identifier in entities)
+
+
+def test_ro_crate_privacy_refusal_is_warning_only(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s1"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({"host": platform.node(), "engine": r"C:\private\engine"}), encoding="utf-8")
+
+    built = build_request_bundle(request, settings, tasks)
+    bundle = Path(built["path"])
+
+    assert "crate_warning" in built
+    assert not (bundle / METADATA_FILE).exists()
+    assert FORMAT_MARKER in (bundle / "README.md").read_text(encoding="utf-8")
+    assert "RO-Crate metadata를 만들지 못했습니다" in (bundle / "report_appendix.md").read_text(encoding="utf-8")
+
+
+def test_ro_crate_allows_consecutive_dots_inside_names():
+    crate = build_ro_crate(
+        {"id": "req..1"},
+        [{"relative_path": "sample..final.tsv", "status": "generated", "size": 1,
+          "sha256": "a" * 64}],
+        [],
+        {},
+    )
+
+    entities = {entity["@id"]: entity for entity in crate["@graph"]}
+    assert entities["./"]["identifier"] == "req..1"
+    assert "sample..final.tsv" in entities
+
+
+@pytest.mark.parametrize("value", ["../x", "a/../b", "%2e%2e/x", r"a\..\b"])
+def test_ro_crate_rejects_parent_path_components_after_uri_decoding(value):
+    with pytest.raises(ValueError, match="안전하지 않은 경로"):
+        build_ro_crate({"id": value}, [], [], {})
+
+
+UNSAFE_BUNDLE_PATHS = [
+    "../../x", "//server/share/x", "C:/outside/x", r"\\?\C:\outside\x",
+    "file:///outside/x", "safe.txt:ads",
+]
+
+
+@pytest.mark.parametrize("relative", UNSAFE_BUNDLE_PATHS)
+def test_plain_file_rejects_unsafe_paths_before_filesystem_access(tmp_path, monkeypatch, relative):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("filesystem access happened before lexical validation")
+
+    monkeypatch.setattr("labhq.adapters.owned.is_link", unexpected)
+    monkeypatch.setattr(Path, "is_file", unexpected)
+    monkeypatch.setattr(Path, "resolve", unexpected)
+
+    with pytest.raises(OSError, match="unsafe bundle path"):
+        ro_crate_module._plain_file(tmp_path, relative)
+
+
+@pytest.mark.parametrize("source", ["manifest", "crate"])
+@pytest.mark.parametrize("relative", UNSAFE_BUNDLE_PATHS)
+def test_verify_rejects_unsafe_declared_paths_before_opening_them(
+        tmp_path, monkeypatch, source, relative):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    if source == "manifest":
+        path = bundle / "MANIFEST.tsv"
+        with path.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle, delimiter="\t")
+            fields, rows = reader.fieldnames, list(reader)
+        next(row for row in rows if row["relative_path"] == "README.md")["relative_path"] = relative
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+    else:
+        path = bundle / METADATA_FILE
+        crate = json.loads(path.read_text(encoding="utf-8"))
+        next(entity for entity in crate["@graph"] if entity.get("@id") == "README.md")["@id"] = relative
+        path.write_text(json.dumps(crate), encoding="utf-8")
+
+    original = ro_crate_module._plain_file
+
+    def guarded_open(root, candidate):
+        assert candidate != relative
+        return original(root, candidate)
+
+    monkeypatch.setattr(ro_crate_module, "_plain_file", guarded_open)
+    report = verify_bundle_copy(bundle)
+
+    assert report["problems"]
+    assert any("안전하지" in problem or "unsafe local entity id" in problem
+               for problem in report["problems"])
+
+
+@pytest.mark.parametrize("target", ["payload", "manifest", "crate"])
+def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, target):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    if target == "payload":
+        write(bundle / "steps/s1/outputs/data/input.tsv", "tampered\n")
+    elif target == "manifest":
+        path = bundle / "MANIFEST.tsv"
+        text = path.read_text(encoding="utf-8")
+        recorded = manifest_rows(bundle)["README.md"]["sha256"]
+        path.write_text(text.replace(recorded, "0" * 64, 1), encoding="utf-8")
+    else:
+        crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+        file_entity = next(entity for entity in crate["@graph"] if entity.get("sha256"))
+        file_entity["sha256"] = "0" * 64
+        (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("요청 묶음 사본" in problem for problem in report["problems"])
+
+
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("size", "", "size가 정수가 아닙니다"),
+    ("size", "1.5", "size가 정수가 아닙니다"),
+    ("sha256", "", "sha256이 64자리 hex가 아닙니다"),
+    ("sha256", "g" * 64, "sha256이 64자리 hex가 아닙니다"),
+])
+def test_verify_rejects_missing_or_malformed_manifest_integrity_fields(
+        tmp_path, field, value, message):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    path = bundle / "MANIFEST.tsv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields, rows = reader.fieldnames, list(reader)
+    next(row for row in rows if row["relative_path"] == "README.md")[field] = value
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any(message in problem and "README.md" in problem for problem in report["problems"])
+
+
+def test_verify_rejects_linked_metadata_before_file_checks(tmp_path, monkeypatch):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    metadata = bundle / METADATA_FILE
+    target = tmp_path / "metadata-target"
+    original_is_file = Path.is_file
+    metadata.unlink()
+    try:
+        if os.name == "nt":
+            import _winapi
+            target.mkdir()
+            _winapi.CreateJunction(str(target), str(metadata))
+        else:
+            write(target, "{}\n")
+            metadata.symlink_to(target)
+    except OSError:
+        pytest.skip("metadata links are unavailable")
+
+    def guarded_is_file(path):
+        if path == metadata:
+            raise AssertionError("metadata is_file followed a link before validation")
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", guarded_is_file)
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link or junction" in problem for problem in report["problems"])
+    finally:
+        if os.name == "nt":
+            metadata.rmdir()
+        else:
+            metadata.unlink()
+
+
+def test_verify_detects_dangling_and_duplicate_ro_crate_ids(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    crate["@graph"][1]["mentions"] = {"@id": "#missing"}
+    crate["@graph"].append(dict(crate["@graph"][1]))
+    (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+
+    report = verify_bundle_copy(bundle)
+
+    assert any("reference가 해소되지" in problem for problem in report["problems"])
+    assert any("@id가 중복" in problem for problem in report["problems"])
+
+
+@pytest.mark.parametrize(("reference", "message"), [
+    ("http://[", "reference URL이 올바르지"),
+    ([], "reference @id가 문자열이 아닙니다"),
+])
+def test_cli_verify_reports_invalid_reference_without_traceback(
+        tmp_path, monkeypatch, capsys, reference, message):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    crate = json.loads((bundle / METADATA_FILE).read_text(encoding="utf-8"))
+    crate["@graph"][1]["mentions"] = {"@id": reference}
+    (bundle / METADATA_FILE).write_text(json.dumps(crate), encoding="utf-8")
+    monkeypatch.setattr("labhq.cli._api", lambda *_args, **_kwargs: request)
+
+    exit_code = _verify(settings, request["id"], as_json=True, bundle=None)
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == report["exit_code"] == 1
+    assert any(message in problem for problem in report["problems"])
+
+
+def test_verify_rejects_a_link_or_junction_inside_the_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    data_dir = bundle / "steps/s1/outputs/data"
+    outside = tmp_path / "junction-target"
+    write(outside / "input.tsv", "value\n7\n")
+    shutil.rmtree(data_dir)
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(outside), str(data_dir))
+        else:
+            data_dir.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory links are unavailable")
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link or junction" in problem for problem in report["problems"])
+    finally:
+        if os.name == "nt":
+            data_dir.rmdir()
+        else:
+            data_dir.unlink()
+
+
+def test_verify_detects_an_unregistered_file_in_the_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    write(bundle / "injected.txt", "not inventoried\n")
+
+    report = verify_bundle_copy(bundle)
+
+    assert any("MANIFEST에 등록되지 않은 파일" in problem and "injected.txt" in problem
+               for problem in report["problems"])
+
+
+def test_verify_detects_an_unregistered_link_without_following_it(tmp_path):
+    settings, request, tasks, _upstream, outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    target = outside.parent
+    link = bundle / "injected-link"
+    try:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory links are unavailable")
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link 또는 junction" in problem and "injected-link" in problem
+                   for problem in report["problems"])
+    finally:
+        if os.name == "nt":
+            link.rmdir()
+        else:
+            link.unlink()
+
+
+def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "old_bundle", "status": "done", "results": {}, "plan": {"steps": []}}
+    bundle = Path(settings.runner.workspace_root) / "requests" / request["id"]
+    write(bundle / "README.md", "# old request bundle\n")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["present"] is True
+    assert report["request_bundle"]["crate"] is False
+
+
+def test_verify_detects_manifested_crate_and_readme_removed_together(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    (bundle / METADATA_FILE).unlink()
+    (bundle / "README.md").unlink()
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("MANIFEST에 기록된 ro-crate-metadata.json이 없습니다" in problem
+               for problem in report["problems"])
+    assert any("MANIFEST에 기록된 README.md가 없습니다" in problem
+               for problem in report["problems"])
+
+
+def test_verify_reports_unreadable_readme_before_legacy_fallback(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    (bundle / METADATA_FILE).unlink()
+    (bundle / "README.md").write_bytes(b"\xff")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("README.md를 읽지 못했습니다" in problem for problem in report["problems"])
+
+
+def test_verify_requires_bundle_folder_and_identifier_to_match_request_id(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    report = verify_bundle_copy(bundle, "request_a")
+
+    assert any("묶음 폴더 이름이 요청 ID와 다릅니다" in problem for problem in report["problems"])
+    assert any("root Dataset identifier가 요청 ID와 다릅니다" in problem
+               for problem in report["problems"])
+
+
+def test_verify_request_rejects_another_requests_bundle(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    request["id"] = "request_a"
+    expected_bundle = bundle.with_name(request["id"])
+    bundle.rename(expected_bundle)
+    request["bundle_path"] = str(expected_bundle)
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("root Dataset identifier가 요청 ID와 다릅니다" in problem
+               for problem in report["problems"])
+
+
+def test_recorded_bundle_missing_from_disk_is_a_problem(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "deleted_bundle", "status": "done", "results": {}, "plan": {"steps": []},
+               "bundle_path": str(Path(settings.runner.workspace_root) / "requests" / "deleted_bundle")}
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert report["request_bundle"]["present"] is False
+    assert any("기록된 묶음 폴더가 없습니다" in problem for problem in report["problems"])
+
+
+def test_unrecorded_missing_bundle_keeps_the_previous_verdict(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "old_without_bundle", "status": "done", "results": {}, "plan": {"steps": []}}
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["present"] is False
+
+
+def test_new_bundle_missing_ro_crate_is_a_problem(tmp_path):
+    settings = configured(tmp_path)
+    request = {"id": "new_missing", "status": "done", "results": {}, "plan": {"steps": []}}
+    bundle = Path(settings.runner.workspace_root) / "requests" / request["id"]
+    write(bundle / "README.md", FORMAT_MARKER + "\n")
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any(METADATA_FILE in problem for problem in report["problems"])
+
+
+def test_external_input_hash_is_compared_as_a_record_not_rehashed(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    manifest = Path(request["results"]["s1"]["workdir"]) / "manifest.json"
+    manifest.write_text(json.dumps({
+        "host": platform.node(), "engine": "mock",
+        "runs": {"t-first": {"input_files": [
+            {"path": "reference/source.tsv", "size": 10, "mtime_ns": 1, "sha256": "b" * 64},
+        ]}},
+    }), encoding="utf-8")
+    Path(build_request_bundle(request, settings, tasks)["path"])
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 0
+    assert report["request_bundle"]["external_input_hashes"] == 1
+    rendered = render_verify(report)
+    assert "기록끼리 1개 대조" in rendered and "원본 재해시 아님" in rendered
+
+
+@pytest.mark.skipif(not os.environ.get("LABHQ_ROCRATE_VALIDATOR"), reason="official validator CI job only")
+def test_official_ro_crate_validator_offline(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["finished_at"] = 1791352800
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    checked = subprocess.run([
+        "rocrate-validator", "validate", "--offline", "--no-auto-profile",
+        "--profile-identifier", "process-run-crate", "--requirement-severity", "REQUIRED",
+        "--skip-availability-check", "--no-paging", str(bundle),
+    ], capture_output=True, text=True)
+
+    assert checked.returncode == 0, checked.stdout + checked.stderr

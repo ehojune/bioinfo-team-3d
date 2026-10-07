@@ -18,6 +18,7 @@ from typing import Any, Iterator
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import locate_workdir
+from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
 TEXT_SUFFIXES = frozenset({
@@ -339,6 +340,9 @@ def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: lis
         "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
+        FORMAT_MARKER, "", "## RO-Crate", "",
+        "`ro-crate-metadata.json`은 RO-Crate 1.1·Process Run Crate 0.5 metadata입니다. "
+        "INPUTS.tsv는 실제 사용 입력이 아니라 실행 전 입력 영역 scan으로 기록합니다.", "",
         "## 단계 순서", "",
     ]
     if steps:
@@ -377,6 +381,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
     temp.mkdir()
     rows: list[dict[str, Any]] = []
     input_rows: list[dict[str, Any]] = []
+    run_records: dict[str, dict[str, Any]] = {}
     workdirs: list[tuple[str, Path]] = []
     script_commands: dict[str, dict[str, str]] = {}
     unsafe_scripts: dict[str, set[str]] = {}
@@ -471,6 +476,17 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 workdirs.append((step_id, workdir))
                 task_id = str(result.get("task_id") or "")
                 run = (manifest.get("runs") or {}).get(task_id) if task_id else None
+                run = run if isinstance(run, Mapping) else {}
+                run_records[step_id] = {
+                    key: value for key, value in {
+                        "agent_id": result.get("agent_id"),
+                        "engine": manifest.get("engine"),
+                        "model": manifest.get("model"),
+                        "engine_cli_version": run.get("engine_cli_version"),
+                        "started_at": run.get("started_at"),
+                        "ended_at": run.get("ended_at"),
+                    }.items() if value not in (None, "")
+                }
                 records = run.get("input_files") if isinstance(run, Mapping) else None
                 for record in records or []:
                     if not isinstance(record, Mapping) or not isinstance(record.get("path"), str):
@@ -605,6 +621,22 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
                 count, paths = rewrite_by_file.get(str(row["relative_path"]), (0, []))
                 row.update(size=copied.stat().st_size, sha256=_sha256(copied), rewritten=count,
                            remaining_absolute_paths=" | ".join(paths))
+        crate_warning = None
+        try:
+            crate_path = temp / METADATA_FILE
+            write_ro_crate(crate_path, req, rows, input_rows, run_records)
+            rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
+                         "sha256": _sha256(crate_path), "step_id": "", "original_path": "",
+                         "status": "generated", "rewritten": 0, "remaining_absolute_paths": "",
+                         "rewritten_files": ""})
+        except Exception as exc:
+            crate_warning = f"RO-Crate metadata를 만들지 못했습니다: {exc}"
+            for path in (temp / "README.md", appendix_path):
+                with path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(f"\n- {crate_warning}\n")
+                relative = path.relative_to(temp).as_posix()
+                row = next(item for item in rows if item["relative_path"] == relative)
+                row.update(size=path.stat().st_size, sha256=_sha256(path))
         rows.append({"relative_path": ".", "size": "", "sha256": "", "step_id": "",
                      "original_path": "", "status": "summary", "rewritten": "",
                      "remaining_absolute_paths": " | ".join(sorted(remaining)),
@@ -619,7 +651,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         return {"path": str(target), "status": bundle_status, "grade": grade, "grade_reasons": grade_reasons,
                 "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
-                "remaining_absolute_paths": sorted(remaining), "superseded": replaced}
+                "remaining_absolute_paths": sorted(remaining), "superseded": replaced,
+                **({"crate_warning": crate_warning} if crate_warning else {})}
     except Exception:
         if temp.exists():
             try:
