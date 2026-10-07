@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:01 | [`394bb33`](https://github.com/ehojune/bioinfo-team-3d/pull/470/commits/394bb33) | 같은 id를 가진 두 topic의 별칭 답이 서로 다르면 합치지 않고 교정으로 보낸다(#470 리뷰 P1). |
+| 22:56 | [`2459f1c`](https://github.com/ehojune/bioinfo-team-3d/pull/470/commits/2459f1c) | 계획의 판 번호 없는 pack id와 topic.id 점검표 답을 정확한 키로 바꾸고, 틀린 pack 키의 교정 안내가 빈 기대값 대신 적용 pack을 보이게 했다(v0.5 시운전 계획 실패). |
+| 22:56 | [`86b0b8e`](https://github.com/ehojune/bioinfo-team-3d/pull/470/commits/86b0b8e) | manual 요청 topic·pack 절에 키 표기 정규화 한 줄. |
 | 22:21 | [`c108bb5`](https://github.com/ehojune/bioinfo-team-3d/pull/467/commits/c108bb5) | 재시작 뒤 재개한 요청은 재개 전에 보낸 task만 이어받는다. clarify 답 뒤 재계획이 첫 계획을 그대로 돌려받아 실패하던 것을 고쳤다. |
 | 22:14 | [`74ddf7a`](https://github.com/ehojune/bioinfo-team-3d/pull/466/commits/74ddf7a) | 영문 README의 topic 근거 논문 수치를 한국어 README와 같은 30편 이상·1286편으로 맞췄다(#462 남은 지적). |
 | 16:56 | [`937fe5b`](https://github.com/ehojune/bioinfo-team-3d/pull/464/commits/937fe5b) | Paper2Agent 설치를 staging·rollback으로 갱신해 원본 누락과 복사·교체 실패에서 기존 skill을 보존한다. |
