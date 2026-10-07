@@ -3,3 +3,6 @@ rows:
   - sha: "e1edba9"
     at: "2026-10-07 14:41"
     text: "환경 단계 설치를 작업 폴더 환경으로 한정하고 Claude 승인 경로와 venv·uv·conda 명령을 검증."
+  - sha: "fef0b0d"
+    at: "2026-10-07 15:14"
+    text: "공유 환경의 모든 shell 호출을 게이트로 보내고 wrapper·분기·실행 치환과 Windows 경로 이탈을 판별한다."
