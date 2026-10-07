@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:43 | [`bb58398`](https://github.com/ehojune/bioinfo-team-3d/pull/489/commits/bb58398) | v0.5 선언: 연구 요청 2건이 CP2·리뷰·claim 앵커 보고서까지 가고 labhq verify exit 0. 버전 0.5.0, README·로드맵·HANDOFF 갱신. |
 | 07:29 | [`22b9f4c`](https://github.com/ehojune/bioinfo-team-3d/pull/488/commits/22b9f4c) | labhq verify가 RO-Crate에 선언된 파일을 MANIFEST status와 상관없이 검사하고, 너무 깊게 중첩된 metadata JSON을 오류 대신 문제로 적는다(#475). |
 | 07:12 | [`1122f55`](https://github.com/ehojune/bioinfo-team-3d/pull/487/commits/1122f55) | 연구 단계 근거가 수집 안 된 파일을 인용하면 CP2 전에 한 번 수집 산출 목록을 주고 고치게 한다. 교정이 안 되면 지금처럼 CP2가 거부한다(v0.5 시운전 8차, #485). |
 | 06:39 | [`d51c84a`](https://github.com/ehojune/bioinfo-team-3d/pull/486/commits/d51c84a) | POSIX 시험이 container에서 zombie로 남은 손자 프로세스를 끝난 것으로 본다(#486 리뷰). |
