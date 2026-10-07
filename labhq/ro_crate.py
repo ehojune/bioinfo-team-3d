@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -309,7 +310,7 @@ def _plain_file(root: Path, relative: str) -> Path:
         path = path / part
         if is_link(path):
             raise OSError(f"link or junction: {relative}")
-    if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
+    if not stat.S_ISREG(path.lstat().st_mode):
         raise OSError(f"missing or outside bundle: {relative}")
     return path
 
@@ -413,7 +414,7 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
     report: dict[str, Any] = {"path": str(root), "present": False, "crate": False,
                               "external_input_hashes": 0, "problems": []}
     try:
-        if not root.is_dir() or is_link(root):
+        if is_link(root) or not root.is_dir():
             return report
     except OSError:
         return report
@@ -426,8 +427,9 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
     except OSError:
         problems.append("요청 묶음 부모 경로를 확인하지 못했습니다")
         return report
-    metadata = root / METADATA_FILE
-    if not metadata.is_file():
+    try:
+        metadata = _plain_file(root, METADATA_FILE)
+    except FileNotFoundError:
         try:
             marked = FORMAT_MARKER in _plain_file(root, "README.md").read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -435,9 +437,12 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
         if marked:
             problems.append(f"새 요청 묶음에 {METADATA_FILE}이 없습니다")
         return report
+    except OSError as exc:
+        report["crate"] = True
+        problems.append(f"RO-Crate JSON 구조가 올바르지 않습니다: {exc}")
+        return report
     report["crate"] = True
     try:
-        metadata = _plain_file(root, METADATA_FILE)
         if metadata.stat().st_size > MAX_METADATA_BYTES:
             raise ValueError("metadata too large")
         crate = json.loads(metadata.read_text(encoding="utf-8"))
@@ -514,8 +519,21 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
         missing_parts = sorted(identifier for identifier, entity in files.items()
                                if entity.get("@id") not in part_ids)
         problems.extend(f"RO-Crate File entity가 root hasPart에 없습니다: {item}" for item in missing_parts)
+    recorded_statuses = {"copied", "copied (unreported)", "generated"}
     for relative, row in sorted(manifest.items()):
-        if relative == "." or not row.get("sha256") or not row.get("size"):
+        if relative == ".":
+            continue
+        recorded_file = relative in inventory or row.get("status") in recorded_statuses
+        size = str(row.get("size") or "")
+        sha256 = str(row.get("sha256") or "")
+        valid_fields = True
+        if recorded_file and not re.fullmatch(r"[0-9]+", size):
+            problems.append(f"MANIFEST 파일 행의 size가 정수가 아닙니다: {relative}")
+            valid_fields = False
+        if recorded_file and not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            problems.append(f"MANIFEST 파일 행의 sha256이 64자리 hex가 아닙니다: {relative}")
+            valid_fields = False
+        if not recorded_file or not valid_fields:
             continue
         try:
             actual = _plain_file(root, relative)
@@ -523,15 +541,15 @@ def verify_bundle_copy(root: Path) -> dict[str, Any]:
         except OSError as exc:
             problems.append(f"묶음 파일을 확인하지 못했습니다: {relative} ({exc})")
             continue
-        if str(actual_size) != str(row["size"]) or actual_sha.casefold() != str(row["sha256"]).casefold():
+        if str(actual_size) != size or actual_sha.casefold() != sha256.casefold():
             problems.append(f"묶음 파일과 MANIFEST가 다릅니다: {relative}")
         if relative == METADATA_FILE:
             continue
         entity = files.get(relative)
         if entity is None:
             problems.append(f"MANIFEST 파일이 RO-Crate에 없습니다: {relative}")
-        elif (str(entity.get("contentSize")) != str(row["size"])
-              or str(entity.get("sha256") or "").casefold() != str(row["sha256"]).casefold()):
+        elif (str(entity.get("contentSize")) != size
+              or str(entity.get("sha256") or "").casefold() != sha256.casefold()):
             problems.append(f"MANIFEST와 RO-Crate metadata가 다릅니다: {relative}")
     for relative in sorted(files):
         if relative != "MANIFEST.tsv" and relative not in manifest:

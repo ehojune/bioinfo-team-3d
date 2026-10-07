@@ -1032,6 +1032,66 @@ def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, targe
     assert any("요청 묶음 사본" in problem for problem in report["problems"])
 
 
+@pytest.mark.parametrize(("field", "value", "message"), [
+    ("size", "", "size가 정수가 아닙니다"),
+    ("size", "1.5", "size가 정수가 아닙니다"),
+    ("sha256", "", "sha256이 64자리 hex가 아닙니다"),
+    ("sha256", "g" * 64, "sha256이 64자리 hex가 아닙니다"),
+])
+def test_verify_rejects_missing_or_malformed_manifest_integrity_fields(
+        tmp_path, field, value, message):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    path = bundle / "MANIFEST.tsv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields, rows = reader.fieldnames, list(reader)
+    next(row for row in rows if row["relative_path"] == "README.md")[field] = value
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any(message in problem and "README.md" in problem for problem in report["problems"])
+
+
+def test_verify_rejects_linked_metadata_before_file_checks(tmp_path, monkeypatch):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    metadata = bundle / METADATA_FILE
+    target = tmp_path / "metadata-target"
+    original_is_file = Path.is_file
+    metadata.unlink()
+    try:
+        if os.name == "nt":
+            import _winapi
+            target.mkdir()
+            _winapi.CreateJunction(str(target), str(metadata))
+        else:
+            write(target, "{}\n")
+            metadata.symlink_to(target)
+    except OSError:
+        pytest.skip("metadata links are unavailable")
+
+    def guarded_is_file(path):
+        if path == metadata:
+            raise AssertionError("metadata is_file followed a link before validation")
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", guarded_is_file)
+    try:
+        report = verify_bundle_copy(bundle)
+        assert any("link or junction" in problem for problem in report["problems"])
+    finally:
+        if os.name == "nt":
+            metadata.rmdir()
+        else:
+            metadata.unlink()
+
+
 def test_verify_detects_dangling_and_duplicate_ro_crate_ids(tmp_path):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
@@ -1085,7 +1145,10 @@ def test_verify_rejects_a_link_or_junction_inside_the_bundle(tmp_path):
         report = verify_bundle_copy(bundle)
         assert any("link or junction" in problem for problem in report["problems"])
     finally:
-        data_dir.rmdir()
+        if os.name == "nt":
+            data_dir.rmdir()
+        else:
+            data_dir.unlink()
 
 
 def test_verify_detects_an_unregistered_file_in_the_bundle(tmp_path):
@@ -1117,7 +1180,10 @@ def test_verify_detects_an_unregistered_link_without_following_it(tmp_path):
         assert any("link 또는 junction" in problem and "injected-link" in problem
                    for problem in report["problems"])
     finally:
-        link.rmdir()
+        if os.name == "nt":
+            link.rmdir()
+        else:
+            link.unlink()
 
 
 def test_old_bundle_without_ro_crate_keeps_the_previous_verdict(tmp_path):
