@@ -397,7 +397,9 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
               "ledgers": research_ledgers(req) if contract else {},
               "artifact_sha256": receipt.get("artifact_sha256") or {},
               "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
-                                                    "unsupported_claims", "unreported_outputs") if key in receipt},
+                                                    "unsupported_claims", "unreported_outputs",
+                                                    "source_verification", "source_verification_reports")
+                      if key in receipt},
               "report_check": report.get("report_check"),
               "source_verification": report.get("source_verification") or []}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "tool_use_id", "workdir_id",

@@ -199,11 +199,14 @@ class LiveSourceResolver:
     async def lookup(self, scheme: str, value: str) -> list[SourceRecord]:
         if not self.supports(scheme):
             raise LookupFailed("resolver_error", f"unsupported source scheme {scheme}")
+        normalized = normalize_id(scheme, value)
         async with httpx.AsyncClient(timeout=self.request_timeout_s, headers=self._headers,
                                      follow_redirects=False, transport=self.transport) as client:
-            if scheme == "doi":
-                return await self._lookup_doi(client, normalize_id(scheme, value))
-            return await self._lookup_ncbi(client, scheme, normalize_id(scheme, value))
+            record = await self._lookup_primary(client, scheme, normalized)
+            if record is None:
+                return []
+            await self._enrich_record(client, record)
+            return [record]
 
     async def _request(self, client: httpx.AsyncClient, method: str, url: str, **kwargs: object) -> httpx.Response:
         for attempt in range(self.max_retries + 1):
@@ -221,7 +224,18 @@ class LiveSourceResolver:
             await self.sleep(_retry_after(response.headers.get("Retry-After")))
         raise AssertionError("retry loop did not return")
 
-    async def _lookup_doi(self, client: httpx.AsyncClient, doi: str) -> list[SourceRecord]:
+    async def _lookup_primary(self, client: httpx.AsyncClient, scheme: str,
+                              value: str) -> SourceRecord | None:
+        """Read the cited authority first; aliases and cross-database metadata never gate this result."""
+        if scheme == "doi":
+            return await self._lookup_doi_primary(client, value)
+        if scheme == "pmid":
+            summary = await self._pubmed_summary(client, value)
+            return self._record_from_ncbi_summary(scheme, value, summary) if summary else None
+        summary = await self._pmc_summary(client, value)
+        return self._record_from_ncbi_summary(scheme, value, summary) if summary else None
+
+    async def _lookup_doi_primary(self, client: httpx.AsyncClient, doi: str) -> SourceRecord:
         response = await self._request(client, "GET", f"https://api.crossref.org/works/{quote(doi, safe='')}",
                                        params=self._params(mailto=self.contact))
         message: Mapping[str, object] = {}
@@ -237,53 +251,49 @@ class LiveSourceResolver:
             if not isinstance(raw_message, Mapping):
                 raise LookupFailed("invalid_response", "Crossref response has no message object")
             message = raw_message
-        record = SourceRecord(
+        return SourceRecord(
             id_scheme="doi", id_value=str(message.get("DOI") or doi),
             title=_first_text(message.get("title")), url=str(message.get("URL") or f"https://doi.org/{doi}"),
             updates=_crossref_updates(message))
+
+    def _record_from_ncbi_summary(self, scheme: str, value: str,
+                                  summary: Mapping[str, object]) -> SourceRecord:
+        return SourceRecord(
+            id_scheme=scheme, id_value=value,
+            title=_first_text(summary.get("title")),
+            url=(f"https://pubmed.ncbi.nlm.nih.gov/{value}/" if scheme == "pmid" else
+                 f"https://pmc.ncbi.nlm.nih.gov/articles/{value}/"),
+            same_as=_dedupe_ids(_summary_ids(summary), (scheme, value)),
+            updates=_pubmed_updates(summary))
+
+    async def _enrich_record(self, client: httpx.AsyncClient, record: SourceRecord) -> None:
+        """Add aliases and PubMed metadata without replacing a successful primary lookup."""
+        mapping: dict[str, str] | None = None
         try:
-            mapping = await self._id_converter(client, doi)
+            mapping = await self._id_converter(client, record.id_value)
         except LookupFailed as error:
             record.enrichment_failures.append(EnrichmentFailure(
                 stage="ncbi_id_converter", error_kind=error.kind, detail=error.detail))
-            return [record]
         if mapping:
-            record.same_as = _record_ids(mapping, exclude=("doi", doi))
-            pmid = mapping.get("pmid")
-            if pmid:
-                try:
-                    summary = await self._pubmed_summary(client, str(pmid))
-                except LookupFailed as error:
-                    record.enrichment_failures.append(EnrichmentFailure(
-                        stage="pubmed_summary", error_kind=error.kind, detail=error.detail))
-                    return [record]
-                if summary:
-                    record.same_as = _dedupe_ids([*record.same_as, *_summary_ids(summary)], ("doi", doi))
-                    record.updates = _dedupe_updates([*record.updates, *_pubmed_updates(summary)])
-                    record.title = record.title or _first_text(summary.get("title"))
-        return [record]
-
-    async def _lookup_ncbi(self, client: httpx.AsyncClient, scheme: str, value: str) -> list[SourceRecord]:
-        mapping = await self._id_converter(client, value)
-        if scheme == "pmcid" and not mapping:
-            return []
-        pmid = value if scheme == "pmid" else str((mapping or {}).get("pmid") or "")
-        summary = await self._pubmed_summary(client, pmid) if pmid else None
-        if scheme == "pmid" and summary is None:
-            return []
-        if mapping is None:
-            mapping = {"pmid": value}
+            record.same_as = _dedupe_ids(
+                [*record.same_as, *_record_ids(mapping, exclude=(record.id_scheme, record.id_value))],
+                (record.id_scheme, record.id_value))
+        if record.id_scheme == "pmid":
+            return
+        pmid = next((alias.id_value for alias in record.same_as if alias.id_scheme == "pmid"), "")
+        if not pmid:
+            return
+        try:
+            summary = await self._pubmed_summary(client, pmid)
+        except LookupFailed as error:
+            record.enrichment_failures.append(EnrichmentFailure(
+                stage="pubmed_summary", error_kind=error.kind, detail=error.detail))
+            return
         if summary:
-            for alias in _summary_ids(summary):
-                mapping.setdefault(alias.id_scheme, alias.id_value)
-        record = SourceRecord(
-            id_scheme=scheme, id_value=value,
-            title=_first_text(summary.get("title")) if summary else None,
-            url=(f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else
-                 f"https://pmc.ncbi.nlm.nih.gov/articles/{value}/"),
-            same_as=_record_ids(mapping, exclude=(scheme, value)),
-            updates=_pubmed_updates(summary or {}))
-        return [record]
+            record.same_as = _dedupe_ids(
+                [*record.same_as, *_summary_ids(summary)], (record.id_scheme, record.id_value))
+            record.updates = _dedupe_updates([*record.updates, *_pubmed_updates(summary)])
+            record.title = record.title or _first_text(summary.get("title"))
 
     async def _id_converter(self, client: httpx.AsyncClient, value: str) -> dict[str, str] | None:
         response = await self._request(
@@ -300,17 +310,26 @@ class LiveSourceResolver:
         return {key: str(row[key]) for key in ("doi", "pmid", "pmcid") if row.get(key) is not None}
 
     async def _pubmed_summary(self, client: httpx.AsyncClient, pmid: str) -> Mapping[str, object] | None:
+        return await self._ncbi_summary(client, "pubmed", pmid, "PMID")
+
+    async def _pmc_summary(self, client: httpx.AsyncClient, pmcid: str) -> Mapping[str, object] | None:
+        uid = pmcid[3:] if pmcid.upper().startswith("PMC") else pmcid
+        return await self._ncbi_summary(client, "pmc", uid, "PMCID", requested=pmcid)
+
+    async def _ncbi_summary(self, client: httpx.AsyncClient, database: str, uid: str, label: str, *,
+                            requested: str | None = None) -> Mapping[str, object] | None:
         response = await self._request(
             client, "GET", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
-            params=self._params(db="pubmed", id=pmid, retmode="json", tool="labhq"))
+            params=self._params(db=database, id=uid, retmode="json", tool="labhq"))
         _require_success(response)
         payload = _json_object(response)
         result = payload.get("result")
         if not isinstance(result, Mapping):
-            raise LookupFailed("invalid_response", "PubMed response has no result object")
-        row = result.get(pmid)
+            raise LookupFailed("invalid_response", f"NCBI {database} response has no result object")
+        row = result.get(uid)
         if not isinstance(row, Mapping):
-            raise LookupFailed("invalid_response", f"PubMed response has no requested PMID {pmid}")
+            raise LookupFailed("invalid_response", f"NCBI {database} response has no requested {label} "
+                               f"{requested or uid}")
         return None if row.get("error") else row
 
 
@@ -370,11 +389,21 @@ def _crossref_updates(message: Mapping[str, object]) -> list[SourceUpdate]:
 
 
 def _summary_ids(summary: Mapping[str, object]) -> list[RecordId]:
-    names = {"doi": "doi", "pubmed": "pmid", "pmc": "pmcid"}
+    names = {"doi": "doi", "pubmed": "pmid", "pmid": "pmid", "pmc": "pmcid", "pmcid": "pmcid"}
     rows = summary.get("articleids")
-    return [RecordId(id_scheme=names[str(row["idtype"])], id_value=str(row["value"]))
-            for row in rows if isinstance(row, Mapping) and row.get("idtype") in names and row.get("value")] \
-        if isinstance(rows, list) else []
+    result: list[RecordId] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping) or row.get("idtype") not in names or not row.get("value"):
+            continue
+        scheme = names[str(row["idtype"])]
+        value = str(row["value"])
+        if scheme == "pmcid":
+            match = re.search(r"PMC\d+", value, re.IGNORECASE)
+            if not match:
+                continue
+            value = match.group(0).upper()
+        result.append(RecordId(id_scheme=scheme, id_value=value))
+    return _dedupe_ids(result, ("", ""))
 
 
 def _pubmed_updates(summary: Mapping[str, object]) -> list[SourceUpdate]:

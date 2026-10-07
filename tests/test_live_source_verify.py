@@ -187,7 +187,7 @@ def test_incomplete_pubmed_response_is_invalid_not_not_found(missing):
     assert caught.value.kind == "invalid_response"
 
 
-def test_crossref_retraction_survives_optional_ncbi_enrichment_timeout():
+def test_doi_primary_retraction_survives_optional_ncbi_enrichment_timeout():
     scenario = fixture("scenarios.json")
 
     def handle(request):
@@ -203,6 +203,58 @@ def test_crossref_retraction_survives_optional_ncbi_enrichment_timeout():
     assert resolution.record.enrichment_failures[0].stage == "ncbi_id_converter"
     assert resolution.record.enrichment_failures[0].error_kind == "timeout"
     assert any("enrichment_unverified=ncbi_id_converter:timeout" in warning for warning in report.warnings)
+
+
+def test_pmid_primary_retraction_survives_optional_ncbi_enrichment_timeout():
+    scenario = fixture("scenarios.json")
+    seen = []
+
+    def handle(request):
+        seen.append((request.url.host, request.url.path, request.url.params.get("db")))
+        if "esummary" in request.url.path:
+            return httpx.Response(200, request=request, json=fixture("pubmed_retracted.json"))
+        assert "idconv" in request.url.path and scenario["timeout"]["exception"] == "httpx.ReadTimeout"
+        raise httpx.ReadTimeout("recorded timeout", request=request)
+
+    result = build([claim("c1")], [row("e1", "pmid", "9500320", kind="literature_claim")],
+                   [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver(handle)))
+    resolution = report.evidence[0].resolution
+
+    assert seen[0][1].endswith("esummary.fcgi") and seen[0][2] == "pubmed"
+    assert resolution.status == "found" and resolution.record is not None
+    assert report.evidence[0].source_defects == ["retracted_by doi:10.1016/S0140-6736(10)60175-4"]
+    assert resolution.record.enrichment_failures[0].stage == "ncbi_id_converter"
+    assert resolution.record.enrichment_failures[0].error_kind == "timeout"
+
+
+def test_pmcid_primary_and_retraction_survive_optional_id_conversion_timeout():
+    scenario = fixture("scenarios.json")
+    seen = []
+
+    def handle(request):
+        seen.append((request.url.host, request.url.path, request.url.params.get("db")))
+        if "esummary" in request.url.path and request.url.params.get("db") == "pmc":
+            return httpx.Response(200, request=request, json=fixture("pmc_retracted.json"))
+        if "idconv" in request.url.path:
+            assert scenario["timeout"]["exception"] == "httpx.ReadTimeout"
+            raise httpx.ReadTimeout("recorded timeout", request=request)
+        if "esummary" in request.url.path and request.url.params.get("db") == "pubmed":
+            return httpx.Response(200, request=request, json=fixture("pubmed_pmc_retracted.json"))
+        raise AssertionError(str(request.url))
+
+    result = build([claim("c1")], [row("e1", "pmcid", "PMC13546610", kind="literature_claim")],
+                   [link("c1", "e1")])
+    report = asyncio.run(verify_sources(result, resolver(handle)))
+    resolution = report.evidence[0].resolution
+
+    assert seen[0][1].endswith("esummary.fcgi") and seen[0][2] == "pmc"
+    assert resolution.status == "found" and resolution.record is not None
+    assert report.evidence[0].source_defects == ["retracted_by doi:10.7759/cureus.r249"]
+    assert resolution.record.enrichment_failures[0].stage == "ncbi_id_converter"
+    assert resolution.record.enrichment_failures[0].error_kind == "timeout"
+    assert ("pmid", "42703480") in {
+        (alias.id_scheme, alias.id_value) for alias in resolution.record.same_as}
 
 
 def test_labhq_verify_calls_live_checks_only_when_enabled(tmp_path, monkeypatch):

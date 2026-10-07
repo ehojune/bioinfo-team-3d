@@ -217,6 +217,23 @@ async def test_bundle_holds_reports_and_audit_records_but_no_output_file(tmp_pat
     assert contents["report_appendix.md"].decode() == full_appendix
 
 
+def test_bundle_keeps_cp2_source_verification_separate_when_live_recheck_is_off(tmp_path, monkeypatch, capsys):
+    request = _research("CD276 is up [[claim:s1/c1]].", [])
+    receipt = request["research_contract"]["checkpoints"]["cp2"]
+    receipt["source_verification"] = ["s1/e1: pmid:9500320 found; defect=retracted_by"]
+    receipt["source_verification_reports"] = [{"step_id": "s1", "ok": False}]
+    out_zip = tmp_path / "audit-cp2-source.zip"
+
+    code, _out = _verify(monkeypatch, capsys, _settings(tmp_path), request, "--bundle", str(out_zip))
+
+    assert code == 0
+    with zipfile.ZipFile(out_zip) as bundle:
+        claims = json.loads(bundle.read("claims.json"))
+    assert claims["source_verification"] == []
+    assert claims["cp2"]["source_verification"] == receipt["source_verification"]
+    assert claims["cp2"]["source_verification_reports"] == receipt["source_verification_reports"]
+
+
 async def test_verify_table_and_bundle_show_tool_use_id(tmp_path, monkeypatch, capsys):
     from labhq.hooks.tool_use import record_post_tool_use
 
