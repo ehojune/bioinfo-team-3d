@@ -1,0 +1,5 @@
+pr: 488
+rows:
+  - sha: "22b9f4c"
+    at: "2026-10-08 07:29"
+    text: "labhq verify가 RO-Crate에 선언된 파일을 MANIFEST status와 상관없이 검사하고, 너무 깊게 중첩된 metadata JSON을 오류 대신 문제로 적는다(#475)."
