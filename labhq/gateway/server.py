@@ -602,10 +602,17 @@ class Hub:
         return any(any(agent.get("id") == agent_id for agent in entry.get("agents", []))
                    for entry in self.last_runner_rosters.values())
 
-    def running_tasks(self) -> list[dict]:
-        """Accepted tasks of running requests, including steps waiting for jobs or ask answers."""
+    def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
+        """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
+
+        The task ledger keeps every result and can reach tens of MB; decoding it on the event loop blocks every
+        request and socket. So skip it when nothing is active, and let a caller that needs it for many requests
+        pass one read instead of decoding it once per request (2026-10-08: an 11 s stall on web office connect).
+        """
+        if not any(is_active_request(req.get("status")) for req in self.requests.values()):
+            return []
         selected: dict[tuple[str, str], tuple[tuple[int, float], dict]] = {}
-        for tid, entry in self.store.all("task").items():
+        for tid, entry in (self.store.all("task") if tasks is None else tasks).items():
             req = self.requests.get(entry.get("request_id"), {})
             if not entry.get("accepted") or not is_active_request(req.get("status")):
                 continue
@@ -626,7 +633,8 @@ class Hub:
                 selected[key] = (rank, task)
         return [selected[key][1] for key in sorted(selected)]
 
-    def request_summary(self, req: dict) -> dict:
+    def request_summary(self, req: dict, running: list[dict] | None = None) -> dict:
+        """One request's step progress; pass ``running`` (from running_tasks) when summarising many requests."""
         rid = req["id"]
         steps = (req.get("plan") or {}).get("steps") or []
         states = {step["id"]: "pending" for step in steps}
@@ -640,10 +648,9 @@ class Hub:
         for sid in (req.get("login_waits") or {}):
             if states.get(sid, "pending") == "pending":
                 states[sid] = "waiting_login"
-        for task in self.running_tasks():
+        for task in self.running_tasks() if running is None else running:
             if task["request_id"] == rid:
-                entry = self.store.get("task", task["id"]) or {}
-                sid = entry.get("step_id") or entry.get("kind")
+                sid = task["step_id"]  # running_tasks already resolved step_id or kind from the ledger entry
                 if sid and states.get(sid, "pending") == "pending":
                     states[sid] = task["state"]
         # Failed steps whose cause is the runner PC (#35): `labhq status` shows "환경 문제: cause — hint".
@@ -2005,6 +2012,9 @@ class Hub:
                 for rid, e in latest.items()}
 
     def snapshot(self) -> dict[str, Any]:
+        # Read the task ledger once for every request below; one read per request stalled the loop (2026-10-08).
+        tasks = self.store.all("task")
+        running = self.running_tasks(tasks)
         pipeline_prs = self.pipeline_prs()
         recent_events = list(self.events)[-200:]
         recent_terminals = {
@@ -2023,8 +2033,8 @@ class Hub:
                                                                   "bundle_path", "bundle_status", "bundle_grade", "bundle_warning")},
                           # the full list and full answers stay on the request (GET /api/requests/{id})
                           "followups": [snapshot_followup(f) for f in (r.get("followups") or [])[-20:]],
-                          "step_status": self.request_summary(r)["step_progress"]["steps"],
-                          "step_details": self.request_step_details(r.get("id", ""), r),
+                          "step_status": self.request_summary(r, running)["step_progress"]["steps"],
+                          "step_details": self.request_step_details(r.get("id", ""), r, tasks),
                           **({} if r.get("id") in recent_terminals else snapshot_reports(r)),
                           **({"pipeline_pr": pipeline_prs[r["id"]]} if r.get("id") in pipeline_prs else {}),
                           "review": r.get("review") or (r.get("review_progress") or {}).get("review")}
@@ -2032,13 +2042,14 @@ class Hub:
             "projects": [{"id": p.id, "name": p.name or p.id, "repo": p.repo, "visibility": p.visibility}
                          for p in self.s.projects],
             "default_references": [r.model_dump() for r in self.s.pi_profile.references],
-            "running_tasks": self.running_tasks(),
+            "running_tasks": running,
             "engine_holds": self.engine_login_holds(),
             "recent_events": [snapshot_event(e) for e in recent_events],
         }}
 
-    def request_step_details(self, rid: str, request: dict) -> dict[str, dict]:
-        tasks = [(tid, entry) for tid, entry in self.store.all("task").items()
+    def request_step_details(self, rid: str, request: dict,
+                             ledger: Mapping[str, dict] | None = None) -> dict[str, dict]:
+        tasks = [(tid, entry) for tid, entry in (self.store.all("task") if ledger is None else ledger).items()
                  if entry.get("request_id") == rid and entry.get("step_id")]
         review = request.get("review") or (request.get("review_progress") or {}).get("review") or {}
         details: dict[str, dict] = {}
@@ -2187,9 +2198,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not 1 <= limit <= 200:
             raise HTTPException(422, "limit must be 1..200")
         requests = sorted(hub.requests.values(), key=lambda r: r.get("created_at", 0), reverse=True)
-        return [hub.request_summary(r) for r in requests
-                if status == "all" or (status == "running" and is_active_request(r.get("status")))
-                or r.get("status") == status][:limit]
+        chosen = [r for r in requests if status == "all" or (status == "running" and is_active_request(r.get("status")))
+                  or r.get("status") == status][:limit]
+        running = hub.running_tasks() if chosen else []  # one ledger read for the whole list
+        return [hub.request_summary(r, running) for r in chosen]
 
     @app.get("/api/projects", dependencies=[Depends(auth)])
     async def projects() -> list[dict]:

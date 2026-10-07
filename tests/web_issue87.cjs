@@ -14,5 +14,6 @@ office.apply({type:'snapshot',data:{
 assert.equal(office.S.requests.get('r1').steps.s1,'working','200개 밖 task도 실행 중으로 복원한다');
 assert.equal(office.S.stepDetails.get('r1:s1').task_id,'task-1','복원한 task는 취소 ID를 보존한다');
 const server=fs.readFileSync(path.join(root,'labhq/gateway/server.py'),'utf8');
-assert.match(server,/"running_tasks"\s*:\s*self\.running_tasks\(\)/,'gateway snapshot이 활성 task를 보낸다');
+// The snapshot reads the task ledger once and reuses the running list (2026-10-08 stall fix).
+assert.match(server,/running = self\.running_tasks\(tasks\)[\s\S]*?"running_tasks"\s*:\s*running,/,'gateway snapshot이 활성 task를 보낸다');
 console.log('snapshot restores an active step after a 200-event replay gap: OK');
