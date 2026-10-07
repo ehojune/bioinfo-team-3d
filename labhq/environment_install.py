@@ -217,6 +217,29 @@ def _python_install(executable: str, args: list[str]) -> bool:
     return executable in _MANAGERS and _has_install(args)
 
 
+def _r_cmd_install(executable: str, args: list[str]) -> list[str] | None:
+    if executable == "r":
+        for i in range(len(args) - 1):
+            if [arg.casefold() for arg in args[i:i + 2]] == ["cmd", "install"]:
+                return args[i + 2:]
+    return None
+
+
+def _r_cmd_libraries(args: list[str]) -> list[str] | None:
+    """R INSTALL accepts -l LIB and --library=LIB, not attached/separated variants."""
+    libraries: list[str] = []
+    for i, arg in enumerate(args):
+        if arg == "-l":
+            if i + 1 == len(args) or args[i + 1].startswith("-"):
+                return None
+            libraries.append(args[i + 1])
+        elif arg.startswith("--library="):
+            libraries.append(arg[len("--library="):])
+        elif arg.casefold().startswith("--library") or (arg.casefold().startswith("-l") and not arg.startswith("--")):
+            return None  # R may ignore these unsupported flags and retain its default shared library.
+    return libraries
+
+
 def _r_calls(segment: str) -> Iterator[str]:
     for match in _R_CALL.finditer(segment):
         depth = 1
@@ -401,6 +424,7 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
         token, args, understood = _shell_invocation(segment)
         executable = executable_basename(token)
         detected_install = _python_install(executable, args)
+        r_cmd_args = _r_cmd_install(executable, args)
         manager_create = environment_step and executable in {"conda", "mamba", "micromamba"} and "create" in args
         if ((not understood or not detected_install and not manager_create and executable not in _R) and
                 not (understood and executable in _DATA_COMMANDS | _LOCATION_COMMANDS)):
@@ -414,6 +438,17 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
             cwd = _changed_workdir(executable, args, cwd)
         if branch_cwd:
             cwd = None  # branch/loop directory changes cannot be represented as one sequential cwd
+        if r_cmd_args is not None:
+            libraries = _r_cmd_libraries(r_cmd_args)
+            if environment_step:
+                if not libraries or not all(_local_path(path, workdir, cwd) for path in libraries):
+                    return _ENVIRONMENT_DENIAL
+            elif not libraries or cwd is None or not all(_task_library(path, ".rlib", workdir, cwd) for path in libraries):
+                return ("Only the environment step may modify the shared R library. Use "
+                        "`R CMD INSTALL -l ./.rlib ...` and record that library's package table "
+                        "in outputs/env/<step>.txt.")
+            pending_r_environment = []
+            continue
         if detected_install or manager_create:
             if environment_step:
                 if install_environment_override or not _environment_python_allowed(token, executable, args, workdir, cwd):

@@ -45,6 +45,10 @@ def denial(tmp_path, command, *, environment_step=True, tool="Bash", protected=T
     "cd ./nested && python -m pip install --target ./packages scanpy",
     "pushd ./nested; popd; ./.venv/bin/python -m pip install scanpy",
     "Rscript -e \"install.packages('limma', lib='./r-library')\"",
+    "R CMD INSTALL -l ./r-library package.tar.gz",
+    "R CMD INSTALL --library=./r-library package.tar.gz",
+    "R CMD INSTALL package.tar.gz -l './r library' --no-docs",
+    "env R CMD INSTALL -l ./first --library=./second package.tar.gz",
     "$env:R_LIBS_USER='./r-library'; Rscript -e \"BiocManager::install('limma')\"",
 ])
 def test_environment_owner_allows_explicit_workspace_destinations(tmp_path, command):
@@ -113,6 +117,20 @@ def test_environment_owner_allows_explicit_workspace_destinations(tmp_path, comm
     "true & pip install scanpy",
     "true & pip install --target ../shared scanpy",
     "Rscript -e \"install.packages('limma')\"",
+    "R CMD INSTALL package.tar.gz",
+    "R CMD INSTALL --library=/shared package.tar.gz",
+    "R CMD INSTALL -l ../shared package.tar.gz",
+    "R CMD INSTALL -l ./local --library=/shared package.tar.gz",
+    "R CMD INSTALL --library=/shared -l ./local package.tar.gz",
+    "R CMD INSTALL -l",
+    "R CMD INSTALL -l --no-docs package.tar.gz",
+    "R CMD INSTALL --library= package.tar.gz",
+    "R CMD INSTALL --library ./local package.tar.gz",
+    "R CMD INSTALL -l./local package.tar.gz",
+    "R CMD INSTALL -l=./local package.tar.gz",
+    "R CMD INSTALL --LIBRARY=./local package.tar.gz",
+    "R CMD INSTALL --library=$HOME/packages package.tar.gz",
+    "cd ..; R CMD INSTALL -l ./r-library package.tar.gz",
     "Rscript -e \"install.packages('limma', lib='../shared')\"",
     "Rscript -e \"install.packages('limma', lib=file.path('/shared'))\"",
     "Rscript -e \"install.packages('limma', lib=.rlib)\"",
@@ -152,7 +170,7 @@ def test_foreign_windows_executable_spellings_are_never_task_relative(tmp_path, 
 @pytest.mark.parametrize("path", [r"C:\shared", "C:/shared", r"C:shared", r"\\server\share\env"])
 def test_foreign_windows_targets_are_rejected_for_all_supported_managers(tmp_path, path):
     for command in (f'pip install --target "{path}" scanpy', f'conda install -p "{path}" scanpy',
-                    f'uv pip --python "{path}" install scanpy'):
+                    f'uv pip --python "{path}" install scanpy', f'R CMD INSTALL --library="{path}" package.tar.gz'):
         assert denial(tmp_path, command)
 
 
@@ -173,6 +191,31 @@ def test_consumers_still_require_their_own_fixed_library(tmp_path):
                   environment_step=False)
 
 
+@pytest.mark.parametrize("command", [
+    "R CMD INSTALL -l ./.rlib package.tar.gz",
+    "R CMD INSTALL --library=./.rlib package.tar.gz",
+    "command R CMD INSTALL -l ./.rlib --library=./.rlib package.tar.gz",
+])
+def test_r_cmd_consumers_can_install_only_into_their_fixed_library(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False) is None
+
+
+@pytest.mark.parametrize("command", [
+    "R CMD INSTALL package.tar.gz",
+    "R CMD INSTALL -l ./other package.tar.gz",
+    "R CMD INSTALL -l ./.rlib --library=./other package.tar.gz",
+    "cd nested; R CMD INSTALL -l ./.rlib package.tar.gz",
+    "R CMD INSTALL --library=../other/.rlib package.tar.gz",
+])
+def test_r_cmd_consumer_shared_and_redirected_libraries_are_denied(tmp_path, command):
+    assert denial(tmp_path, command, environment_step=False)
+
+
+def test_r_cmd_explicit_absolute_local_libraries_and_powershell_call_operator(tmp_path):
+    assert denial(tmp_path, f'cd ..; R CMD INSTALL --library="{tmp_path}/r library" package.tar.gz') is None
+    assert denial(tmp_path, r"& R.exe CMD INSTALL -l .\r-library package.tar.gz", tool="PowerShell") is None
+
+
 def _directory_link(link, target):
     if os.name == "nt":
         subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
@@ -186,6 +229,8 @@ def _directory_link(link, target):
     ("packages", "pip install --target ./packages scanpy", True),
     (".pylib", "pip install --target ./.pylib scanpy", False),
     (".rlib", "Rscript -e \"install.packages('a', lib='./.rlib')\"", False),
+    ("r-library", "R CMD INSTALL -l ./r-library package.tar.gz", True),
+    (".rlib", "R CMD INSTALL --library=./.rlib package.tar.gz", False),
 ])
 def test_directory_links_cannot_redirect_installations_outside_the_step(tmp_path, folder, command, owner):
     workspace = tmp_path / "step"

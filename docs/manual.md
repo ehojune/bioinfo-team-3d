@@ -272,7 +272,7 @@ flowchart LR
 
 러너는 시작할 때 R·Python 분석 패키지·Docker·Nextflow·Java·WSL 유무를 CSO에 알립니다. Python은 직원 셸이 부르는 PATH의 `python3`·`python`·`py`를 모두 검사해 분석 패키지가 가장 많은 것을 고르고, 그 명령 이름을 함께 알립니다(같은 PC에서 둘이 다른 Python일 수 있습니다). PATH에 없을 때만 labhq 자신의 interpreter를 봅니다. 엔진 설정의 `env.PATH`로 직원 PATH를 따로 바꾼 경우는 아직 반영하지 않습니다. CSO는 binary wheel만 설치하고, 빌드가 필요한 패키지는 대체안을 계획해 설치 실패 때 PI에게 묻지 않고 바꿉니다.
 
-패키지가 더 필요하면 계획 첫 단계가 자기 작업 폴더에 공유 virtual environment를 만들고 `outputs/env/requirements.lock.txt`에 interpreter 경로와 판본을 남깁니다. 환경 단계도 `.venv`의 interpreter 경로를 직접 쓰거나 자기 폴더 안 `--target`, conda `-p`, uv pip `--python` 경로를 지정해야 합니다. 공유 환경을 쓰는 단계의 모든 shell 호출은 Claude 승인 게이트를 거치며, bare `pip install`과 작업 폴더 밖 설치를 거절합니다. 뒤 단계는 공유 interpreter를 실행만 하며, 추가 패키지는 각 단계의 `./.pylib`(`--target`) 또는 `./.rlib`에 설치합니다. 단계별 `outputs/env/<단계>.txt`에는 `pip freeze --path ./.pylib` 또는 R package 표까지 넣습니다.
+패키지가 더 필요하면 계획 첫 단계가 자기 작업 폴더에 공유 virtual environment를 만들고 `outputs/env/requirements.lock.txt`에 interpreter 경로와 판본을 남깁니다. 환경 단계도 `.venv`의 interpreter 경로를 직접 쓰거나 자기 폴더 안 `--target`, conda `-p`, uv pip `--python` 경로를 지정해야 합니다. 공유 환경을 쓰는 단계의 모든 shell 호출은 Claude 승인 게이트를 거치며, bare `pip install`과 작업 폴더 밖 설치를 거절합니다. `R CMD INSTALL`도 로컬 `-l`·`--library`를 명시해야 합니다. 뒤 단계는 공유 interpreter를 실행만 하며, 추가 패키지는 각 단계의 `./.pylib`(`--target`) 또는 `./.rlib`에 설치합니다. 단계별 `outputs/env/<단계>.txt`에는 `pip freeze --path ./.pylib` 또는 R package 표까지 넣습니다.
 
 러너는 실행 전후의 `outputs/`를 비교해 새 파일과 바뀐 파일의 크기·sha256을 `manifest.json`의 `runs.<task_id>.observed_outputs`에 남깁니다. Claude 직원은 PostToolUse 시각과 파일 시각이 가깝고 유일할 때 `tool_use_id`도 붙이며, 애매하거나 정보가 없는 Codex 직원은 비워 둡니다. `TaskResult.output_sha256`은 수집된 산출의 해시를, `unreported_outputs`는 직원이 보고하지 않은 관찰 산출을 기록합니다(`runner.output_hash_max_bytes` 기본 512 MiB).
 
