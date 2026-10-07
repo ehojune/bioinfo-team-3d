@@ -235,14 +235,14 @@ class LiveSourceResolver:
         summary = await self._pmc_summary(client, value)
         return self._record_from_ncbi_summary(scheme, value, summary) if summary else None
 
-    async def _lookup_doi_primary(self, client: httpx.AsyncClient, doi: str) -> SourceRecord:
+    async def _lookup_doi_primary(self, client: httpx.AsyncClient, doi: str) -> SourceRecord | None:
         response = await self._request(client, "GET", f"https://api.crossref.org/works/{quote(doi, safe='')}",
                                        params=self._params(mailto=self.contact))
         message: Mapping[str, object] = {}
         if response.status_code == 404:
             fallback = await self._request(client, "HEAD", f"https://doi.org/{quote(doi, safe='/')}")
             if fallback.status_code == 404:
-                return []
+                return None
             _require_success(fallback)
         else:
             _require_success(response)

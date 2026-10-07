@@ -177,7 +177,8 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
             "note": "" if same else "다시 돌린 결과가 기록된 검사와 다릅니다"}
 
 
-async def _live_source_reports(req: Mapping[str, Any], settings: Any) -> list[Any]:
+async def _live_source_reports(req: Mapping[str, Any], settings: Any,
+                               observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
     from ..research.contract import ResearchResult
     from .verify import LiveSourceResolver, verify_sources
 
@@ -186,14 +187,16 @@ async def _live_source_reports(req: Mapping[str, Any], settings: Any) -> list[An
     parsed = [ResearchResult.model_validate(ledger) for ledger in research_ledgers(req).values()
               if isinstance(ledger, Mapping)]
     return list(await asyncio.gather(*(verify_sources(
-        result, resolver, timeout_s=settings.research.live_source_timeout_s,
+        result, resolver, observed_artifacts=observed_artifacts.get(result.step_id),
+        timeout_s=settings.research.live_source_timeout_s,
         deadline_s=settings.research.live_source_deadline_s) for result in parsed)))
 
 
-def _run_live_source_reports(req: Mapping[str, Any], settings: Any) -> list[Any]:
+def _run_live_source_reports(req: Mapping[str, Any], settings: Any,
+                             observed_artifacts: Mapping[str, Mapping[str, str]]) -> list[Any]:
     if not settings.research.live_source_check or not isinstance(req.get("research_contract"), Mapping):
         return []
-    return asyncio.run(_live_source_reports(req, settings))
+    return asyncio.run(_live_source_reports(req, settings, observed_artifacts))
 
 
 def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
@@ -210,6 +213,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     reasons: list[str] = []
     unreported: dict[str, list[str]] = {}
     scans: dict[str, tuple[list[dict[str, Any]], str | None]] = {}
+    observed_artifacts: dict[str, dict[str, str]] = {}
     for step_id, result in results.items():
         if not isinstance(result, Mapping):
             continue
@@ -236,6 +240,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                 zones, settings.runner.reference_scan_max_entries, settings.runner.reference_scan_max_depth,
                 settings.runner.output_hash_max_bytes)
         records, note = scans[str(workdir)]
+        if note is None and all(isinstance(row.get("sha256"), str) for row in records):
+            observed_artifacts[str(step_id)] = {str(row["path"]): row["sha256"] for row in records}
         # A declared name matched a differently cased file on a case-insensitive volume when it was collected.
         key = (lambda name: name) if case_sensitive_directory(workdir / "outputs") else str.casefold
         by_path = {key(row["path"]): row for row in records}
@@ -247,7 +253,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                           **_compare(recorded.get(path), row, note, files_below=below,
                                      in_zone=row is None and overlaps_zone(workdir / path, zones))})
     report_check = rerun_report_check(req)
-    source_reports = _run_live_source_reports(req, settings)
+    source_reports = _run_live_source_reports(req, settings, observed_artifacts)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]
     if report_check and report_check["rerun"]:

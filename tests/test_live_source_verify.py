@@ -158,16 +158,37 @@ def test_doi_head_fallback_and_contact_etiquette():
     assert [request.method for request in seen] == ["GET", "HEAD", "GET"]
 
 
-def test_pubmed_error_record_is_not_found():
+@pytest.mark.parametrize(("scheme", "value", "database"), [
+    ("doi", "10.5555/not-registered", None),
+    ("pmid", "999999999", "pubmed"),
+    ("pmcid", "PMC999999999", "pmc"),
+])
+def test_missing_primary_records_are_not_found_defects(scheme, value, database):
+    scenario = fixture("scenarios.json")
+    seen = []
+
     def handle(request):
-        if "idconv" in request.url.path:
-            return idconv_missing(request)
-        return httpx.Response(200, request=request, json=fixture("pubmed_missing.json"))
+        seen.append((request.method, request.url.host, request.url.params.get("db")))
+        if request.url.host == "api.crossref.org":
+            return httpx.Response(scenario["doi_missing"]["crossref_status"], request=request)
+        if request.url.host == "doi.org":
+            return httpx.Response(scenario["doi_missing"]["resolver_status"], request=request)
+        uid = value[3:] if scheme == "pmcid" else value
+        return httpx.Response(200, request=request, json={
+            "header": {"type": "esummary", "version": "0.3"},
+            "result": {"uids": [uid], uid: {"uid": uid, "error": "cannot get document summary"}}})
 
     report = asyncio.run(verify_sources(
-        build([claim("c1")], [row("e1", "pmid", "999999999")], [link("c1", "e1")]), resolver(handle)))
-    assert report.evidence[0].resolution.status == "not_found"
+        build([claim("c1")], [row("e1", scheme, value)], [link("c1", "e1")]), resolver(handle)))
+    assert (report.evidence[0].resolution.lookup, report.evidence[0].resolution.status) == (
+        "succeeded", "not_found")
     assert by_claim(report)["c1@1"].state == "defective"
+    assert report.defective_evidence == ["e1"] and report.lookup_failures == []
+    if scheme == "doi":
+        assert [(method, host) for method, host, _db in seen] == [
+            ("GET", "api.crossref.org"), ("HEAD", "doi.org")]
+    else:
+        assert seen == [("GET", "eutils.ncbi.nlm.nih.gov", database)]
 
 
 @pytest.mark.parametrize("missing", ["result", "requested_row"])
