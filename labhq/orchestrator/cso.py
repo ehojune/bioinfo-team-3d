@@ -38,9 +38,9 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
-from ..research.packs import (assess_pack_applicability, configured_packs, pack_refs, pack_snapshot,
-                              packs_for_snapshot, render_pack_catalog, render_pack_review, select_applied_packs,
-                              select_legacy_applied_packs)
+from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
+                              pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
+                              select_applied_packs, select_legacy_applied_packs)
 from ..util import clip, extract_json, input_relpath, output_relpath, short
 from .. import vocab as output_vocab
 from ..vocab import declare as output_types
@@ -117,6 +117,22 @@ def normalize_plan_topics(plan: Any, vocab: output_vocab.Vocab, *, strict: bool)
     warnings = list(plan.get("warnings") or []) if isinstance(plan.get("warnings"), list) else []
     warnings.extend(added)
     return {**plan, "topics": normalized, **({"warnings": warnings} if warnings else {})}
+
+
+def normalize_plan_keys(plan: Any, packs: dict[str, Any], catalog: dict[str, list[topic_checklists.ChecklistItem]]) \
+        -> Any:
+    """Exact keys for the spellings a planner naturally writes: a pack id without its one configured @version, and
+    a checklist answer keyed ``topic.id``. Runs after topic normalization, before validation and freezing."""
+    if not isinstance(plan, dict):
+        return plan
+    updates = {}
+    values = normalize_pack_keys(packs, plan.get("pack_values")) if packs else plan.get("pack_values")
+    if values != plan.get("pack_values"):
+        updates["pack_values"] = values
+    answers = topic_checklists.normalize_answers(plan.get("checklist"), plan.get("topics"), catalog)
+    if answers != plan.get("checklist"):
+        updates["checklist"] = answers
+    return {**plan, **updates} if updates else plan
 
 
 def route_decision(plan: Any, solo_agent: str | None, roster: list[dict], *, requested: str = "auto",
@@ -4371,13 +4387,16 @@ class Orchestrator:
                     for attempt in (1, 2):
                         type_stats = {}
                         selection_problems = []
+                        assessed = None
                         try:
                             if topic_vocab is None:
                                 raise ValueError("research topics vocabulary is unavailable")
                             plan = normalize_plan_topics(plan, topic_vocab, strict=True)
+                            plan = normalize_plan_keys(plan, configured_pack_defs, checklist_catalog)
                             candidate_packs, applicability, topic_warnings = assess_pack_applicability(
                                 configured_pack_defs, plan.get("topics"),
                                 plan.get("pack_values") if isinstance(plan, dict) else None)
+                            assessed = candidate_packs
                             candidate_packs = select_applied_packs(
                                 configured_pack_defs,
                                 plan.get("pack_values") if isinstance(plan, dict) else None,
@@ -4387,7 +4406,9 @@ class Orchestrator:
                                     "warnings": [*(plan.get("warnings") or []), *topic_warnings]}
                         except ValueError as error:
                             supplied = plan.get("pack_values") if isinstance(plan, dict) else None
-                            candidate_packs = {
+                            # The correction names the packs the topics apply. Expecting only the supplied keys told
+                            # a CSO that wrote one wrong key "expected []", and it dropped its pack values (v0.5 trial).
+                            candidate_packs = assessed if assessed is not None else {
                                 key: loaded for key, loaded in configured_pack_defs.items()
                                 if isinstance(supplied, dict) and key in supplied and
                                 not (isinstance(supplied[key], dict) and "not_applicable" in supplied[key])
@@ -4450,6 +4471,7 @@ class Orchestrator:
                         try:
                             if topic_vocab is not None:
                                 plan = normalize_plan_topics(plan, topic_vocab, strict=False)
+                            plan = normalize_plan_keys(plan, {}, checklist_catalog)
                             steps, step_warnings = validate_steps(plan.get("steps") or [], known, self.cfg.max_steps,
                                                                   orchestration, vocab=vocab, stats=type_stats)
                             precedent_state = req.get("analysis_precedents") or {}

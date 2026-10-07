@@ -89,6 +89,27 @@ def requirements(topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> 
     return list(found.values())
 
 
+def normalize_answers(answers: Any, topics: Any, checklists: Mapping[str, list[ChecklistItem]]) -> Any:
+    """Re-key answers written ``topic.id`` or ``topic/id`` (the TSV's two columns joined) to the bare id.
+
+    The plan answers each id once, but a planner reading the topic and id columns often joins them; the v0.5 trial
+    plan was rejected twice for that spelling alone (2026-10-07). An exact id answer wins over an alias, and keys that
+    are not a declared topic's alias stay as they are."""
+    if not isinstance(answers, dict):
+        return answers
+    selected = set(topics) if isinstance(topics, list) else set()
+    aliases = {f"{topic}{sep}{item.id}": item.id for topic, items in checklists.items() if topic in selected
+               for item in items for sep in (".", "/")}
+    normalized: dict[str, Any] = {}
+    for key, value in answers.items():
+        target = aliases.get(key) if isinstance(key, str) else None
+        if target is None:
+            normalized[key] = value
+        elif target not in answers and target not in normalized:
+            normalized[target] = value
+    return normalized
+
+
 def _cell(text: str) -> str:
     return " ".join(str(text).split())  # one TSV cell: no tab or line break
 
