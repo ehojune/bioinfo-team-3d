@@ -35,6 +35,35 @@ _INSTALL_REDIRECT_ENV = re.compile(
 _SHELL_PREFIXES = frozenset({"if", "then", "else", "elif", "while", "until", "do", "!"})
 _LOCATION_COMMANDS = frozenset({"cd", "chdir", "set-location", "sl", "pushd", "push-location", "popd", "pop-location"})
 _DATA_COMMANDS = frozenset({"echo", "printf", "write-output", "write-host", "cat", "get-content", "rg", "grep", "ls", "dir"})
+_POSIX_SHELLS = frozenset({"bash", "sh", "zsh", "dash"})
+_POWERSHELLS = frozenset({"pwsh", "powershell"})
+_NESTED_SHELL_DEPTH = 3
+_POSIX_SHELL_FLAGS = frozenset("abefhkmnptuvxBCEHPTilrsD")
+_POWERSHELL_OPTIONS = {
+    "-command": "command",
+    "-encodedcommand": "encoded",
+    "-file": "file",
+    "-configurationname": "value",
+    "-custompipename": "value",
+    "-executionpolicy": "value",
+    "-inputformat": "value",
+    "-outputformat": "value",
+    "-settingsfile": "value",
+    "-windowstyle": "value",
+    "-workingdirectory": "value",
+    "-login": "flag",
+    "-mta": "flag",
+    "-namedpipeservermode": "flag",
+    "-nologo": "flag",
+    "-noninteractive": "flag",
+    "-noprofile": "flag",
+    "-noprofileloadtime": "flag",
+    "-servermode": "flag",
+    "-socketserver": "flag",
+    "-sshservermode": "flag",
+    "-sta": "flag",
+}
+_CMD_FLAGS = re.compile(r"/(?:[dqas]|[auefv]:(?:on|off))$", re.IGNORECASE)
 
 
 def executable_basename(token: str) -> str:
@@ -44,20 +73,39 @@ def executable_basename(token: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
-def _literal_words(segment: str) -> tuple[list[str], bool]:
-    """Tokenize literal words, including quoted pieces within one executable/option."""
+class _ShellWord(str):
+    """A dequoted shell word that remembers whether its source can expand."""
+
+    def __new__(cls, value: str, *, nonliteral: bool = False):
+        word = super().__new__(cls, value)
+        word.nonliteral = nonliteral
+        return word
+
+
+def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bool]:
+    """Tokenize words while retaining expansion provenance across quoted pieces."""
     words: list[str] = []
     token = ""
     quote = ""
     started = False
     escaped = False
-    for char in segment:
-        if escaped:
-            token += char
-            escaped = False
-        elif quote and char == "`":
-            escaped = True
-        elif char in "\"'":
+    nonliteral = False
+    i = 0
+    while i < len(segment):
+        char = segment[i]
+        next_char = segment[i + 1] if i + 1 < len(segment) else ""
+        powershell_escape = tool_name == "PowerShell" and char == "`" and quote != "'"
+        bash_escape = (tool_name != "PowerShell" and char == "\\" and quote != "'" and
+                       next_char and (next_char in '$`"\\' or not quote and next_char.isspace()))
+        if powershell_escape or bash_escape:
+            started = True
+            if not next_char:
+                escaped = True
+                break
+            token += next_char
+            i += 2
+            continue
+        if char in "\"'":
             if not quote:
                 quote = char
                 started = True
@@ -67,13 +115,16 @@ def _literal_words(segment: str) -> tuple[list[str], bool]:
                 token += char
         elif char.isspace() and not quote:
             if started:
-                words.append(token)
-                token, started = "", False
+                words.append(_ShellWord(token, nonliteral=nonliteral))
+                token, started, nonliteral = "", False, False
         else:
             token += char
             started = True
+            if quote != "'" and (char == "$" or char == "`" and tool_name != "PowerShell"):
+                nonliteral = True
+        i += 1
     if started:
-        words.append(token)
+        words.append(_ShellWord(token, nonliteral=nonliteral))
     return words, not quote and not escaped
 
 
@@ -88,9 +139,9 @@ def _executable_words(segment: str) -> tuple[str, list[str]]:
     return (executable_basename(words[0]), words[1:]) if words else ("", [])
 
 
-def _shell_invocation(segment: str) -> tuple[str, list[str], bool]:
+def _shell_invocation(segment: str, tool_name: str) -> tuple[str, list[str], bool]:
     """Unwrap a bounded shell grammar; unknown wrapper options remain untrusted."""
-    words, valid = _literal_words(segment.strip().lstrip("({ ").rstrip(")} "))
+    words, valid = _literal_words(segment.strip().lstrip("({ ").rstrip(")} "), tool_name)
     while words:
         token = words[0].casefold()
         if token in _SHELL_PREFIXES or token in {"&", "."} or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
@@ -116,13 +167,15 @@ def _shell_invocation(segment: str) -> tuple[str, list[str], bool]:
     return (words[0], words[1:], valid) if words else ("", [], valid)
 
 
-def _installation_syntax(segment: str) -> bool:
+def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
     """Find direct installer operands even when a wrapper/control form was not understood."""
-    words, valid = _literal_words(segment)
+    words, valid = _literal_words(segment, tool_name)
     if words and executable_basename(words[0]) in _DATA_COMMANDS:
         return False  # printed text and filename arguments are data, not shell invocations
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
+        if _dynamic_installer_syntax(word, words[i + 1:]):
+            return True
         if _python_install(executable, words[i + 1:]):
             return True
         if executable in {"conda", "mamba", "micromamba"} and "create" in words[i + 1:]:
@@ -131,6 +184,228 @@ def _installation_syntax(segment: str) -> bool:
             return True
     # An unknown executable/wrapper with an install operand cannot receive an unscoped exception.
     return _has_install(words) or not valid and bool(re.search(r"\binstall\b", segment, re.IGNORECASE))
+
+
+def _nonliteral_word(word: str) -> bool:
+    """Whether a shell may replace any part of a word before execution."""
+    if isinstance(word, _ShellWord):
+        return word.nonliteral
+    return "$" in word or "`" in word or bool(re.search(r"%[^%]+%", word))
+
+
+def _first_operand(args: list[str]) -> str:
+    return next((arg for arg in args if not arg.startswith("-")), "")
+
+
+def _dynamic_installer_syntax(token: str, args: list[str]) -> bool:
+    """Fail closed when an installer selector is computed instead of literal."""
+    executable = executable_basename(token)
+    folded = [arg.casefold() for arg in args]
+    install_like = any(arg in {"install", "create"} for arg in folded)
+    if _nonliteral_word(token):
+        return install_like
+    if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
+        return _nonliteral_word(_first_operand(args))
+    if _PYTHON.fullmatch(executable):
+        for i, arg in enumerate(folded):
+            if arg != "-m":
+                continue
+            if i + 1 == len(args) or _nonliteral_word(args[i + 1]):
+                return True
+            if _PIP.fullmatch(executable_basename(args[i + 1])):
+                return _nonliteral_word(_first_operand(args[i + 2:]))
+        return False
+    if executable == "uv":
+        try:
+            pip_index = next(i for i, arg in enumerate(folded) if arg == "pip")
+        except StopIteration:
+            return _nonliteral_word(_first_operand(args))
+        return _nonliteral_word(_first_operand(args[pip_index + 1:]))
+    if executable == "r":
+        selectors = [arg for arg in args if not arg.startswith("-")][:2]
+        return any(_nonliteral_word(arg) for arg in selectors)
+    return False
+
+
+def _installer_name_visible(text: str) -> bool:
+    names = r"python(?:\d+(?:\.\d+)*)?|pythonw(?:\d+(?:\.\d+)*)?|py|pip(?:\d+(?:\.\d+)*)?|uv|conda|mamba|micromamba|rscript|r"
+    return bool(re.search(rf"(?<![A-Za-z0-9_])(?:{names})(?:\.exe)?(?![A-Za-z0-9_])", text, re.IGNORECASE))
+
+
+def _powershell_option_kind(option: str) -> str | None:
+    folded = option.casefold()
+    if folded == "-c":
+        return "command"
+    if folded == "-ec":
+        return "encoded"
+    matches = {kind for name, kind in _POWERSHELL_OPTIONS.items() if name.startswith(folded)}
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _fully_nonliteral_body(body: str, tool_name: str) -> bool:
+    value = body.strip()
+    if tool_name == "PowerShell":
+        return bool(re.fullmatch(r"\$(?:env:)?[A-Za-z_][\w:]*|\$\{[^}]+\}|\$\(.+\)", value, re.DOTALL))
+    return bool(re.fullmatch(
+        r"\$(?:[A-Za-z_]\w*|\d+|[@*#?!_-])|\$\{[^}]+\}|\$\(.+\)|`[^`]+`|%[^%]+%|![^!]+!",
+        value, re.DOTALL))
+
+
+def _positional_index(word: str) -> int | None:
+    match = re.fullmatch(r"\$(\d+)|\$\{(\d+)\}|\$[@*]|\$\{[@*](?::(\d+))?\}", word)
+    if not match:
+        return None
+    if match.group(1) or match.group(2):
+        return int(match.group(1) or match.group(2))
+    return int(match.group(3) or 1)
+
+
+def _positional_command_candidate(token: str, args: list[str], positional: list[str]) -> str | None:
+    """Expand only positional parameters used as an executable or installer selector."""
+    index = _positional_index(token)
+    if index is not None:
+        return " ".join(positional[index:])
+    executable = executable_basename(token)
+    folded = [arg.casefold() for arg in args]
+    selector_index: int | None = None
+    prefix: list[str] = [token]
+    if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
+        selector_index = next((i for i, arg in enumerate(args) if not arg.startswith("-")), None)
+        if selector_index is not None:
+            prefix.extend(args[:selector_index])
+    elif _PYTHON.fullmatch(executable):
+        module_index = next((i for i, arg in enumerate(folded) if arg == "-m"), None)
+        if module_index is not None and module_index + 1 < len(args):
+            selector_index = module_index + 1
+            prefix.extend(args[:selector_index])
+    elif executable == "uv":
+        pip_index = next((i for i, arg in enumerate(folded) if arg == "pip"), None)
+        if pip_index is not None:
+            selector_index = next(
+                (i for i in range(pip_index + 1, len(args)) if not args[i].startswith("-")), None)
+            if selector_index is not None:
+                prefix.extend(args[:selector_index])
+    elif executable == "r":
+        selector_index = next((i for i, arg in enumerate(args) if not arg.startswith("-")), None)
+        if selector_index is not None:
+            prefix.extend(args[:selector_index])
+    if selector_index is None:
+        return None
+    index = _positional_index(args[selector_index])
+    if index is None:
+        return None
+    return " ".join([*prefix, *positional[index:]])
+
+
+def _positional_commands(body: str, positional: list[str]) -> tuple[str, list[str]]:
+    """Separate body segments whose command position is supplied by bash positional arguments."""
+    remaining: list[str] = []
+    candidates: list[str] = []
+    for segment in _segments(body):
+        stripped = segment.strip()
+        if not stripped:
+            continue
+        token, args, _ = _shell_invocation(stripped, "Bash")
+        candidate = _positional_command_candidate(token, args, positional)
+        if candidate is None:
+            remaining.append(stripped)
+        elif candidate:
+            candidates.append(candidate)
+    return "; ".join(remaining), candidates
+
+
+def _nested_shell_body(
+        executable: str, args: list[str], valid: bool,
+) -> tuple[str, str, bool, bool, list[str]] | None:
+    """Return body, parser kind, extractability, unconditional denial, and positional arguments."""
+    option_index: int | None = None
+    unknown_option = False
+    joins_remainder = False
+    positional: list[str] = []
+    if executable in _POSIX_SHELLS:
+        nested_tool = "Bash"
+        i = 0
+        while i < len(args):
+            option = args[i]
+            if option == "--":
+                break
+            if option in {"-o", "-O", "+O", "--rcfile", "--init-file"}:
+                i += 2
+                continue
+            if option.startswith(("--rcfile=", "--init-file=")):
+                i += 1
+                continue
+            if option.startswith("--"):
+                i += 1
+                continue
+            if option.startswith("+"):
+                unknown_option |= len(option) < 2 or any(char not in _POSIX_SHELL_FLAGS for char in option[1:])
+                i += 1
+                continue
+            if option.startswith("-"):
+                flags = option[1:]
+                known = bool(flags) and all(char == "c" or char in _POSIX_SHELL_FLAGS for char in flags)
+                if "c" in flags and known:
+                    option_index = i
+                    break
+                unknown_option |= not known
+                i += 1
+                continue
+            break
+    elif executable in _POWERSHELLS:
+        nested_tool = "PowerShell"
+        joins_remainder = True
+        i = 0
+        while i < len(args):
+            option = args[i]
+            if option == "--":
+                break
+            if not option.startswith("-"):
+                break
+            kind = _powershell_option_kind(option)
+            if kind == "encoded":
+                body = args[i + 1] if i + 1 < len(args) else ""
+                return str(body), nested_tool, False, True, []
+            if kind == "file":
+                return "", nested_tool, True, False, []
+            if kind == "command":
+                option_index = i
+                break
+            if kind == "value":
+                i += 2
+                continue
+            if kind == "flag":
+                i += 1
+                continue
+            unknown_option = True
+            i += 1
+    elif executable == "cmd":
+        nested_tool = "Bash"
+        joins_remainder = True
+        for i, option in enumerate(args):
+            if option.casefold() in {"/c", "/k"}:
+                option_index = i
+                break
+            if not option.startswith("/"):
+                break
+            unknown_option |= not bool(_CMD_FLAGS.fullmatch(option))
+    else:
+        return None
+    if option_index is None:
+        return "", nested_tool, True, False, []
+    if unknown_option:
+        return "", nested_tool, False, True, []
+    if option_index + 1 >= len(args):
+        return "", nested_tool, False, True, []
+    if joins_remainder:
+        body = " ".join(args[option_index + 1:])
+    else:
+        body = args[option_index + 1]
+        positional = args[option_index + 2:]
+    _, body_valid = _literal_words(str(body), nested_tool)
+    fully_dynamic = _fully_nonliteral_body(str(body), nested_tool)
+    extractable = valid and body_valid and not fully_dynamic
+    return str(body), nested_tool, extractable, fully_dynamic, positional
 
 
 def _foreign_windows_path(value: str) -> bool:
@@ -162,10 +437,11 @@ def _shell_expands(segment: str, tool_name: str) -> bool:
 
 
 def _segments(command: str) -> Iterator[str]:
-    """Split shell commands at control operators outside quoted strings."""
+    """Split shell commands and lexical command groups outside quoted strings."""
     start = 0
     quote = ""
     escaped = False
+    groups: list[str] = []
     i = 0
     while i < len(command):
         char = command[i]
@@ -191,6 +467,26 @@ def _segments(command: str) -> Iterator[str]:
             elif char in ";|\r\n" or (char == "&" and command[start:i].strip() and
                                        (i == 0 or command[i - 1] not in "><")):
                 separator = char
+            elif char in "({":
+                prefix = command[start:i].strip().casefold()
+                previous = command[i - 1] if i else ""
+                if (not previous or previous not in "$<>") and (
+                        not prefix or prefix.split()[-1] in _SHELL_PREFIXES | {"do"}):
+                    if command[start:i].strip():
+                        yield command[start:i]
+                    yield char
+                    groups.append(")" if char == "(" else "}")
+                    i += 1
+                    start = i
+                    continue
+            elif char in ")}" and groups and char == groups[-1]:
+                if command[start:i].strip():
+                    yield command[start:i]
+                yield char
+                groups.pop()
+                i += 1
+                start = i
+                continue
         if separator:
             yield command[start:i]
             i += len(separator)
@@ -268,7 +564,8 @@ def _r_calls(segment: str) -> Iterator[str]:
 
 def _task_library(path: str, name: str, workdir: str, cwd: Path | None = None) -> bool:
     value = path.strip().strip("\"'")
-    if _foreign_windows_path(value) or any(mark in value for mark in ("$", "%", "`")):
+    if (_foreign_windows_path(value) or ".." in value.replace("\\", "/").split("/") or
+            any(mark in value for mark in ("$", "%", "`"))):
         return False
     try:
         root = Path(workdir).resolve()
@@ -286,6 +583,7 @@ def _local_path(path: str, workdir: str, cwd: Path | None, *, interpreter: bool 
     """Resolve a literal destination below the task root, including directory links."""
     value = path.strip().strip("\"'")
     if (not value or _foreign_windows_path(value) or
+            ".." in value.replace("\\", "/").split("/") or
             any(mark in value for mark in ("$", "%", "`", "~", "*", "?", "[", "]", "(", ")"))):
         return None
     value = value.replace("\\", "/")
@@ -402,11 +700,18 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
     """Keep the environment owner's installs and consumers' extra libraries in their own workspace."""
     if not protected or tool_name not in {"Bash", "PowerShell"}:
         return None
-    cwd: Path | None = Path(workdir).resolve()
+    return _shared_environment_install_denial(
+        tool_name, str(tool_input.get("command") or ""), environment_step=environment_step,
+        workdir=workdir, cwd=Path(workdir).resolve(), depth=0)
+
+
+def _shared_environment_install_denial(tool_name: str, command: str, *, environment_step: bool,
+                                       workdir: str, cwd: Path | None, depth: int) -> str | None:
     cwd_stack: list[Path | None] = []
+    group_stack: list[tuple[str, Path | None, int, bool]] = []
     install_environment_override = False
     pending_r_environment: list[str] = []
-    segments = list(_segments(str(tool_input.get("command") or "")))
+    segments = list(_segments(command))
     control_flow = any(re.match(r"\s*[({]*\s*(?:if|elif|else|then|while|until|for|do|case|switch|foreach)\b", part)
                        for part in segments)
     branch_cwd = control_flow and any(
@@ -415,20 +720,63 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
         segment = raw_segment.strip()
         if not segment:
             continue
+        if segment in {"(", "{"}:
+            group_stack.append((")" if segment == "(" else "}", cwd, len(cwd_stack), segment == "("))
+            continue
+        if segment in {")", "}"}:
+            if not group_stack or group_stack[-1][0] != segment:
+                if _installer_name_visible(command):
+                    return _ENVIRONMENT_DENIAL
+                continue
+            _, saved_cwd, stack_length, restores_state = group_stack.pop()
+            if restores_state:
+                cwd = saved_cwd
+                del cwd_stack[stack_length:]
+            continue
         # A data command can still execute substitutions; literal single-quoted text remains data.
         if (_shell_expands(segment, tool_name) and
                 re.search(r"\b(?:install|create)\b", segment, re.IGNORECASE)):
             return _ENVIRONMENT_DENIAL
         # PowerShell assignments and shell exports can redirect a later command in the same tool call.
         install_environment_override |= bool(_INSTALL_REDIRECT_ENV.search(segment))
-        token, args, understood = _shell_invocation(segment)
+        token, args, understood = _shell_invocation(segment, tool_name)
         executable = executable_basename(token)
+        if _nonliteral_word(token) and not _R_ENV_ONLY.fullmatch(segment):
+            return _ENVIRONMENT_DENIAL
+        if _dynamic_installer_syntax(token, args):
+            return _ENVIRONMENT_DENIAL
+        nested = _nested_shell_body(executable, args, understood)
+        if nested is not None:
+            body, nested_tool, extractable, unconditional, positional = nested
+            if unconditional:
+                return _ENVIRONMENT_DENIAL
+            if not extractable or depth >= _NESTED_SHELL_DEPTH:
+                candidate = segment if not extractable else body or segment
+                if (_installer_name_visible(candidate) or
+                        not extractable and _installation_syntax(segment, tool_name)):
+                    return _ENVIRONMENT_DENIAL
+                continue
+            if positional:
+                body, positional_candidates = _positional_commands(body, positional)
+                for candidate in positional_candidates:
+                    denial = _shared_environment_install_denial(
+                        nested_tool, candidate, environment_step=environment_step,
+                        workdir=workdir, cwd=cwd, depth=depth + 1)
+                    if denial:
+                        return denial
+            if not body:
+                continue
+            denial = _shared_environment_install_denial(
+                nested_tool, body, environment_step=environment_step, workdir=workdir, cwd=cwd, depth=depth + 1)
+            if denial:
+                return denial
+            continue
         detected_install = _python_install(executable, args)
         r_cmd_args = _r_cmd_install(executable, args)
         manager_create = environment_step and executable in {"conda", "mamba", "micromamba"} and "create" in args
         if ((not understood or not detected_install and not manager_create and executable not in _R) and
                 not (understood and executable in _DATA_COMMANDS | _LOCATION_COMMANDS)):
-            if _installation_syntax(segment):
+            if _installation_syntax(segment, tool_name):
                 return _ENVIRONMENT_DENIAL
         if executable in {"pushd", "push-location"}:
             cwd_stack.append(cwd)
@@ -480,4 +828,6 @@ def shared_environment_install_denial(tool_name: str, tool_input: dict, *, prote
             pending_r_environment = current_environment
         else:
             pending_r_environment = []
+    if group_stack and _installer_name_visible(command):
+        return _ENVIRONMENT_DENIAL
     return None
