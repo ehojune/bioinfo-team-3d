@@ -14,13 +14,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:06 | [`7248895`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/7248895) | RO-Crate conformsTo 매핑과 묶음 파일 및 요청 ID 검증을 수정 |
+| 00:42 | [`c6afcff`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/c6afcff) | MANIFEST 필수 필드 형식과 metadata link 선검증 및 POSIX link 정리를 보완 |
 | 00:40 | [`6cc7517`](https://github.com/ehojune/bioinfo-team-3d/pull/474/commits/6cc7517) | 도구 호출이 진행 중이거나 UAC·process 조회가 일시 실패한 무응답 CLI를 종료하지 않고 다시 확인 |
 | 00:27 | [`de75304`](https://github.com/ehojune/bioinfo-team-3d/pull/474/commits/de75304) | 직원 CLI가 출력 없이 멈추면 실행 중인 하위 명령이 없을 때만 종료하고 같은 단계를 재시도 |
+| 00:10 | [`13a9b91`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/13a9b91) | 변조 경로를 파일 접근 전에 거부하고 묶음 실종 및 미등록 파일과 링크 검사를 추가 |
 
 ## 2026-10-07
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:44 | [`7289039`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/7289039) | RO-Crate 경고 표시와 변조된 reference 및 경로 component 검증을 보완 |
+| 23:33 | [`37028f6`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/37028f6) | 요청 묶음에 RO-Crate metadata와 사본 무결성 검사를 추가 |
 | 23:26 | [`4dab138`](https://github.com/ehojune/bioinfo-team-3d/pull/468/commits/4dab138) | 중첩 shell option 문법과 위치별 비리터럴 판별을 구조화 |
 | 23:01 | [`394bb33`](https://github.com/ehojune/bioinfo-team-3d/pull/470/commits/394bb33) | 같은 id를 가진 두 topic의 별칭 답이 서로 다르면 합치지 않고 교정으로 보낸다(#470 리뷰 P1). |
 | 22:56 | [`13a183d`](https://github.com/ehojune/bioinfo-team-3d/pull/468/commits/13a183d) | brace cwd와 동적 중첩 shell을 닫고 따옴표 출처 기반 설치 판별로 오탐 제거 |
