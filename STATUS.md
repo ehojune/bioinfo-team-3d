@@ -4,6 +4,35 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 2026-10-07 · PR #464
+
+## 결론
+
+Paper2Agent 설치 갱신에서 원본 누락·복사 실패가 기존 skill을 지우던 버그를 고칩니다.
+
+## 바뀐 것
+
+- 원본 폴더와 SKILL.md를 확인하고, Claude Code·Codex의 새 복사를 모두 staging에 마친 뒤 설치를 교체합니다.
+- 교체 실패는 기존 두 설치로 rollback합니다. 복구도 실패하면 백업을 보존하고 경로를 오류에 표시합니다.
+- install_skill의 인자·반환값과 설치 위치를 유지하고, manual에 실패 때의 동작을 적었습니다.
+- 세 PR의 최종 status를 각 PR 본문과 맞춰 알려진 P1/P2 후속이 보고에서 빠지지 않게 했습니다.
+
+## 실행한 것
+
+- tmp_path와 mocked git만 사용한 실패 주입 회귀: 14 passed.
+- Windows 전체 pytest: 4467 passed, 56 skipped. 단일 basetemp 종료 삭제 확인.
+- scripts/check_public.sh 통과.
+
+## 남은 지적
+
+- P2: rename 완료 직후 상태 기록 전 중단 구간의 복구가 남습니다. 현재 회귀는 동기 복사·교체 오류를 검증했습니다.
+
+#424의 source commit 고정·license·hash·외부 전송 계약은 별도 범위입니다. 이 PR은 설치 실패 버그만 다루며 #424를 닫지 않습니다.
+
+Refs #424
+
+🤖 Generated with Codex for the labhq dev lead
+
 # 2026-10-07 · PR #462
 
 ## 결론
@@ -33,13 +62,17 @@
 - `scripts/vocab_tables.py --check`, `scripts/check_public.sh` 통과.
 - Windows 전체 pytest: 4453 passed, 56 skipped. 단일 basetemp 종료 삭제 확인. 첫 실행의 ledger 기록 실패 1건은 단독 재실행과 전체 재실행에서 통과했습니다.
 
+## 남은 지적
+
+- P2: README.en.md의 옛 논문 수치(20/1255)를 30/1286으로 맞추는 후속 작업이 남습니다.
+
 🤖 Generated with Codex for the labhq dev lead
 
 # 2026-10-07 · PR #460
 
 ## 결론
 
-환경 단계도 자기 작업 폴더 안 환경에만 설치합니다. 공유 환경을 쓰는 모든 shell 호출은 승인 게이트를 거칩니다.
+환경 단계에서 판별되는 설치 명령은 작업 폴더 환경만 예외로 허용합니다. 남은 parser P1은 #461로 넘겼습니다.
 
 ## 바뀐 것
 
@@ -53,13 +86,13 @@
 
 - R 직접 판정: 157 passed·1 skipped.
 - Windows 전체 pytest: 4453 passed·56 skipped. 단일 basetemp는 종료 뒤 삭제했습니다.
-- WSL 관련 검사: 399 passed·2 skipped·9 failed. 실패는 DrvFS의 기존 POSIX 권한 검사이며 CI에서 다시 확인합니다.
+- WSL 관련 검사: 399 passed·2 skipped·9 failed. 실패는 DrvFS의 기존 POSIX 권한 검사입니다. Linux 3.10·3.12 CI는 통과했습니다.
 - `scripts/check_public.sh` 통과. patch notes·status 검사도 통과했습니다. 프롬프트 SHA 두 값을 갱신했고 정확한 비교와 schema 기대값은 유지했습니다.
 - 실제 설치·labhq 요청·직원 CLI 호출은 하지 않았습니다.
 
 ## 남은 지적
 
-인용된 중첩 shell 본문은 후속 #461로 넘깁니다. 간접 script·상속된 installer 설정·검사 뒤 파일시스템 변경은 기존 직접 명령 가드의 범위 밖입니다.
+봇 P1인 비리터럴 설치 인자·subshell cwd 복원과 인용된 중첩 shell 본문은 후속 #461로 넘깁니다. 같은 parser 부류는 구조 수정 한 번 뒤 병합한다는 작업 규칙을 따릅니다. 간접 script·상속된 installer 설정·검사 뒤 파일시스템 변경은 기존 직접 명령 가드의 범위 밖입니다.
 
 Fixes #458
 
