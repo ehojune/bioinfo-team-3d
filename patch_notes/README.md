@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 01:54 | [`23b4c73`](https://github.com/ehojune/bioinfo-team-3d/pull/478/commits/23b4c73) | 결과 원장 salvage가 오류의 설명 조각과 실패·0건 조회를 근거로 단 링크에서 포기하지 않게 했다. 0건 안내는 계산된 0을 quantities로 적는 길을 보인다(v0.5 시운전 annotation 실패). |
 | 01:06 | [`7248895`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/7248895) | RO-Crate conformsTo 매핑과 묶음 파일 및 요청 ID 검증을 수정 |
 | 00:42 | [`c6afcff`](https://github.com/ehojune/bioinfo-team-3d/pull/471/commits/c6afcff) | MANIFEST 필수 필드 형식과 metadata link 선검증 및 POSIX link 정리를 보완 |
 | 00:40 | [`6cc7517`](https://github.com/ehojune/bioinfo-team-3d/pull/474/commits/6cc7517) | 도구 호출이 진행 중이거나 UAC·process 조회가 일시 실패한 무응답 CLI를 종료하지 않고 다시 확인 |
