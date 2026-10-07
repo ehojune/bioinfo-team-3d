@@ -1205,6 +1205,38 @@ async def test_retry_reuses_workdir_and_dependent_receives_artifact_paths():
 
 
 @pytest.mark.asyncio
+async def test_a_step_gets_inputs_links_for_ancestors_it_reaches_through_other_steps():
+    # v0.5 trial (2026-10-08): preprocessing read the fetch step's matrix but depended on it only through the
+    # pairing and QC steps, so inputs/<fetch> was missing and the step failed.
+    seen = {}
+
+    async def dispatch(task):
+        sid = task.meta["step_id"]
+        seen[sid] = task
+        return result(task, text=f"{sid} done", workdir=f"runs/{sid}", workdir_id=sid,
+                      outputs=[f"outputs/{sid.lower()}.tsv"])
+
+    hub = FakeHub(dispatch)
+    steps = [{"id": "fetch", "agent_id": "worker", "instruction": "fetch", "depends_on": [],
+              "outputs": ["fetch.tsv"]},
+             {"id": "pair", "agent_id": "worker", "instruction": "pair", "depends_on": ["fetch"],
+              "outputs": ["pair.tsv"]},
+             {"id": "qc", "agent_id": "worker", "instruction": "qc", "depends_on": ["fetch", "pair"],
+              "outputs": ["qc.tsv"]},
+             {"id": "prep", "agent_id": "worker", "instruction": "use the fetched matrix", "depends_on": ["qc"]}]
+    outcomes = {}
+    await Orchestrator(hub).run_dag("r", "question", steps, outcomes)
+
+    prep = seen["prep"]
+    assert prep.meta["upstream_steps"] == {"qc": "runs/qc", "fetch": "runs/fetch", "pair": "runs/pair"}
+    assert prep.meta["upstream_dirs"] == ["runs/qc", "runs/fetch", "runs/pair"]  # direct first, then plan order
+    assert "## qc · worker\n" in prep.context and "qc done" in prep.context
+    assert "## fetch · worker (earlier step, files only)" in prep.context
+    assert "inputs/fetch/fetch.tsv" in prep.context and "fetch done" not in prep.context
+    assert seen["fetch"].meta["upstream_steps"] == {}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [True, False])
 async def test_max_turns_wraps_once_and_keeps_failure(resume, continuations):
     async def dispatch(task):
