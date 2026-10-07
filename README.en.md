@@ -1,4 +1,4 @@
-# labhq — HQ for a one-person bioinformatics lab (v0.25)
+# labhq — HQ for a one-person bioinformatics lab (v0.5)
 
 <!-- badges:start -->
 [![Claude Code: 8 staff · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=8%20staff%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
@@ -232,7 +232,7 @@ Details are in [Safety measures](docs/manual.md#%EC%95%88%EC%A0%84-%EC%9E%A5%EC%
 | Version | Goal |
 |---|---|
 | v0.25 | The PI trials labhq on public data — **declared 2026-10-04** |
-| v0.5 | The PI does research locally on their own public data |
+| v0.5 | The PI does research locally on their own public data — **declared 2026-10-08** |
 | v0.75 | The PI does research on public data on HPC |
 | v0.9 | The PI does research on controlled data (on HPC) |
 | v0.95 | Another researcher installs from the docs alone and finishes one case on public data |
