@@ -10,6 +10,7 @@ import platform
 import re
 import shlex
 import shutil
+import time
 from collections import Counter
 from contextlib import ExitStack, contextmanager
 from collections.abc import Mapping
@@ -108,6 +109,24 @@ def _clear_owned_dir(path: Path, parent: Path) -> None:
     if is_link(path) or not path.is_dir() or path.resolve().parent != parent.resolve():
         raise OSError(f"request bundle target is not a plain child directory: {path}")
     shutil.rmtree(path)
+
+
+RENAME_RETRY_DELAYS = (0.2, 0.5, 1.0, 2.0)
+
+
+def _replace_dir(temp: Path, target: Path, *, windows: bool = os.name == "nt") -> None:
+    """Move the finished temp bundle into place, retrying a Windows sharing lock briefly.
+
+    Right after the copy, Defender or the search indexer can hold a handle on a new file, and the directory rename
+    fails with WinError 5 although nothing is wrong; the v0.5 trial lost its bundle that way (2026-10-08)."""
+    for delay in (*RENAME_RETRY_DELAYS, None):
+        try:
+            temp.replace(target)
+            return
+        except PermissionError:
+            if not windows or delay is None:
+                raise
+            time.sleep(delay)
 
 
 def _recorded_outputs(result: Mapping[str, Any]) -> list[tuple[str, PurePosixPath | None, str]]:
@@ -647,7 +666,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             writer.writerows(rows)
 
         _clear_owned_dir(target, requests_root)
-        temp.replace(target)
+        _replace_dir(temp, target)
         return {"path": str(target), "status": bundle_status, "grade": grade, "grade_reasons": grade_reasons,
                 "not_copied": not_copied,
                 "rewritten_files": rewritten_files,
