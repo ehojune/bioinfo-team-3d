@@ -1033,6 +1033,44 @@ def test_verify_detects_bundle_file_manifest_and_crate_tampering(tmp_path, targe
     assert any("요청 묶음 사본" in problem for problem in report["problems"])
 
 
+def test_verify_checks_a_crate_file_whatever_its_manifest_status_says(tmp_path):
+    """#475 (PR #471 review P1): deleting a payload and editing only its MANIFEST status to "not copied: missing"
+    skipped the existence and hash checks, and verify exited 0."""
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    relative = "steps/s1/outputs/data/input.tsv"
+    (bundle / relative).unlink()
+    path = bundle / "MANIFEST.tsv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        fields, rows = reader.fieldnames, list(reader)
+    next(row for row in rows if row["relative_path"] == relative)["status"] = "not copied: missing"
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    report = verify_request(request, settings)
+
+    assert report["exit_code"] == 1
+    assert any("MANIFEST status가 RO-Crate 기록과 다릅니다" in problem and relative in problem
+               for problem in report["problems"])
+    assert any("묶음 파일을 확인하지 못했습니다" in problem and relative in problem
+               for problem in report["problems"])
+
+
+def test_verify_reports_deeply_nested_crate_json_instead_of_crashing(tmp_path):
+    """#475 (PR #471 review P2): metadata nested past the recursion limit ended in a RecursionError traceback."""
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    depth = 5_000
+    (bundle / METADATA_FILE).write_text('{"@graph": ' + "[" * depth + "]" * depth + "}", encoding="utf-8")
+
+    report = verify_bundle_copy(bundle)
+
+    assert any("nested too deeply" in problem for problem in report["problems"])
+
+
 @pytest.mark.parametrize(("field", "value", "message"), [
     ("size", "", "size가 정수가 아닙니다"),
     ("size", "1.5", "size가 정수가 아닙니다"),
