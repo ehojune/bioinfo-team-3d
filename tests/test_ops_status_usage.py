@@ -64,10 +64,12 @@ def test_waiting_quota_request_stays_visible_and_active(tmp_path, caplog):
 
     with caplog.at_level(logging.WARNING), TestClient(app) as client:
         assert [r["id"] for r in client.get("/api/requests?status=running", headers=headers).json()] == ["quota"]
-        assert client.get("/api/health").json() == {
+        health = client.get("/api/health").json()
+        assert {key: health[key] for key in ("service", "runners", "agents", "active_requests", "running_tasks")} == {
             "service": "labhq gateway", "runners": [], "agents": 0,
             "active_requests": 1, "running_tasks": 1,
         }
+        assert health["runner_online"] is False  # R15: no runner, so the web shows 러너 꺼짐
     assert "gateway shutdown with running requests: quota" in caplog.text
 
 

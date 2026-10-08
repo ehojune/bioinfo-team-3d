@@ -213,26 +213,70 @@ async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
     plan_task = next(m["task"]["id"] for m in ws.sent if m.get("type") == "task.dispatch")
     orchestration = hub.request_tasks[rid]
 
-    out = await hub.cancel_request(rid)
+    cancelling = asyncio.create_task(hub.cancel_request(rid))
+    await _until(lambda: {"type": "task.cancel", "task_id": plan_task} in ws.sent)
+    # The cancelled turn reports back (with its cost) before the terminal record is written.
+    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
+                                          "data": TaskResult(task_id=plan_task, agent_id="cso", ok=False,
+                                                             error="cancelled", cost_usd=0.4).model_dump(mode="json")})
+    out = await asyncio.wait_for(cancelling, 3)
     assert out == {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": [plan_task]}
-    assert {"type": "task.cancel", "task_id": plan_task} in ws.sent
     assert orchestration.done() and rid not in hub.request_tasks
     req = hub.requests[rid]
     assert req["status"] == "cancelled" and req["outcome"] == "cancelled" and "취소했습니다" in req["report"]
     final = [e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]
     assert len(final) == 1 and final[0]["data"]["status"] == "cancelled" and final[0]["data"]["ok"] is False
+    assert final[0]["data"]["cost_usd"] == pytest.approx(0.4) and final[0]["data"]["cost_known"] is True
 
-    # The cancelled turn reports back; nothing else is sent, and a second cancel answers the same.
+    # Nothing else is sent, and a second cancel answers the same.
     sent = len(ws.sent)
-    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
-                                          "data": TaskResult(task_id=plan_task, agent_id="cso", ok=False,
-                                                             error="cancelled").model_dump(mode="json")})
     await asyncio.sleep(0.05)
     assert not [m for m in ws.sent[sent:] if m.get("type") == "task.dispatch"]
     assert (await hub.cancel_request(rid)) == {"request_id": rid, "status": "cancelled", "already": True,
                                                "cancelled_tasks": [plan_task]}
     assert hub.requests[rid]["status"] == "cancelled"
     assert len([e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_turn_that_never_reports_is_unaccounted_not_free(tmp_path):
+    from labhq.gateway.server import RequestIn
+
+    hub = Hub(_team_settings(tmp_path))
+    hub.cancel_result_wait_s = 0.2
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
+    await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
+    await hub.cancel_request(rid)
+    final = next(e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid)
+    assert final["data"]["cost_known"] is False and hub.requests[rid]["cost_known"] is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_parallel_steps_and_a_late_card_from_the_runner_is_closed(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r")
+    parked = asyncio.Event()
+
+    async def step():
+        parked.set()
+        await asyncio.sleep(3600)  # a step parked on quota or an answer
+
+    sibling = hub.orchestrator._step_task("r", step())
+    await asyncio.wait_for(parked.wait(), 1)
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    await hub.cancel_request("r")
+    await asyncio.sleep(0)
+    assert sibling.cancelled()
+
+    late = ApprovalRequest(kind="tool_permission", summary="Bash: rm -rf tmp/", request_id="r", agent_id="worker",
+                           task_id="t1").model_dump(mode="json")
+    await hub.on_runner_message("local", {"type": "approval.requested", "data": late})
+    assert late["id"] not in hub.approvals and hub.store.get("approval_decision", late["id"])["state"] == "expired"
+    assert {"type": "approval.resolved", "id": late["id"], "approved": False, "note": "요청 취소로 닫힘"} in ws.sent
+    assert not [e for e in hub.events if e["type"] == "approval.requested" and e["data"].get("id") == late["id"]]
 
 
 @pytest.mark.asyncio
@@ -328,6 +372,18 @@ async def test_a_request_without_a_runner_waits_and_runs_when_one_registers(tmp_
     hub.register_runner("local", ws, ROSTER, "inc")
     await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
     assert hub.requests[rid]["status"] == "running" and "runner_waits" not in hub.requests[rid]
+    assert [e["data"]["status"] for e in hub.events if e["type"] == "request.status"] == [
+        "waiting_for_runner", "running"]  # an open page sees it move on
+    # The plan sees the roster that arrived with the runner, so a plan naming its staff runs.
+    plan = next(m["task"] for m in ws.sent if m.get("type") == "task.dispatch")
+    assert '"worker"' in plan["prompt"] or "worker" in plan["prompt"]
+    steps = [{"id": "s1", "agent_id": "worker", "instruction": "QC 표 만들기", "depends_on": []}]
+    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan["id"], "request_id": rid,
+                                          "data": TaskResult(task_id=plan["id"], agent_id="cso", ok=True,
+                                                             structured={"steps": steps}).model_dump(mode="json")})
+    await _until(lambda: any(m.get("type") == "task.dispatch" and m["task"]["agent_id"] == "worker"
+                             for m in ws.sent))
+    hub.cancel_result_wait_s = 0.1
     await hub.cancel_request(rid)
 
 
@@ -351,6 +407,12 @@ async def test_an_agent_no_runner_ever_hosted_still_fails_at_once(tmp_path):
     _request(hub, "r")
     outcome = await asyncio.wait_for(hub.dispatch(Task(agent_id="ghost", request_id="r", prompt="x")), 1)
     assert not outcome.ok and "no runner hosts agent 'ghost'" in outcome.error and outcome.cost_usd == 0
+    # The same when the connected runner used to host the agent and dropped it from its roster.
+    hub.register_runner("local", CaptureSocket(), [*ROSTER, {"id": "dropped", "name": "d", "role": "t",
+                                                            "engine": "mock"}], "inc")
+    hub.register_runner("local", CaptureSocket(), ROSTER, "inc")
+    outcome = await asyncio.wait_for(hub.dispatch(Task(agent_id="dropped", request_id="r", prompt="x")), 1)
+    assert not outcome.ok and "no runner hosts agent 'dropped'" in outcome.error
 
 
 def test_health_says_whether_a_runner_is_connected(tmp_path):

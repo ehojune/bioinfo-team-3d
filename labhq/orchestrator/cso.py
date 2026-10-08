@@ -2067,7 +2067,23 @@ class Orchestrator:
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
         self.budget_outcomes: dict[str, list[dict]] = {}
+        self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.consult_locks: dict[tuple[str | None, str], tuple[asyncio.Lock, int]] = {}
+
+    def _step_task(self, rid: str, coro) -> asyncio.Task:
+        """A step or briefing the request runs as its own task; request cancel stops it with the request (R13)."""
+        task = asyncio.create_task(coro)
+        tasks = self.step_tasks.setdefault(rid, set())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        return task
+
+    def cancel_steps(self, rid: str) -> list[asyncio.Task]:
+        """Cancel every step task of a request; returns them so the caller can wait for them to unwind."""
+        tasks = [task for task in self.step_tasks.pop(rid, set()) if not task.done()]
+        for task in tasks:
+            task.cancel()
+        return tasks
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
@@ -3375,19 +3391,14 @@ class Orchestrator:
                     reason = ", ".join(f"{d}: {results[d].error if d in results else 'not run'}" for d in blocked)
                     await skip(sid, f"upstream {reason}", blocked)
                     continue
-                running[sid] = asyncio.create_task(run_one(by_id[sid]))
+                running[sid] = self._step_task(rid, run_one(by_id[sid]))
             if not running:
                 if ready:
                     continue
                 for sid in todo:
                     results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="unmet dependencies")
                 break
-            try:
-                done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
-            except asyncio.CancelledError:
-                for step_task in running.values():  # request cancel: its steps stop with it (R13)
-                    step_task.cancel()
-                raise
+            done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
             for sid, t in list(running.items()):
                 if t in done:
                     running.pop(sid)
@@ -4404,7 +4415,7 @@ class Orchestrator:
             else:
                 briefing = ""
                 cos = self.cfg.chief_of_staff_agent
-                brief_job = (asyncio.create_task(self.run_step(Task(
+                brief_job = (self._step_task(rid, self.run_step(Task(
                     agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
                     meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
                              if cos and cos in known and not continuation else None)
@@ -4423,7 +4434,7 @@ class Orchestrator:
                             prompt=PRECEDENT_PROMPT.format(request=text),
                             meta={**refs, "kind": "precedent", "request": text,
                                   "title": "선행 연구 분석 기준 조사", "max_attempts": 1})
-                        precedent_job = asyncio.create_task(self.run_step(precedent_task))
+                        precedent_job = self._step_task(rid, self.run_step(precedent_task))
                     else:
                         req["analysis_precedents"] = precedent_warning("agent_unavailable")
                         self.hub.save_request(rid)

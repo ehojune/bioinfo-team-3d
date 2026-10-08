@@ -52,6 +52,8 @@ TASK_CANCEL_KEEP_S = 2 * 86400
 # timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
 PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
                                "research_continue", "resume"})
+# How long request cancel waits for the cancelled turns to report, so their cost is counted (R13).
+CANCEL_RESULT_WAIT_S = 10.0
 # Statuses a hold sets and _sync_hold_status may lift again.
 HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
@@ -240,6 +242,7 @@ class Hub:
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
         self.request_tasks: dict[str, asyncio.Task] = {}  # each request's orchestration, for request cancel (R13)
+        self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
@@ -382,12 +385,12 @@ class Hub:
             await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
                                 "data": {"status": status, "previous": before}})
 
-    async def _publish_hold_status(self, rid: str | None) -> None:
+    async def _publish_hold_status(self, rid: str | None, before: str | None = None) -> None:
         """Recompute a request's hold status, save it, and tell clients when it changed (R5)."""
         req = self.requests.get(rid or "")
         if req is None:
             return
-        before = req.get("status")
+        before = req.get("status") if before is None else before
         self._sync_hold_status(req)
         self.save_request(rid)
         if req.get("status") != before:
@@ -1328,14 +1331,25 @@ class Hub:
             return True
         return False
 
-    def _waits_for_runner(self, task: Task) -> bool:
-        """A task of a live request waits for its runner instead of failing at once (R15): when no runner is connected
-        at all, or when the agent is known from a roster whose runner is away. An agent no runner ever hosted, while
-        others are connected, still fails at once."""
+    def _waits_for_runner(self, task: Task, *, first: bool = False) -> bool:
+        """A task of a live request waits for its runner instead of failing at once (R15) when the agent is known
+        from a roster whose runner is away. The request's first agent (CSO, or the direct agent) also waits while no
+        runner is connected at all, as on a fresh gateway. Any other agent no runner hosts fails at once."""
         req = self.requests.get(task.request_id or "")
         if req is None or not is_active_request(req.get("status")):
             return False
-        return (not self.runners or task.agent_id in self.agent_runner or self.has_seen_agent(task.agent_id))
+        if (first and not self.runners) or task.agent_id in self.agent_runner:
+            return True
+        # Known from the roster of a runner that is away; a connected runner that dropped the agent does not count.
+        return any(runner not in self.runners and
+                   any(agent.get("id") == task.agent_id for agent in entry.get("agents", []))
+                   for runner, entry in self.last_runner_rosters.items())
+
+    def _runner_wait_failure(self, agent_id: str) -> str:
+        bound = float(self.s.gateway.runner_wait_s)
+        span = f"{round(bound / 3600, 1):g}시간" if bound >= 3600 else f"{max(1, round(bound / 60))}분"
+        return (f"러너가 {span} 안에 연결되지 않아 {agent_id} 작업을 보내지 못했습니다. `labhq runner`로 러너를 "
+                "켠 뒤 같은 요청을 다시 보내세요(gateway.runner_wait_s).")
 
     async def wait_for_runner(self, task: Task) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
@@ -1355,13 +1369,14 @@ class Hub:
         try:
             return await self.wait_agent_online(task.agent_id, bound)
         finally:
+            before = req.get("status")
             waits = req.get("runner_waits") or {}
             waits.pop(task.id, None)
             if not waits:
                 req.pop("runner_waits", None)
                 if req.get("status") == "waiting_for_runner":
                     req["status"] = "running"
-            await self._publish_hold_status(rid)
+            await self._publish_hold_status(rid, before)  # open pages see the request move on
 
     async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
@@ -1515,6 +1530,20 @@ class Hub:
             fut = self.futures.pop(msg.get("task_id") or "", None)
             if fut and not fut.done():
                 fut.set_result(result)
+        elif typ == "approval.requested" and (self.requests.get(msg["data"].get("request_id") or "") or {}).get(
+                "status") == "cancelled":
+            # A card queued before request cancel arrives after it: the hook hears no, the PI sees nothing (R13).
+            a = msg["data"]
+            note = "요청 취소로 닫힘"
+            self.store.put("approval_decision", a["id"], {"approval": a, "origin": runner_id, "approved": False,
+                                                          "note": note, "state": "expired",
+                                                          "decided_at": time.time()})
+            self.store.put("decision", a["id"], {"origin": runner_id, "approved": False, "note": note})
+            try:
+                await self.flush_decisions(runner_id)
+            except RunnerUnavailable:
+                pass  # kept: sent again when that runner reconnects
+            msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": note}}
         elif typ == "approval.requested":
             a = msg["data"]
             # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
@@ -1625,13 +1654,8 @@ class Hub:
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                                   error="request cancelled")
             if not arrived:
-                bound = float(self.s.gateway.runner_wait_s)
-                span = f"{round(bound / 3600, 1):g}시간" if bound >= 3600 else f"{max(1, round(bound / 60))}분"
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
-                                  error_kind="runner_offline",
-                                  error=f"러너가 {span} 안에 연결되지 않아 {task.agent_id} 작업을 보내지 "
-                                        "못했습니다. `labhq runner`로 러너를 켠 뒤 같은 요청을 다시 보내세요"
-                                        "(gateway.runner_wait_s).")
+                                  error_kind="runner_offline", error=self._runner_wait_failure(task.agent_id))
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
@@ -2206,8 +2230,13 @@ class Hub:
                 fix["status"] = "cancelled"
         self.save_request(rid)
         orchestration = self.request_tasks.pop(rid, None)
+        unwinding = []
         if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
             orchestration.cancel()
+            unwinding.append(orchestration)
+        stop_steps = getattr(self.orchestrator, "cancel_steps", None)
+        if stop_steps is not None:
+            unwinding.extend(stop_steps(rid))  # parallel steps and the briefing run beside it
         cancelled = []
         for tid, entry in self.store.all("task").items():
             if entry.get("request_id") != rid:
@@ -2222,8 +2251,9 @@ class Hub:
                 await self.close_approval(aid, "요청 취소로 닫힘")
         for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
             await self.login_recovered(engine, reason="request cancelled")
-        if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
-            await asyncio.wait([orchestration], timeout=5)  # let it unwind before the terminal record
+        if unwinding:
+            await asyncio.wait(unwinding, timeout=5)  # let them unwind before the terminal record
+        await self._await_cancelled_results(rid, cancelled)
         req["cancelled_tasks"] = cancelled
         report, appendix = self._cancel_report(req, cancelled, quota)
         req.update(report=report, report_appendix=appendix)
@@ -2233,6 +2263,24 @@ class Hub:
                 "usage_known": req.get("usage_known", True)}
         self.schedule_terminal(rid, "request.completed", data)
         return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+    async def _await_cancelled_results(self, rid: str, cancelled: list[str]) -> None:
+        """Give each cancelled turn a short time to report, so its cost is counted; a turn that does not report is
+        counted as unaccounted, never as $0 (#270)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.cancel_result_wait_s
+        def silent() -> list[str]:
+            return [tid for tid in cancelled
+                    if not ((self.store.get("task", tid) or {}).get("completed") and
+                            not (self.store.get("task", tid) or {}).get("abandoned"))]
+        while silent() and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+        for tid in silent():
+            entry = self.store.get("task", tid) or {}
+            agent_id = (entry.get("payload") or {}).get("agent_id") or "unknown"
+            self._record_task_cost(rid, tid, TaskResult(task_id=tid, agent_id=agent_id, ok=False,
+                                                        error="request cancelled before the turn reported"),
+                                   outcome_unknown=True)
 
     @staticmethod
     def _cancel_report(req: dict, cancelled: list[str], quota: dict) -> tuple[str, str]:
@@ -2346,6 +2394,18 @@ class Hub:
         await self.publish({"type": "request.created", "ts": time.time(), "request_id": rid,
                             "data": {k: r.get(k) for k in ("text", "mode", "agent_id", "project_id", "references",
                                                            "route")}})
+        # The plan reads the roster before its first dispatch, so wait for the first agent's runner here (R15).
+        first = r.get("agent_id") if r.get("mode") == "direct" else self.s.orchestrator.cso_agent
+        probe = Task(agent_id=str(first or ""), request_id=rid, prompt="")
+        if (first and self.agent_runner.get(first) not in self.runners and
+                self._waits_for_runner(probe, first=True)):
+            if not await self.wait_for_runner(probe):
+                if self.requests[rid].get("status") != "cancelled":
+                    reason = self._runner_wait_failure(first)
+                    self.orchestrator._finish(rid, reason, {}, ok=False, error=reason)
+                return
+            if self.requests[rid].get("status") == "cancelled":
+                return
         await self.orchestrator.run_request(rid)
 
     def pipeline_prs(self) -> dict[str, dict]:
