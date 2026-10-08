@@ -4,6 +4,18 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · 시운전 이어 가기에서 나온 카드 소음 세 가지
+
+- 결론: 웹 연구 시운전 2차(이어 가기)에서 PI가 판단할 필요가 없거나 읽기 어려운 카드 세 종류를 고쳤다.
+- 바뀐 것:
+  - 예산 카드: 요약 끝에 "승인하면 상한을 $X로 올리고, 거절하면 새 작업을 보내지 않습니다."(`labhq/orchestrator/cso.py` `_check_budget`). 웹은 `*_usd` 값을 `$25.86`처럼, 키를 지금까지 쓴 비용·지금 상한·승인하면 새 상한·비용 미집계 작업·미집계 작업 1건당 가정 비용으로 보인다(`labhq/web/ui/decide.js`). detail 값 자체는 그대로다(bench가 읽음).
+  - `__pycache__`: 직원 실행 환경에 `PYTHONDONTWRITEBYTECODE=1`을 넣는다(`labhq/adapters/base.py` `staff_env`). analyst가 자기 산출의 `__pycache__`를 `rm -rf`하려고 권한 카드를 띄웠다. 설정이나 runner 환경에 값이 있으면 그 값을 쓴다.
+  - null 장치: `curl -o /dev/null`, `tee /dev/null`, `cp x NUL`처럼 명령 인자로 잡힌 null 장치를 쓰기 대상에서 뺀다(`labhq/policy.py` `_shell_write_targets`). 리다이렉트(`2>/dev/null`)는 전부터 쓰기가 아니었다.
+  - `docs/manual.md`: 예산 카드 요약, `PYTHONDONTWRITEBYTECODE`, 이어 가기 비용(새 계획이 protocol을 바꾸면 재사용 없음, 1차가 상한 가까이 썼으면 바로 예산 카드).
+- 실행한 것: 새 test가 main 코드에서 실패하고 이 branch에서 통과(`tests/test_cso.py` 예산 요약, `tests/test_claude_staff_home.py` 환경변수, `tests/test_policy.py` null 장치 3건, `tests/web_decision_detail.cjs` 예산 카드). 전체 `pytest -q`(Windows) 4977 passed·63 skipped, web node test 전체, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: `curl -so <경로>`처럼 붙여 쓴 짧은 옵션의 출력 경로는 원래도 쓰기 대상으로 잡히지 않는다(이 PR 범위 밖). 이어 가기 2차 시운전은 진행 중이다.
+- 근거: trial `req_d77e574f85` 카드 `appr_785d1b55f2`(예산), `appr_1524b060de`(`__pycache__`), `appr_18572d98ea`(`curl -o /dev/null`).
+
 ## 2026-10-08 · 재개 카드가 멈춘 자리를 바르게 적는다
 
 - 결론: 단계를 모두 마친 뒤(CP2·리뷰·이어 가기 카드·보고서 차례) 멈춘 요청의 재개 카드가 "남은 단계: 요청 전체" 대신 "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)"으로 적힌다. 계획이 없는 요청은 지금처럼 "요청 전체"다.

@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:38 | [`c8265f2`](https://github.com/ehojune/bioinfo-team-3d/pull/510/commits/c8265f2) | 예산 카드 요약에 승인하면 올라갈 상한과 거절 결과를 적고, 웹은 금액을 $0.00으로 한국어 이름과 함께 보인다. 직원 실행 환경에 PYTHONDONTWRITEBYTECODE=1을 넣어 __pycache__ 삭제 권한 카드가 뜨지 않게 한다. |
+| 14:38 | [`485c01b`](https://github.com/ehojune/bioinfo-team-3d/pull/510/commits/485c01b) | curl -o /dev/null·tee NUL처럼 명령 인자로 쓴 null 장치를 '허용 범위 밖 쓰기'로 PI에게 묻지 않는다. |
 | 14:16 | [`ff21675`](https://github.com/ehojune/bioinfo-team-3d/pull/509/commits/ff21675) | 재개 카드: 단계를 모두 마친 요청은 남은 단계 '없음'으로 적고, 웹 카드는 접수 시각을 날짜로·남은 단계를 목록으로 보이며 요청 문장을 두 번 쓰지 않는다. |
 | 13:49 | [`a63bc7b`](https://github.com/ehojune/bioinfo-team-3d/pull/508/commits/a63bc7b) | 이어 가기 카드가 리뷰 P1 지적을 JSON 원문 대신 단계·문제·고칠 점 목록으로 보인다(웹 연구 시운전에서 발견). |
 | 13:32 | [`20f4e3a`](https://github.com/ehojune/bioinfo-team-3d/pull/507/commits/20f4e3a) | roster를 단정하는 registry 시험의 engineer 모델 기대값을 gpt-5.6-sol로 맞췄다(#507 리뷰). |
