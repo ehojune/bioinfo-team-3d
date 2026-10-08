@@ -95,3 +95,18 @@ test('research plan card shows the full canonical PLAN in readable sections',asy
     'public counts only','metadata.donor_id','raw_counts']) assert.ok(c.detail.textContent.includes(value),value+' must be visible');
   assert.ok(c.detail.textContent.includes(canonicalPlan),'the exact hash input must remain visible');
 });
+
+test('research_continue lists each review P1 issue by step with its problem and requested fix',async()=>{
+  const issues=[{step_id:'s3',claim_id:'confounding_assessed',priority:'P1',category:'other',
+    evidence_quote:'stage_grp = "I"',problem:'stage IV is coded as stage I <example>',request:'map every stage explicitly'},
+    {step_id:'s6',priority:'P1',problem:'pathways are filtered by observed overlap before correction'}];
+  const c=await card('research_continue',{gate:'research_continue',plan_sha256:'a'.repeat(64),round:2,limit:2,p1_issues:issues});
+  const text=c.detail.textContent;
+  for (const value of ['리뷰 P1 지적 (2건)','1. s3 · claim confounding_assessed','문제: stage IV is coded as stage I <example>',
+    '고칠 점: map every stage explicitly','2. s6','이어 가기 차수','이어 가기 상한','지난 계획 plan hash'])
+    assert.ok(text.includes(value),value+' must be visible');
+  assert.ok(text.indexOf('리뷰 P1 지적')<text.indexOf('이어 가기 차수'),'the issues come first');
+  assert.ok(!/(^|[^_])gate/.test(text.replace(/research_continue/g,'')),'the internal gate name is not shown');
+  assert.ok(text.includes('"evidence_quote"'),'the raw issue JSON stays available');
+  assert.equal(nodes(c.detail).some(n=>['IMG','SCRIPT'].includes(n.tagName)),false);
+});

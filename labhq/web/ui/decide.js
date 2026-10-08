@@ -64,6 +64,17 @@ function renderResearchPlan(list, canonical) {
   });
 }
 
+// Review "revise" card: the P1 issues the new plan must answer, readable before the raw JSON.
+function renderReviewIssues(list, issues) {
+  const rows = Array.isArray(issues) ? issues : [];
+  detailEntry(list, `리뷰 P1 지적 (${rows.length}건)`, rows.map((issue, index) => [
+    `${index + 1}. ${issue?.step_id || '단계 없음'}${issue?.claim_id ? ` · claim ${issue.claim_id}` : ''}`,
+    `   문제: ${issue?.problem ?? ''}`, ...(issue?.request ? [`   고칠 점: ${issue.request}`] : []),
+  ].join('\n')).join('\n\n') || '(없음)', {raw: true, fold: rows.length > 0, open: true,
+    summary: `P1 ${rows.length}건 (단계 · 문제 · 고칠 점)`});
+  if (rows.length) detailEntry(list, '리뷰 지적 JSON 전체', detailValue(rows), {raw: true, fold: true});
+}
+
 // CP2 (R18): one row per claim, built from the card's ledgers; the raw ledger JSON stays folded below.
 const CLAIM_STATUS_KO = { supported: '지지', partially_supported: '부분 지지', contradicted: '반대 근거',
   unresolved: '미해결', proposed: '제안', withdrawn: '철회' };
@@ -245,6 +256,7 @@ const DETAIL_LABELS = {
   research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
+  research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
 };
 function renderDetail(container, kind, detail, approval = null) {
@@ -253,10 +265,12 @@ function renderDetail(container, kind, detail, approval = null) {
     kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
     kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'results', 'plan_sha256'] :
     kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
+    kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
     kind === 'question' ? ['why_blocked', 'from'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
+    kind === 'research_continue' ? ['gate'] :
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
@@ -273,6 +287,7 @@ function renderDetail(container, kind, detail, approval = null) {
   const labels = DETAIL_LABELS[kind] || {};
   for (const [key, value] of entries) {
     if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'research_evidence' && key === 'results') {
       renderEvidenceTable(list, detail);
       detailEntry(list, '원장 JSON 전체', value, {raw: true, fold: true,
