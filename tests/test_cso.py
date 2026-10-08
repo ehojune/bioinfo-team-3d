@@ -2361,6 +2361,33 @@ async def test_failed_twelve_step_report_names_each_failure_without_dumping_inst
     assert report.count("Next:") == 12
 
 
+@pytest.mark.asyncio
+async def test_failed_report_starts_with_step_cause_and_pi_action_and_masks_paths_and_tokens():
+    """Reduced from trial req_14b3465387; personal paths and credentials are deliberately synthetic."""
+    step = {"id": "s10_results_qc", "agent_id": "qc_reviewer", "instruction": "check",
+            "depends_on": []}
+    error = ("command line has 32,288 Windows command-line UTF-16 units, over the limit of 32,000; "
+             "see C:\\Users\\person\\private\\agent.log?token=secret")
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": [step]})
+        return result(task, ok=False, error=error)
+
+    hub = FakeHub(dispatch)
+    hub.agents["qc_reviewer"] = {"id": "qc_reviewer", "name": "qc_reviewer", "role": "test", "engine": "mock"}
+    hub.s.orchestrator.max_failure_replans = 0
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    first = req["report"].splitlines()[:3]
+    assert "s10_results_qc · qc_reviewer" in first[0] and "Windows 명령줄 길이 제한" in first[0]
+    assert first[1].startswith("원인: Windows 명령줄 길이 제한")
+    assert first[2] == "PI가 할 일: 개발자에게 알리기"
+    assert "C:\\Users" not in req["report"] and "secret" not in req["report"]
+    assert req["error"], "request.completed must carry a non-empty server-side failure reason"
+
+
 def test_review_revision_reruns_every_step_downstream_of_a_flagged_one():
     """A revised step changes what its dependents read: unflagged dependents re-run with a note, so neither a later
     revision nor the report reads a bridge built on the old result (PR #337 review, mock trial 2026-10-03)."""
