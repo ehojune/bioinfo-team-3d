@@ -84,11 +84,41 @@ test('other approvals keep two buttons and send no choice',async()=>{
 test('both offices forward the CP2 choice to the gateway',()=>{
   const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
   const live=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
-  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(\{ kind: li\.dataset\.kind \}, act\)\)/);
+  // The whole card goes in, so CP1 sends 수정 요청 only where detail.revise_allowed offers it.
+  assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(approval \|\| \{ kind: li\.dataset\.kind \}, act\)\)/);
   assert.match(html,/choice \? \{ approved: ok, note, choice \} : \{ approved: ok, note \}/);
   assert.match(live,/choice \? \{type:'approval\.resolve', id:a\.id, approved, note, choice\}/);
   // Both refuse an empty-note revise before anything is sent (R10).
   assert.match(html,/missing = revisionNoteMissing\(approval, act, note\);\s*if \(missing\) \{ toast\(missing\); ans\.focus\(\); btn\.disabled = false; return; \}\s*\/\/ CP2 evidence review sends/);
   assert.match(live,/const missing = revisionNoteMissing\(a, choice, note\);\s*if \(missing\) \{ notice\(missing\); return; \}\s*\/\/ CP2 evidence review carries/);
   assert.match(fs.readFileSync(path.join(web,'state.js'),'utf8'),/research_evidence: 'CP2 증거 검토'/);
+});
+
+const cp1={id:'cp1',kind:'research_plan',summary:'CP1 연구 계획 승인',created_at:1,
+  detail:{gate:'research_plan',target_sha256:'e'.repeat(64),revise_allowed:true,plan_canonical:'{}'}};
+
+test('CP1 offers 수정 요청 that needs a note and opens a new request; a continuation CP1 does not',async()=>{
+  const decide=await modulePromise,container=new Element(),sent=[];
+  const [row]=decide.syncDecisionCards(container,[cp1],[],{onDecision:(a,ok,note,type,choice)=>sent.push([ok,choice])});
+  const p=row._decisionParts;
+  assert.equal(p.approve.textContent,'승인');
+  assert.equal(p.revise.hidden,false);
+  assert.equal(p.revise.textContent,'수정 요청');
+  assert.match(p.consequence.textContent,/새 요청으로 계획을 다시 세워 새 CP1/);
+  assert.match(p.note.placeholder,/고칠 점을 꼭 적어/);
+  assert.doesNotMatch(p.detail.textContent,/revise_allowed/);
+  p.approve.onclick(); p.revise.onclick(); p.deny.onclick();
+  assert.deepEqual(sent,[[true,'approve'],[false,'revise'],[false,'deny']]);
+  assert.match(decide.revisionNoteMissing(cp1,'revise',' '),/고칠 점을 메모에/);
+  assert.match(decide.revisedToast(cp1),/새 요청으로 계획을 다시/);
+  // A continuation round's CP1 (or an older gateway's card without the flag) keeps 승인·거절 and sends no choice.
+  for (const detail of [{...cp1.detail,revise_allowed:false},{gate:'research_plan',plan_canonical:'{}'}]) {
+    const old=[];
+    const [plain]=decide.syncDecisionCards(new Element(),[{...cp1,id:'cp1b',detail}],[],{onDecision:(a,ok,note,type,choice)=>old.push(choice)});
+    assert.equal(plain._decisionParts.revise.hidden,true);
+    assert.match(plain._decisionParts.consequence.textContent,/거절하면 이 요청은 단계를 돌리지 않고 끝납니다/);
+    plain._decisionParts.approve.onclick(); plain._decisionParts.deny.onclick();
+    assert.deepEqual(old,[null,null]);
+    assert.equal(decide.revisionNoteMissing({...cp1,detail},'revise',''),'');
+  }
 });

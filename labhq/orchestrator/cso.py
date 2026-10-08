@@ -2207,7 +2207,9 @@ class Orchestrator:
         await self._emit(rid, "request.questions", {"questions": req["pending_questions"], "details": details})
         if not self.cfg.wait_for_clarification:
             return "open", None
-        if len(req.get("clarifications") or []) >= MAX_CLARIFY_CARDS:
+        # Answers a CP1 수정 요청 carried over from the old request filter questions but used none of this one's cards.
+        if len([entry for entry in req.get("clarifications") or []
+                if not (isinstance(entry, dict) and entry.get("inherited"))]) >= MAX_CLARIFY_CARDS:
             return "limit", None
         detail = {"questions": details}
         assumptions = normalize_assumptions(candidate.get("assumptions"))
@@ -4475,6 +4477,13 @@ class Orchestrator:
             capabilities = format_capabilities(roster, getattr(self.hub, "runner_capabilities", None))
 
             async def finish_research_plan(plan: dict[str, Any]) -> bool:
+                def end_revised(new_rid: str, note: str) -> None:
+                    # Not a failure: the PI asked for another plan, which the new request writes (CP1 수정 요청).
+                    req["outcome"] = "plan_revision_requested"
+                    self._finish(rid, f"CP1에서 계획 수정을 요청해 이 요청은 단계를 돌리지 않고 끝냅니다. PI 메모를 넣은 "
+                                 f"새 요청 {new_rid}에서 계획을 다시 세우고 새 CP1을 받습니다."
+                                 + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True)
+
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
@@ -4497,10 +4506,23 @@ class Orchestrator:
                 carried = req["research_contract"].get("continuation") or {}
                 # This plan continues a revised one and its reuse is not yet checked against the files (#90).
                 reuse_pending = carried.get("plan_sha256") == plan_hash and not carried.get("verified")
+                # Restarted after a CP1 수정 요청 had already opened its new request (found by its first save).
+                lookup = getattr(self.hub, "revised_request_of", None)
+                revised_to = req.get("revised_to") or (lookup(rid) if callable(lookup) else None)
+                if revised_to:
+                    req["revised_to"] = revised_to  # saved by _finish: the link survives a stop before it was written
+                    end_revised(revised_to, str((stored.get("approval") or {}).get("note") or ""))
+                    return False
+                # CP1 수정 요청 opens a new request from the PI's note (Hub.create_revised_request), so only at a first
+                # CP1 before any step: not in a continuation round (its plan rests on that round's results), and not
+                # on a re-approval after steps ran (a new request would drop their results).
+                can_revise = (not carried and not req.get("results") and approval.get("status") == "approval_required"
+                              and callable(getattr(self.hub, "create_revised_request", None)))
                 if approval.get("status") != "approved":
                     # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
                     summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
-                               "확인하고 승인하세요.")
+                               "확인하고 승인하세요." + (" 고칠 점이 있으면 메모와 함께 수정 요청을 고르세요."
+                                                      if can_revise else ""))
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
@@ -4509,23 +4531,36 @@ class Orchestrator:
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     budget, configured_source = self._research_budget(req, plan)
                     budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
-                    decision = await self.hub.request_approval(
-                        kind="research_plan", request_id=rid,
-                        summary=f"{summary[:699 - len(budget_line)]} {budget_line}",
-                        detail={"gate": "research_plan", "target_sha256": plan_hash,
-                                "plan_canonical": canonical_plan_json(plan),
-                                "pack_applicability": plan.get("pack_applicability") or {},
-                                "warnings": plan.get("warnings") or [],
-                                "protocol_revision": plan["protocol"]["revision"],
-                                "packs": plan["protocol"]["packs"],
-                                "scope_status": plan["intake"]["scope_status"],
-                                "budget": budget,
-                                **({"continuation": {
-                                    **{key: carried.get(key) for key in
-                                       ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
-                                    **{key: carried[key] for key in ("trigger", "pi_request") if key in carried}}}
-                                   if reuse_pending else {})})
+
+                    async def ask_cp1(prefix: str = "") -> dict:
+                        card = prefix + summary
+                        return await self.hub.request_approval(
+                            kind="research_plan", request_id=rid,
+                            summary=f"{card[:699 - len(budget_line)]} {budget_line}",
+                            detail={"gate": "research_plan", "target_sha256": plan_hash,
+                                    "plan_canonical": canonical_plan_json(plan),
+                                    "pack_applicability": plan.get("pack_applicability") or {},
+                                    "warnings": plan.get("warnings") or [],
+                                    "protocol_revision": plan["protocol"]["revision"],
+                                    "packs": plan["protocol"]["packs"],
+                                    "scope_status": plan["intake"]["scope_status"],
+                                    "budget": budget, "revise_allowed": can_revise,
+                                    **({"continuation": {
+                                        **{key: carried.get(key) for key in
+                                           ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
+                                        **{key: carried[key] for key in ("trigger", "pi_request") if key in carried}}}
+                                       if reuse_pending else {})})
+
+                    decision = await ask_cp1()
+                    # A 수정 요청 needs the note it re-plans from; the web and CLI refuse an empty one first (R10 likewise).
+                    for _ in range(2):
+                        if not (can_revise and decision.get("choice") == "revise"
+                                and not str(decision.get("note") or "").strip()):
+                            break
+                        decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     approval = freeze_plan(plan, decision)
+                    if can_revise and decision.get("choice") == "revise" and not approval["approved"]:
+                        approval["choice"] = "revise"
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
                     if approval.get("approved") and "plan_budget_usd" in budget:
                         # PI 점검 R17: the plan's budget becomes the enforced cap, in the save that records CP1, and
@@ -4543,11 +4578,25 @@ class Orchestrator:
                                  "(policy.approvals.pi_decision_timeout_s). 같은 요청을 다시 보내면 새 CP1이 뜹니다.",
                                  {}, ok=False, error="CP1 계획 카드 시간 초과")
                     return False
+                revision_note = str(approval.get("note") or "").strip()
+                if not approved and approval.get("choice") == "revise" and can_revise and revision_note:
+                    try:
+                        new_rid = self.hub.create_revised_request(rid, revision_note)
+                    except (KeyError, ValueError) as error:  # a project, CSO model or reference no longer allowed
+                        req["outcome"] = "plan_revision_failed"
+                        self._finish(rid, "CP1 수정 요청으로 새 요청을 열지 못해 이 요청은 단계를 돌리지 않고 끝납니다"
+                                     f"({safe_failure_cause(str(error))}). 아래 메모를 넣어 요청을 다시 보내 주세요."
+                                     f"\nPI 메모: {revision_note}", {}, ok=False, error="CP1 수정 요청 실패")
+                        return False
+                    end_revised(new_rid, revision_note)
+                    return False
                 if not approved:
                     req["outcome"] = "plan_rejected"
                     note = str(approval.get("note") or "").strip()
-                    self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. 계획을 바꾸려면 요청 문장을 "
-                                 "고쳐 새로 보내세요." + (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
+                    self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. " +
+                                 ("계획만 고치려면 다음에는 거절 대신 CP1 수정 요청을 메모와 함께 고르세요(새 요청으로 다시 "
+                                  "계획합니다)." if can_revise else "계획을 바꾸려면 요청 문장을 고쳐 새로 보내세요.") +
+                                 (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
                                  error="연구 계획(CP1) 거절")
                     return False
                 # The cost so far is judged against the cap CP1 just set, before any end without dispatch: a plan_only
@@ -4668,6 +4717,17 @@ class Orchestrator:
                         (f"CP2 (round {rounds[-1].get('round')})",
                          "" if cp2_revise else (rounds[-1].get("cp2") or {}).get("note") or ""),
                         ("이어 가기", carried.get("note") or "")], CONTINUE_NOTE_RULE)
+                revision = req.get("revision_of") or {}
+                if research_lane and not continuation and isinstance(revision.get("plan"), dict):
+                    # CP1 수정 요청: the note names steps of the plan the PI did not approve, so the planner revises that
+                    # plan instead of writing an unrelated one (Claude review of the CP1 수정 요청 change, P1).
+                    continuation_note += (
+                        f"\n\nCP1 revision request: the PI did not approve the plan below at CP1 of request "
+                        f"{revision.get('request_id')} and asked for this change:\n{approval_note(revision.get('note'))}\n"
+                        "Revise that plan: make the change the PI asked for and keep everything else unless the change "
+                        "requires otherwise. The new plan goes to a new CP1.\n"
+                        f"Previous plan (plan_sha256 {revision.get('plan_sha256')}):\n"
+                        + _research_plan_digest(revision["plan"]))
                 precedent_job = None
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:
