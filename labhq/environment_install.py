@@ -774,8 +774,9 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
         if not segment:
             continue
         if segment in {"(", "{"}:
+            # Only a POSIX subshell undoes cd and variable changes; PowerShell parentheses keep them (#505 review).
             group_stack.append((
-                ")" if segment == "(" else "}", cwd, len(cwd_stack), segment == "(",
+                ")" if segment == "(" else "}", cwd, len(cwd_stack), segment == "(" and tool_name != "PowerShell",
                 list(pending_r_environment)))
             continue
         if segment in {")", "}"}:

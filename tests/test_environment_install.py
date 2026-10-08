@@ -477,3 +477,11 @@ def test_unquoted_dynamic_executables_fail_closed_with_literal_arguments(
 ])
 def test_dynamic_install_guards_keep_analysis_commands_allowed(tmp_path, environment_step, command):
     assert denial(tmp_path, command, environment_step=environment_step) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+def test_powershell_parentheses_do_not_undo_an_r_library_change(tmp_path, environment_step):
+    """#505 review: PowerShell parentheses keep variable changes, unlike a POSIX subshell; the shared-library
+    install below must stay refused as on main."""
+    command = "$env:R_LIBS_USER='./.rlib'; ($env:R_LIBS_USER='/tmp/shared'); Rscript -e \"install.packages('a')\""
+    assert denial(tmp_path, command, environment_step=environment_step, tool="PowerShell")
