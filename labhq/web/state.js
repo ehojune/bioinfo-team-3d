@@ -7,6 +7,9 @@ const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+const websocketCloseAction = code => code === 1008
+  ? {connection: 'auth', retry: false}
+  : {connection: 'offline', retry: true};
 // Cost text (#270): confirmed, price-table estimate and unaccounted tasks stay apart; an unknown is never $0.
 const usd = v => `$${(Number(v) || 0).toFixed(2)}`;
 function costParts(actual, estimated, unknown) {
@@ -540,5 +543,5 @@ function toolLabel(name) {
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest };
+  isActiveRequest, isTerminalRequest, websocketCloseAction };
 })(globalThis);

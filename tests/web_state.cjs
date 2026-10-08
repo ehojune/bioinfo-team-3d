@@ -8,6 +8,8 @@ const source = fs.readFileSync(path.join(root, 'labhq/web/state.js'), 'utf8');
 const context = vm.createContext({});
 vm.runInContext(source, context);
 const create = context.LabHQState.createOfficeState;
+assert.deepEqual({...context.LabHQState.websocketCloseAction(1008)}, {connection:'auth', retry:false});
+assert.deepEqual({...context.LabHQState.websocketCloseAction(1006)}, {connection:'offline', retry:true});
 const office = create({now: () => 1000});
 const agent = {id:'analyst', name:'Analyst', employment:'core'};
 const plan = {steps:[{id:'s1', agent_id:'analyst', instruction:'Inspect'}, {id:'s2', depends_on:['s1']}]};
