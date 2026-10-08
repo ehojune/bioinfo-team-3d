@@ -3555,9 +3555,9 @@ class Orchestrator:
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
-        summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
-                   (f", {len(refused_rows) or len(refused)} refused" if refused_rows or refused else "") +
-                   ". Choose approve, revise or deny.")
+        summary = (f"CP2 근거 검토: 단계 {len(ledgers)}개, claim {claims}개, 근거 {rows}행" +
+                   (f", 거부 {len(refused_rows) or len(refused)}건" if refused_rows or refused else "") +
+                   ". 증거 승인·수정 요청·거부 중 고르세요. 수정 요청도 지금은 다시 돌리지 않고 요청을 끝냅니다.")
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
                    "choices": list(EVIDENCE_CHOICES),
                    **({"refused_rows": refused_rows} if refused_rows else {}),

@@ -7,6 +7,23 @@ const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+// One label per gateway request status (R14). An unknown status shows as itself, never as 실패.
+const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 기다림', waiting_quota: '한도 대기',
+  waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', interrupted: '중단됨', done: '완료',
+  failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
+const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
+// The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
+function requestStatusText(q, approvals) {
+  if (!q) return '';
+  const label = requestStatusLabel(q.status);
+  if (q.status === 'interrupted') {
+    const card = [...(approvals ? approvals.values() : [])].some(a => a && a.kind === 'resume' && a.request_id === q.id);
+    return card ? `${label} · 결정 탭의 재개 카드로 이어 가요` : label;
+  }
+  if (q.status === 'waiting_for_runner' && (q.resumeMissing || []).length)
+    return `${label} · 연결 필요: ${q.resumeMissing.join(', ')}`;
+  return label;
+}
 // Cost text (#270): confirmed, price-table estimate and unaccounted tasks stay apart; an unknown is never $0.
 const usd = v => `$${(Number(v) || 0).toFixed(2)}`;
 function costParts(actual, estimated, unknown) {
@@ -80,7 +97,7 @@ function resetSnapshotState() {
 }
 const STATE_KO = { idle: '쉬는 중', queued: '순서 기다림', working: '작업 중', waiting: '승인 기다림',
   hibernating: 'HPC 기다리는 중', done: '완료', error: '문제 발생' };
-const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정' };
+const KIND_KO = { hpc_submit: 'HPC 제출', tool_permission: '도구 권한', budget: '예산 초과', recruit: '채용', download: '대용량 다운로드', clarify: 'PI 질문', scope: '범위 확인', research_plan: 'CP1 계획 승인', research_evidence: 'CP2 증거 검토', research_continue: '리뷰 뒤 이어 가기', codex_sandbox_setup: 'Codex sandbox 준비', facilities_fix: '환경 자동 수정', resume: '중단된 요청 재개', question: '직원 질문 · PI 확인' };
 const JOB_KO = { queued: '대기', running: '실행 중', completed: '완료', failed: '실패', held: '보류', suspended: '일시정지',
   cancelled: '취소', unknown_finished: '종료 (확인 필요)', error: '오류', missing: '확인 중' };
 const GH_KO = { issue: 'GitHub에 이 요청의 이슈를 열었어요', plan: '이슈에 계획을 올렸어요', review: '이슈에 리뷰 결과를 올렸어요',
@@ -117,6 +134,7 @@ function req(rid) {
     Object.defineProperty(q, 'bundleGrade', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'bundleWarning', { value: '', writable: true, enumerable: false });
     Object.defineProperty(q, 'skipWarningsShown', { value: new Set(), writable: true, enumerable: false });  // #446
+    Object.defineProperty(q, 'resumeMissing', { value: [], writable: true, enumerable: false });  // R14
     S.requests.set(rid, q);
   }
   return S.requests.get(rid);
@@ -155,6 +173,12 @@ function syncHoldStatus(q) {
   else if (states.includes('waiting_quota') && !isTerminalRequest(q.status)) q.status = 'waiting_quota';
   else if (states.includes('waiting_facilities_fix') && !isTerminalRequest(q.status)) q.status = 'waiting_facilities_fix';
   else if (['waiting_login', 'waiting_quota', 'waiting_facilities_fix'].includes(q.status)) q.status = 'running';
+}
+// A resumed request leaves the 'done' phase a snapshot gave it while it was interrupted (R14).
+function reopen(q, status) {
+  if (isTerminalRequest(q.status)) return;
+  q.status = status;
+  if (q.phase === 'done') q.phase = q.mode === 'direct' || q.plan.length ? 'execute' : 'briefing';
 }
 function pickCurrent() {
   const all = [...S.requests.values()].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -267,7 +291,12 @@ function apply(ev, replay = false) {
       if (d.level === 'debug' || d.level === 'thinking') { traceTo(a, d.level, d.text, ts); break; }
       a.say = d.text; a.sayAt = ts; logTo(a, d.text, ts);
       // An alert (a read-only run changed files) always reaches the feed, never throttled with ordinary talk.
-      if (d.level === 'alert') { feed({ who: id, text: short(d.text, 300), cls: 'alert' }, ts, rid); break; }
+      // R21: it also raises a toast, so a hold the PI must clear on the PC (UAC) is seen outside the messenger.
+      if (d.level === 'alert') {
+        feed({ who: id, text: short(d.text, 300), cls: 'alert' }, ts, rid);
+        if (!replay) effects.push({ type: 'toast', text: `${nick(id)}: ${short(d.text, 90)}` });
+        break;
+      }
       if (!S.lastSay[id] || ts - S.lastSay[id] > 6) { S.lastSay[id] = ts; feed({ who: id, text: short(d.text, 150) }, ts, rid); }
       break;
     }
@@ -318,12 +347,22 @@ function apply(ev, replay = false) {
       if (d.kind === 'facilities_fix' && rid && d.detail?.step_id) {
         const q = req(rid); q.steps[d.detail.step_id] = 'waiting_facilities_fix'; syncHoldStatus(q);
       }
+      // The gateway opens a resume card only for a request it has just marked interrupted (restart or
+      // resume timeout) and sends no status event for that, so the card itself says so (R14).
+      const resumeOf = d.kind === 'resume' && (d.request_id || rid);
+      if (resumeOf && S.requests.has(resumeOf) && !isTerminalRequest(S.requests.get(resumeOf).status)) {
+        req(resumeOf).status = 'interrupted';
+      }
       feed({ who: d.agent_id || id || 'cso', text: `승인 요청: ${short(d.summary, 130)}`, cls: 'alert' }, ts, rid);
       if (!replay) effects.push({ type: 'toast', text: `승인 요청이 왔어요: ${short(d.summary, 50)}`, approval_id: d.id });
       break;
     }
     case 'approval.expired': case 'approval.stale': endApproval(d.id, effects); break;
-    case 'approval.resolved': { const pending = S.approvals.get(d.id); endApproval(d.id, effects); if (pending?.kind === 'facilities_fix' && rid && pending.detail?.step_id) { const q = req(rid); if (q.steps[pending.detail.step_id] === 'waiting_facilities_fix') q.steps[pending.detail.step_id] = 'pending'; syncHoldStatus(q); } feed({ who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break; }
+    case 'approval.resolved': { const pending = S.approvals.get(d.id); endApproval(d.id, effects); if (pending?.kind === 'facilities_fix' && rid && pending.detail?.step_id) { const q = req(rid); if (q.steps[pending.detail.step_id] === 'waiting_facilities_fix') q.steps[pending.detail.step_id] = 'pending'; syncHoldStatus(q); }
+      // An approved resume card puts the request in waiting_for_runner at once (server.py), again without a status event.
+      const resumed = pending?.kind === 'resume' && d.approved && (pending.request_id || rid);
+      if (resumed && S.requests.has(resumed)) { const q = req(resumed); q.resumeMissing = []; reopen(q, 'waiting_for_runner'); }
+      feed({ who: 'pi', text: d.approved ? '승인했어요' : `${d.choice === 'revise' ? '수정을 요청했어요' : '거절했어요'}${d.note ? ` (${short(d.note, 60)})` : ''}` }, ts, rid); break; }
     case 'job.submitted': S.jobs.set(String(d.job_id), { id: String(d.job_id), name: d.name, state: 'queued', agent: id, ts }); feed({ who: id, text: `HPC 작업 제출: ${d.name || ''} (${d.job_id})` }, ts, rid); break;
     case 'job.state': {
       const j = S.jobs.get(String(d.job_id)) || { id: String(d.job_id), name: d.name, agent: id };
@@ -361,16 +400,34 @@ function apply(ev, replay = false) {
       if (rid && d.step_id) stepDetail(rid, d.step_id).attempts = Math.max(stepDetail(rid, d.step_id).attempts || 0, Number(d.attempt) || 1);
       break;
     }
+    case 'request.resume_waiting': {
+      const q = req(rid); q.resumeMissing = (d.missing_agents || []).map(String); reopen(q, 'waiting_for_runner');
+      feed({ who: 'system', text: `재개를 기다려요. 러너 연결이 필요한 직원: ${q.resumeMissing.join(', ') || '없음'}`, cls: 'alert' }, ts, rid);
+      break;
+    }
+    case 'request.resumed': {
+      const q = req(rid); q.resumeMissing = []; reopen(q, 'running');
+      feed({ who: 'system', text: '중단된 요청을 다시 이어 가요' }, ts, rid);
+      break;
+    }
+    case 'request.resume_timeout': {
+      const q = req(rid);
+      if (!isTerminalRequest(q.status)) q.status = 'interrupted';
+      q.resumeMissing = [];
+      feed({ who: 'system', text: `러너가 돌아오지 않아 재개를 멈췄어요(${(d.missing_agents || []).join(', ')}). 새 재개 카드가 떠요`, cls: 'alert' }, ts, rid);
+      break;
+    }
     case 'request.step_quota_wait': {
       const q = req(rid); q.steps[d.step_id] = 'waiting_quota';
-      Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine });
+      Object.assign(stepDetail(rid, d.step_id), { quota_resume_at: d.resume_at, quota_engine: d.engine,
+        quota_deadline_at: d.deadline_at });
       syncHoldStatus(q);
       break;
     }
     case 'request.step_quota_resumed': {
       const q = req(rid), detail = stepDetail(rid, d.step_id);
       if (q.steps[d.step_id] === 'waiting_quota') q.steps[d.step_id] = 'pending';
-      delete detail.quota_resume_at; delete detail.quota_engine;
+      delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at;
       syncHoldStatus(q);
       break;
     }
@@ -400,7 +457,7 @@ function apply(ev, replay = false) {
     }
     case 'request.questions': feed({ who: 'cso', text: `확인이 필요해요: ${short((d.questions || []).join(' / '), 150)}`, cls: 'alert' }, ts, rid); break;
     case 'request.facilities_fix': { const detail = stepDetail(rid, d.step_id), status = d.status || (d.ok ? 'succeeded' : 'failed'); detail.facilities_fix = { ...d, status }; const label = status === 'applied' ? '환경 수정 적용' : status === 'succeeded' ? '환경 수정 성공' : '환경 수정 실패'; feed({ who: 'facilities', text: `${label}: ${short((status === 'failed' ? d.error : d.action) || d.fix_id || '', 120)}`, cls: status === 'failed' ? 'alert' : '' }, ts, rid); break; }
-    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
+    case 'request.step_done': { const q = req(rid), detail = stepDetail(rid, d.step_id); q.steps[d.step_id] = d.ok === false ? 'error' : 'done'; Object.assign(detail, { attempts: d.attempts || detail.attempts, error: d.reason || detail.error }); if (d.ok === false && d.environment) detail.environment = d.environment; else delete detail.environment; if (d.facilities_fix) detail.facilities_fix = d.facilities_fix; delete detail.quota_resume_at; delete detail.quota_engine; delete detail.quota_deadline_at; delete detail.login_resume_at; delete detail.login_engine; delete detail.login_reason; syncHoldStatus(q); break; }
     case 'request.step_skipped': { const q = req(rid); q.steps[d.step_id] = 'skipped'; stepDetail(rid, d.step_id).error = d.reason || ''; syncHoldStatus(q); break; }
     case 'request.review': {
       const q = req(rid), sc = d.scores || {};
@@ -540,5 +597,5 @@ function toolLabel(name) {
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest };
+  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText };
 })(globalThis);
