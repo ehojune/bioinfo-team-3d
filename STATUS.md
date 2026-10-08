@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · clarify 재질문과 실패 보고 원인을 보강 (PI 점검 R6 R12)
+
+- 결론: 답한 질문은 정규화한 본문이나 stable id가 같으면 다시 묻지 않는다. 새 질문만 두 번째 카드로 보내며, 요청당 카드 2장을 넘으면 남은 질문을 한국어 보고서에 적고 멈춘다.
+- 바뀐 것: 일반·연구 계획과 실패 재계획이 같은 질문 필터를 쓴다. 단계 실패 보고서 첫머리는 단계·담당·가린 원인·PI 조치를 세 줄로 보여 주고, 서버가 웹 feed용 실패 이유도 보낸다.
+- 실행한 것: 관련 pytest 286 passed, 보존 확인 14 passed. Windows 전체 pytest 4752 passed·59 skipped. `scripts/check_public.sh` 통과.
+- 미해결: 없음.
+- 근거: `tests/test_intake_questions.py`, `tests/test_cso.py`, `tests/test_research_cp2.py`.
+
 ## 2026-10-08 · 연구 lane이 끝까지 도는지 doctor가 알리고, research 오타 키를 오류로 (PI 점검 R1 R25)
 
 - 결론: PI 시운전 전 점검(R1)에서 PI 설정에 `research` 블록이 없어 v0.5 연구 lane이 돌지 않는 것을 찾았다. 문서는 `enabled: true` 한 줄로 켠다고 했지만, 그러면 CP1 승인 뒤 단계를 실행하지 않고 끝난다. `labhq doctor`에 `research lane` 행(꺼짐 / CP1에서 멈춤 warn / 끝까지 감)을 넣고, `research` 아래 오타 키는 시작할 때 오류로 한다. `docs/research_protocol.md`와 예시 설정은 `enabled`·`evidence_checkpoint`·`active_packs` 세 키 형태로 고쳤다. R25: `docs/pi-qa.md`의 옛 창구(#298 → #435), #402 상태(병합됨), Codex 직원 보호 설명을 매뉴얼과 맞추고, 폰 접속 보류를 적었다.
