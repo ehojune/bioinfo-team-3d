@@ -3608,7 +3608,9 @@ class Orchestrator:
         The generic re-plan, review and synthesis would change or judge the frozen PLAN without a new CP1 approval,
         so the research lane never reaches them. Evidence whose artifact labhq did not collect is refused and shown
         on the card. CP2 reads only the structured approve/revise/deny choice; an unreadable answer is not approved
-        and is asked again. Only an approval goes on to the research review and report (``_research_report``).
+        and is asked again. Only an approval goes on to the research review and report (``_research_report``). A
+        revise continues through a new plan and CP1 written from the PI's note (``_research_continue``, R10); one
+        without a note is asked again while a continuation is still allowed.
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
@@ -3694,11 +3696,17 @@ class Orchestrator:
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
+        # A revise continues through a new plan and CP1 while research.revise_continuations allows (R10).
+        limit = self.hub.s.research.revise_continuations
+        revise_continues = len(contract.get("rounds") or []) < limit
         summary = (f"CP2 근거 검토: 단계 {len(ledgers)}개, claim {claims}개, 근거 {rows}행" +
                    (f", 거부 {len(refused_rows) or len(refused)}건" if refused_rows or refused else "") +
-                   ". 증거 승인·수정 요청·거부 중 고르세요. 수정 요청도 지금은 다시 돌리지 않고 요청을 끝냅니다.")
+                   ". 증거 승인·수정 요청·거부 중 고르세요. " +
+                   ("수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 받습니다(바뀐 단계만 다시 실행)."
+                    if revise_continues else
+                    f"이어 가기 상한(research.revise_continuations={limit})에 닿아 수정 요청도 요청을 끝냅니다."))
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
-                   "choices": list(EVIDENCE_CHOICES),
+                   "choices": list(EVIDENCE_CHOICES), "revise_continues": revise_continues,
                    **({"refused_rows": refused_rows} if refused_rows else {}),
                    **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
@@ -3735,13 +3743,20 @@ class Orchestrator:
             cp2: str | None = None
             decision: dict[str, Any] = {}
             asks = 0
+            retry = ""
             while cp2 is None and asks < CP2_MAX_ASKS:
                 asks += 1
                 decision = await self.hub.request_approval(
-                    kind="research_evidence", request_id=rid, detail=detail,
-                    summary=summary if asks == 1 else
-                    "The previous CP2 answer had no readable approve/revise/deny choice and was not approved. " + summary)
+                    kind="research_evidence", request_id=rid, detail=detail, summary=retry + summary)
                 cp2 = read_evidence_decision(decision)
+                if (cp2 == "revision_requested" and revise_continues and asks < CP2_MAX_ASKS
+                        and not str(decision.get("note") or "").strip()):
+                    # The new plan is written from the note, so a revise without one is asked again (R10).
+                    cp2, retry = None, ("수정 요청에 메모가 없어 다시 묻습니다. 무엇을 고칠지 메모에 적고 수정 요청을 "
+                                        "누르세요. ")
+                elif cp2 is None:
+                    retry = ("The previous CP2 answer had no readable approve/revise/deny choice and was not "
+                             "approved. ")
             decided = cp2 or "unreadable"
             note = str(decision.get("note") or "").strip()
             # Kept per step in the receipt: a continuation reuses a step together with its salvage records (#90).
@@ -3774,7 +3789,13 @@ class Orchestrator:
         if reuse_lines:
             audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
-            audit += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
+            # The PI's note is the revision request: the CSO re-plans from it and the PI approves a new CP1 (R10).
+            ended = (await self._research_continue(rid, None, results, cp2_note=note) if note else
+                     "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다.")
+            if ended is None:  # a new plan, CP1 and run took this request over
+                return
+            if ended:
+                audit += "\n" + ended
         elif decided == "unreadable":
             audit += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
         elif decided == "timed_out":
@@ -3787,6 +3808,8 @@ class Orchestrator:
             receipt = (archived.get("cp2") or {}) if isinstance(archived, dict) else {}
             if receipt.get("decision") == "approved" and receipt.get("note"):
                 audit += f"\nPI note (round {archived.get('round')} CP2): {receipt['note']}"
+            elif receipt.get("decision") == "revision_requested" and receipt.get("note"):  # what this round fixed
+                audit += f"\nPI 수정 요청 (round {archived.get('round')} CP2): {receipt['note']}"
         report = self.format_results(steps, results, n) + "\n\n" + audit
         reviewer = self.cfg.reviewer_agent
         if decided == "approved" and reviewer and reviewer in self.hub.agents:
@@ -3851,7 +3874,8 @@ class Orchestrator:
                 plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
             carried = contract.get("continuation") or {}
             if carried.get("plan_sha256") == plan_hash:
-                prompt += research_continuation.review_prompt(carried.get("p1_issues") or [])
+                prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
+                                                              approval_note(carried.get("pi_request")))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
@@ -3937,38 +3961,53 @@ class Orchestrator:
         end("report_incomplete" if check["problems"] else "research_reported", report,
             not check["problems"] and rid not in self.budget_denials, review)
 
-    async def _research_continue(self, rid: str, review: dict, results: dict[str, TaskResult]) -> str | None:
-        """After a research review "revise": ask the PI whether to continue through a new CP1 (#90, #58).
+    async def _research_continue(self, rid: str, review: dict | None, results: dict[str, TaskResult], *,
+                                 cp2_note: str | None = None) -> str | None:
+        """Continue through a new plan and CP1 after a research review "revise" or a CP2 revise (#90, #58, R10).
 
-        Returns None when the PI continued (this request then re-plans and runs again here), else a line for the
-        revise report ("" when no card was shown). The decision is saved with the plan hash it answers, so a restart
-        neither asks again nor forgets an approval. On approval the finished round (plan, results, CP2 receipt,
-        review) is archived in ``research_contract.rounds`` in the same save that raises ``round``; the results stay
-        in place until the new plan is adopted (``_adopt_continuation_plan``).
+        After a review "revise" the PI is asked on a ``research_continue`` card. After a CP2 revise (``cp2_note``, the
+        PI's CP2 note) no card is shown: the PI already chose to revise there, so the note is the revision request
+        and the new CP1 is where the PI approves the new plan. Both count against research.revise_continuations.
+
+        Returns None when the request continued (it then re-plans and runs again here), else a line for the report
+        ("" when no card was shown). The decision is saved with the plan hash it answers, so a restart neither asks
+        again nor forgets an approval. On approval the finished round (plan, results, CP2 receipt, review) is archived
+        in ``research_contract.rounds`` in the same save that raises ``round``; the results stay in place until the
+        new plan is adopted (``_adopt_continuation_plan``).
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
         plan_hash = contract["plan_sha256"]
         rounds = list(contract.get("rounds") or [])
         decided = contract.get("continue_decision") or {}
+        cp2_revise = cp2_note is not None
         if decided.get("plan_sha256") != plan_hash:
             limit = self.hub.s.research.revise_continuations
             if len(rounds) >= limit:
+                if cp2_revise:
+                    return (f"이어 가기 상한(research.revise_continuations={limit})에 닿아 수정 요청으로 새 계획을 "
+                            "세우지 않았습니다.")
                 return (f"이어 가기 상한(research.revise_continuations={limit})에 닿아 새 CP1을 묻지 않았습니다."
                         if limit else "")
-            issues = research_continuation.p1_issues(review)
+            issues = [] if cp2_revise else research_continuation.p1_issues(review)
             round_no = len(rounds) + 2
-            decision = await self.hub.request_approval(
-                kind=research_continuation.CONTINUE_GATE, request_id=rid,
-                summary=(f"연구 리뷰가 revise(P1 {len(issues)}건)로 끝났습니다. 리뷰 지적을 넣은 새 계획으로 "
-                         f"이어 갈까요({round_no}차)? 승인하면 CSO가 새 계획을 쓰고 새 CP1을 받습니다. 사양이 같고 "
-                         "산출 hash가 그대로인 완료 단계는 다시 돌리지 않습니다. 거절하면 지금처럼 끝납니다."),
-                detail={"gate": research_continuation.CONTINUE_GATE, "plan_sha256": plan_hash, "round": round_no,
-                        "limit": limit, "p1_issues": issues})
+            if cp2_revise:  # the CP2 card that asked for the revision is the decision
+                receipt = (contract.get("checkpoints") or {}).get("cp2") or {}
+                decision = {"approved": True, "approval_id": receipt.get("approval_id"),
+                            "decided_at": receipt.get("decided_at")}
+            else:
+                decision = await self.hub.request_approval(
+                    kind=research_continuation.CONTINUE_GATE, request_id=rid,
+                    summary=(f"연구 리뷰가 revise(P1 {len(issues)}건)로 끝났습니다. 리뷰 지적을 넣은 새 계획으로 "
+                             f"이어 갈까요({round_no}차)? 승인하면 CSO가 새 계획을 쓰고 새 CP1을 받습니다. 사양이 같고 "
+                             "산출 hash가 그대로인 완료 단계는 다시 돌리지 않습니다. 거절하면 지금처럼 끝납니다."),
+                    detail={"gate": research_continuation.CONTINUE_GATE, "plan_sha256": plan_hash, "round": round_no,
+                            "limit": limit, "p1_issues": issues})
             approved = bool(decision.get("approved"))
+            trigger = {"trigger": "cp2_revise"} if cp2_revise else {}
             decided = {"plan_sha256": plan_hash, "decision": "approved" if approved else "declined",
                        "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
-                       "note": str(decision.get("note") or "").strip(),
+                       "note": "" if cp2_revise else str(decision.get("note") or "").strip(), **trigger,
                        **({"state": decision["state"]} if decision.get("state") else {})}
             contract["continue_decision"] = decided
             if approved:
@@ -3980,13 +4019,15 @@ class Orchestrator:
                 contract["round"] = round_no
                 # The note rides with the continuation: adopting the new plan drops continue_decision (R11).
                 contract["continuation"] = {"round": round_no, "from_plan_sha256": plan_hash, "p1_issues": issues,
-                                            "approval_id": decision.get("approval_id"),
+                                            "approval_id": decision.get("approval_id"), **trigger,
+                                            **({"pi_request": cp2_note} if cp2_revise else {}),
                                             **({"note": decided["note"]} if decided["note"] else {})}
             self.hub.save_request(rid)
         if decided.get("decision") != "approved":
             return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
                     else "PI가 새 CP1로 이어 가기를 거절했습니다.")
-        await self._emit(rid, "request.continued", {"round": contract.get("round"), "from_plan_sha256": plan_hash})
+        await self._emit(rid, "request.continued", {"round": contract.get("round"), "from_plan_sha256": plan_hash,
+                                                    **({"trigger": "cp2_revise"} if cp2_revise else {})})
         await self.run_request(rid, continuation=True)
         return None
 
@@ -4323,8 +4364,9 @@ class Orchestrator:
 
     # ---------- request entry point ----------
     async def run_request(self, rid: str, resume: bool = False, continuation: bool = False) -> None:
-        """``continuation``: a research request whose review ended "revise" goes on in this process through a new
-        plan and CP1 (``_research_continue``); its running cost is kept, and no briefing runs again."""
+        """``continuation``: a research request whose review ended "revise", or whose CP2 the PI answered with revise,
+        goes on in this process through a new plan and CP1 (``_research_continue``); its running cost is kept, and no
+        briefing runs again."""
         req = self.hub.requests[rid]
         refs = reference_meta(req)
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
@@ -4415,10 +4457,13 @@ class Orchestrator:
                 # This plan continues a revised one and its reuse is not yet checked against the files (#90).
                 reuse_pending = carried.get("plan_sha256") == plan_hash and not carried.get("verified")
                 if approval.get("status") != "approved":
-                    summary = ("CP1 research plan approval: approve the frozen question, methods, completion/stop "
-                               f"conditions, data boundary, and selected packs. plan_sha256={plan_hash}")
+                    # The hash stays in detail.target_sha256; the card shows the plan itself (PI 점검 R10).
+                    summary = ("CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 "
+                               "확인하고 승인하세요.")
                     if reuse_pending:
-                        summary = (f"이어 가기 {carried.get('round')}차 계획(리뷰 P1 반영). 재사용: "
+                        source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
+                                  else "리뷰 P1 반영")
+                        summary = (f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
                     budget, configured_source = self._research_budget(req, plan)
@@ -4434,8 +4479,10 @@ class Orchestrator:
                                 "packs": plan["protocol"]["packs"],
                                 "scope_status": plan["intake"]["scope_status"],
                                 "budget": budget,
-                                **({"continuation": {key: carried.get(key) for key in
-                                                     ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")}}
+                                **({"continuation": {
+                                    **{key: carried.get(key) for key in
+                                       ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
+                                    **{key: carried[key] for key in ("trigger", "pi_request") if key in carried}}}
                                    if reuse_pending else {})})
                     approval = freeze_plan(plan, decision)
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
@@ -4566,15 +4613,19 @@ class Orchestrator:
                     agent_id=cos, request_id=rid, prompt=BRIEFING_PROMPT.format(request=text),
                     meta={**refs, "kind": "briefing", "request": text, "title": "CSO용 브리핑 준비"})))
                              if cos and cos in known and not continuation else None)
-                # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90).
+                # A continuation's plan prompt carries the revised plan and the reviewer's P1 issues (#90), or the
+                # PI's CP2 revise note as the revision request (R10).
                 carried = (req.get("research_contract") or {}).get("continuation") or {}
                 rounds = (req.get("research_contract") or {}).get("rounds") or []
+                cp2_revise = carried.get("trigger") == "cp2_revise"
                 continuation_note = (research_continuation.plan_prompt(
                     rounds[-1]["plan"], rounds[-1]["plan_sha256"], carried.get("p1_issues") or [],
-                    int(carried.get("round") or 2)) if continuation and research_lane and rounds else "")
+                    int(carried.get("round") or 2), pi_request=approval_note(carried.get("pi_request")))
+                    if continuation and research_lane and rounds else "")
                 if continuation_note:  # the previous round's CP2 note and the 이어 가기 note (PI 점검 R11)
                     continuation_note += approval_note_block("이어 가기", [
-                        (f"CP2 (round {rounds[-1].get('round')})", (rounds[-1].get("cp2") or {}).get("note") or ""),
+                        (f"CP2 (round {rounds[-1].get('round')})",
+                         "" if cp2_revise else (rounds[-1].get("cp2") or {}).get("note") or ""),
                         ("이어 가기", carried.get("note") or "")], CONTINUE_NOTE_RULE)
                 precedent_job = None
                 precedent_agent = self.cfg.precedent_agent
@@ -5443,12 +5494,13 @@ class Orchestrator:
                                     review: dict | None) -> tuple[str, dict, dict | None]:
         """A continuation round that ends before its new CP1 let any step run (#90, PR #448 review).
 
-        A rejected or timed-out CP1, a failed or invalid plan, or an error ends the request as the revise it
-        continued: outcome ``research_review_revise``, the previous round's review on top, and its results kept,
-        so the record and ``labhq verify`` still show what ran. The previous round's plan, hash, CP1 approval, pack
-        snapshot and CP2 receipt come back with them (``restore_round``): the results never ran under the new draft,
-        which stays in ``continuation.declined_plan`` (PR #448 review). Why the round ended is kept in
-        ``continuation.ended_before_dispatch``."""
+        A rejected or timed-out CP1, a failed or invalid plan, a refused budget card, or an error ends the request as
+        the revise it continued: outcome ``research_review_revise`` with the previous round's review on top, or
+        ``evidence_revision_requested`` with the PI's CP2 note after a CP2 revise (R10), and its results kept, so the
+        record and ``labhq verify`` still show what ran. The previous round's plan, hash, CP1 approval, pack snapshot,
+        CP2 receipt and request spending cap come back with them (``restore_round``): the results never ran under the
+        new draft, which stays in ``continuation.declined_plan`` (PR #448 review, PR #499 review). Why the round ended
+        is kept in ``continuation.ended_before_dispatch``."""
         if not Orchestrator._continuation_unstarted(req):
             return report, results, review
         contract = req["research_contract"]
@@ -5466,12 +5518,17 @@ class Orchestrator:
         results = {key: value for key, value in (results or {}).items() if key in step_ids}
         carried["ended_before_dispatch"] = {"outcome": req.get("outcome"), "reason": reason,
                                             **({"task_results": stray} if stray else {})}
-        req["outcome"] = "research_review_revise"
-        report = "\n".join([
-            f"이어 가기 {carried.get('round')}차가 단계 실행 전에 끝났습니다: {reason}",
-            f"{previous.get('round')}차 결과와 리뷰가 이 요청의 결과입니다.", "",
-            f"Research review ({stored.get('reviewer') or '-'}): revise.",
-            *_research_issue_lines(stored.get("issues") or []), "", report])
+        if carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
+            req["outcome"] = "evidence_revision_requested"
+            ended = [f"{previous.get('round')}차 결과와 CP2 수정 요청이 이 요청의 결과입니다.", "",
+                     "CP2 evidence review: revision_requested.", f"PI 수정 요청: {carried.get('pi_request') or '-'}"]
+        else:
+            req["outcome"] = "research_review_revise"
+            ended = [f"{previous.get('round')}차 결과와 리뷰가 이 요청의 결과입니다.", "",
+                     f"Research review ({stored.get('reviewer') or '-'}): revise.",
+                     *_research_issue_lines(stored.get("issues") or [])]
+        report = "\n".join([f"이어 가기 {carried.get('round')}차가 단계 실행 전에 끝났습니다: {reason}", *ended, "",
+                            report])
         return report, {**(previous.get("results") or {}), **results}, review or (stored or None)
 
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,

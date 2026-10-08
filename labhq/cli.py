@@ -1250,6 +1250,11 @@ def main(argv: list[str] | None = None) -> None:
             p.error("CP2 evidence review needs --choice approve, --choice revise or --choice deny")
         if args.choice and pending and not evidence:
             p.error(f"--choice is only for CP2 evidence review; {args.id} is {pending.get('kind')}")
+        # CP2 수정 요청 re-plans from its note through a new CP1 until the continuation cap is reached (R10).
+        if (args.choice == "revise" and not args.note.strip()
+                and ((pending or {}).get("detail") or {}).get("revise_continues") is not False):
+            p.error('수정 요청(--choice revise)에는 고칠 점을 --note로 적어야 합니다. CSO가 그 메모로 새 계획을 세워 '
+                    f'새 CP1을 받습니다. 예: labhq approve {args.id} --choice revise --note "s2에 민감도 분석 추가"')
         if pending and pending.get("kind") == "clarify" and not args.deny and not args.note.strip():
             questions = (pending.get("detail") or {}).get("questions") or []
             lines = []

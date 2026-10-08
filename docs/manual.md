@@ -182,7 +182,7 @@ labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교" 
 labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
 labhq cancel req_123         # 요청 취소: 도는 작업 중단, 대기·카드 정리, 부분 결과 보고서. 두 번 해도 같음
 labhq watch                  # 실시간 이벤트
-labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
+labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny(revise는 --note 필수)
 labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
 labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14
@@ -311,7 +311,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
 | `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
 | `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
-| `request.continued` | 연구 리뷰 revise 뒤 PI가 새 CP1로 이어 가기를 승인(`round`) | 요청 카드에 n차 표시 |
+| `request.continued` | 연구 리뷰 revise 뒤 PI가 이어 가기를 승인했거나 CP2에서 수정 요청을 골라 새 계획으로 넘어감(`round`, CP2면 `trigger: cp2_revise`) | 요청 카드에 n차 표시 |
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
@@ -598,13 +598,15 @@ CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다.
 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222).
 CP1 카드는 질문·가설·완료 조건 아래에 단계 목록(id·직원·지시 앞부분·산출)을 펼쳐 두고 protocol 전문은 접어 둡니다.
+요약은 한국어 한 줄과 집행 상한이고, plan hash는 detail(`target_sha256`)에만 있습니다.
 
 ### 단계와 CP2
 
 `evidence_checkpoint: true`를 함께 켜면 CP1 뒤 연구 단계가 `result v2` claim·evidence 계약으로 실행되고, CP2 카드에서 PI가 승인·수정 요청·거부를 고릅니다.
-수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝냅니다(`evidence_revision_requested`).
-PI 메모는 기록에만 남으므로 근거를 보강하려면 새 요청을 보냅니다.
-웹 버튼도 `수정 요청(요청 끝남)`입니다.
+**수정 요청**은 메모에 적은 고칠 점으로 CSO가 새 계획을 세우고 PI가 새 CP1에서 승인합니다(PI 점검 R10). 이어 가기 카드는 따로 뜨지 않습니다.
+그 뒤는 리뷰 revise 뒤 이어 가기와 같습니다: 새 계획이 바꾼 단계와 그 아래 단계만 다시 돌고 나머지는 재사용합니다(아래 "리뷰·이어 가기").
+수정 요청에는 메모가 필요합니다. 웹은 빈 메모로 보내지 않고, `labhq approve <id> --choice revise`는 `--note`가 없으면 거절합니다. 다른 경로로 빈 메모가 오면 CP2 카드를 다시 띄워 메모를 묻습니다(세 번까지, 끝내 없으면 새 계획 없이 끝남).
+`research.revise_continuations` 상한에 닿았으면 수정 요청도 지금처럼 요청을 끝냅니다(`evidence_revision_requested`). 이때 카드 요약과 버튼(`수정 요청(요청 끝남)`)이 그렇게 알리고 메모는 필요 없습니다.
 CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거, 근거 잃음)를 한 줄로 보여 주고 원장 JSON은 접어 둡니다.
 결정은 웹 카드 버튼이나 `labhq approve <id> --choice approve|revise|deny`의 선택값으로만 읽고 메모는 읽지 않습니다.
 선택값이 없으면 승인하지 않고 다시 묻습니다(세 번까지).
@@ -623,6 +625,7 @@ CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거
 ### 리뷰·이어 가기
 
 CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다.
+CP2 수정 요청도 같은 이어 가기로 들어갑니다. 다른 점은 카드 없이 바로 새 계획을 쓰고, 리뷰 P1 지적 대신 PI 메모(`continuation.pi_request`)를 새 계획·새 리뷰 prompt에 넣는다는 것뿐입니다. 새 CP1 카드 요약은 "이어 가기 n차 계획(CP2 수정 요청 반영)"으로 시작합니다.
 P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다.
 대신 **이어 가기** 카드(`research_continue`)가 뜹니다.
 거절하거나 답이 없으면 지금처럼 `research_review_revise`로 끝납니다.
@@ -634,10 +637,10 @@ P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않
 재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다.
 CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다.
 이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다.
-이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하고, 비용은 같은 요청 예산에 쌓입니다.
+이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하며 리뷰 revise와 CP2 수정 요청을 합쳐 셉니다. 비용은 같은 요청 예산에 쌓입니다.
 중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다.
 새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다.
-이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다.
+이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 예산 카드 거절, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과·요청 집행 상한을 되돌린 채 `research_review_revise`(CP2 수정 요청에서 왔으면 `evidence_revision_requested`)로 끝납니다.
 돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다.
 `labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다.
 이어 가기 카드도 다른 결정 카드처럼 `policy.approvals.pi_decision_timeout_s`(기본 7일)가 지나면 시간 초과로 닫힙니다.
@@ -649,7 +652,7 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 실패한 조회는 보고서에 따로 남습니다.
 규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
 
-카드 메모는 결정이 아니고 다음 일을 맡은 쪽에 전달됩니다(PI 점검 R11). CP1 승인 메모는 그 계획의 모든 단계 prompt에, CP2 승인 메모는 리뷰와 보고서 prompt에(이어 간 요청은 앞 차수 CP2 메모도), 이어 가기 메모와 직전 CP2 메모는 새 계획 prompt에 들어갑니다. prompt에는 2,000자까지만 넣고 잘렸다고 표시하며, 전문은 receipt와 보고서 감사 부록에 남습니다. 재사용된 단계는 다시 돌지 않으므로 새 CP1 메모를 받지 않습니다. 계획에는 숫자 `budget_usd`(선택)를 둘 수 있습니다. CP1을 승인하면 `budget_usd`와 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`) 가운데 작은 값이 요청의 집행 상한이 되고, 넘으면 예산 카드가 뜹니다(R17). CP1 카드 요약 끝줄과 `detail.budget`에 그 상한이 보입니다. 승인 직후 지금까지 쓴 비용을 새 상한으로 한 번 판정하므로, 단계를 돌리지 않고 끝나는 요청(`plan_only`, `evidence_checkpoint` 꺼짐)도 이미 넘었으면 예산 카드가 뜹니다. 단계와 리뷰 prompt에는 `protocol.resource_limits` 문구와 별도로 실제 집행 상한이 한 줄 들어갑니다. `budget_usd`에 true/false를 쓴 계획은 검증에 걸려 교정을 받습니다. 이어 간 요청의 감사 부록에는 앞 차수 CP2 메모도 차수와 함께 전문으로 남습니다. `budget_usd`가 없는 계획은 지금처럼 요청 예산이나 정책 상한을 씁니다.
+카드 메모는 결정이 아니고 다음 일을 맡은 쪽에 전달됩니다(PI 점검 R11). CP1 승인 메모는 그 계획의 모든 단계 prompt에, CP2 승인 메모는 리뷰와 보고서 prompt에(이어 간 요청은 앞 차수 CP2 메모도), 이어 가기 메모와 직전 CP2 메모는 새 계획 prompt에 들어갑니다(CP2 수정 요청 메모는 새 계획의 수정 요청 자체로 한 번만 들어가고, 새 리뷰 prompt에도 들어갑니다). prompt에는 2,000자까지만 넣고 잘렸다고 표시하며, 전문은 receipt와 보고서 감사 부록에 남습니다. 재사용된 단계는 다시 돌지 않으므로 새 CP1 메모를 받지 않습니다. 계획에는 숫자 `budget_usd`(선택)를 둘 수 있습니다. CP1을 승인하면 `budget_usd`와 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`) 가운데 작은 값이 요청의 집행 상한이 되고, 넘으면 예산 카드가 뜹니다(R17). CP1 카드 요약 끝줄과 `detail.budget`에 그 상한이 보입니다. 승인 직후 지금까지 쓴 비용을 새 상한으로 한 번 판정하므로, 단계를 돌리지 않고 끝나는 요청(`plan_only`, `evidence_checkpoint` 꺼짐)도 이미 넘었으면 예산 카드가 뜹니다. 단계와 리뷰 prompt에는 `protocol.resource_limits` 문구와 별도로 실제 집행 상한이 한 줄 들어갑니다. `budget_usd`에 true/false를 쓴 계획은 검증에 걸려 교정을 받습니다. 이어 간 요청의 감사 부록에는 앞 차수 CP2 메모도 차수와 함께 전문으로 남습니다. `budget_usd`가 없는 계획은 지금처럼 요청 예산이나 정책 상한을 씁니다.
 
 `labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 요청 묶음이 있으면 link·junction을 먼저 거부한 뒤 JSON 구조·reference·경로 containment, 요청 ID, MANIFEST 필수 필드 형식, 파일↔`MANIFEST.tsv`↔crate의 size·sha256을 검사합니다. crate가 `File`로 선언한 파일은 MANIFEST status와 상관없이 있는지와 hash를 보고, status가 crate 기록과 다르면 문제로 적습니다(#475). 너무 깊게 중첩된 metadata JSON은 오류로 끝나지 않고 문제로 적습니다. MANIFEST에 기록된 crate·README가 없거나 README를 읽지 못하면 이전 형식으로 간주하지 않습니다. 외부 입력은 `INPUTS.tsv`와 crate에 적힌 hash끼리만 대조하며 원본을 재해시했다고 표시하지 않습니다. crate가 없는 이전 묶음은 기존 판정을 유지합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없으면 2입니다. `--bundle out.zip`과 웹 요청 상세의 **감사 번들**은 `README.md`·`claims.json`·`artifacts.json`만 담고 산출 파일은 넣지 않습니다. gateway에 작업 폴더가 없으면 기록만 담고 runner PC의 `labhq verify` 재검사를 안내합니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다. 일반 단계는 Findings·Evidence·Not established·Method changes 블록을 남기며, 모으지 않은 Evidence 경로와 실패한 도구 호출은 거부 대신 최종 보고서 경고로 올라갑니다(#58).
 

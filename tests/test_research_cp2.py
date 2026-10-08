@@ -183,9 +183,11 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert [row["evidence_id"] for row in receipt["refused_evidence"]] == ["e1"]
     assert [row["claim_id"] for row in receipt["unsupported_claims"]] == ["c1"]
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
-    # R18/R10: the card summary is Korean and says that 수정 요청 ends the request too.
+    # R18/R10: the card summary is Korean and says that 수정 요청 re-plans through a new CP1.
     assert hub.approvals[1]["summary"] == ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
-                                           "고르세요. 수정 요청도 지금은 다시 돌리지 않고 요청을 끝냅니다.")
+                                           "고르세요. 수정 요청은 메모에 적은 고칠 점으로 CSO가 새 계획을 세워 새 CP1을 "
+                                           "받습니다(바뀐 단계만 다시 실행).")
+    assert hub.approvals[1]["detail"]["revise_continues"] is True
 
 
 def _rebinding_hub(correction_reply):
@@ -875,7 +877,9 @@ def _interrupt(hub):
 @pytest.mark.asyncio
 async def test_resume_after_the_cp2_receipt_keeps_the_pi_decision():
     decisions = [CP1, {"approved": False, "choice": "revise", "note": "add a sensitivity check"}]
-    hub = _research_hub(_settings(), decisions)
+    settings = _settings()
+    settings.research.revise_continuations = 0  # R10: past the cap a CP2 revise still ends the request
+    hub = _research_hub(settings, decisions)
     await Orchestrator(hub).run_request("r")
     receipt = dict(hub.requests["r"]["research_contract"]["checkpoints"]["cp2"])
 
@@ -893,6 +897,7 @@ async def test_resume_after_the_cp2_receipt_keeps_the_pi_decision():
 async def test_resume_reopens_cp2_only_when_live_source_summary_changed(monkeypatch):
     settings = _settings()
     settings.research.live_source_check = True
+    settings.research.revise_continuations = 0  # R10: the reopened CP2's revise ends the request as before
     decisions = [CP1, {"approved": True, "choice": "approve", "note": ""},
                  {"approved": False, "choice": "revise", "note": "new retraction"}]
     hub = _research_hub(settings, decisions)
@@ -1035,8 +1040,10 @@ async def test_research_step_question_reaches_the_pi_and_the_step_reruns(schema_
 
 @pytest.mark.asyncio
 async def test_cp2_approval_without_a_choice_is_not_approved_and_is_asked_again():
-    hub = _research_hub(_settings(), [CP1, {"approved": True, "note": "Request revision"},
-                                      {"approved": False, "choice": "revise", "note": "add a sensitivity check"}])
+    settings = _settings()
+    settings.research.revise_continuations = 0  # R10: past the cap a CP2 revise still ends the request
+    hub = _research_hub(settings, [CP1, {"approved": True, "note": "Request revision"},
+                                   {"approved": False, "choice": "revise", "note": "add a sensitivity check"}])
     await Orchestrator(hub).run_request("r")
 
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_evidence", "research_evidence"]

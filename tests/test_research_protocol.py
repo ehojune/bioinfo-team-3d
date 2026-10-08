@@ -810,6 +810,8 @@ async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     settings.research.evidence_checkpoint = True
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
+    # Past the continuation cap a revise ends the request; within it, see tests/test_research_cp2_revise.py (R10).
+    settings.research.revise_continuations = 0
     hub = None
 
     async def reply(task):

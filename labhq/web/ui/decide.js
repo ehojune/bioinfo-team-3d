@@ -152,6 +152,14 @@ function clarifyQuestions(approval) {
 export function answerRequired(approval) {
   return approval?.kind === 'clarify' || (approval?.kind === 'question' && clarifyQuestions(approval).length > 0);
 }
+// CP2 수정 요청 re-plans from its note through a new CP1, so it needs one unless the continuation cap is reached (R10).
+export function reviseContinues(approval) {
+  return approval?.kind === 'research_evidence' && approval?.detail?.revise_continues !== false;
+}
+export function revisionNoteMissing(approval, choice, note) {
+  return choice === 'revise' && reviseContinues(approval) && !String(note || '').trim()
+    ? '수정 요청에는 고칠 점을 메모에 적어 주세요. 그 메모로 새 계획을 세웁니다.' : '';
+}
 
 function renderQuestions(container, approval) {
   const questions = clarifyQuestions(approval);
@@ -248,7 +256,7 @@ function renderDetail(container, kind, detail, approval = null) {
     kind === 'question' ? ['why_blocked', 'from'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
-    kind === 'research_evidence' ? ['choices', 'gate'] :
+    kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
@@ -341,9 +349,11 @@ const NO_TIMEOUT_KINDS = new Set();
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',
   research_plan: '거절하면 이 요청은 단계를 돌리지 않고 끝납니다. 계획을 고치려면 고칠 점을 넣어 새 요청을 보내세요.',
-  research_evidence: '수정 요청과 거부는 둘 다 이 요청을 끝냅니다(단계를 다시 돌리지 않음). 근거를 보강하려면 새 요청을 보내세요.',
+  research_evidence: '수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다.',
   question: '거절하면 직원에게 "진행 불가"로 전합니다.',
 };
+// Past research.revise_continuations a CP2 수정 요청 ends the request like 거부 (cso.py).
+const EVIDENCE_REVISE_ENDS = '이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다. 근거를 보강하려면 새 요청을 보내세요.';
 // The gateway writes resume step ids as a Python list ("['s2', 's3']"); the card joins them (R19).
 export function displaySummary(approval) {
   const text = String(approval?.summary ?? '');
@@ -389,17 +399,19 @@ function updateCard(row, item, options) {
   p.timing.textContent = approval ? timingText(value, options) : '';
   p.note.placeholder = value.kind === 'question' ? (p.questions._questions?.length
     ? '덧붙일 말(선택)' : '직원에게 줄 답(선택). 비우고 승인하면 승인만 전합니다.')
+    : reviseContinues(value) ? '메모(수정 요청이면 고칠 점을 꼭 적어 주세요)'
     : value.kind !== 'clarify' ? '메모(선택)' : p.questions._questions?.length
     ? '덧붙일 말(선택). 거절하면 요청을 멈춥니다.' : '답을 적어 주세요. 거절하면 요청을 멈춥니다.';
-  p.consequence.textContent = approval ? DENY_RESULT[value.kind] || '' : '';
+  p.consequence.textContent = !approval ? '' :
+    value.kind === 'research_evidence' && !reviseContinues(value) ? EVIDENCE_REVISE_ENDS : DENY_RESULT[value.kind] || '';
   p.consequence.hidden = !p.consequence.textContent;
   const evidence = approval && value.kind === 'research_evidence';
   const scope = approval && value.kind === 'scope';  // out-of-scope request: run it or stop (#36)
   const answers = approval && clarifyQuestions(value).length > 0;
   p.approve.textContent = item.type === 'suggestion' ? '채용하기' : evidence ? '증거 승인' : value.kind === 'clarify' || (value.kind === 'question' && answers) ? '답하고 진행' : scope ? '진행' : '승인';
   p.deny.textContent = item.type === 'suggestion' ? '나중에' : evidence ? '거부' : scope ? '중단' : '거절';
-  // CP2 수정 요청 does not re-run anything yet: it ends the request like 거부 (cso.py, R10).
-  p.revise.textContent = '수정 요청(요청 끝남)'; p.revise.hidden = !evidence;
+  // CP2 수정 요청 re-plans through a new CP1 until the continuation cap, then ends the request like 거부 (R10).
+  p.revise.textContent = reviseContinues(value) ? '수정 요청' : '수정 요청(요청 끝남)'; p.revise.hidden = !evidence;
   p.approve.dataset.act = item.type === 'suggestion' ? 'hire' : 'approve';
   p.revise.dataset.act = 'revise';
   p.deny.dataset.act = item.type === 'suggestion' ? 'later' : 'deny';
