@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+import yaml
 from fastapi import Request, Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field, field_validator
@@ -259,6 +260,12 @@ class Hub:
                 self.events.append(self.store.append_event({"type": "approval.expired", "ts": time.time(),
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
+        bound = settings.policy.approvals.pi_decision_timeout_s
+        for aid, entry in self.approvals.items():
+            card = entry["approval"]
+            if card.get("kind") == "resume" and card.get("timeout_s") != bound:
+                card["timeout_s"] = bound  # a card saved before it had this bound; the web counts it down
+                self.save_approval(aid)
         for rid, req in self.requests.items():
             if (req.pop("pi_waits", None) is not None) | (req.pop("runner_waits", None) is not None):
                 self.save_request(rid)  # their cards and waiters died with the old process
@@ -654,6 +661,34 @@ class Hub:
     def has_seen_agent(self, agent_id: str) -> bool:
         return any(any(agent.get("id") == agent_id for agent in entry.get("agents", []))
                    for entry in self.last_runner_rosters.values())
+
+    def configured_agent_ids(self) -> set[str]:
+        """Staff ids in this config's runner.agents_dir (core and active contracts). Empty when the folder is on
+        another PC. Read-only: an expired contract is skipped, never archived here."""
+        base = self.s.path(self.s.runner.agents_dir)
+        contract = self.s.path(self.s.runner.contract_dir) if self.s.runner.contract_dir else base / "contract"
+        ids: set[str] = set()
+        for folder in (base / "core", contract):
+            for path in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+                if path.name.startswith("_"):
+                    continue
+                try:
+                    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+                except (OSError, yaml.YAMLError):
+                    continue
+                terms = data.get("contract") if isinstance(data, dict) else None
+                if isinstance(terms, dict) and (terms.get("status") in ("expired", "archived") or
+                                                float(terms.get("expires_at") or float("inf")) < time.time()):
+                    continue
+                if isinstance(data, dict) and isinstance(data.get("id"), str):
+                    ids.add(data["id"])
+        return ids
+
+    def knows_agent(self, agent_id: str | None) -> bool:
+        """A staff member a direct request may name: hosted now, in a stored runner roster, or in agents_dir. The
+        request then waits for that runner (R15); only a name none of them has is unknown."""
+        return bool(agent_id) and (agent_id in self.agents or self.has_seen_agent(agent_id) or
+                                   agent_id in self.configured_agent_ids())
 
     def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
@@ -2595,7 +2630,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.post("/api/requests", dependencies=[Depends(auth)])
     async def create_request(body: RequestIn) -> dict:
-        if body.mode == "direct" and body.agent_id not in hub.agents:
+        if body.mode == "direct" and not hub.knows_agent(body.agent_id):
             raise HTTPException(404, f"unknown agent {body.agent_id!r}")
         try:
             return {"request_id": hub.create_request(body)}

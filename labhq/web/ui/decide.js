@@ -335,8 +335,8 @@ export function blockedStepCount(approval, requests, taskStep) {
   return sid ? descendants(request.plan, sid) : (approval.kind === 'clarify' ? request.plan.length : 0);
 }
 
-// Cards the gateway never times out (server.py new_resume_approval): their timeout_s is the model default, unused.
-const NO_TIMEOUT_KINDS = new Set(['resume']);
+// Cards the gateway never times out. None today: a resume card ends after policy.approvals.pi_decision_timeout_s too.
+const NO_TIMEOUT_KINDS = new Set();
 // What 거절 (or CP2 수정 요청) does, only where the gateway or CSO makes that outcome certain (R10, R19).
 const DENY_RESULT = {
   resume: '거절하면 이 요청은 실패로 끝납니다.',

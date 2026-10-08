@@ -511,3 +511,56 @@ def test_a_snapshot_keeps_the_quota_deadline_of_a_waiting_step(tmp_path):
              quota_waits={"s1": {"engine": "codex", "resume_at": 100.0, "deadline_at": 900.0, "reason": "limit"}})
     detail = hub.request_step_details("r", hub.requests["r"])["s1"]
     assert detail["quota_resume_at"] == 100.0 and detail["quota_deadline_at"] == 900.0
+
+
+# ----- PR #502 review: direct requests to known staff, resume countdown -----
+
+@pytest.mark.asyncio
+async def test_a_direct_request_to_known_staff_waits_for_the_first_runner(tmp_path):
+    import httpx
+
+    from labhq.gateway.server import create_app
+
+    s = _settings(tmp_path)
+    core = tmp_path / "agents" / "core"
+    core.mkdir(parents=True)
+    (core / "analyst.yaml").write_text("id: analyst\nname: Analyst\nrole: test\nengine: mock\n", encoding="utf-8")
+    s.runner.agents_dir = str(tmp_path / "agents")
+    Hub(s).set_roster("lab", [{"id": "curator", "name": "c", "role": "t", "engine": "mock"}])  # an earlier runner
+    app = create_app(s)
+    hub = app.state.hub
+    hub.runners.clear()  # set_roster above left no live connection; the fresh gateway has no runner
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as client:
+        ids = {}
+        for agent in ("analyst", "curator"):
+            response = await client.post("/api/requests", headers=auth,
+                                         json={"text": "표 정리", "mode": "direct", "agent_id": agent})
+            assert response.status_code == 200, response.text
+            ids[agent] = response.json()["request_id"]
+        unknown = await client.post("/api/requests", headers=auth,
+                                    json={"text": "x", "mode": "direct", "agent_id": "ghost"})
+        assert unknown.status_code == 404
+    await _until(lambda: all(hub.requests[rid]["status"] == "waiting_for_runner" for rid in ids.values()))
+    assert not hub.store.all("task")
+
+    ws = CaptureSocket()
+    roster = [{"id": name, "name": name, "role": "t", "engine": "mock"} for name in ("analyst", "curator")]
+    hub.register_runner("lab", ws, roster, "inc")
+    await _until(lambda: {m["task"]["agent_id"] for m in ws.sent if m.get("type") == "task.dispatch"}
+                 == {"analyst", "curator"})
+    hub.cancel_result_wait_s = 0.1
+    for rid in ids.values():
+        await hub.cancel_request(rid)
+
+
+def test_a_resume_card_saved_with_the_old_hour_gets_the_decision_bound(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    _request(hub, "r", status="interrupted")
+    card = hub.new_resume_approval("r")
+    hub.approvals[card.id]["approval"]["timeout_s"] = 3600  # what a card saved before PR #502 carries
+    hub.save_approval(card.id)
+    restarted = Hub(s)
+    assert restarted.approvals[card.id]["approval"]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
+    assert restarted.snapshot()["data"]["approvals"][0]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
