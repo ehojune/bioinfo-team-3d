@@ -162,7 +162,7 @@ async def test_the_gateway_opens_the_revised_request_with_the_plan_note_answers_
     assert own[1].get("query_removed") is True and req["default_references"] is True
     # Answers and notes given to the old request; the answers do not use this request's clarify cards.
     assert req["clarifications"] == [{"questions": ["외부 검증?"], "answer": "b) 없음", "inherited": True}]
-    assert req["pi_notes"] == hub.requests["old"]["pi_notes"]
+    assert req["pi_notes"] == [{**note, "inherited": True} for note in hub.requests["old"]["pi_notes"]]
     assert req["revised_from"] == "old" and req["meta"]["revised_from"] == "old" and req["meta"]["case"] == "trial"
     assert hub.requests["old"]["revised_to"] == new and hub.started == [new]
     # All of it is in the new request's first save: a restart right after it finds the same request again.
@@ -243,7 +243,7 @@ async def test_a_restart_finds_the_new_request_by_its_link_even_before_revised_t
     asked = len(hub.approvals)
     await Orchestrator(hub).run_request("r")
     assert len(hub.approvals) == asked and hub.revised == [("r", NOTE)]
-    assert req["outcome"] == "plan_revision_requested"
+    assert req["outcome"] == "plan_revision_requested" and req["revised_to"] == "req_revised"  # the link is saved
 
 
 @pytest.mark.asyncio
@@ -258,3 +258,18 @@ async def test_a_re_approval_of_a_plan_whose_steps_ran_offers_no_revise(tmp_path
         pass
     plan_cards = [approval for approval in hub.approvals if approval["kind"] == "research_plan"]
     assert plan_cards and all(card["detail"]["revise_allowed"] is False for card in plan_cards)
+
+
+@pytest.mark.asyncio
+async def test_carried_notes_do_not_use_the_new_requests_note_allowance(tmp_path, monkeypatch):
+    from labhq.gateway.server import MAX_PI_NOTES
+
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub, pi_notes=[{"id": f"n{i}", "text": f"note {i}", "at": float(i)} for i in range(MAX_PI_NOTES + 5)])
+    new = hub.create_revised_request("old", NOTE)
+    req = hub.requests[new]
+    # The latest notes only, so a chain of revisions stays bounded, and none counts against this request's own.
+    assert [note["id"] for note in req["pi_notes"]] == [f"n{i}" for i in range(5, MAX_PI_NOTES + 5)]
+    req["status"] = "running"
+    entry = await hub.add_note(new, "B의 첫 메모")
+    assert entry["text"] == "B의 첫 메모" and len(req["pi_notes"]) == MAX_PI_NOTES + 1

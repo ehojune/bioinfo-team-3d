@@ -2425,8 +2425,8 @@ class Hub:
                             "plan": copy.deepcopy(old.get("plan")), "note": note.strip()}}
         if old.get("clarifications"):  # answered once; not counted against this request's own clarify cards
             extra["clarifications"] = [{**copy.deepcopy(entry), "inherited": True} for entry in old["clarifications"]]
-        if old.get("pi_notes"):  # notes sent before CP1 shaped the old plan
-            extra["pi_notes"] = copy.deepcopy(old["pi_notes"])
+        if old.get("pi_notes"):  # notes sent before CP1 shaped the old plan; the latest ones, so a chain stays bounded
+            extra["pi_notes"] = [{**copy.deepcopy(note), "inherited": True} for note in old["pi_notes"][-MAX_PI_NOTES:]]
         body = RequestIn(text=text, mode=old.get("mode", "orchestrate"), work_kind="research",
                          scope_status=old.get("scope_status", "in_scope"),
                          project_dirs=list(old.get("project_dirs") or []), references=references,
@@ -2472,7 +2472,8 @@ class Hub:
         if req.get("mode") == "direct":
             raise ValueError("직접 맡긴 요청에는 실행 중 메모를 보낼 수 없습니다. 끝난 뒤 이어 묻기를 쓰세요")
         notes = req.setdefault("pi_notes", [])
-        if len(notes) >= MAX_PI_NOTES:
+        # Notes a CP1 수정 요청 carried over from the old request do not use this request's own allowance.
+        if len([note for note in notes if not note.get("inherited")]) >= MAX_PI_NOTES:
             raise ValueError(f"메모는 요청마다 {MAX_PI_NOTES}개까지 보낼 수 있습니다")
         entry = {"id": new_id("note"), "text": text.strip(), "at": time.time()}
         notes.append(entry)

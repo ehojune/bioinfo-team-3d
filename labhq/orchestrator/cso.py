@@ -4510,6 +4510,7 @@ class Orchestrator:
                 lookup = getattr(self.hub, "revised_request_of", None)
                 revised_to = req.get("revised_to") or (lookup(rid) if callable(lookup) else None)
                 if revised_to:
+                    req["revised_to"] = revised_to  # saved by _finish: the link survives a stop before it was written
                     end_revised(revised_to, str((stored.get("approval") or {}).get("note") or ""))
                     return False
                 # CP1 수정 요청 opens a new request from the PI's note (Hub.create_revised_request), so only at a first
