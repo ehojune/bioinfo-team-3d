@@ -2,7 +2,7 @@
 
 대상: 연구를 승인하는 PI와 계획·실행·검토를 맡는 직원. 버전 `v0.1`(2026-10-01).
 
-> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받는다. 수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝낸다(`evidence_revision_requested`). 그리고 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier와 CP3·CP4는 아직 실행 경로에 연결하지 않았다.
+> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받는다. 수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝낸다(`evidence_revision_requested`). 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier는 `research.live_source_check`를 켜면 CP2와 `labhq verify`에서 실행하며 기본값은 꺼짐이다. CP3·CP4는 아직 실행 경로에 연결하지 않았다.
 
 ## 1. 접수
 

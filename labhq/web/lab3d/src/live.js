@@ -168,8 +168,9 @@ export function startLiveOffice(onState) {
       } catch (error) { console.warn('bad event', error); }
     };
     ws.onclose = event => {
-      pending.clear(); S.conn = event.code === 1008 ? 'auth' : 'offline'; render();
-      if (event.code !== 1008) { retry = setTimeout(open, backoff); backoff = Math.min(15000, backoff * 2); }
+      const action = globalThis.LabHQState.websocketCloseAction(event.code);
+      pending.clear(); S.conn = action.connection; render();
+      if (action.retry) { retry = setTimeout(open, backoff); backoff = Math.min(15000, backoff * 2); }
     };
   }
   $('token-form').addEventListener('submit', event => {

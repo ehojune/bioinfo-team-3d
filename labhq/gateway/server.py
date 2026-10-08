@@ -2143,7 +2143,8 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.websocket("/ws/client")
     async def ws_client(ws: WebSocket, token: str = "", since: int | None = None) -> None:
         if not token_matches(token, settings.gateway.client_token):
-            await ws.close(code=1008)
+            await ws.accept()
+            await ws.close(code=1008, reason="token")
             return
         await ws.accept()
         async with hub.event_lock:

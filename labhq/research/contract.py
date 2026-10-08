@@ -1021,8 +1021,9 @@ def bind_result_artifacts(result: dict[str, Any], *, outputs: list[str],
     for row in rows:
         artifact = (row.get("source") or {}).get("artifact_id")
         if artifact in unbound:
-            refused[row["id"]] = (f"cites artifact {artifact} at {unbound[artifact]!r}, which is neither a collected "
-                                  "output of this step nor a verified upstream artifact")
+            refused[row["id"]] = (f"cites artifact {artifact} at {unbound[artifact]!r}; the file exists but is not "
+                                  "a collected output of this step or an output of a completed upstream step "
+                                  "(파일은 있으나 이 단계의 수집 산출이나 완료된 앞 단계 산출이 아님)")
     pending = True
     while pending:
         pending = False

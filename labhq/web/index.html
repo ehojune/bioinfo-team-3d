@@ -1153,9 +1153,11 @@ function startLive() {
       if (ev.seq && ev.seq > lastSeq) lastSeq = ev.seq;
     } catch (err) { console.warn('bad event', err); } };
     ws.onclose = e => {
-      if (e.code === 1008) { S.conn = 'auth'; bar.classList.add('show'); schedule(); return; }
-      S.conn = 'offline'; schedule();
-      setTimeout(open, backoff); backoff = Math.min(backoff * 2, 15000);
+      const action = LabHQState.websocketCloseAction(e.code);
+      S.conn = action.connection;
+      bar.classList.toggle('show', !action.retry);
+      schedule();
+      if (action.retry) { setTimeout(open, backoff); backoff = Math.min(backoff * 2, 15000); }
     };
   };
   $('#tok-go').addEventListener('click', () => { token = $('#tok').value.trim(); store.set('labhq_token', token); open(); });

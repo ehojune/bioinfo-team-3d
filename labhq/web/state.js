@@ -7,6 +7,9 @@ const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
+const websocketCloseAction = code => code === 1008
+  ? {connection: 'auth', retry: false}
+  : {connection: 'offline', retry: true};
 // One label per gateway request status (R14). An unknown status shows as itself, never as 실패.
 const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 기다림', waiting_quota: '한도 대기',
   waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', interrupted: '중단됨', done: '완료',
@@ -597,5 +600,6 @@ function toolLabel(name) {
 return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
-  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText };
+  isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText,
+  websocketCloseAction };
 })(globalThis);
