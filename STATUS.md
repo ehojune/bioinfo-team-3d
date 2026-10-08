@@ -4,6 +4,15 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · 이어 간 연구 요청의 보고서가 이전 차수에서 고친 것을 적는다
+
+- 결론: 웹 연구 시운전(GSE10072) 2차 보고서가 1차 리뷰 P1 5건(stage IV 오분류, 경로 BH 범위, 가설 재정의, permutation 가정, 비유의=동등)을 한 번도 언급하지 않았다. PI가 2차 CP2 메모로 "1차 대비 고친 점을 한 표로"를 요구했지만, 보고서 prompt에는 이전 차수 CP2 메모만 있고 리뷰 지적은 없었다. 이제 보고서가 "이전 차수에서 고친 것" 절에 지적마다 어떻게 고쳤는지(claim anchor), 못 고쳤는지 적는다.
+- 바뀐 것: `labhq/orchestrator/cso.py` `earlier_round_lines`(차수 archive의 리뷰 P1, CP2 수정 요청 메모), `EARLIER_ROUNDS_RULE`을 연구 보고서 prompt 끝에 붙이고, 같은 줄을 감사 부록(`report_appendix`)에 남긴다. 이어 가지 않은 요청은 그대로다. `docs/manual.md` 리뷰·이어 가기 절 한 줄.
+  - #511 리뷰 P2: 2.5D 말풍선(`bubble`)과 3D 라벨(`lab3d/src/main.js` `stateLabel`)도 질문 답 대기를 "답 기다리는 중"·"답 대기"로 보인다.
+- 실행한 것: `tests/test_research_continue.py::test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step`에 보고서 prompt·감사 부록 단언 추가(main 코드에서 실패, 이 branch에서 통과). 전체 `pytest -q`(Windows) 4977 passed·63 skipped, web·3D test(`tests/test_lab3d.py`, `tests/test_web_3d.py`, `tests/test_web.py`)와 node test 전체, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음. 이번 시운전 요청(`req_d77e574f85`)은 이미 끝나 보고서는 그대로다.
+- 근거: trial `req_d77e574f85` 2차 보고서·감사 부록, `labhq verify` exit 0.
+
 ## 2026-10-08 · 연구 단계가 CP1 가설 원문을 받는다
 
 - 결론: 연구 단계 prompt의 동결 요약(`frozen_context`)에 CP1 가설(주가설, null/대안, 구별할 관찰)이 없었다. 웹 연구 시운전 1차에서 s9가 A1·A2를 다시 정의해 리뷰 P1을 받았고, 2차에서는 "TASK.md에 가설 원문이 없다"며 PI에게 물으며 멈췄다. 이제 단계 prompt에 가설 원문이 들어가고, 가설은 그대로 쓰고 이름을 바꾸거나 합치지 말라는 지시가 붙는다.

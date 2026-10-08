@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 15:40 | [`67c74d4`](https://github.com/ehojune/bioinfo-team-3d/pull/512/commits/67c74d4) | 이어 간 연구 요청의 보고서 prompt와 감사 부록에 이전 차수 리뷰 P1 지적(또는 CP2 수정 요청)을 넣고, 보고서가 '이전 차수에서 고친 것' 절에 지적마다 고친 결과를 적는다. |
+| 15:40 | [`02fd084`](https://github.com/ehojune/bioinfo-team-3d/pull/512/commits/02fd084) | 2.5D 말풍선과 3D 라벨도 질문 답을 기다리는 직원을 '답 기다리는 중'('답 대기')으로 보인다(#511 리뷰). |
 | 15:19 | [`a4ee475`](https://github.com/ehojune/bioinfo-team-3d/pull/511/commits/a4ee475) | 연구 단계 prompt에 CP1 가설(주가설·null/대안·구별할 관찰)을 넣고 그대로 쓰게 한다. 가설이 바뀐 이어 가기는 단계를 재사용하지 않는다(시운전에서 s9가 A1·A2를 다시 정의한 원인). |
 | 15:19 | [`9fcaca1`](https://github.com/ehojune/bioinfo-team-3d/pull/511/commits/9fcaca1) | 웹: 질문 답을 기다리는 직원은 '답 기다리는 중'으로, 새로 연 페이지에서 계획이 있는 진행 중 요청은 '실행'부터 보인다. |
 | 14:38 | [`c8265f2`](https://github.com/ehojune/bioinfo-team-3d/pull/510/commits/c8265f2) | 예산 카드 요약에 승인하면 올라갈 상한과 거절 결과를 적고, 웹은 금액을 $0.00으로 한국어 이름과 함께 보인다. 직원 실행 환경에 PYTHONDONTWRITEBYTECODE=1을 넣어 __pycache__ 삭제 권한 카드가 뜨지 않게 한다. |
