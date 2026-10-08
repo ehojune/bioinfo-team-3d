@@ -1,0 +1,7 @@
+rows:
+  - sha: "c9cea6f"
+    at: "2026-10-08 12:05"
+    text: "CP2 수정 요청이 요청을 끝내지 않고 PI 메모로 새 계획·새 CP1을 거쳐 바뀐 단계만 다시 돌린다. 메모 없는 수정 요청은 다시 묻고(웹·CLI는 보내지 않음), 이어 가기 상한은 리뷰 revise와 합산한다. 웹 버튼은 '수정 요청'. 이어 가기를 되돌릴 때 집행 상한도 복원하고(#499 리뷰), CP1 카드 요약은 한국어로 hash 없이 보인다(PI 점검 R10)."
+  - sha: "efbbcc9"
+    at: "2026-10-08 12:17"
+    text: "패키지에 든 예제 설정(labhq/config/labhq.example.yaml)에도 revise_continuations 주석을 같게 고친다(PI 점검 R10)."
