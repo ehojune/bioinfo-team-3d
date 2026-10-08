@@ -331,3 +331,44 @@ def test_a_closed_gateway_on_the_websocket_commands_is_one_line_and_exit_2(tmp_p
         cli.main(["-c", str(config), *argv])
     assert stopped.value.code == 2
     assert "client_token을 거부" in capsys.readouterr().err
+
+
+def test_down_also_refuses_a_running_follow_up_or_recruitment(tmp_path, monkeypatch, capsys):
+    """#500: a follow-up on a finished request or a recruitment is not an active request, so `down` used to stop it."""
+    settings = Settings.load(str(_config(tmp_path)))
+    _write_process_record(settings, "runner", 4244, "runner-generation")
+    monkeypatch.setattr(cli, "_process_created", lambda pid: "runner-generation")
+    killed = []
+    monkeypatch.setattr(cli, "_terminate_tree", lambda pid: killed.append(pid))
+
+    def gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        if url.endswith("/api/shutdown-readiness"):
+            return httpx.Response(200, request=request, json={
+                "requests": [], "recruits": 1, "ready": False,
+                "followups": [{"request_id": "req_done", "followup_id": "fu_1", "text": "그림 다시"}]})
+        return httpx.Response(404, request=request)
+
+    monkeypatch.setattr(httpx, "request", gateway)
+    with pytest.raises(SystemExit) as stopped:
+        cli._down(settings, force=False)
+    error = capsys.readouterr().err
+    assert stopped.value.code == 2 and killed == []
+    assert "req_done" in error and "진행 중 채용: 1건" in error
+    cli._down(settings, force=True)
+    assert killed == [4244]
+
+    # An older gateway without the endpoint: the request list alone decides, as before.
+    def old_gateway(method, url, **kwargs):
+        request = httpx.Request(method, url)
+        if "/api/requests" in url:
+            return httpx.Response(200, json=[], request=request)
+        return httpx.Response(404, request=request)
+
+    monkeypatch.setattr(httpx, "request", old_gateway)
+    killed.clear()
+    _write_process_record(settings, "runner", 4244, "runner-generation")  # the forced down removed the record
+    cli._down(settings, force=False)
+    assert killed == [4244]
