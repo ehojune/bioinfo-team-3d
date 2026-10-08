@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:17 | [`efbbcc9`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/efbbcc9) | 패키지에 든 예제 설정(labhq/config/labhq.example.yaml)에도 revise_continuations 주석을 같게 고친다(PI 점검 R10). |
+| 12:05 | [`c9cea6f`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/c9cea6f) | CP2 수정 요청이 요청을 끝내지 않고 PI 메모로 새 계획·새 CP1을 거쳐 바뀐 단계만 다시 돌린다. 메모 없는 수정 요청은 다시 묻고(웹·CLI는 보내지 않음), 이어 가기 상한은 리뷰 revise와 합산한다. 웹 버튼은 '수정 요청'. 이어 가기를 되돌릴 때 집행 상한도 복원하고(#499 리뷰), CP1 카드 요약은 한국어로 hash 없이 보인다(PI 점검 R10). |
 | 11:11 | [`3f6d449`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/3f6d449) | CP1 직후 새 집행 상한으로 지금까지 쓴 비용을 판정해 단계 없이 끝나는 요청도 예산 카드를 받는다. budget_usd true/false는 검증 오류, 단계·리뷰 prompt에 실제 집행 상한, 앞 차수 CP2 메모는 감사 부록에 차수와 함께(#499 리뷰). |
 | 10:53 | [`f33d40a`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/f33d40a) | 연구 카드 메모가 다음 일을 하는 prompt로 간다(CP1 → 단계, CP2 → 리뷰·보고서, 이어 가기 → 새 계획). 계획의 숫자 budget_usd가 CP1 승인 때 요청 집행 상한이 되어 넘으면 예산 카드가 뜨고, CP1 카드에 그 상한을 보인다(PI 점검 R11 R17). |
 | 10:43 | [`d66947f`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/d66947f) | main 병합(#504): manual 연구 절을 나눈 판을 두고 이어 가기 카드 7일 기한 문장만 반영했다. |

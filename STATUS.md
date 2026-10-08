@@ -4,6 +4,22 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · CP2 수정 요청이 새 계획·새 CP1로 이어 간다 (PI 점검 R10)
+
+- 결론: CP2에서 **수정 요청**을 고르면 요청이 끝나지 않는다. PI 메모가 수정 요청이 되어 CSO가 새 계획을 쓰고, PI가 새 CP1에서 승인하면 바뀐 단계와 그 아래 단계만 다시 돈다. 지금까지는 거부와 똑같이 `evidence_revision_requested`로 끝났고, #494에서 버튼을 `수정 요청(요청 끝남)`으로 바꿔 두기만 했다.
+- 바뀐 것:
+  - 흐름: CP2 revise는 리뷰 revise와 같은 이어 가기(`_research_continue`)로 들어간다. 이어 가기 카드는 따로 묻지 않는다. PI가 CP2에서 이미 수정을 골랐고 새 계획 승인은 새 CP1이 맡으므로, 같은 질문을 두 번 묻지 않으려는 것이다. `continuation.trigger: cp2_revise`와 `pi_request`(메모 전문)를 남긴다. 새 계획 prompt에는 리뷰 P1 지적 대신 "PI revision request (CP2)"로 메모가 한 번 들어가고, 그 차수의 리뷰 prompt도 이 요청이 해결됐는지 본다. 재사용 규칙(사양·질문·protocol·pack이 바이트까지 같고 산출 hash가 그대로)은 바뀌지 않았다. 새 CP1 요약은 "이어 가기 n차 계획(CP2 수정 요청 반영). 재사용: … · 다시 실행: …"으로 시작한다.
+  - 메모 필수: 메모 없는 revise는 CP2 카드를 다시 띄워 메모를 묻는다(세 번까지, 끝내 없으면 새 계획 없이 끝남). 웹 2.5D·3D는 빈 메모로 보내지 않고 안내를 띄운다(`revisionNoteMissing`). `labhq approve <id> --choice revise`는 `--note`가 없으면 거절한다.
+  - 상한: `research.revise_continuations`(기본 2)가 CP2 revise와 리뷰 revise를 합쳐 센다. 상한에 닿았으면 CP2 카드 요약·`detail.revise_continues: false`·버튼 `수정 요청(요청 끝남)`으로 알리고, 메모 없이도 지금처럼 끝난다.
+  - 결과 이름: 새 CP1 거절·시간 초과, 계획 실패, 예산 카드 거절, 오류로 새 차수가 단계 실행 전에 끝나면 1차 계획·결과·CP2 receipt를 되돌리고 `evidence_revision_requested`로 끝난다(리뷰 revise에서 왔으면 지금처럼 `research_review_revise`).
+  - 웹: 버튼은 `수정 요청`, 카드 한 줄 안내는 "수정 요청은 메모로 새 계획을 세워 새 CP1을 받고 바뀐 단계만 다시 돌립니다. 거부하면 요청이 끝납니다." 메모 칸 안내도 바꿨다.
+  - #499 리뷰 P2: 차수 archive에 요청 집행 상한(`budget_usd`)을 남기고, 이어 가기를 되돌릴 때(`restore_round`) 함께 복원한다. 이전 archive에는 이 값이 없으므로 그때는 지금 상한을 그대로 둔다.
+  - CP1 카드 요약은 "CP1 연구 계획 승인: 고정할 질문·방법·완료/중단 조건·데이터 범위·적용 pack을 확인하고 승인하세요."와 집행 상한 한 줄이다. plan hash는 `detail.target_sha256`에만 있다.
+  - 문서: `docs/manual.md`(단계와 CP2, 리뷰·이어 가기, 메모, CLI), `docs/research_protocol.md`(머리말, CP2 행, 메모), `docs/pi-qa.md`(CP2에서 근거를 보강하게 하는 법), `config/labhq.example.yaml` 주석.
+- 실행한 것: 새 회귀 14건(`tests/test_research_cp2_revise.py`) 중 13건이 main 코드에서 실패하고 이 branch에서 통과했다(메모 넣은 revise → 새 CP1·s1 재사용·s2만 재실행, 빈 메모 재질문·끝내 없음, 상한 합산 두 방향, 새 CP1 거절·시간 초과, 계획 작성 중·새 CP1 카드에서 재시작, 집행 상한 복원 두 경로, CP1 요약, CLI 거절). 나머지 1건은 상한에서 빈 메모를 다시 묻지 않는 보존 test다. 집행 상한 복원 test는 복원 두 줄만 빼도 실패하는 것을 확인했다. 웹 node test 5건이 main의 웹 코드에서 실패하고 통과했다(`tests/web_cp2_evidence.cjs`, `tests/web_cards_status.cjs`). 기존 CP2 test 4건은 revise가 끝나는 경로를 보던 것이라 `revise_continuations: 0`(상한)으로 그 경로를 그대로 지킨다. 연구·CLI test 502 passed, web node test 31파일 통과. 전체 pytest(Windows) 4868 passed·59 skipped·3 failed였다. 실패 3건은 패키지에 든 예제 설정 사본이 바뀐 주석과 달라서였고(`efbbcc9`에서 맞춤), 그 세 파일을 다시 돌려 83 passed. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: CP1에는 여전히 승인·거부뿐이다(R10의 `research-cp1-no-revise`). PI 메모에 단계 id를 적어도 그 단계를 강제로 다시 돌리지는 않는다. 다시 돌 단계는 새 계획이 바꾼 단계로 정하고, 새 CP1 카드에 재사용·재실행 목록이 보인다. 실제 CLI 실측은 아직 없다.
+- 근거: `tests/test_research_cp2_revise.py`, `labhq/orchestrator/cso.py`(`_research_after_steps`, `_research_continue`, `_unstarted_continuation_end`), `labhq/research/continuation.py`(`plan_prompt`, `review_prompt`, `archive_round`, `restore_round`), `labhq/web/ui/decide.js`(`revisionNoteMissing`), `labhq/cli.py`.
+
 ## 2026-10-08 · 연구 카드 메모가 단계·리뷰·보고서·새 계획에 가고, 계획 예산이 집행 상한이 된다 (PI 점검 R11 R17)
 
 - 결론: CP1·CP2·이어 가기 카드 메모가 다음 일을 하는 prompt에 들어간다. 계획의 숫자 `budget_usd`는 CP1 승인 때 요청의 집행 상한이 되어, 넘으면 예산 카드가 뜬다. 시운전 요청 `req_7ccde78be0`에서는 CP2 메모 6항목이 task prompt 24개 어디에도 없었고, "USD 5 이내" 계획이 카드 없이 $18.28을 썼다.
