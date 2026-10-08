@@ -659,7 +659,12 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                            "compute_backends": ["local CLI"] + ([scheduler] if scheduler != "none" else []) +
                                                (["external labhq_hpc MCP"] if external_hpc else []),
                            "hpc_tools": scheduler != "none" or external_hpc}
+    readiness_reasons = ([] if agents else ["활성 직원 0명"])
+    missing_engines = sorted(name for name in roster_engines if name != "mock" and not available.get(name, False))
+    if missing_engines:
+        readiness_reasons.append("roster engine 실행 파일 없음: " + ", ".join(missing_engines))
     return {"schema_version": 1, "runner_capabilities": runner_capabilities, "checks": rows,
+            "readiness": {"ready": not readiness_reasons, "reasons": readiness_reasons},
             "summary": {status: sum(r["status"] == status for r in rows)
                         for status in ("ok", "warn", "fail", "skip")}}
 
@@ -672,7 +677,14 @@ def render(manifest: dict) -> str:
     fail_count = manifest.get("summary", {}).get("fail")
     if fail_count is None:
         fail_count = sum(row.get("status") == "fail" for row in manifest["checks"])
-    lines.append(f"실행 준비: {'예' if fail_count == 0 else f'아니오(fail {fail_count}건)'}")
+    readiness = manifest.get("readiness")
+    if readiness is None:  # manifests written before readiness reasons were recorded
+        lines.append(f"실행 준비: {'예' if fail_count == 0 else f'아니오(fail {fail_count}건)'}")
+    else:
+        reasons = ([f"fail {fail_count}건"] if fail_count else []) + list(readiness.get("reasons", []))
+        lines.append(f"실행 준비: {'예' if not reasons and readiness.get('ready', False) else '아니오'}")
+        if reasons:
+            lines.append("이유: " + "; ".join(reasons))
     return "\n".join(lines)
 
 

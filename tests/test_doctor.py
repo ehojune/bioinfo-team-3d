@@ -104,6 +104,28 @@ def test_doctor_checks_only_roster_engines_and_prints_readiness(tmp_path, monkey
     assert doctor.render(result).endswith("실행 준비: 예")
 
 
+def test_doctor_readiness_rejects_an_empty_roster(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").unlink()
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    lines = doctor.render(doctor.collect(settings)).splitlines()
+
+    assert lines[-2] == "실행 준비: 아니오"
+    assert lines[-1] == "이유: 활성 직원 0명"
+
+
+def test_doctor_readiness_rejects_a_missing_roster_engine_executable(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(doctor, "_resolve_command", lambda command, env, engine: [str(tmp_path / "missing.exe")])
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    lines = doctor.render(doctor.collect(settings)).splitlines()
+
+    assert lines[-2] == "실행 준비: 아니오"
+    assert lines[-1] == "이유: roster engine 실행 파일 없음: claude_code"
+
+
 def test_doctor_dry_run_summarizes_login_skips_once(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     executable = tmp_path / "claude.exe"

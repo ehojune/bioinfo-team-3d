@@ -977,11 +977,31 @@ _PS_REMOVE_NAMES = frozenset({"remove-item", "rm", "ri", "del", "erase", "rd", "
 _PS_RECURSE_FLAGS = frozenset({"-r", "-re", "-rec", "-recu", "-recur", "-recurs", "-recurse", "-rf", "-fr"})
 
 
-def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
-    """Allow a literal recursive delete only when every target is below the step workdir.
+def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool:
+    """Whether a delete path is one literal filesystem path with a known base."""
+    if not target or target.startswith("~") or _drive_relative(target):
+        return False
+    if target.startswith(("\\\\", "//")) or (relative and _absolute(target)):
+        return False
+    if any(char in target for char in "*?[{"):
+        return False
+    if any(part == ".." for part in target.replace("\\", "/").split("/")):
+        return False
+    if "$" in target or "`" in target or re.search(r"%[^%]+%|![^!]+!", target):
+        return False
+    if powershell:
+        # PowerShell providers/PSDrives and String[]/array syntax can name non-filesystem or extra targets.
+        drive_absolute = bool(re.match(r"^[A-Za-z]:[/\\]", target))
+        if (":" in target and not drive_absolute) or any(char in target for char in ",()") or target.startswith("@"):
+            return False
+    return True
 
-    This is deliberately lexical: variables, globs, parent traversal and an unparseable command keep the PI gate.
-    A literal `cd`/`Set-Location` is followed only while it remains below the same workdir.
+
+def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
+    """Allow a recursive delete only for literal filesystem-relative targets below the step workdir.
+
+    Variables, arrays, providers, globs, parent traversal and unparseable commands keep the PI gate. A literal
+    filesystem `cd`/`Set-Location` is followed only while it remains below the same workdir.
     """
     if not workdir:
         return False
@@ -1011,9 +1031,7 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
             if len(cd_words) != 1:
                 return False
             target = _literal_shell_word(cd_words[0], powershell)
-            if (target is None or target.startswith(("~", "$", "%")) or
-                    any(char in target for char in "*?[{") or _drive_relative(target) or
-                    any(part == ".." for part in target.replace("\\", "/").split("/"))):
+            if target is None or not _plain_delete_path(target, powershell, relative=False):
                 return False
             current = (_norm(target, expand_vars=False) if _absolute(target) else
                        _norm(posixpath.join(current, target.replace("\\", "/")), expand_vars=False))
@@ -1023,6 +1041,8 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
         is_remove = plain_name in _PS_REMOVE_NAMES if powershell else plain_name == "rm"
         if not is_remove:
             continue
+        if segment.start() and text[segment.start() - 1] == "|":
+            return False
         literals = [_literal_shell_word(word, powershell) for word in raw_words[1:]]
         if any(value is None for value in literals):
             return False
@@ -1055,11 +1075,9 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
         if not targets:
             return False
         for target in targets:
-            if (not target or target.startswith(("~", "$", "%")) or any(char in target for char in "*?[{") or
-                    _drive_relative(target) or any(part == ".." for part in target.replace("\\", "/").split("/"))):
+            if not _plain_delete_path(target, powershell, relative=True):
                 return False
-            resolved = _norm(target, expand_vars=False) if _absolute(target) else _norm(
-                posixpath.join(current, target.replace("\\", "/")), expand_vars=False)
+            resolved = _norm(posixpath.join(current, target.replace("\\", "/")), expand_vars=False)
             if resolved == root or not _inside(resolved, root):
                 return False
     return found

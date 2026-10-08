@@ -264,6 +264,8 @@ def test_non_recursive_rm_is_allowed():
 @pytest.mark.parametrize("command", [
     "rm -rf .tmp",
     "rm -rf outputs/tmp",
+    "rm -rf .tmp outputs/tmp",
+    "rm -rf -- .tmp outputs/tmp",
     "cd /work/step && rm -rf .tmp/peek",
 ])
 def test_recursive_delete_inside_the_step_workdir_is_allowed(command):
@@ -278,7 +280,36 @@ def test_powershell_recursive_delete_inside_the_step_workdir_is_allowed():
     assert decision.action == "allow"
 
 
-@pytest.mark.parametrize("command", ["rm -rf ../x", "rm -rf $DIR", "rm -rf /tmp/x"])
+@pytest.mark.parametrize("command", [
+    r"Remove-Item -Recurse -Force HKCU:\Software\X",
+    r"Remove-Item -Recurse Cert:\CurrentUser\My",
+    "Remove-Item -Recurse -Force .tmp,C:/outside",
+    r"Remove-Item -Recurse -Path @('.tmp','..\x')",
+    "Get-ChildItem .tmp | Remove-Item -Recurse",
+    r"Remove-Item -Recurse -LiteralPath \\server\share\tmp",
+    "Remove-Item -Recurse -Path ~",
+    "Remove-Item -Recurse -Path $target",
+    "Remove-Item -Recurse -Path $(Join-Path . .tmp)",
+    "Remove-Item -Recurse -Path ${target}",
+    "Remove-Item -Recurse -Path %TEMP%",
+    "Remove-Item -Recurse -Path !TEMP!",
+    "Remove-Item -Recurse -Path *.tmp",
+    "Remove-Item -Recurse -Path",
+])
+def test_powershell_recursive_delete_requires_literal_filesystem_targets(command):
+    decision = evaluate_tool("PowerShell", {"command": command}, _policy(),
+                             allowed_roots=["C:/work/step"], workdir="C:/work/step")
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    "rm -rf ../x",
+    "rm -rf $DIR",
+    'rm -rf "$D"',
+    "rm -rf /tmp/x",
+    "rm -rf .tmp ../x",
+])
 def test_recursive_delete_outside_or_unresolved_still_asks(command):
     decision = evaluate_tool("Bash", {"command": command}, _policy(),
                              allowed_roots=["/work/step"], workdir="/work/step")
