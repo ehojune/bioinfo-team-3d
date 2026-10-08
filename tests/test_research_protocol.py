@@ -146,6 +146,34 @@ def test_intake_classifies_simple_research_and_ambiguous():
     assert classify_intake("anything", "simple").source == "explicit"
 
 
+@pytest.mark.parametrize(("text", "kind"), [
+    # 2026-10-08 web rehearsal: this went through CP1 and a five-step research plan (readiness R16).
+    ("GEO GSE10072 시료 메타데이터를 표로 정리해 줘. 시료마다 조직, 흡연 상태, 성별, 나이를 열로", "simple"),
+    ("논문 5편의 데이터셋 목록을 만들어 줘", "simple"),
+    ("Download GSE19804 and extract the sample metadata", "simple"),
+    ("GSE19804 메타데이터를 보고 짝 지어 DEG 분석해 줘", "research"),
+    ("GSE10072 메타데이터 표를 만들고 흡연에 따른 발현 차이를 분석해 줘", "research"),
+    ("Tabulate the samples and run a pathway analysis", "research"),
+    # #498 review: inference next to a simple word stays research; an analysis the request rules out does not count.
+    ("Download the metadata and predict which patients respond", "research"),
+    ("메타데이터에서 흡연과 질병의 관계를 밝혀 줘", "research"),
+    ("별도 분석 없이 원문을 그대로 요약해 줘", "simple"),
+    ("Summarize the source text without any analysis", "simple"),
+    # A requested computation is analysis whatever it is called (#498 review: "run DE").
+    ("Download the metadata and run DE", "research"),
+    ("메타데이터를 받아 정규화하고 군집을 나눠 줘", "research"),
+    ("GSE19804 시료 정보를 받아 limma를 돌려 줘", "research"),
+])
+def test_collecting_what_a_source_says_is_simple_but_any_analysis_is_research(text, kind):
+    assert classify_intake(text).work_kind == kind
+
+
+def test_a_request_sent_to_one_staff_member_is_simple_unless_the_pi_asked_for_research():
+    decision = classify_intake("이 자료를 살펴봐 줘", mode="direct")
+    assert (decision.work_kind, decision.source) == ("simple", "explicit")
+    assert classify_intake("이 자료를 살펴봐 줘", "research", mode="direct").work_kind == "research"
+
+
 def test_research_plan_and_result_contracts_are_strict():
     plan = valid_plan()
     parsed = validate_research_plan(plan, max_steps=2, active_packs={})

@@ -1,4 +1,4 @@
-import {syncDecisionCards} from '../../ui/decide.js';
+import {answerRequired, syncDecisionCards} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -63,11 +63,12 @@ export function startLiveOffice(onState) {
     });
     $('login-holds').replaceChildren(...holdRows);
     syncDecisionCards($('approvals'), S.approvals.values(), [], { tagName:'article', listTag:'div', kindLabels:KIND_KO,
-      emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
+      requests:S.requests, emptyText:'대기 승인 없음', disabled:a => S.conn !== 'live' || pending.has(a.id),
       onDecision:(a, approved, note, _type, choice) => {
         if (!ws || ws.readyState !== 1 || pending.has(a.id)) return;
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
         if (a.kind === 'clarify' && approved && !note) { notice(a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'); return; }
+        if (a.kind === 'question' && approved && !note && answerRequired(a)) { notice('선택지를 하나 고르거나 답을 적어 주세요.'); return; }
         // CP2 evidence review carries its approve/revise/deny choice; the note never decides it (#90).
         ws.send(JSON.stringify(choice ? {type:'approval.resolve', id:a.id, approved, note, choice}
           : {type:'approval.resolve', id:a.id, approved, note}));
@@ -78,7 +79,8 @@ export function startLiveOffice(onState) {
     const rows = [];
     if (!S.requests.size) text({append: row => rows.push(row)}, 'p', '요청 없음');
     for (const q of [...S.requests.values()].reverse()) {
-      const key = JSON.stringify([q.text, q.status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
+      const status = globalThis.LabHQState.requestStatusText(q, S.approvals);  // R14: never a raw status
+      const key = JSON.stringify([q.text, q.status, status, q.phase, q.plan, q.steps, q.processing, q.review, q.error, q.report,
         q.report_appendix, q.report_truncated, q.report_appendix_truncated, q.followups, q.piNotes,
         q.assumptions, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleWarning, loadingAnswers.has(q.id)]);
       const prior = oldRows.get(q.id);
@@ -88,7 +90,7 @@ export function startLiveOffice(onState) {
       const route = q.processing?.fallback ? '처리: 단독 실패 → 팀'
         : q.processing?.mode === 'solo' ? `처리: 단독(${q.processing.agent_id})`
         : q.processing?.mode === 'team' ? '처리: 팀' : '처리: 결정 중';
-      text(row, 'p', `${q.status} · ${q.phase} · ${route}`);
+      text(row, 'p', `${status} · ${q.phase} · ${route}`);
       const audit = text(row, 'a', '감사 번들');
       audit.href = `/api/requests/${encodeURIComponent(q.id)}/audit-bundle`;
       audit.onclick = event => { event.preventDefault(); downloadAuditBundle(q.id); };

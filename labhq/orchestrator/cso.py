@@ -3560,9 +3560,9 @@ class Orchestrator:
                         for claim in checked.claims if evidence_id in claim.verified_evidence]
         claims = sum(len((ledger or {}).get("claims") or []) for ledger in ledgers.values())
         rows = sum(len((ledger or {}).get("evidence") or []) for ledger in ledgers.values())
-        summary = (f"CP2 evidence review: {len(ledgers)} step(s), {claims} claim(s), {rows} evidence row(s)" +
-                   (f", {len(refused_rows) or len(refused)} refused" if refused_rows or refused else "") +
-                   ". Choose approve, revise or deny.")
+        summary = (f"CP2 근거 검토: 단계 {len(ledgers)}개, claim {claims}개, 근거 {rows}행" +
+                   (f", 거부 {len(refused_rows) or len(refused)}건" if refused_rows or refused else "") +
+                   ". 증거 승인·수정 요청·거부 중 고르세요. 수정 요청도 지금은 다시 돌리지 않고 요청을 끝냅니다.")
         detail = {"gate": "research_evidence", "plan_sha256": contract["plan_sha256"],
                    "choices": list(EVIDENCE_CHOICES),
                    **({"refused_rows": refused_rows} if refused_rows else {}),
@@ -4190,7 +4190,7 @@ class Orchestrator:
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
-                                      scope_status=req.get("scope_status", "in_scope"))
+                                      scope_status=req.get("scope_status", "in_scope"), mode=req["mode"])
                       if research_pilot else None)
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
@@ -4209,8 +4209,8 @@ class Orchestrator:
             if req["mode"] == "direct":
                 if research_lane:
                     req["outcome"] = "needs_research"
-                    self._finish(rid, "Research work cannot use direct mode in the PR 1 pilot. "
-                                 "Submit it as orchestrate or plan_only for a frozen, PI-approved plan.", {}, ok=False)
+                    self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
+                                 "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
                     return
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
                                                budget_usd=req.get("budget_usd"),

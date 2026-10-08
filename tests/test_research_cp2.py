@@ -183,6 +183,9 @@ async def test_cp2_refuses_evidence_whose_artifact_was_not_collected():
     assert [row["evidence_id"] for row in receipt["refused_evidence"]] == ["e1"]
     assert [row["claim_id"] for row in receipt["unsupported_claims"]] == ["c1"]
     assert "Refused evidence (not approved at CP2):\n- s1/e1:" in hub.requests["r"]["report"]
+    # R18/R10: the card summary is Korean and says that 수정 요청 ends the request too.
+    assert hub.approvals[1]["summary"] == ("CP2 근거 검토: 단계 1개, claim 1개, 근거 1행, 거부 1건. 증거 승인·수정 요청·거부 중 "
+                                           "고르세요. 수정 요청도 지금은 다시 돌리지 않고 요청을 끝냅니다.")
 
 
 def _rebinding_hub(correction_reply):

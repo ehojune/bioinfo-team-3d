@@ -2,17 +2,17 @@
 
 대상: 연구를 승인하는 PI와 계획·실행·검토를 맡는 직원. 버전 `v0.1`(2026-10-01).
 
-> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받고, 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier는 `research.live_source_check`를 켜면 CP2와 `labhq verify`에서 실행하며 기본값은 꺼짐이다. CP3·CP4는 아직 실행 경로에 연결하지 않았다.
+> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받는다. 수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝낸다(`evidence_revision_requested`). 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier는 `research.live_source_check`를 켜면 CP2와 `labhq verify`에서 실행하며 기본값은 꺼짐이다. CP3·CP4는 아직 실행 경로에 연결하지 않았다.
 
 ## 1. 접수
 
 | 판정 | 기준 | 처리 |
 |---|---|---|
-| `simple` | 정해진 변환·집계·원문 요약 | 기존 direct/orchestrate 경로 유지 |
-| `research` | 새 결론·가설·후보 선택, 답을 바꾸는 방법 선택 | 연구 계약 PLAN과 CP1 적용 |
+| `simple` | 정해진 변환·집계·원문 요약, 출처에 있는 것을 표·목록으로 정리(메타데이터·시료 정보), 추출·다운로드. 직원 한 명을 직접 지정한 요청 | 기존 direct/orchestrate 경로 유지 |
+| `research` | 새 결론·가설·후보 선택, 답을 바꾸는 방법 선택. 분석(DE·경로·생존 등)·추론(예측·비교·관계)·계산 실행(돌려·run 등)이 들어가면 표나 다운로드를 함께 요청해도 research | 연구 계약 PLAN과 CP1 적용 |
 | 모호함·scope 밖 | simple로 단정하기 어려움, 승인 범위 불명 | research로 계획하거나 PI 확인 전 대기 |
 
-길이와 직원 수는 판정 기준이 아니다. API의 `work_kind=auto|simple|research`로 PI가 명시할 수 있다. pilot을 켠 상태에서 `research + direct`는 실행하지 않고 `orchestrate` 또는 `plan_only` 재접수를 요구한다. 단순 작업에도 출처·실패·데이터 경계는 지킨다.
+길이와 직원 수는 판정 기준이 아니다. API의 `work_kind=auto|simple|research`로 PI가 명시할 수 있다. 직원 직접 지정(`direct`)은 `work_kind=research`를 명시하지 않는 한 simple이다. 명시한 `research + direct`는 실행하지 않고 팀(CSO)으로 다시 보내라고 안내한다. 단순 작업에도 출처·실패·데이터 경계는 지킨다.
 
 설정은 세 키를 함께 켠다. `enabled`만 켜면 CP1에서 계획을 동결한 뒤 단계를 실행하지 않고 끝난다. 오타 키는 시작할 때 오류다. `labhq doctor`의 `research lane` 행이 지금 상태를 알려 준다.
 
@@ -109,7 +109,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 | gate | 멈추는 때 | PI에게 보이는 것 |
 |---|---|---|
 | CP1 계획 | 연구 실행 전 | 질문·가설, plan hash, 성공/중단 기준, 비용·데이터 경계, CP2·3 위임 범위 |
-| CP2 증거 | 분석 전 | 충족/공백 slot, 실패·반대 근거, 승인·수정 요청·거부 선택. 수정 요청은 현재 요청을 끝낸다 |
+| CP2 증거 | 분석 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청·거부 선택(지금은 수정 요청도 요청을 끝냄) |
 | CP3 선택 | 후보·방법 선택 시 | 공통 기준, 대안·민감도, 최소 판별 실험·비용 |
 | CP4 수용 | 감사와 최종 초안 뒤 | 현재 권고, claim/audit/report hash, 남은 공백과 이견 |
 
