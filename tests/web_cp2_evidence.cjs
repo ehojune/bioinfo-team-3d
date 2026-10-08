@@ -28,7 +28,7 @@ test('the CP2 card offers approve, revise and deny and sends each as a choice',a
   const p=row._decisionParts;
   assert.equal(p.approve.textContent,'증거 승인');
   assert.equal(p.revise.hidden,false);
-  assert.equal(p.revise.textContent,'수정 요청');
+  assert.equal(p.revise.textContent,'수정 요청(요청 끝남)','the label says the request ends (R10)');
   assert.equal(p.revise.dataset.act,'revise');
   assert.equal(p.deny.textContent,'거부');
   p.note.value='Request revision';

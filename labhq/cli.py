@@ -23,7 +23,7 @@ from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
 from .request_status import is_terminal_request
 from .settings import Settings
-from .util import free_port, short
+from .util import atomic_write_text, free_port, short, without_windows_app_aliases
 
 REPO = Path(__file__).resolve().parents[1]
 ICON = {"cso": "🦉", "chief_of_staff": "🐧", "biologist": "🐻", "data_steward": "🐿️", "lit_scout": "🦊",
@@ -74,6 +74,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"{ic} {a:<15}{STATE_KO[d['state']]}{extra}"
     elif t == "agent.tool":
         line = f"{ic} {a:<15}🔧 {d.get('name')} {short(d.get('input'), 80)}"
+    elif t == "agent.log" and str(d.get("level") or "").casefold() in {"warn", "warning", "alert"}:
+        line = f"⚠ {ic} {a:<15}{d.get('text') or d.get('message') or '직원 경고'}"
     elif t == "approval.requested":
         line = f"📱 승인 요청 [{d.get('kind')}] {d.get('summary')}  (id={d.get('id')})"
     elif t == "approval.resolved":
@@ -169,13 +171,360 @@ def _open_web_office(s: Settings, config: str | None, *, three_d: bool = False, 
             "gateway.client_token 값을 넣으세요.")
 
 
-def _api(s: Settings, method: str, path: str, **kw):
+def _api_error_detail(response) -> str:
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return ""
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, str):
+        return " ".join(detail.split())
+    return json.dumps(detail, ensure_ascii=False, separators=(",", ":")) if detail is not None else ""
+
+
+def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw):
     import httpx
 
-    r = httpx.request(method, _http_base(s) + path, headers={"Authorization": f"Bearer {s.gateway.client_token}"},
-                      timeout=30, **kw)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = httpx.request(method, _http_base(s) + path,
+                          headers={"Authorization": f"Bearer {s.gateway.client_token}"}, timeout=30, **kw)
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPError as exc:
+        if raw_errors:
+            raise
+        if isinstance(exc, httpx.HTTPStatusError):
+            detail = _api_error_detail(exc.response)
+            message = f"gateway 요청 실패(HTTP {exc.response.status_code})" + (f": {detail}" if detail else "")
+        else:
+            message = (f"gateway에 연결할 수 없습니다: {_http_base(s)} — "
+                       f"`{_config_command(s, 'up')}`을 실행하세요.")
+        print(message, file=sys.stderr)
+        raise SystemExit(2) from None
+    except ValueError:
+        if raw_errors:
+            raise
+        print("gateway 응답을 읽을 수 없습니다.", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def _default_client_token(token: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9]", "", token.casefold())
+    return normalized in {"changeme", "changemeclient"}
+
+
+def _config_command(s: Settings, command: str) -> str:
+    launcher = os.environ.get("LABHQ_LAUNCHER") or "labhq"
+    return f'{launcher} -c "{s.config_path}" {command}' if s.config_path else f"{launcher} {command}"
+
+
+def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
+    import httpx
+
+    try:
+        value = _api(s, "GET", f"/api/requests?status=running&limit={limit}", raw_errors=True)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            print("client_token이 이 gateway와 다릅니다.", file=sys.stderr)
+            raise SystemExit(2) from None
+        return None
+    except (httpx.HTTPError, ValueError):
+        return None
+    return value if isinstance(value, list) and all(isinstance(row, dict) for row in value) else None
+
+
+def _active_requests(s: Settings) -> list[dict] | None:
+    return _authenticated_requests(s, limit=200)
+
+
+def _health(s: Settings) -> dict | None:
+    import httpx
+
+    if _authenticated_requests(s, limit=1) is None:
+        return None
+    try:
+        value = _api(s, "GET", "/api/health", raw_errors=True)
+    except (httpx.HTTPError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value.get("service") == "labhq gateway" else None
+
+
+def _wait_for_health(s: Settings, *, runner: bool, timeout: float = 20) -> dict | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        health = _health(s)
+        if health and (not runner or s.runner.id in (health.get("runners") or [])):
+            return health
+        time.sleep(0.2)
+    return None
+
+
+def _launch_state(s: Settings) -> Path:
+    return s.path(s.gateway.state_dir)
+
+
+def _pid_file(s: Settings, role: str) -> Path:
+    return _launch_state(s) / f"labhq-{role}.pid"
+
+
+class ProcessIdentityError(RuntimeError):
+    pass
+
+
+def _process_created(pid: int) -> str | None:
+    """Return an OS process-generation identifier, None only when the PID does not exist."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            error = ctypes.get_last_error()
+            if error in {87, 1168}:  # invalid parameter / not found
+                return None
+            raise ProcessIdentityError(f"Windows에서 PID {pid} 생성 시각을 읽을 수 없음(오류 {error})")
+        created, exited, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        exit_code = wintypes.DWORD()
+        try:
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                error = ctypes.get_last_error()
+                raise ProcessIdentityError(f"Windows에서 PID {pid} 상태를 읽을 수 없음(오류 {error})")
+            if exit_code.value != 259:  # STILL_ACTIVE
+                return None
+            if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                            ctypes.byref(kernel), ctypes.byref(user)):
+                error = ctypes.get_last_error()
+                raise ProcessIdentityError(f"Windows에서 PID {pid} 생성 시각을 읽을 수 없음(오류 {error})")
+        finally:
+            kernel32.CloseHandle(handle)
+        return f"windows:{(created.high << 32) | created.low}"
+
+    proc = Path("/proc")
+    if proc.is_dir():
+        stat_path = proc / str(pid) / "stat"
+        try:
+            raw = stat_path.read_text(encoding="ascii")
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise ProcessIdentityError(f"/proc에서 PID {pid} 생성 시각을 읽을 수 없음: {exc}") from None
+        end = raw.rfind(")")
+        fields = raw[end + 2:].split() if end >= 0 else []
+        if len(fields) <= 19:
+            raise ProcessIdentityError(f"/proc에서 PID {pid} 생성 시각 형식을 읽을 수 없음")
+        if fields[0] == "Z":
+            return None
+        return f"proc:{fields[19]}"
+
+    try:
+        result = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                                timeout=3, env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProcessIdentityError(f"ps로 PID {pid} 생성 시각을 읽을 수 없음: {exc}") from None
+    created = " ".join(result.stdout.split())
+    if result.returncode != 0 and not created:
+        return None
+    if not created:
+        raise ProcessIdentityError(f"ps가 PID {pid} 생성 시각을 돌려주지 않음")
+    return f"ps:{created}"
+
+
+def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | None]:
+    """Return alive/missing/stale/unknown. Stale records are removed without touching a process."""
+    path = _pid_file(s, role)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "missing", None, None
+    except OSError as exc:
+        return "unknown", None, f"프로세스 기록을 읽을 수 없음: {exc}"
+    except (ValueError, TypeError):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", None, f"잘못된 프로세스 기록을 지울 수 없음: {exc}"
+        return "stale", None, None
+    valid = (isinstance(record, dict) and isinstance(record.get("pid"), int)
+             and record.get("pid", 0) > 0 and record.get("role") == role
+             and isinstance(record.get("created"), str) and record.get("config") == s.config_path)
+    if not valid:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", record if isinstance(record, dict) else None, f"stale 기록을 지울 수 없음: {exc}"
+        return "stale", None, None
+    try:
+        created = _process_created(record["pid"])
+    except ProcessIdentityError as exc:
+        return "unknown", record, str(exc)
+    if created is None or created != record["created"]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", record, f"stale 기록을 지울 수 없음: {exc}"
+        return "stale", record, None
+    return "alive", record, None
+
+
+def _record_problem(role: str, reason: str | None) -> None:
+    print(f"{role} 프로세스 신원을 확인할 수 없어 건드리지 않습니다: {reason or '알 수 없는 이유'}",
+          file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _start_background(s: Settings, role: str, *, popen=None) -> int:
+    state = _launch_state(s)
+    logs = state / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    if role == "runner":
+        env = without_windows_app_aliases(env)
+    command = [sys.executable, "-m", "labhq.cli"]
+    if s.config_path:
+        command += ["-c", s.config_path]
+    command.append(role)
+    options = {
+        "cwd": str(REPO), "stdin": subprocess.DEVNULL, "stderr": subprocess.STDOUT,
+        "env": env, "close_fds": True,
+    }
+    if sys.platform == "win32":
+        options["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0x00000008) |
+                                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+    else:
+        options["start_new_session"] = True
+    with (logs / f"{role}.log").open("a", encoding="utf-8") as output:
+        process = (popen or subprocess.Popen)(command, stdout=output, **options)
+    try:
+        created = _process_created(process.pid)
+    except ProcessIdentityError as exc:
+        try:
+            _terminate_tree(process.pid)
+        except OSError:
+            if hasattr(process, "terminate"):
+                process.terminate()
+        _record_problem(role, str(exc))
+    if created is None:
+        try:
+            _terminate_tree(process.pid)
+        except OSError:
+            if hasattr(process, "terminate"):
+                process.terminate()
+        _record_problem(role, f"띄운 PID {process.pid}이 이미 종료됨")
+    record = {"pid": int(process.pid), "role": role, "created": created, "config": s.config_path}
+    atomic_write_text(_pid_file(s, role), json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return int(process.pid)
+
+
+def _up(s: Settings, *, popen=None) -> None:
+    if _default_client_token(s.gateway.client_token):
+        print("gateway 시작 거부: gateway.client_token의 change-me 기본값을 바꾸세요.", file=sys.stderr)
+        raise SystemExit(2)
+    health = _health(s)
+    if health is None:
+        state, _record, reason = _process_record(s, "gateway")
+        if state == "unknown":
+            _record_problem("gateway", reason)
+        if state == "alive":
+            health = _wait_for_health(s, runner=False, timeout=30)
+            if health is None:
+                print(f"gateway 프로세스는 살아 있으나 인증된 상태를 확인할 수 없음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        else:
+            _start_background(s, "gateway", popen=popen)
+            health = _wait_for_health(s, runner=False)
+        if health is None:
+            print(f"gateway가 시작되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'gateway.log'}",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    if s.runner.id not in (health.get("runners") or []):
+        state, _record, reason = _process_record(s, "runner")
+        if state == "unknown":
+            _record_problem("runner", reason)
+        if state == "alive":
+            health = _wait_for_health(s, runner=True, timeout=30)
+            if health is None:
+                print(f"runner 프로세스는 살아 있으나 gateway에 연결되지 않음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'runner.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        else:
+            _start_background(s, "runner", popen=popen)
+            health = _wait_for_health(s, runner=True, timeout=60)
+        if health is None:
+            print(f"runner가 연결되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'runner.log'}",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
+
+
+def _terminate_tree(pid: int) -> None:
+    if sys.platform == "win32":
+        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, text=True,
+                                timeout=15)
+        if result.returncode:
+            try:
+                missing = _process_created(pid) is None
+            except ProcessIdentityError:
+                missing = False
+            if not missing:
+                detail = " ".join((result.stderr or result.stdout).split())
+                raise OSError(detail or f"taskkill exit {result.returncode}")
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
+def _stop_background(s: Settings, role: str) -> int | None:
+    state, record, reason = _process_record(s, role)
+    if state in {"missing", "stale"}:
+        return None
+    if state == "unknown":
+        _record_problem(role, reason)
+    pid = int(record["pid"])
+    try:
+        _terminate_tree(pid)
+    except OSError as exc:
+        print(f"{role} PID {pid}을 종료하지 못했습니다: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
+    _pid_file(s, role).unlink(missing_ok=True)
+    return pid
+
+
+def _active_request_line(request: dict) -> str:
+    steps = (request.get("step_progress") or {}).get("steps") or {}
+    active = [f"{step}={state}" for step, state in steps.items() if state in {"running", "hibernating"}]
+    suffix = f" · {', '.join(active)}" if active else ""
+    return f"{request.get('id', '?')} ({request.get('status', '?')}) {short(request.get('text'), 80)}{suffix}"
+
+
+def _down(s: Settings, *, force: bool = False) -> None:
+    active = _active_requests(s)
+    if active:
+        for request in active:
+            print(f"진행 중 요청: {_active_request_line(request)}", file=sys.stderr)
+        if not force:
+            print(f"종료를 거부했습니다. 계속하려면 `{_config_command(s, 'down --force')}`를 쓰세요.",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    elif active is None and not force:
+        print(f"진행 중 작업을 확인할 수 없어 종료하지 않았습니다. 계속하려면 "
+              f"`{_config_command(s, 'down --force')}`를 쓰세요.", file=sys.stderr)
+        raise SystemExit(2)
+    for role in ("runner", "gateway"):
+        state, _record, reason = _process_record(s, role)
+        if state == "unknown":
+            _record_problem(role, reason)
+    stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
+    print("종료: " + (", ".join(f"{role} PID {pid}" for role, pid in stopped) if stopped else "기록된 프로세스 없음"))
 
 
 def _terminal_report(data: dict) -> str:
@@ -204,7 +553,7 @@ def _verify(s: Settings, request_id: str, *, as_json: bool, bundle: str | None) 
         return 2
 
     try:
-        req = _api(s, "GET", f"/api/requests/{quote(request_id, safe='')}")
+        req = _api(s, "GET", f"/api/requests/{quote(request_id, safe='')}", raw_errors=True)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         return cannot("gateway에 그 요청이 없습니다" if code == 404 else f"gateway가 HTTP {code}를 돌려줬습니다")
@@ -294,6 +643,21 @@ def _approval_delay(phone: bool, approve_timeout: float) -> float:
 
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 WILDCARD_HOSTS = ("0.0.0.0", "::", "")
+
+
+def _port_available(host: str, port: int) -> bool:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    bind_host = host or ("::" if family == socket.AF_INET6 else "0.0.0.0")
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.bind((bind_host, port))
+        return True
+    except OSError:
+        return False
+
+
+def _demo_web_port(host: str, preferred: int) -> int:
+    return preferred if _port_available(host, preferred) else free_port()
 
 
 def _demo_token(exposed: bool, current: str) -> str:
@@ -459,7 +823,7 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
     tmp = Path(tempfile.mkdtemp(prefix="labhq-demo-"))
     shutil.copytree(REPO / "agents", tmp / "agents")
     s = _demo_settings(tmp)
-    gport = port if web else free_port()
+    gport = _demo_web_port(host, port) if web else free_port()
     dial = _demo_dial_host(host)
     s.gateway.port, s.gateway.url = gport, f"ws://{dial}:{gport}"
     exposed = phone or host not in LOOPBACK_HOSTS
@@ -562,6 +926,9 @@ def main(argv: list[str] | None = None) -> None:
     init.add_argument("--dry-run", action="store_true", help="preview without writing files")
     init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
     sub.add_parser("gateway")
+    sub.add_parser("up", help="start the gateway and runner in the background")
+    down = sub.add_parser("down", help="stop only the gateway and runner recorded by this instance")
+    down.add_argument("--force", action="store_true", help="stop even when work is active or cannot be checked")
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
@@ -693,6 +1060,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "demo" and (not math.isfinite(args.approve_timeout) or args.approve_timeout <= 0):
         p.error("--approve-timeout must be positive")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     if args.cmd == "init":
         from .init_wizard import InitError, run
         from yaml import YAMLError
@@ -708,6 +1076,9 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.cmd == "bench":
+        requested = args.config or os.environ.get("LABHQ_CONFIG")
+        if requested and not Path(requested).is_file():
+            p.exit(2, f"labhq: 설정 파일이 없습니다: {requested}\n")
         from .bench import run_cli
 
         try:
@@ -715,7 +1086,10 @@ def main(argv: list[str] | None = None) -> None:
         except (ValueError, KeyError) as exc:
             p.error(str(exc))
         return
-    s = Settings.load(args.config)
+    try:
+        s = Settings.load(args.config)
+    except FileNotFoundError as exc:
+        p.exit(2, f"labhq: {exc}\n")
 
     if args.cmd == "doctor":
         from .doctor import collect, render, save
@@ -744,15 +1118,30 @@ def main(argv: list[str] | None = None) -> None:
             app = create_app(s)
         except ValueError as exc:  # e.g. a retired research pack version (#170)
             p.exit(1, f"gateway: {exc}\n")
+        if _default_client_token(s.gateway.client_token):
+            p.exit(2, "gateway: gateway.client_token의 change-me 기본값을 바꾸세요.\n")
         # The web office asks for the client token; say how to get in without printing it (PI visit 2026-10-04).
-        print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `labhq open`을 실행하면 토큰을 넣은 채 열립니다)", flush=True)
+        print(f"웹 사무실: {_http_base(s)}/  (다른 창에서 `{_config_command(s, 'open')}`을 실행하세요)",
+              flush=True)
         uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
                     log_config=gateway_log_config())
+    elif args.cmd == "up":
+        _up(s)
+    elif args.cmd == "down":
+        _down(s, force=args.force)
     elif args.cmd == "open":
+        if _health(s) is None:
+            print(f"gateway에 연결할 수 없습니다: {_http_base(s)} — "
+                  f"`{_config_command(s, 'up')}`을 실행하세요.", file=sys.stderr)
+            raise SystemExit(2)
         print(_open_web_office(s, args.config or os.environ.get("LABHQ_CONFIG"), three_d=args.three_d))
     elif args.cmd == "runner":
         from .runner.daemon import Runner
 
+        clean = without_windows_app_aliases(dict(os.environ))
+        path_key = next((key for key in clean if key.casefold() == "path"), None)
+        if path_key:
+            os.environ[path_key] = clean[path_key]
         asyncio.run(_run_runner_with_interrupts(Runner(s)))
     elif args.cmd == "status":
         health = _api(s, "GET", "/api/health")
@@ -841,6 +1230,16 @@ def main(argv: list[str] | None = None) -> None:
             p.error("CP2 evidence review needs --choice approve, --choice revise or --choice deny")
         if args.choice and pending and not evidence:
             p.error(f"--choice is only for CP2 evidence review; {args.id} is {pending.get('kind')}")
+        if pending and pending.get("kind") == "clarify" and not args.deny and not args.note.strip():
+            questions = (pending.get("detail") or {}).get("questions") or []
+            lines = []
+            for index, question in enumerate(questions, 1):
+                text = question.get("question") if isinstance(question, dict) else str(question)
+                lines.append(f"{index}. {text}")
+            if not lines:
+                lines = [str(pending.get("summary") or "PI 질문에 답해 주세요.")]
+            p.exit(2, "clarify 카드는 --note 답변이 필요합니다. 요청은 그대로 유지됩니다.\n질문:\n" +
+                   "\n".join(lines) + f'\n예: labhq approve {args.id} --note "1: a, 2: b"\n')
         body = {"approved": args.choice == "approve" if args.choice else not args.deny, "note": args.note}
         if args.choice:
             body["choice"] = args.choice

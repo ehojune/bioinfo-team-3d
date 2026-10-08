@@ -516,10 +516,12 @@ class Settings(BaseModel):
     def load(cls, path: str | None = None) -> "Settings":
         path = path or os.environ.get("LABHQ_CONFIG")
         data: dict = {}
-        if path and Path(path).exists():
+        if path and not Path(path).is_file():
+            raise FileNotFoundError(f"설정 파일이 없습니다: {path}")
+        if path:
             data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         s = cls.model_validate(data)
-        if path and Path(path).exists():
+        if path:
             s.config_path = str(Path(path).resolve())
         return s
 

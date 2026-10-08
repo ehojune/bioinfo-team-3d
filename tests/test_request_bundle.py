@@ -1387,3 +1387,39 @@ def test_bundle_rename_gives_up_after_the_retries_or_off_windows(monkeypatch, wi
     with pytest.raises(PermissionError):
         request_bundle_module._replace_dir(locked, Path("target"), windows=windows)
     assert locked.calls == calls
+
+
+def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path):
+    """Readiness R24 (2026-10-08): claims lived only in the audit bundle, so a colleague holding the request bundle
+    could not follow a report anchor to its evidence."""
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    request["research_contract"] = {"plan_sha256": "f" * 64, "report_check": {"anchors": 1, "problems": []},
+                                    "checkpoints": {"cp2": {"decision": "approved", "refused_evidence": []}}}
+    upstream_ref = f"{request['results']['s1']['workdir_id']}/outputs/data/input.tsv"
+    request["results"]["s2"]["structured"] = {"claims": [{"id": "c_main", "statement": "x", "status": "supported"}],
+                                              "evidence": [], "links": [],
+                                              "artifact_refs": [{"artifact_id": "own", "path": "outputs/final.txt"},
+                                                                {"artifact_id": "up", "path": upstream_ref},
+                                                                {"artifact_id": "gone", "path": "outputs/missing.tsv"}]}
+    request["report"] = "Main finding [[claim:s2/c_main]]."
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+
+    claims = json.loads((bundle / "claims.json").read_text(encoding="utf-8"))
+    assert claims["ledgers"]["s2"]["claims"][0]["id"] == "c_main"
+    refs = {ref["artifact_id"]: ref for ref in claims["ledgers"]["s2"]["artifact_refs"]}
+    # #497 review: each cited file is found at its place in the bundle; the ledger's own path is kept.
+    assert refs["own"]["bundle_path"] == "steps/s2/outputs/final.txt" and (bundle / refs["own"]["bundle_path"]).is_file()
+    assert refs["up"]["bundle_path"] == "steps/s1/outputs/data/input.tsv" and (bundle / refs["up"]["bundle_path"]).is_file()
+    assert refs["up"]["path"] == upstream_ref and "bundle_path" not in refs["gone"]
+    assert "bundle_path" not in request["results"]["s2"]["structured"]["artifact_refs"][0]  # stored request untouched
+    assert claims["cp2"]["decision"] == "approved" and claims["report_check"] == {"anchors": 1, "problems": []}
+    assert manifest_rows(bundle)["claims.json"]["status"] == "generated"
+    assert "claims.json" in crate_entities(bundle)
+    assert "`claims.json`" in (bundle / "README.md").read_text(encoding="utf-8")
+    assert verify_bundle_copy(bundle)["problems"] == []
+
+
+def test_a_general_bundle_has_no_claims_file(tmp_path):
+    settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
+    bundle = Path(build_request_bundle(request, settings, tasks)["path"])
+    assert not (bundle / "claims.json").exists() and "claims.json" not in manifest_rows(bundle)

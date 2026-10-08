@@ -50,6 +50,27 @@ def merge_staff_env(parent: dict[str, str], *overrides: dict[str, str]) -> dict[
     return merged
 
 
+def is_windows_app_alias_dir(path: str) -> bool:
+    """Whether a PATH entry is one of the Windows Python app-alias folders."""
+    normalized = path.strip().strip('"').replace("\\", "/").rstrip("/").casefold()
+    return (normalized.endswith("/microsoft/windowsapps") or "/microsoft/windowsapps/" in normalized or
+            normalized.endswith("/appdata/local/python/bin") or "/appdata/local/python/bin/" in normalized)
+
+
+def without_windows_app_aliases(env: dict[str, str]) -> dict[str, str]:
+    """Copy an environment without Windows app aliases that can hang ``python3``."""
+    cleaned = dict(env)
+    path_key = next((key for key in cleaned if key.casefold() == "path"), None)
+    if path_key is None:
+        return cleaned
+    raw = cleaned[path_key]
+    separator = ";" if ";" in raw else os.pathsep
+    cleaned[path_key] = separator.join(
+        entry for entry in raw.split(separator) if not is_windows_app_alias_dir(entry)
+    )
+    return cleaned
+
+
 def atomic_write_text(path: str | Path, text: str) -> None:
     """Replace a text file from a same-directory temporary file."""
     target = Path(path)

@@ -3,6 +3,13 @@ function add(parent, tag, text = '', className = '') { const el = doc().createEl
 const STATUS = { pending:'대기', queued:'대기', working:'진행 중', waiting_quota:'한도 대기', waiting_login:'로그인 대기', waiting_facilities_fix:'환경 수정 승인 대기', hibernating:'HPC 대기', revise:'리뷰 반영', error:'실패', failed:'실패', skipped:'건너뜀', done:'완료' };
 const COLUMN = { pending:'waiting', queued:'waiting', working:'working', waiting_quota:'working', waiting_login:'working', waiting_facilities_fix:'working', hibernating:'working', revise:'review', error:'review', failed:'review', skipped:'done', done:'done' };
 
+const pad = n => String(n).padStart(2, '0');
+// Local "MM-DD HH:MM", the same on every browser locale.
+export function stamp(seconds) {
+  const d = new Date(Number(seconds) * 1000);
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function list(parent, title, values, className = '') {
   if (!values?.length) return;
   add(parent, 'strong', title, className);
@@ -31,8 +38,10 @@ function cardFor(step, status, detail, options) {
   if (detail.error) add(card, 'p', detail.error, 'task-error');
   if (detail.text) add(card, 'p', detail.text, 'task-result');
   if (status === 'waiting_quota') {
-    const when = detail.quota_resume_at ? new Date(detail.quota_resume_at * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '시각 확인 중';
-    add(card, 'p', `한도 대기, ${when} 재개`, 'task-meta');
+    // A reset days away must not read as today (R21): date and time, and the gateway's last deadline when known.
+    const when = detail.quota_resume_at ? `${stamp(detail.quota_resume_at)} 재개` : '재개 시각 확인 중';
+    const until = detail.quota_deadline_at ? ` · 최대 ${stamp(detail.quota_deadline_at)}까지 기다림` : '';
+    add(card, 'p', `한도 대기 · ${when}${until}`, 'task-meta');
     if (options.onQuotaResume) {
       const resume = add(card, 'button', '지금 재개', 'btn'); resume.type = 'button';
       resume.addEventListener('click', () => options.onQuotaResume(step.id));

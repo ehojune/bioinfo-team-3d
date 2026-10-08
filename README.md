@@ -176,34 +176,42 @@ CSO는 계획마다 분야 이름표(topic 키)를 적습니다. 키는 PI가 �
 ```bash
 git clone https://github.com/ehojune/bioinfo-team-3d.git
 cd bioinfo-team-3d
-pip install -e ".[dev]"
-labhq demo --web
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\labhq demo --web
 ```
 
-출력된 `http://127.0.0.1:8787/?token=…`을 열면 mock 팀이 일하는 사무실이 뜹니다. 폰으로 보려면 PC와 폰을 같은 Wi-Fi에 두고 `labhq demo --web --phone`을 실행한 뒤 출력된 `/3d` URL을 엽니다.
+POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다. 8787이 사용 중이면 demo가 빈 port를 고릅니다.
 
 ### 2. 설치와 설정
 
 필요한 것: Python 3.10 이상, Git, 직원으로 쓸 CLI(Claude Code·Codex)의 설치와 로그인. npm으로 설치한 CLI는 Node.js도 필요합니다.
 
 ```bash
-labhq init                                   # 설정 파일과 gateway token을 만들고 점검
-export LABHQ_CONFIG=$PWD/config/labhq.yaml   # PowerShell: $env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
-labhq doctor                                 # 설정·엔진·직원·계산 도구 점검
+.\labhq init
+.\labhq -c config\labhq.yaml doctor
 ```
 
 `labhq init`은 HPC와 bioinfo-agent 경로를 묻습니다. 직원 전용 로그인 폴더가 필요하면 사람이 칠 로그인 명령도 알려 줍니다.
 
 ### 3. 띄우기
 
-터미널 두 개에서 실행합니다. 2단계의 `export`는 그 터미널에만 걸리므로 새 터미널에서도 `LABHQ_CONFIG`를 다시 지정합니다(또는 `labhq --config config/labhq.yaml runner`처럼 명령 앞에 붙입니다). 빠뜨리면 그쪽이 기본 token으로 떠서 gateway와 runner가 서로 붙지 못합니다.
+PowerShell이나 cmd의 새 창에서 실행합니다. `labhq.cmd`가 `.venv` Python을 직접 써서 PowerShell ExecutionPolicy에 걸리지 않습니다.
 
-```bash
-labhq gateway   # 요청·승인·이벤트를 저장하고 웹 사무실을 연다
-labhq runner    # 직원 CLI를 실제로 돌린다. gateway로 나가는 연결만 쓴다
+```powershell
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
 ```
 
-세 번째 터미널에서 `labhq open`을 실행하면 웹 사무실이 로그인된 채 열립니다(토큰은 화면에 찍지 않습니다). 직접 열려면 `http://127.0.0.1:8787/?token=<client_token>`을 엽니다. `client_token`은 설정 파일의 `gateway.client_token` 값이고, 한 번 열면 그 기기에 저장됩니다.
+`up`은 gateway와 runner를 창과 분리해 띄우고 state 폴더의 로그와 프로세스 기록으로 관리합니다. `down`은 진행 중 요청이 있거나 상태를 확인할 수 없으면 거부하며, 확인하고 끝내려면 `down --force`를 씁니다. POSIX 명령은 `./labhq.sh -c config/labhq.yaml up`과 `open`입니다.
+
+**PC를 다시 켰을 때**
+
+```powershell
+cd <labhq 저장소>
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
+```
 
 ### 4. 첫 요청
 

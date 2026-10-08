@@ -62,12 +62,12 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 API 키·클러스터 없이 돌아갑니다.
 
 ```bash
-pip install -e ".[dev]"
-labhq demo --web   # mock 팀이 계속 일하는 사무실을 브라우저로: 출력되는 http://127.0.0.1:8787/?token=… 열기
-labhq demo         # 같은 흐름을 터미널 로그로
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\labhq demo --web
 ```
 
-폰에서는 `labhq demo --web --phone`을 실행하고 출력된 `/3d` URL을 여세요.
+POSIX에서는 `python3 -m venv .venv`, `./.venv/bin/python -m pip install -e ".[dev]"`, `./labhq.sh demo --web`을 씁니다. 폰은 `--phone`을 더합니다.
 게이트웨이 없이 UI만 보려면 `python -m http.server --directory labhq/web 8000` 뒤 `http://127.0.0.1:8000/?demo=1`을 엽니다.
 
 ## 설치와 첫 설정
@@ -75,16 +75,13 @@ labhq demo         # 같은 흐름을 터미널 로그로
 전제: Python ≥ 3.10, Git, 설정한 직원 CLI의 설치·로그인. npm 설치 CLI는 Node.js도 필요합니다.
 
 ```bash
-labhq init                                        # 첫 설치 설정과 doctor 점검
-export LABHQ_CONFIG=$PWD/config/labhq.yaml
+.\labhq init
+.\labhq -c config\labhq.yaml doctor
 ```
 
 PowerShell:
 
-```powershell
-labhq init
-$env:LABHQ_CONFIG = "$PWD\config\labhq.yaml"
-```
+POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 AlphaGenome API 키가 아직 없으면 마지막에 한 번 묻습니다. Enter로 건너뛸 수 있고, 키 보관은 [공개 자원 조회 도구](#공개-자원-조회-도구)에 있습니다.
@@ -108,14 +105,23 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 ## 띄우기와 접속
 
 ```bash
-labhq gateway                # 작은 VM 또는 집 PC(+Tailscale). 요청·승인·이벤트를 로컬 SQLite에 저장
-labhq runner                 # 워크스테이션 또는 HPC 로그인 노드. 게이트웨이로 outbound 접속
-labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1회)
-
-# 브라우저: http://<gateway>:8787/?token=<client_token>  (토큰은 한 번만, 이후 기기에 저장)
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
 ```
 
-`client_token`은 설정 파일의 `gateway.client_token` 값입니다. gateway는 기본으로 `127.0.0.1:8787`에서만 받으므로, 다른 기기에서 열려면 `gateway.host`·`port`를 바꿉니다.
+Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. POSIX에서는 `./labhq.sh`를 씁니다.
+
+`down`은 진행 중 요청·task가 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다. 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다.
+
+**PC를 다시 켰을 때**
+
+```powershell
+cd <labhq 저장소>
+.\labhq -c config\labhq.yaml up
+.\labhq -c config\labhq.yaml open
+```
+
+설정 경로가 없거나 gateway client token이 `change-me` 기본값이면 시작하지 않습니다. `open`과 다른 API 명령은 gateway가 꺼졌거나 HTTP 오류가 나면 traceback 대신 한 줄과 exit 2를 돌려줍니다.
 오프라인 데모를 폰으로 보려면 PC와 폰이 같은 Wi-Fi에 있어야 합니다([웹 사무실](#웹-사무실)).
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
 (러너는 재접속 루프로 대기). 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
@@ -144,7 +150,10 @@ labhq setup-paper2agent      # 파견직 채용용 paper2agent 스킬 설치 (1�
 - 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
 **실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. CLI는 `labhq note <request_id> "text"`입니다.
-- CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 답한 질문은 다시 묻지 않으며, 새 질문이 생기면 카드가 한 번 더 뜹니다(요청당 최대 2장). 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다
+- CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 답한 질문은 다시 묻지 않으며, 새 질문이 생기면 카드가 한 번 더 뜹니다(요청당 최대 2장). 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다. 직원의 hard-stop 질문(`직원 질문 · PI 확인`, 설치·데이터 구역·삭제 등)도 선택지가 있으면 같은 버튼으로 하나를 골라야 보내집니다
+- 결정 카드 첫 줄에 어느 요청의 카드인지 요청 문장을 보여 줍니다. 거절 결과가 정해진 카드(재개·CP1·CP2·직원 질문)에는 거절하면 어떻게 되는지 한 줄을 붙입니다. 재개 카드는 gateway가 시간 초과로 닫지 않으므로 남은 시간을 표시하지 않습니다
+- 요청 상태는 진행 중·러너 기다림·한도 대기·로그인 대기·환경 수정 승인 대기·중단됨·완료·실패·취소됨·거부됨으로 나눠 보입니다. gateway 재시작 뒤 `중단됨`은 실패가 아니며 결정 탭의 재개 카드로 이어 갑니다. 재개를 승인하면 새로고침 없이 `러너 기다림`(연결이 필요한 직원 표시) → `진행 중`으로 바뀝니다
+- 직원 로그의 alert(UAC 승인 대기, 읽기 전용 실행의 파일 변경, 단계 실패 등)는 메신저와 함께 화면 알림으로도 뜹니다
 - 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지. 폰에서는 **직원 보기**로 펼칩니다.
 - 사무실 소품은 탭 입구입니다. 칠판은 작업판, HPC 랙은 HPC, 문은 메신저를 엽니다. 결정이 기다리면 칠판이 깜박이고 결정 탭을 엽니다(#57).
 - 직원 카드를 누르면 상세 시트가 열립니다. **활동**은 도구 사용과 말, **생각·디버그**는 피드에 올리지 않는 엔진의 생각·디버그 줄(직원마다 최근 60줄)입니다(#57). 시트 위쪽 capability card는 권한(Claude `permission_mode`, Codex `sandbox`), 추론 강도, 이어 묻기·상담 가능 여부(읽기 전용을 강제하지 못하는 엔진은 안 됨)와 세션 이어 쓰기, runner가 실제로 붙이는 MCP, 이 화면에 있는 요청들에서 쓴 비용을 runner가 보낸 roster와 엔진 adapter 기준으로 보여 줍니다.
@@ -170,6 +179,7 @@ labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교" 
 labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
 labhq watch                  # 실시간 이벤트
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
+labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
 labhq verify <request_id>    # runner PC에서 산출 sha256과 보고서 claim 앵커를 다시 검사(--json, --bundle audit.zip)
 labhq recruit --repo https://github.com/scverse/scanpy --focus "Preprocessing and clustering" --ttl 14
 labhq talent                 # 인재풀
@@ -232,6 +242,7 @@ CSO는 설치·예산·통제 데이터·HPC 같은 권한/비용/접근, PI만 
 | 경로 | 내용 |
 |---|---|
 | `report.md` · `report_appendix.md` | PI용 본문과 실행 기록 |
+| `claims.json` | 연구 요청만. 단계별 claim·근거 원장, CP2 기록, 앵커 검사. 보고서의 `[[claim:<단계>/<claim>]]`은 `ledgers.<단계>.claims`의 `id` |
 | `steps/<step_id>/outputs/` | 최종 단계 결과에 경로와 sha256이 함께 기록된 산출물, 그다음 단계가 보고하지 않고 쓴 산출 |
 | `link_inputs.py` | 단계 폴더의 `inputs/<앞 단계>`를 `steps/<앞 단계>/outputs`로 잇는 스크립트(의존이 있을 때만) |
 | `README.md` | 단계 의존 순서와 스크립트 재실행 명령 |
@@ -289,12 +300,13 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `approval.requested` · `approval.resolved` | 승인 요청·결과 | 폰 푸시, 책상 위 빨간 깃발 |
 | `job.submitted` · `job.state` · `jobs.finished` | HPC 작업 | 서버실 랙 불빛, 기상 알람 |
 | `request.plan` · `request.step_attempt` · `request.step_retry` · `request.step_skipped` · `request.step_done` · `request.review` · `request.completed` | 요청 진행 | 실패한 가지는 skip, 일시적 실패는 최대 2회 시도. 실패 보고서 첫머리는 단계·원인·PI 조치를 세 줄로 알리고, 지시문·출력 전문은 round 기록과 작업 폴더에 남긴다(#331) |
-| `request.step_quota_wait` · `request.step_quota_resumed` | 구독 한도 주차·재개 | reset 시각과 `지금 재개` 버튼 |
+| `request.step_quota_wait` · `request.step_quota_resumed` | 구독 한도 주차·재개 | `MM-DD HH:MM` reset 시각, 최대 대기 기한(`orchestrator.quota_default_wait_s` 기본 3600초, `quota_max_wait_s` 기본 7일)과 `지금 재개` 버튼(같은 엔진에서 기다리는 단계를 모두 풂) |
 | `request.step_login_wait` · `request.step_login_resumed` · `engine.login_wait` · `engine.login_resumed` | 로그인 주차·재개 | 엔진별 로그인 명령과 `로그인했어요 · 다시 시도` 버튼 |
 | `recruit.suggested` · `recruit.status` · `recruit.done` · `roster.updated` | 파견직 | 입구에 새 병아리, 명패에 만료일 |
 | `request.created` · `github.posted` · `github.failed` | 요청 접수, GitHub 보고 | 메신저에 링크 |
 | `request.followup` · `request.followup_done` | 끝난 요청에 이어 묻기와 답 | 작업판의 질문·답 목록 |
 | `request.note` | 실행 중 요청에 보낸 PI 메모 | 요청 카드·작업판에 시각과 함께 표시 |
+| `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 새 CP1로 이어 가기를 승인(`round`) | 요청 카드에 n차 표시 |
 
 REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
@@ -554,7 +566,7 @@ bioinfo-agent의 일반 질문과 새 pipeline 생성 여부는 CSO가 답합니
 
 ![연구 lane: CSO 계획 → CP1 계획 승인 → 단계 실행 → CP2 근거 승인 → 리뷰 → claim 앵커 보고서 → labhq verify](media/research-lane.svg)
 
-`research` 설정, 기본 꺼짐. `enabled: true`면 CSO가 요청을 연구와 단순 작업(변환·집계·원문 요약, 출처에 있는 것을 표·목록으로 정리·추출·다운로드)으로 나누고(분석·예측·비교·관계 같은 추론이나 계산 실행(돌려·run 등)이 들어가면 표를 함께 요청해도 연구, 직원 한 명을 직접 지정한 요청은 연구로 명시하지 않는 한 단순 작업, 규칙은 [연구 수행 규약](research_protocol.md) 1절), 연구는 계획(PLAN)을 schema로 검증해 hash로 고정한 뒤 PI 승인(CP1)을 받습니다. 승인 뒤 계획이 바뀌면 다시 승인받습니다. 도메인 규칙은 `active_packs`의 pack(`id@version`)으로 더합니다(예: `active_packs: [single_cell_de@3, bulk_tumor_normal@3]`). `single_cell_de@3`은 단일세포 donor·scale·model을, `bulk_tumor_normal@3`은 벌크 두 조건의 pairing·filter·DE 기준·양성 대조를 판정합니다. 짝의 근거(`pairing_evidence`)는 GEO characteristics·sample title 같은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면 출처가 하나 이상 있어야 합니다. 발현 유사도는 근거가 될 수 없습니다(#369). CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다. 두 version 모두 요청 topic으로 적용됩니다(`single_cell_rna_seq`, `bulk_rna_seq`·`microarray_expression`). 기존 `bulk_tumor_normal@1`·`@2`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개합니다. 없어진 version이나 없는 pack 폴더가 설정에 있으면 gateway가 남은 version을 알리고 시작하지 않습니다(#170). 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다. 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222). `evidence_checkpoint: true`를 함께 켜면 CP1 뒤 연구 단계가 `result v2` claim·evidence 계약으로 실행되고, CP2 카드에서 PI가 승인·수정 요청·거부를 고릅니다. 결정은 웹 카드 버튼이나 `labhq approve <id> --choice approve|revise|deny`의 선택값으로만 읽고 메모는 읽지 않습니다. 선택값이 없으면 승인하지 않고 다시 묻습니다(세 번까지). `artifact_refs` 경로가 그 단계가 모은 산출이나 끝난 조상 단계(직접 상위가 아니어도 됨)의 산출(`<workdir_id>/<path>`)이 아니면 그 evidence는 거부되고, 카드와 receipt에 이유가 남습니다. 단계가 끝날 때 원장이 계약을 통과해도 이런 인용이 있으면, 교정 횟수가 남은 동안 한 번 모은 산출 목록을 주고 인용을 고치게 합니다(#485). 이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다. 보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 단계가 PI 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 PI에게 묻고, 답을 받아 다시 실행합니다. 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다. 단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다. 거부한 행과 이유는 CP2 카드와 보고서 메타데이터에 남습니다. 예를 들어 실패하거나 0건인 조회를 근거(supports)로 연결했다면 그 링크만 빼고 시도 기록은 남깁니다. 계획 hash·단계·필수 evidence 칸 같은 구조 결함은 거부로 메우지 않고 단계 실패로 봅니다. 단계가 실패하면 `research_failed`로 끝나고, 계획을 바꾸려면 CP1을 다시 받아야 합니다. 연구 계약이 있는 요청을 `research.enabled`를 끈 채 이어 가면 아무것도 보내지 않고 `research_disabled`로 멈춥니다. CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다. P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다. 대신 **이어 가기** 카드(`research_continue`)가 뜹니다. 거절하거나 답이 없으면 지금처럼 `research_review_revise`로 끝납니다. 승인하면 CSO가 리뷰 P1 지적과 이전 계획을 받아 새 계획을 쓰고, PI가 새 CP1(새 `plan_sha256`)을 승인한 뒤 바뀐 단계와 새 단계만 실행합니다. 그 뒤 CP2·리뷰·보고서는 같습니다. 이전 단계는 다섯 조건이 모두 맞을 때만 다시 돌리지 않고 결과를 그대로 씁니다: 단계 사양(모든 field)과 질문·scope·protocol·pack 값이 바이트까지 같고, 적용 pack의 sha256(`protocol.packs`·`pack_snapshot`)이 같고, P1 지적이 그 단계를 가리키지 않고, 위 단계가 모두 재사용되고, 새 CP1 승인 직후 기록된 산출 파일의 sha256이 그대로입니다(`labhq verify`와 같은 검사). 같은 `id@version` pack이라도 정의가 바뀌면 단계가 어느 규칙에 기댔는지 모르므로 모든 단계가 다시 돕니다. 하나라도 어긋나면 그 단계와 아래 단계가 다시 돕니다. 재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다. CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다. 이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다. 이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하고, 비용은 같은 요청 예산에 쌓입니다. 중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다. 새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다. 이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다. 돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다. `labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다. 이어 가기 카드도 다른 승인 카드처럼 `policy.approvals.timeout_s`(기본 3600초)가 지나면 닫힙니다. 이미 끝난 요청은 나중에 이어 갈 수 없으니 새 요청을 냅니다. accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`, 있으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다. 실패한 조회는 보고서에 따로 남습니다. 끄면 새 요청은 기존처럼 CP1에서 멈추고, 이미 연구 계약이 있는 요청은 재개할 때 고정된 실행 여부와 CP2 receipt를 그대로 씁니다. 규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
+`research` 설정, 기본 꺼짐. `enabled: true`면 CSO가 요청을 연구와 단순 작업(변환·집계·원문 요약, 출처에 있는 것을 표·목록으로 정리·추출·다운로드)으로 나누고(분석·예측·비교·관계 같은 추론이나 계산 실행(돌려·run 등)이 들어가면 표를 함께 요청해도 연구, 직원 한 명을 직접 지정한 요청은 연구로 명시하지 않는 한 단순 작업, 규칙은 [연구 수행 규약](research_protocol.md) 1절), 연구는 계획(PLAN)을 schema로 검증해 hash로 고정한 뒤 PI 승인(CP1)을 받습니다. 승인 뒤 계획이 바뀌면 다시 승인받습니다. 도메인 규칙은 `active_packs`의 pack(`id@version`)으로 더합니다(예: `active_packs: [single_cell_de@3, bulk_tumor_normal@3]`). `single_cell_de@3`은 단일세포 donor·scale·model을, `bulk_tumor_normal@3`은 벌크 두 조건의 pairing·filter·DE 기준·양성 대조를 판정합니다. 짝의 근거(`pairing_evidence`)는 GEO characteristics·sample title 같은 메타데이터 출처 목록에서만 고르고, 짝이 있다고 하면 출처가 하나 이상 있어야 합니다. 발현 유사도는 근거가 될 수 없습니다(#369). CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다. 두 version 모두 요청 topic으로 적용됩니다(`single_cell_rna_seq`, `bulk_rna_seq`·`microarray_expression`). 기존 `bulk_tumor_normal@1`·`@2`·`single_cell_de@2` 승인 요청은 저장된 version과 hash로 재개합니다. 없어진 version이나 없는 pack 폴더가 설정에 있으면 gateway가 남은 version을 알리고 시작하지 않습니다(#170). 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다. 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222). `evidence_checkpoint: true`를 함께 켜면 CP1 뒤 연구 단계가 `result v2` claim·evidence 계약으로 실행되고, CP2 카드에서 PI가 승인·수정 요청·거부를 고릅니다. **수정 요청은 아직 단계를 다시 돌리지 않습니다.** 거부처럼 요청을 끝내고(`evidence_revision_requested`) PI 메모는 기록에만 남으므로, 근거를 보강하려면 새 요청을 보냅니다. 웹 버튼도 `수정 요청(요청 끝남)`입니다. CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거, 근거 잃음)를 한 줄로 보여 주고 원장 JSON은 접어 둡니다. CP1 카드는 질문·가설·완료 조건 아래에 단계 목록(id·직원·지시 앞부분·산출)을 펼쳐 두고 protocol 전문은 접어 둡니다. 결정은 웹 카드 버튼이나 `labhq approve <id> --choice approve|revise|deny`의 선택값으로만 읽고 메모는 읽지 않습니다. 선택값이 없으면 승인하지 않고 다시 묻습니다(세 번까지). `artifact_refs` 경로가 그 단계가 모은 산출이나 끝난 조상 단계(직접 상위가 아니어도 됨)의 산출(`<workdir_id>/<path>`)이 아니면 그 evidence는 거부되고, 카드와 receipt에 이유가 남습니다. 단계가 끝날 때 원장이 계약을 통과해도 이런 인용이 있으면, 교정 횟수가 남은 동안 한 번 모은 산출 목록을 주고 인용을 고치게 합니다(#485). 이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다. 보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 단계가 PI 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 PI에게 묻고, 답을 받아 다시 실행합니다. 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다. 단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다. 거부한 행과 이유는 CP2 카드와 보고서 메타데이터에 남습니다. 예를 들어 실패하거나 0건인 조회를 근거(supports)로 연결했다면 그 링크만 빼고 시도 기록은 남깁니다. 계획 hash·단계·필수 evidence 칸 같은 구조 결함은 거부로 메우지 않고 단계 실패로 봅니다. 단계가 실패하면 `research_failed`로 끝나고, 계획을 바꾸려면 CP1을 다시 받아야 합니다. 연구 계약이 있는 요청을 `research.enabled`를 끈 채 이어 가면 아무것도 보내지 않고 `research_disabled`로 멈춥니다. CP2에서 승인하면 `reviewer_agent`가 claim을 원장·산출 파일과 대조해 한 번 리뷰합니다. P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않습니다. 대신 **이어 가기** 카드(`research_continue`)가 뜹니다. 거절하거나 답이 없으면 지금처럼 `research_review_revise`로 끝납니다. 승인하면 CSO가 리뷰 P1 지적과 이전 계획을 받아 새 계획을 쓰고, PI가 새 CP1(새 `plan_sha256`)을 승인한 뒤 바뀐 단계와 새 단계만 실행합니다. 그 뒤 CP2·리뷰·보고서는 같습니다. 이전 단계는 다섯 조건이 모두 맞을 때만 다시 돌리지 않고 결과를 그대로 씁니다: 단계 사양(모든 field)과 질문·scope·protocol·pack 값이 바이트까지 같고, 적용 pack의 sha256(`protocol.packs`·`pack_snapshot`)이 같고, P1 지적이 그 단계를 가리키지 않고, 위 단계가 모두 재사용되고, 새 CP1 승인 직후 기록된 산출 파일의 sha256이 그대로입니다(`labhq verify`와 같은 검사). 같은 `id@version` pack이라도 정의가 바뀌면 단계가 어느 규칙에 기댔는지 모르므로 모든 단계가 다시 돕니다. 하나라도 어긋나면 그 단계와 아래 단계가 다시 돕니다. 재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다. CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다. 이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다. 이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하고, 비용은 같은 요청 예산에 쌓입니다. 중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다. 새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다. 이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다. 돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다. `labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다. 이어 가기 카드도 다른 승인 카드처럼 `policy.approvals.timeout_s`(기본 3600초)가 지나면 닫힙니다. 이미 끝난 요청은 나중에 이어 갈 수 없으니 새 요청을 냅니다. accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를 단 보고서를 쓰고, labhq가 앵커를 검사해 문제가 없으면 `research_reported`, 있으면 본문 뒤에 "Claim check"를 붙여 `report_incomplete`로 끝냅니다. 실패한 조회는 보고서에 따로 남습니다. 끄면 새 요청은 기존처럼 CP1에서 멈추고, 이미 연구 계약이 있는 요청은 재개할 때 고정된 실행 여부와 CP2 receipt를 그대로 씁니다. 규약은 [`docs/research_protocol.md`](research_protocol.md)(#90).
 
 ### labhq verify
 
@@ -672,7 +684,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 
 첫 실행 때 확인할 것도 여기 있습니다.
 
-- runner는 gateway에 붙기 전에 엔진 CLI와 PATH의 Python(`python3`·`python`·`py`)을 짧게 조사합니다. 응답하지 않는 실행 파일은 몇 초 뒤 프로세스 트리째 끊고 "미보고"로 둡니다. 끊기지 않는 프로세스여도 runner는 조사 시간 + 1초 뒤 넘어가고, 그 프로세스는 남을 수 있습니다. Windows Store의 Python Install Manager가 만든 `python3` 실행 별칭이 `--version`에 답하지 않아 두 runner가 연결 전에 멈춘 적이 있습니다(2026-10-08).
+- runner와 직원 CLI의 PATH에서는 Windows Store·Python Install Manager 실행 별칭 폴더를 뺍니다. doctor가 PATH의 `python3` 별칭을 찾으면 Windows 앱 실행 별칭에서 끄는 법을 경고합니다.
 - Windows는 직원 CLI 명령줄을 32,000자로 제한합니다. 긴 프롬프트는 작업 폴더의 TASK 파일로 넘기고, 그래도 넘치면(조상 단계가 많아 폴더별 규칙이 늘어난 경우 등) Claude 직원의 `--settings`를 작업 폴더 옆 `.labhq-settings/<task>.json` 파일로 넘깁니다. 직원의 쓰기 규칙은 자기 작업 폴더만 덮으므로 이 파일은 셸 쓰기 게이트를 거치지 않고는 고칠 수 없습니다. 그래도 넘치면 단계가 이유와 함께 실패합니다.
 - 읽기 전용 workspace 지시 파일 차단은 adapter에 등록된 Claude Code·Codex 이름을 판정합니다. Windows·macOS에서는 대소문자를 무시하고 비교합니다(`claude.md`도 `CLAUDE.md`, #190). 새 CLI가 다른 이름을 도입하면 목록을 갱신해야 합니다.
 - Codex 0.155.0-alpha.16의 `exec` 기본 승인 정책 `never`는 MCP 호출을 실패시켰습니다 (#24135). labhq 내장 MCP에만 `default_tools_approval_mode="approve"`를 설정하고 도구 안에서 폰 승인을 받습니다.
