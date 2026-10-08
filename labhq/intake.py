@@ -102,9 +102,49 @@ def normalize_questions(raw: Any) -> list[dict[str, Any]]:
         elif len(options) > 4:
             options, free = options[:4], True  # the dropped choice can still be typed
         entry: dict[str, Any] = {"question": item["question"].strip(), "options": options, "allow_free_text": free}
+        # Older or non-schema planners may supply a stable id. Keep it for repeat detection without adding it to the
+        # strict planner schema: current model outputs still use the question text as their stable identity.
+        if isinstance(item.get("id"), str) and item["id"].strip():
+            entry["id"] = item["id"].strip()
         if type(item.get("depth")) is int and item["depth"] in QUESTION_DEPTHS:
             entry["depth"] = item["depth"]
         out.append(entry)
+    return out
+
+
+def _question_text_key(value: Any) -> str:
+    """A punctuation/spacing-insensitive identity for a question the PI has already answered."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(char for char in text if char.isalnum())
+
+
+def _question_keys(question: dict[str, Any]) -> set[tuple[str, str]]:
+    keys = {("text", key)} if (key := _question_text_key(question.get("question"))) else set()
+    if isinstance(question.get("id"), str) and (qid := question["id"].strip().casefold()):
+        keys.add(("id", qid))
+    return keys
+
+
+def unanswered_questions(raw: Any, clarifications: Any) -> list[dict[str, Any]]:
+    """Drop already answered or duplicate questions by stable id or normalized text."""
+    answered: set[tuple[str, str]] = set()
+    for entry in clarifications if isinstance(clarifications, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        details = normalize_questions(entry.get("question_details"))
+        answered.update(key for question in details for key in _question_keys(question))
+        for question in entry.get("questions") or []:
+            if key := _question_text_key(question):
+                answered.add(("text", key))
+
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for question in normalize_questions(raw):
+        keys = _question_keys(question)
+        if keys & answered or keys & seen:
+            continue
+        out.append(question)
+        seen.update(keys)
     return out
 
 

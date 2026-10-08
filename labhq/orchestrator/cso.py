@@ -25,8 +25,9 @@ from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, 
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
 from ..facilities import signatures as env_signatures
 from ..facilities import fixes as facility_fixes
-from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure, normalize_questions,
-                      question_detail_lines, questions_summary, reference_dirs, render_references)
+from ..intake import (CLARIFYING_QUESTION_SCHEMA, QUESTION_RULE, has_structure,
+                      question_detail_lines, questions_summary, reference_dirs, render_references,
+                      unanswered_questions)
 from ..models import AskRequest, RunnerUnavailable, Task, TaskResult, hard_stop_kind, new_id, waiting
 from ..quota import is_quota_error, received_quota_wait
 from ..login import is_login_error
@@ -39,6 +40,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  validate_research_result, with_pack_refs)
 from ..research import continuation as research_continuation
+from ..security import redact_tokens
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
                               pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
                               select_applied_packs, select_legacy_applied_packs)
@@ -962,6 +964,8 @@ def _reaches(steps: list[dict], start: str, target: str) -> bool:
 
 
 ORCHESTRATION_ROLES = frozenset({"cso", "chief_of_staff", "sci_reviewer"})
+MAX_CLARIFY_CARDS = 2
+ANSWERED_QUESTIONS_HEADING = "PI가 이미 답한 질문 — 다시 묻지 말 것"
 
 
 def qa_text(entry: Any) -> str:
@@ -975,6 +979,81 @@ def qa_text(entry: Any) -> str:
                           for i, q in enumerate(qs, 1))
         return f"{asked}\nPI answer: {entry.get('answer', '')}" if asked else f"PI answer: {entry.get('answer', '')}"
     return f"PI answer: {entry}"
+
+
+def answered_questions_prompt(entries: Any) -> str:
+    """A prompt section that makes prior PI answers explicit on every plan and re-plan."""
+    entries = entries if isinstance(entries, list) else []
+    if not entries:
+        return ""
+    return "\n\n" + ANSWERED_QUESTIONS_HEADING + ":\n" + "\n\n".join(qa_text(entry) for entry in entries)
+
+
+_WINDOWS_PATH = re.compile(r"(?i)(?:[a-z]:[\\/]|\\\\)[^\s,;]+")
+_HOME_PATH = re.compile(r"(?<!\w)~[\\/][^\s,;]+")
+_POSIX_PATH = re.compile(r"(?<![:\w])/(?:[^/\s]+/)+[^\s,;]*")
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(?:authorization|bearer|api[_-]?key|access[_-]?token|secret|password)\s*[:=]\s*\S+")
+
+
+def safe_failure_cause(value: Any, limit: int = 280) -> str:
+    """One readable cause line for the PI, with paths and credentials removed."""
+    text = " ".join(str(value or "원인을 기록하지 못했습니다.").split())
+    text = redact_tokens(_SECRET_ASSIGNMENT.sub("[가림]", text))
+    text = _WINDOWS_PATH.sub("<경로>", text)
+    text = _HOME_PATH.sub("<경로>", text)
+    text = _POSIX_PATH.sub("<경로>", text)
+    command_line = re.search(
+        r"command line has ([\d,]+) Windows command-line UTF-16 units, over the limit of ([\d,]+)", text,
+        re.IGNORECASE)
+    if command_line:
+        text = (f"Windows 명령줄 길이 제한을 넘었습니다"
+                f"({command_line.group(1)} units, 제한 {command_line.group(2)}).")
+    elif "invalid research result contract" in text.casefold():
+        text = re.sub(r"(?i)invalid research result contract", "연구 결과 계약이 유효하지 않습니다", text)
+    elif "question was rejected or unanswered" in text.casefold():
+        text = re.sub(r"(?i)question was rejected or unanswered", "질문이 거절되었거나 답을 받지 못했습니다", text)
+    return short(text, limit)
+
+
+def _developer_action(cause: str, error_kind: str = "") -> bool:
+    internal = (
+        "command line", "utf-16", "명령줄 길이 제한", "result contract", "결과 계약", "schema", "traceback", "internal",
+        "configuration", "config", "no runner hosts", "module not found", "modulenotfounderror",
+        "같은 대상", "질문 상한", "plan invalid", "not a json object",
+    )
+    lowered = f"{cause} {error_kind}".casefold()
+    return any(marker in lowered for marker in internal)
+
+
+def failed_request_summary(req: dict, results: dict, fallback: Any = "") -> tuple[str, str]:
+    """Three Korean lines for the top of an executed request's failed report."""
+    steps = (req.get("plan") or {}).get("steps") or []
+    by_id = {str(step.get("id")): step for step in steps if isinstance(step, dict) and step.get("id")}
+    candidates: list[tuple[str, dict, dict]] = []
+    for sid, step in by_id.items():
+        entry = results.get(sid) if isinstance(results, dict) else None
+        entry = entry if isinstance(entry, dict) else {}
+        failed = (entry.get("ok") is False or entry.get("status") in {"failed", "skipped", "incomplete"}
+                  or bool(entry.get("error")) or sid not in results)
+        if failed:
+            candidates.append((sid, step, entry))
+    roots = [item for item in candidates if not str(item[2].get("error") or "").startswith("skipped:")]
+    if roots or candidates:
+        sid, step, entry = (roots or candidates)[0]
+        agent = str(step.get("agent_id") or entry.get("agent_id") or "담당 미기록")
+        cause_raw = entry.get("error") or entry.get("revision_failed") or fallback
+        error_kind = str(entry.get("error_kind") or "")
+    else:
+        sid, agent, cause_raw, error_kind = "request", "cso", fallback, ""
+    cause = safe_failure_cause(cause_raw)
+    action = "개발자에게 알리기" if _developer_action(cause, error_kind) else "다시 보내기"
+    summary = "\n".join([
+        f"실패한 단계: {sid} · {agent} — {cause}",
+        f"원인: {cause}",
+        f"PI가 할 일: {action}",
+    ])
+    return summary, cause if sid == "request" else f"{sid} 실패: {cause}"
 
 
 class PlanOutputsError(ValueError):
@@ -1992,6 +2071,45 @@ class Orchestrator:
 
     async def _emit(self, rid: str, typ: str, data: dict) -> None:
         await self.hub.publish({"type": typ, "ts": time.time(), "request_id": rid, "data": data})
+
+    async def _plan_clarification(self, rid: str, candidate: dict) -> tuple[str, dict | None]:
+        """Expose only new plan questions and store one answered card; the caller performs the next re-plan."""
+        req = self.hub.requests[rid]
+        details = unanswered_questions(candidate.get("clarifying_questions"), req.get("clarifications"))
+        candidate["clarifying_questions"] = details
+        if not details:
+            req["pending_questions"] = []
+            req.pop("pending_question_details", None)
+            req.pop("clarification_failure", None)
+            self.hub.save_request(rid)
+            return "done", None
+        req["pending_questions"] = [question["question"] for question in details]
+        if has_structure(details):
+            req["pending_question_details"] = details
+        else:
+            req.pop("pending_question_details", None)
+        self.hub.save_request(rid)
+        await self._emit(rid, "request.questions", {"questions": req["pending_questions"], "details": details})
+        if not self.cfg.wait_for_clarification:
+            return "open", None
+        if len(req.get("clarifications") or []) >= MAX_CLARIFY_CARDS:
+            return "limit", None
+        detail = {"questions": details}
+        assumptions = normalize_assumptions(candidate.get("assumptions"))
+        if assumptions:
+            detail["assumptions"] = assumptions
+        decision = await self.hub.request_approval(
+            kind="clarify", request_id=rid, summary=questions_summary(details), detail=detail)
+        if not decision.get("approved") or not str(decision.get("note") or "").strip():
+            return "unanswered", None
+        entry = {"questions": list(req["pending_questions"]), "answer": str(decision["note"]).strip()}
+        if has_structure(details) or any(question.get("id") for question in details):
+            entry["question_details"] = details
+        req.setdefault("clarifications", []).append(entry)
+        req["pending_questions"] = []
+        req.pop("pending_question_details", None)
+        self.hub.save_request(rid)
+        return "answered", entry
 
     def _output_vocab(self) -> output_vocab.Vocab | None:
         """The vocabulary when plan.declare_output_types is on and it loads; None means today's plan, unchanged."""
@@ -4058,8 +4176,8 @@ class Orchestrator:
         req = self.hub.requests[rid]
         refs = reference_meta(req)
         # Pointers ride with the request text, so briefing, plan, steps, review and report all see them (#36).
-        text = req["text"] + render_references(req.get("references")) + "".join(
-            "\n\nPI clarification (questions and answer):\n" + qa_text(c) for c in req.get("clarifications") or [])
+        text = (req["text"] + render_references(req.get("references")) +
+                answered_questions_prompt(req.get("clarifications")))
         if not continuation:
             self.cost[rid] = float(req.get("cost_usd") or 0)
             self.cost_tasks[rid] = set(req.get("cost_by_task") or {})
@@ -4386,6 +4504,38 @@ class Orchestrator:
                         self.hub.save_request(rid)
                     return planned
 
+                async def resolve_plan_questions(candidate: dict, current: TaskResult,
+                                                   suffix: str = "") -> tuple[dict | None, TaskResult]:
+                    """Ask at most two cards for this request, filtering answered questions after each re-plan."""
+                    nonlocal text
+                    while True:
+                        status, entry = await self._plan_clarification(rid, candidate)
+                        if status in {"done", "open"}:
+                            return candidate, current
+                        if status in {"limit", "unanswered"}:
+                            reason = ("확인 질문을 두 번 드렸지만 새 질문이 남아 요청을 멈췄습니다."
+                                      if status == "limit" else
+                                      "PI 확인 답변을 받지 못해 요청을 멈췄습니다.")
+                            questions = "\n".join(f"- {question}" for question in req.get("pending_questions") or [])
+                            req["clarification_failure"] = reason
+                            self._finish(rid, reason + ("\n\n남은 질문:\n" + questions if questions else ""), {},
+                                         ok=False, error=reason)
+                            return None, current
+                        text += answered_questions_prompt([entry])
+                        current = await make_plan(text + suffix)
+                        if not current.ok:
+                            reason = f"답변 반영 계획을 만들지 못했습니다: {safe_failure_cause(current.error)}"
+                            self._finish(rid, reason, {}, ok=False, error=reason)
+                            return None, current
+                        if rid in self.budget_denials:
+                            reason = "답변 반영 계획의 예산 승인이 거부되었습니다."
+                            self._finish(rid, reason, {"plan": current.model_dump(mode="json")},
+                                         ok=False, error=reason)
+                            return None, current
+                        candidate = _carry_assumptions(
+                            candidate, current.structured if isinstance(current.structured, dict)
+                            else extract_json(current.text) or {})
+
                 plan_res = await make_plan(text)
                 if not plan_res.ok:
                     self._finish(rid, f"계획 실패: {plan_res.error}", {"plan": plan_res.model_dump(mode="json")}, ok=False)
@@ -4437,45 +4587,9 @@ class Orchestrator:
                                 plan, plan_res.structured if isinstance(plan_res.structured, dict)
                                 else extract_json(plan_res.text) or {})
                 # semantics-shadow: end
-                details = normalize_questions(plan.get("clarifying_questions"))
-                questions = [q["question"] for q in details]
-                if questions:
-                    req["pending_questions"] = questions
-                    if has_structure(details):
-                        req["pending_question_details"] = details
-                    self.hub.save_request(rid)
-                    await self._emit(rid, "request.questions", {"questions": questions, "details": details})
-                    if self.cfg.wait_for_clarification:
-                        # The card shows options as buttons and returns the composed answer as the note (#34).
-                        detail = {"questions": details}
-                        assumptions = normalize_assumptions(plan.get("assumptions"))
-                        if assumptions:
-                            detail["assumptions"] = assumptions
-                        dec = await self.hub.request_approval(kind="clarify", request_id=rid,
-                                                              summary=questions_summary(details), detail=detail)
-                        if not dec.get("approved") or not str(dec.get("note") or "").strip():
-                            self._finish(rid, "PI clarification denied or unanswered.", {}, ok=False)
-                            return
-                        entry = {"questions": questions, "answer": str(dec["note"]).strip()}
-                        if has_structure(details):
-                            entry["question_details"] = details
-                        req.setdefault("clarifications", []).append(entry)
-                        req["pending_questions"] = []
-                        req.pop("pending_question_details", None)
-                        self.hub.save_request(rid)  # a restart must not lose the PI's answer
-                        text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
-                        plan_res = await make_plan(text)
-                        if not plan_res.ok:
-                            self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
-                            return
-                        plan = _carry_assumptions(
-                            plan, plan_res.structured if isinstance(plan_res.structured, dict)
-                            else extract_json(plan_res.text) or {})
-                        still = normalize_questions(plan.get("clarifying_questions"))
-                        if still:
-                            req["pending_questions"] = [q["question"] for q in still]
-                            self._finish(rid, "Re-plan still requires PI clarification.", {}, ok=False)
-                            return
+                plan, plan_res = await resolve_plan_questions(plan, plan_res)
+                if plan is None:
+                    return
                 if research_lane:
                     vocab = self._output_vocab()
                     topic_vocab = output_vocab.current()
@@ -4558,7 +4672,8 @@ class Orchestrator:
                             report = plan_invalid_report(problems, configured_pack_defs)
                             self._finish(rid, report, {}, ok=False, error=report.split("\n", 1)[0])
                             return
-                        plan_res = await make_plan(text + "\n\n" + plan_correction(problems))
+                        correction_suffix = "\n\n" + plan_correction(problems)
+                        plan_res = await make_plan(text + correction_suffix)
                         if not plan_res.ok:
                             self._finish(rid, f"Research re-plan failed: {plan_res.error}", {}, ok=False)
                             return
@@ -4569,6 +4684,9 @@ class Orchestrator:
                         plan = _carry_assumptions(
                             plan, plan_res.structured if isinstance(plan_res.structured, dict)
                             else extract_json(plan_res.text) or {})
+                        plan, plan_res = await resolve_plan_questions(plan, plan_res, correction_suffix)
+                        if plan is None:
+                            return
                     req["plan"] = validated.model_dump(mode="json")
                     if continuation:  # saved below with the plan, so a restart sees both or neither
                         self._adopt_continuation_plan(rid, req["plan"], active_pack_hashes)
@@ -4599,9 +4717,10 @@ class Orchestrator:
                                                 ", ".join(problem.split(" must ", 1)[0]
                                                           for problem in problems))
                                 break
-                            plan_res = await make_plan(text + "\n\nThe previous PLAN failed validation:\n" +
-                                                       "\n".join(f"- {problem}" for problem in problems) +
-                                                       "\nReturn a complete corrected PLAN.")
+                            correction_suffix = ("\n\nThe previous PLAN failed validation:\n" +
+                                                 "\n".join(f"- {problem}" for problem in problems) +
+                                                 "\nReturn a complete corrected PLAN.")
+                            plan_res = await make_plan(text + correction_suffix)
                             if not plan_res.ok:
                                 self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
                                 return
@@ -4612,23 +4731,16 @@ class Orchestrator:
                             plan = _carry_assumptions(
                                 plan, plan_res.structured if isinstance(plan_res.structured, dict)
                                 else extract_json(plan_res.text) or {})
-                            still = normalize_questions(plan.get("clarifying_questions"))
-                            if still:
-                                req["pending_questions"] = [q["question"] for q in still]
-                                if has_structure(still):
-                                    req["pending_question_details"] = still
-                                self.hub.save_request(rid)
-                                await self._emit(rid, "request.questions",
-                                                 {"questions": req["pending_questions"], "details": still})
-                                if self.cfg.wait_for_clarification:
-                                    self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
-                                    return
+                            plan, plan_res = await resolve_plan_questions(plan, plan_res, correction_suffix)
+                            if plan is None:
+                                return
                         except (PlanOutputsError, PlanAgentError) as error:
                             if attempt == 2:
                                 raise ValueError(f"plan invalid after correction: {error}") from error
                             # Before any step runs: one corrected plan, as the research lane does (#220).
-                            plan_res = await make_plan(text + "\n\nThe previous PLAN failed validation: " +
-                                                       str(error) + "\nReturn a complete corrected PLAN.")
+                            correction_suffix = ("\n\nThe previous PLAN failed validation: " + str(error) +
+                                                 "\nReturn a complete corrected PLAN.")
+                            plan_res = await make_plan(text + correction_suffix)
                             if not plan_res.ok:
                                 self._finish(rid, f"Re-plan failed: {plan_res.error}", {}, ok=False)
                                 return
@@ -4639,17 +4751,9 @@ class Orchestrator:
                             plan = _carry_assumptions(
                                 plan, plan_res.structured if isinstance(plan_res.structured, dict)
                                 else extract_json(plan_res.text) or {})
-                            still = normalize_questions(plan.get("clarifying_questions"))
-                            if still:
-                                req["pending_questions"] = [q["question"] for q in still]
-                                if has_structure(still):
-                                    req["pending_question_details"] = still
-                                self.hub.save_request(rid)
-                                await self._emit(rid, "request.questions",
-                                                 {"questions": req["pending_questions"], "details": still})
-                                if self.cfg.wait_for_clarification:
-                                    self._finish(rid, "Corrected plan still requires PI clarification.", {}, ok=False)
-                                    return
+                            plan, plan_res = await resolve_plan_questions(plan, plan_res, correction_suffix)
+                            if plan is None:
+                                return
                     req["plan"] = with_checklist_skip_warnings({**plan, "steps": steps, "warnings": warnings},
                                                                checklist_catalog, req.get("analysis_precedents"))
                     if vocab is not None:
@@ -4809,38 +4913,21 @@ class Orchestrator:
 
                 try:
                     candidate = _carry_assumptions(req.get("plan"), await ask_cso(1))
-                    details = normalize_questions(candidate.get("clarifying_questions"))
-                    if details:  # a changed scope, cost or approval goes back through the clarify gate
-                        req["pending_questions"] = [q["question"] for q in details]
-                        if has_structure(details):
-                            req["pending_question_details"] = details
-                        self.hub.save_request(rid)
-                        await self._emit(rid, "request.questions",
-                                         {"questions": req["pending_questions"], "details": details})
-                        if self.cfg.wait_for_clarification:
-                            detail = {"questions": details}
-                            assumptions = normalize_assumptions(candidate.get("assumptions"))
-                            if assumptions:
-                                detail["assumptions"] = assumptions
-                            decision = await self.hub.request_approval(
-                                kind="clarify", request_id=rid, summary=questions_summary(details),
-                                detail=detail)
-                            if not decision.get("approved") or not str(decision.get("note") or "").strip():
-                                return record("failed", attempt,
-                                              reason="re-plan needs PI clarification that was denied or unanswered")
-                            entry = {"questions": req["pending_questions"], "answer": str(decision["note"]).strip()}
-                            if has_structure(details):
-                                entry["question_details"] = details
-                            req.setdefault("clarifications", []).append(entry)
-                            req["pending_questions"] = []
-                            req.pop("pending_question_details", None)
-                            text += "\n\nPI clarification (questions and answer):\n" + qa_text(entry)
-                            self.hub.save_request(rid)
-                            candidate = _carry_assumptions(candidate, await ask_cso(2))
-                            still = normalize_questions(candidate.get("clarifying_questions"))
-                            if still:
-                                req["pending_questions"] = [q["question"] for q in still]
-                                return record("failed", attempt, reason="re-plan still needs PI clarification")
+                    parse_attempt = 1
+                    while True:
+                        status, entry = await self._plan_clarification(rid, candidate)
+                        if status in {"done", "open"}:
+                            break
+                        if status in {"limit", "unanswered"}:
+                            req["clarification_failure"] = (
+                                "확인 질문을 두 번 드렸지만 새 질문이 남았습니다."
+                                if status == "limit" else "PI 확인 답변을 받지 못했습니다.")
+                            reason = ("re-plan still needs PI clarification" if status == "limit" else
+                                      "re-plan needs PI clarification that was denied or unanswered")
+                            return record("failed", attempt, reason=reason)
+                        text += answered_questions_prompt([entry])
+                        parse_attempt += 1
+                        candidate = _carry_assumptions(candidate, await ask_cso(parse_attempt))
                     raw, drop = candidate.get("steps") or [], candidate.get("drop") or []
                     if not isinstance(raw, list) or not isinstance(drop, list):
                         raise ValueError("re-plan steps and drop must be lists")
@@ -5123,6 +5210,7 @@ class Orchestrator:
                 return
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             execution = []
+            saved: dict[str, TaskResult] = {}
             if req.get("plan", {}).get("steps"):
                 saved = {k: TaskResult.model_validate(v) for k, v in (req.get("results") or {}).items()}
                 execution.append(self.report_results(req["plan"]["steps"], saved,
@@ -5130,12 +5218,14 @@ class Orchestrator:
             if req.get("pending_questions"):
                 execution.append("Pending PI decisions/questions:\n" + "\n".join(
                     f"- {question}" for question in req["pending_questions"]))
-            req["report"] = ("## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
-                             "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
+            serialized_saved = {key: value.model_dump(mode="json") for key, value in saved.items()}
+            summary, _feed_error = failed_request_summary(req, serialized_saved, req["error"])
+            req["report"] = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 "
+                             "다음 조치를 확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
                              "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 오류가 있습니다. 실행 기록 참고.")
             req["report_appendix"] = _appendix_sections("", [req["error"], *execution])
             # The preserved partial report goes with the event so a connected (or reconnecting) office shows it.
-            failed = {"error": req["error"],
+            failed = {"error": safe_failure_cause(req["error"]),
                       **_terminal_reports(rid, req.get("report") or "", req.get("report_appendix") or ""),
                       "cost_usd": float(req.get("cost_usd") or 0),
                       "cost_known": req.get("cost_known", True), "cost_summary": req.get("cost_summary")}
@@ -5196,9 +5286,16 @@ class Orchestrator:
         report, report_appendix = _split_report_appendix(report)
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
             report_appendix = _appendix_sections(report_appendix, [report])
-            report = ("## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
+            summary, feed_error = failed_request_summary(req, results, error or report)
+            report = (summary + "\n\n## 결론과 권고\n요청을 완료하지 못했습니다. 실행 기록의 원인과 다음 조치를 "
                       "확인하세요.\n\n## 결과\n확정할 최종 결과가 없습니다.\n\n## 방법 요약\n"
                       "완료된 단계까지 실행했습니다.\n\n## 한계\n요청 처리 경고가 있습니다. 실행 기록 참고.")
+            error = error or feed_error
+        if not ok and req.get("clarification_failure") and req.get("pending_questions"):
+            pending = "\n".join(f"- {question}" for question in req["pending_questions"])
+            if "남은 질문:" not in report:
+                report = f"{req['clarification_failure']}\n\n남은 질문:\n{pending}\n\n{report}"
+            error = error or str(req["clarification_failure"])
         report = _with_review_reference(report, review)
         metadata = []
         route = req.get("route_decision") or {}
