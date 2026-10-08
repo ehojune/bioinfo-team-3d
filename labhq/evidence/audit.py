@@ -435,21 +435,30 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def claims_record(req: Mapping[str, Any], *, report_check: Any = None,
+                  source_verification: list | None = None) -> dict[str, Any]:
+    """The research claims record shared by the audit bundle and the request bundle: step ledgers (whose claim ids the
+    report's [[claim:<step>/<claim>]] anchors name), the CP2 receipt, and the anchor check."""
+    contract = req.get("research_contract") if isinstance(req.get("research_contract"), Mapping) else {}
+    receipt = _receipt(req)
+    return {"request_id": req.get("id"), "plan_sha256": contract.get("plan_sha256"),
+            "ledgers": research_ledgers(req) if contract else {},
+            "artifact_sha256": receipt.get("artifact_sha256") or {},
+            "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
+                                                  "unsupported_claims", "unreported_outputs",
+                                                  "source_verification", "source_verification_reports")
+                    if key in receipt},
+            "report_check": report_check,
+            "source_verification": source_verification or []}
+
+
 def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
     """Build the three-record audit zip in memory. No output file goes in."""
     import zipfile
 
-    contract = req.get("research_contract") if isinstance(req.get("research_contract"), Mapping) else {}
-    receipt = _receipt(req)
-    claims = {"request_id": report.get("request_id"), "plan_sha256": contract.get("plan_sha256"),
-              "ledgers": research_ledgers(req) if contract else {},
-              "artifact_sha256": receipt.get("artifact_sha256") or {},
-              "cp2": {key: receipt[key] for key in ("decision", "plan_sha256", "refused_rows", "refused_evidence",
-                                                    "unsupported_claims", "unreported_outputs",
-                                                    "source_verification", "source_verification_reports")
-                      if key in receipt},
-              "report_check": report.get("report_check"),
-              "source_verification": report.get("source_verification") or []}
+    claims = {**claims_record(req, report_check=report.get("report_check"),
+                              source_verification=report.get("source_verification")),
+              "request_id": report.get("request_id")}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "tool_use_id", "workdir_id",
                                                  "path", "size", "recorded_sha256", "sha256", "status")}
                  for row in report["files"]]

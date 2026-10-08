@@ -18,7 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
-from .evidence.audit import locate_workdir
+from .evidence.audit import claims_record, locate_workdir
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -353,9 +353,11 @@ def _grade(rows: list[dict[str, Any]], steps: list[Mapping[str, Any]],
 
 
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
-            unsafe_scripts: list[str], python_unknown: bool, linked: bool = False) -> str:
+            unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False) -> str:
     lines = [
         "# 요청 묶음", "", f"- 요청: `{req.get('id')}`", "- `report.md`: PI용 본문",
+        *(["- `claims.json`: 연구 요청의 단계별 claim·근거 원장과 CP2 기록. 보고서의 `[[claim:<단계>/<claim>]]`은 "
+           "`ledgers.<단계>.claims`의 `id`입니다"] if claims else []),
         "- `report_appendix.md`: 실행 기록과 묶음 변환 기록", "- `steps/<step_id>/`: 단계 workdir 사본",
         "- `MANIFEST.tsv`: 사본의 크기·sha256과 원래 위치",
         "- `INPUTS.tsv`: 단계가 읽을 수 있던 외부 입력의 크기·mtime·sha256 또는 생략 이유", "",
@@ -584,7 +586,15 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             appendix += f"\n\n- 요청 묶음 상태: incomplete (기록 산출 {not_copied}개 미복사; MANIFEST.tsv 확인)"
         (temp / "report.md").write_text(report, encoding="utf-8", newline="\n")
         (temp / "report_appendix.md").write_text(appendix, encoding="utf-8", newline="\n")
-        commands = [command for step_id in ordered_ids
+        # The report's claim anchors resolve against these ledgers; without them a colleague holding only the bundle
+        # could not follow a number to its evidence (readiness R24, 2026-10-08).
+        contract = req.get("research_contract")
+        claims = isinstance(contract, Mapping) and bool(contract.get("plan_sha256"))
+        if claims:
+            (temp / "claims.json").write_text(
+                json.dumps(claims_record(req, report_check=contract.get("report_check")), ensure_ascii=False,
+                           indent=2, default=str), encoding="utf-8", newline="\n")
+        commands =[command for step_id in ordered_ids
                     for _path, command in sorted(script_commands.get(step_id, {}).items())]
         unsafe = [path for step_id in ordered_ids for path in sorted(unsafe_scripts.get(step_id, set()))]
         bundled = {step_id for step_id, _workdir in workdirs}
@@ -594,7 +604,8 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         if links:
             (temp / LINK_SCRIPT).write_text(LINK_SCRIPT_BODY.replace("__LINKS__", json.dumps(links, sort_keys=True)),
                                             encoding="utf-8", newline="\n")
-        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links)),
+        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
+                                                claims),
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
@@ -627,6 +638,7 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
             handle.write("\n".join(bundle_note) + "\n")
 
         generated = [temp / "README.md", temp / "report.md", appendix_path, temp / "INPUTS.tsv",
+                     *([temp / "claims.json"] if claims else []),
                      *([temp / LINK_SCRIPT] if (temp / LINK_SCRIPT).is_file() else [])]
         for path in generated:
             relative = path.relative_to(temp).as_posix()
