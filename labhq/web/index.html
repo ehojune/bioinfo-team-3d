@@ -416,6 +416,10 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
     <label class="sr" for="target">받는 사람</label>
     <select id="target"></select>
     <label class="team-toggle" id="team-only-label"><input id="team-only" type="checkbox">팀으로</label>
+    <label class="sr" for="work-kind">작업 종류</label>
+    <select id="work-kind" title="연구 lane이 켜져 있을 때: 간단은 CP1·CP2 없이, 연구는 계획 승인(CP1)과 근거 승인(CP2)을 거쳐요">
+      <option value="auto">자동 판단</option><option value="simple">간단한 일</option><option value="research">연구</option>
+    </select>
     <label class="sr" for="project">프로젝트</label>
     <select id="project" hidden></select>
     <button class="btn" id="ref-toggle" type="button" aria-controls="ref-panel" aria-expanded="false">참고</button>
@@ -867,6 +871,7 @@ function renderComposerMode() {
   const noteMode = active && mode.value === 'note';
   $('#target').hidden = noteMode;
   $('#team-only-label').hidden = noteMode;
+  $('#work-kind').hidden = noteMode;
   $('#project').hidden = noteMode || !S.projects.length;
   $('#ref-toggle').hidden = noteMode;
   $('#ask').placeholder = noteMode ? '이 요청의 다음 단계에 전할 메모' : '무엇을 알아볼까요?';
@@ -926,12 +931,15 @@ async function send() {
     return;
   }
   if (target && $('#team-only').checked) { toast('직원에게 직접 맡기기와 팀으로 보내기를 함께 고를 수 없어요'); return; }
+  const workKind = $('#work-kind').value;
+  // A research request goes through the CSO's frozen plan (CP1); one staff member cannot take it directly (R16).
+  if (target && workKind === 'research') { toast('연구는 팀(CSO)에게 보내야 해요. 받는 사람을 CSO로 바꿔 주세요'); return; }
   const body = { text, mode: target ? 'direct' : 'orchestrate', agent_id: target || null, project_id: project || null,
-    route: $('#team-only').checked ? 'team' : 'auto',
+    route: $('#team-only').checked ? 'team' : 'auto', work_kind: workKind,
     references: refs.items.map(({kind, value}) => ({kind, value})), default_references: refs.useDefaults };
   try {
     await api.request(body);
-    input.value = ''; refs.items = []; $('#team-only').checked = false; showRefs(false); renderRefs();
+    input.value = ''; refs.items = []; $('#team-only').checked = false; $('#work-kind').value = 'auto'; showRefs(false); renderRefs();
     toast(target ? `${nick(target)}에게 맡겼어요` : 'CSO에게 요청을 보냈어요');
   } catch (e) { toast(`보내지 못했어요: ${e.message}`); }
 }

@@ -34,19 +34,43 @@ _RESEARCH_SIGNALS = (
     r"차등\s*발현|연관\s*분석|통계\s*검정|실험\s*설계|반증|재현성",
     r"\bhypothes(?:is|es)\b|\bresearch question\b|\bcausal|\bmechanism|\bbiomarker",
     r"\bdifferential expression\b|\bassociation stud|\bselect (?:a )?(?:candidate|method)",
+    # Any analysis or inference stays research even when it also asks for a table or a download (readiness R16;
+    # #498 review: "download the metadata and predict who responds" must not become simple).
+    r"분석|\banaly[sz]e\b|\banalys[ie]s\b|\bGSEA\b|\bpathway\b|\bsurvival\b|\bDEGs?\b",
+    r"예측|관계|상관|연관|비교|차이|영향|효과|원인|검증|유의|밝혀|알아내|판단|평가|추론",
+    r"\bpredict|\brelationship|\bcorrelat|\bassociat|\bcompar|\bdifferen|\beffect|\bimpact|\bcause|\bwhy\b|"
+    r"\bwhether\b|\btest\b|\bsignifican|\bidentify\b|\bdiscover|\binfer|\bevaluat|\bassess",
+    # Asking to run a computation is analysis whatever its name or abbreviation ("download and run DE", #498 review):
+    # the verb closes the class instead of listing every method.
+    r"돌려|수행|실행|계산|정규화|군집|클러스터|모델링|\bDE\b",
+    r"\brun\b|\bperform|\bcomput|\bcalculat|\bfit\b|\bmodel(?:l?ing)?\b|\bcluster|\bnormali[sz]",
 )
+# An analysis the request rules out is not a research signal ("별도 분석 없이 원문만 요약", #498 review).
+_NEGATED_ANALYSIS = re.compile(
+    r"(별도\s*|추가\s*)?(분석|해석)\s*(없이|하지\s*말고|은\s*빼고|는\s*하지\s*말)|"
+    r"\bwithout (?:any )?(?:further |additional )?(?:analys[ie]s|interpretation)\b|"
+    r"\bno (?:further |additional )?(?:analys[ie]s|interpretation)\b", re.IGNORECASE)
 _SIMPLE_SIGNALS = (
     r"형식\s*변환|파일\s*변환|집계|개수\s*(세기|계산)|원문\s*요약|그대로\s*요약|발췌",
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
+    # Collecting and laying out what a source already says: a metadata table went through CP1 and a five-step
+    # research plan on 2026-10-08 (readiness R16).
+    r"표(로|를)\s*(정리|만들|모아)|목록(을|으로)?\s*(정리|만들)|메타데이터|시료\s*정보|샘플\s*정보|추출|다운로드|내려\s*받",
+    r"\bmetadata\b|\b(?:make|build) a table\b|\btabulate\b|\bextract\b|\bdownload\b",
 )
 
 
-def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope") -> IntakeDecision:
+def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope",
+                    mode: str = "orchestrate") -> IntakeDecision:
     """Classify without an extra model call; ambiguous requests enter the research planning lane."""
     if requested in {"simple", "research"}:
         return IntakeDecision(work_kind=requested, reason=f"PI specified work_kind={requested}",
                               scope_status=scope_status, source="explicit")
-    research = any(re.search(pattern, text, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
+    if mode == "direct":  # the PI picked one staff member: a task for them, not a frozen research plan (R16)
+        return IntakeDecision(work_kind="simple", reason="PI sent the request to one staff member directly",
+                              scope_status=scope_status, source="explicit")
+    unnegated = _NEGATED_ANALYSIS.sub(" ", text)
+    research = any(re.search(pattern, unnegated, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
     simple = any(re.search(pattern, text, re.IGNORECASE) for pattern in _SIMPLE_SIGNALS)
     if simple and not research:
         return IntakeDecision(work_kind="simple", reason="request is a fixed transformation, aggregation, or source summary",

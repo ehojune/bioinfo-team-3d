@@ -1070,3 +1070,22 @@ def test_project_reports_drop_the_query_of_legacy_url_references(tmp_path):
     cleaned = hub.reporter._clean(f"Downloaded {legacy} for the summary")
     assert "opaqueSHAREcode99" not in cleaned
     assert "https://share.example.org/f/cohort.tsv" in cleaned
+
+
+def test_cli_send_passes_the_work_kind_and_refuses_research_to_one_agent(monkeypatch):
+    """Readiness R16: with the research lane on, the PI picks simple or research instead of the rule guessing."""
+    from labhq.cli import main
+
+    sent = {}
+
+    def api(_settings, method, path, **kwargs):
+        sent.update(kwargs)
+        return {"request_id": "req_1"}
+
+    monkeypatch.setattr("labhq.cli._api", api)
+    main(["send", "GSE10072 메타데이터 표", "--no-wait", "--work-kind", "simple"])
+    assert sent["json"]["work_kind"] == "simple"
+    main(["send", "x", "--no-wait"])
+    assert sent["json"]["work_kind"] == "auto"
+    with pytest.raises(SystemExit):
+        main(["send", "x", "--no-wait", "--agent", "analyst", "--work-kind", "research"])
