@@ -14,10 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:28 | [`fea7039`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/fea7039) | 끝에 /가 붙은 .tmp 아래 링크 대상도 재귀 삭제 카드로 돌리고, doctor는 직원이 실제로 실행되는 경로로 CLI 준비를 판정한다(#501 리뷰). |
 | 12:17 | [`efbbcc9`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/efbbcc9) | 패키지에 든 예제 설정(labhq/config/labhq.example.yaml)에도 revise_continuations 주석을 같게 고친다(PI 점검 R10). |
 | 12:05 | [`c9cea6f`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/c9cea6f) | CP2 수정 요청이 요청을 끝내지 않고 PI 메모로 새 계획·새 CP1을 거쳐 바뀐 단계만 다시 돌린다. 메모 없는 수정 요청은 다시 묻고(웹·CLI는 보내지 않음), 이어 가기 상한은 리뷰 revise와 합산한다. 웹 버튼은 '수정 요청'. 이어 가기를 되돌릴 때 집행 상한도 복원하고(#499 리뷰), CP1 카드 요약은 한국어로 hash 없이 보인다(PI 점검 R10). |
+| 12:05 | [`257c711`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/257c711) | 미선언 재현 기록은 요청 묶음에 보존하고 사람이 보는 미보고 산출 경고에서만 숨김 |
+| 11:29 | [`08486ea`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/08486ea) | 재귀 삭제 무승인 범위를 링크 없는 작업 폴더 .tmp 단일 명령으로 좁히고 CLI 직원의 실행 준비 판정을 바로잡음 |
 | 11:11 | [`3f6d449`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/3f6d449) | CP1 직후 새 집행 상한으로 지금까지 쓴 비용을 판정해 단계 없이 끝나는 요청도 예산 카드를 받는다. budget_usd true/false는 검증 오류, 단계·리뷰 prompt에 실제 집행 상한, 앞 차수 CP2 메모는 감사 부록에 차수와 함께(#499 리뷰). |
 | 10:53 | [`f33d40a`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/f33d40a) | 연구 카드 메모가 다음 일을 하는 prompt로 간다(CP1 → 단계, CP2 → 리뷰·보고서, 이어 가기 → 새 계획). 계획의 숫자 budget_usd가 CP1 승인 때 요청 집행 상한이 되어 넘으면 예산 카드가 뜨고, CP1 카드에 그 상한을 보인다(PI 점검 R11 R17). |
+| 10:51 | [`4da03a6`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/4da03a6) | PowerShell provider·배열 삭제를 닫고 빈 roster·엔진 누락 doctor 준비 판정을 보강 |
 | 10:43 | [`d66947f`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/d66947f) | main 병합(#504): manual 연구 절을 나눈 판을 두고 이어 가기 카드 7일 기한 문장만 반영했다. |
 | 10:32 | [`506830b`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/506830b) | direct 요청은 연결된 runner·저장된 roster·agents_dir에 있는 직원이면 받아서 러너를 기다리고(없는 이름만 404), 재개 카드도 웹에 남은 시간을 보인다(#502 리뷰). |
 | 10:30 | [`78b8ec7`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/78b8ec7) | main 병합(#498 #503): manual 연구 절 충돌을 풀어 단순 작업 판정 문장과 이어 가기 카드 7일 기한을 함께 남겼다. |
@@ -25,6 +29,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 10:13 | [`94f2f04`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/94f2f04) | 잘못된 웹 token을 accept 뒤 1008로 닫고 두 화면이 공통 경로에서 재시도를 멈추게 했다 |
 | 10:13 | [`565061e`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/565061e) | 연구 verifier·CP2·blocking decision·Codex auto 설명과 artifact 거부 사유를 현재 동작에 맞췄다 |
 | 10:10 | [`f0b7b62`](https://github.com/ehojune/bioinfo-team-3d/pull/503/commits/f0b7b62) | 웹 입력창 옆 작업 종류(자동·간단·연구)와 labhq send --work-kind로 PI가 연구 lane을 탈지 직접 고른다(PI 점검 R16). |
+| 10:09 | [`73958b5`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/73958b5) | 단계 작업 폴더 삭제·지정 산출·doctor 검사를 묶어 PI 경고 소음을 줄임 |
 | 09:57 | [`52161dc`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/52161dc) | 웹에 러너 꺼짐 띠·요청 취소 버튼·PI 결정 대기 상태를 넣고, 2시간이 넘는 카드 대기·남은 시간은 시간·일로 적는다(PI 점검 R5 R13 R15). |
 | 09:57 | [`20a0296`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/20a0296) | 리뷰 반영: 러너를 기다린 뒤 계획이 roster를 읽고, 취소가 병렬 단계·늦게 온 카드·비용(보고 없는 turn은 미집계)까지 정리한다. |
 | 09:57 | [`669ef03`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/669ef03) | #493 병합 뒤 러너 안내를 labhq up으로 맞추고 영문 README에 같은 안내를 넣었다. |

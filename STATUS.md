@@ -54,6 +54,14 @@
 - 근거: `tests/test_request_lifecycle.py`, `tests/web_request_lifecycle.cjs`, `tests/test_research_protocol.py::test_an_unanswered_cp1_card_is_not_a_rejected_plan`, `tests/test_research_cp2.py::test_cp2_decision_is_read_from_the_choice_alone`.
 - 후속(리뷰·main 병합): main(#493 #494 #496 #497 #498 #503)을 병합하고 manual 충돌을 양쪽 내용으로 풀었다. 봇 P2 두 건을 고쳤다: direct 요청은 저장된 roster나 `runner.agents_dir`에 있는 직원이면 받아서 러너를 기다리고, 재개 카드도 웹에 남은 시간을 보인다(예전 1시간 카드는 시작 때 7일로 맞춤). 봇 P1(패치노트 없음)은 기록 커밋 db5d85b로 해결됐다.
 
+## 2026-10-08 · 경고와 카드 소음 축소 (PI 점검 R20)
+
+- 결론: `outputs/scripts/`·`outputs/reference/`·`outputs/env/`의 미선언 파일을 `unreported_outputs`와 요청 묶음에 보존하고, 사람이 보는 경고에서만 숨겼다.
+- 바뀐 것: runner 로그·CP2 카드·`labhq verify` 경고가 공통 필터를 쓴다. `__pycache__`는 전처럼 목록에서도 제외한다.
+- 실행한 것: 수정 전 회귀 1 failed, 수정 뒤 관련 pytest 191 passed·5 skipped. Windows 전체 pytest 4826 passed·60 skipped, `scripts/check_public.sh`·패치노트·목차 검사와 `git diff --check` 통과.
+- 미해결: push 뒤 CI 확인.
+- 근거: `labhq/artifact_policy.py`, `labhq/runner/daemon.py`, `labhq/evidence/audit.py`, `labhq/orchestrator/cso.py`, `tests/test_observed_outputs.py`, `tests/test_labhq_verify.py`, `tests/test_research_cp2.py`, `docs/manual.md`.
+
 ## 2026-10-08 · 메타데이터 표·목록 정리는 단순 작업으로, 직원 직접 지정은 연구 lane 밖으로 (PI 점검 R16)
 
 - 결론: 연구 lane을 켠 trial에서 웹으로 "GEO GSE10072 시료 메타데이터를 표로 정리해 줘"를 보내자, 규칙 분류가 "단순 작업으로 확실히 한정되지 않음"으로 research에 넣어 CP1과 5단계 연구 계획이 떴다. PI 설정에도 연구 lane을 켰으므로 내일 PI가 같은 일을 겪는다. 이제 출처에 있는 것을 표·목록으로 정리하거나(메타데이터·시료 정보) 추출·다운로드하는 요청은 simple이다. 분석(DE·경로·생존 등)이 들어가면 표를 함께 요청해도 research로 둔다. 직원 한 명을 직접 지정한 요청은 PI가 research를 명시하지 않는 한 simple이고, 명시했을 때의 안내는 한국어로 바꿨다.
