@@ -431,7 +431,7 @@ dialog.sheet::backdrop{background:rgba(17,26,34,.45)}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="./state.js"></script>
 <script type="module">
-import {answerRequired, decisionChoice, decisionNote, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, reviseContinues, revisionNoteMissing, syncDecisionCards, syncDecisionHistory} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncTaskBoard} from './ui/tasks.js';
 import {initTabShell} from './ui/shell.js';
@@ -963,9 +963,12 @@ $('#approvals').addEventListener('click', async e => {
       if (li.dataset.kind === 'question' && act === 'approve' && !note && answerRequired(S.approvals.get(li.dataset.id))) {
         toast('선택지를 하나 고르거나 답을 적어 주세요'); btn.disabled = false; return;
       }
+      // CP2 수정 요청 re-plans from its note through a new CP1, so the note says what to fix (R10).
+      const approval = S.approvals.get(li.dataset.id), missing = revisionNoteMissing(approval, act, note);
+      if (missing) { toast(missing); ans.focus(); btn.disabled = false; return; }
       // CP2 evidence review sends its approve/revise/deny choice; the note never decides it (#90).
       await api.approve(li.dataset.id, act === 'approve', note, decisionChoice({ kind: li.dataset.kind }, act));
-      toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? '수정 요청을 보냈어요. 이 요청은 끝나요' : '거절했어요');
+      toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? (reviseContinues(approval) ? '수정 요청을 보냈어요. 새 계획으로 CP1을 다시 받아요' : '수정 요청을 보냈어요. 이 요청은 끝나요') : '거절했어요');
     }
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);

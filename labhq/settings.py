@@ -423,7 +423,8 @@ class ResearchSettings(BaseModel):
     live_source_deadline_s: float = Field(default=60.0, gt=0)
     result_corrections: int = Field(default=2, ge=0)  # retry only invalid result JSON; never rerun the step
     finish_turns: int = Field(default=1, ge=0)  # a step past its turn limit continues once with half the limit
-    # After a review "revise", the PI may continue through a new CP1 this many times per request; 0 ends at revise.
+    # After a review "revise" or a CP2 revise, a request continues through a new CP1 at most this many times in all;
+    # 0 ends at revise.
     revise_continuations: int = Field(default=2, ge=0)
     pack_dirs: list[str] = []
     active_packs: list[str] = []  # exact ``id@version`` keys, fixed into the approved plan

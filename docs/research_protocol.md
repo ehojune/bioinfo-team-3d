@@ -2,7 +2,7 @@
 
 대상: 연구를 승인하는 PI와 계획·실행·검토를 맡는 직원. 버전 `v0.1`(2026-10-01).
 
-> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받는다. 수정 요청은 아직 단계를 다시 돌리지 않고 거부처럼 요청을 끝낸다(`evidence_revision_requested`). 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier는 `research.live_source_check`를 켜면 CP2와 `labhq verify`에서 실행하며 기본값은 꺼짐이다. CP3·CP4는 아직 실행 경로에 연결하지 않았다.
+> 현재 구현은 opt-in pilot이다. `research.enabled: false`가 기본값이다. 연구 요청은 계획 검증과 CP1 승인까지 진행하고, `research.evidence_checkpoint: true`일 때만 승인된 step을 결과 원장(§3) 계약으로 실행해 CP2에서 멈춘다. CP2 승인 뒤에는 리뷰 한 번과 claim 앵커를 검사한 보고서까지 간다. CP2 결정은 승인·수정 요청·거부 선택값으로만 받는다. 수정 요청은 PI 메모를 수정 요청으로 삼아 새 계획과 새 CP1로 이어 가고, 바뀐 단계와 그 아래 단계만 다시 돌린다(R10). `research.revise_continuations` 상한(리뷰 revise와 합산)에 닿았으면 거부처럼 요청을 끝낸다(`evidence_revision_requested`). 모은 산출에 묶이지 않은 artifact를 인용한 근거는 거부한다. 연구 요청은 일반 재계획에 들어가지 않는다. 출처 verifier는 `research.live_source_check`를 켜면 CP2와 `labhq verify`에서 실행하며 기본값은 꺼짐이다. CP3·CP4는 아직 실행 경로에 연결하지 않았다.
 
 ## 1. 접수
 
@@ -109,13 +109,13 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 | gate | 멈추는 때 | PI에게 보이는 것 |
 |---|---|---|
 | CP1 계획 | 연구 실행 전 | 질문·가설, plan hash, 성공/중단 기준, 비용·데이터 경계, 승인 뒤 집행 상한(`budget_usd`), CP2·3 위임 범위 |
-| CP2 증거 | 분석 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청·거부 선택(지금은 수정 요청도 요청을 끝냄) |
+| CP2 증거 | 분석 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청(메모 필수, 새 CP1로 이어 감)·거부 선택 |
 | CP3 선택 | 후보·방법 선택 시 | 공통 기준, 대안·민감도, 최소 판별 실험·비용 |
 | CP4 수용 | 감사와 최종 초안 뒤 | 현재 권고, claim/audit/report hash, 남은 공백과 이견 |
 
 receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 위임 범위를 적는다. 질문 답변·직원 상담·resume 승인·예산/HPC/전송 승인은 연구 승인을 대신하지 않는다.
 
-카드 메모는 결정이 아니다. CP2는 구조화된 선택값만 읽는다. 메모는 receipt와 감사 부록에 남고, 다음 일을 하는 prompt에도 2,000자까지 들어간다: CP1 메모는 그 계획의 단계, CP2 메모는 리뷰와 보고서, 이어 가기 메모와 직전 CP2 메모는 새 계획(R11). PLAN의 선택 field `budget_usd`(양수)는 CP1 승인 때 요청의 집행 상한이 된다. 값은 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`)을 넘지 않는다. 승인 직후 누적 비용을 이 상한으로 판정하고, 단계·리뷰 prompt에 이 상한을 직접 적는다. true/false 값은 검증 오류다. 이 field가 없는 PLAN은 canonical JSON에 넣지 않으므로 전에 동결한 plan hash가 그대로다(R17).
+카드 메모는 결정이 아니다. CP2는 구조화된 선택값만 읽는다. 메모는 receipt와 감사 부록에 남고, 다음 일을 하는 prompt에도 2,000자까지 들어간다: CP1 메모는 그 계획의 단계, CP2 메모는 리뷰와 보고서, 이어 가기 메모와 직전 CP2 메모는 새 계획(R11). CP2 수정 요청의 메모는 메모가 아니라 수정 요청이다. 새 계획과 그 차수의 리뷰 prompt에 수정 요청으로 들어간다(R10). PLAN의 선택 field `budget_usd`(양수)는 CP1 승인 때 요청의 집행 상한이 된다. 값은 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`)을 넘지 않는다. 승인 직후 누적 비용을 이 상한으로 판정하고, 단계·리뷰 prompt에 이 상한을 직접 적는다. true/false 값은 검증 오류다. 이 field가 없는 PLAN은 canonical JSON에 넣지 않으므로 전에 동결한 plan hash가 그대로다(R17).
 
 필수 작업·감사·승인·사전 기준을 충족하면 `done`, 끊긴 참조·낡은 결과·중대 결함이 남으면 `incomplete`, 실행 오류는 `failed`다. 근거 부족도 허용한 계획이면 `done + inconclusive`가 가능하다. `plan_only`의 완료는 승인된 계획이며 연구 결과 완료가 아니다.
 

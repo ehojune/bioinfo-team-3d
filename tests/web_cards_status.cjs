@@ -130,8 +130,8 @@ test('the CP2 card of req_7ccde78be0 is a 22-row claim table with the JSON folde
   const labels=nodes(p.detail).filter(n=>n.tagName==='DT').map(n=>n.textContent);
   assert.deepEqual(labels.slice(0,3),['거부된 evidence (승인 대상 아님)','근거를 잃은 claim','claim별 근거 (22개)']);
   assert.ok(!labels.includes('results')&&!labels.includes('choices')&&!labels.includes('gate'));
-  assert.equal(p.revise.hidden,false);assert.equal(p.revise.textContent,'수정 요청(요청 끝남)');
-  assert.match(p.consequence.textContent,/수정 요청과 거부는 둘 다 이 요청을 끝냅니다/);assert.equal(p.consequence.hidden,false);
+  assert.equal(p.revise.hidden,false);assert.equal(p.revise.textContent,'수정 요청');
+  assert.match(p.consequence.textContent,/수정 요청은 메모로 새 계획을 세워 새 CP1을 받고/);assert.equal(p.consequence.hidden,false);
   assert.match(p.timing.textContent,/1분 대기 · 59분 남음/,'CP2 keeps its real countdown');
   p.revise.onclick();assert.deepEqual(sent,['revise'],'the revise choice is still sent unchanged');
 });

@@ -1,4 +1,4 @@
-import {answerRequired, syncDecisionCards} from '../../ui/decide.js';
+import {answerRequired, revisionNoteMissing, syncDecisionCards} from '../../ui/decide.js';
 
 // DOM controls and transport stay outside the shared event reducer.
 export function startLiveOffice(onState) {
@@ -69,6 +69,9 @@ export function startLiveOffice(onState) {
         // Structured questions compose their answer in decide.js; an unanswered one yields ''.
         if (a.kind === 'clarify' && approved && !note) { notice(a.detail?.questions?.length ? '모든 질문에 답해 주세요.' : '답을 적어 주세요.'); return; }
         if (a.kind === 'question' && approved && !note && answerRequired(a)) { notice('선택지를 하나 고르거나 답을 적어 주세요.'); return; }
+        // CP2 수정 요청 re-plans from its note through a new CP1, so the note says what to fix (R10).
+        const missing = revisionNoteMissing(a, choice, note);
+        if (missing) { notice(missing); return; }
         // CP2 evidence review carries its approve/revise/deny choice; the note never decides it (#90).
         ws.send(JSON.stringify(choice ? {type:'approval.resolve', id:a.id, approved, note, choice}
           : {type:'approval.resolve', id:a.id, approved, note}));

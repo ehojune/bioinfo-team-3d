@@ -1,8 +1,11 @@
-"""Continue a research request after its scientific review ended with "revise" (#90, #58).
+"""Continue a research request after its scientific review ended with "revise" (#90, #58) or the PI chose revise at
+CP2 (PI 점검 R10).
 
-The PI approves the continuation on a card (gate ``research_continue``). The CSO then writes a complete new research
-PLAN that carries the reviewer's P1 issues, and the PI approves it at a new CP1 (a new plan_sha256). A completed step
-of the previous plan is reused instead of run again only when all of these hold; anything else re-runs:
+After a review "revise" the PI approves the continuation on a card (gate ``research_continue``) and the CSO writes a
+complete new research PLAN that carries the reviewer's P1 issues. After a CP2 revise the PI's CP2 note is the revision
+request (``continuation.pi_request``) and no extra card is asked. Either way the PI approves the new plan at a new CP1
+(a new plan_sha256), and both count against ``research.revise_continuations``. A completed step of the previous plan
+is reused instead of run again only when all of these hold; anything else re-runs:
 
 - the new plan keeps the step byte-identical (canonical JSON of every field) under the same frozen question, scope,
   protocol and pack values, which together are exactly what the step was dispatched with apart from its upstream
@@ -22,6 +25,8 @@ after its CP1, and a restart between them. A reused result is a copy bound to th
 ``labhq verify`` and the semantics records read one plan with its own results; the round and plan it ran under stay
 in ``continuation.reused_from`` and in the round archive. A continuation that ends before any step ran puts the
 archived round back whole (``restore_round``) and keeps its declined draft in ``continuation.declined_plan``.
+The archive also keeps the request's spending cap (``budget_usd``), which a new CP1 may have lowered, so that rollback
+puts it back too (PR #499 review).
 """
 
 from __future__ import annotations
@@ -192,6 +197,7 @@ def archive_round(req: Mapping[str, Any], results: Mapping[str, Mapping[str, Any
     archived["cp2"] = copy.deepcopy((contract.get("checkpoints") or {}).get("cp2"))
     archived["continuation"] = copy.deepcopy(contract.get("continuation"))
     archived["results"] = copy.deepcopy(dict(results))
+    archived["budget_usd"] = req.get("budget_usd")  # the cap this round ran under; a new CP1 may lower it
     return archived
 
 
@@ -223,6 +229,8 @@ def restore_round(req: dict[str, Any], archived: Mapping[str, Any]) -> dict[str,
         checkpoints["cp2"] = copy.deepcopy(archived["cp2"])
     contract.pop("result_salvage", None)  # the draft's carried salvage; the archived receipt holds the round's
     contract["round"] = int(archived.get("round") or 1)
+    if "budget_usd" in archived:  # an archive written before the cap was kept leaves today's cap as it is
+        req["budget_usd"] = archived["budget_usd"]
     return draft
 
 
@@ -246,27 +254,45 @@ def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any) -> dic
 
 
 def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: list[Mapping[str, Any]],
-                round_no: int) -> str:
-    """Appended to the research PLAN prompt of a continuation round."""
-    lines = [f"- {issue.get('step_id') or '-'}"
-             f"{'/' + str(issue['claim_id']) if issue.get('claim_id') else ''} [{issue.get('category') or 'other'}] "
-             f"{issue.get('problem')} Request: {issue.get('request')}" for issue in issues]
+                round_no: int, pi_request: str = "") -> str:
+    """Appended to the research PLAN prompt of a continuation round. ``pi_request`` is the PI's CP2 revise note: the
+    round continues a CP2 revise, not a review "revise" (R10)."""
+    if pi_request:
+        why = ("At CP2 the PI did not approve the evidence of the previous frozen plan and asked for a revision. "
+               "Return a complete new research PLAN that does what the PI's revision request below asks; the PI "
+               "approves it at a new CP1.\n")
+        named = ""
+        scope = ("Change or add only the steps the request needs. A step the request asks to run again must change "
+                 "(give it instructions that address the request), since a byte-identical step keeps its previous "
+                 "result. Use a new id for a step that does different work.\n")
+        listed = "PI revision request (CP2):\n" + pi_request
+    else:
+        why = ("The scientific review of the previous frozen plan ended with verdict \"revise\". Return a complete "
+               "new research PLAN that fixes every P1 issue below; the PI approves it at a new CP1.\n")
+        named = "no P1 issue names the step, "
+        scope = ("Change or add only the steps the issues need, give a changed step instructions that address its "
+                 "issue, and use a new id for a step that does different work.\n")
+        lines = [f"- {issue.get('step_id') or '-'}"
+                 f"{'/' + str(issue['claim_id']) if issue.get('claim_id') else ''} "
+                 f"[{issue.get('category') or 'other'}] {issue.get('problem')} Request: {issue.get('request')}"
+                 for issue in issues]
+        listed = "P1 issues:\n" + ("\n".join(lines) or "- (none)")
     return (
-        f"\n\nContinuation (research round {round_no}). The scientific review of the previous frozen plan ended "
-        "with verdict \"revise\". Return a complete new research PLAN that fixes every P1 issue below; the PI "
-        "approves it at a new CP1.\n"
+        f"\n\nContinuation (research round {round_no}). " + why +
         "labhq reuses a previous step's result without running it again only when your plan keeps that step "
         "byte-identical (same id and every field), keeps brief.question, brief.scope, protocol and pack_values "
-        "unchanged, no P1 issue names the step, and every step it depends on is reused too. Any change to the "
-        "question, scope, protocol or pack values re-runs every step, so change them only when an issue needs it. "
-        "Change or add only the steps the issues need, give a changed step instructions that address its issue, "
-        "and use a new id for a step that does different work.\n"
-        "P1 issues:\n" + ("\n".join(lines) or "- (none)") +
-        f"\n\nPrevious frozen plan (plan_sha256 {previous_sha256}):\n{_canonical(previous_plan)}")
+        f"unchanged, {named}and every step it depends on is reused too. Any change to the question, scope, protocol "
+        "or pack values re-runs every step, so change them only when the request or an issue needs it. " + scope +
+        listed + f"\n\nPrevious frozen plan (plan_sha256 {previous_sha256}):\n{_canonical(previous_plan)}")
 
 
-def review_prompt(issues: list[Mapping[str, Any]]) -> str:
-    """Appended to the research review prompt of a continuation round: the issues the new plan was meant to fix."""
+def review_prompt(issues: list[Mapping[str, Any]], pi_request: str = "") -> str:
+    """Appended to the research review prompt of a continuation round: the issues the new plan was meant to fix, or
+    the PI's CP2 revision request it was written from (R10)."""
+    if pi_request:
+        return ("\n\nThis plan is a continuation approved at a new CP1 after the PI asked at CP2 for this revision "
+                "instead of approving the earlier evidence. Check whether the results address it and file an issue "
+                "where they do not:\n" + pi_request)
     if not issues:
         return ""
     return ("\n\nThis plan is a continuation approved at a new CP1 after a previous review asked for these P1 "

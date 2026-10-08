@@ -28,12 +28,35 @@ test('the CP2 card offers approve, revise and deny and sends each as a choice',a
   const p=row._decisionParts;
   assert.equal(p.approve.textContent,'증거 승인');
   assert.equal(p.revise.hidden,false);
-  assert.equal(p.revise.textContent,'수정 요청(요청 끝남)','the label says the request ends (R10)');
+  assert.equal(p.revise.textContent,'수정 요청','a revise re-plans through a new CP1 (R10)');
+  assert.match(p.consequence.textContent,/새 CP1/);
+  assert.match(p.note.placeholder,/고칠 점을 꼭 적어/);
   assert.equal(p.revise.dataset.act,'revise');
   assert.equal(p.deny.textContent,'거부');
   p.note.value='Request revision';
   p.approve.onclick(); p.revise.onclick(); p.deny.onclick();
   assert.deepEqual(sent,[[true,'Request revision','approve'],[false,'Request revision','revise'],[false,'Request revision','deny']]);
+});
+
+test('past the continuation cap the revise button says the request ends (R10)',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const ending={...cp2,id:'cp2-end',detail:{...cp2.detail,revise_continues:false}};
+  const [row]=decide.syncDecisionCards(container,[ending]);
+  const p=row._decisionParts;
+  assert.equal(p.revise.textContent,'수정 요청(요청 끝남)');
+  assert.match(p.consequence.textContent,/이어 가기 상한에 닿아 수정 요청과 거부는 둘 다 이 요청을 끝냅니다/);
+  assert.doesNotMatch(row._decisionParts.detail.textContent,/revise_continues/);
+});
+
+test('a revise needs a note while it re-plans; approve, deny and an ending revise do not (R10)',async()=>{
+  const decide=await modulePromise;
+  assert.match(decide.revisionNoteMissing(cp2,'revise',''),/고칠 점을 메모에/);
+  assert.match(decide.revisionNoteMissing(cp2,'revise','   '),/고칠 점을 메모에/);
+  assert.equal(decide.revisionNoteMissing(cp2,'revise','add a sensitivity check'),'');
+  assert.equal(decide.revisionNoteMissing(cp2,'approve',''),'');
+  assert.equal(decide.revisionNoteMissing(cp2,'deny',''),'');
+  assert.equal(decide.revisionNoteMissing({...cp2,detail:{...cp2.detail,revise_continues:false}},'revise',''),'');
+  assert.equal(decide.revisionNoteMissing({id:'t',kind:'tool_permission'},'revise',''),'');
 });
 
 test('contract-refused rows and their reasons lead the CP2 card detail',async()=>{
@@ -64,5 +87,8 @@ test('both offices forward the CP2 choice to the gateway',()=>{
   assert.match(html,/api\.approve\(li\.dataset\.id, act === 'approve', note, decisionChoice\(\{ kind: li\.dataset\.kind \}, act\)\)/);
   assert.match(html,/choice \? \{ approved: ok, note, choice \} : \{ approved: ok, note \}/);
   assert.match(live,/choice \? \{type:'approval\.resolve', id:a\.id, approved, note, choice\}/);
+  // Both refuse an empty-note revise before anything is sent (R10).
+  assert.match(html,/missing = revisionNoteMissing\(approval, act, note\);\s*if \(missing\) \{ toast\(missing\); ans\.focus\(\); btn\.disabled = false; return; \}\s*\/\/ CP2 evidence review sends/);
+  assert.match(live,/const missing = revisionNoteMissing\(a, choice, note\);\s*if \(missing\) \{ notice\(missing\); return; \}\s*\/\/ CP2 evidence review carries/);
   assert.match(fs.readFileSync(path.join(web,'state.js'),'utf8'),/research_evidence: 'CP2 증거 검토'/);
 });
