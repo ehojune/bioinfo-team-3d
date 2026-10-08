@@ -3,3 +3,6 @@ rows:
 - sha: "73958b5"
   at: 2026-10-08 10:09
   text: "단계 작업 폴더 삭제·지정 산출·doctor 검사를 묶어 PI 경고 소음을 줄임"
+- sha: "4da03a6"
+  at: 2026-10-08 10:51
+  text: "PowerShell provider·배열 삭제를 닫고 빈 roster·엔진 누락 doctor 준비 판정을 보강"
