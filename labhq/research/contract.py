@@ -34,17 +34,27 @@ _RESEARCH_SIGNALS = (
     r"차등\s*발현|연관\s*분석|통계\s*검정|실험\s*설계|반증|재현성",
     r"\bhypothes(?:is|es)\b|\bresearch question\b|\bcausal|\bmechanism|\bbiomarker",
     r"\bdifferential expression\b|\bassociation stud|\bselect (?:a )?(?:candidate|method)",
+    # Any analysis stays research even when it also asks for a table (readiness R16, 2026-10-08).
+    r"분석|\banaly[sz]e\b|\banalys[ie]s\b|\bGSEA\b|\bpathway\b|\bsurvival\b|\bDEGs?\b",
 )
 _SIMPLE_SIGNALS = (
     r"형식\s*변환|파일\s*변환|집계|개수\s*(세기|계산)|원문\s*요약|그대로\s*요약|발췌",
     r"\bconvert\b|\breformat\b|\baggregate\b|\bcount\b|\bsummarize (?:the )?(?:source|text)",
+    # Collecting and laying out what a source already says: a metadata table went through CP1 and a five-step
+    # research plan on 2026-10-08 (readiness R16).
+    r"표(로|를)\s*(정리|만들|모아)|목록(을|으로)?\s*(정리|만들)|메타데이터|시료\s*정보|샘플\s*정보|추출|다운로드|내려\s*받",
+    r"\bmetadata\b|\b(?:make|build) a table\b|\btabulate\b|\bextract\b|\bdownload\b",
 )
 
 
-def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope") -> IntakeDecision:
+def classify_intake(text: str, requested: str = "auto", *, scope_status: str = "in_scope",
+                    mode: str = "orchestrate") -> IntakeDecision:
     """Classify without an extra model call; ambiguous requests enter the research planning lane."""
     if requested in {"simple", "research"}:
         return IntakeDecision(work_kind=requested, reason=f"PI specified work_kind={requested}",
+                              scope_status=scope_status, source="explicit")
+    if mode == "direct":  # the PI picked one staff member: a task for them, not a frozen research plan (R16)
+        return IntakeDecision(work_kind="simple", reason="PI sent the request to one staff member directly",
                               scope_status=scope_status, source="explicit")
     research = any(re.search(pattern, text, re.IGNORECASE) for pattern in _RESEARCH_SIGNALS)
     simple = any(re.search(pattern, text, re.IGNORECASE) for pattern in _SIMPLE_SIGNALS)
