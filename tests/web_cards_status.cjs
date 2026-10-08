@@ -253,3 +253,26 @@ test('both offices use the shared labels, guards and request lookup',()=>{
   assert.match(live,/a\.kind === 'question' && approved && !note && answerRequired\(a\)/);
   assert.match(fs.readFileSync(path.join(web,'lab3d/index.html'),'utf8'),/\.evidence-table/);
 });
+
+test('an agent waiting on an answer is not shown as waiting on HPC, and a reloaded planned request is past briefing',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  const plan={steps:[{id:'s1',agent_id:'biologist'}]};
+  office.apply({type:'snapshot',data:{agents:[{id:'biologist',name:'곰'}],
+    requests:[{id:'r1',text:'흡연 DE',status:'waiting_pi',plan,review:{verdict:'revise'}},
+              {id:'r2',text:'요약',status:'running',plan:{steps:[]}}]}});
+  assert.equal(office.S.requests.get('r1').phase,'execute','web trial 2026-10-08: round 2 CP2 read 브리핑 after a reload');
+  assert.equal(office.S.requests.get('r2').phase,'briefing','no plan yet: still briefing');
+  office.apply({type:'agent.status',agent_id:'biologist',data:{state:'hibernating',jobs:[],asks:['ask_1']}});
+  const a=office.ag('biologist');
+  assert.equal(office.stateText(a),'답 기다리는 중');
+  office.apply({type:'agent.status',agent_id:'biologist',data:{state:'hibernating',jobs:['42'],asks:[]}});
+  assert.equal(office.stateText(a),'HPC 기다리는 중');
+});
+
+test('what an agent waits for survives a roster update',()=>{
+  const office=State.createOfficeState({now:()=>100});
+  office.apply({type:'snapshot',data:{agents:[{id:'biologist',name:'곰'}]}});
+  office.apply({type:'agent.status',agent_id:'biologist',data:{state:'hibernating',jobs:[],asks:['ask_1']}});
+  office.apply({type:'roster.updated',data:{agents:[{id:'biologist',name:'곰',state:'hibernating'}]}});
+  assert.equal(office.stateText(office.ag('biologist')),'답 기다리는 중');
+});

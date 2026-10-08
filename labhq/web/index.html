@@ -571,7 +571,7 @@ const headSVG = kind => `<svg viewBox="24 8 52 50" aria-hidden="true" focusable=
 
 /* ---------------- state ---------------- */
 const officeState = LabHQState.createOfficeState({mode: MODE, now});
-const { S, ag, visual, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
+const { S, ag, visual, stateText, nick, req, setPlan, feed, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES } = officeState;
 function apply(ev, replay = false) {
   for (const effect of officeState.apply(ev, replay)) {
     if (effect.type === 'toast') toast(effect.text, effect.approval_id);
@@ -658,7 +658,7 @@ function renderOffice() {
     if (el.className !== cls) el.className = cls;
     const b = bubble(a, vs), bub = el.firstElementChild;
     if (bub.textContent !== b) bub.textContent = b;
-    el.setAttribute('aria-label', `${a.name}, ${STATE_KO[vs]}${a.task && vs !== 'idle' ? `, ${a.task}` : ''}`);
+    el.setAttribute('aria-label', `${a.name}, ${stateText(a, vs)}${a.task && vs !== 'idle' ? `, ${a.task}` : ''}`);
   }
 }
 function phaseList(q) {
@@ -1046,7 +1046,7 @@ function openSheet(id) {
   if (dlg.dataset.agent !== id) dlg.dataset.log = 'activity';
   const view = dlg.dataset.log === 'trace' ? 'trace' : 'activity';
   const facts = [
-    ['상태', STATE_KO[vs]], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
+    ['상태', stateText(a, vs)], ['지금 하는 일', vs === 'idle' ? '없음' : (a.task || '—')],
     ['엔진', `${a.engine || '—'}${a.model ? ` / ${a.model}` : ''}`],
     ['소속', isContract(a) ? `파견직, ${contractLeft(a)}` : '정규직'],
   ];
