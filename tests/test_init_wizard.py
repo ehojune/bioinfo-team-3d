@@ -385,6 +385,10 @@ def test_doctor_and_version_report_use_same_app_path(tmp_path, monkeypatch):
     root, env = _app(tmp_path, monkeypatch)
     monkeypatch.setenv("LOCALAPPDATA", env["LOCALAPPDATA"])
     settings = Settings()
+    agents = tmp_path / "agents" / "core"
+    agents.mkdir(parents=True)
+    (agents / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: codex\n", encoding="utf-8")
     settings.engines.codex.bin = "auto"
     calls = []
     def probe(argv, env):

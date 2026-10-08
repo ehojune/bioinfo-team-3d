@@ -261,6 +261,37 @@ def test_non_recursive_rm_is_allowed():
     assert evaluate_tool("PowerShell", {"command": "rm C:/work/tmp.txt"}, _policy()).action == "allow"
 
 
+@pytest.mark.parametrize("command", [
+    "rm -rf .tmp",
+    "rm -rf outputs/tmp",
+    "cd /work/step && rm -rf .tmp/peek",
+])
+def test_recursive_delete_inside_the_step_workdir_is_allowed(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=["/work/step"], workdir="/work/step")
+    assert decision.action == "allow"
+
+
+def test_powershell_recursive_delete_inside_the_step_workdir_is_allowed():
+    decision = evaluate_tool("PowerShell", {"command": "Remove-Item -Recurse -Force .tmp"}, _policy(),
+                             allowed_roots=["C:/work/step"], workdir="C:/work/step")
+    assert decision.action == "allow"
+
+
+@pytest.mark.parametrize("command", ["rm -rf ../x", "rm -rf $DIR", "rm -rf /tmp/x"])
+def test_recursive_delete_outside_or_unresolved_still_asks(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=["/work/step"], workdir="/work/step")
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+    assert "(/" not in decision.reason
+
+
+def test_other_risky_command_summary_has_a_korean_label_without_the_regex():
+    decision = evaluate_tool("Bash", {"command": "qsub run.sh"}, _policy())
+    assert decision.reason == "위험 명령 확인 필요: `qsub run.sh`"
+
+
 def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
     """#421: an unclassified tool used to fall through to allow. Monitor runs a shell command the Bash checks never
     see; tools measured in trial records (StructuredOutput, ToolSearch) and the configured list stay allowed."""

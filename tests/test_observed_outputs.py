@@ -94,6 +94,31 @@ async def test_bytecode_caches_are_observed_but_not_unreported(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_labhq_instructed_outputs_are_observed_without_unreported_warning(tmp_path, monkeypatch):
+    def write(workdir):
+        _write(workdir, "outputs/env/s01.txt", b"env\n")
+        _write(workdir, "outputs/scripts/analyze.py", b"print('ok')\n")
+        _write(workdir, "outputs/reference/genes.tsv", b"gene\n")
+        _write(workdir, "outputs/other.txt", b"other\n")
+
+    runner = _runner(tmp_path, monkeypatch, write)
+    result = await runner.run_task(_task())
+
+    assert result.unreported_outputs == ["outputs/other.txt"]
+    manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
+    observed = {row["path"] for row in manifest["runs"][result.task_id]["observed_outputs"]}
+    assert observed == {
+        "outputs/env/s01.txt", "outputs/scripts/analyze.py",
+        "outputs/reference/genes.tsv", "outputs/other.txt",
+    }
+    warnings = [event["data"].get("text", "") for event in runner.store.pending()
+                if event["type"] == "agent.log" and event["data"].get("level") == "warn"]
+    assert any("outputs/other.txt" in warning for warning in warnings)
+    assert not any("outputs/env/" in warning or "outputs/scripts/" in warning or
+                   "outputs/reference/" in warning for warning in warnings)
+
+
+@pytest.mark.asyncio
 async def test_claude_post_tool_hook_ids_the_nearest_observed_output_write(tmp_path, monkeypatch):
     from labhq.hooks.tool_use import record_post_tool_use
 
