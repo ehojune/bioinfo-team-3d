@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -763,6 +764,22 @@ async def test_research_step_prompt_carries_the_frozen_protocol():
                  plan["protocol"]["statistics"]["multiple_testing"], "method_changes",
                  "never describe the result as following the pre-specified rule"):
         assert text in prompt
+
+
+def test_the_step_digest_carries_the_cp1_hypotheses_word_for_word():
+    """Web trial 2026-10-08: without them s9 redefined A1 and A2 in round 1 (a review P1) and asked the PI for the
+    sentences in round 2."""
+    from labhq.orchestrator.cso import _research_protocol_digest
+
+    plan = valid_plan(steps=1)
+    plan["brief"]["primary_hypothesis"] = "Smokers show higher cell-cycle expression after covariate adjustment."
+    plan["brief"]["null_or_alternatives"] = ["H0: no difference beyond the permutation null.",
+                                             "A1: confounding by sex, stage, age or scan batch."]
+    plan["brief"]["distinguishing_observations"] = ["DEG count above the 95th permutation percentile (H0)."]
+    digest = _research_protocol_digest(plan)
+    for text in (plan["brief"]["primary_hypothesis"], *plan["brief"]["null_or_alternatives"],
+                 *plan["brief"]["distinguishing_observations"]):
+        assert json.dumps(text, ensure_ascii=False) in digest
 
 
 def test_no_prompt_clips_the_frozen_protocol():

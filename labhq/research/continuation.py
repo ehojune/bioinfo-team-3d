@@ -8,7 +8,7 @@ request (``continuation.pi_request``) and no extra card is asked. Either way the
 is reused instead of run again only when all of these hold; anything else re-runs:
 
 - the new plan keeps the step byte-identical (canonical JSON of every field) under the same frozen question, scope,
-  protocol and pack values, which together are exactly what the step was dispatched with apart from its upstream
+  hypotheses, protocol and pack values, which together are exactly what the step was dispatched with apart from its upstream
   results, the PI's CP1 note and the spending cap (``frozen_context``; neither changes the plan, so a new round's
   note or cap does not re-run a reused step), and under the same domain pack snapshot (``protocol.packs`` with each pack's sha256,
   and the contract's ``pack_snapshot``): a pack whose definition changed under the same ``id@version`` re-runs every
@@ -53,9 +53,16 @@ def _canonical(value: Any) -> str:
 
 
 def frozen_context(plan: Mapping[str, Any]) -> dict[str, Any]:
-    """The frozen question and protocol every research step is dispatched with (the step prompt's digest)."""
+    """The frozen question, hypotheses and protocol every research step is dispatched with (the step prompt's digest).
+
+    The hypotheses are the CP1-approved definitions a step judges against. Without them a step that had to rule on
+    H0 and the alternatives wrote its own (web trial 2026-10-08: s9 redefined A1 and A2, a review P1; in round 2 it
+    stopped to ask the PI for the sentences)."""
     brief = plan.get("brief") or {}
     return {"question": brief.get("question"), "scope": brief.get("scope"),
+            "hypotheses": {"primary": brief.get("primary_hypothesis"),
+                           "null_or_alternatives": brief.get("null_or_alternatives") or [],
+                           "distinguishing_observations": brief.get("distinguishing_observations") or []},
             "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
             "pack_values": plan.get("pack_values") or {}}
 
@@ -126,7 +133,7 @@ def carry_over(previous: Mapping[str, Any], plan: Mapping[str, Any], pack_snapsh
     old = {step["id"]: step for step in previous_plan.get("steps") or [] if isinstance(step, Mapping)}
     previous_results = previous.get("results") or {}
     named = {issue.get("step_id") for issue in issues if issue.get("step_id")}
-    context = ("question, scope, protocol or pack values changed"
+    context = ("question, scope, hypotheses, protocol or pack values changed"
                if _canonical(frozen_context(previous_plan)) != _canonical(frozen_context(plan)) else
                "domain pack snapshot changed"
                if _canonical(pack_context(previous_plan, previous.get("pack_snapshot"))) !=
