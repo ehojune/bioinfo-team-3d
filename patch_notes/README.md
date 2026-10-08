@@ -14,8 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:12 | [`132b607`](https://github.com/ehojune/bioinfo-team-3d/pull/493/commits/132b607) | CLI가 프로세스 생성 시각과 인증된 작업 상태를 확인한 뒤 중복 기동과 위험한 종료를 막게 함 |
 | 09:05 | [`1ae55c1`](https://github.com/ehojune/bioinfo-team-3d/pull/496/commits/1ae55c1) | 답한 clarify 질문을 걸러 재계획을 이어 가고 실패 보고서에 단계·원인·PI 조치를 표시 |
 | 08:53 | [`0ec66c5`](https://github.com/ehojune/bioinfo-team-3d/pull/495/commits/0ec66c5) | 웹 사무실이 붙을 때 gateway가 task 원장을 요청마다 두 번 풀어 event loop가 약 11초 멈추던 문제를 고침. snapshot·요청 목록·라운드 기록 복구는 원장을 한 번만 읽고, 진행 중 요청이 없으면 health가 원장을 읽지 않는다. |
+| 08:47 | [`fde575f`](https://github.com/ehojune/bioinfo-team-3d/pull/493/commits/fde575f) | PI가 새 터미널에서 gateway와 runner를 한 번에 띄우고 CLI 오류를 복구할 수 있게 함 |
 | 08:27 | [`116a693`](https://github.com/ehojune/bioinfo-team-3d/pull/492/commits/116a693) | doctor 연구 lane 행이 gateway가 시작을 거부할 pack 설정(오타·없는 판)을 fail로 알린다(#492 리뷰). |
 | 08:24 | [`6dd606c`](https://github.com/ehojune/bioinfo-team-3d/pull/492/commits/6dd606c) | labhq doctor가 연구 lane이 끝까지 도는지 알리고(enabled만 켜면 CP1에서 멈춤), research 오타 키는 시작 오류로. 문서는 세 키 형태로, pi-qa 옛 창구·상태를 바로잡음(PI 점검 R1 R25). |
 | 08:07 | [`d224874`](https://github.com/ehojune/bioinfo-team-3d/pull/491/commits/d224874) | sed -i 입력과 curl·wget 출력 경로의 옵션 순서·따옴표 해석을 보강 |

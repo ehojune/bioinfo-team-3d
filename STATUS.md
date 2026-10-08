@@ -12,6 +12,14 @@
 - 미해결: 없음.
 - 근거: `tests/test_intake_questions.py`, `tests/test_cso.py`, `tests/test_research_cp2.py`.
 
+## 2026-10-08 · #493 — PI 단독 기동과 CLI 복구 경로
+
+- 결론: 새 PowerShell·cmd에서 `.\labhq -c config\labhq.yaml up`으로 안전하게 기동하고 `open`할 수 있다. `down`은 프로세스 생성 시각과 active 작업을 확인하며, 강제 종료는 `--force`를 명시해야 한다.
+- 바뀐 것: PID 숫자 파일을 역할·생성 시각·설정 경로가 든 JSON 기록으로 교체했다. 살아 있는 runner 중복 기동 방지, 인증된 상태 확인, runner 트리 종료, wrapper 이름 안내를 더했다.
+- 실행한 것: 새 회귀가 수정 전 7건 실패, 수정 뒤 21건 통과. Windows 전체 pytest 4763 passed·59 skipped, 자체 throwaway process 생성 시각 확인, `scripts/check_public.sh`, `git diff --check` 통과.
+- 미해결: repo root의 `labhq`가 Python package 디렉터리라 POSIX wrapper는 `labhq.sh`다.
+- 근거: `tests/test_cli_launch.py`, `labhq/cli.py`, `labhq/adapters/base.py`, `labhq/doctor.py`, `README.md`, `README.en.md`, `docs/manual.md`.
+
 ## 2026-10-08 · 연구 lane이 끝까지 도는지 doctor가 알리고, research 오타 키를 오류로 (PI 점검 R1 R25)
 
 - 결론: PI 시운전 전 점검(R1)에서 PI 설정에 `research` 블록이 없어 v0.5 연구 lane이 돌지 않는 것을 찾았다. 문서는 `enabled: true` 한 줄로 켠다고 했지만, 그러면 CP1 승인 뒤 단계를 실행하지 않고 끝난다. `labhq doctor`에 `research lane` 행(꺼짐 / CP1에서 멈춤 warn / 끝까지 감)을 넣고, `research` 아래 오타 키는 시작할 때 오류로 한다. `docs/research_protocol.md`와 예시 설정은 `enabled`·`evidence_checkpoint`·`active_packs` 세 키 형태로 고쳤다. R25: `docs/pi-qa.md`의 옛 창구(#298 → #435), #402 상태(병합됨), Codex 직원 보호 설명을 매뉴얼과 맞추고, 폰 접속 보류를 적었다.
