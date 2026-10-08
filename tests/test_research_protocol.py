@@ -858,3 +858,6 @@ async def test_an_unanswered_cp1_card_is_not_a_rejected_plan(cp1, outcome):
     assert [task.meta["kind"] for task in hub.calls] == ["plan"]
     assert hub.requests["r"]["outcome"] == outcome and hub.requests["r"]["status"] == "failed"
     assert hub.requests["r"]["research_contract"]["approval"]["status"] == outcome.removeprefix("plan_")
+    if outcome == "plan_rejected":  # the PI's first failure line reads in Korean, with their note
+        assert hub.requests["r"]["report"].startswith("연구 계획을 승인하지 않아 단계를 실행하지 않았습니다.")
+        assert "PI 메모: not this plan" in hub.requests["r"]["report"]

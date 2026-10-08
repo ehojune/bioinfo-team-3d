@@ -4311,8 +4311,10 @@ class Orchestrator:
                     return False
                 if not approved:
                     req["outcome"] = "plan_rejected"
-                    self._finish(rid, "Research plan was not approved; no employee research step was dispatched.",
-                                 {}, ok=False)
+                    note = str(approval.get("note") or "").strip()
+                    self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. 계획을 바꾸려면 요청 문장을 "
+                                 "고쳐 새로 보내세요." + (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
+                                 error="연구 계획(CP1) 거절")
                     return False
                 if not execution_enabled:
                     req["outcome"] = "plan_approved"
