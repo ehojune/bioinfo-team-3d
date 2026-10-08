@@ -2,7 +2,7 @@
 
 <!-- badges:start -->
 [![Claude Code: 8 staff · opus/sonnet](https://img.shields.io/static/v1?label=Claude%20Code&message=8%20staff%20%C2%B7%20opus%2Fsonnet&color=D97757&logo=claude)](https://code.claude.com/docs/en/overview)
-[![Codex: 3 staff · gpt-6-astra/gpt-6-luna/gpt-6.1-sol](https://img.shields.io/static/v1?label=Codex&message=3%20staff%20%C2%B7%20gpt-6-astra%2Fgpt-6-luna%2Fgpt-6.1-sol&color=10A37F)](https://github.com/openai/codex)
+[![Codex: 3 staff · gpt-5.6-sol/gpt-6-astra/gpt-6-luna](https://img.shields.io/static/v1?label=Codex&message=3%20staff%20%C2%B7%20gpt-5.6-sol%2Fgpt-6-astra%2Fgpt-6-luna&color=10A37F)](https://github.com/openai/codex)
 [![SGE: HPC scheduler](https://img.shields.io/static/v1?label=SGE&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![PBS: HPC scheduler](https://img.shields.io/static/v1?label=PBS&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)
 [![SLURM: HPC scheduler](https://img.shields.io/static/v1?label=SLURM&message=HPC%20scheduler&color=2F6F9F)](docs/manual.md#설정-포인트)

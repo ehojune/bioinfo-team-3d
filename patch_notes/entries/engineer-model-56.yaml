@@ -1,0 +1,8 @@
+pr: 507
+rows:
+- sha: "07cfcec"
+  at: "2026-10-08 13:30"
+  text: "engineer 직원 모델을 v0.5를 통과한 구성과 같은 gpt-5.6-sol로 바꿨다(PI 결정 5A)."
+- sha: "20f4e3a"
+  at: "2026-10-08 13:32"
+  text: "roster를 단정하는 registry 시험의 engineer 모델 기대값을 gpt-5.6-sol로 맞췄다(#507 리뷰)."

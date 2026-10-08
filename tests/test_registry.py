@@ -29,7 +29,7 @@ def test_core_agents_load():
     assert {(m.name, m.type, m.url) for m in lit.mcp} == science
     assert {(m.name, m.type, m.url) for m in reg.get("biologist").mcp} == science
     assert {(m.name, m.type, m.url) for m in reg.get("sci_reviewer").mcp} == literature
-    assert reg.get("engineer").model == "gpt-6.1-sol" and not reg.get("engineer").tools
+    assert reg.get("engineer").model == "gpt-5.6-sol" and not reg.get("engineer").tools
     assert reg.get("sci_reviewer").model == "gpt-6-astra"
     assert reg.get("sci_reviewer").tools == ["WebSearch"]
     assert "original source" in lit.system_prompt
