@@ -159,6 +159,10 @@ def test_intake_classifies_simple_research_and_ambiguous():
     ("메타데이터에서 흡연과 질병의 관계를 밝혀 줘", "research"),
     ("별도 분석 없이 원문을 그대로 요약해 줘", "simple"),
     ("Summarize the source text without any analysis", "simple"),
+    # A requested computation is analysis whatever it is called (#498 review: "run DE").
+    ("Download the metadata and run DE", "research"),
+    ("메타데이터를 받아 정규화하고 군집을 나눠 줘", "research"),
+    ("GSE19804 시료 정보를 받아 limma를 돌려 줘", "research"),
 ])
 def test_collecting_what_a_source_says_is_simple_but_any_analysis_is_research(text, kind):
     assert classify_intake(text).work_kind == kind

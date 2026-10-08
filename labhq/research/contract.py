@@ -40,6 +40,10 @@ _RESEARCH_SIGNALS = (
     r"예측|관계|상관|연관|비교|차이|영향|효과|원인|검증|유의|밝혀|알아내|판단|평가|추론",
     r"\bpredict|\brelationship|\bcorrelat|\bassociat|\bcompar|\bdifferen|\beffect|\bimpact|\bcause|\bwhy\b|"
     r"\bwhether\b|\btest\b|\bsignifican|\bidentify\b|\bdiscover|\binfer|\bevaluat|\bassess",
+    # Asking to run a computation is analysis whatever its name or abbreviation ("download and run DE", #498 review):
+    # the verb closes the class instead of listing every method.
+    r"돌려|수행|실행|계산|정규화|군집|클러스터|모델링|\bDE\b",
+    r"\brun\b|\bperform|\bcomput|\bcalculat|\bfit\b|\bmodel(?:l?ing)?\b|\bcluster|\bnormali[sz]",
 )
 # An analysis the request rules out is not a research signal ("별도 분석 없이 원문만 요약", #498 review).
 _NEGATED_ANALYSIS = re.compile(
