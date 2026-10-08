@@ -606,6 +606,7 @@ function bubble(a, vs) {
     if (a.tool && now() - (a.toolAt || 0) < 20) return toolLabel(a.tool);
     return '작업 중';
   }
+  if (vs === 'hibernating') return stateText(a, vs);  // HPC job or an unanswered question (#511 review)
   return { queued: '순서 기다림', waiting: '승인 기다려요', hibernating: 'HPC 기다리는 중', done: '완료!', error: '문제가 생겼어요' }[vs] || '';
 }
 function renderHeader() {

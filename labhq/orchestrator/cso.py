@@ -917,6 +917,32 @@ def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
     return [(label or f"round {contract.get('round') or 1}", note) for label, note in notes]
 
 
+def earlier_round_lines(contract: dict) -> list[str]:
+    """What each earlier round of a continued request was asked to fix: its review's P1 issues, or the PI's CP2
+    revision request. The final report says what this round changed (web trial 2026-10-08: the round-2 report never
+    named round 1's five P1 issues, though the PI's CP2 note asked for that table)."""
+    lines: list[str] = []
+    for archived in contract.get("rounds") or []:
+        if not isinstance(archived, dict):
+            continue
+        number, review = archived.get("round"), archived.get("review") or {}
+        issues = research_continuation.p1_issues(review)
+        if issues:
+            lines.append(f"Round {number} review: {review.get('verdict')} with {len(issues)} P1 issue(s):")
+            lines += [f"- {issue.get('step_id')}{'/' + str(issue['claim_id']) if issue.get('claim_id') else ''}: "
+                      f"{short(str(issue.get('problem') or ''), 600)} Request: {short(str(issue.get('request') or ''), 400)}"
+                      for issue in issues]
+        receipt = archived.get("cp2") or {}
+        if receipt.get("decision") == "revision_requested" and receipt.get("note"):
+            lines.append(f"Round {number} CP2 revision request by the PI: {short(str(receipt['note']), 1200)}")
+    return lines
+
+
+EARLIER_ROUNDS_RULE = ("This request continued from the earlier rounds above. Right after \"결론과 권고\", add a short "
+                       "section \"이전 차수에서 고친 것\": one line per issue saying how this round addressed it, ending "
+                       "with the claim anchor that shows the fix, or saying plainly that it was not addressed.")
+
+
 _HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
 
 
@@ -3814,6 +3840,8 @@ class Orchestrator:
                       "policy.approvals.pi_decision_timeout_s).")
         if note:
             audit += f"\nPI note: {note}"
+        # What the earlier rounds were asked to fix, as the report writer saw it (web trial 2026-10-08).
+        audit += "".join(f"\n{line}" for line in earlier_round_lines(contract))
         # An earlier round's CP2 note still reaches this round's review and report, so the record keeps it whole (#499).
         for archived in contract.get("rounds") or []:
             receipt = (archived.get("cp2") or {}) if isinstance(archived, dict) else {}
@@ -3938,7 +3966,9 @@ class Orchestrator:
                 issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
                 plan_report_context(req.get("plan"), topic_checklists.load(),
                                     req.get("analysis_precedents")) +
-                approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE),
+                approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE) +
+                ("\n\nEarlier rounds of this request:\n" + "\n".join(earlier) + "\n" + EARLIER_ROUNDS_RULE
+                 if (earlier := earlier_round_lines(contract)) else ""),
             meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
                   **({"workdir": workdir} if workdir else {})}))
         if not final.ok:
