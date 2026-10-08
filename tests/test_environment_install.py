@@ -425,3 +425,63 @@ def test_noninstall_data_dollars_do_not_become_dynamic_installers(tmp_path, envi
 def test_nested_shell_local_install_destinations_remain_allowed(tmp_path):
     assert denial(tmp_path, "bash -c 'pip install --target ./packages scanpy'") is None
     assert denial(tmp_path, "bash -c 'pip install --target ./.pylib scanpy'", environment_step=False) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    "CMD='pip install scanpy'; $CMD",
+    'CMD="pip install scanpy"; ${CMD}',
+    "$(echo pip install scanpy)",
+    "$CMD $ARGS",
+    'eval "$CMD"',
+    'PIP=pip; ACTION=install; "$PIP" "$ACTION" scanpy',
+    'cmd /v:on /c "set ACTION=install&&pip !ACTION! scanpy"',
+    "pwsh -WorkingDirectory .. -Command 'pip install --target ./packages scanpy'",
+    "powershell -wd .. -Command 'pip install --target ./packages scanpy'",
+    '(R_LIBS_USER=./.rlib); Rscript -e "install.packages(\'a\')"',
+])
+def test_dynamic_install_forms_and_nested_workdirs_fail_closed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "CMD='pip install'; $CMD scanpy"),
+    ("Bash", "CMD='python -m pip install'; $CMD scanpy"),
+    ("Bash", "CMD='pip install'; ${CMD} scanpy"),
+    ("Bash", "$(echo pip) install scanpy"),
+    ("Bash", "`echo pip` install scanpy"),
+    ("Bash", "${CMD[@]} scanpy"),
+    ("Bash", "$* scanpy"),
+    ("Bash", "$@ scanpy"),
+    ("PowerShell", "& $cmd scanpy"),
+    ("PowerShell", "& (Get-Command pip) install scanpy"),
+    ("PowerShell", "Invoke-Expression $cmd"),
+    ("PowerShell", "Invoke-Expression (Get-Content command.txt)"),
+    ("Bash", 'cmd /c "%PIPCMD% scanpy"'),
+    ("Bash", 'cmd /v:on /c "!PIPCMD! scanpy"'),
+])
+def test_unquoted_dynamic_executables_fail_closed_with_literal_arguments(
+        tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    '''bash -c 'python script.py "$INPUT"' ''',
+    "Rscript -e 'print(df$column)'",
+    '"$PY" -m pytest',
+    '"$PY" script.py',
+    '"${PY}" script.py',
+    'cmd /c "python run.py"',
+])
+def test_dynamic_install_guards_keep_analysis_commands_allowed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+def test_powershell_parentheses_do_not_undo_an_r_library_change(tmp_path, environment_step):
+    """#505 review: PowerShell parentheses keep variable changes, unlike a POSIX subshell; the shared-library
+    install below must stay refused as on main."""
+    command = "$env:R_LIBS_USER='./.rlib'; ($env:R_LIBS_USER='/tmp/shared'); Rscript -e \"install.packages('a')\""
+    assert denial(tmp_path, command, environment_step=environment_step, tool="PowerShell")
