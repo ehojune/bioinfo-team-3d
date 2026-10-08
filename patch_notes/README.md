@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:11 | [`3f6d449`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/3f6d449) | CP1 직후 새 집행 상한으로 지금까지 쓴 비용을 판정해 단계 없이 끝나는 요청도 예산 카드를 받는다. budget_usd true/false는 검증 오류, 단계·리뷰 prompt에 실제 집행 상한, 앞 차수 CP2 메모는 감사 부록에 차수와 함께(#499 리뷰). |
+| 10:53 | [`f33d40a`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/f33d40a) | 연구 카드 메모가 다음 일을 하는 prompt로 간다(CP1 → 단계, CP2 → 리뷰·보고서, 이어 가기 → 새 계획). 계획의 숫자 budget_usd가 CP1 승인 때 요청 집행 상한이 되어 넘으면 예산 카드가 뜨고, CP1 카드에 그 상한을 보인다(PI 점검 R11 R17). |
 | 10:43 | [`d66947f`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/d66947f) | main 병합(#504): manual 연구 절을 나눈 판을 두고 이어 가기 카드 7일 기한 문장만 반영했다. |
 | 10:32 | [`506830b`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/506830b) | direct 요청은 연결된 runner·저장된 roster·agents_dir에 있는 직원이면 받아서 러너를 기다리고(없는 이름만 404), 재개 카드도 웹에 남은 시간을 보인다(#502 리뷰). |
 | 10:30 | [`78b8ec7`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/78b8ec7) | main 병합(#498 #503): manual 연구 절 충돌을 풀어 단순 작업 판정 문장과 이어 가기 카드 7일 기한을 함께 남겼다. |
