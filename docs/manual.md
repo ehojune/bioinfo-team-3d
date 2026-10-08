@@ -112,7 +112,7 @@ Codex 직원 로그인 격리는 [알려진 한계](#알려진-한계)의 전용
 
 Windows wrapper는 `.venv\Scripts\python.exe`를 직접 실행하므로 venv 활성화나 PowerShell ExecutionPolicy 변경이 필요 없습니다. `up`은 gateway와 runner를 분리된 background process로 띄우고 state 폴더에 로그와 생성 시각을 포함한 프로세스 기록을 남깁니다. POSIX에서는 `./labhq.sh`를 씁니다.
 
-`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다. 끝난 요청의 이어 묻기 같은 task는 확인하지 않습니다. 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다.
+`down`은 진행 중이거나 대기 중인 요청(PI 결정 대기 포함), 끝난 요청에서 돌고 있는 이어 묻기, 진행 중인 채용(`labhq recruit`)이 있거나 인증된 상태를 확인할 수 없으면 exit 2로 거부합니다(gateway `/api/shutdown-readiness`, #500). 중단을 감수할 때만 `down --force`를 쓰며, 신원이 맞는 runner 프로세스 트리와 gateway만 종료합니다.
 
 **PC를 다시 켰을 때**
 
