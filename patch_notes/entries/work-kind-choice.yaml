@@ -1,0 +1,5 @@
+pr: 503
+rows:
+  - sha: "f0b7b62"
+    at: "2026-10-08 10:10"
+    text: "웹 입력창 옆 작업 종류(자동·간단·연구)와 labhq send --work-kind로 PI가 연구 lane을 탈지 직접 고른다(PI 점검 R16)."
