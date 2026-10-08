@@ -16,7 +16,7 @@ def _render() -> str:
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
     # #373 benches A/B: keep artifacts and upstream paths in one block; #423: as inputs/<step id>/ paths, plus an outputs/env/ record.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "0bca979ec003c52f3850eb5804280c25ca6449effae96b6c40e31b4df5d0671e")
+        "2936883841a6f85736f963b0624e7ec042105f13a482dd3a6604668c0d1ba1a2")
 
 
 def test_generic_step_prompt_requires_the_lightweight_evidence_contract():
@@ -39,7 +39,7 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
     # #373 benches A/B apply both reproducibility rules to the frozen research lane; #423 inputs/ paths and an outputs/env/ record.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "b7c8f16f536f5e2cfc5178358e5a385016d30c6b5da4ec21959c434d4ef28e3e")
+        "01030bc5547523dced6bdd6e2663935b10371d6022c61bea5ad660daaf2d4dab")
 
 
 def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
@@ -51,6 +51,7 @@ def test_step_prompt_forbids_a_silent_fallback_and_asks_why_when_giving_up():
 def test_blocking_decision_is_written_for_the_phone_card():
     text = _render()
     assert '"blocking_decision"' in text and "Do not proceed with the blocked work." in text
+    assert "The CSO answers first" in text and "only hard-stop questions go to the PI" in text
     assert "at most 700 characters" in text
     assert "the question itself in the first sentence" in text and "each choice on its own line" in text
 
@@ -111,7 +112,7 @@ async def test_a_card_question_with_real_newlines_reaches_the_pi_and_the_step_re
         calls.append(task)
         if task.meta["kind"] == "plan":
             return result(task, structured={"steps": steps})
-        if task.meta.get("step_id") == "A" and "Your earlier blocking question and the PI's answer:" not in task.prompt:
+        if task.meta.get("step_id") == "A" and "Your earlier blocking question and its answer:" not in task.prompt:
             return result(task, text=RAW)
         return result(task, text="done", outputs=["outputs/a.tsv"] if task.meta.get("step_id") == "A" else [])
 
