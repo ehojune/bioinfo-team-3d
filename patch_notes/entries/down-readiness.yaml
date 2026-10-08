@@ -1,0 +1,7 @@
+rows:
+  - sha: "d08874e"
+    at: "2026-10-09 07:05"
+    text: "labhq down이 끝난 요청의 이어 묻기나 진행 중인 채용이 있으면 --force 없이 종료하지 않는다(gateway /api/shutdown-readiness, #500)."
+  - sha: "1243d89"
+    at: "2026-10-09 07:05"
+    text: "manual의 down 거부 조건에 이어 묻기·채용을 넣었다."
