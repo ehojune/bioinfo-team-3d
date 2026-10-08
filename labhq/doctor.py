@@ -537,10 +537,15 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         cli_agents = [agent for agent in agents if (forced or agent.engine) == Engine.cli]
         found = 0
         for agent in cli_agents:
-            command = agent.cli.command[0] if agent.cli and agent.cli.command else ""
+            command = list(agent.cli.command) if agent.cli and agent.cli.command else []
             env = {**os.environ, **expand_env(agent.cli.env, os.environ)} if agent.cli else dict(os.environ)
-            executable = os.path.expandvars(os.path.expanduser(command))
-            if executable and shutil.which(executable, path=env.get("PATH")):
+            cmd = [os.path.expandvars(os.path.expanduser(part)) for part in command]
+            # The runner starts staff through _resolve_command, which refuses shims it cannot run (#501 review).
+            try:
+                runnable = bool(cmd) and bool(_resolve_command(cmd, env, "cli"))
+            except (ValueError, OSError):
+                runnable = False
+            if runnable and shutil.which(cmd[0], path=env.get("PATH")):
                 found += 1
         available["cli"] = bool(cli_agents) and found == len(cli_agents)
         rows.append(_row("engine", "cli", "ok" if available["cli"] else "warn",

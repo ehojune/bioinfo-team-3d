@@ -126,6 +126,20 @@ def test_doctor_readiness_rejects_a_missing_roster_engine_executable(tmp_path, m
     assert lines[-1] == "이유: roster engine 실행 파일 없음: claude_code"
 
 
+def test_doctor_readiness_refuses_a_cli_command_the_runner_cannot_resolve(tmp_path, monkeypatch):
+    """#501 review: a .cmd shim on PATH that _resolve_command refuses must not read as ready."""
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: cli\ncli:\n  command: [lab-agent, run]\n", encoding="utf-8")
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: "C:/tools/lab-agent.cmd")
+
+    def refuse(command, env, engine):
+        raise ValueError("not a standard npm shim")
+
+    monkeypatch.setattr(doctor, "_resolve_command", refuse)
+    assert doctor.collect(settings)["readiness"]["ready"] is False
+
+
 def test_doctor_readiness_accepts_cli_command_on_configured_path(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     (tmp_path / "agents" / "core" / "worker.yaml").write_text(

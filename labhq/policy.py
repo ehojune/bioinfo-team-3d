@@ -1048,9 +1048,9 @@ def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: st
         if resolved != tmp_root and not _inside(resolved, tmp_root):
             return False
         parts = [part for part in relative.split("/") if part not in {"", "."}]
-        parents = parts[:max(1, len(parts) - 1)]
-        for index in range(1, len(parents) + 1):
-            component = physical_root.joinpath(*parents[:index])
+        # The target itself counts too: `rm -rf .tmp/link/` follows a directory link (#501 review).
+        for index in range(1, len(parts) + 1):
+            component = physical_root.joinpath(*parts[:index])
             try:
                 if os.path.lexists(component) and is_link(component):
                     return False

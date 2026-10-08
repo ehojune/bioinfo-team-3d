@@ -312,6 +312,22 @@ def test_recursive_delete_below_linked_step_tmp_asks(tmp_path):
     assert decision.reason.startswith("재귀 삭제 확인 필요: `")
 
 
+@pytest.mark.parametrize("command", ["rm -rf .tmp/link/", "rm -rf .tmp/link/.", "rm -rf .tmp/link"])
+def test_recursive_delete_of_a_linked_target_below_step_tmp_asks(tmp_path, command):
+    """#501 review: `rm -rf .tmp/link/` follows a directory link out of the step folder."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".tmp").mkdir()
+    try:
+        (tmp_path / ".tmp" / "link").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=[str(tmp_path)], workdir=str(tmp_path))
+    assert decision.action == "ask"
+
+
 @pytest.mark.parametrize("command", [
     r"Remove-Item -Recurse -Force HKCU:\Software\X",
     r"Remove-Item -Recurse Cert:\CurrentUser\My",
