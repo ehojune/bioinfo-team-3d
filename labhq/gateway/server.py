@@ -257,8 +257,8 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
-            if req.pop("pi_waits", None) is not None:  # those cards were expired above with the old process
-                self.save_request(rid)
+            if (req.pop("pi_waits", None) is not None) | (req.pop("runner_waits", None) is not None):
+                self.save_request(rid)  # their cards and waiters died with the old process
             if is_active_request(req.get("status")) and req.get("status") not in {
                     "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
                 req["status"] = "interrupted"
@@ -363,6 +363,8 @@ class Hub:
             req["status"] = "waiting_facilities_fix"
         elif req.get("pi_waits"):
             req["status"] = "waiting_pi"
+        elif req.get("runner_waits"):
+            req["status"] = "waiting_for_runner"
         elif req.get("status") in HOLD_STATES:
             req["status"] = "running"
 
@@ -1278,6 +1280,41 @@ class Hub:
             return True
         return False
 
+    def _waits_for_runner(self, task: Task) -> bool:
+        """A task of a live request waits for its runner instead of failing at once (R15): when no runner is connected
+        at all, or when the agent is known from a roster whose runner is away. An agent no runner ever hosted, while
+        others are connected, still fails at once."""
+        req = self.requests.get(task.request_id or "")
+        if req is None or not is_active_request(req.get("status")):
+            return False
+        return (not self.runners or task.agent_id in self.agent_runner or self.has_seen_agent(task.agent_id))
+
+    async def wait_for_runner(self, task: Task) -> bool:
+        """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
+        gateway.runner_wait_s. Nothing was sent yet, so nothing is uncertain or spent."""
+        rid = task.request_id or ""
+        req = self.requests[rid]
+        now = time.time()
+        bound = float(self.s.gateway.runner_wait_s)
+        req.setdefault("runner_waits", {})[task.id] = {"agent_id": task.agent_id, "since": now,
+                                                       "deadline_at": now + bound}
+        await self._publish_hold_status(rid)
+        await self.publish({"type": "request.runner_wait", "ts": now, "request_id": rid,
+                            "data": {"agent_id": task.agent_id, "missing_agents": [task.agent_id],
+                                     "deadline_at": now + bound,
+                                     "message": f"러너가 꺼져 있어 기다립니다. 터미널에서 labhq runner를 켜면 "
+                                                f"{task.agent_id} 작업부터 이어 갑니다."}})
+        try:
+            return await self.wait_agent_online(task.agent_id, bound)
+        finally:
+            waits = req.get("runner_waits") or {}
+            waits.pop(task.id, None)
+            if not waits:
+                req.pop("runner_waits", None)
+                if req.get("status") == "waiting_for_runner":
+                    req["status"] = "running"
+            await self._publish_hold_status(rid)
+
     async def wait_agent_online(self, agent_id: str, timeout_s: float) -> bool:
         signal = self.agent_online.setdefault(agent_id, asyncio.Event())
         deadline = asyncio.get_running_loop().time() + timeout_s
@@ -1532,11 +1569,25 @@ class Hub:
                     self.recovered_tasks.add(tid)
                     return self._abandon_previous_generation(tid, entry)
                 return await self._await_prior_task(tid, entry, task.agent_id, task.request_id, sid)
+        if self.agent_runner.get(task.agent_id) not in self.runners and self._waits_for_runner(task):
+            arrived = await self.wait_for_runner(task)
+            if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                  error="request cancelled")
+            if not arrived:
+                bound = float(self.s.gateway.runner_wait_s)
+                span = f"{round(bound / 3600, 1):g}시간" if bound >= 3600 else f"{max(1, round(bound / 60))}분"
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                                  error_kind="runner_offline",
+                                  error=f"러너가 {span} 안에 연결되지 않아 {task.agent_id} 작업을 보내지 "
+                                        "못했습니다. `labhq runner`로 러너를 켠 뒤 같은 요청을 다시 보내세요"
+                                        "(gateway.runner_wait_s).")
         rid = self.agent_runner.get(task.agent_id)
         if not rid:
             # Nothing was sent, so nothing was spent: a real $0, not an unaccounted cost (#270).
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
-                              error=f"no runner hosts agent {task.agent_id!r}")
+                              error=f"연결된 러너 중 {task.agent_id} 직원을 맡은 곳이 없습니다 "
+                                    f"(no runner hosts agent {task.agent_id!r})")
         refused = self._session_pin_refusal(task, rid)
         if refused:
             return refused
@@ -2584,8 +2635,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
 
     @app.get("/api/health")
     async def health() -> dict:
-        return {"service": "labhq gateway", "runners": list(hub.runners), "agents": len(hub.agents),
+        return {"service": "labhq gateway", "runners": list(hub.runners), "runner_online": bool(hub.runners),
+                "agents": len(hub.agents),
                 "active_requests": sum(is_active_request(r.get("status")) for r in hub.requests.values()),
+                "waiting_for_runner": sum(r.get("status") == "waiting_for_runner" for r in hub.requests.values()),
                 "running_tasks": len(hub.running_tasks())}
 
     @app.get("/", response_class=HTMLResponse)

@@ -307,3 +307,58 @@ def test_cancel_endpoint_and_cli(tmp_path, monkeypatch, capsys):
     cli.main(["cancel", "req_x"])
     assert calls == [("POST", "/api/requests/req_x/cancel")]
     assert "req_x: 취소했습니다 · 멈춘 작업 2개" in capsys.readouterr().out
+
+
+# ----- R15: no runner -----
+
+@pytest.mark.asyncio
+async def test_a_request_without_a_runner_waits_and_runs_when_one_registers(tmp_path):
+    from labhq.gateway.server import RequestIn
+
+    hub = Hub(_team_settings(tmp_path))
+    rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
+    await _until(lambda: hub.requests[rid]["status"] == "waiting_for_runner")
+    assert list(hub.requests[rid]["runner_waits"].values())[0]["agent_id"] == "cso"
+    assert not hub.store.all("task")  # nothing was sent, so nothing is uncertain or spent
+    wait = next(e for e in hub.events if e["type"] == "request.runner_wait")
+    assert wait["data"]["missing_agents"] == ["cso"] and "labhq runner" in wait["data"]["message"]
+    assert any(e["type"] == "request.status" and e["data"]["status"] == "waiting_for_runner" for e in hub.events)
+
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
+    assert hub.requests[rid]["status"] == "running" and "runner_waits" not in hub.requests[rid]
+    await hub.cancel_request(rid)
+
+
+@pytest.mark.asyncio
+async def test_a_runner_wait_past_its_bound_fails_with_a_korean_next_step(tmp_path):
+    from labhq.gateway.server import RequestIn
+
+    s = _team_settings(tmp_path)
+    s.gateway.runner_wait_s = 0.2
+    hub = Hub(s)
+    rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
+    await _until(lambda: hub.requests[rid]["status"] == "failed")
+    report = hub.requests[rid]["report"] + hub.requests[rid].get("report_appendix", "")
+    assert "러너가 1분 안에 연결되지 않아 cso 작업을 보내지 못했습니다" in report and "labhq runner" in report
+
+
+@pytest.mark.asyncio
+async def test_an_agent_no_runner_ever_hosted_still_fails_at_once(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    hub.register_runner("local", CaptureSocket(), ROSTER, "inc")
+    _request(hub, "r")
+    outcome = await asyncio.wait_for(hub.dispatch(Task(agent_id="ghost", request_id="r", prompt="x")), 1)
+    assert not outcome.ok and "no runner hosts agent 'ghost'" in outcome.error and outcome.cost_usd == 0
+
+
+def test_health_says_whether_a_runner_is_connected(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from labhq.gateway.server import create_app
+
+    app = create_app(_settings(tmp_path))
+    with TestClient(app) as client:
+        health = client.get("/api/health").json()
+    assert health["runners"] == [] and health["runner_online"] is False and health["waiting_for_runner"] == 0

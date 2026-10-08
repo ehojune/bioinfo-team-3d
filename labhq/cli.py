@@ -133,6 +133,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
         line = f"💥 요청 실패: {d.get('error')}"
     elif t == "request.status":
         line = f"⏸ {ev.get('request_id')} 상태: {request_status_label(d.get('status'))}"
+    elif t == "request.runner_wait":
+        line = f"🔌 {d.get('message') or '러너를 기다립니다'}"
     elif t == "request.bundle":
         line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
                 f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
@@ -1149,7 +1151,7 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_run_runner_with_interrupts(Runner(s)))
     elif args.cmd == "status":
         health = _api(s, "GET", "/api/health")
-        print("러너: " + (", ".join(health["runners"]) or "없음"))
+        print("러너: " + (", ".join(health["runners"]) or "없음 — `labhq runner`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
         for req in running:
