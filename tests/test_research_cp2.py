@@ -50,7 +50,7 @@ def _extra_observation(row_id="bad"):
             "assessment_reason": "an independent cross-check", "slots": []}
 
 
-def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
+def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False, unreported_outputs=None):
     holder = {}
 
     async def reply(task):
@@ -64,7 +64,9 @@ def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False):
         if artifact_path is not None:
             result["artifact_refs"][0]["path"] = artifact_path
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path],
-                          output_sha256={path: "a" * 64}, unreported_outputs=["outputs/extra.tsv"])
+                          output_sha256={path: "a" * 64},
+                          unreported_outputs=(unreported_outputs if unreported_outputs is not None
+                                              else ["outputs/extra.tsv"]))
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
 
@@ -277,7 +279,9 @@ async def test_cp2_accepts_a_normalized_path_to_the_collected_output():
 
 @pytest.mark.asyncio
 async def test_cp2_records_bound_artifact_hash_and_unreported_outputs():
-    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}])
+    raw = ["outputs/env/s1.txt", "outputs/extra.tsv", "outputs/reference/map.tsv", "outputs/scripts/run.py"]
+    hub = _research_hub(_settings(), [CP1, {"approved": True, "choice": "approve", "note": ""}],
+                        unreported_outputs=raw)
     await Orchestrator(hub).run_request("r")
 
     detail = hub.approvals[1]["detail"]
@@ -286,6 +290,7 @@ async def test_cp2_records_bound_artifact_hash_and_unreported_outputs():
     assert detail["unreported_outputs"] == {"s1": ["outputs/extra.tsv"]}
     receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
     assert receipt["artifact_sha256"] == expected
+    assert receipt["unreported_outputs"] == {"s1": raw}
 
 
 @pytest.mark.asyncio

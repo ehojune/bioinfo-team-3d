@@ -13,18 +13,23 @@ import posixpath
 import re
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
-from .settings import SCHEDULER_JOB_COMMANDS, PolicySettings
+from .settings import BASH_RECURSIVE_DELETE_PATTERN, SCHEDULER_JOB_COMMANDS, PolicySettings
 
 READ_LIKE = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
 WRITE_LIKE = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 # Lexical prompts for common PowerShell hazards; this is not a command sandbox.
+POWERSHELL_RECURSIVE_DELETE_PATTERN = (
+    r"\b(?:Remove-Item|rm|ri|del|erase|rd|rmdir)\b[^;|\n]*\s-"
+    r"(?:r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|rf|fr)\b"
+)
 POWERSHELL_ASK_PATTERNS = (
     # Remove-Item and all its aliases; PowerShell accepts any prefix of -Recurse (-r, -re, …) and unix-style -rf.
-    r"\b(?:Remove-Item|rm|ri|del|erase|rd|rmdir)\b[^;|\n]*\s-(?:r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?|rf|fr)\b",
+    POWERSHELL_RECURSIVE_DELETE_PATTERN,
     r"\b(?:Invoke-Expression|iex)\b[^;\n]*(?:Invoke-WebRequest|iwr|DownloadString|https?://)",
     r"\b(?:Invoke-WebRequest|iwr)\b[^|\n]*\|\s*(?:Invoke-Expression|iex)\b",
     r"\bSet-ExecutionPolicy\b", r"\bStart-Process\b[^;\n]*\s-Verb\s+RunAs\b",
@@ -969,6 +974,91 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         yield from _named_write_targets(words, powershell)
 
 
+def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool:
+    """Whether a delete path is one literal filesystem path with a known base."""
+    if not target or target.startswith("~") or _drive_relative(target):
+        return False
+    if target.startswith(("\\\\", "//")) or (relative and _absolute(target)):
+        return False
+    if any(char in target for char in "*?[{"):
+        return False
+    if any(part == ".." for part in target.replace("\\", "/").split("/")):
+        return False
+    if "$" in target or "`" in target or re.search(r"%[^%]+%|![^!]+!", target):
+        return False
+    if powershell:
+        # PowerShell providers/PSDrives and String[]/array syntax can name non-filesystem or extra targets.
+        drive_absolute = bool(re.match(r"^[A-Za-z]:[/\\]", target))
+        if (":" in target and not drive_absolute) or any(char in target for char in ",()") or target.startswith("@"):
+            return False
+    return True
+
+
+def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
+    """Allow one simple recursive delete of literal targets below the step's disposable `.tmp`."""
+    from .adapters.owned import is_link
+
+    if not workdir:
+        return False
+    if any(char in command for char in ";|&()<>`\r\n"):
+        return False
+    text = _blank_non_syntax(command, powershell)
+    if text is None:
+        return False
+    root = _norm(workdir, expand_vars=False)
+    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
+    raw_words = [command[word.start():word.end()] for word in _BARE_WORD.finditer(text)]
+    literals = [_literal_shell_word(word, powershell) for word in raw_words]
+    if not literals or any(value is None for value in literals):
+        return False
+    values = [str(value) for value in literals]
+    if values[0].casefold() != ("remove-item" if powershell else "rm"):
+        return False
+
+    targets: list[str] = []
+    recursive = False
+    after_options = False
+    for value in values[1:]:
+        folded = value.casefold()
+        if not powershell and value == "--" and not after_options:
+            after_options = True
+        elif not after_options and value.startswith("-"):
+            if powershell:
+                if folded not in {"-recurse", "-force"}:
+                    return False
+                recursive = recursive or folded == "-recurse"
+            else:
+                flags = folded.lstrip("-")
+                if not flags or not set(flags) <= {"r", "f"}:
+                    return False
+                recursive = recursive or "r" in flags
+        else:
+            if value.startswith("-"):
+                return False
+            targets.append(value)
+    if not recursive or not targets:
+        return False
+
+    physical_root = Path(workdir)
+    for target in targets:
+        if not _plain_delete_path(target, powershell, relative=True):
+            return False
+        relative = posixpath.normpath(target.replace("\\", "/"))
+        resolved = _norm(posixpath.join(root, relative), expand_vars=False)
+        if resolved != tmp_root and not _inside(resolved, tmp_root):
+            return False
+        parts = [part for part in relative.split("/") if part not in {"", "."}]
+        # The target itself counts too: `rm -rf .tmp/link/` follows a directory link (#501 review).
+        for index in range(1, len(parts) + 1):
+            component = physical_root.joinpath(*parts[:index])
+            try:
+                if os.path.lexists(component) and is_link(component):
+                    return False
+            except OSError:
+                return False
+    return True
+
+
 @dataclass
 class Decision:
     action: str  # allow | deny | ask
@@ -1781,7 +1871,13 @@ def _evaluate_tool(
                     else POWERSHELL_ASK_PATTERNS)
         for pat in patterns:
             if re.search(pat, cmd, re.IGNORECASE):
-                return Decision("ask", f"risky command (/{pat}/): `{cmd[:200]}`")
+                delete_pattern = (BASH_RECURSIVE_DELETE_PATTERN if tool_name == "Bash"
+                                  else POWERSHELL_RECURSIVE_DELETE_PATTERN)
+                if pat == delete_pattern:
+                    if _recursive_delete_inside_workdir(cmd, tool_name == "PowerShell", workdir):
+                        continue
+                    return Decision("ask", f"재귀 삭제 확인 필요: `{cmd[:200]}`")
+                return Decision("ask", f"위험 명령 확인 필요: `{cmd[:200]}`")
         roots = [_norm(r) for r in allowed_roots if r]
         # Claude's Bash on Windows is Git Bash: /c/Users/... is C:/Users/..., the folder the roots name (12th mock
         # trial: a write into the staff member's own .tmp asked the PI). A path it cannot map stays as written.

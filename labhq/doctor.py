@@ -480,9 +480,9 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
                      if markers else "부모 Claude 세션 마커 없음",
                      "직원 CLI는 labhq runner를 통해 시작하세요."))
-    rows.append(_row("staff", "codex_user_skills_leak", "warn",
-                     "직원 세션이 PI 개인 skill·규칙을 읽을 수 있음",
-                     "PI 결정: 현재는 격리하지 않으며 재현성 해석에 반영하세요."))
+    rows.append(_row("staff", "codex_user_skills_leak", "ok",
+                      "직원 세션이 PI 개인 skill·규칙을 읽을 수 있음",
+                      "PI 결정: 현재는 격리하지 않으며 재현성 해석에 반영하세요."))
     for name, raw in (("gateway state", settings.gateway.state_dir), ("runner state", settings.runner.state_dir),
                       ("workspace", settings.runner.workspace_root)):
         path = settings.path(raw)
@@ -514,10 +514,48 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         rows.append(_row("config", "dev log", status, detail,
                          "dev_log.repo에 비공개 기록 저장소를 지정하세요."))
 
+    try:
+        agents = _roster(settings)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        agents = []
+        rows.append(_row("staff", "roster", "fail", type(exc).__name__, "Fix the agent YAML files."))
+    if not agents:
+        rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
+                         "no active agents found", "Set runner.agents_dir."))
+    forced = None
+    invalid_force = False
+    if settings.runner.force_engine:
+        try:
+            forced = Engine(settings.runner.force_engine)
+        except ValueError:
+            invalid_force = True
+            rows.append(_row("config", "runner.force_engine", "fail", "unknown engine",
+                             "Set runner.force_engine to a supported engine or remove it."))
+    roster_engines = ({forced.value} if forced else {agent.engine.value for agent in agents}) - {"mock"}
     available: dict[str, bool] = {}
+    if "cli" in roster_engines:
+        cli_agents = [agent for agent in agents if (forced or agent.engine) == Engine.cli]
+        found = 0
+        for agent in cli_agents:
+            command = list(agent.cli.command) if agent.cli and agent.cli.command else []
+            env = {**os.environ, **expand_env(agent.cli.env, os.environ)} if agent.cli else dict(os.environ)
+            cmd = [os.path.expandvars(os.path.expanduser(part)) for part in command]
+            # The runner starts staff through _resolve_command, which refuses shims it cannot run (#501 review).
+            try:
+                runnable = bool(cmd) and bool(_resolve_command(cmd, env, "cli"))
+            except (ValueError, OSError):
+                runnable = False
+            if runnable and shutil.which(cmd[0], path=env.get("PATH")):
+                found += 1
+        available["cli"] = bool(cli_agents) and found == len(cli_agents)
+        rows.append(_row("engine", "cli", "ok" if available["cli"] else "warn",
+                         f"cli.command executable found for {found}/{len(cli_agents)} staff",
+                         "Set each engine: cli staff member's cli.command and cli.env.PATH."))
     codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
     login_codes: dict[str, int | None] = {}  # the CLI's own status command, with engines.<name>.env applied
     for name in settings.engines.__class__.model_fields:
+        if name not in roster_engines:
+            continue
         spec = getattr(settings.engines, name)
         env = {**os.environ, **expand_env(spec.env, os.environ)}
         cmd = [os.path.expandvars(os.path.expanduser(spec.bin)),
@@ -541,8 +579,10 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             if choice and choice["path"] == resolved[0]:
                 detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (codex.exe 있는 폴더 {choice['candidates']}개 중 " +
                            ("판본이 가장 높은 폴더)" if choice["by"] == "version" else "판본 비교 불가, 가장 최근 폴더)"))
-        rows.append(_row("engine", name, "ok" if code == 0 else "warn", detail,
+        rows.append(_row("engine", name, "skip" if dry_run else "ok" if code == 0 else "warn", detail,
                          "Check the executable and prefix_args if version fails."))
+        if dry_run:
+            continue
         if name in LOGIN:
             code, _ = (None, "") if dry_run else _probe([*resolved, *LOGIN[name]], env)
             login_codes[name] = code
@@ -550,27 +590,13 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                              "status command succeeded" if code == 0 else "status unavailable or signed out",
                              f"Check {name} login locally; doctor never starts login."))
         else:
-            rows.append(_row("login", name, "warn", "non-interactive status skipped",
-                             "Check login manually before a paid run."))
-
-    try:
-        agents = _roster(settings)
-    except (OSError, ValueError, yaml.YAMLError) as exc:
-        agents = []
-        rows.append(_row("staff", "roster", "fail", type(exc).__name__, "Fix the agent YAML files."))
-    if not agents:
-        rows.append(_row("staff", "roster", "fail" if require_roster else "warn",
-                         "no active agents found", "Set runner.agents_dir."))
-    forced = None
-    invalid_force = False
+            rows.append(_row("login", name, "skip", "non-interactive status skipped",
+                              "Check login manually before a paid run."))
+    if dry_run and roster_engines:
+        rows.append(_row("login", "roster engines", "skip",
+                         f"dry-run: login not checked ({len(roster_engines)} engines)",
+                         "Run doctor without dry-run to check login."))
     sandbox_homes: set[Path] = set()
-    if settings.runner.force_engine:
-        try:
-            forced = Engine(settings.runner.force_engine)
-        except ValueError:
-            invalid_force = True
-            rows.append(_row("config", "runner.force_engine", "fail", "unknown engine",
-                             "Set runner.force_engine to a supported engine or remove it."))
     for agent in agents:
         if invalid_force:
             rows.append(_row("staff", agent.id, "fail", "invalid runner.force_engine",
@@ -636,17 +662,27 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         found = bool(shutil.which(tool))
         rows.append(_row("compute", tool, "ok" if found else "warn", "on PATH" if found else "missing",
                          f"Install or configure {tool} if bioinfo-agent needs it."))
-    for name, url in SOURCES.items():
-        reachable = _network_check(url) if network and not dry_run else None
-        rows.append(_row("data", name, "ok" if reachable else "warn",
-                         "reachable" if reachable else "unreachable" if network else "skipped",
-                         "Use --network to test connectivity." if not network else "Check network access."))
+    if network and not dry_run:
+        for name, url in SOURCES.items():
+            reachable = _network_check(url)
+            rows.append(_row("data", name, "ok" if reachable else "warn",
+                             "reachable" if reachable else "unreachable", "Check network access."))
+    else:
+        reason = "dry-run" if dry_run else "--network not set"
+        rows.append(_row("data", "public sources", "skip",
+                         f"network checks skipped ({reason}; {len(SOURCES)} sources)",
+                         "Use --network to test connectivity."))
     external_hpc = any(any(m.name == "labhq_hpc" for m in agent.mcp) for agent in agents)
     runner_capabilities = {"scheduler": scheduler,
                            "compute_backends": ["local CLI"] + ([scheduler] if scheduler != "none" else []) +
                                                (["external labhq_hpc MCP"] if external_hpc else []),
                            "hpc_tools": scheduler != "none" or external_hpc}
+    readiness_reasons = ([] if agents else ["활성 직원 0명"])
+    missing_engines = sorted(name for name in roster_engines if name != "mock" and not available.get(name, False))
+    if missing_engines:
+        readiness_reasons.append("roster engine 실행 파일 없음: " + ", ".join(missing_engines))
     return {"schema_version": 1, "runner_capabilities": runner_capabilities, "checks": rows,
+            "readiness": {"ready": not readiness_reasons, "reasons": readiness_reasons},
             "summary": {status: sum(r["status"] == status for r in rows)
                         for status in ("ok", "warn", "fail", "skip")}}
 
@@ -656,6 +692,17 @@ def render(manifest: dict) -> str:
     for row in manifest["checks"]:
         hint = f" | fix: {row['hint']}" if row["status"] != "ok" and row.get("hint") else ""  # hints only where needed
         lines.append(f"{row['group']:<9} {row['name']:<22} {row['status']:<5} {row['detail']}{hint}")
+    fail_count = manifest.get("summary", {}).get("fail")
+    if fail_count is None:
+        fail_count = sum(row.get("status") == "fail" for row in manifest["checks"])
+    readiness = manifest.get("readiness")
+    if readiness is None:  # manifests written before readiness reasons were recorded
+        lines.append(f"실행 준비: {'예' if fail_count == 0 else f'아니오(fail {fail_count}건)'}")
+    else:
+        reasons = ([f"fail {fail_count}건"] if fail_count else []) + list(readiness.get("reasons", []))
+        lines.append(f"실행 준비: {'예' if not reasons and readiness.get('ready', False) else '아니오'}")
+        if reasons:
+            lines.append("이유: " + "; ".join(reasons))
     return "\n".join(lines)
 
 

@@ -261,6 +261,116 @@ def test_non_recursive_rm_is_allowed():
     assert evaluate_tool("PowerShell", {"command": "rm C:/work/tmp.txt"}, _policy()).action == "allow"
 
 
+@pytest.mark.parametrize("command", [
+    "rm -rf .tmp",
+    "rm -rf .tmp/cache",
+    "rm -r .tmp/cache",
+])
+def test_single_recursive_delete_below_step_tmp_is_allowed(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=["/work/step"], workdir="/work/step")
+    assert decision.action == "allow"
+
+
+@pytest.mark.parametrize("command", [
+    "Remove-Item -Recurse -Force .tmp",
+    r"Remove-Item -Recurse .tmp\a",
+])
+def test_single_powershell_recursive_delete_below_step_tmp_is_allowed(command):
+    decision = evaluate_tool("PowerShell", {"command": command}, _policy(),
+                             allowed_roots=["C:/work/step"], workdir="C:/work/step")
+    assert decision.action == "allow"
+
+
+@pytest.mark.parametrize("tool,command,workdir", [
+    ("Bash", "rm -rf inputs/upstream/subdir", "/work/step"),
+    ("Bash", "rm -rf outputs/tmp", "/work/step"),
+    ("Bash", "command cd .. && rm -rf sibling", "/work/step"),
+    ("Bash", "cd .tmp && rm -rf x", "/work/step"),
+    ("PowerShell", r"Microsoft.PowerShell.Management\Set-Location ..; Remove-Item -Recurse sibling",
+     "C:/work/step"),
+    ("Bash", "rm -rf .tmp; rm -rf x", "/work/step"),
+])
+def test_recursive_delete_requires_a_single_simple_command_below_step_tmp(tool, command, workdir):
+    decision = evaluate_tool(tool, {"command": command}, _policy(),
+                             allowed_roots=[workdir], workdir=workdir)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+def test_recursive_delete_below_linked_step_tmp_asks(tmp_path):
+    target = tmp_path / "linked"
+    target.mkdir()
+    try:
+        (tmp_path / ".tmp").symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    decision = evaluate_tool("Bash", {"command": "rm -rf .tmp/cache"}, _policy(),
+                             allowed_roots=[str(tmp_path)], workdir=str(tmp_path))
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", ["rm -rf .tmp/link/", "rm -rf .tmp/link/.", "rm -rf .tmp/link"])
+def test_recursive_delete_of_a_linked_target_below_step_tmp_asks(tmp_path, command):
+    """#501 review: `rm -rf .tmp/link/` follows a directory link out of the step folder."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".tmp").mkdir()
+    try:
+        (tmp_path / ".tmp" / "link").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=[str(tmp_path)], workdir=str(tmp_path))
+    assert decision.action == "ask"
+
+
+@pytest.mark.parametrize("command", [
+    r"Remove-Item -Recurse -Force HKCU:\Software\X",
+    r"Remove-Item -Recurse Cert:\CurrentUser\My",
+    "Remove-Item -Recurse -Force .tmp,C:/outside",
+    r"Remove-Item -Recurse -Path @('.tmp','..\x')",
+    "Get-ChildItem .tmp | Remove-Item -Recurse",
+    r"Remove-Item -Recurse -LiteralPath \\server\share\tmp",
+    "Remove-Item -Recurse -Path ~",
+    "Remove-Item -Recurse -Path $target",
+    "Remove-Item -Recurse -Path $(Join-Path . .tmp)",
+    "Remove-Item -Recurse -Path ${target}",
+    "Remove-Item -Recurse -Path %TEMP%",
+    "Remove-Item -Recurse -Path !TEMP!",
+    "Remove-Item -Recurse -Path *.tmp",
+    "Remove-Item -Recurse -Path",
+])
+def test_powershell_recursive_delete_requires_literal_filesystem_targets(command):
+    decision = evaluate_tool("PowerShell", {"command": command}, _policy(),
+                             allowed_roots=["C:/work/step"], workdir="C:/work/step")
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+@pytest.mark.parametrize("command", [
+    "rm -rf ../x",
+    "rm -rf $DIR",
+    'rm -rf "$D"',
+    "rm -rf /tmp/x",
+    "rm -rf .tmp ../x",
+])
+def test_recursive_delete_outside_or_unresolved_still_asks(command):
+    decision = evaluate_tool("Bash", {"command": command}, _policy(),
+                             allowed_roots=["/work/step"], workdir="/work/step")
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+    assert "(/" not in decision.reason
+
+
+def test_other_risky_command_summary_has_a_korean_label_without_the_regex():
+    decision = evaluate_tool("Bash", {"command": "qsub run.sh"}, _policy())
+    assert decision.reason == "위험 명령 확인 필요: `qsub run.sh`"
+
+
 def test_a_tool_without_a_rule_asks_instead_of_being_allowed():
     """#421: an unclassified tool used to fall through to allow. Monitor runs a shell command the Bash checks never
     see; tools measured in trial records (StructuredOutput, ToolSearch) and the configured list stay allowed."""

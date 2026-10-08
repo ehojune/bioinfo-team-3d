@@ -37,7 +37,8 @@ def test_doctor_offline_missing_tools_and_manifest(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
     result = doctor.collect(settings)
     assert result["summary"]["fail"] == 0
-    assert all(row["detail"] == "skipped" for row in result["checks"] if row["group"] == "data")
+    data_rows = [row for row in result["checks"] if row["group"] == "data"]
+    assert len(data_rows) == 1 and data_rows[0]["status"] == "skip"
     assert any(row["name"] == "worker" and row["status"] == "warn" for row in result["checks"])
     path = doctor.save(result, settings)
     assert path == tmp_path / "state" / "capabilities.json"
@@ -76,8 +77,110 @@ def test_doctor_warns_about_parent_session_markers_and_pi_skills(tmp_path, monke
     assert checks["claude_parent_session_env"]["status"] == "warn"
     assert "2" in checks["claude_parent_session_env"]["detail"]
     assert "not-reported" not in json.dumps(result)
-    assert checks["codex_user_skills_leak"]["status"] == "warn"
+    assert checks["codex_user_skills_leak"]["status"] == "ok"
     assert checks["codex_user_skills_leak"]["detail"] == "직원 세션이 PI 개인 skill·규칙을 읽을 수 있음"
+
+
+def test_doctor_checks_only_roster_engines_and_prints_readiness(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    executable = tmp_path / "claude.exe"
+    executable.touch()
+    resolved = []
+
+    def resolve(command, env, engine):
+        resolved.append(engine)
+        return [str(executable)]
+
+    monkeypatch.setattr(doctor, "_resolve_command", resolve)
+    monkeypatch.setattr(doctor, "_probe", lambda argv, env: (0, "version 1.2.3"))
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    result = doctor.collect(settings)
+
+    assert resolved == ["claude_code"]
+    assert {row["name"] for row in result["checks"] if row["group"] == "engine"} == {"claude_code"}
+    network_rows = [row for row in result["checks"] if row["group"] == "data"]
+    assert len(network_rows) == 1 and network_rows[0]["status"] == "skip"
+    assert doctor.render(result).endswith("실행 준비: 예")
+
+
+def test_doctor_readiness_rejects_an_empty_roster(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").unlink()
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    lines = doctor.render(doctor.collect(settings)).splitlines()
+
+    assert lines[-2] == "실행 준비: 아니오"
+    assert lines[-1] == "이유: 활성 직원 0명"
+
+
+def test_doctor_readiness_rejects_a_missing_roster_engine_executable(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(doctor, "_resolve_command", lambda command, env, engine: [str(tmp_path / "missing.exe")])
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    lines = doctor.render(doctor.collect(settings)).splitlines()
+
+    assert lines[-2] == "실행 준비: 아니오"
+    assert lines[-1] == "이유: roster engine 실행 파일 없음: claude_code"
+
+
+def test_doctor_readiness_refuses_a_cli_command_the_runner_cannot_resolve(tmp_path, monkeypatch):
+    """#501 review: a .cmd shim on PATH that _resolve_command refuses must not read as ready."""
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: cli\ncli:\n  command: [lab-agent, run]\n", encoding="utf-8")
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: "C:/tools/lab-agent.cmd")
+
+    def refuse(command, env, engine):
+        raise ValueError("not a standard npm shim")
+
+    monkeypatch.setattr(doctor, "_resolve_command", refuse)
+    assert doctor.collect(settings)["readiness"]["ready"] is False
+
+
+def test_doctor_readiness_accepts_cli_command_on_configured_path(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: cli\n"
+        "cli:\n  command: [lab-agent, run]\n  env:\n    PATH: /configured/bin\n",
+        encoding="utf-8",
+    )
+    seen = []
+
+    def which(name, path=None):
+        seen.append((name, path))
+        return "/configured/bin/lab-agent" if name == "lab-agent" and path == "/configured/bin" else None
+
+    monkeypatch.setattr(doctor.shutil, "which", which)
+
+    result = doctor.collect(settings)
+
+    assert ("lab-agent", "/configured/bin") in seen
+    assert result["readiness"] == {"ready": True, "reasons": []}
+    assert doctor.render(result).endswith("실행 준비: 예")
+
+
+def test_doctor_dry_run_summarizes_login_skips_once(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    executable = tmp_path / "claude.exe"
+    executable.touch()
+    monkeypatch.setattr(doctor, "_resolve_command", lambda command, env, engine: [str(executable)])
+    monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: None)
+
+    result = doctor.collect(settings, dry_run=True)
+
+    login_rows = [row for row in result["checks"] if row["group"] == "login"]
+    assert len(login_rows) == 1
+    assert login_rows[0]["status"] == "skip" and "dry-run" in login_rows[0]["detail"]
+
+
+def test_doctor_readiness_summary_counts_failures():
+    manifest = {"checks": [{"group": "config", "name": "file", "status": "fail",
+                             "detail": "missing", "hint": "set it"}],
+                "summary": {"ok": 0, "warn": 0, "fail": 1, "skip": 0}}
+    assert doctor.render(manifest).endswith("실행 준비: 아니오(fail 1건)")
 
 
 def test_doctor_uses_runner_resolution_and_prefix_args(tmp_path, monkeypatch):

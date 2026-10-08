@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
+from ..artifact_policy import unreported_warning_paths
 from .report_check import check_report
 
 OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED = (
@@ -369,7 +370,8 @@ def render_verify(report: Mapping[str, Any]) -> str:
         lines.append(f"보고서 앵커(다시 돌림): 앵커 {check['rerun']['anchors']}개, 문제 {len(found)}건"
                      + ("" if check["same"] else f" — {check['note']}"))
         lines += [f"  - {problem}" for problem in found]
-    unreported = report["unreported_outputs"]
+    unreported = {sid: shown for sid, paths in report["unreported_outputs"].items()
+                  if (shown := unreported_warning_paths(list(paths)))}
     if unreported:
         lines.append("보고하지 않은 산출(경고):")
         lines += [f"  - {sid}: {path}" for sid, paths in unreported.items() for path in paths]
@@ -412,6 +414,8 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
                    + (" (기록과 같음)" if check["same"] else f" ({check['note']})"))
     request = str(report.get("text") or "").strip() or "-"
     verdict = f"문제 {len(report['problems'])}건" if report["problems"] else "문제 없음"
+    warning_count = sum(len(unreported_warning_paths(list(paths)))
+                        for paths in report["unreported_outputs"].values())
     lines = [f"# labhq 감사 번들 · {report.get('request_id')}", "", "## 요청", "",
              *[f"> {line}" for line in request.splitlines()], "",
              "## 검사 결과", "",
@@ -419,7 +423,7 @@ def _bundle_readme(report: Mapping[str, Any]) -> str:
              f"- 판정: {verdict}",
              f"- 산출 파일 {len(report['files'])}개: {_counts(report)}",
              f"- 보고서 앵커: {anchors}",
-             f"- 보고하지 않은 산출: {sum(len(paths) for paths in report['unreported_outputs'].values())}개",
+             f"- 보고하지 않은 산출: {warning_count}개",
              f"- 만든 시각: {report.get('checked_at')}",
              f"- labhq 판본: {report.get('labhq_version')}", "",
              NO_FILES_LINE, ""]

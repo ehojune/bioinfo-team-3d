@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
+from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
+                               unreported_warning_paths)
 from ..costs import cost_detail, format_cost, task_cost_item
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
@@ -281,15 +283,15 @@ Request: {request}"""
 PI_CARD_QUESTION_RULE = "Each question must fit the PI's phone card: at most 700 characters, the question itself first."
 # One environment per request (2nd mock trial 2026-10-03): steps that each built a venv duplicated installs, and
 # a later step could not add a package to another step's environment.
-ENV_LOCK_OUTPUT = "outputs/env/requirements.lock.txt"
+ENV_LOCK_OUTPUT = OUTPUT_ENV_DIR + "requirements.lock.txt"
 ENV_STEP_RULE = ("If the work needs packages the runner does not have, plan one environment step first: it creates a "
                  "virtual environment in its own workspace, installs only packages the PI approved with "
                  "`.venv/bin/python -m pip install --only-binary=:all:` (Windows: "
                  "`.venv/Scripts/python.exe -m pip install --only-binary=:all:`), and saves "
-                 "outputs/env/requirements.lock.txt with the interpreter's path. Later steps depend on it and run "
+                 f"{OUTPUT_ENV_DIR}requirements.lock.txt with the interpreter's path. Later steps depend on it and run "
                  "that interpreter by path instead of building their own. For every package that may need compilation, "
                  "put an alternative in the plan. If wheel installation or a build fails, do not ask the PI for build "
-                 "tools: use the alternative and record the change under outputs/env/. Ask only when no alternative exists.")
+                 f"tools: use the alternative and record the change under {OUTPUT_ENV_DIR}. Ask only when no alternative exists.")
 
 LOCAL_PACKAGE_NAMES = ("pandas", "numpy", "scipy", "matplotlib", "statsmodels", "scikit-learn", "gseapy", "pydeseq2")
 LOCAL_TOOL_NAMES = ("docker", "nextflow", "java", "wsl")
@@ -341,8 +343,9 @@ DECLARED_OUTPUTS_FALLBACK_RULE = (
     "(for example outputs/data/fetch_log.md or the file header). Do not declare different filenames per path.")
 
 ANALYSIS_REPRODUCIBILITY_PLAN_RULE = (
-    "Every analysis step declares the scripts it runs under outputs/scripts/ (for example "
-    "outputs/scripts/analyze.py), as well as result-determining intermediate artifacts under outputs/reference/.")
+    f"Every analysis step declares the scripts it runs under {OUTPUT_SCRIPTS_DIR} (for example "
+    f"{OUTPUT_SCRIPTS_DIR}analyze.py), as well as result-determining intermediate artifacts under "
+    f"{OUTPUT_REFERENCE_DIR}.")
 
 ROUTE_PLAN_RULE = ("Set route to solo only when one employee can finish the whole request in one turn of about "
                    "30 minutes or less: a lookup, a table, a single QC check or figure, a literature list. Use team "
@@ -361,7 +364,7 @@ Planning assumptions:
 Rules:
 - Lead with the conclusion and write a short report, about 2,000 Korean characters or less.
 - Save every deliverable under outputs/ using relative paths.
-- Save analysis code under outputs/scripts/ and use only relative paths inside it.
+- Save analysis code under """ + OUTPUT_SCRIPTS_DIR + """ and use only relative paths inside it.
 - In the limitations, give one line for each thing you could not do and each assumption you had to make.
 - Follow every supplied topic or precedent checklist item. Add a short cited "선행 연구 기준" section when
   Analysis precedents are supplied, and put omitted recommendations under "다음에 할 수 있는 분석".
@@ -488,12 +491,12 @@ questions go to the PI. Write the question so either can answer it:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
 with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work.
 
-For reproducibility, save every analysis script under outputs/scripts/ and every result-determining reference or
-intermediate artifact (for example a gene mapping table or a copy of the gene set file) under outputs/reference/.
+For reproducibility, save every analysis script under """ + OUTPUT_SCRIPTS_DIR + """ and every result-determining reference or
+intermediate artifact (for example a gene mapping table or a copy of the gene set file) under """ + OUTPUT_REFERENCE_DIR + """.
 A script reads upstream step files by their relative paths under inputs/<step id>/, exactly as the context lists
 them, collected in one variable block at the top of the script; never write an absolute path into a script.
 If you run scripts, save the version and package list of the interpreter that ran them to
-outputs/env/<your step id>.txt (`<that interpreter> --version` and `<that interpreter> -m pip freeze`), unless an
+""" + OUTPUT_ENV_DIR + """<your step id>.txt (`<that interpreter> --version` and `<that interpreter> -m pip freeze`), unless an
 earlier environment step's lock covers exactly what you used; packages you installed yourself (for example into
 ./.pylib) always go in your own record.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions."""
@@ -3646,6 +3649,8 @@ class Orchestrator:
         unsupported: list[dict[str, str]] = []
         artifact_sha256: dict[str, str | None] = {}
         unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
+        warning_outputs = {step_id: shown for step_id, paths in unreported_outputs.items()
+                           if (shown := unreported_warning_paths(paths))}
         source_verification: list[str] = []
         source_reports: list[dict[str, Any]] = []
         live_resolver = None
@@ -3711,7 +3716,7 @@ class Orchestrator:
                    **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   **({"source_verification": source_verification} if source_verification else {}),
-                  "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                   "artifact_sha256": artifact_sha256, "unreported_outputs": warning_outputs,
                   "results": ledgers}
         carried = contract.get("continuation") or {}
         reuse_lines: list[str] = []
