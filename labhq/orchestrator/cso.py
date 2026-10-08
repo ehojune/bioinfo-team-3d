@@ -3165,6 +3165,20 @@ class Orchestrator:
         return {"plan_budget_usd": planned, "cap_usd": planned, "source": "plan",
                 "configured_cap_usd": configured}, source
 
+    def _spending_cap_line(self, rid: str) -> str:
+        """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
+        only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
+        req = self.hub.requests.get(rid) or {}
+        cap = float(req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd or 0)
+        if not cap:
+            return ""
+        approved = (((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}).get("cap_usd")
+        origin = ("the plan's budget_usd approved at CP1" if approved == cap else
+                  f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
+                  "the lab's request cap; the plan states no budget_usd")
+        return (f"\n\nEnforced spending cap for this request: ${cap:.2f} ({origin}). It is the cap labhq enforces, "
+                "whatever amount protocol.resource_limits states; spending past it waits for a PI budget card.")
+
     def _unknown_reserve(self, limit: float) -> float:
         """What an unaccounted task is assumed to have spent for the cap (#270): the per-task budget, else the cap."""
         per_task = self.hub.s.policy.budget.per_task_usd
@@ -3261,6 +3275,7 @@ class Orchestrator:
                 cp1 = contract.get("approval") or {}
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
+                prompt += self._spending_cap_line(rid)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -3739,6 +3754,11 @@ class Orchestrator:
             audit += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
         if note:
             audit += f"\nPI note: {note}"
+        # An earlier round's CP2 note still reaches this round's review and report, so the record keeps it whole (#499).
+        for archived in contract.get("rounds") or []:
+            receipt = (archived.get("cp2") or {}) if isinstance(archived, dict) else {}
+            if receipt.get("decision") == "approved" and receipt.get("note"):
+                audit += f"\nPI note (round {archived.get('round')} CP2): {receipt['note']}"
         report = self.format_results(steps, results, n) + "\n\n" + audit
         reviewer = self.cfg.reviewer_agent
         if decided == "approved" and reviewer and reviewer in self.hub.agents:
@@ -3804,7 +3824,7 @@ class Orchestrator:
             carried = contract.get("continuation") or {}
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [])
-            prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE)
+            prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
                 reply = await self.run_step(Task(
@@ -4405,6 +4425,18 @@ class Orchestrator:
                     req["outcome"] = "plan_rejected"
                     self._finish(rid, "Research plan was not approved; no employee research step was dispatched.",
                                  {}, ok=False)
+                    return False
+                # The cost so far is judged against the cap CP1 just set, before any end without dispatch: a plan_only
+                # or checkpoint-off request would otherwise finish over its approved budget without a card (#499).
+                await self._check_budget(rid, block=False)
+                if rid in self.budget_denials:
+                    req["research_contract"]["failure"] = {"steps": [], "plan_sha256": plan_hash, "stage": "cp1",
+                                                           "budget": self.budget_denials[rid]}
+                    req["outcome"] = "research_failed"
+                    self.hub.save_request(rid)
+                    self._finish(rid, "Research plan approved, but the cost so far passed its spending cap and the "
+                                 "budget card was not approved; no employee research step was dispatched.", {},
+                                 ok=False)
                     return False
                 if not execution_enabled:
                     req["outcome"] = "plan_approved"

@@ -115,7 +115,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 
 receipt에는 gate, 요청, 대상 revision/hash, 결정자, 시각, 결정과 위임 범위를 적는다. 질문 답변·직원 상담·resume 승인·예산/HPC/전송 승인은 연구 승인을 대신하지 않는다.
 
-카드 메모는 결정이 아니다. CP2는 구조화된 선택값만 읽는다. 메모는 receipt와 감사 부록에 남고, 다음 일을 하는 prompt에도 2,000자까지 들어간다: CP1 메모는 그 계획의 단계, CP2 메모는 리뷰와 보고서, 이어 가기 메모와 직전 CP2 메모는 새 계획(R11). PLAN의 선택 field `budget_usd`(양수)는 CP1 승인 때 요청의 집행 상한이 된다. 값은 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`)을 넘지 않는다. 이 field가 없는 PLAN은 canonical JSON에 넣지 않으므로 전에 동결한 plan hash가 그대로다(R17).
+카드 메모는 결정이 아니다. CP2는 구조화된 선택값만 읽는다. 메모는 receipt와 감사 부록에 남고, 다음 일을 하는 prompt에도 2,000자까지 들어간다: CP1 메모는 그 계획의 단계, CP2 메모는 리뷰와 보고서, 이어 가기 메모와 직전 CP2 메모는 새 계획(R11). PLAN의 선택 field `budget_usd`(양수)는 CP1 승인 때 요청의 집행 상한이 된다. 값은 설정 상한(요청 예산, 없으면 `policy.budget.per_request_usd`)을 넘지 않는다. 승인 직후 누적 비용을 이 상한으로 판정하고, 단계·리뷰 prompt에 이 상한을 직접 적는다. true/false 값은 검증 오류다. 이 field가 없는 PLAN은 canonical JSON에 넣지 않으므로 전에 동결한 plan hash가 그대로다(R17).
 
 필수 작업·감사·승인·사전 기준을 충족하면 `done`, 끊긴 참조·낡은 결과·중대 결함이 남으면 `incomplete`, 실행 오류는 `failed`다. 근거 부족도 허용한 계획이면 `done + inconclusive`가 가능하다. `plan_only`의 완료는 승인된 계획이며 연구 결과 완료가 아니다.
 

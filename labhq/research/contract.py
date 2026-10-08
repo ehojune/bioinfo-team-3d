@@ -284,9 +284,12 @@ class ResearchPlan(StrictModel):
     @field_validator("budget_usd", mode="before")
     @classmethod
     def no_cap_when_not_positive(cls, value: Any) -> Any:
-        # Zero or a negative number states no cap: the plan keeps today's cap instead of failing validation, which
-        # would cost one of its two plan attempts.
-        if isinstance(value, bool) or isinstance(value, (int, float)) and value <= 0:
+        # true/false is not an amount: it fails validation and goes to the plan correction (pydantic would read true
+        # as $1). Zero or a negative number states no cap: the plan keeps today's cap instead of failing, which would
+        # cost one of its two plan attempts.
+        if isinstance(value, bool):
+            raise ValueError("budget_usd must be a number of USD, not true/false")
+        if isinstance(value, (int, float)) and value <= 0:
             return None
         return value
 

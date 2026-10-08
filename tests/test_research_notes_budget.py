@@ -222,3 +222,62 @@ def test_an_approved_plan_frozen_without_budget_resumes_as_approved():
 
 def test_research_plan_prompt_asks_for_a_numeric_budget():
     assert "budget_usd" in cso.RESEARCH_PLAN_PROMPT and "budget_usd" in cso.RESEARCH_CP2_PLAN_PROMPT
+
+
+# ---------- PR #499 review ----------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("card", "outcome", "status"), [(False, "research_failed", "failed"),
+                                                          (True, "plan_approved", "done")])
+async def test_a_cap_already_passed_at_cp1_raises_the_card_before_a_request_ends_without_steps(card, outcome, status):
+    """P1: the plan cost $2, the approved plan says $1, and with the evidence checkpoint off the request ends at CP1;
+    it must not end "done" over its approved budget without a card."""
+    hub = _research_hub(_settings(evidence_checkpoint=False), [])
+    reply = hub.reply
+
+    async def costly_plan(task):
+        result = await reply(task)
+        return (result.model_copy(update={"cost_usd": 2.0, "cost_known": True}) if task.meta["kind"] == "plan"
+                else result)
+
+    hub.reply = costly_plan
+    _with_plan(hub, budget_usd=1)
+    _answer(hub, [{"approved": True, "note": ""}], budget=card)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "budget"]
+    assert hub.approvals[1]["detail"]["limit_usd"] == 1.0 and hub.approvals[1]["detail"]["spent_usd"] == 2.0
+    assert _kinds(hub, "step") == []
+    assert req["outcome"] == outcome and req["status"] == status
+
+
+def test_a_boolean_budget_fails_plan_validation_instead_of_vanishing():
+    for value in (True, False):
+        with pytest.raises(ValueError, match="budget_usd"):
+            rc.validate_research_plan({**valid_plan(), "budget_usd": value}, max_steps=3, active_packs={})
+        assert any("budget_usd" in problem for problem in
+                   rc.research_plan_errors({**valid_plan(), "budget_usd": value}, max_steps=3, active_packs={}))
+
+
+@pytest.mark.asyncio
+async def test_earlier_round_cp2_notes_stay_in_the_audit_appendix_with_their_round(tmp_path):
+    long_note = CP2_NOTE + " " + "나" * (cso.APPROVAL_NOTE_CHARS + 100)
+    decisions = [CP1, {**cont.APPROVE, "note": long_note}, cont.CONTINUE, CP1, {**cont.APPROVE, "note": "2차 확인"}]
+    hub = cont._hub(tmp_path, decisions)
+    await Orchestrator(hub).run_request("r")
+
+    appendix = hub.requests["r"]["report_appendix"]
+    assert f"PI note (round 1 CP2): {long_note}" in appendix  # whole, though prompts clip it
+    assert "PI note: 2차 확인" in appendix
+
+
+@pytest.mark.asyncio
+async def test_step_and_review_prompts_carry_the_enforced_cap_not_only_resource_limits():
+    hub = _with_plan(rep._hub(), budget_usd=1)
+    await Orchestrator(hub).run_request("r")
+
+    for kind in ("step", "review"):
+        prompt = _kinds(hub, kind)[0].prompt
+        assert "Enforced spending cap for this request: $1.00" in prompt
+        assert "protocol.resource_limits" in prompt.split("Enforced spending cap", 1)[1]
