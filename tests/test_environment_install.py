@@ -425,3 +425,27 @@ def test_noninstall_data_dollars_do_not_become_dynamic_installers(tmp_path, envi
 def test_nested_shell_local_install_destinations_remain_allowed(tmp_path):
     assert denial(tmp_path, "bash -c 'pip install --target ./packages scanpy'") is None
     assert denial(tmp_path, "bash -c 'pip install --target ./.pylib scanpy'", environment_step=False) is None
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    'PIP=pip; ACTION=install; "$PIP" "$ACTION" scanpy',
+    'cmd /v:on /c "set ACTION=install&&pip !ACTION! scanpy"',
+    "pwsh -WorkingDirectory .. -Command 'pip install --target ./packages scanpy'",
+    "powershell -wd .. -Command 'pip install --target ./packages scanpy'",
+    '(R_LIBS_USER=./.rlib); Rscript -e "install.packages(\'a\')"',
+])
+def test_dynamic_install_forms_and_nested_workdirs_fail_closed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("command", [
+    '''bash -c 'python script.py "$INPUT"' ''',
+    "Rscript -e 'print(df$column)'",
+    '"$PY" -m pytest',
+    '"$PY" script.py',
+    'cmd /c "python run.py"',
+])
+def test_dynamic_install_guards_keep_analysis_commands_allowed(tmp_path, environment_step, command):
+    assert denial(tmp_path, command, environment_step=environment_step) is None
