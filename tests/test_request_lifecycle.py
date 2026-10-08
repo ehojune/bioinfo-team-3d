@@ -421,3 +421,31 @@ def test_a_resume_card_names_the_request_its_date_and_the_steps_left(tmp_path):
     assert "(09-28 10:30 접수)" in card.summary and card.summary.endswith("남은 단계: s2, s3")
     assert "[" not in card.summary
     assert card.detail == {"request_text": card.detail["request_text"], "created_at": created, "steps": ["s2", "s3"]}
+
+
+# ----- what an open page needs without a reload (#494) -----
+
+@pytest.mark.asyncio
+async def test_restart_and_resume_status_changes_reach_open_pages_as_events(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    _request(hub, "r")
+    restarted = Hub(s)
+    replay = [e for e in restarted.store.events_since(0) if e.get("request_id") == "r"]
+    assert [(e["type"], (e["data"].get("status") or e["data"].get("kind"))) for e in replay] == [
+        ("request.status", "interrupted"), ("approval.requested", "resume")]
+    assert replay[0]["data"]["previous"] == "running"
+
+    card = next(iter(restarted.approvals))
+    await restarted.resolve_approval(card, True)
+    await _until(lambda: any(e["type"] == "request.status" and e["data"]["status"] == "waiting_for_runner"
+                             for e in restarted.events))
+    await restarted.cancel_request("r")
+
+
+def test_a_snapshot_keeps_the_quota_deadline_of_a_waiting_step(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r", plan={"steps": [{"id": "s1", "agent_id": "worker"}]},
+             quota_waits={"s1": {"engine": "codex", "resume_at": 100.0, "deadline_at": 900.0, "reason": "limit"}})
+    detail = hub.request_step_details("r", hub.requests["r"])["s1"]
+    assert detail["quota_resume_at"] == 100.0 and detail["quota_deadline_at"] == 900.0

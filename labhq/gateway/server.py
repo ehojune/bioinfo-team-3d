@@ -261,8 +261,12 @@ class Hub:
                 self.save_request(rid)  # their cards and waiters died with the old process
             if is_active_request(req.get("status")) and req.get("status") not in {
                     "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
-                req["status"] = "interrupted"
+                before, req["status"] = req.get("status"), "interrupted"
                 self.save_request(rid)
+                # An open page learns it without a reload: it reconnects with `since` and replays this (#494).
+                self.events.append(self.store.append_event({"type": "request.status", "ts": time.time(),
+                    "request_id": rid, "data": {"status": "interrupted", "previous": before}},
+                    settings.gateway.event_buffer))
             stale = [f for f in req.get("followups") or [] if f.get("status") == "running"]
             for followup in stale:  # its task future died with the old process; the PI can ask again
                 followup.update(status="interrupted", error="gateway restarted before the answer arrived")
@@ -367,6 +371,16 @@ class Hub:
             req["status"] = "waiting_for_runner"
         elif req.get("status") in HOLD_STATES:
             req["status"] = "running"
+
+    async def _set_status(self, rid: str, status: str) -> None:
+        """A status the gateway sets itself (resume, restart), told to open pages as request.status."""
+        req = self.requests[rid]
+        before = req.get("status")
+        req["status"] = status
+        self.save_request(rid)
+        if before != status:
+            await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
+                                "data": {"status": status, "previous": before}})
 
     async def _publish_hold_status(self, rid: str | None) -> None:
         """Recompute a request's hold status, save it, and tell clients when it changed (R5)."""
@@ -567,8 +581,7 @@ class Hub:
             return
         facilities_resume = bool(facilities) and facilities_hold
         if not req.get("quota_waits") and not req.get("login_waits") and not facilities_resume:
-            req["status"] = "interrupted"
-            self.save_request(rid)
+            await self._set_status(rid, "interrupted")
             return
         await self.resume_when_ready(rid)
 
@@ -1078,8 +1091,7 @@ class Hub:
         req = self.requests[rid]
         if req.get("status") == "cancelled":
             return
-        req["status"] = "waiting_for_runner"
-        self.save_request(rid)
+        await self._set_status(rid, "waiting_for_runner")
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
         while True:
@@ -1088,8 +1100,7 @@ class Hub:
             missing = {aid for aid in self.resume_agents(rid)
                        if self.agent_runner.get(aid) not in self.runners}
             if not missing:
-                req["status"] = "running"
-                self.save_request(rid)
+                await self._set_status(rid, "running")
                 await self.publish({"type": "request.resumed", "ts": time.time(), "request_id": rid,
                                     "data": {"agents": sorted(self.resume_agents(rid))}})
                 self.recovery_started[rid] = time.time()
@@ -1105,8 +1116,7 @@ class Hub:
                                     "data": {"missing_agents": sorted(missing)}})
                 previous = missing
             if asyncio.get_running_loop().time() >= deadline:
-                req["status"] = "interrupted"
-                self.save_request(rid)
+                await self._set_status(rid, "interrupted")
                 await self.publish({"type": "request.resume_timeout", "ts": time.time(), "request_id": rid,
                                     "data": {"missing_agents": sorted(missing)}})
                 approval = self.new_resume_approval(rid)
@@ -2118,8 +2128,7 @@ class Hub:
         elif entry["approval"].get("kind") == "resume":
             rid = entry["approval"]["request_id"]
             if approved:
-                self.requests[rid]["status"] = "waiting_for_runner"
-                self.save_request(rid)
+                await self._set_status(rid, "waiting_for_runner")
                 self._restart_request_asks(rid)
                 self.track_request(rid, self.resume_when_ready(rid))
         elif entry["approval"].get("kind") == "facilities_fix":
@@ -2409,6 +2418,7 @@ class Hub:
                 "text": short(result.get("text") or "", SNAPSHOT_RESULT_CHARS),
                 "error": result.get("error") or "",
                 "quota_resume_at": quota.get("resume_at"),
+                "quota_deadline_at": quota.get("deadline_at"),  # the longest wait, kept across a reload (#494)
                 "quota_engine": quota.get("engine"),
                 "login_resume_at": login.get("resume_at"),
                 "login_engine": login.get("engine"),
