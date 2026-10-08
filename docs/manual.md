@@ -166,13 +166,14 @@ cd <labhq 저장소>
 
 ## 명령줄(CLI)
 
-웹 사무실에서 하는 일은 명령줄로도 됩니다. 설정은 `LABHQ_CONFIG`(또는 `--instance <이름>`)로 고릅니다.
+웹 사무실 입력창 옆 **작업 종류**(자동 판단·간단한 일·연구)는 연구 lane이 켜져 있을 때 이 요청을 CP1·CP2로 보낼지 정합니다. 자동이면 [접수 규칙](research_protocol.md)이 정하고, 연구는 팀(CSO)으로만 보낼 수 있습니다. 웹 사무실에서 하는 일은 명령줄로도 됩니다. 설정은 `LABHQ_CONFIG`(또는 `--instance <이름>`)로 고릅니다.
 
 ```bash
 labhq send "공개 폐선암 scRNA-seq에서 CD276 고발현 세포유형을 찾고 QC까지"   # CSO 오케스트레이션
 labhq send --project my-project "새 WGS 배치 표준 QC"                     # 결과를 그 프로젝트 GitHub에도 보고
 labhq send --agent analyst "outputs/의 DE 결과로 volcano plot"             # 한 직원에게 직접
 labhq send --team "작아 보여도 독립 검토까지 해 줘"                       # 자동 단독 처리를 끄고 팀 강제
+labhq send --work-kind simple "GSE10072 시료 메타데이터 표"            # 연구 lane이 켜져 있어도 CP1·CP2 없이(research면 반대로 강제)
 labhq send --ref scverse/scanpy --ref doi:10.1038/nature12373 "같은 방식으로 재현"  # 참고 자료 포인터(여러 번)
 labhq send --plan-only "같은 roster로 분석 계획만 작성"                   # 실행·과학 리뷰 전에 종료
 labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교"     # 이 요청의 CSO 모델만 변경
