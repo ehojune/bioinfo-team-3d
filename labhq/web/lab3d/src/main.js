@@ -53,9 +53,9 @@ const labels=new Map();
 chars.forEach(c=>{const label=document.createElement('div');label.className='tag';label.dataset.agent=c.id;stage.appendChild(label);labels.set(c.id,label);const opt=document.createElement('option');opt.value=c.id;opt.textContent=c.name;$('character').appendChild(opt);});
 STATES.forEach(state=>{const opt=document.createElement('option');opt.value=state;opt.textContent=STATE_LABELS[state];$('state').appendChild(opt);});
 const detail={queued:'자기 차례를 기다리며 천천히 숨을 쉽니다.',working:'손을 움직이며 맡은 업무를 진행합니다.',waiting:'<b>빨간 깃발 = PI 승인 대기.</b> 손을 들고 기다립니다.',hibernating:'HPC 작업을 기다리는 중입니다. 세션은 쉬고 있습니다.',done:'일을 마치고 작은 박수를 보냅니다.',error:'땀방울 = 문제가 생겼습니다. 확인이 필요합니다.'};
-function updatePanel(){const c=byId.get(selected);if(!c){$('agent-name').textContent='직원 없음';$('agent-role').textContent='roster를 기다립니다';$('agent-number').textContent='—';$('state-detail').textContent='';$('approval-chip').hidden=true;$('focus').disabled=true;return;}$('focus').disabled=false;document.body.classList.toggle('focused-mode',focused);$('character').value=selected;$('state').value=c.state;$('agent-name').textContent=c.name;$('agent-role').textContent=c.role;$('agent-number').textContent=String(c.index+1).padStart(2,'0');$('state-detail').innerHTML=detail[c.state]||'';if(!demo)$('state-detail').textContent=c.task||STATE_LABELS[c.state]||'상태 미확인';$('focus').textContent=focused?'전체 보기':'가까이 보기';
+function updatePanel(){const c=byId.get(selected);if(!c){$('agent-name').textContent='직원 없음';$('agent-role').textContent='roster를 기다립니다';$('agent-number').textContent='—';$('state-detail').textContent='';$('approval-chip').hidden=true;$('focus').disabled=true;return;}$('focus').disabled=false;document.body.classList.toggle('focused-mode',focused);$('character').value=selected;$('state').value=c.state;$('agent-name').textContent=c.name;$('agent-role').textContent=c.role;$('agent-number').textContent=String(c.index+1).padStart(2,'0');$('state-detail').innerHTML=detail[c.state]||'';if(!demo)$('state-detail').textContent=c.task||stateLabel(c)||'상태 미확인';$('focus').textContent=focused?'전체 보기':'가까이 보기';
   const count=demo?chars.filter(ch=>ch.state==='waiting').length:liveApprovalCount;$('approval-chip').hidden=!count;$('approval-chip').textContent=`승인 대기 ${count}`;
-  for(const ch of chars){const label=labels.get(ch.id);label.className=`tag${ch.id===selected?' selected':''}${view==='gallery'?' gallery':''}`;label.innerHTML=view==='gallery'?`<strong>${String(ch.index+1).padStart(2,'0')} · ${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</strong><small class="gallery-role">${ch.prop}</small>`:`<span><i class="state-dot" style="background:${STATE_COLORS[ch.state]}"></i>${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</span><small>${STATE_LABELS[ch.state]}</small>`;}
+  for(const ch of chars){const label=labels.get(ch.id);label.className=`tag${ch.id===selected?' selected':''}${view==='gallery'?' gallery':''}`;label.innerHTML=view==='gallery'?`<strong>${String(ch.index+1).padStart(2,'0')} · ${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</strong><small class="gallery-role">${ch.prop}</small>`:`<span><i class="state-dot" style="background:${STATE_COLORS[ch.state]}"></i>${ch.badge?`${ch.species} ${ch.badge.letter}`:ch.species}</span><small>${stateLabel(ch)}</small>`;}
 }
 function setState(id,state){if(!byId.has(id))throw new RangeError(`Unknown character: ${id}`);if(!STATES.includes(state))throw new RangeError(`Unknown agent.status: ${state}`);byId.get(id).state=state;byId.get(id).skin.setState(state);updatePanel();requestRender();return state;}
 function select(id){if(!byId.has(id))throw new RangeError(`Unknown character: ${id}`);selected=id;updatePanel();if(focused&&view==='office')frameCamera();requestRender();}
@@ -185,7 +185,7 @@ function syncLive(S, visual) {
     stage.setAttribute('aria-label',`${chars.length}명 직원이 있는 3D 연구소`);
     frameCamera();
   }
-  for(const a of agents){const c=byId.get(a.id);c.state=pose(visual(a));c.task=a.task||'';c.skin.setState(c.state);}
+  for(const a of agents){const c=byId.get(a.id);c.state=pose(visual(a));c.task=a.task||'';c.waitFor=a.waitFor||'';c.skin.setState(c.state);}
   const q=S.requests.get(S.current);
   const nextBoard=JSON.stringify(q||null);
   if(nextBoard!==boardKey){boardKey=nextBoard;updateBoard(q);}
@@ -193,5 +193,7 @@ function syncLive(S, visual) {
   leds.forEach((led,i)=>{led.visible=i<running;});
   liveApprovalCount=S.approvals.size+S.engineHolds.size;updatePanel();$('approval-chip').hidden=!liveApprovalCount;$('approval-chip').textContent=`승인·로그인 대기 ${liveApprovalCount}`;requestRender();
 }
+// hibernating covers HPC jobs and unanswered questions (state.js stateText, #511 review).
+function stateLabel(c){return c.state==='hibernating'&&c.waitFor==='answer'?'답 대기':STATE_LABELS[c.state];}
 function pose(state){return ({sleep:'hibernating',sleeping:'hibernating',idle:'queued'})[state]|| (STATES.includes(state)?state:'queued');}
 if(!demo)startLiveOffice(syncLive);
