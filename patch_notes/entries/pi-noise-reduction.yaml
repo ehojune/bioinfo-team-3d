@@ -6,3 +6,6 @@ rows:
 - sha: "4da03a6"
   at: 2026-10-08 10:51
   text: "PowerShell provider·배열 삭제를 닫고 빈 roster·엔진 누락 doctor 준비 판정을 보강"
+- sha: "08486ea"
+  at: 2026-10-08 11:29
+  text: "재귀 삭제 무승인 범위를 링크 없는 작업 폴더 .tmp 단일 명령으로 좁히고 CLI 직원의 실행 준비 판정을 바로잡음"
