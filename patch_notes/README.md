@@ -14,11 +14,23 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:43 | [`d66947f`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/d66947f) | main 병합(#504): manual 연구 절을 나눈 판을 두고 이어 가기 카드 7일 기한 문장만 반영했다. |
+| 10:32 | [`506830b`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/506830b) | direct 요청은 연결된 runner·저장된 roster·agents_dir에 있는 직원이면 받아서 러너를 기다리고(없는 이름만 404), 재개 카드도 웹에 남은 시간을 보인다(#502 리뷰). |
+| 10:30 | [`78b8ec7`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/78b8ec7) | main 병합(#498 #503): manual 연구 절 충돌을 풀어 단순 작업 판정 문장과 이어 가기 카드 7일 기한을 함께 남겼다. |
 | 10:17 | [`ff9212d`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/ff9212d) | 최신 main의 연구 분류·웹 상태 변경을 보존하며 문서와 공통 WebSocket close 판정 충돌을 풀었다 |
 | 10:13 | [`94f2f04`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/94f2f04) | 잘못된 웹 token을 accept 뒤 1008로 닫고 두 화면이 공통 경로에서 재시도를 멈추게 했다 |
 | 10:13 | [`565061e`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/565061e) | 연구 verifier·CP2·blocking decision·Codex auto 설명과 artifact 거부 사유를 현재 동작에 맞췄다 |
 | 10:10 | [`f0b7b62`](https://github.com/ehojune/bioinfo-team-3d/pull/503/commits/f0b7b62) | 웹 입력창 옆 작업 종류(자동·간단·연구)와 labhq send --work-kind로 PI가 연구 lane을 탈지 직접 고른다(PI 점검 R16). |
+| 09:57 | [`52161dc`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/52161dc) | 웹에 러너 꺼짐 띠·요청 취소 버튼·PI 결정 대기 상태를 넣고, 2시간이 넘는 카드 대기·남은 시간은 시간·일로 적는다(PI 점검 R5 R13 R15). |
+| 09:57 | [`20a0296`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/20a0296) | 리뷰 반영: 러너를 기다린 뒤 계획이 roster를 읽고, 취소가 병렬 단계·늦게 온 카드·비용(보고 없는 turn은 미집계)까지 정리한다. |
+| 09:57 | [`669ef03`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/669ef03) | #493 병합 뒤 러너 안내를 labhq up으로 맞추고 영문 README에 같은 안내를 넣었다. |
 | 09:56 | [`bcefdcf`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/bcefdcf) | main(#493·#494)과 합치며 매뉴얼 연구 lane 문단에 접수 규칙 변경과 CP1·CP2 카드 설명을 함께 살려 충돌을 풀었다. |
+| 09:56 | [`65d0927`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/65d0927) | 결정 카드(확인 질문·예산·범위·CP1·CP2·이어 가기·재개)가 1시간에 요청을 끝내지 않고 7일(policy.approvals.pi_decision_timeout_s) 동안 waiting_pi로 기다리며, 기한을 넘기면 거절이 아닌 *_timed_out으로 끝난다(PI 점검 R5). |
+| 09:56 | [`cf15502`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/cf15502) | 요청 취소를 넣었다. POST /api/requests/{id}/cancel과 labhq cancel이 도는 task·한도/로그인 대기·카드를 정리하고 cancelled와 부분 결과 보고서를 남긴다(PI 점검 R13). |
+| 09:56 | [`0a22498`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/0a22498) | 러너가 없을 때 새 요청이 바로 실패하지 않고 waiting_for_runner로 기다렸다가 러너가 붙으면 진행하며, 24시간을 넘기면 한국어 이유로 끝난다. /api/health에 runner_online(PI 점검 R15). |
+| 09:56 | [`fc3b306`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/fc3b306) | 러너가 다시 시작되거나 직원이 다른 러너로 옮기면 이전 프로세스의 도구 권한 카드를 러너 등록 때 닫고, 재개 카드에 요청 문장·접수 시각·남은 단계를 적는다(PI 점검 R2). |
+| 09:56 | [`3ceeffb`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/3ceeffb) | gateway가 재시작·재개로 요청 상태를 바꾸면 request.status event를 내고, snapshot에 quota 최대 기한을 넣어 열린 웹이 새로고침 없이 안다(#494 후속). |
+| 09:56 | [`80304bd`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/80304bd) | CP1 거절 종료 문구를 한국어로 바꾸고 거절 메모를 "PI 메모"로 붙인다. |
 | 09:39 | [`d4629a6`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/d4629a6) | 계산을 시키는 동사(run·돌려·수행·계산·정규화·군집 등)와 DE 약어도 연구 신호로 두어, 다운로드·메타데이터와 함께여도 분석 요청은 연구로 간다(#498 재리뷰). |
 | 09:35 | [`0f44bbc`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/0f44bbc) | 예측·관계·비교 같은 추론 표현은 다운로드·메타데이터 요청과 함께여도 연구로, "분석 없이"는 연구 신호에서 뺀다(#498 리뷰). |
 | 09:30 | [`b2bf903`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/b2bf903) | 메타데이터 표·목록 정리·추출·다운로드는 단순 작업, 분석이 들어가면 연구로 분류하고 직원 직접 지정은 연구 lane 밖으로(PI 점검 R16). |

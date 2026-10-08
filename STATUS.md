@@ -20,6 +20,15 @@
 - 미해결: 3D 사무실에는 따로 입력창이 없어 해당 없음.
 - 근거: `tests/web_work_kind.cjs`, `tests/test_intake_references.py::test_cli_send_passes_the_work_kind_and_refuses_research_to_one_agent`.
 
+## 2026-10-08 · 요청·승인 수명 정리: 결정 카드 기한, 요청 취소, 러너 대기, 떠난 카드 (PI 점검 R2 R5 R13 R15)
+
+- 결론: PI가 혼자 쓸 때 요청이 조용히 죽던 네 경로를 막았다. 결정 카드(확인 질문·직원 질문·범위·예산·CP1·CP2·이어 가기·재개)는 1시간이 아니라 `policy.approvals.pi_decision_timeout_s`(기본 7일) 동안 기다리고, 그동안 요청은 `waiting_pi`다. 기한을 넘기면 `clarify_timed_out`·`plan_timed_out`·`evidence_timed_out` 같은 시간 초과로 끝나 거절과 구분된다(R5). 요청 취소를 웹 버튼·`labhq cancel`·`POST /api/requests/{id}/cancel`로 넣었다(R13). 러너가 없을 때 새 요청은 `waiting_for_runner`로 기다렸다가 러너가 붙으면 진행하고, 웹 상단에 **러너 꺼짐** 띠가 뜬다(R15). 러너가 다시 시작되거나 직원이 다른 러너로 옮기면 이전 프로세스의 도구 권한 카드는 러너 등록 때 닫히고, 재개 카드에는 요청 문장·접수 시각·남은 단계가 적힌다(R2).
+- 바뀐 것: `labhq/gateway/server.py`(결정 카드 기한·`waiting_pi`·재개 카드 timer, `cancel_request`·`close_approval`, `wait_for_runner`, `expire_orphan_approvals`, `request.status` event, snapshot `quota_deadline_at`, `/api/health` `runner_online`), `labhq/orchestrator/cso.py`(종류별 `*_timed_out`, 취소 때 단계 task 정리, CP1 거절 문구 한국어), `labhq/research/contract.py`, `labhq/settings.py`(`pi_decision_timeout_s`, `gateway.runner_wait_s`), `labhq/request_status.py`, `labhq/cli.py`(`cancel`, 상태 라벨, 러너 안내를 `labhq up`으로), `labhq/web/state.js`·`index.html`·`ui/decide.js`(2시간 넘는 대기는 시간·일), 예시 설정 두 벌, README·README.en §3·§4, `docs/manual.md`, `docs/pi-qa.md`.
+- 실행한 것: 전체 pytest(Windows) 4819 passed·59 skipped. 새 시험 `tests/test_request_lifecycle.py` 21건(종류별 park·기한·거절 구분, 취소·멱등·늦은 카드·비용, 러너 대기·한국어 실패, 떠난 카드, 상태 event), `tests/web_request_lifecycle.cjs`, CP1·CP2 timed_out 시험. 임시 gateway(127.0.0.1:18799, 별도 state)를 러너 없이 띄워 웹에서 러너 꺼짐 띠 → 요청이 러너 기다림 → 요청 취소 → 취소됨·보고서를 확인했다. Codex 로컬 리뷰 P1 1건(러너 연결 전 빈 roster로 계획 검증)·P2 4건(병렬 단계 취소, 취소 뒤 늦은 카드, 취소 turn 비용, 러너 대기 해제 event)을 모두 고쳤다. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: gateway 재시작 때 열린 결정 카드는 여전히 닫히고 재개 카드로 돌아온다(재개 승인 뒤 러너 대기는 `resume_wait_s` 300초 그대로). 취소는 HPC에 이미 낸 job을 멈추지 않는다.
+- 근거: `tests/test_request_lifecycle.py`, `tests/web_request_lifecycle.cjs`, `tests/test_research_protocol.py::test_an_unanswered_cp1_card_is_not_a_rejected_plan`, `tests/test_research_cp2.py::test_cp2_decision_is_read_from_the_choice_alone`.
+- 후속(리뷰·main 병합): main(#493 #494 #496 #497 #498 #503)을 병합하고 manual 충돌을 양쪽 내용으로 풀었다. 봇 P2 두 건을 고쳤다: direct 요청은 저장된 roster나 `runner.agents_dir`에 있는 직원이면 받아서 러너를 기다리고, 재개 카드도 웹에 남은 시간을 보인다(예전 1시간 카드는 시작 때 7일로 맞춤). 봇 P1(패치노트 없음)은 기록 커밋 db5d85b로 해결됐다.
+
 ## 2026-10-08 · 메타데이터 표·목록 정리는 단순 작업으로, 직원 직접 지정은 연구 lane 밖으로 (PI 점검 R16)
 
 - 결론: 연구 lane을 켠 trial에서 웹으로 "GEO GSE10072 시료 메타데이터를 표로 정리해 줘"를 보내자, 규칙 분류가 "단순 작업으로 확실히 한정되지 않음"으로 research에 넣어 CP1과 5단계 연구 계획이 떴다. PI 설정에도 연구 lane을 켰으므로 내일 PI가 같은 일을 겪는다. 이제 출처에 있는 것을 표·목록으로 정리하거나(메타데이터·시료 정보) 추출·다운로드하는 요청은 simple이다. 분석(DE·경로·생존 등)이 들어가면 표를 함께 요청해도 research로 둔다. 직원 한 명을 직접 지정한 요청은 PI가 research를 명시하지 않는 한 simple이고, 명시했을 때의 안내는 한국어로 바꿨다.
