@@ -258,7 +258,15 @@ const DETAIL_LABELS = {
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
   research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
+  resume: { created_at: '접수 시각', steps: '남은 단계' },
 };
+// A resume card's epoch seconds read as a local date, the way the gateway writes it in the summary.
+const two = n => String(n).padStart(2, '0');
+function receivedAt(seconds) {
+  const date = new Date(Number(seconds) * 1000);
+  return Number.isFinite(date.getTime()) && seconds != null ?
+    `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}` : String(seconds ?? '');
+}
 function renderDetail(container, kind, detail, approval = null) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
@@ -266,11 +274,13 @@ function renderDetail(container, kind, detail, approval = null) {
     kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'results', 'plan_sha256'] :
     kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
     kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
-    kind === 'question' ? ['why_blocked', 'from'] : [];
+    kind === 'question' ? ['why_blocked', 'from'] :
+    kind === 'resume' ? ['steps', 'created_at'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
     kind === 'research_continue' ? ['gate'] :
+    kind === 'resume' ? ['request_text'] :  // the summary already quotes it
     kind === 'research_plan' && typeof detail?.plan_canonical === 'string' ? ['gate', 'pack_applicability', 'warnings', 'protocol_revision', 'packs'] :
     kind === 'question' && clarifyQuestions(approval).length ? ['options'] : [];
   const entries = detail !== null && typeof detail === 'object' && !Array.isArray(detail) ?
@@ -288,6 +298,9 @@ function renderDetail(container, kind, detail, approval = null) {
   for (const [key, value] of entries) {
     if (kind === 'research_plan' && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
+    else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
+    else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
+      detailEntry(list, labels[key], detail.steps.join(', ') || '없음', {raw: true});
     else if (kind === 'research_evidence' && key === 'results') {
       renderEvidenceTable(list, detail);
       detailEntry(list, '원장 JSON 전체', value, {raw: true, fold: true,
