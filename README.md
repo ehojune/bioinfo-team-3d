@@ -203,7 +203,7 @@ PowerShell이나 cmd의 새 창에서 실행합니다. `labhq.cmd`가 `.venv` Py
 .\labhq -c config\labhq.yaml open
 ```
 
-`up`은 gateway와 runner를 창과 분리해 띄우고 state 폴더의 `logs/`와 PID 파일로 관리합니다. 끝낼 때는 같은 설정으로 `down`을 실행합니다. POSIX 명령은 `./labhq.sh -c config/labhq.yaml up`과 `open`입니다.
+`up`은 gateway와 runner를 창과 분리해 띄우고 state 폴더의 로그와 프로세스 기록으로 관리합니다. `down`은 진행 중 요청이 있거나 상태를 확인할 수 없으면 거부하며, 확인하고 끝내려면 `down --force`를 씁니다. POSIX 명령은 `./labhq.sh -c config/labhq.yaml up`과 `open`입니다.
 
 **PC를 다시 켰을 때**
 

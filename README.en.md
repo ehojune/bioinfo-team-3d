@@ -205,7 +205,7 @@ Run this from a fresh PowerShell or cmd window. `labhq.cmd` calls the repository
 .\labhq -c config\labhq.yaml open
 ```
 
-`up` detaches the gateway and runner from the window and keeps their logs and PID files under the state directory. Run `down` with the same config to stop them. On POSIX, use `./labhq.sh -c config/labhq.yaml up`, then `open`.
+`up` detaches the gateway and runner and keeps logs and process records under the state directory. `down` refuses while work is active or cannot be checked; use `down --force` only after confirming that work may be interrupted. On POSIX, use `./labhq.sh -c config/labhq.yaml up`, then `open`.
 
 **After restarting the PC**
 

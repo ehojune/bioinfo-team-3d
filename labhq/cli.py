@@ -197,7 +197,8 @@ def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw)
             detail = _api_error_detail(exc.response)
             message = f"gateway 요청 실패(HTTP {exc.response.status_code})" + (f": {detail}" if detail else "")
         else:
-            message = f"gateway에 연결할 수 없습니다: {_http_base(s)} — `labhq up`을 실행하세요."
+            message = (f"gateway에 연결할 수 없습니다: {_http_base(s)} — "
+                       f"`{_config_command(s, 'up')}`을 실행하세요.")
         print(message, file=sys.stderr)
         raise SystemExit(2) from None
     except ValueError:
@@ -213,12 +214,34 @@ def _default_client_token(token: str) -> bool:
 
 
 def _config_command(s: Settings, command: str) -> str:
-    return f'labhq -c "{s.config_path}" {command}' if s.config_path else f"labhq {command}"
+    launcher = os.environ.get("LABHQ_LAUNCHER") or "labhq"
+    return f'{launcher} -c "{s.config_path}" {command}' if s.config_path else f"{launcher} {command}"
+
+
+def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
+    import httpx
+
+    try:
+        value = _api(s, "GET", f"/api/requests?status=running&limit={limit}", raw_errors=True)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 401:
+            print("client_token이 이 gateway와 다릅니다.", file=sys.stderr)
+            raise SystemExit(2) from None
+        return None
+    except (httpx.HTTPError, ValueError):
+        return None
+    return value if isinstance(value, list) and all(isinstance(row, dict) for row in value) else None
+
+
+def _active_requests(s: Settings) -> list[dict] | None:
+    return _authenticated_requests(s, limit=200)
 
 
 def _health(s: Settings) -> dict | None:
     import httpx
 
+    if _authenticated_requests(s, limit=1) is None:
+        return None
     try:
         value = _api(s, "GET", "/api/health", raw_errors=True)
     except (httpx.HTTPError, ValueError):
@@ -244,6 +267,117 @@ def _pid_file(s: Settings, role: str) -> Path:
     return _launch_state(s) / f"labhq-{role}.pid"
 
 
+class ProcessIdentityError(RuntimeError):
+    pass
+
+
+def _process_created(pid: int) -> str | None:
+    """Return an OS process-generation identifier, None only when the PID does not exist."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            error = ctypes.get_last_error()
+            if error in {87, 1168}:  # invalid parameter / not found
+                return None
+            raise ProcessIdentityError(f"Windows에서 PID {pid} 생성 시각을 읽을 수 없음(오류 {error})")
+        created, exited, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        exit_code = wintypes.DWORD()
+        try:
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                error = ctypes.get_last_error()
+                raise ProcessIdentityError(f"Windows에서 PID {pid} 상태를 읽을 수 없음(오류 {error})")
+            if exit_code.value != 259:  # STILL_ACTIVE
+                return None
+            if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                            ctypes.byref(kernel), ctypes.byref(user)):
+                error = ctypes.get_last_error()
+                raise ProcessIdentityError(f"Windows에서 PID {pid} 생성 시각을 읽을 수 없음(오류 {error})")
+        finally:
+            kernel32.CloseHandle(handle)
+        return f"windows:{(created.high << 32) | created.low}"
+
+    proc = Path("/proc")
+    if proc.is_dir():
+        stat_path = proc / str(pid) / "stat"
+        try:
+            raw = stat_path.read_text(encoding="ascii")
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise ProcessIdentityError(f"/proc에서 PID {pid} 생성 시각을 읽을 수 없음: {exc}") from None
+        end = raw.rfind(")")
+        fields = raw[end + 2:].split() if end >= 0 else []
+        if len(fields) <= 19:
+            raise ProcessIdentityError(f"/proc에서 PID {pid} 생성 시각 형식을 읽을 수 없음")
+        if fields[0] == "Z":
+            return None
+        return f"proc:{fields[19]}"
+
+    try:
+        result = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True,
+                                timeout=3, env={**os.environ, "LC_ALL": "C"})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProcessIdentityError(f"ps로 PID {pid} 생성 시각을 읽을 수 없음: {exc}") from None
+    created = " ".join(result.stdout.split())
+    if result.returncode != 0 and not created:
+        return None
+    if not created:
+        raise ProcessIdentityError(f"ps가 PID {pid} 생성 시각을 돌려주지 않음")
+    return f"ps:{created}"
+
+
+def _process_record(s: Settings, role: str) -> tuple[str, dict | None, str | None]:
+    """Return alive/missing/stale/unknown. Stale records are removed without touching a process."""
+    path = _pid_file(s, role)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "missing", None, None
+    except OSError as exc:
+        return "unknown", None, f"프로세스 기록을 읽을 수 없음: {exc}"
+    except (ValueError, TypeError):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", None, f"잘못된 프로세스 기록을 지울 수 없음: {exc}"
+        return "stale", None, None
+    valid = (isinstance(record, dict) and isinstance(record.get("pid"), int)
+             and record.get("pid", 0) > 0 and record.get("role") == role
+             and isinstance(record.get("created"), str) and record.get("config") == s.config_path)
+    if not valid:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", record if isinstance(record, dict) else None, f"stale 기록을 지울 수 없음: {exc}"
+        return "stale", None, None
+    try:
+        created = _process_created(record["pid"])
+    except ProcessIdentityError as exc:
+        return "unknown", record, str(exc)
+    if created is None or created != record["created"]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            return "unknown", record, f"stale 기록을 지울 수 없음: {exc}"
+        return "stale", record, None
+    return "alive", record, None
+
+
+def _record_problem(role: str, reason: str | None) -> None:
+    print(f"{role} 프로세스 신원을 확인할 수 없어 건드리지 않습니다: {reason or '알 수 없는 이유'}",
+          file=sys.stderr)
+    raise SystemExit(2)
+
+
 def _start_background(s: Settings, role: str, *, popen=None) -> int:
     state = _launch_state(s)
     logs = state / "logs"
@@ -267,7 +401,24 @@ def _start_background(s: Settings, role: str, *, popen=None) -> int:
         options["start_new_session"] = True
     with (logs / f"{role}.log").open("a", encoding="utf-8") as output:
         process = (popen or subprocess.Popen)(command, stdout=output, **options)
-    atomic_write_text(_pid_file(s, role), f"{process.pid}\n")
+    try:
+        created = _process_created(process.pid)
+    except ProcessIdentityError as exc:
+        try:
+            _terminate_tree(process.pid)
+        except OSError:
+            if hasattr(process, "terminate"):
+                process.terminate()
+        _record_problem(role, str(exc))
+    if created is None:
+        try:
+            _terminate_tree(process.pid)
+        except OSError:
+            if hasattr(process, "terminate"):
+                process.terminate()
+        _record_problem(role, f"띄운 PID {process.pid}이 이미 종료됨")
+    record = {"pid": int(process.pid), "role": role, "created": created, "config": s.config_path}
+    atomic_write_text(_pid_file(s, role), json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     return int(process.pid)
 
 
@@ -277,15 +428,35 @@ def _up(s: Settings, *, popen=None) -> None:
         raise SystemExit(2)
     health = _health(s)
     if health is None:
-        _start_background(s, "gateway", popen=popen)
-        health = _wait_for_health(s, runner=False)
+        state, _record, reason = _process_record(s, "gateway")
+        if state == "unknown":
+            _record_problem("gateway", reason)
+        if state == "alive":
+            health = _wait_for_health(s, runner=False, timeout=30)
+            if health is None:
+                print(f"gateway 프로세스는 살아 있으나 인증된 상태를 확인할 수 없음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        else:
+            _start_background(s, "gateway", popen=popen)
+            health = _wait_for_health(s, runner=False)
         if health is None:
             print(f"gateway가 시작되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'gateway.log'}",
                   file=sys.stderr)
             raise SystemExit(2)
     if s.runner.id not in (health.get("runners") or []):
-        _start_background(s, "runner", popen=popen)
-        health = _wait_for_health(s, runner=True, timeout=60)
+        state, _record, reason = _process_record(s, "runner")
+        if state == "unknown":
+            _record_problem("runner", reason)
+        if state == "alive":
+            health = _wait_for_health(s, runner=True, timeout=30)
+            if health is None:
+                print(f"runner 프로세스는 살아 있으나 gateway에 연결되지 않음 — 로그: "
+                      f"{_launch_state(s) / 'logs' / 'runner.log'}", file=sys.stderr)
+                raise SystemExit(2)
+        else:
+            _start_background(s, "runner", popen=popen)
+            health = _wait_for_health(s, runner=True, timeout=60)
         if health is None:
             print(f"runner가 연결되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'runner.log'}",
                   file=sys.stderr)
@@ -293,24 +464,65 @@ def _up(s: Settings, *, popen=None) -> None:
     print(f"웹 사무실: {_http_base(s)}/  (`{_config_command(s, 'open')}`)")
 
 
-def _stop_background(s: Settings, role: str) -> int | None:
-    path = _pid_file(s, role)
+def _terminate_tree(pid: int) -> None:
+    if sys.platform == "win32":
+        result = subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, text=True,
+                                timeout=15)
+        if result.returncode:
+            try:
+                missing = _process_created(pid) is None
+            except ProcessIdentityError:
+                missing = False
+            if not missing:
+                detail = " ".join((result.stderr or result.stdout).split())
+                raise OSError(detail or f"taskkill exit {result.returncode}")
+        return
     try:
-        pid = int(path.read_text(encoding="ascii").strip())
-    except (OSError, ValueError):
-        return None
-    try:
-        os.kill(pid, signal.SIGTERM)
+        os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+
+def _stop_background(s: Settings, role: str) -> int | None:
+    state, record, reason = _process_record(s, role)
+    if state in {"missing", "stale"}:
+        return None
+    if state == "unknown":
+        _record_problem(role, reason)
+    pid = int(record["pid"])
+    try:
+        _terminate_tree(pid)
     except OSError as exc:
         print(f"{role} PID {pid}을 종료하지 못했습니다: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
-    path.unlink(missing_ok=True)
+    _pid_file(s, role).unlink(missing_ok=True)
     return pid
 
 
-def _down(s: Settings) -> None:
+def _active_request_line(request: dict) -> str:
+    steps = (request.get("step_progress") or {}).get("steps") or {}
+    active = [f"{step}={state}" for step, state in steps.items() if state in {"running", "hibernating"}]
+    suffix = f" · {', '.join(active)}" if active else ""
+    return f"{request.get('id', '?')} ({request.get('status', '?')}) {short(request.get('text'), 80)}{suffix}"
+
+
+def _down(s: Settings, *, force: bool = False) -> None:
+    active = _active_requests(s)
+    if active:
+        for request in active:
+            print(f"진행 중 요청: {_active_request_line(request)}", file=sys.stderr)
+        if not force:
+            print(f"종료를 거부했습니다. 계속하려면 `{_config_command(s, 'down --force')}`를 쓰세요.",
+                  file=sys.stderr)
+            raise SystemExit(2)
+    elif active is None and not force:
+        print(f"진행 중 작업을 확인할 수 없어 종료하지 않았습니다. 계속하려면 "
+              f"`{_config_command(s, 'down --force')}`를 쓰세요.", file=sys.stderr)
+        raise SystemExit(2)
+    for role in ("runner", "gateway"):
+        state, _record, reason = _process_record(s, role)
+        if state == "unknown":
+            _record_problem(role, reason)
     stopped = [(role, pid) for role in ("runner", "gateway") if (pid := _stop_background(s, role)) is not None]
     print("종료: " + (", ".join(f"{role} PID {pid}" for role, pid in stopped) if stopped else "기록된 프로세스 없음"))
 
@@ -715,7 +927,8 @@ def main(argv: list[str] | None = None) -> None:
     init.add_argument("--force", action="store_true", help="replace an existing config and rotate tokens")
     sub.add_parser("gateway")
     sub.add_parser("up", help="start the gateway and runner in the background")
-    sub.add_parser("down", help="stop only the gateway and runner recorded by this instance")
+    down = sub.add_parser("down", help="stop only the gateway and runner recorded by this instance")
+    down.add_argument("--force", action="store_true", help="stop even when work is active or cannot be checked")
     op = sub.add_parser("open", help="open the web office in the browser, signed in (the token is never printed)")
     op.add_argument("--3d", dest="three_d", action="store_true", help="open the 3D office instead of 2.5D")
     sub.add_parser("runner")
@@ -915,9 +1128,12 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "up":
         _up(s)
     elif args.cmd == "down":
-        _down(s)
+        _down(s, force=args.force)
     elif args.cmd == "open":
-        _api(s, "GET", "/api/health")
+        if _health(s) is None:
+            print(f"gateway에 연결할 수 없습니다: {_http_base(s)} — "
+                  f"`{_config_command(s, 'up')}`을 실행하세요.", file=sys.stderr)
+            raise SystemExit(2)
         print(_open_web_office(s, args.config or os.environ.get("LABHQ_CONFIG"), three_d=args.three_d))
     elif args.cmd == "runner":
         from .runner.daemon import Runner
