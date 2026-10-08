@@ -554,7 +554,7 @@ async def test_mock_engine_ask_routes_without_deadlock_and_pi_hibernates(tmp_pat
 
         pi_request = hub.create_request(RequestIn(
             text="[ask:pi-install] 새 package 설치", mode="direct", agent_id="analyst"))
-        await _until(lambda: hub.requests[pi_request]["status"] != "running")
+        await _until(lambda: hub.requests[pi_request]["status"] not in {"running", "waiting_pi"})  # a PI card parks it (R5)
         assert hub.requests[pi_request]["status"] == "done"
         pi_tasks = [v for v in hub.store.all("task").values()
                     if v.get("request_id") == pi_request and v.get("kind") == "direct"]

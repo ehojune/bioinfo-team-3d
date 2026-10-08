@@ -1049,12 +1049,15 @@ EVIDENCE_CHOICES = ("approve", "revise", "deny")
 
 
 def read_evidence_decision(decision: dict[str, Any]) -> str | None:
-    """The CP2 outcome from the structured choice alone: approved, revision_requested, rejected, or None.
+    """The CP2 outcome from the structured choice alone: approved, revision_requested, rejected, timed_out, or None.
 
-    The note is a memo and never decides. A deny, timeout or expiry without a choice stops the request. An
-    approval without a choice, an unknown choice, or one that contradicts ``approved`` cannot be read: it is not
-    approved, and the PI is asked again."""
+    The note is a memo and never decides. A deny or expiry without a choice stops the request as rejected; a card left
+    unanswered past its bound stops it as timed_out, which is not a rejection (PI 점검 R5). An approval without a
+    choice, an unknown choice, or one that contradicts ``approved`` cannot be read: it is not approved, and the PI is
+    asked again."""
     choice, approved = decision.get("choice"), decision.get("approved") is True
+    if choice is None and not approved and decision.get("state") == "timed_out":
+        return "timed_out"
     if choice is None:
         return None if approved else "rejected"
     if not isinstance(choice, str):
@@ -1078,7 +1081,8 @@ def freeze_plan(plan: ResearchPlan | dict[str, Any], decision: dict[str, Any]) -
         "gate": "research_plan",
         "target_sha256": target,
         "approved": bool(decision.get("approved")),
-        "status": "approved" if decision.get("approved") else "rejected",
+        "status": ("approved" if decision.get("approved") else
+                   "timed_out" if decision.get("state") == "timed_out" else "rejected"),
         "approval_id": decision.get("approval_id"),
         "decider": "PI",
         "delegation_scope": decision.get("delegation_scope") or [],

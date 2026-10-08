@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
-from .request_status import is_terminal_request
+from .request_status import is_terminal_request, request_status_label
 from .settings import Settings
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
 
@@ -131,6 +131,10 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
             line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
+    elif t == "request.status":
+        line = f"⏸ {ev.get('request_id')} 상태: {request_status_label(d.get('status'))}"
+    elif t == "request.runner_wait":
+        line = f"🔌 {d.get('message') or '러너를 기다립니다'}"
     elif t == "request.bundle":
         line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
                 f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
@@ -956,6 +960,8 @@ def main(argv: list[str] | None = None) -> None:
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
     note.add_argument("text")
+    cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
+    cancel.add_argument("request_id")
     resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
     resume.add_argument("request_id")
     resume.add_argument("step_id")
@@ -1147,12 +1153,14 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_run_runner_with_interrupts(Runner(s)))
     elif args.cmd == "status":
         health = _api(s, "GET", "/api/health")
-        print("러너: " + (", ".join(health["runners"]) or "없음"))
+        print("러너: " + (", ".join(health["runners"]) or
+                         f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
         for req in running:
             progress = req["step_progress"]
-            print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}")
+            held = "" if req.get("status") == "running" else f" [{request_status_label(req.get('status'))}]"
+            print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
             environment = req.get("step_environment") or {}
             for sid, state in progress["steps"].items():
                 problem = problem_text(environment.get(sid))
@@ -1213,6 +1221,13 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_send_and_wait(s, body))
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
+    elif args.cmd == "cancel":
+        from urllib.parse import quote
+
+        out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})  # 409: 이미 끝남
+        print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
+              f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
+              "부분 결과는 보고서에 있습니다")
     elif args.cmd == "resume":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":

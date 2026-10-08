@@ -167,16 +167,16 @@ test('KIND_KO names resume and question cards (R19)',()=>{
   assert.equal(KIND_KO.question,'직원 질문 · PI 확인');
 });
 
-test('a resume card joins step ids, has no countdown and says what 거절 does (R19)',async()=>{
+test('a resume card joins step ids, counts down to its bound and says what 거절 does (R19)',async()=>{
   const decide=await load('decide.js'),container=new Element();
-  const card={id:'appr_r',kind:'resume',request_id:'r1',summary:"중단된 단계 ['s2', 's3']를 다시 돌릴까요?",created_at:1,timeout_s:3600};
+  const card={id:'appr_r',kind:'resume',request_id:'r1',summary:"중단된 단계 ['s2', 's3']를 다시 돌릴까요?",created_at:1,timeout_s:14*86400};
   const requests=new Map([['r1',{text:'새로 받은 WGS 배치 표준 QC',plan:[]}]]);
   const [row]=decide.syncDecisionCards(container,[card],[],{requests,now:()=>1+14239*60,kindLabels:State.createOfficeState().KIND_KO});
   const p=row._decisionParts;
   assert.equal(p.title.textContent,'중단된 요청 재개');
   assert.equal(p.summary.textContent,'중단된 단계(s2, s3)를 다시 돌릴까요?');
   assert.equal(p.request.textContent,'요청: 새로 받은 WGS 배치 표준 QC');
-  assert.equal(p.timing.textContent,'14239분 대기','the gateway never times a resume card out');
+  assert.equal(p.timing.textContent,'9일 대기 · 4일 남음','the gateway ends it after pi_decision_timeout_s, so it counts down');
   assert.equal(p.consequence.textContent,'거절하면 이 요청은 실패로 끝납니다.');
   assert.equal(decide.displaySummary({...card,summary:"중단된 단계 ['요청']를 다시 돌릴까요?"}),'중단된 요청을 다시 이어 갈까요?');
   assert.equal(decide.displaySummary({kind:'tool_permission',summary:"['a']"}),"['a']",'other kinds keep their text');

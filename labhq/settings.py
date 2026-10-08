@@ -22,6 +22,8 @@ class GatewaySettings(BaseModel):
     client_token: str = "change-me-client"
     event_buffer: int = 2000
     resume_wait_s: int = 300
+    # A request whose task has no connected runner waits this long as waiting_for_runner, then fails (PI 점검 R15).
+    runner_wait_s: float = Field(default=86400, gt=0)
     state_dir: str = Field(default_factory=lambda: os.environ.get("LABHQ_STATE_DIR", "~/.labhq/state"))
 
 
@@ -270,7 +272,10 @@ class ApprovalRules(BaseModel):
     hpc_core_hours_threshold: float = 0.0  # 0 → every HPC submission asks the PI
     bash_ask_patterns: list[str] = Field(default_factory=_default_bash_ask)
     auto_allow_tools: list[str] = Field(default_factory=_default_auto_allow)
-    timeout_s: int = 3600
+    timeout_s: int = 3600  # gate cards: tool permission, HPC submit, download
+    # Cards that decide the request itself (clarify, question, scope, budget, CP1, CP2, continue, resume). The request
+    # waits as waiting_pi meanwhile; an unanswered card ends as *_timed_out, never as a deny (PI 점검 R5).
+    pi_decision_timeout_s: int = Field(default=7 * 86400, ge=1)
 
 
 class BudgetSettings(BaseModel):

@@ -85,7 +85,8 @@ policy:
   #   # 목록을 직접 쓰면 필요한 만큼 다시 적음
   approvals:
     hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인
-    timeout_s: 3600
+    timeout_s: 3600                 # 도구 권한·HPC 제출 같은 gate 카드
+    pi_decision_timeout_s: 604800   # 확인 질문·예산·CP1·CP2·재개 카드. 그동안 요청은 waiting_pi
   budget:
     per_task_usd: 5
     per_request_usd: 30

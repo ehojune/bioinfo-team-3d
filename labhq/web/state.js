@@ -3,7 +3,7 @@
 'use strict';
 const short = (s, n) => { s = String(s ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const isContract = a => !!a && (a.employment === 'contract' || String(a.id).startsWith('c_'));
-const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix']);
+const ACTIVE_REQUEST_STATES = new Set(['running', 'waiting_for_runner', 'waiting_quota', 'waiting_login', 'waiting_facilities_fix', 'waiting_pi']);
 const TERMINAL_REQUEST_STATES = new Set(['done', 'failed', 'cancelled', 'rejected']);
 const isActiveRequest = status => ACTIVE_REQUEST_STATES.has(status);
 const isTerminalRequest = status => TERMINAL_REQUEST_STATES.has(status);
@@ -12,8 +12,8 @@ const websocketCloseAction = code => code === 1008
   : {connection: 'offline', retry: true};
 // One label per gateway request status (R14). An unknown status shows as itself, never as 실패.
 const REQUEST_STATUS_KO = { running: '진행 중', waiting_for_runner: '러너 기다림', waiting_quota: '한도 대기',
-  waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', interrupted: '중단됨', done: '완료',
-  failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
+  waiting_login: '로그인 대기', waiting_facilities_fix: '환경 수정 승인 대기', waiting_pi: 'PI 결정 대기',
+  interrupted: '중단됨', done: '완료', failed: '실패', cancelled: '취소됨', rejected: '거부됨' };
 const requestStatusLabel = status => REQUEST_STATUS_KO[status] || String(status || '상태 모름');
 // The status with what the PI can do about it: resume an interrupted request, or which runner is still missing.
 function requestStatusText(q, approvals) {
@@ -92,6 +92,9 @@ Object.defineProperty(S, 'askDetails', { value: new Map(), enumerable: false });
 Object.defineProperty(S, 'engineHolds', { value: new Map(), enumerable: false });
 // #36 additions stay non-enumerable too, so the legacy state digests (tests/web_state.cjs) are unchanged.
 Object.defineProperty(S, 'defaultRefs', { value: [], writable: true, enumerable: false });
+// Connected runner ids (R15), known once a snapshot said so; the page shows 러너 꺼짐 while it is empty.
+Object.defineProperty(S, 'runners', { value: new Set(), writable: true, enumerable: false });
+Object.defineProperty(S, 'runnersKnown', { value: false, writable: true, enumerable: false });
 function resetSnapshotState() {
   S.agents.clear(); S.approvals.clear(); S.suggestions = []; S.requests.clear(); S.current = null;
   S.jobs.clear(); S.feed = []; S.cost = 0; S.projects = [];
@@ -231,6 +234,7 @@ function apply(ev, replay = false) {
       S.defaultRefs = d.default_references || [];
       (d.recent_events || []).forEach(e => apply(e, true));
       (d.engine_holds || []).forEach(hold => S.engineHolds.set(hold.engine, {...hold}));
+      if (Array.isArray(d.runners)) { S.runners = new Set(d.runners.map(String)); S.runnersKnown = true; }
       for (const r of d.requests || []) {
         const q = req(r.id);
         Object.assign(q, { text: r.text, status: r.status, mode: r.mode, project_id: r.project_id, created_at: r.created_at, cost: r.cost_usd || 0, costKnown: r.cost_known !== false });
@@ -276,8 +280,8 @@ function apply(ev, replay = false) {
       break;
     }
     case 'roster.updated': syncRoster(d.agents || [], replay); break;
-    case 'runner.online': feed({ who: 'system', text: `러너 연결됨 (${d.runner_id})` }, ts); break;
-    case 'runner.offline': feed({ who: 'system', text: `러너 연결 끊김 (${d.runner_id})`, cls: 'alert' }, ts); break;
+    case 'runner.online': S.runners.add(String(d.runner_id)); feed({ who: 'system', text: `러너 연결됨 (${d.runner_id})` }, ts); break;
+    case 'runner.offline': S.runners.delete(String(d.runner_id)); feed({ who: 'system', text: `러너 연결 끊김 (${d.runner_id})`, cls: 'alert' }, ts); break;
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
@@ -495,9 +499,12 @@ function apply(ev, replay = false) {
       break;
     }
     case 'recruit.failed': feed({ who: 'recruiter', text: `채용하지 못했어요: ${short(d.error, 120)}`, cls: 'alert' }, ts, rid); break;
+    // A status the gateway sets itself: waiting_pi, waiting_for_runner, interrupted, running (R5, R15, #494).
+    case 'request.status': { const q = req(rid); if (d.status && !isTerminalRequest(q.status)) q.status = d.status; break; }
+    case 'request.runner_wait': feed({ who: 'system', text: d.message || '러너를 기다려요', cls: 'alert' }, ts, rid); break;
     case 'request.completed': case 'request.failed': {
       const q = req(rid);
-      q.status = t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
+      q.status = d.status === 'cancelled' ? 'cancelled' : t === 'request.completed' && d.ok !== false ? 'done' : 'failed'; q.phase = 'done';
       if (typeof d.cost_usd === 'number' && Number.isFinite(d.cost_usd) && d.cost_usd >= 0) {
         S.cost += d.cost_usd - q.cost; q.cost = d.cost_usd;
       }
@@ -512,7 +519,7 @@ function apply(ev, replay = false) {
         report_appendix_chars: d.report_appendix_chars });
       if (d.error) q.error = d.error;
       q.bundlePath = d.bundle_path || ''; q.bundleStatus = d.bundle_status || ''; q.bundleGrade = d.bundle_grade || ''; q.bundleWarning = d.bundle_warning || '';
-      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'done' ? '' : 'alert' }, ts, rid);
+      feed({ who: 'cso', text: q.status === 'done' ? '최종 보고서를 올렸어요' : q.status === 'cancelled' ? '요청을 취소했어요. 끝난 단계까지 보고서에 남겼어요' : `요청이 실패했어요: ${short(d.error, 100)}`, cls: q.status === 'failed' ? 'alert' : '' }, ts, rid);
       break;
     }
     case 'request.bundle': {

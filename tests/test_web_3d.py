@@ -178,6 +178,7 @@ def test_package_data_includes_office_assets():
     ('web_environment.cjs', 'environment failure web tests passed'),
     ('web_checklist_skip.cjs', 'checklist skip web tests passed'),
     ('web_cards_status.cjs', 'fail 0'),
+    ('web_request_lifecycle.cjs', 'request lifecycle web tests passed'),
 ])
 def test_office_in_node(filename, marker):
     node = shutil.which('node')

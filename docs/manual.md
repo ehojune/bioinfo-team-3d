@@ -124,7 +124,7 @@ cd <labhq 저장소>
 설정 경로가 없거나 gateway client token이 `change-me` 기본값이면 시작하지 않습니다. `open`과 다른 API 명령은 gateway가 꺼졌거나 HTTP 오류가 나면 traceback 대신 한 줄과 exit 2를 돌려줍니다.
 오프라인 데모를 폰으로 보려면 PC와 폰이 같은 Wi-Fi에 있어야 합니다([웹 사무실](#웹-사무실)).
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
-(러너는 재접속 루프로 대기). 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
+(러너는 재접속 루프로 대기). 러너가 하나도 연결되지 않았거나 필요한 직원의 러너가 꺼져 있으면, 새 요청과 진행 중 단계는 실패하지 않고 `waiting_for_runner`로 기다렸다가 러너가 붙으면 이어 갑니다(PI 점검 R15). 아무것도 보내지 않은 상태라 비용도 없습니다. `gateway.runner_wait_s`(기본 86400초)를 넘기면 "labhq up(또는 labhq runner)으로 러너를 켠 뒤 다시 보내세요"라는 한국어 이유로 끝납니다. 어느 러너도 맡은 적 없는 직원은 기다리지 않고 바로 실패합니다. `GET /api/health`의 `runner_online`, `labhq status`의 러너 줄, 웹 상단의 **러너 꺼짐** 띠가 연결 여부를 보여 줍니다. 가장 간단한 구성은 게이트웨이 머신과 폰에 Tailscale을 켜고 tailnet 주소로 접속하는 것.
 공개 인터넷에 열어야 한다면 TLS 프록시(Caddy 등) 뒤에 두고 토큰을 반드시 교체하세요.
 
 ## 웹 사무실
@@ -149,9 +149,11 @@ cd <labhq 저장소>
 - 오른쪽(폰에서는 하단 탭): **결정** 탭(결정할 일·메모·대기 시간·이력), step별 시도·산출물·리뷰를 보는 **작업판**, **사내 메신저**, HPC 작업 목록
 - 끝난 요청의 **작업판** 아래 **이어 묻기**: 새 요청을 만들지 않고 팀 요청은 CSO, direct·단독 요청은 맡았던 직원이 같은 세션·작업 폴더에서 보고서·산출물을 읽고 답합니다. 읽기 전용이라 새 분석이 필요하면 새 요청을 권합니다. 그 세션을 만든 runner가 아닌 다른 runner가 지금 같은 직원 id를 맡고 있으면 이어 묻기는 이유를 밝히고 거절하고(작업 폴더가 그 PC에 있음), 상담은 새 세션으로 엽니다. 읽기 전용은 엔진이 강제해야 해서(Claude plan 모드·읽기 도구만, Codex `-s read-only`) `engine: cli`·Gemini·Antigravity 직원에게는 이어 묻기와 상담을 보내지 않고 이유를 돌려줍니다. 이어 묻기·상담은 직원 설정에서 지우는 방식이 아니라 러너의 읽기 전용 허용 목록으로 돌고(MCP·plugin·hook 없음), 실행 중 파일이 바뀌면 실패로 처리합니다([알려진 한계](#알려진-한계)). 접속할 때 받는 snapshot에는 긴 답의 앞 2,000자만 실리고, **전문 보기**를 누르면 그 요청의 전체 답을 불러옵니다(2.5D·3D).
 
+**요청 취소**(PI 점검 R13): 끝나지 않은 요청(진행·대기·중단됨)은 요청 줄의 **요청 취소** 버튼, `labhq cancel <요청 ID>`, `POST /api/requests/{id}/cancel`로 멈춥니다. 도는 작업마다 runner에 중단을 보내고, 한도·로그인 대기와 그 요청의 카드(재개 카드 포함)를 닫은 뒤 상태를 `cancelled`로 바꾸고 끝난 단계와 산출 경로를 적은 짧은 보고서를 남깁니다. 다시 시작되지 않습니다. HPC에 이미 낸 작업은 클러스터에서 확인합니다. 단계 카드의 **작업 취소**는 그 단계만 멈춥니다.
+
 **실행 중 메모:** 진행 중인 CSO 요청을 고르면 아래 입력창이 기본으로 **이 요청에 메모**가 됩니다(**새 요청**으로 바꿀 수 있음). 메모는 현재 turn을 끊지 않고 이후에 시작하는 계획·재계획·단계·재개·수정·review·최종 보고서에 전달되며, 요청 카드와 3D 요청 보드에 보낸 시각과 함께 남습니다. 연구 lane은 CP1 전 계획에 메모를 반영하지만 CP1 뒤에는 동결 계획을 바꾸지 않고 참고만 합니다. 한 직원에게 바로 맡긴 direct 요청에는 다음 turn이 없으므로 메모를 받지 않으며, 끝난 뒤 **이어 묻기**를 씁니다. CLI는 `labhq note <request_id> "text"`입니다.
 - CSO 확인 질문은 질문마다 선택지 버튼과 자유 입력칸으로 답합니다. 답한 질문은 다시 묻지 않으며, 새 질문이 생기면 카드가 한 번 더 뜹니다(요청당 최대 2장). 모든 질문에 답해야 **답하고 진행**이 보내지고, 2.5D·3D가 같은 카드를 씁니다. 직원의 hard-stop 질문(`직원 질문 · PI 확인`, 설치·데이터 구역·삭제 등)도 선택지가 있으면 같은 버튼으로 하나를 골라야 보내집니다
-- 결정 카드 첫 줄에 어느 요청의 카드인지 요청 문장을 보여 줍니다. 거절 결과가 정해진 카드(재개·CP1·CP2·직원 질문)에는 거절하면 어떻게 되는지 한 줄을 붙입니다. 재개 카드는 gateway가 시간 초과로 닫지 않으므로 남은 시간을 표시하지 않습니다
+- 결정 카드 첫 줄에 어느 요청의 카드인지 요청 문장을 보여 줍니다. 거절 결과가 정해진 카드(재개·CP1·CP2·직원 질문)에는 거절하면 어떻게 되는지 한 줄을 붙입니다. 재개 카드도 다른 결정 카드처럼 `policy.approvals.pi_decision_timeout_s`(기본 7일) 뒤 닫히므로 남은 시간을 보여 줍니다. 2시간이 넘는 대기·남은 시간은 시간·일로 적습니다
 - 요청 상태는 진행 중·러너 기다림·한도 대기·로그인 대기·환경 수정 승인 대기·중단됨·완료·실패·취소됨·거부됨으로 나눠 보입니다. gateway 재시작 뒤 `중단됨`은 실패가 아니며 결정 탭의 재개 카드로 이어 갑니다. 재개를 승인하면 새로고침 없이 `러너 기다림`(연결이 필요한 직원 표시) → `진행 중`으로 바뀝니다
 - 직원 로그의 alert(UAC 승인 대기, 읽기 전용 실행의 파일 변경, 단계 실패 등)는 메신저와 함께 화면 알림으로도 뜹니다
 - 아래 직원 카드 줄: 이름·역할·PI 기준 상태·현재 도구·턴/시간 게이지. 폰에서는 **직원 보기**로 펼칩니다.
@@ -178,6 +180,7 @@ labhq send --ref scverse/scanpy --ref doi:10.1038/nature12373 "같은 방식으�
 labhq send --plan-only "같은 roster로 분석 계획만 작성"                   # 실행·과학 리뷰 전에 종료
 labhq send --plan-only --cso-model gpt-6-astra "같은 요청의 계획 비교"     # 이 요청의 CSO 모델만 변경
 labhq note req_123 "표도 함께 만들어 주세요"                            # 실행 중 요청의 다음 단계부터 전달
+labhq cancel req_123         # 요청 취소: 도는 작업 중단, 대기·카드 정리, 부분 결과 보고서. 두 번 해도 같음
 labhq watch                  # 실시간 이벤트
 labhq approvals              # 대기 중 승인 → labhq approve <id> [--deny --note "..."], CP2는 --choice approve|revise|deny
 labhq approve <clarify-id> --note "1: a, 2: b"  # 질문 카드는 답이 없으면 보내지 않고 요청을 유지
@@ -310,7 +313,7 @@ Windows 러너는 직원 Python이 OS 신뢰 저장소도 믿게 합니다. 기�
 | `request.resume_waiting` · `request.resumed` · `request.resume_timeout` | 재개 승인 뒤 runner 기다림·재개·기다림 초과 | `러너 기다림`(빠진 직원) → `진행 중`, 초과면 `중단됨`과 새 재개 카드 |
 | `request.continued` | 연구 리뷰 revise 뒤 PI가 새 CP1로 이어 가기를 승인(`round`) | 요청 카드에 n차 표시 |
 
-REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
+REST (Bearer `client_token`): `GET /api/agents`, `GET|POST /api/requests` (`status`, `limit`; 본문 `references`·`default_references`. direct 요청의 직원은 연결된 runner·저장된 runner roster·`runner.agents_dir` 중 한 곳에 있으면 받아서 runner를 기다리고, 어디에도 없으면 404), `GET /api/requests/{id}`, `POST /api/requests/{id}/notes` (`{"text"}`, 미종료 요청만, 2,000자·20개), `POST /api/requests/{id}/followup` (`{"text"}`, 끝난 요청만, 한 번에 하나),
 `GET|POST /api/approvals[/{id}]`, `POST /api/tasks/{id}/cancel`, `POST /api/requests/{id}/steps/{step}/resume-quota`, `POST /api/recruit`, `POST /api/contracts/{agent_id}`,
 `GET /api/projects`, `GET /api/approvals/history`, `POST /api/projects/{id}/prs/{n}/codex-review`, `GET /api/events`, `GET /api/health`. 폰은 `/ws/client`로 스냅샷+이벤트를 받고 `{"type":"approval.resolve",...}`로 바로 승인할 수 있습니다.
 
@@ -540,6 +543,8 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 
 `policy.approvals`, `policy.budget`. `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. 임계값 아래여도 스크립트에 스케줄러 지시(`#SBATCH`·`#$`·`#PBS`·`#BSUB`)가 있으면 승인받습니다. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 보고되지 않은 비용은 0으로 더하지 않습니다(#270). Codex처럼 token만 보고하면 판본 있는 가격표(`labhq/costs.py`: 출처·확인일·모델 ID)로 `추정`하되, 모델 ID가 정확히 일치하고 과금 token 항목이 모두 있을 때만 환산합니다. 나머지는 `미집계 N건`으로 따로 셉니다. 웹·CLI·보고서는 `확인 $a + 추정 $b + 미집계 N건`과 엔진별 소계를 보여 주며, 추정은 청구액이 아닙니다. 단가는 OpenAI API Standard·짧은 문맥(호출당 입력 272K 이하, Codex 기본값) 기준이라 staff `CODEX_HOME`에서 `model_context_window`를 키우면 추정은 하한입니다. 요청 상한은 미집계 task마다 `per_task_usd`(0이면 요청 상한 전체)를 쓴 것으로 보고 판정해 넘으면 예산 승인을 받으며, 보고서는 미집계가 남은 요청을 예산 내로 적지 않습니다. 가격표 확인일이 90일을 넘으면 경고합니다.
 
+**결정 카드의 기한**(PI 점검 R5). 요청 자체를 정하는 카드(확인 질문 `clarify`, 직원 질문 `question`, 범위 `scope`, 예산 `budget`, CP1 `research_plan`, CP2 `research_evidence`, 이어 가기 `research_continue`, 재개 `resume`)는 `policy.approvals.pi_decision_timeout_s`(기본 604800초, 7일) 동안 기다립니다. 그동안 요청 상태는 `waiting_pi`이고 카드는 언제든 답할 수 있습니다. 기한을 넘기면 요청은 `clarify_timed_out`·`budget_timed_out`·`plan_timed_out`·`evidence_timed_out`·`out_of_scope_timed_out`·`resume_timed_out`으로 끝나며 거절과 구분됩니다. `policy.approvals.timeout_s`(기본 3600초)는 도구 권한·HPC 제출·대용량 다운로드 같은 gate 카드에만 씁니다. gateway를 다시 시작하면 열린 결정 카드는 닫히고 요청은 재개 카드로 돌아옵니다. 재개 카드에는 요청 문장 앞부분, 접수 시각, 남은 단계가 적힙니다. 러너가 다시 시작되거나 직원이 다른 러너로 옮기면, 이전 러너 프로세스가 띄운 도구 권한 카드는 새 러너가 붙을 때 `expired`로 닫힙니다(PI 점검 R2). 답할 프로세스가 이미 없기 때문입니다.
+
 resume 비용·Codex 토큰은 호출별 증분으로 합산합니다(#82). 원 누적값은 runner run 기록에 남기며, 재개 기준값이 없으면 해당 증분은 미집계로 표시합니다. 요청 비용 요약은 엔진별(`by_engine`)에 더해 직원별(`by_agent`)로도 나뉘어 웹 요청 줄에 "누가 얼마"로 보입니다. 직원 정보가 없던 예전 기록에는 직원별 줄이 없습니다.
 
 ## 프로젝트별 GitHub 보고
@@ -635,7 +640,7 @@ CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다.
 이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과를 되돌린 채 `research_review_revise`로 끝납니다.
 돌지 않은 새 계획은 `continuation.declined_plan`에, 끝난 이유는 `continuation.ended_before_dispatch`에 남습니다.
 `labhq verify`는 완료 단계 ledger가 고정 계획과 다른 `plan_sha256`에 묶여 있으면 문제로 적습니다.
-이어 가기 카드도 다른 승인 카드처럼 `policy.approvals.timeout_s`(기본 3600초)가 지나면 닫힙니다.
+이어 가기 카드도 다른 결정 카드처럼 `policy.approvals.pi_decision_timeout_s`(기본 7일)가 지나면 시간 초과로 닫힙니다.
 이미 끝난 요청은 나중에 이어 갈 수 없으니 새 요청을 냅니다.
 
 ### 보고서·verify
@@ -837,7 +842,7 @@ Claude baseline은 자기 arm의 파일 쓰기·단순 명령을 허용합니다
 | 9 | **프로젝트 메모리** | 프로젝트별 결정 로그·용어집을 CLAUDE.md/AGENTS.md로 주입해 같은 질문 반복 방지 | 로드맵 |
 | 10 | **Fan-out 모드** | “같은 작업 × 수천 항목”(변이·논문·샘플 스크리닝)을 저가 모델 + JSON 스키마 + 출처 필드로 병렬 처리 | 로드맵 |
 | 11 | **명확화 질문 루프** | 계획 전에 CSO가 묻고 PI가 폰에서 답하면 재계획. 질문마다 선택지 2–4개(버튼), 자유 입력 허용 여부, 깊이(약 30/60/90분) (#34, #36) | 구현 |
-| 12 | **킬 스위치 · 감사** | 태스크 취소 API, 전체 이벤트 로그 | 부분 |
+| 12 | **킬 스위치 · 감사** | 태스크·요청 취소(웹·CLI·API), 전체 이벤트 로그 | 부분 |
 | 13 | **워크플로 엔진 우선** | 분석가·엔지니어는 nf-core/Snakemake, 버전·컨테이너 고정을 기본 정책으로 | 프롬프트 정책 |
 | 14 | **직원 질의 `labhq_ask`** | CSO·시설팀·동료에게 묻고, hard stop만 PI 폰으로 올린 뒤 같은 session을 resume | 구현 |
 
