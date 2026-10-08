@@ -1,0 +1,5 @@
+pr: 497
+rows:
+  - sha: "129fce5"
+    at: "2026-10-08 09:22"
+    text: "연구 요청 묶음에 claim 원장 claims.json을 넣어, 묶음만으로 보고서의 claim 앵커를 근거까지 따라갈 수 있다(PI 점검 R24)."
