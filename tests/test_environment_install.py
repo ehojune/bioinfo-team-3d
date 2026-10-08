@@ -429,6 +429,11 @@ def test_nested_shell_local_install_destinations_remain_allowed(tmp_path):
 
 @pytest.mark.parametrize("environment_step", [True, False])
 @pytest.mark.parametrize("command", [
+    "CMD='pip install scanpy'; $CMD",
+    'CMD="pip install scanpy"; ${CMD}',
+    "$(echo pip install scanpy)",
+    "$CMD $ARGS",
+    'eval "$CMD"',
     'PIP=pip; ACTION=install; "$PIP" "$ACTION" scanpy',
     'cmd /v:on /c "set ACTION=install&&pip !ACTION! scanpy"',
     "pwsh -WorkingDirectory .. -Command 'pip install --target ./packages scanpy'",

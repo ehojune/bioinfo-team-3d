@@ -178,7 +178,7 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
         return False  # printed text and filename arguments are data, not shell invocations
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
-        if _dynamic_installer_syntax(word, words[i + 1:]):
+        if _dynamic_installer_syntax(word, words[i + 1:], executable_position=i == 0):
             return True
         if _python_install(executable, words[i + 1:]):
             return True
@@ -201,13 +201,16 @@ def _first_operand(args: list[str]) -> str:
     return next((arg for arg in args if not arg.startswith("-")), "")
 
 
-def _dynamic_installer_syntax(token: str, args: list[str]) -> bool:
+def _dynamic_installer_syntax(token: str, args: list[str], *, executable_position: bool = True) -> bool:
     """Fail closed when an installer selector is computed instead of literal."""
     executable = executable_basename(token)
     folded = [arg.casefold() for arg in args]
     install_like = any(arg in {"install", "create"} for arg in folded)
     if _nonliteral_word(token):
-        return install_like or bool(args and _nonliteral_word(args[0]))
+        return (executable_position and not args or install_like or
+                bool(args and any(_nonliteral_word(arg) for arg in args)))
+    if executable == "eval":
+        return any(_nonliteral_word(arg) for arg in args)
     if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
         return _nonliteral_word(_first_operand(args))
     if _PYTHON.fullmatch(executable):
@@ -760,6 +763,10 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
             return _ENVIRONMENT_DENIAL
         # PowerShell assignments and shell exports can redirect a later command in the same tool call.
         install_environment_override |= bool(_INSTALL_REDIRECT_ENV.search(segment))
+        r_environment = _R_ENV_LIBRARY.findall(segment)
+        if r_environment and _R_ENV_ONLY.fullmatch(segment):
+            pending_r_environment = r_environment
+            continue
         token, args, understood = _shell_invocation(segment, tool_name)
         executable = executable_basename(token)
         if _dynamic_installer_syntax(token, args):
