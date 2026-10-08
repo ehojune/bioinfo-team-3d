@@ -564,3 +564,13 @@ def test_a_resume_card_saved_with_the_old_hour_gets_the_decision_bound(tmp_path)
     restarted = Hub(s)
     assert restarted.approvals[card.id]["approval"]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
     assert restarted.snapshot()["data"]["approvals"][0]["timeout_s"] == s.policy.approvals.pi_decision_timeout_s
+
+
+def test_a_resume_card_after_every_step_finished_says_no_step_is_left(tmp_path):
+    # Trial 2026-10-08: a research request restarted at its continue card read "남은 단계: 요청 전체" with 12/12 done.
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r", status="interrupted", plan={"steps": [{"id": "s1"}, {"id": "s2"}]},
+             results={"s1": {"ok": True}, "s2": {"ok": True}})
+    _request(hub, "unplanned", status="interrupted")
+    assert hub.new_resume_approval("r").summary.endswith("남은 단계: 없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)")
+    assert hub.new_resume_approval("unplanned").summary.endswith("남은 단계: 요청 전체")

@@ -999,9 +999,12 @@ class Hub:
         head = short(" ".join(str(req.get("text") or rid).split()), 60)
         created = req.get("created_at")
         when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
+        # A plan whose steps all finished stopped after them (CP2, review, a continue card, the report), not before.
+        left = (", ".join(steps) if steps else
+                "없음(단계는 모두 끝났고 그 뒤 검토·결정·보고서부터 이어 갑니다)" if req.get("plan", {}).get("steps")
+                else "요청 전체")
         approval = ApprovalRequest(kind="resume", request_id=rid,
-                                   summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? "
-                                           f"남은 단계: {', '.join(steps) if steps else '요청 전체'}",
+                                   summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? 남은 단계: {left}",
                                    detail={"request_text": head, "created_at": created, "steps": steps},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}

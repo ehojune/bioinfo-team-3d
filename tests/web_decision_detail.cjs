@@ -110,3 +110,15 @@ test('research_continue lists each review P1 issue by step with its problem and 
   assert.ok(text.includes('"evidence_quote"'),'the raw issue JSON stays available');
   assert.equal(nodes(c.detail).some(n=>['IMG','SCRIPT'].includes(n.tagName)),false);
 });
+
+test('resume card shows the received time as a date and the steps left as a list, without repeating the request',async()=>{
+  const created=new Date(2026,9,8,11,33).getTime()/1000;
+  const c=await card('resume',{request_text:'GEO GSE10072 example request',created_at:created,steps:[]});
+  const text=c.detail.textContent;
+  assert.ok(text.includes('접수 시각2026-10-08 11:33'),text);
+  assert.ok(text.includes('남은 단계없음'),text);
+  assert.ok(!text.includes('GEO GSE10072 example request'),'the summary already quotes the request');
+  assert.ok(!text.includes(String(created)),'no epoch seconds');
+  const left=await card('resume',{created_at:created,steps:['s2','s3']});
+  assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
+});
