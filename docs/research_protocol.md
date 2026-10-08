@@ -41,6 +41,8 @@ CSO는 실행 전에 `PLAN v2`를 만든다.
 
 정규화한 PLAN 전체의 canonical JSON을 SHA-256 입력과 CP1 상세 화면에 함께 쓴다. 결정 카드에는 질문·가설·protocol·완료/중단 조건·자원·data boundary·pack 값을 나눠 보여 주고, hash 입력 원문도 보존한다. 승인 뒤 질문·방법·대상·지표·선정 기준·범위·자원·pack이 바뀌면 receipt를 `needs_reapproval`로 표시한다.
 
+각 연구 단계 prompt에는 동결된 질문·범위·가설(주가설, null/대안, 구별할 관찰)·protocol·pack 값이 그대로 들어간다. 단계는 가설을 판정하거나 부를 때 이 문장을 그대로 쓰고 이름을 바꾸거나 합치지 않는다(웹 시운전 10-08: 가설이 빠져 있어 s9가 A1·A2를 다시 정의했다). 이어 가기는 이 묶음이 하나라도 바뀌면 단계를 재사용하지 않는다.
+
 ## 3. 직원 결과 계약
 
 연구 직원은 향후 실행 단계에서 `result v2`를 반환한다. 원장은 `labhq/evidence/claims.py`, 출처 검사는 `labhq/evidence/verify.py`이며 #58 증거 계층과 같은 원장을 쓴다.

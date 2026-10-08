@@ -3298,11 +3298,14 @@ class Orchestrator:
                            "only hard-stop questions go to the PI. You re-run with the answer."
                            "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
                            RESEARCH_RESULT_FIELD_RULES +
-                           "\n\nFrozen protocol, approved by the PI at CP1:\n" + _research_protocol_digest(research_plan) +
+                           "\n\nFrozen question, hypotheses and protocol, approved by the PI at CP1:\n" +
+                           _research_protocol_digest(research_plan) +
                            "\nApply its selection and exclusion criteria, analysis unit and statistics exactly as "
                            "written. If the data force a different rule, use the closest workable one, record it in "
                            "method_changes (field, planned, actual, reason, affects_conclusion), and never describe "
-                           "the result as following the pre-specified rule.")
+                           "the result as following the pre-specified rule. When you judge or name a hypothesis, use "
+                           "hypotheses.primary and hypotheses.null_or_alternatives word for word: do not rename, "
+                           "merge, split or redefine them.")
                 cp1 = contract.get("approval") or {}
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)

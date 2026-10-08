@@ -114,6 +114,8 @@ const PHASES = [['briefing', '브리핑'], ['plan', '계획'], ['execute', '실�
 const ag = id => S.agents.get(id);
 const visual = a => a.state === 'done' && now() - (a.stateAt || 0) > 3
   ? 'idle' : STATE_KO[a.state] ? a.state : 'idle';
+// 'hibernating' covers HPC jobs and unanswered asks (runner agent.status: jobs, asks); a PI question is not HPC.
+const stateText = (a, vs = visual(a)) => vs === 'hibernating' && a.waitFor === 'answer' ? '답 기다리는 중' : STATE_KO[vs];
 const nick = id => { const a = ag(id); return a ? String(a.name || a.id).split(' ')[0] : ({ pi: '나', hpc: 'HPC', github: 'GitHub', system: '시스템' }[id] || id || ''); };
 function upsertAgent(a) {
   const prev = S.agents.get(a.id) || { state: 'idle', task: '', say: '', tool: '', log: [] };
@@ -123,6 +125,7 @@ function upsertAgent(a) {
   Object.defineProperty(next, 'toolCalls', { value: toolCalls, writable: true, enumerable: false });
   // Not part of the replayed state: the trace survives roster updates but stays out of state comparisons.
   Object.defineProperty(next, 'trace', { value: prev.trace || [], writable: true, enumerable: false });
+  Object.defineProperty(next, 'waitFor', { value: prev.waitFor || '', writable: true, configurable: true, enumerable: false });
   S.agents.set(a.id, next);
 }
 function req(rid) {
@@ -253,6 +256,9 @@ function apply(ev, replay = false) {
         Object.assign(q.steps, r.step_status || {});
         for (const [sid, detail] of Object.entries(r.step_details || {})) Object.assign(stepDetail(r.id, sid), detail);
         if (r.review) q.review = r.review;
+        // recent_events may no longer hold a long request's plan event: a planned active request is past briefing.
+        if (isActiveRequest(r.status) && q.phase === 'briefing' && q.plan.length)
+          q.phase = r.review && r.review.verdict !== 'revise' ? 'review' : 'execute';
         if (r.pipeline_pr) setPipelinePr(q, r.pipeline_pr);  // the stored status outlives the replayed events
         if (!isActiveRequest(r.status)) q.phase = 'done';
       }
@@ -285,6 +291,9 @@ function apply(ev, replay = false) {
     case 'agent.status': {
       const a = ag(id); if (!a) break;
       a.state = d.state || a.state; a.stateAt = ts;
+      // Display only, like usage and trace: kept out of the replayed state the golden hashes compare.
+      if (d.state === 'hibernating') Object.defineProperty(a, 'waitFor', { writable: true, configurable: true, enumerable: false,
+        value: (d.jobs || []).length ? 'hpc' : (d.asks || []).length ? 'answer' : '' });
       if (d.task) a.task = d.task;
       if (d.state === 'done' || d.state === 'idle') a.tool = '';
       if (d.error) { a.error = d.error; logTo(a, `오류: ${d.error}`, ts); }
@@ -604,7 +613,7 @@ function toolLabel(name) {
     Skill: '스킬 실행', Agent: '서브에이전트', edit: '파일 수정', web_search: '웹 검색' }[n]) || n;
 }
 
-return { S, apply, ag, visual, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
+return { S, apply, ag, visual, stateText, nick, req, setPlan, feed, fillFollowups, fillRequestDetail, toolLabel, STATE_KO, KIND_KO, JOB_KO, PHASES };
 }
 root.LabHQState = { createOfficeState, costLabel, engineCostLabel, agentCostLabel, agentSpentLabel, totalCostLabel,
   isActiveRequest, isTerminalRequest, REQUEST_STATUS_KO, requestStatusLabel, requestStatusText,

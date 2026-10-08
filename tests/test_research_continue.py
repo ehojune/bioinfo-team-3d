@@ -532,3 +532,15 @@ async def test_a_reused_step_keeps_its_salvaged_rows_at_the_next_cp2(tmp_path):
     assert [(row["step_id"], row["row_id"]) for row in second_card["detail"]["refused_rows"]] == refused
     assert req["research_contract"]["checkpoints"]["cp2"]["refused_rows"] == second_card["detail"]["refused_rows"]
     assert req["outcome"] == "research_reported"
+
+
+def test_a_changed_hypothesis_re_runs_every_step_since_steps_are_dispatched_with_it():
+    """The step prompt carries the CP1 hypotheses (web trial 2026-10-08), so a result made under other wording is not
+    a result of the new plan."""
+    old = valid_plan(steps=2)
+    previous = _round_one(old)
+    new = copy.deepcopy(old)
+    new["brief"]["null_or_alternatives"] = [*new["brief"]["null_or_alternatives"], "A3: a new alternative"]
+    carry = continuation.carry_over(previous, new, {}, [])
+    assert carry.reuse == [] and set(carry.rerun.values()) == {"question, scope, hypotheses, protocol or pack values changed"}
+    assert continuation.carry_over(previous, copy.deepcopy(old), {}, []).reuse == ["s1", "s2"]
