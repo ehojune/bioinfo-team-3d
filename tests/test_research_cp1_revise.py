@@ -108,39 +108,78 @@ async def test_a_restart_after_the_new_request_was_opened_ends_without_asking_ag
     assert req["outcome"] == "plan_revision_requested" and "req_revised" in req["report"]
 
 
-@pytest.mark.asyncio
-async def test_the_gateway_opens_the_revised_request_with_the_note_answers_and_pointers(tmp_path, monkeypatch):
+def _gateway(tmp_path, monkeypatch):
     settings = Settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     hub = Hub(settings)
-    started = []
+    hub.started = []
 
     async def no_start(rid):
-        started.append(rid)
+        hub.started.append(rid)
 
     monkeypatch.setattr(hub, "_start_request", no_start)
+    return hub
+
+
+OLD_PLAN = {"brief": {"question": "Does smoking change expression?"}, "steps": [{"id": "s1"}, {"id": "s2"}]}
+
+
+def _old_request(hub, **extra):
     hub.requests["old"] = {
         "id": "old", "text": "GSE10072 흡연자 대 비흡연자 DE", "mode": "orchestrate", "status": "waiting_pi",
         "created_at": time.time(), "work_kind": "auto", "scope_status": "in_scope", "project_dirs": [],
         "references": [{"kind": "pmid", "value": "18297132", "note": "원 논문", "source": "request"},
+                       {"kind": "url", "value": "https://example.org/data.tsv", "note": None, "source": "request",
+                        "query_removed": True},
                        {"kind": "doi", "value": "10.1000/lab-default", "note": None, "source": "pi_profile"}],
-        "default_references": True, "budget_usd": 40.0, "project_id": None, "cso_model": None, "route": "auto",
-        "meta": {"case": "trial"}, "clarifications": [{"question": "외부 검증?", "answer": "b) 없음"}]}
+        "default_references": True, "budget_usd": 80.0, "requested_budget_usd": 40.0, "project_id": None,
+        "cso_model": None, "route": "auto", "meta": {"case": "trial"}, "plan": OLD_PLAN,
+        "research_contract": {"plan_sha256": "a" * 64},
+        "clarifications": [{"questions": ["외부 검증?"], "answer": "b) 없음"}],
+        "pi_notes": [{"text": "TCGA는 쓰지 마세요", "at": 1.0}], **extra}
     hub.save_request("old")
+    hub.store.put("reference_original", "old",
+                  {"references": [{"value": "https://example.org/data.tsv", "original": "https://example.org/data.tsv?sig=x"}]})
+
+
+@pytest.mark.asyncio
+async def test_the_gateway_opens_the_revised_request_with_the_plan_note_answers_and_pointers(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub)
 
     new = hub.create_revised_request("old", NOTE)
     await asyncio.sleep(0)
     req = hub.requests[new]
     assert req["text"].startswith("GSE10072 흡연자 대 비흡연자 DE") and NOTE in req["text"] and "old" in req["text"]
-    assert req["work_kind"] == "research" and req["budget_usd"] == 40.0 and req["mode"] == "orchestrate"
-    # The request's own pointer is carried; the PI default is not duplicated (default_references brings it back).
-    assert [(ref["kind"], ref["source"]) for ref in req["references"] if ref["source"] == "request"] == [("pmid", "request")]
-    assert req["default_references"] is True
-    assert req["clarifications"] == hub.requests["old"]["clarifications"]
+    assert req["work_kind"] == "research" and req["mode"] == "orchestrate"
+    # The budget the PI asked for, not the one a budget card later doubled.
+    assert req["budget_usd"] == 40.0 == req["requested_budget_usd"]
+    # The plan the note talks about goes with it (Claude review P1: "s2 전에" had no s2 to refer to).
+    assert req["revision_of"] == {"request_id": "old", "plan_sha256": "a" * 64, "plan": OLD_PLAN, "note": NOTE}
+    # The request's own pointers are carried, the cleaned URL flagged again; the PI default is not duplicated.
+    own = [ref for ref in req["references"] if ref["source"] == "request"]
+    assert [(ref["kind"], ref["value"]) for ref in own] == [("pmid", "18297132"), ("url", "https://example.org/data.tsv")]
+    assert own[1].get("query_removed") is True and req["default_references"] is True
+    # Answers and notes given to the old request; the answers do not use this request's clarify cards.
+    assert req["clarifications"] == [{"questions": ["외부 검증?"], "answer": "b) 없음", "inherited": True}]
+    assert req["pi_notes"] == hub.requests["old"]["pi_notes"]
     assert req["revised_from"] == "old" and req["meta"]["revised_from"] == "old" and req["meta"]["case"] == "trial"
-    assert hub.requests["old"]["revised_to"] == new and started == [new]
-    # Asked again (a restart before the old request ended), it returns the same request instead of a second one.
-    assert hub.create_revised_request("old", NOTE) == new and len(started) == 1
+    assert hub.requests["old"]["revised_to"] == new and hub.started == [new]
+    # All of it is in the new request's first save: a restart right after it finds the same request again.
+    saved = hub.store.get("request", new)
+    assert saved["revision_of"]["note"] == NOTE and saved["clarifications"][0]["inherited"] is True
+    hub.requests["old"].pop("revised_to")
+    assert hub.revised_request_of("old") == new
+    assert hub.create_revised_request("old", NOTE) == new and len(hub.started) == 1
+    assert hub.requests["old"]["revised_to"] == new
+
+
+def test_the_gateway_raises_when_the_old_request_can_no_longer_be_created(tmp_path, monkeypatch):
+    hub = _gateway(tmp_path, monkeypatch)
+    _old_request(hub, project_id="removed-project")
+    with pytest.raises(KeyError):
+        hub.create_revised_request("old", NOTE)
+    assert hub.revised_request_of("old") is None and "revised_to" not in hub.requests["old"]
 
 
 def test_the_cli_takes_a_cp1_revise_with_a_note_only_where_the_card_offers_it(monkeypatch):
@@ -166,3 +205,56 @@ def test_the_cli_takes_a_cp1_revise_with_a_note_only_where_the_card_offers_it(mo
     cli.main(["approve", "a_round2"])  # 승인 needs no choice, as before
     assert posts == [("/api/approvals/a_cp1", {"approved": False, "note": NOTE, "choice": "revise"}),
                      ("/api/approvals/a_round2", {"approved": True, "note": ""})]
+
+
+@pytest.mark.asyncio
+async def test_a_revised_request_plans_from_the_previous_plan_and_the_note(tmp_path):
+    hub = cont._hub(tmp_path, [CP1, cont.APPROVE], reviews=[cont.ACCEPT])
+    hub.requests["r"]["revision_of"] = {"request_id": "req_old", "plan_sha256": "b" * 64, "note": NOTE,
+                                        "plan": {"brief": {"question": "old question"}, "steps": [{"id": "s2"}]}}
+    await Orchestrator(hub).run_request("r")
+    plan_prompt = next(task for task in hub.calls if task.meta["kind"] == "plan").prompt
+    assert "CP1 revision request" in plan_prompt and "req_old" in plan_prompt and NOTE in plan_prompt
+    assert "b" * 64 in plan_prompt and "old question" in plan_prompt
+
+
+@pytest.mark.asyncio
+async def test_a_revise_that_cannot_open_its_new_request_keeps_the_note_in_the_report(tmp_path):
+    hub = cont._hub(tmp_path, [REVISE])
+
+    def gone(rid, note):
+        raise KeyError("unknown project 'removed-project'")
+
+    hub.create_revised_request = gone
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["outcome"] == "plan_revision_failed" and req["status"] == "failed"
+    assert NOTE in req["report"] and "removed-project" in req["report"] and cont._steps(hub) == ["plan"]
+
+
+@pytest.mark.asyncio
+async def test_a_restart_finds_the_new_request_by_its_link_even_before_revised_to_was_saved(tmp_path):
+    hub = _with_revise(cont._hub(tmp_path, [REVISE]))
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    req.pop("revised_to", None)
+    req["status"] = "running"
+    hub.revised_request_of = lambda rid: "req_revised" if rid == "r" else None
+    asked = len(hub.approvals)
+    await Orchestrator(hub).run_request("r")
+    assert len(hub.approvals) == asked and hub.revised == [("r", NOTE)]
+    assert req["outcome"] == "plan_revision_requested"
+
+
+@pytest.mark.asyncio
+async def test_a_re_approval_of_a_plan_whose_steps_ran_offers_no_revise(tmp_path):
+    hub = _with_revise(cont._hub(tmp_path, [CP1]))
+    hub.requests["r"]["results"] = {"s1": {"ok": True}}  # a resumed request whose plan changed after steps ran
+    hub.requests["r"]["research_contract"] = {"approval": {"approved": True, "target_sha256": "c" * 64}}
+    orch = Orchestrator(hub)
+    try:
+        await orch.run_request("r")
+    except Exception:
+        pass
+    plan_cards = [approval for approval in hub.approvals if approval["kind"] == "research_plan"]
+    assert plan_cards and all(card["detail"]["revise_allowed"] is False for card in plan_cards)

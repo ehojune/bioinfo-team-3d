@@ -2357,7 +2357,8 @@ class Hub:
         return report, appendix
 
     # ----- requests -----
-    def create_request(self, body: RequestIn) -> str:
+    def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
+        """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
         if body.mode == "direct" and body.route == "team":
             raise ValueError("route=team cannot be used with direct mode")
         if body.mode == "direct" and body.cso_model:
@@ -2367,7 +2368,9 @@ class Hub:
             raise ValueError(f"cso_model {body.cso_model!r} is not allowed; allowed models: {allowed}")
         rid = new_id("req")
         req = {"id": rid, "status": "running", "created_at": time.time(),
-               "cost_known": True, "usage": {}, **body.model_dump()}
+               "cost_known": True, "usage": {}, **body.model_dump(),
+               # The budget the PI asked for; budget_usd may later rise on a budget card (a CP1 수정 요청 carries this).
+               "requested_budget_usd": body.budget_usd, **(extra or {})}
         proj = self.s.project(body.project_id)
         if body.project_id and proj is None:
             raise KeyError(f"unknown project {body.project_id!r}")
@@ -2386,35 +2389,52 @@ class Hub:
         self.track_request(rid, self._start_request(rid))
         return rid
 
+    def revised_request_of(self, rid: str) -> str | None:
+        """The request a CP1 수정 요청 of ``rid`` opened, found by meta.revised_from (saved in its first write)."""
+        return next((other for other, req in self.requests.items()
+                     if (req.get("meta") or {}).get("revised_from") == rid), None)
+
     def create_revised_request(self, rid: str, note: str) -> str:
-        """CP1 수정 요청: a new research request with the PI's note, the answers already given, the same references,
-        project, budget and CSO model. It plans again from the note and asks a new CP1; the old one ends (no step ran).
-        Idempotent: a restart between creating it and ending the old request does not create a second one."""
+        """CP1 수정 요청: a new research request with the PI's note, the previous plan to revise (``revision_of``), the
+        answers and PI notes already given, the same references, project, requested budget and CSO model. It plans again
+        from the note and asks a new CP1; the old request ends (no step ran). Everything the new request reads is in
+        its first save, and a request already opened for ``rid`` is returned, so a restart never opens a second one.
+        Raises what create_request raises (a removed project or CSO model, a reference no longer allowed)."""
         old = self.requests[rid]
-        if old.get("revised_to") in self.requests:
-            return old["revised_to"]
+        existing = self.revised_request_of(rid)
+        if existing:
+            if old.get("revised_to") != existing:
+                old["revised_to"] = existing
+                self.save_request(rid)
+            return existing
         text = (str(old.get("text") or "").rstrip() +
                 f"\n\n[CP1 수정 요청 · {rid}] PI가 이전 계획에 남긴 고칠 점:\n{note.strip()}")
-        # Only the request's own pointers: the PI's defaults come back through default_references (#36).
-        references = [Reference(kind=ref["kind"], value=ref["value"], note=ref.get("note"))
+        # A URL whose query was dropped is rebuilt from its original, so it is cleaned (and flagged) the same way again.
+        originals = {item.get("value"): item.get("original")
+                     for item in (self.store.get("reference_original", rid) or {}).get("references") or []
+                     if item.get("original")}
+        # Only the request's own pointers: the PI's defaults come back through default_references (#36). Plain dicts:
+        # RequestIn re-runs Reference.normalize on an instance, which would clear the original kept above.
+        references = [{"kind": ref["kind"], "note": ref.get("note"),
+                       "value": originals.get(ref["value"], ref["value"]) if ref["kind"] == "url" else ref["value"]}
                       for ref in old.get("references") or [] if ref.get("source", "request") == "request"]
+        contract = old.get("research_contract") or {}
+        extra: dict[str, Any] = {
+            "revised_from": rid,
+            "revision_of": {"request_id": rid, "plan_sha256": contract.get("plan_sha256"),
+                            "plan": copy.deepcopy(old.get("plan")), "note": note.strip()}}
+        if old.get("clarifications"):  # answered once; not counted against this request's own clarify cards
+            extra["clarifications"] = [{**copy.deepcopy(entry), "inherited": True} for entry in old["clarifications"]]
+        if old.get("pi_notes"):  # notes sent before CP1 shaped the old plan
+            extra["pi_notes"] = copy.deepcopy(old["pi_notes"])
         body = RequestIn(text=text, mode=old.get("mode", "orchestrate"), work_kind="research",
                          scope_status=old.get("scope_status", "in_scope"),
                          project_dirs=list(old.get("project_dirs") or []), references=references,
                          default_references=bool(old.get("default_references", True)),
-                         budget_usd=old.get("budget_usd"), project_id=old.get("project_id"),
-                         cso_model=old.get("cso_model"), route=old.get("route", "auto"),
-                         meta={**(old.get("meta") or {}), "revised_from": rid})
-        new_rid = self.create_request(body)
-        new = self.requests[new_rid]
-        # Set before the new request's task first runs (it is only scheduled): answered questions are not asked again.
-        if old.get("clarifications"):
-            new["clarifications"] = copy.deepcopy(old["clarifications"])
-        new["revised_from"] = rid
-        original = self.store.get("reference_original", rid)
-        if original:  # a URL whose query was dropped stays usable, as in the old request
-            self.store.put("reference_original", new_rid, original)
-        self.save_request(new_rid)
+                         budget_usd=old.get("requested_budget_usd", old.get("budget_usd")),
+                         project_id=old.get("project_id"), cso_model=old.get("cso_model"),
+                         route=old.get("route", "auto"), meta={**(old.get("meta") or {}), "revised_from": rid})
+        new_rid = self.create_request(body, extra=extra)
         old["revised_to"] = new_rid
         self.save_request(rid)
         return new_rid
