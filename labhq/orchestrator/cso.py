@@ -3136,11 +3136,14 @@ class Orchestrator:
             over = spent > limit
             pending = f" + 미집계 {unknown}건" if unknown else ""
             reserve = self._unknown_reserve(limit)
-            summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?" if over else
+            raised = max(limit * 2, bound)
+            # What each answer does, so the PI need not read detail.requested_budget_usd (trial 2026-10-08).
+            then = f" 승인하면 상한을 ${raised:.2f}로 올리고, 거절하면 새 작업을 보내지 않습니다."
+            summary = (f"예산 초과: ${spent:.2f}{pending} / ${limit:.2f} — 계속 진행할까요?{then}" if over else
                        f"예산 판정 불가: 집계 ${spent:.2f}{pending}(건당 ${reserve:.2f}로 보면 ${bound:.2f}) / "
-                       f"상한 ${limit:.2f} — 계속 진행할까요?")
+                       f"상한 ${limit:.2f} — 계속 진행할까요?{then}")
             try:
-                detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": max(limit * 2, bound),
+                detail = {"spent_usd": spent, "limit_usd": limit, "requested_budget_usd": raised,
                           **({"unknown_count": unknown, "unknown_reserve_usd": reserve} if unknown else {})}
                 dec = await self.hub.request_approval(kind="budget", request_id=rid, summary=summary, detail=detail)
             except Exception as exc:

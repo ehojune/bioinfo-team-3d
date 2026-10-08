@@ -122,3 +122,11 @@ test('resume card shows the received time as a date and the steps left as a list
   const left=await card('resume',{created_at:created,steps:['s2','s3']});
   assert.ok(left.detail.textContent.includes('남은 단계s2, s3'));
 });
+
+test('budget card shows dollar amounts to the cent under Korean names, including the cap 승인 sets',async()=>{
+  const c=await card('budget',{spent_usd:25.860455119999997,limit_usd:30,requested_budget_usd:60,unknown_count:1,unknown_reserve_usd:5});
+  const text=c.detail.textContent;
+  for (const value of ['지금까지 쓴 비용$25.86','지금 상한$30.00','승인하면 새 상한$60.00','비용 미집계 작업1','미집계 작업 1건당 가정 비용$5.00'])
+    assert.ok(text.includes(value),value+' must be visible: '+text);
+  assert.ok(!text.includes('25.8604'),'no float noise');
+});
