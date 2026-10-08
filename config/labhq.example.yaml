@@ -1,4 +1,5 @@
-# cp config/labhq.example.yaml config/labhq.yaml && export LABHQ_CONFIG=$PWD/config/labhq.yaml
+# 처음이면 `labhq init`이 이 파일로 config/labhq.yaml을 만들고 token을 무작위로 채움.
+# 직접 복사하면 runner_token·client_token을 바꾸고, Windows에서는 data_zones: []로 둠.
 gateway:
   host: 127.0.0.1            # 폰에서 접속하려면 Tailscale IP나 0.0.0.0 + TLS 프록시
   port: 8787
@@ -75,18 +76,21 @@ policy:
   #   - ~/.claude
   #   - ~/.claude.json
   #   - ~/.codex
+  #   - ~/.gemini
+  #   - ~/.env
   #   - ~/AppData/Local/Google/Chrome/User Data
   #   - ~/AppData/Local/Microsoft/Edge/User Data
   #   - ~/AppData/Roaming/Mozilla/Firefox
   #   - ~/.config/google-chrome
   #   - ~/.config/microsoft-edge
   #   - ~/.mozilla
-  #   # 기본 목록에는 이 설정 파일, gateway.state_dir, engines.claude_code.env.CLAUDE_CONFIG_DIR도 들어감.
+  #   # 기본 목록에는 이 설정 파일, gateway.state_dir, engines.claude_code.env.CLAUDE_CONFIG_DIR,
+  #   # engines.codex.env.CODEX_HOME(직원 Codex 폴더), annot.alphagenome_key_file도 들어감.
   #   # 목록을 직접 쓰면 필요한 만큼 다시 적음
   approvals:
     hpc_core_hours_threshold: 0     # 0 = 모든 HPC 제출을 폰으로 승인
     timeout_s: 3600                 # 도구 권한·HPC 제출 같은 gate 카드
-    pi_decision_timeout_s: 604800   # 확인 질문·예산·CP1·CP2·재개 카드. 그동안 요청은 waiting_pi
+    pi_decision_timeout_s: 604800   # 확인 질문·직원 질문·범위 확인·예산·CP1·CP2·이어 가기·재개 카드. 그동안 요청은 waiting_pi
   budget:
     per_task_usd: 5
     per_request_usd: 30
@@ -178,6 +182,7 @@ research:
   revise_continuations: 2     # 리뷰 revise·CP2 수정 요청 뒤 새 CP1로 이어 가는 횟수, 둘을 합산(0이면 revise에서 끝)
   active_packs: []            # 예: [single_cell_de@3, bulk_tumor_normal@3]
 
-# 의미 모델 그림자 기록(#150): off | shadow. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
+# 의미 모델 그림자 기록(#150): off | shadow | ab. shadow는 요청이 끝난 뒤 출처 모델·객체 뷰를 계산해
 # gateway.state_dir/semantics/에 ID·hash·개수만 남기고, CSO·승인·보고에는 아무것도 주지 않습니다.
+# ab는 연구 요청 절반에만 재사용 후보를 CSO 계획 참고로 줍니다.
 semantics: off

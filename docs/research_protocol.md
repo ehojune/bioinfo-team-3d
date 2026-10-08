@@ -97,7 +97,7 @@ evidence 종류는 `observation`, `database_annotation`, `experimental`, `litera
 
 claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `verified`다. 하나라도 미확인이면 `unverified`다. 출처가 ID와 URI를 함께 적으면 URI도 그 ID를 가리키는지 검사한다. 레지스트리 URL이 같은 체계의 다른 accession을 가리키면 코드가 바로 `conflicting`으로 본다. 한 기록을 여러 표기로 쓰는 체계(Ensembl·RefSeq version, UniProt isoform, ClinVar VCV)는 version·isoform·VCV 자리채움을 뗀 base accession으로 비교한다. base가 다르거나, base가 같아도 양쪽에 적힌 version·isoform이 다르면(`ENSG…17`과 `ENSG…16`) `conflicting`이다. 한쪽에 version·isoform이 없으면 같은 기록인지 코드가 모르므로 resolver에 넘긴다(#167). 체계가 다른 URL(DOI 옆 PubMed URL)도 그 밖의 URL처럼 resolver가 uri 조회로 ID를 알려 줄 때 비교한다. resolver가 돌려준 기록도 같은 함수로 비교해서, 다르면 `conflicting`, base만 같거나 비교하지 못하면 미확인이다. ID 조회 응답에 인용한 표기와 같은 base의 다른 표기가 함께 오면 하나를 골라 주지 않고 `conflicting`으로 둔다. 레지스트리 경로라도 accession 형식이 아닌 검색·도움말 페이지(`/search`, `/docs`)는 일반 URI다. URI만 있는 출처도 레지스트리 URL이면 그 ID로 조회한다. 출처가 ID와 artifact를 함께 적으면 둘 다 검사하고, `version`은 외부 기록의 판으로 본다(artifact만 있으면 인용한 sha256). context 행·연결 안 된 행·추론 행, 0건 검색(`not_found`) 행의 출처도 검사하며, 결함이 하나라도 있으면 보고 전체(`ok`)가 통과하지 않는다. 0건 행의 출처는 검색한 곳(DB·dataset)이고 찾던 ID는 `query`에 적는다. `failed`·`unavailable` 행은 출처에 닿지 못했으므로 검사하지 않는다. URI는 scheme·host만 대소문자를 무시한다. 원장은 행에 적힌 표기만으로 재인용을 보므로 DOI 행과 같은 논문의 PMID 행을 다른 출처로 둔다. resolver가 찾은 기록의 `same_as`로 다른 체계 ID(DOI↔PMID↔PMCID)를 알려 주면 verifier가 그 대응까지 넣어 다시 보고, 다른 independence group으로 적은 행은 `recitations`에 남겨 보고 전체를 통과시키지 않는다(#168).
 
-조회는 한 번에 최대 `concurrency`(기본 4)개씩 돌고, 조회마다 `timeout_s`(기본 20초), 보고 전체는 `deadline_s`(기본 120초) 안에 끝난다. deadline을 넘긴 출처는 `failed/timeout`이라 미확인이며, 부재(`not_found`)로 적지 않는다. `research.live_source_check`를 켜면 Crossref·doi.org·NCBI를 조회하고, 기본값은 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
+조회는 한 번에 최대 `concurrency`(기본 4)개씩 돌고, 조회마다 `research.live_source_timeout_s`(기본 10초), 보고 전체는 `research.live_source_deadline_s`(기본 60초) 안에 끝난다. deadline을 넘긴 출처는 `failed/timeout`이라 미확인이며, 부재(`not_found`)로 적지 않는다. `research.live_source_check`를 켜면 Crossref·doi.org·NCBI를 조회하고, 기본값은 꺼짐이다. 시험과 bench 고정 응답은 `StaticResolver`를 쓴다. artifact 근거는 runner가 관찰한 manifest가 있어야 `found`가 된다.
 - 주요 claim에는 반대 근거·대안 설명·반증 관찰을 둔다. critic은 결함을 찾고 원 담당자가 고친다.
 - 입력·검색식·명령·코드/환경·seed·exit·출력 hash를 기록한다. `documented`, `replayable`, `rerun_verified`를 구별한다.
 - 근거나 방법 revision이 바뀌면 종속 claim·분석·감사·승인을 stale 처리한다. 옛 결과는 이력으로만 둔다.
@@ -111,7 +111,7 @@ claim은 지지·반박으로 연결한 출처가 모두 `found`일 때만 `veri
 | gate | 멈추는 때 | PI에게 보이는 것 |
 |---|---|---|
 | CP1 계획 | 연구 실행 전 | 질문·가설, plan hash, 성공/중단 기준, 비용·데이터 경계, 승인 뒤 집행 상한(`budget_usd`), CP2·3 위임 범위 |
-| CP2 증거 | 분석 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청(메모 필수, 새 CP1로 이어 감)·거부 선택 |
+| CP2 증거 | 연구 단계 실행 뒤, 리뷰·보고서 전 | claim별 상태·근거 종류 표, 거부된 근거·근거 잃은 claim, 승인·수정 요청(메모 필수, 새 CP1로 이어 감)·거부 선택 |
 | CP3 선택 | 후보·방법 선택 시 | 공통 기준, 대안·민감도, 최소 판별 실험·비용 |
 | CP4 수용 | 감사와 최종 초안 뒤 | 현재 권고, claim/audit/report hash, 남은 공백과 이견 |
 
