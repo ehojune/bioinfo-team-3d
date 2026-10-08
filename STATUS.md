@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · 연구 요청 묶음에 claim 원장(claims.json)을 넣음 (PI 점검 R24)
+
+- 결론: 보고서의 `[[claim:<단계>/<claim>]]` 앵커가 가리키는 claim·근거 원장은 감사 번들(`labhq verify --bundle`)에만 있었다. 그래서 요청 묶음만 받은 동료는 수치를 근거까지 따라갈 수 없었다. 이제 연구 요청의 묶음에 감사 번들과 같은 claim 기록(단계 원장, CP2 기록, 앵커 검사)을 `claims.json`으로 넣는다. MANIFEST에는 generated로 오르고 RO-Crate File entity가 생기며, 묶음 README가 앵커와 원장 id의 관계를 한 줄로 설명한다. 일반 요청 묶음에는 넣지 않는다.
+- 바뀐 것: `labhq/evidence/audit.py`(`claims_record`를 빼서 감사 번들과 같이 씀), `labhq/request_bundle.py`, `docs/manual.md` 요청 묶음 표 한 줄, `tests/test_request_bundle.py` 2건.
+- 실행한 것: 새 시험 2건(기존 코드에는 claims.json을 쓰는 경로가 없음), 묶음·verify 시험 108 passed, 전체 pytest(Windows) 4760 passed·59 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 웹에서 보고서 앵커를 각주 링크로 바꾸는 일은 웹 카드 PR(#494) 뒤로 미룬다.
+- 근거: `tests/test_request_bundle.py::test_a_research_bundle_carries_the_claims_its_report_anchors_name`.
+
 ## 2026-10-08 · clarify 재질문과 실패 보고 원인을 보강 (PI 점검 R6 R12)
 
 - 결론: 답한 질문은 정규화한 본문이나 stable id가 같으면 다시 묻지 않는다. 새 질문만 두 번째 카드로 보내며, 요청당 카드 2장을 넘으면 남은 질문을 한국어 보고서에 적고 멈춘다.

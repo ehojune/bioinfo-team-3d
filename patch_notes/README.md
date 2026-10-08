@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:27 | [`3ec0ee0`](https://github.com/ehojune/bioinfo-team-3d/pull/497/commits/3ec0ee0) | claims.json의 인용 artifact마다 묶음 안 경로(steps/<단계>/...)를 붙여 claim에서 근거 파일로 바로 간다(#497 리뷰). |
+| 09:22 | [`129fce5`](https://github.com/ehojune/bioinfo-team-3d/pull/497/commits/129fce5) | 연구 요청 묶음에 claim 원장 claims.json을 넣어, 묶음만으로 보고서의 claim 앵커를 근거까지 따라갈 수 있다(PI 점검 R24). |
 | 09:12 | [`132b607`](https://github.com/ehojune/bioinfo-team-3d/pull/493/commits/132b607) | CLI가 프로세스 생성 시각과 인증된 작업 상태를 확인한 뒤 중복 기동과 위험한 종료를 막게 함 |
 | 09:05 | [`1ae55c1`](https://github.com/ehojune/bioinfo-team-3d/pull/496/commits/1ae55c1) | 답한 clarify 질문을 걸러 재계획을 이어 가고 실패 보고서에 단계·원인·PI 조치를 표시 |
 | 08:53 | [`0ec66c5`](https://github.com/ehojune/bioinfo-team-3d/pull/495/commits/0ec66c5) | 웹 사무실이 붙을 때 gateway가 task 원장을 요청마다 두 번 풀어 event loop가 약 11초 멈추던 문제를 고침. snapshot·요청 목록·라운드 기록 복구는 원장을 한 번만 읽고, 진행 중 요청이 없으면 health가 원장을 읽지 않는다. |
