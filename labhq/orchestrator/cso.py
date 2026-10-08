@@ -4185,7 +4185,7 @@ class Orchestrator:
         try:
             research_pilot = bool(self.hub.s.research.enabled)
             intake = (classify_intake(req["text"], req.get("work_kind", "auto"),
-                                      scope_status=req.get("scope_status", "in_scope"))
+                                      scope_status=req.get("scope_status", "in_scope"), mode=req["mode"])
                       if research_pilot else None)
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
@@ -4204,8 +4204,8 @@ class Orchestrator:
             if req["mode"] == "direct":
                 if research_lane:
                     req["outcome"] = "needs_research"
-                    self._finish(rid, "Research work cannot use direct mode in the PR 1 pilot. "
-                                 "Submit it as orchestrate or plan_only for a frozen, PI-approved plan.", {}, ok=False)
+                    self._finish(rid, "연구로 지정한 요청은 직원 한 명에게 직접 보낼 수 없습니다. 팀(CSO)에게 보내면 "
+                                 "계획을 세워 CP1 승인을 받습니다.", {}, ok=False)
                     return
                 res = await self.run_step(Task(agent_id=req["agent_id"], request_id=rid, prompt=text,
                                                budget_usd=req.get("budget_usd"),
