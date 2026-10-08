@@ -218,6 +218,27 @@ test('a hard-stop question card renders its options as choices and needs one (R1
   assert.equal(open._decisionParts.approve.textContent,'승인');
 });
 
+test('a hard-stop question with a single option still needs that option picked (PR #494 review)',async()=>{
+  const decide=await load('decide.js'),container=new Element(),sent=[];
+  // AskRequest.options accepts a one-item list; dropping it would let 승인 send "승인했지만 답변을 남기지 않았습니다".
+  const card={id:'appr_one',kind:'question',request_id:'r1',agent_id:'engineer',summary:'Hard stop (delete): tmp/를 지울까요?',
+    detail:{ask_id:'ask_3',from:'engineer',why_blocked:'디스크가 찼습니다',options:['tmp/만 지우기']}};
+  const [row]=decide.syncDecisionCards(container,[card],[],{onDecision:(a,ok,note)=>sent.push([ok,note])});
+  const p=row._decisionParts,buttons=nodes(p.questions).filter(n=>n.tagName==='BUTTON');
+  assert.equal(p.questions.hidden,false);
+  assert.deepEqual(buttons.map(b=>b.textContent),['a) tmp/만 지우기']);
+  assert.equal(decide.answerRequired(card),true,'the single option must be chosen before 답하고 진행');
+  assert.equal(p.approve.textContent,'답하고 진행');
+  assert.ok(!/\["tmp/.test(p.detail.textContent),'the option is a button, not JSON');
+  assert.equal(decide.decisionNote(row,true),'','no choice yet: nothing to send');
+  buttons[0].onclick();
+  assert.equal(decide.decisionNote(row,true),'a) tmp/만 지우기');
+  p.approve.onclick();assert.deepEqual(sent,[[true,'a) tmp/만 지우기']]);
+  const clarify={id:'c1',kind:'clarify',summary:'s',detail:{questions:[{question:'Which?',options:['only one'],allow_free_text:false}]}};
+  const [plain]=decide.syncDecisionCards(new Element(),[clarify]);
+  assert.equal(nodes(plain._decisionParts.questions).filter(n=>n.tagName==='BUTTON').length,0,'clarify keeps its two-option rule');
+});
+
 test('both offices use the shared labels, guards and request lookup',()=>{
   const html=fs.readFileSync(path.join(web,'index.html'),'utf8');
   const live=fs.readFileSync(path.join(web,'lab3d/src/live.js'),'utf8');
