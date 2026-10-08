@@ -362,3 +362,62 @@ def test_health_says_whether_a_runner_is_connected(tmp_path):
     with TestClient(app) as client:
         health = client.get("/api/health").json()
     assert health["runners"] == [] and health["runner_online"] is False and health["waiting_for_runner"] == 0
+
+
+# ----- R2: orphan cards and a readable resume card -----
+
+def _runner_card(agent_id="worker", task_id="t1"):
+    return ApprovalRequest(kind="tool_permission", summary="Bash: rm -rf tmp/", request_id="r", agent_id=agent_id,
+                           task_id=task_id, timeout_s=90).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_a_runner_restart_expires_the_cards_its_old_process_asked(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r")
+    hub.register_runner("local", CaptureSocket(), ROSTER, "first")
+    card = _runner_card()
+    await hub.on_runner_message("local", {"type": "approval.requested", "data": card})
+    assert hub.approvals[card["id"]]["origin_incarnation"] == "first"
+
+    assert await hub.expire_orphan_approvals("local", "first") == []  # the same process reconnecting keeps it
+    assert card["id"] in hub.approvals
+
+    replacement = CaptureSocket()
+    hub.register_runner("local", replacement, ROSTER, "second")
+    assert await hub.expire_orphan_approvals("local", "second") == [card["id"]]
+    assert card["id"] not in hub.approvals and not hub.store.get("approval", card["id"])
+    assert hub.store.get("approval_decision", card["id"])["state"] == "expired"
+    assert hub.store.get("decision", card["id"]) is None  # the new process never asked; nothing is sent to it
+    await hub.flush_decisions("local")
+    assert not [m for m in replacement.sent if m.get("type") == "approval.resolved"]
+    assert any(e["type"] == "approval.expired" and e["data"]["id"] == card["id"] for e in hub.events)
+
+
+@pytest.mark.asyncio
+async def test_a_card_from_a_runner_that_no_longer_hosts_the_agent_expires(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    gone, kept = _runner_card("worker", "t_old"), _runner_card("aligner", "t_hpc")
+    for card, origin in ((gone, "local"), (kept, "hpc")):  # saved before cards carried the asking process
+        hub.approvals[card["id"]] = {"approval": card, "origin": origin}
+        hub.save_approval(card["id"])
+    restarted = Hub(s)
+    restarted.register_runner("lab-workstation", CaptureSocket(), ROSTER, "inc")
+    assert await restarted.expire_orphan_approvals("lab-workstation", "inc") == [gone["id"]]
+    assert "직원이 다른 러너(lab-workstation)로 옮겨" in restarted.store.get("approval_decision", gone["id"])["note"]
+    assert list(restarted.approvals) == [kept["id"]]  # another runner's agent, still away: it may come back
+
+
+def test_a_resume_card_names_the_request_its_date_and_the_steps_left(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    created = time.mktime((2026, 9, 28, 10, 30, 0, 0, 0, -1))
+    _request(hub, "r", status="interrupted", created_at=created,
+             text="새로 받은 WGS 배치 표준 QC를 돌리고 결과를 요약해 주세요 " * 3,
+             plan={"steps": [{"id": sid} for sid in ("s1", "s2", "s3")]},
+             results={"s1": {"ok": True}})
+    card = hub.new_resume_approval("r")
+    assert card.summary.startswith('중단된 요청 "새로 받은 WGS 배치 표준 QC')
+    assert "(09-28 10:30 접수)" in card.summary and card.summary.endswith("남은 단계: s2, s3")
+    assert "[" not in card.summary
+    assert card.detail == {"request_text": card.detail["request_text"], "created_at": created, "steps": ["s2", "s3"]}

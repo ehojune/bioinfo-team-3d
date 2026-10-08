@@ -944,8 +944,14 @@ class Hub:
         req = self.requests[rid]
         done = set(req.get("results") or {})
         steps = [s["id"] for s in req.get("plan", {}).get("steps", []) if s["id"] not in done]
+        # Which request, from when, and what is left (R2): an old card must not read like tonight's work.
+        head = short(" ".join(str(req.get("text") or rid).split()), 60)
+        created = req.get("created_at")
+        when = time.strftime("%m-%d %H:%M", time.localtime(float(created))) if created else "접수 시각 모름"
         approval = ApprovalRequest(kind="resume", request_id=rid,
-                                   summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?",
+                                   summary=f"중단된 요청 \"{head}\"({when} 접수)을 다시 이어 갈까요? "
+                                           f"남은 단계: {', '.join(steps) if steps else '요청 전체'}",
+                                   detail={"request_text": head, "created_at": created, "steps": steps},
                                    timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)
@@ -1185,6 +1191,38 @@ class Hub:
             future.set_result(result)
         self._session_state_changed()
         return result
+
+    def _orphan_reason(self, entry: dict, runner_id: str, incarnation: str | None, hosted: set[str]) -> str | None:
+        """Why a runner card can no longer be answered, judged when ``runner_id`` registers, or None (R2)."""
+        origin = entry.get("origin")
+        if not origin:
+            return None
+        approval = entry["approval"]
+        task = self.store.get("task", str(approval.get("task_id") or "")) if approval.get("task_id") else None
+        if task is not None and task.get("abandoned"):
+            return "그 작업이 끝났거나 결과를 알 수 없게 되어 닫힘"
+        if origin == runner_id:
+            asked_by = entry.get("origin_incarnation")
+            if incarnation and asked_by and asked_by != incarnation:
+                return "러너가 다시 시작되어 닫힘"
+            if incarnation and not asked_by and (task is None or task.get("completed") or
+                                                 task.get("runner_incarnation") != incarnation):
+                return "러너가 다시 시작되어 닫힘"
+            return None
+        if origin not in self.runners and approval.get("agent_id") in hosted:
+            return f"{approval.get('agent_id')} 직원이 다른 러너({runner_id})로 옮겨 닫힘"
+        return None
+
+    async def expire_orphan_approvals(self, runner_id: str, incarnation: str | None) -> list[str]:
+        """At runner registration, close cards whose asking process is gone: the runner restarted, the agent now
+        lives on this runner, or the card's task was abandoned. The old process is not told; it is gone."""
+        hosted = {a.get("id") for a in self.runner_agents.get(runner_id, [])}
+        closed = []
+        for aid, entry in list(self.approvals.items()):
+            reason = self._orphan_reason(entry, runner_id, incarnation, hosted)
+            if reason and await self.close_approval(aid, reason, notify_runner=False):
+                closed.append(aid)
+        return closed
 
     async def flush_decisions(self, runner_id: str) -> None:
         for aid, entry in self.store.all("decision").items():
@@ -1469,7 +1507,9 @@ class Hub:
                 fut.set_result(result)
         elif typ == "approval.requested":
             a = msg["data"]
-            self.approvals[a["id"]] = {"approval": a, "origin": runner_id}
+            # The asking process: a card outlives neither it nor the agent's move to another runner (R2).
+            self.approvals[a["id"]] = {"approval": a, "origin": runner_id,
+                                       "origin_incarnation": self.runner_incarnations.get(runner_id)}
             self.save_approval(a["id"])
         elif typ == "approval.timed_out":
             aid = str((msg.get("data") or {}).get("id") or "")
@@ -2426,6 +2466,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             incarnation = hello.get("incarnation")
             hub.register_runner(runner_id, ws, hello.get("agents", []), incarnation,
                                 hello.get("capabilities"))
+            await hub.expire_orphan_approvals(runner_id, incarnation)
             await hub.flush_decisions(runner_id)
             await hub.flush_ask_answers(runner_id)
             await hub.flush_task_cancels(runner_id)
