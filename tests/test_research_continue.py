@@ -166,6 +166,11 @@ async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step
     assert all(task.meta.get("research_round") == 2 for task in hub.calls[4:])
     assert all("research_round" not in task.meta for task in hub.calls[:4])
     assert "reused from plan" in req["report_appendix"]
+    # The report says what round 1 was asked to fix (web trial 2026-10-08: the round-2 report never named its P1s).
+    synthesis = hub.calls[7].prompt
+    assert "Earlier rounds of this request:" in synthesis and P1["problem"] in synthesis
+    assert "이전 차수에서 고친 것" in synthesis
+    assert "Round 1 review: revise with 1 P1 issue(s):" in req["report_appendix"] and P1["problem"] in req["report_appendix"]
 
 
 @pytest.mark.asyncio
