@@ -1,0 +1,7 @@
+rows:
+  - sha: "5c3daa8"
+    at: "2026-10-09 06:36"
+    text: "labhq send(대기)·watch가 gateway 꺼짐·토큰 거부 때 traceback 대신 원인 한 줄과 exit 2를 낸다."
+  - sha: "72c3314"
+    at: "2026-10-09 06:36"
+    text: "PI 시험 전 문서 대조로 확인한 21건을 고쳤다: research.enabled와 evidence_checkpoint 차이, CP2 시점, 시간 초과 결과 이름, 개인 경로 기본 목록, 단독 처리 조건, Codex 직원 sandbox 읽기 거부 등."
