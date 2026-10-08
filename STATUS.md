@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · 웹·CLI에서 작업 종류(자동·간단·연구)를 PI가 고름 (PI 점검 R16)
+
+- 결론: 연구 lane을 켜면 CP1·CP2를 거칠지는 접수 규칙만으로 정해졌다. 웹 시운전에서 메타데이터 표 요청이 CP1과 5단계 연구 계획으로 간 일이 있었다(규칙은 #498에서 고침). 이제 PI가 웹 입력창 옆 **작업 종류**(자동 판단·간단한 일·연구)나 `labhq send --work-kind simple|research`로 직접 고른다. 연구를 직원 한 명에게 직접 보내는 조합은 웹·CLI 모두 보내기 전에 막고 안내한다. 메모 모드에서는 선택이 숨는다.
+- 바뀐 것: `labhq/web/index.html`(선택·전송·메모 모드), `labhq/cli.py`(`send --work-kind`), `docs/manual.md`(웹 설명과 CLI 예), 시험 `tests/web_work_kind.cjs`·`tests/test_intake_references.py` 1건.
+- 실행한 것: 웹·CLI 관련 시험 163 passed, 전체 pytest(Windows) 4793 passed·59 skipped, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 3D 사무실에는 따로 입력창이 없어 해당 없음.
+- 근거: `tests/web_work_kind.cjs`, `tests/test_intake_references.py::test_cli_send_passes_the_work_kind_and_refuses_research_to_one_agent`.
+
 ## 2026-10-08 · 메타데이터 표·목록 정리는 단순 작업으로, 직원 직접 지정은 연구 lane 밖으로 (PI 점검 R16)
 
 - 결론: 연구 lane을 켠 trial에서 웹으로 "GEO GSE10072 시료 메타데이터를 표로 정리해 줘"를 보내자, 규칙 분류가 "단순 작업으로 확실히 한정되지 않음"으로 research에 넣어 CP1과 5단계 연구 계획이 떴다. PI 설정에도 연구 lane을 켰으므로 내일 PI가 같은 일을 겪는다. 이제 출처에 있는 것을 표·목록으로 정리하거나(메타데이터·시료 정보) 추출·다운로드하는 요청은 simple이다. 분석(DE·경로·생존 등)이 들어가면 표를 함께 요청해도 research로 둔다. 직원 한 명을 직접 지정한 요청은 PI가 research를 명시하지 않는 한 simple이고, 명시했을 때의 안내는 한국어로 바꿨다.

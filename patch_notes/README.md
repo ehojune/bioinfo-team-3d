@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:10 | [`f0b7b62`](https://github.com/ehojune/bioinfo-team-3d/pull/503/commits/f0b7b62) | 웹 입력창 옆 작업 종류(자동·간단·연구)와 labhq send --work-kind로 PI가 연구 lane을 탈지 직접 고른다(PI 점검 R16). |
 | 09:56 | [`bcefdcf`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/bcefdcf) | main(#493·#494)과 합치며 매뉴얼 연구 lane 문단에 접수 규칙 변경과 CP1·CP2 카드 설명을 함께 살려 충돌을 풀었다. |
 | 09:39 | [`d4629a6`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/d4629a6) | 계산을 시키는 동사(run·돌려·수행·계산·정규화·군집 등)와 DE 약어도 연구 신호로 두어, 다운로드·메타데이터와 함께여도 분석 요청은 연구로 간다(#498 재리뷰). |
 | 09:35 | [`0f44bbc`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/0f44bbc) | 예측·관계·비교 같은 추론 표현은 다운로드·메타데이터 요청과 함께여도 연구로, "분석 없이"는 연구 신호에서 뺀다(#498 리뷰). |
