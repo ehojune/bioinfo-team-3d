@@ -949,6 +949,8 @@ def main(argv: list[str] | None = None) -> None:
                          "or a runner path inside runner.reference_roots (prefix kind: to force one)")
     sp.add_argument("--no-default-refs", action="store_true", help="leave out pi_profile.references")
     sp.add_argument("--plan-only", action="store_true", help="stop after the CSO plan; do not run or review steps")
+    sp.add_argument("--work-kind", choices=("auto", "simple", "research"), default="auto",
+                    help="with research.enabled: simple skips the research lane (CP1/CP2), research forces it")
     sp.add_argument("--cso-model", help="request-local CSO model from orchestrator.cso_models")
     sp.add_argument("--no-wait", action="store_true")
     note = sub.add_parser("note", help="send a note to later stages of a running request")
@@ -1198,10 +1200,13 @@ def main(argv: list[str] | None = None) -> None:
             references.append(reference)
         if args.agent and (args.plan_only or args.cso_model or args.team):
             p.error("--agent cannot be used with --plan-only, --cso-model or --team")
+        if args.agent and args.work_kind == "research":
+            p.error("--work-kind research needs the team (CSO) path: drop --agent")
         body = {"text": args.text, "mode": "direct" if args.agent else "plan_only" if args.plan_only else "orchestrate",
                 "agent_id": args.agent, "cso_model": args.cso_model, "route": "team" if args.team else "auto",
                 "project_dirs": args.project_dir, "budget_usd": args.budget, "project_id": args.project,
-                "references": references, "default_references": not args.no_default_refs}
+                "references": references, "default_references": not args.no_default_refs,
+                "work_kind": args.work_kind}
         if args.no_wait:
             print(_api(s, "POST", "/api/requests", json=body))
         else:
