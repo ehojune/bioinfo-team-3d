@@ -971,7 +971,9 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
                       for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
                     for seg in re.finditer(r"[^|;&\n]+", words_text)]
     for words in segments:
-        yield from _named_write_targets(words, powershell)
+        # A command's own output argument may be a null device too (`curl -o /dev/null`, `tee NUL`; trial 2026-10-08).
+        yield from (target for target in _named_write_targets(words, powershell)
+                    if target.strip("\"'").casefold() not in NULL_DEVICES)
 
 
 def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool:
