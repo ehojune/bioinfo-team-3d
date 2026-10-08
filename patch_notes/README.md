@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:56 | [`bcefdcf`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/bcefdcf) | main(#493·#494)과 합치며 매뉴얼 연구 lane 문단에 접수 규칙 변경과 CP1·CP2 카드 설명을 함께 살려 충돌을 풀었다. |
+| 09:39 | [`d4629a6`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/d4629a6) | 계산을 시키는 동사(run·돌려·수행·계산·정규화·군집 등)와 DE 약어도 연구 신호로 두어, 다운로드·메타데이터와 함께여도 분석 요청은 연구로 간다(#498 재리뷰). |
+| 09:35 | [`0f44bbc`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/0f44bbc) | 예측·관계·비교 같은 추론 표현은 다운로드·메타데이터 요청과 함께여도 연구로, "분석 없이"는 연구 신호에서 뺀다(#498 리뷰). |
+| 09:30 | [`b2bf903`](https://github.com/ehojune/bioinfo-team-3d/pull/498/commits/b2bf903) | 메타데이터 표·목록 정리·추출·다운로드는 단순 작업, 분석이 들어가면 연구로 분류하고 직원 직접 지정은 연구 lane 밖으로(PI 점검 R16). |
 | 09:28 | [`4005a45`](https://github.com/ehojune/bioinfo-team-3d/pull/494/commits/4005a45) | main(#496 clarify·실패 보고)과 합치며 매뉴얼의 확인 질문·요청 진행·한도 대기 문구를 함께 살려 충돌을 풀었다. |
 | 09:27 | [`3ec0ee0`](https://github.com/ehojune/bioinfo-team-3d/pull/497/commits/3ec0ee0) | claims.json의 인용 artifact마다 묶음 안 경로(steps/<단계>/...)를 붙여 claim에서 근거 파일로 바로 간다(#497 리뷰). |
 | 09:22 | [`129fce5`](https://github.com/ehojune/bioinfo-team-3d/pull/497/commits/129fce5) | 연구 요청 묶음에 claim 원장 claims.json을 넣어, 묶음만으로 보고서의 claim 앵커를 근거까지 따라갈 수 있다(PI 점검 R24). |
