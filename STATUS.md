@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · engineer 직원 모델을 gpt-5.6-sol로 (PI 결정 5A)
+
+- 결론: 저장소 roster의 engineer는 `gpt-6.1-sol`이었고, v0.5를 통과한 trial roster는 `gpt-5.6-sol`이었다. 6.1-sol은 v0.5 시운전 3차의 환경 단계에서 마무리 응답 중 두 번 멈췄다(#473이 그 뒤 자동 재시도를 넣음). PI 결정 5A(#435)로 저장소도 통과한 구성에 맞춘다. 두 roster의 차이는 이 한 줄뿐이었다.
+- 바뀐 것: `agents/core/engineer.yaml`, README(한·영) 배지(`scripts/integrations.py --write`로 생성), `docs/manual.md` 직원 표, 배지 문구를 단정하는 `tests/test_integrations.py` 기대값.
+- 실행한 것: `tests/test_integrations.py`·`test_cost_accounting.py`·`test_doctor.py` 89 passed(가격표에 gpt-5.6-sol 있음), `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: PI 인스턴스는 병합 뒤 다시 띄워야 반영된다(agents_dir이 저장소 roster).
+- 근거: `agents/core/engineer.yaml`.
+
 ## 2026-10-08 · CP2 수정 요청이 새 계획·새 CP1로 이어 간다 (PI 점검 R10)
 
 - 결론: CP2에서 **수정 요청**을 고르면 요청이 끝나지 않는다. PI 메모가 수정 요청이 되어 CSO가 새 계획을 쓰고, PI가 새 CP1에서 승인하면 바뀐 단계와 그 아래 단계만 다시 돈다. 지금까지는 거부와 똑같이 `evidence_revision_requested`로 끝났고, #494에서 버튼을 `수정 요청(요청 끝남)`으로 바꿔 두기만 했다.

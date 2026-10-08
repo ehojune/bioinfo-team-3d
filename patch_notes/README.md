@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:32 | [`20f4e3a`](https://github.com/ehojune/bioinfo-team-3d/pull/507/commits/20f4e3a) | roster를 단정하는 registry 시험의 engineer 모델 기대값을 gpt-5.6-sol로 맞췄다(#507 리뷰). |
+| 13:30 | [`07cfcec`](https://github.com/ehojune/bioinfo-team-3d/pull/507/commits/07cfcec) | engineer 직원 모델을 v0.5를 통과한 구성과 같은 gpt-5.6-sol로 바꿨다(PI 결정 5A). |
 | 13:28 | [`fea7039`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/fea7039) | 끝에 /가 붙은 .tmp 아래 링크 대상도 재귀 삭제 카드로 돌리고, doctor는 직원이 실제로 실행되는 경로로 CLI 준비를 판정한다(#501 리뷰). |
 | 13:24 | [`e78b9f4`](https://github.com/ehojune/bioinfo-team-3d/pull/505/commits/e78b9f4) | PowerShell 괄호 안에서 바꾼 R 라이브러리·위치를 되돌린 것으로 보던 회귀를 고쳐, 공유 라이브러리 설치가 main처럼 거부된다(#505 리뷰). |
 | 12:17 | [`efbbcc9`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/efbbcc9) | 패키지에 든 예제 설정(labhq/config/labhq.example.yaml)에도 revise_continuations 주석을 같게 고친다(PI 점검 R10). |
