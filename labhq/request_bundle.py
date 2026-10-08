@@ -19,6 +19,7 @@ from typing import Any, Iterator
 
 from .adapters.held_dir import HeldDir, NotPlainFolder
 from .evidence.audit import claims_record, locate_workdir
+from .evidence.claims import normalize_artifact_path
 from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
@@ -352,6 +353,25 @@ def _grade(rows: list[dict[str, Any]], steps: list[Mapping[str, Any]],
     return ("documented" if reasons else "replayable"), reasons
 
 
+def _bundle_claims(record: dict[str, Any], results: Mapping[str, Any], copied: set[str]) -> dict[str, Any]:
+    """The claims record with each artifact ref's place in this bundle (#497 review): a ledger cites `outputs/x` (its
+    own step) or `<workdir_id>/outputs/x` (an ancestor), and the bundle keeps both under `steps/<step_id>/`. The
+    original `path` stays; `bundle_path` is added only when that file was copied."""
+    record = json.loads(json.dumps(record, default=str))  # the ledgers belong to the stored request
+    owners = {str(result.get("workdir_id")): step_id for step_id, result in results.items()
+              if isinstance(result, Mapping) and result.get("workdir_id")}
+    for step_id, ledger in (record.get("ledgers") or {}).items():
+        for ref in (ledger or {}).get("artifact_refs") or [] if isinstance(ledger, dict) else []:
+            if not isinstance(ref, dict):
+                continue
+            path = normalize_artifact_path(str(ref.get("path") or ""))
+            head, _, rest = path.partition("/")
+            owner, inner = (owners[head], rest) if head in owners and rest else (step_id, path)
+            if f"steps/{owner}/{inner}" in copied:
+                ref["bundle_path"] = f"steps/{owner}/{inner}"
+    return record
+
+
 def _readme(req: Mapping[str, Any], steps: list[Mapping[str, Any]], scripts: list[str],
             unsafe_scripts: list[str], python_unknown: bool, linked: bool = False, claims: bool = False) -> str:
     lines = [
@@ -591,9 +611,11 @@ def build_request_bundle(req: Mapping[str, Any], settings: Any,
         contract = req.get("research_contract")
         claims = isinstance(contract, Mapping) and bool(contract.get("plan_sha256"))
         if claims:
-            (temp / "claims.json").write_text(
-                json.dumps(claims_record(req, report_check=contract.get("report_check")), ensure_ascii=False,
-                           indent=2, default=str), encoding="utf-8", newline="\n")
+            copied_paths = {str(row["relative_path"]) for row in rows if str(row.get("status", "")).startswith("copied")}
+            record = _bundle_claims(claims_record(req, report_check=contract.get("report_check")), results,
+                                    copied_paths)
+            (temp / "claims.json").write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str),
+                                              encoding="utf-8", newline="\n")
         commands =[command for step_id in ordered_ids
                     for _path, command in sorted(script_commands.get(step_id, {}).items())]
         unsafe = [path for step_id in ordered_ids for path in sorted(unsafe_scripts.get(step_id, set()))]
