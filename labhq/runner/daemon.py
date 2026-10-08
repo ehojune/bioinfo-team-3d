@@ -30,7 +30,7 @@ from ..adapters.held_dir import HeldDir
 from ..adapters.owned import (OwnedPathError, is_link, owned_link_error, plain_directory, read_owned,
                               remove_entry, write_owned)
 from ..ask_results import read_ask_results, rejected_step
-from ..artifact_policy import is_instructed_output
+from ..artifact_policy import unreported_warning_paths
 from ..facilities import fixes as facility_fixes
 from ..login import LOGIN_PATH_ENV
 from ..models import ASK_MAX_WAIT_S, AgentSpec, ApprovalRequest, AskRequest, Engine, Event, McpServerSpec, Task, TaskResult, waiting
@@ -1323,11 +1323,11 @@ class Runner:
         # outputs/lib/__pycache__ (#485). They stay in the observed records.
         result.unreported_outputs = sorted(row["path"] for row in observed_outputs
                                            if row["path"] not in collected
-                                           and not is_instructed_output(row["path"])
                                            and "__pycache__" not in row["path"].replace("\\", "/").split("/"))
-        if result.unreported_outputs:
+        warning_outputs = unreported_warning_paths(result.unreported_outputs)
+        if warning_outputs:
             await emit("agent.log", {"level": "warn", "text": (
-                "보고하지 않은 관찰 산출물: " + ", ".join(result.unreported_outputs))})
+                "보고하지 않은 관찰 산출물: " + ", ".join(warning_outputs))})
         for note in dict.fromkeys(output_scan_notes):
             await emit("agent.log", {"level": "warn", "text": note})
         # Only a finished, successful turn: a bundle written before HPC checks or an ask is not final (#301 review).

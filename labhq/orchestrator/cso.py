@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from ..adapters import READ_ONLY_OVERRIDES, is_read_only_task, read_only_refusal
 from ..ask_results import ask_result, read_ask_results, rejected_step
-from ..artifact_policy import OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR
+from ..artifact_policy import (OUTPUT_ENV_DIR, OUTPUT_REFERENCE_DIR, OUTPUT_SCRIPTS_DIR,
+                               unreported_warning_paths)
 from ..costs import cost_detail, format_cost, task_cost_item
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
@@ -3507,6 +3508,8 @@ class Orchestrator:
         unsupported: list[dict[str, str]] = []
         artifact_sha256: dict[str, str | None] = {}
         unreported_outputs = {s["id"]: list(results[s["id"]].unreported_outputs) for s in steps}
+        warning_outputs = {step_id: shown for step_id, paths in unreported_outputs.items()
+                           if (shown := unreported_warning_paths(paths))}
         source_verification: list[str] = []
         source_reports: list[dict[str, Any]] = []
         live_resolver = None
@@ -3566,7 +3569,7 @@ class Orchestrator:
                    **({"refused_evidence": refused} if refused else {}),
                   **({"unsupported_claims": unsupported} if unsupported else {}),
                   **({"source_verification": source_verification} if source_verification else {}),
-                  "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
+                   "artifact_sha256": artifact_sha256, "unreported_outputs": warning_outputs,
                   "results": ledgers}
         carried = contract.get("continuation") or {}
         reuse_lines: list[str] = []

@@ -12,3 +12,8 @@ def is_instructed_output(path: str) -> bool:
     normalized = path.replace("\\", "/").strip("/")
     return any(normalized == prefix.rstrip("/") or normalized.startswith(prefix)
                for prefix in INSTRUCTED_OUTPUT_DIRS)
+
+
+def unreported_warning_paths(paths: list[str]) -> list[str]:
+    """Hide labhq-requested reproducibility records only from the warning shown to people."""
+    return [path for path in paths if not is_instructed_output(path)]

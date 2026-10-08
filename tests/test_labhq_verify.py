@@ -163,11 +163,22 @@ async def test_output_inside_a_restricted_zone_is_unchecked_not_missing(tmp_path
 async def test_unreported_output_is_listed_as_a_warning(tmp_path, monkeypatch, capsys):
     def write(wd):
         _write(wd, "outputs/table.tsv", BODY)
+        _write(wd, "outputs/scripts/run.py", b"print('ok')\n")
+        _write(wd, "outputs/env/s1.txt", b"python=3.12\n")
+        _write(wd, "outputs/reference/map.tsv", b"gene\n")
         _write(wd, "outputs/scratch.tsv", b"x")
 
     settings, result = await _run(tmp_path, monkeypatch, write)
+    code, raw = _verify(monkeypatch, capsys, settings, _request(result), "--json")
+    assert code == 0
+    assert json.loads(raw)["unreported_outputs"] == {"s1": [
+        "outputs/env/s1.txt", "outputs/reference/map.tsv", "outputs/scratch.tsv", "outputs/scripts/run.py",
+    ]}
     code, out = _verify(monkeypatch, capsys, settings, _request(result))
     assert code == 0 and "보고하지 않은 산출(경고)" in out and "s1: outputs/scratch.tsv" in out
+    assert "outputs/scripts/run.py" not in out
+    assert "outputs/env/s1.txt" not in out
+    assert "outputs/reference/map.tsv" not in out
 
 
 def _research(report: str, problems: list[str]) -> dict:

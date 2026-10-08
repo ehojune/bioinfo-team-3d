@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.request_bundle import build_request_bundle
 from labhq.runner.daemon import Runner
 from labhq.settings import Settings
 
@@ -96,26 +97,35 @@ async def test_bytecode_caches_are_observed_but_not_unreported(tmp_path, monkeyp
 @pytest.mark.asyncio
 async def test_labhq_instructed_outputs_are_observed_without_unreported_warning(tmp_path, monkeypatch):
     def write(workdir):
-        _write(workdir, "outputs/env/s01.txt", b"env\n")
-        _write(workdir, "outputs/scripts/analyze.py", b"print('ok')\n")
-        _write(workdir, "outputs/reference/genes.tsv", b"gene\n")
-        _write(workdir, "outputs/other.txt", b"other\n")
+        _write(workdir, "outputs/env/s1.txt", b"env\n")
+        _write(workdir, "outputs/scripts/run.py", b"print('ok')\n")
+        _write(workdir, "outputs/reference/map.tsv", b"gene\n")
+        _write(workdir, "outputs/extra.tsv", b"extra\n")
 
     runner = _runner(tmp_path, monkeypatch, write)
     result = await runner.run_task(_task())
 
-    assert result.unreported_outputs == ["outputs/other.txt"]
+    assert result.unreported_outputs == [
+        "outputs/env/s1.txt", "outputs/extra.tsv", "outputs/reference/map.tsv", "outputs/scripts/run.py",
+    ]
     manifest = json.loads((Path(result.workdir) / "manifest.json").read_text(encoding="utf-8"))
     observed = {row["path"] for row in manifest["runs"][result.task_id]["observed_outputs"]}
     assert observed == {
-        "outputs/env/s01.txt", "outputs/scripts/analyze.py",
-        "outputs/reference/genes.tsv", "outputs/other.txt",
+        "outputs/env/s1.txt", "outputs/scripts/run.py",
+        "outputs/reference/map.tsv", "outputs/extra.tsv",
     }
     warnings = [event["data"].get("text", "") for event in runner.store.pending()
                 if event["type"] == "agent.log" and event["data"].get("level") == "warn"]
-    assert any("outputs/other.txt" in warning for warning in warnings)
+    assert any("outputs/extra.tsv" in warning for warning in warnings)
     assert not any("outputs/env/" in warning or "outputs/scripts/" in warning or
                    "outputs/reference/" in warning for warning in warnings)
+
+    request = {"id": "instructed_outputs", "report": "ok", "report_appendix": "",
+               "plan": {"steps": [{"id": "s1", "depends_on": []}]},
+               "results": {"s1": result.model_dump(mode="json")}}
+    bundle = Path(build_request_bundle(request, runner.s)["path"])
+    for relative in ("outputs/scripts/run.py", "outputs/env/s1.txt", "outputs/reference/map.tsv"):
+        assert (bundle / "steps" / "s1" / relative).is_file()
 
 
 @pytest.mark.asyncio
