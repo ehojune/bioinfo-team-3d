@@ -1151,7 +1151,8 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_run_runner_with_interrupts(Runner(s)))
     elif args.cmd == "status":
         health = _api(s, "GET", "/api/health")
-        print("러너: " + (", ".join(health["runners"]) or "없음 — `labhq runner`로 켜야 요청이 진행됩니다"))
+        print("러너: " + (", ".join(health["runners"]) or
+                         f"없음 — `{_config_command(s, 'up')}`로 켜야 요청이 진행됩니다"))
         running = _api(s, "GET", "/api/requests?status=running&limit=200")
         print(f"진행 중 요청: {len(running)}")
         for req in running:
@@ -1216,15 +1217,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
     elif args.cmd == "cancel":
-        import httpx
         from urllib.parse import quote
 
-        try:
-            out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.json().get("detail") if exc.response.headers.get(
-                "content-type", "").startswith("application/json") else exc.response.text
-            raise SystemExit(f"취소하지 못했습니다: {detail or exc.response.status_code}")
+        out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})  # 409: 이미 끝남
         print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
               f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
               "부분 결과는 보고서에 있습니다")

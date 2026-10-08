@@ -35,7 +35,7 @@ office.apply({ type: 'request.status', request_id: 'r1', data: { status: 'runnin
 assert.equal(S.requests.get('r1').status, 'cancelled', 'a late status event never reopens a finished request');
 
 const html = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
-assert.match(html, /id="runner-off"[^>]*hidden>러너 꺼짐/);
+assert.match(html, /id="runner-off"[^>]*hidden>러너 꺼짐 — 터미널에서 <code>labhq up<\/code>/);
 assert.match(html, /\$\('#runner-off'\)\.hidden = !\(MODE !== 'demo' && S\.conn === 'live' && S\.runnersKnown && !S\.runners\.size\)/);
 assert.match(html, /cancelRequest: rid => post\(`\/api\/requests\/\$\{encodeURIComponent\(rid\)\}\/cancel`, \{\}\)/);
 assert.match(html, /LabHQState\.isActiveRequest\(q\.status\) \|\| q\.status === 'interrupted'\) \? `<p class="req-actions"><button class="btn" id="req-cancel"/);

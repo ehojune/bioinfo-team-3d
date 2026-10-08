@@ -1348,8 +1348,8 @@ class Hub:
     def _runner_wait_failure(self, agent_id: str) -> str:
         bound = float(self.s.gateway.runner_wait_s)
         span = f"{round(bound / 3600, 1):g}시간" if bound >= 3600 else f"{max(1, round(bound / 60))}분"
-        return (f"러너가 {span} 안에 연결되지 않아 {agent_id} 작업을 보내지 못했습니다. `labhq runner`로 러너를 "
-                "켠 뒤 같은 요청을 다시 보내세요(gateway.runner_wait_s).")
+        return (f"러너가 {span} 안에 연결되지 않아 {agent_id} 작업을 보내지 못했습니다. labhq up(또는 labhq runner)으로 "
+                "러너를 켠 뒤 같은 요청을 다시 보내세요(gateway.runner_wait_s).")
 
     async def wait_for_runner(self, task: Task) -> bool:
         """Park the task's request as waiting_for_runner until a runner hosting the agent connects, at most
@@ -1364,7 +1364,7 @@ class Hub:
         await self.publish({"type": "request.runner_wait", "ts": now, "request_id": rid,
                             "data": {"agent_id": task.agent_id, "missing_agents": [task.agent_id],
                                      "deadline_at": now + bound,
-                                     "message": f"러너가 꺼져 있어 기다립니다. 터미널에서 labhq runner를 켜면 "
+                                     "message": f"러너가 꺼져 있어 기다립니다. labhq up(또는 labhq runner)으로 켜면 "
                                                 f"{task.agent_id} 작업부터 이어 갑니다."}})
         try:
             return await self.wait_agent_online(task.agent_id, bound)

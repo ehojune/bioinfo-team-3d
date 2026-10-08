@@ -215,13 +215,16 @@ cd <labhq repository>
 .\labhq -c config\labhq.yaml open
 ```
 
+If the runner is off, a **러너 꺼짐** (Runner off) bar shows at the top of the web office. Requests sent meanwhile do not fail; they wait for a runner to connect (up to 24 hours).
+
 ### 4. First request
 
 1. Type a request in the input box below. A small public-data request is a good start (e.g. "public penguin data QC summary").
 2. If the CSO asks a clarifying question, choose an option and press **답하고 진행** (Reply and continue).
-3. Things to approve arrive as cards in the **결정** (Decisions) tab on the right. Approve or reject to carry on.
+3. Things to approve arrive as cards in the **결정** (Decisions) tab on the right. Approve or reject to carry on. Clarifying, budget, CP1 and CP2 cards wait up to 7 days (`policy.approvals.pi_decision_timeout_s`), so stepping away does not fail the request.
 4. Watch step progress and outputs on the **작업판** (Workboard), and open the **최종 보고서** (Final report) when it ends. To ask more about the report, use **이어 묻기** (Follow up).
-5. If you pick a running request that the CSO is handling, the input box default is **이 요청에 메모** (Note on this request). A note is delivered from the next plan or step on, not to a turn that is already running. For a request given directly to one staff member, use **이어 묻기** after it ends.
+5. To stop a request sent by mistake, use **요청 취소** (Cancel request) on the request, or `labhq cancel <request id>`. It stops running work and keeps the finished steps in a short report.
+6. If you pick a running request that the CSO is handling, the input box default is **이 요청에 메모** (Note on this request). A note is delivered from the next plan or step on, not to a turn that is already running. For a request given directly to one staff member, use **이어 묻기** after it ends.
 
 To give work directly to one staff member, pick that staff member in the input box or drag a yellow note onto their desk.
 Attach GitHub URLs, DOIs, and data paths with the **참고** (Reference) button.
