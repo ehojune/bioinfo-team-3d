@@ -1,0 +1,2 @@
+labhq.cmd text eol=crlf
+labhq.sh text eol=lf
