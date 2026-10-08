@@ -6,7 +6,8 @@ of the previous plan is reused instead of run again only when all of these hold;
 
 - the new plan keeps the step byte-identical (canonical JSON of every field) under the same frozen question, scope,
   protocol and pack values, which together are exactly what the step was dispatched with apart from its upstream
-  results (``frozen_context``), and under the same domain pack snapshot (``protocol.packs`` with each pack's sha256,
+  results and the PI's CP1 note (``frozen_context``; the note guides but never changes the plan, so a new round's
+  note does not re-run a reused step), and under the same domain pack snapshot (``protocol.packs`` with each pack's sha256,
   and the contract's ``pack_snapshot``): a pack whose definition changed under the same ``id@version`` re-runs every
   step, since a step does not declare which pack rule its result rests on;
 - no P1 issue of the review names the step;

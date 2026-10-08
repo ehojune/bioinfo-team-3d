@@ -271,11 +271,24 @@ class ResearchPlan(StrictModel):
     warnings: list[str] = Field(default_factory=list)
     checklist: dict[str, str] = Field(default_factory=dict)
     suggested_next: list[str] = Field(default_factory=list, max_length=8)
+    # The request's total spending cap in USD (PI 점검 R17). On CP1 approval labhq makes min(this, the configured
+    # per-request cap) the request's enforced budget, so the budget card fires when spending passes it. Absent, it is
+    # left out of the canonical JSON: plans frozen before it keep their plan_sha256 and today's cap.
+    budget_usd: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     # Same structure as the general PLAN; plain strings from older plans keep their canonical hash.
     clarifying_questions: list[str | ClarifyingQuestion]
     steps: list[ResearchStep] = Field(min_length=1)
     recruit: list[RecruitProposal]
     notes: str
+
+    @field_validator("budget_usd", mode="before")
+    @classmethod
+    def no_cap_when_not_positive(cls, value: Any) -> Any:
+        # Zero or a negative number states no cap: the plan keeps today's cap instead of failing validation, which
+        # would cost one of its two plan attempts.
+        if isinstance(value, bool) or isinstance(value, (int, float)) and value <= 0:
+            return None
+        return value
 
     @field_validator("topics")
     @classmethod
@@ -298,6 +311,8 @@ class ResearchPlan(StrictModel):
         for field in ("topics", "pack_applicability", "warnings", "checklist", "suggested_next"):
             if not data.get(field):
                 data.pop(field, None)
+        if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
+            data.pop("budget_usd", None)
         return data
 
     @model_validator(mode="after")
