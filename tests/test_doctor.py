@@ -126,6 +126,28 @@ def test_doctor_readiness_rejects_a_missing_roster_engine_executable(tmp_path, m
     assert lines[-1] == "이유: roster engine 실행 파일 없음: claude_code"
 
 
+def test_doctor_readiness_accepts_cli_command_on_configured_path(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
+        "id: worker\nname: Worker\nrole: test\nengine: cli\n"
+        "cli:\n  command: [lab-agent, run]\n  env:\n    PATH: /configured/bin\n",
+        encoding="utf-8",
+    )
+    seen = []
+
+    def which(name, path=None):
+        seen.append((name, path))
+        return "/configured/bin/lab-agent" if name == "lab-agent" and path == "/configured/bin" else None
+
+    monkeypatch.setattr(doctor.shutil, "which", which)
+
+    result = doctor.collect(settings)
+
+    assert ("lab-agent", "/configured/bin") in seen
+    assert result["readiness"] == {"ready": True, "reasons": []}
+    assert doctor.render(result).endswith("실행 준비: 예")
+
+
 def test_doctor_dry_run_summarizes_login_skips_once(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     executable = tmp_path / "claude.exe"

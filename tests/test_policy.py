@@ -263,21 +263,53 @@ def test_non_recursive_rm_is_allowed():
 
 @pytest.mark.parametrize("command", [
     "rm -rf .tmp",
-    "rm -rf outputs/tmp",
-    "rm -rf .tmp outputs/tmp",
-    "rm -rf -- .tmp outputs/tmp",
-    "cd /work/step && rm -rf .tmp/peek",
+    "rm -rf .tmp/cache",
+    "rm -r .tmp/cache",
 ])
-def test_recursive_delete_inside_the_step_workdir_is_allowed(command):
+def test_single_recursive_delete_below_step_tmp_is_allowed(command):
     decision = evaluate_tool("Bash", {"command": command}, _policy(),
                              allowed_roots=["/work/step"], workdir="/work/step")
     assert decision.action == "allow"
 
 
-def test_powershell_recursive_delete_inside_the_step_workdir_is_allowed():
-    decision = evaluate_tool("PowerShell", {"command": "Remove-Item -Recurse -Force .tmp"}, _policy(),
+@pytest.mark.parametrize("command", [
+    "Remove-Item -Recurse -Force .tmp",
+    r"Remove-Item -Recurse .tmp\a",
+])
+def test_single_powershell_recursive_delete_below_step_tmp_is_allowed(command):
+    decision = evaluate_tool("PowerShell", {"command": command}, _policy(),
                              allowed_roots=["C:/work/step"], workdir="C:/work/step")
     assert decision.action == "allow"
+
+
+@pytest.mark.parametrize("tool,command,workdir", [
+    ("Bash", "rm -rf inputs/upstream/subdir", "/work/step"),
+    ("Bash", "rm -rf outputs/tmp", "/work/step"),
+    ("Bash", "command cd .. && rm -rf sibling", "/work/step"),
+    ("Bash", "cd .tmp && rm -rf x", "/work/step"),
+    ("PowerShell", r"Microsoft.PowerShell.Management\Set-Location ..; Remove-Item -Recurse sibling",
+     "C:/work/step"),
+    ("Bash", "rm -rf .tmp; rm -rf x", "/work/step"),
+])
+def test_recursive_delete_requires_a_single_simple_command_below_step_tmp(tool, command, workdir):
+    decision = evaluate_tool(tool, {"command": command}, _policy(),
+                             allowed_roots=[workdir], workdir=workdir)
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
+
+
+def test_recursive_delete_below_linked_step_tmp_asks(tmp_path):
+    target = tmp_path / "linked"
+    target.mkdir()
+    try:
+        (tmp_path / ".tmp").symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    decision = evaluate_tool("Bash", {"command": "rm -rf .tmp/cache"}, _policy(),
+                             allowed_roots=[str(tmp_path)], workdir=str(tmp_path))
+    assert decision.action == "ask"
+    assert decision.reason.startswith("재귀 삭제 확인 필요: `")
 
 
 @pytest.mark.parametrize("command", [

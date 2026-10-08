@@ -245,7 +245,7 @@ SCHEDULER_JOB_COMMANDS = (
 )
 
 
-BASH_RECURSIVE_DELETE_PATTERN = r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r"
+BASH_RECURSIVE_DELETE_PATTERN = r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*\b"
 
 
 def _default_bash_ask() -> list[str]:

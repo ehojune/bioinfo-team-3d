@@ -13,6 +13,7 @@ import posixpath
 import re
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
@@ -973,10 +974,6 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         yield from _named_write_targets(words, powershell)
 
 
-_PS_REMOVE_NAMES = frozenset({"remove-item", "rm", "ri", "del", "erase", "rd", "rmdir"})
-_PS_RECURSE_FLAGS = frozenset({"-r", "-re", "-rec", "-recu", "-recur", "-recurs", "-recurse", "-rf", "-fr"})
-
-
 def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool:
     """Whether a delete path is one literal filesystem path with a known base."""
     if not target or target.startswith("~") or _drive_relative(target):
@@ -998,89 +995,68 @@ def _plain_delete_path(target: str, powershell: bool, *, relative: bool) -> bool
 
 
 def _recursive_delete_inside_workdir(command: str, powershell: bool, workdir: str | None) -> bool:
-    """Allow a recursive delete only for literal filesystem-relative targets below the step workdir.
+    """Allow one simple recursive delete of literal targets below the step's disposable `.tmp`."""
+    from .adapters.owned import is_link
 
-    Variables, arrays, providers, globs, parent traversal and unparseable commands keep the PI gate. A literal
-    filesystem `cd`/`Set-Location` is followed only while it remains below the same workdir.
-    """
     if not workdir:
+        return False
+    if any(char in command for char in ";|&()<>`\r\n"):
         return False
     text = _blank_non_syntax(command, powershell)
     if text is None:
         return False
     root = _norm(workdir, expand_vars=False)
-    current = root
-    found = False
-    for segment in re.finditer(r"[^|;&\n]+", text):
-        raw_words = [command[word.start():word.end()]
-                     for word in _BARE_WORD.finditer(text, segment.start(), segment.end())]
-        if not raw_words:
-            continue
-        name = _literal_shell_word(raw_words[0], powershell)
-        if name is None:
-            return False
-        plain_name = name.casefold()
-        if plain_name in {"pushd", "popd", "push-location", "pop-location"}:
-            return False
-        if plain_name in {"cd", "set-location", "sl"}:
-            cd_words = raw_words[1:]
-            if powershell and cd_words and _word_value(cd_words[0]).casefold() in {"-path", "-literalpath", "-lp"}:
-                cd_words = cd_words[1:]
-            if not powershell and cd_words and _word_value(cd_words[0]) == "--":
-                cd_words = cd_words[1:]
-            if len(cd_words) != 1:
-                return False
-            target = _literal_shell_word(cd_words[0], powershell)
-            if target is None or not _plain_delete_path(target, powershell, relative=False):
-                return False
-            current = (_norm(target, expand_vars=False) if _absolute(target) else
-                       _norm(posixpath.join(current, target.replace("\\", "/")), expand_vars=False))
-            if not _inside(current, root):
-                return False
-            continue
-        is_remove = plain_name in _PS_REMOVE_NAMES if powershell else plain_name == "rm"
-        if not is_remove:
-            continue
-        if segment.start() and text[segment.start() - 1] == "|":
-            return False
-        literals = [_literal_shell_word(word, powershell) for word in raw_words[1:]]
-        if any(value is None for value in literals):
-            return False
-        values = [str(value) for value in literals]
-        recursive = (any(value.casefold() in _PS_RECURSE_FLAGS for value in values) if powershell else
-                     any(value.startswith("-") and "r" in value.casefold().lstrip("-")
-                         and "f" in value.casefold().lstrip("-") for value in values))
-        if not recursive:
-            continue
-        found = True
-        targets: list[str] = []
-        after_options = False
-        index = 0
-        while index < len(values):
-            value = values[index]
-            folded = value.casefold()
-            if value == "--" and not powershell:
-                after_options = True
-            elif not after_options and value.startswith("-"):
-                if powershell and folded in {"-path", "-literalpath", "-lp"}:
-                    index += 1
-                    if index >= len(values):
-                        return False
-                    targets.append(values[index])
-                elif powershell and folded not in _PS_RECURSE_FLAGS | {"-force", "-whatif", "-confirm"}:
+    tmp_root = _norm(posixpath.join(root, ".tmp"), expand_vars=False)
+    raw_words = [command[word.start():word.end()] for word in _BARE_WORD.finditer(text)]
+    literals = [_literal_shell_word(word, powershell) for word in raw_words]
+    if not literals or any(value is None for value in literals):
+        return False
+    values = [str(value) for value in literals]
+    if values[0].casefold() != ("remove-item" if powershell else "rm"):
+        return False
+
+    targets: list[str] = []
+    recursive = False
+    after_options = False
+    for value in values[1:]:
+        folded = value.casefold()
+        if not powershell and value == "--" and not after_options:
+            after_options = True
+        elif not after_options and value.startswith("-"):
+            if powershell:
+                if folded not in {"-recurse", "-force"}:
                     return False
+                recursive = recursive or folded == "-recurse"
             else:
-                targets.append(value)
-            index += 1
-        if not targets:
+                flags = folded.lstrip("-")
+                if not flags or not set(flags) <= {"r", "f"}:
+                    return False
+                recursive = recursive or "r" in flags
+        else:
+            if value.startswith("-"):
+                return False
+            targets.append(value)
+    if not recursive or not targets:
+        return False
+
+    physical_root = Path(workdir)
+    for target in targets:
+        if not _plain_delete_path(target, powershell, relative=True):
             return False
-        for target in targets:
-            if not _plain_delete_path(target, powershell, relative=True):
+        relative = posixpath.normpath(target.replace("\\", "/"))
+        resolved = _norm(posixpath.join(root, relative), expand_vars=False)
+        if resolved != tmp_root and not _inside(resolved, tmp_root):
+            return False
+        parts = [part for part in relative.split("/") if part not in {"", "."}]
+        parents = parts[:max(1, len(parts) - 1)]
+        for index in range(1, len(parents) + 1):
+            component = physical_root.joinpath(*parents[:index])
+            try:
+                if os.path.lexists(component) and is_link(component):
+                    return False
+            except OSError:
                 return False
-            resolved = _norm(posixpath.join(current, target.replace("\\", "/")), expand_vars=False)
-            if resolved == root or not _inside(resolved, root):
-                return False
-    return found
+    return True
 
 
 @dataclass

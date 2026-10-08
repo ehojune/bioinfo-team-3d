@@ -533,6 +533,19 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                              "Set runner.force_engine to a supported engine or remove it."))
     roster_engines = ({forced.value} if forced else {agent.engine.value for agent in agents}) - {"mock"}
     available: dict[str, bool] = {}
+    if "cli" in roster_engines:
+        cli_agents = [agent for agent in agents if (forced or agent.engine) == Engine.cli]
+        found = 0
+        for agent in cli_agents:
+            command = agent.cli.command[0] if agent.cli and agent.cli.command else ""
+            env = {**os.environ, **expand_env(agent.cli.env, os.environ)} if agent.cli else dict(os.environ)
+            executable = os.path.expandvars(os.path.expanduser(command))
+            if executable and shutil.which(executable, path=env.get("PATH")):
+                found += 1
+        available["cli"] = bool(cli_agents) and found == len(cli_agents)
+        rows.append(_row("engine", "cli", "ok" if available["cli"] else "warn",
+                         f"cli.command executable found for {found}/{len(cli_agents)} staff",
+                         "Set each engine: cli staff member's cli.command and cli.env.PATH."))
     codex_now: dict[str, str | list[str] | None] = {"version": None, "command": None}
     login_codes: dict[str, int | None] = {}  # the CLI's own status command, with engines.<name>.env applied
     for name in settings.engines.__class__.model_fields:
