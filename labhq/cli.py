@@ -212,6 +212,33 @@ def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, **kw)
         raise SystemExit(2) from None
 
 
+def _run_websocket(s: Settings, command) -> None:
+    """Run a command that holds the gateway's client websocket (`send` without --no-wait, `watch`). A gateway that is
+    down, refuses the token or stops midway gives one line and exit 2 like _api, not a traceback (docs audit 10-09)."""
+    from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
+
+    try:
+        asyncio.run(command)
+    except InvalidStatus as exc:
+        status = getattr(exc.response, "status_code", None)
+        print(f"gateway가 연결을 거부했습니다(HTTP {status}). gateway.client_token이 gateway 설정과 같은지 "
+              "확인하세요." if status in (401, 403) else f"gateway가 연결을 거부했습니다(HTTP {status}).",
+              file=sys.stderr)
+        raise SystemExit(2) from None
+    except ConnectionClosed as exc:
+        if exc.rcvd is not None and exc.rcvd.code == 1008:  # the gateway accepts, then closes a wrong token
+            print("gateway가 client_token을 거부했습니다. gateway.client_token이 gateway 설정과 같은지 확인하세요.",
+                  file=sys.stderr)
+        else:
+            print("gateway 연결이 끊겼습니다(gateway가 멈췄거나 다시 시작됨). 요청은 gateway에서 계속됩니다. "
+                  f"`{_config_command(s, 'watch')}`로 다시 보세요.", file=sys.stderr)
+        raise SystemExit(2) from None
+    except (OSError, InvalidHandshake):  # refused, unreachable, timed out, or not a labhq gateway
+        print(f"gateway에 연결할 수 없습니다: {_http_base(s)} — `{_config_command(s, 'up')}`을 실행하세요.",
+              file=sys.stderr)
+        raise SystemExit(2) from None
+
+
 def _default_client_token(token: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", token.casefold())
     return normalized in {"changeme", "changemeclient"}
@@ -1218,7 +1245,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.no_wait:
             print(_api(s, "POST", "/api/requests", json=body))
         else:
-            asyncio.run(_send_and_wait(s, body))
+            _run_websocket(s, _send_and_wait(s, body))
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
     elif args.cmd == "cancel":
@@ -1231,7 +1258,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "resume":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":
-        asyncio.run(_watch(s))
+        _run_websocket(s, _watch(s))
     elif args.cmd == "projects":
         for pr in _api(s, "GET", "/api/projects"):
             print(f"{pr['id']:<16} {pr.get('repo') or '-':<32} {pr['visibility']:<8} "

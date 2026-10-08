@@ -302,3 +302,32 @@ def test_repo_wrappers_use_the_local_venv():
     assert r'set "LABHQ_LAUNCHER=.\labhq"' in windows
     assert ".venv/bin/python" in posix and '"$@"' in posix
     assert "LABHQ_LAUNCHER=./labhq.sh" in posix
+
+
+@pytest.mark.parametrize("argv", [["watch"], ["send", "샘플 표를 정리해 줘"]])
+def test_a_closed_gateway_on_the_websocket_commands_is_one_line_and_exit_2(tmp_path, monkeypatch, capsys, argv):
+    """Docs audit 2026-10-09: `send` (waiting) and `watch` open the websocket first and printed a traceback."""
+    import websockets
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    config = _config(tmp_path)
+
+    def refused(*args, **kwargs):
+        raise ConnectionRefusedError("connection refused")
+
+    monkeypatch.setattr(websockets, "connect", refused)
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["-c", str(config), *argv])
+    assert stopped.value.code == 2
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1 and "gateway에 연결할 수 없습니다" in lines[0] and " up`" in lines[0]
+
+    def wrong_token(*args, **kwargs):  # the gateway accepts, then closes with 1008 "token"
+        raise ConnectionClosedError(Close(1008, "token"), None)
+
+    monkeypatch.setattr(websockets, "connect", wrong_token)
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["-c", str(config), *argv])
+    assert stopped.value.code == 2
+    assert "client_token을 거부" in capsys.readouterr().err
