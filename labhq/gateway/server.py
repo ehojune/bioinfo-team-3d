@@ -2386,6 +2386,39 @@ class Hub:
         self.track_request(rid, self._start_request(rid))
         return rid
 
+    def create_revised_request(self, rid: str, note: str) -> str:
+        """CP1 수정 요청: a new research request with the PI's note, the answers already given, the same references,
+        project, budget and CSO model. It plans again from the note and asks a new CP1; the old one ends (no step ran).
+        Idempotent: a restart between creating it and ending the old request does not create a second one."""
+        old = self.requests[rid]
+        if old.get("revised_to") in self.requests:
+            return old["revised_to"]
+        text = (str(old.get("text") or "").rstrip() +
+                f"\n\n[CP1 수정 요청 · {rid}] PI가 이전 계획에 남긴 고칠 점:\n{note.strip()}")
+        # Only the request's own pointers: the PI's defaults come back through default_references (#36).
+        references = [Reference(kind=ref["kind"], value=ref["value"], note=ref.get("note"))
+                      for ref in old.get("references") or [] if ref.get("source", "request") == "request"]
+        body = RequestIn(text=text, mode=old.get("mode", "orchestrate"), work_kind="research",
+                         scope_status=old.get("scope_status", "in_scope"),
+                         project_dirs=list(old.get("project_dirs") or []), references=references,
+                         default_references=bool(old.get("default_references", True)),
+                         budget_usd=old.get("budget_usd"), project_id=old.get("project_id"),
+                         cso_model=old.get("cso_model"), route=old.get("route", "auto"),
+                         meta={**(old.get("meta") or {}), "revised_from": rid})
+        new_rid = self.create_request(body)
+        new = self.requests[new_rid]
+        # Set before the new request's task first runs (it is only scheduled): answered questions are not asked again.
+        if old.get("clarifications"):
+            new["clarifications"] = copy.deepcopy(old["clarifications"])
+        new["revised_from"] = rid
+        original = self.store.get("reference_original", rid)
+        if original:  # a URL whose query was dropped stays usable, as in the old request
+            self.store.put("reference_original", new_rid, original)
+        self.save_request(new_rid)
+        old["revised_to"] = new_rid
+        self.save_request(rid)
+        return new_rid
+
     def start_followup(self, rid: str, text: str) -> dict:
         """Ask a finished request one more question in the same session and workspace (#36). Not a new request."""
         req = self.requests[rid]

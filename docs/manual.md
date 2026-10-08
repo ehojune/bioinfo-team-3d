@@ -602,6 +602,7 @@ CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고, 교정 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222).
 CP1 카드는 질문·가설·완료 조건 아래에 단계 목록(id·직원·지시 앞부분·산출)을 펼쳐 두고 protocol 전문은 접어 둡니다.
 요약은 한국어 한 줄과 집행 상한이고, plan hash는 detail(`target_sha256`)에만 있습니다.
+CP1 카드의 **수정 요청**(메모 필수)은 지금 요청을 단계 없이 `plan_revision_requested`로 끝내고, 같은 문장·참고 자료(요청의 것, PI 기본 참고는 `default_references`로)·확인 질문 답·예산·프로젝트에 `[CP1 수정 요청 · <이전 요청 id>]` 메모를 붙인 새 연구 요청을 엽니다(`revised_from`·`revised_to`로 서로 가리킴). 새 요청이 계획을 다시 세워 새 CP1을 띄웁니다. 메모 없는 수정 요청은 카드를 다시 묻고, 세 번 모두 비면 거절처럼 끝납니다. 이어 가기 차수의 CP1에는 수정 요청이 없습니다(`detail.revise_allowed: false`). CLI는 `labhq approve <id> --choice revise --note "고칠 점"`입니다.
 
 ### 단계와 CP2
 

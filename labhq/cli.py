@@ -976,7 +976,8 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("id")
     ap.add_argument("--deny", action="store_true")
     ap.add_argument("--choice", choices=["approve", "revise", "deny"],
-                    help="CP2 evidence review (research_evidence) decision; the note never decides it")
+                    help="CP2 evidence review (research_evidence) decision; the note never decides it. CP1 "
+                         "(research_plan) takes --choice revise --note: a new request plans again from the note")
     ap.add_argument("--note", default="")
     vp = sub.add_parser("verify", help="re-hash a request's outputs on this PC and recheck its report anchors (#58)")
     vp.add_argument("request_id")
@@ -1246,10 +1247,13 @@ def main(argv: list[str] | None = None) -> None:
             p.error(f"--deny contradicts --choice {args.choice}")
         pending = next((a for a in _api(s, "GET", "/api/approvals") if a.get("id") == args.id), None)
         evidence = bool(pending and pending.get("kind") == "research_evidence")
+        # CP1 수정 요청 opens a new request from the note; a continuation round's CP1 has none (revise_allowed).
+        plan_revise = bool(pending and pending.get("kind") == "research_plan"
+                           and (pending.get("detail") or {}).get("revise_allowed") is True)
         if evidence and args.choice is None and not args.deny:
             p.error("CP2 evidence review needs --choice approve, --choice revise or --choice deny")
-        if args.choice and pending and not evidence:
-            p.error(f"--choice is only for CP2 evidence review; {args.id} is {pending.get('kind')}")
+        if args.choice and pending and not (evidence or plan_revise):
+            p.error(f"--choice is only for CP2 evidence review and CP1 수정 요청; {args.id} is {pending.get('kind')}")
         # CP2 수정 요청 re-plans from its note through a new CP1 until the continuation cap is reached (R10).
         if (args.choice == "revise" and not args.note.strip()
                 and ((pending or {}).get("detail") or {}).get("revise_continues") is not False):
