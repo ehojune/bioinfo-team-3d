@@ -1061,7 +1061,9 @@ async def test_cp2_that_never_gets_a_readable_choice_ends_not_approved():
     ({"approved": False, "choice": "revise"}, "revision_requested"),
     ({"approved": False, "choice": "deny"}, "rejected"),
     ({"approved": False, "note": "stop"}, "rejected"),
-    ({"approved": False, "note": "timed out", "state": "timed_out"}, "rejected"),
+    # An unanswered card is not a rejection (PI 점검 R5); an expired one still is.
+    ({"approved": False, "note": "timed out", "state": "timed_out"}, "timed_out"),
+    ({"approved": False, "note": "gateway restarted", "state": "expired"}, "rejected"),
     ({"approved": True, "note": "Request revision"}, None),
     ({"approved": True, "choice": "revise"}, None),
     ({"approved": False, "choice": "approve"}, None),

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .costs import cost_detail, cost_text
 from .facilities.signatures import problem_text
-from .request_status import is_terminal_request
+from .request_status import is_terminal_request, request_status_label
 from .settings import Settings
 from .util import atomic_write_text, free_port, short, without_windows_app_aliases
 
@@ -131,6 +131,8 @@ def render(ev: dict, login_holds: set[str] | None = None) -> None:
             line += f"\n   {cost_detail(summary)}"
     elif t == "request.failed":
         line = f"💥 요청 실패: {d.get('error')}"
+    elif t == "request.status":
+        line = f"⏸ {ev.get('request_id')} 상태: {request_status_label(d.get('status'))}"
     elif t == "request.bundle":
         line = (f"📦 요청 묶음: {d['bundle_path']}" if d.get("bundle_path") else
                 f"⚠️ 요청 묶음: {d.get('bundle_warning', '만들지 못함')}")
@@ -1150,7 +1152,8 @@ def main(argv: list[str] | None = None) -> None:
         print(f"진행 중 요청: {len(running)}")
         for req in running:
             progress = req["step_progress"]
-            print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}")
+            held = "" if req.get("status") == "running" else f" [{request_status_label(req.get('status'))}]"
+            print(f"  {req['id']} {progress['done']}/{progress['total']} {req['text']}{held}")
             environment = req.get("step_environment") or {}
             for sid, state in progress["steps"].items():
                 problem = problem_text(environment.get(sid))

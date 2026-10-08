@@ -2100,6 +2100,8 @@ class Orchestrator:
             detail["assumptions"] = assumptions
         decision = await self.hub.request_approval(
             kind="clarify", request_id=rid, summary=questions_summary(details), detail=detail)
+        if decision.get("state") == "timed_out":  # no answer within the bound is not a deny (R5)
+            return "timed_out", None
         if not decision.get("approved") or not str(decision.get("note") or "").strip():
             return "unanswered", None
         entry = {"questions": list(req["pending_questions"]), "answer": str(decision["note"]).strip()}
@@ -2147,7 +2149,7 @@ class Orchestrator:
             self.hub.save_request(rid)
             if check["decision"] == "proceed":
                 return True
-        req["outcome"] = "out_of_scope_declined"
+        req["outcome"] = "out_of_scope_timed_out" if check["decision"] == "timed_out" else "out_of_scope_declined"
         why = "the approval timed out" if check["decision"] == "timed_out" else "the PI declined it"
         self._finish(rid, f"Out-of-scope request stopped: {why}; no step was dispatched.", {}, ok=False,
                      error="범위 밖 요청이라 실행하지 않았습니다")
@@ -2374,7 +2376,8 @@ class Orchestrator:
                         "options": ask.options},
             )
             note = str(decision.get("note") or "").strip()
-            answer = note or ("PI가 진행을 허용하지 않았습니다" if not decision.get("approved") else
+            answer = note or ("PI가 기한 안에 답하지 않았습니다(시간 초과)" if decision.get("state") == "timed_out" else
+                              "PI가 진행을 허용하지 않았습니다" if not decision.get("approved") else
                               "PI가 승인했지만 답변을 남기지 않았습니다")
             await self.hub.resolve_ask(ask, runner_id, ask_result(answer=answer, decision=decision,
                 **{"from": "pi", "routed_to": "pi", "hard_stop": stop}))
@@ -3056,7 +3059,9 @@ class Orchestrator:
             # include concurrently completed attempts in this decision
             spent, unknown, bound = self._budget_bound(rid, limit)
             approved = bool(dec.get("approved"))
+            timed_out = not approved and dec.get("state") == "timed_out"  # no answer is not a deny (R5)
             outcome = {"spent_usd": round(spent, 4), "limit_usd": limit, "approved": approved,
+                       **({"timed_out": True} if timed_out else {}),
                        **({"unknown_count": unknown} if unknown else {})}
             self.budget_outcomes.setdefault(rid, []).append(outcome)
             await self._emit(rid, "request.budget_exceeded", outcome)
@@ -3064,9 +3069,13 @@ class Orchestrator:
                 self.hub.requests[rid]["budget_usd"] = max(limit * 2, bound)
             else:
                 pending = f" + {unknown} unaccounted task(s)" if unknown else ""
-                reason = (f"budget exceeded (${spent:.2f}{pending} > ${limit:.2f}); approval denied" if over else
-                          f"budget unaccounted (${spent:.2f}{pending} may pass ${limit:.2f}); approval denied")
+                verdict = "no PI answer before the card timed out" if timed_out else "approval denied"
+                reason = (f"budget exceeded (${spent:.2f}{pending} > ${limit:.2f}); {verdict}" if over else
+                          f"budget unaccounted (${spent:.2f}{pending} may pass ${limit:.2f}); {verdict}")
                 self.budget_denials[rid] = reason
+                state = (getattr(self.hub, "requests", None) or {}).get(rid)
+                if timed_out and state is not None and not state.get("research_contract"):
+                    state["outcome"] = "budget_timed_out"
                 if block:
                     raise BudgetExceeded(reason)
 
@@ -3638,6 +3647,9 @@ class Orchestrator:
             audit += "\nResearch steps are not re-run yet; a changed plan needs a new CP1 approval."
         elif decided == "unreadable":
             audit += f"\nNo readable approve/revise/deny choice after {asks} card(s); the evidence is not approved."
+        elif decided == "timed_out":
+            audit += ("\nCP2 카드에 기한 안에 답이 없어 근거를 승인하지 않고 끝냈습니다(거절이 아님, "
+                      "policy.approvals.pi_decision_timeout_s).")
         if note:
             audit += f"\nPI note: {note}"
         report = self.format_results(steps, results, n) + "\n\n" + audit
@@ -4286,6 +4298,12 @@ class Orchestrator:
                     req["research_contract"]["approval"] = approval
                     self.hub.save_request(rid)
                 approved = bool(approval.get("approved"))
+                if not approved and approval.get("status") == "timed_out":
+                    req["outcome"] = "plan_timed_out"  # no answer is not a rejection (R5)
+                    self._finish(rid, "CP1 계획 카드에 기한 안에 답이 없어 연구 단계를 보내지 않고 끝냈습니다"
+                                 "(policy.approvals.pi_decision_timeout_s). 같은 요청을 다시 보내면 새 CP1이 뜹니다.",
+                                 {}, ok=False, error="CP1 계획 카드 시간 초과")
+                    return False
                 if not approved:
                     req["outcome"] = "plan_rejected"
                     self._finish(rid, "Research plan was not approved; no employee research step was dispatched.",
@@ -4512,10 +4530,15 @@ class Orchestrator:
                         status, entry = await self._plan_clarification(rid, candidate)
                         if status in {"done", "open"}:
                             return candidate, current
-                        if status in {"limit", "unanswered"}:
+                        if status in {"limit", "unanswered", "timed_out"}:
                             reason = ("확인 질문을 두 번 드렸지만 새 질문이 남아 요청을 멈췄습니다."
                                       if status == "limit" else
+                                      "PI 질문 카드에 기한 안에 답이 없어 요청을 멈췄습니다"
+                                      "(policy.approvals.pi_decision_timeout_s). 같은 요청을 다시 보내세요."
+                                      if status == "timed_out" else
                                       "PI 확인 답변을 받지 못해 요청을 멈췄습니다.")
+                            if status == "timed_out":
+                                req["outcome"] = "clarify_timed_out"
                             questions = "\n".join(f"- {question}" for question in req.get("pending_questions") or [])
                             req["clarification_failure"] = reason
                             self._finish(rid, reason + ("\n\n남은 질문:\n" + questions if questions else ""), {},
@@ -4918,11 +4941,14 @@ class Orchestrator:
                         status, entry = await self._plan_clarification(rid, candidate)
                         if status in {"done", "open"}:
                             break
-                        if status in {"limit", "unanswered"}:
+                        if status in {"limit", "unanswered", "timed_out"}:
                             req["clarification_failure"] = (
-                                "확인 질문을 두 번 드렸지만 새 질문이 남았습니다."
-                                if status == "limit" else "PI 확인 답변을 받지 못했습니다.")
+                                "확인 질문을 두 번 드렸지만 새 질문이 남았습니다." if status == "limit" else
+                                "PI 질문 카드에 기한 안에 답이 없었습니다." if status == "timed_out" else
+                                "PI 확인 답변을 받지 못했습니다.")
                             reason = ("re-plan still needs PI clarification" if status == "limit" else
+                                      "re-plan needs PI clarification; the card timed out unanswered"
+                                      if status == "timed_out" else
                                       "re-plan needs PI clarification that was denied or unanswered")
                             return record("failed", attempt, reason=reason)
                         text += answered_questions_prompt([entry])
@@ -5341,7 +5367,7 @@ class Orchestrator:
             known = float(req.get("cost_usd") or 0)
             metadata.append(f"비용: {f'${known:.2f} + ' if known else ''}비용 미집계")
         for outcome in self.budget_outcomes.get(rid, []):
-            decision = "approved" if outcome["approved"] else "denied"
+            decision = "approved" if outcome["approved"] else "timed out" if outcome.get("timed_out") else "denied"
             unknown = int(outcome.get("unknown_count") or 0)
             pending = f" + 미집계 {unknown}건" if unknown else ""
             relation = ">" if outcome["spent_usd"] > outcome["limit_usd"] else "/"

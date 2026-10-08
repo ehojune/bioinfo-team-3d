@@ -48,6 +48,12 @@ SNAPSHOT_RESULT_CHARS = 500
 MAX_PI_NOTES = 20
 # A kept task cancel outlives any runner turn (runner.task_timeout_s defaults to 6 h) before it is dropped.
 TASK_CANCEL_KEEP_S = 2 * 86400
+# Cards that decide the request itself (PI 점검 R5). They wait policy.approvals.pi_decision_timeout_s instead of the gate
+# timeout, the request waits as waiting_pi meanwhile, and an unanswered card ends as *_timed_out, never as a deny.
+PI_DECISION_KINDS = frozenset({"clarify", "question", "scope", "budget", "research_plan", "research_evidence",
+                               "research_continue", "resume"})
+# Statuses a hold sets and _sync_hold_status may lift again.
+HOLD_STATES = frozenset({"waiting_login", "waiting_quota", "waiting_facilities_fix", "waiting_pi"})
 
 
 def snapshot_followup(entry: dict) -> dict:
@@ -232,6 +238,7 @@ class Hub:
         self.quota_events: dict[str, asyncio.Event] = {}
         self.login_events: dict[str, asyncio.Event] = {}
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
+        self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
@@ -249,6 +256,8 @@ class Hub:
                     "request_id": entry["approval"].get("request_id"), "data": {"id": aid}},
                     settings.gateway.event_buffer))
         for rid, req in self.requests.items():
+            if req.pop("pi_waits", None) is not None:  # those cards were expired above with the old process
+                self.save_request(rid)
             if is_active_request(req.get("status")) and req.get("status") not in {
                     "waiting_quota", "waiting_login", "waiting_facilities_fix"}:
                 req["status"] = "interrupted"
@@ -351,8 +360,22 @@ class Hub:
         elif any(entry.get("status") in {"waiting", "approved", "running"}
                  for entry in (req.get("facilities_fixes") or {}).values()):
             req["status"] = "waiting_facilities_fix"
-        elif req.get("status") in {"waiting_login", "waiting_quota", "waiting_facilities_fix"}:
+        elif req.get("pi_waits"):
+            req["status"] = "waiting_pi"
+        elif req.get("status") in HOLD_STATES:
             req["status"] = "running"
+
+    async def _publish_hold_status(self, rid: str | None) -> None:
+        """Recompute a request's hold status, save it, and tell clients when it changed (R5)."""
+        req = self.requests.get(rid or "")
+        if req is None:
+            return
+        before = req.get("status")
+        self._sync_hold_status(req)
+        self.save_request(rid)
+        if req.get("status") != before:
+            await self.publish({"type": "request.status", "ts": time.time(), "request_id": rid,
+                                "data": {"status": req.get("status"), "previous": before}})
 
     def _remove_quota_wait(self, rid: str, step_id: str) -> dict | None:
         req = self.requests[rid]
@@ -908,10 +931,73 @@ class Hub:
         done = set(req.get("results") or {})
         steps = [s["id"] for s in req.get("plan", {}).get("steps", []) if s["id"] not in done]
         approval = ApprovalRequest(kind="resume", request_id=rid,
-                                   summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?")
+                                   summary=f"중단된 단계 {steps or ['요청']}를 다시 돌릴까요?",
+                                   timeout_s=self.s.policy.approvals.pi_decision_timeout_s)
         self.approvals[approval.id] = {"approval": approval.model_dump(mode="json"), "origin": None}
         self.save_approval(approval.id)
+        self._schedule_resume_expiry(approval.id)
         return approval
+
+    def _resume_deadline(self, approval: dict) -> float:
+        # Every resume card gets the PI-decision bound, also one saved before it had a timer (its timeout_s was 3600).
+        return float(approval.get("created_at") or 0) + self.s.policy.approvals.pi_decision_timeout_s
+
+    def _schedule_resume_expiry(self, aid: str) -> None:
+        """Nothing awaits a resume card, so a timer ends it after pi_decision_timeout_s (R5)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # a Hub built outside the event loop: the startup hook schedules it
+        if aid not in self.resume_timers:
+            self.resume_timers[aid] = loop.create_task(self._expire_resume_later(aid))
+
+    def _cancel_resume_timer(self, aid: str) -> None:
+        task = self.resume_timers.pop(aid, None)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    async def _expire_resume_later(self, aid: str) -> None:
+        try:
+            entry = self.approvals.get(aid)
+            if entry is not None:
+                await asyncio.sleep(max(0.0, self._resume_deadline(entry["approval"]) - time.time()))
+                await self.expire_resume_card(aid)
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self.resume_timers.get(aid) is asyncio.current_task():
+                self.resume_timers.pop(aid, None)
+
+    async def expire_resume_card(self, aid: str) -> bool:
+        """End a resume card unanswered past its bound: the request fails as resume_timed_out, not as declined."""
+        entry = self.approvals.get(aid)
+        if entry is None or entry["approval"].get("kind") != "resume":
+            return False
+        approval = entry["approval"]
+        if time.time() < self._resume_deadline(approval):
+            return False
+        self._cancel_resume_timer(aid)
+        days = round(self.s.policy.approvals.pi_decision_timeout_s / 86400, 1)
+        note = f"재개 카드에 {days:g}일 동안 답이 없어 요청을 끝냈습니다"
+        self.approvals.pop(aid, None)
+        self.store.delete("approval", aid)
+        answer = {"approved": False, "note": note, "state": "timed_out"}
+        self.store.put("approval_decision", aid, {"approval": approval, "origin": None, **answer,
+                                                  "decided_at": time.time()})
+        rid = approval.get("request_id")
+        await self.publish({"type": "approval.resolved", "ts": time.time(), "request_id": rid,
+                            "data": {"id": aid, **answer}})
+        req = self.requests.get(rid or "")
+        if req is not None and req.get("status") == "interrupted":
+            req.update(status="failed", outcome="resume_timed_out", error=note, finished_at=time.time())
+            self.schedule_terminal(rid, "request.failed", {"error": note})
+        return True
+
+    async def expire_stale_resume_cards(self) -> None:
+        """At startup: end resume cards past their bound and time the rest."""
+        for aid, entry in list(self.approvals.items()):
+            if entry["approval"].get("kind") == "resume" and not await self.expire_resume_card(aid):
+                self._schedule_resume_expiry(aid)
 
     def resume_agents(self, rid: str) -> set[str]:
         req = self.requests[rid]
@@ -1763,13 +1849,27 @@ class Hub:
     # ----- approvals -----
     async def request_approval(self, kind: str, summary: str, request_id: str | None = None,
                                detail: dict | None = None, timeout_s: int | None = None) -> dict:
+        """Open a gateway card and wait for the PI.
+
+        A PI-decision card (PI_DECISION_KINDS) waits ``pi_decision_timeout_s`` (default 7 days) and parks its request
+        as ``waiting_pi`` until it is answered (R5); the card stays answerable the whole time. Only when even that
+        bound passes does it return ``state: timed_out``, which callers record as ``*_timed_out``, never as a deny."""
+        rules = self.s.policy.approvals
+        pi_decision = kind in PI_DECISION_KINDS
         req = ApprovalRequest(kind=kind, summary=summary, request_id=request_id, detail=detail or {},
-                              timeout_s=timeout_s or self.s.policy.approvals.timeout_s)
+                              timeout_s=timeout_s or (rules.pi_decision_timeout_s if pi_decision else rules.timeout_s))
         fut = asyncio.get_running_loop().create_future()
         self.approvals[req.id] = {"approval": req.model_dump(mode="json"), "origin": None, "future": fut}
         self.save_approval(req.id)
+        state = self.requests.get(request_id or "")
+        parked = pi_decision and state is not None and is_active_request(state.get("status"))
+        if parked:
+            state.setdefault("pi_waits", {})[req.id] = {"kind": kind, "since": req.created_at,
+                                                        "deadline_at": req.created_at + req.timeout_s}
         await self.publish({"type": "approval.requested", "ts": time.time(), "request_id": request_id,
                             "data": req.model_dump(mode="json")})
+        if parked:
+            await self._publish_hold_status(request_id)
         try:
             decision = await asyncio.wait_for(fut, req.timeout_s)
             return {**decision, "approval_id": req.id, "decided_at": time.time()}
@@ -1784,6 +1884,11 @@ class Hub:
                                         "state": "timed_out"}})
             return {"approved": False, "note": "timed out", "state": "timed_out", "approval_id": req.id,
                     "decided_at": time.time()}
+        finally:
+            if parked and (state.get("pi_waits") or {}).pop(req.id, None) is not None:
+                if not state.get("pi_waits"):
+                    state.pop("pi_waits", None)
+                await self._publish_hold_status(request_id)
 
     async def request_facilities_fix(self, rid: str, step_id: str, proposal: dict) -> dict:
         """Request one durable repair approval per step and reuse its decision after a restart."""
@@ -1878,6 +1983,7 @@ class Hub:
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None) -> None:
         self._cancel_facilities_timeout(approval_id)
+        self._cancel_resume_timer(approval_id)
         entry = self.approvals.pop(approval_id, None)
         if entry is None:
             raise KeyError(approval_id)
@@ -2091,6 +2197,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     @app.on_event("startup")
     async def recover_terminal_deliveries() -> None:
         hub.recover_terminal_deliveries()
+        await hub.expire_stale_resume_cards()
         for rid, request in hub.requests.items():
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)

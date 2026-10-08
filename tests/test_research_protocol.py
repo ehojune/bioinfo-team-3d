@@ -773,6 +773,8 @@ def _cp2_result(hub, task):
      "evidence_revision_requested", "failed"),
     ({"approved": False, "choice": "deny", "note": "stop this line of work"}, "evidence_rejected", "failed"),
     ({"approved": False, "note": "stop this line of work"}, "evidence_rejected", "failed"),
+    # An unanswered card is not a rejection (PI 점검 R5).
+    ({"approved": False, "note": "timed out", "state": "timed_out"}, "evidence_timed_out", "failed"),
 ])
 async def test_cp2_records_approve_revision_or_rejection(cp2, outcome, status):
     settings = Settings()
@@ -828,3 +830,31 @@ async def test_cp2_off_keeps_the_cp1_only_research_pilot():
     assert [item["kind"] for item in hub.approvals] == ["research_plan"]
     assert hub.requests["r"]["outcome"] == "plan_approved"
     assert hub.requests["r"]["research_contract"]["execution_enabled"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("cp1", "outcome"), [
+    ({"approved": False, "note": "timed out", "state": "timed_out"}, "plan_timed_out"),
+    ({"approved": False, "note": "not this plan"}, "plan_rejected"),
+])
+async def test_an_unanswered_cp1_card_is_not_a_rejected_plan(cp1, outcome):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def reply(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**cp1, "approval_id": "a1", "decided_at": 1.0}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+    assert [task.meta["kind"] for task in hub.calls] == ["plan"]
+    assert hub.requests["r"]["outcome"] == outcome and hub.requests["r"]["status"] == "failed"
+    assert hub.requests["r"]["research_contract"]["approval"]["status"] == outcome.removeprefix("plan_")

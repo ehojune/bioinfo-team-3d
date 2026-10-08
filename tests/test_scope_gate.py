@@ -134,7 +134,8 @@ async def test_out_unanswered_follows_the_approval_timeout_and_runs_nothing():
     hub = Hub(decision={"approved": False, "note": "timed out", "state": "timed_out"})
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
-    assert req["outcome"] == "out_of_scope_declined" and req["scope_check"]["decision"] == "timed_out"
+    # An unanswered card is not a decline (PI 점검 R5).
+    assert req["outcome"] == "out_of_scope_timed_out" and req["scope_check"]["decision"] == "timed_out"
     assert kinds(hub, "step") == []
 
 
