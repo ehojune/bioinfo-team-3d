@@ -76,9 +76,10 @@ def executable_basename(token: str) -> str:
 class _ShellWord(str):
     """A dequoted shell word that remembers whether its source can expand."""
 
-    def __new__(cls, value: str, *, nonliteral: bool = False):
+    def __new__(cls, value: str, *, nonliteral: bool = False, fully_quoted: bool = False):
         word = super().__new__(cls, value)
         word.nonliteral = nonliteral
+        word.fully_quoted = fully_quoted
         return word
 
 
@@ -90,6 +91,8 @@ def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bo
     started = False
     escaped = False
     nonliteral = False
+    quoted_content = False
+    unquoted_content = False
     i = 0
     while i < len(segment):
         char = segment[i]
@@ -103,6 +106,10 @@ def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bo
                 escaped = True
                 break
             token += next_char
+            if quote:
+                quoted_content = True
+            else:
+                unquoted_content = True
             i += 2
             continue
         if char == '"' or char == "'" and not tool_name.startswith("Cmd"):
@@ -115,11 +122,18 @@ def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bo
                 token += char
         elif char.isspace() and not quote:
             if started:
-                words.append(_ShellWord(token, nonliteral=nonliteral))
+                words.append(_ShellWord(
+                    token, nonliteral=nonliteral,
+                    fully_quoted=quoted_content and not unquoted_content))
                 token, started, nonliteral = "", False, False
+                quoted_content, unquoted_content = False, False
         else:
             token += char
             started = True
+            if quote:
+                quoted_content = True
+            else:
+                unquoted_content = True
             if quote != "'" and (
                     char == "$" and not tool_name.startswith("Cmd") or
                     char == "`" and tool_name == "Bash" or
@@ -128,7 +142,9 @@ def _literal_words(segment: str, tool_name: str = "Bash") -> tuple[list[str], bo
                 nonliteral = True
         i += 1
     if started:
-        words.append(_ShellWord(token, nonliteral=nonliteral))
+        words.append(_ShellWord(
+            token, nonliteral=nonliteral,
+            fully_quoted=quoted_content and not unquoted_content))
     return words, not quote and not escaped
 
 
@@ -178,7 +194,8 @@ def _installation_syntax(segment: str, tool_name: str = "Bash") -> bool:
         return False  # printed text and filename arguments are data, not shell invocations
     for i, word in enumerate(words):
         executable = executable_basename(word.strip("({)}"))
-        if _dynamic_installer_syntax(word, words[i + 1:], executable_position=i == 0):
+        if _dynamic_installer_syntax(
+                word, words[i + 1:], executable_position=i == 0, tool_name=tool_name):
             return True
         if _python_install(executable, words[i + 1:]):
             return True
@@ -201,16 +218,31 @@ def _first_operand(args: list[str]) -> str:
     return next((arg for arg in args if not arg.startswith("-")), "")
 
 
-def _dynamic_installer_syntax(token: str, args: list[str], *, executable_position: bool = True) -> bool:
+def _quoted_scalar_expansion(word: str, tool_name: str) -> bool:
+    """Whether one quoted scalar supplies exactly one executable word."""
+    if not isinstance(word, _ShellWord) or not word.fully_quoted:
+        return False
+    if tool_name.startswith("Cmd"):
+        return False
+    return bool(re.fullmatch(r"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})", word))
+
+
+def _dynamic_installer_syntax(token: str, args: list[str], *, executable_position: bool = True,
+                              tool_name: str = "Bash") -> bool:
     """Fail closed when an installer selector is computed instead of literal."""
     executable = executable_basename(token)
     folded = [arg.casefold() for arg in args]
     install_like = any(arg in {"install", "create"} for arg in folded)
     if _nonliteral_word(token):
-        return (executable_position and not args or install_like or
-                bool(args and any(_nonliteral_word(arg) for arg in args)))
-    if executable == "eval":
-        return any(_nonliteral_word(arg) for arg in args)
+        return (
+            executable_position and not _quoted_scalar_expansion(token, tool_name) or
+            install_like or
+            bool(args and any(_nonliteral_word(arg) for arg in args))
+        )
+    if executable_position and tool_name == "PowerShell" and token.startswith("("):
+        return True
+    if executable in {"eval", "invoke-expression", "iex"}:
+        return any(_nonliteral_word(arg) or tool_name == "PowerShell" and arg.startswith("(") for arg in args)
     if _PIP.fullmatch(executable) or executable in {"conda", "mamba", "micromamba"}:
         return _nonliteral_word(_first_operand(args))
     if _PYTHON.fullmatch(executable):
@@ -769,7 +801,7 @@ def _shared_environment_install_denial(tool_name: str, command: str, *, environm
             continue
         token, args, understood = _shell_invocation(segment, tool_name)
         executable = executable_basename(token)
-        if _dynamic_installer_syntax(token, args):
+        if _dynamic_installer_syntax(token, args, tool_name=tool_name):
             return _ENVIRONMENT_DENIAL
         nested = _nested_shell_body(executable, args, understood, cwd)
         if nested is not None:

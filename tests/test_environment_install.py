@@ -445,11 +445,34 @@ def test_dynamic_install_forms_and_nested_workdirs_fail_closed(tmp_path, environ
 
 
 @pytest.mark.parametrize("environment_step", [True, False])
+@pytest.mark.parametrize("tool,command", [
+    ("Bash", "CMD='pip install'; $CMD scanpy"),
+    ("Bash", "CMD='python -m pip install'; $CMD scanpy"),
+    ("Bash", "CMD='pip install'; ${CMD} scanpy"),
+    ("Bash", "$(echo pip) install scanpy"),
+    ("Bash", "`echo pip` install scanpy"),
+    ("Bash", "${CMD[@]} scanpy"),
+    ("Bash", "$* scanpy"),
+    ("Bash", "$@ scanpy"),
+    ("PowerShell", "& $cmd scanpy"),
+    ("PowerShell", "& (Get-Command pip) install scanpy"),
+    ("PowerShell", "Invoke-Expression $cmd"),
+    ("PowerShell", "Invoke-Expression (Get-Content command.txt)"),
+    ("Bash", 'cmd /c "%PIPCMD% scanpy"'),
+    ("Bash", 'cmd /v:on /c "!PIPCMD! scanpy"'),
+])
+def test_unquoted_dynamic_executables_fail_closed_with_literal_arguments(
+        tmp_path, environment_step, tool, command):
+    assert denial(tmp_path, command, environment_step=environment_step, tool=tool)
+
+
+@pytest.mark.parametrize("environment_step", [True, False])
 @pytest.mark.parametrize("command", [
     '''bash -c 'python script.py "$INPUT"' ''',
     "Rscript -e 'print(df$column)'",
     '"$PY" -m pytest',
     '"$PY" script.py',
+    '"${PY}" script.py',
     'cmd /c "python run.py"',
 ])
 def test_dynamic_install_guards_keep_analysis_commands_allowed(tmp_path, environment_step, command):
