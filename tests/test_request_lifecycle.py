@@ -171,3 +171,139 @@ async def test_a_resume_card_past_the_bound_ends_its_request_as_resume_timed_out
     assert hub.requests["fresh"]["status"] == "interrupted" and fresh.id in hub.resume_timers
     await hub.resolve_approval(fresh.id, False)  # a deny is still a deny
     assert hub.requests["fresh"]["error"] == "resume declined" and fresh.id not in hub.resume_timers
+
+
+# ----- R13: request cancel -----
+
+class CaptureSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def send_text(self, body):
+        import json
+        self.sent.append(json.loads(body))
+
+
+ROSTER = [{"id": name, "name": name, "role": "test", "engine": "mock"} for name in ("cso", "worker")]
+
+
+def _team_settings(tmp_path):
+    s = _settings(tmp_path)
+    s.orchestrator.chief_of_staff_agent = None
+    s.orchestrator.precedent_agent = None
+    return s
+
+
+async def _until(predicate, timeout=3.0):
+    end = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < end, "timed out"
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_cancel_stops_a_planning_request_and_its_live_task(tmp_path):
+    from labhq.gateway.server import RequestIn
+
+    hub = Hub(_team_settings(tmp_path))
+    ws = CaptureSocket()
+    hub.register_runner("local", ws, ROSTER, "inc")
+    rid = hub.create_request(RequestIn(text="공개 데이터 QC 요약"))
+    await _until(lambda: any(m.get("type") == "task.dispatch" for m in ws.sent))
+    plan_task = next(m["task"]["id"] for m in ws.sent if m.get("type") == "task.dispatch")
+    orchestration = hub.request_tasks[rid]
+
+    out = await hub.cancel_request(rid)
+    assert out == {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": [plan_task]}
+    assert {"type": "task.cancel", "task_id": plan_task} in ws.sent
+    assert orchestration.done() and rid not in hub.request_tasks
+    req = hub.requests[rid]
+    assert req["status"] == "cancelled" and req["outcome"] == "cancelled" and "취소했습니다" in req["report"]
+    final = [e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]
+    assert len(final) == 1 and final[0]["data"]["status"] == "cancelled" and final[0]["data"]["ok"] is False
+
+    # The cancelled turn reports back; nothing else is sent, and a second cancel answers the same.
+    sent = len(ws.sent)
+    await hub.on_runner_message("local", {"type": "task.result", "task_id": plan_task, "request_id": rid,
+                                          "data": TaskResult(task_id=plan_task, agent_id="cso", ok=False,
+                                                             error="cancelled").model_dump(mode="json")})
+    await asyncio.sleep(0.05)
+    assert not [m for m in ws.sent[sent:] if m.get("type") == "task.dispatch"]
+    assert (await hub.cancel_request(rid)) == {"request_id": rid, "status": "cancelled", "already": True,
+                                               "cancelled_tasks": [plan_task]}
+    assert hub.requests[rid]["status"] == "cancelled"
+    assert len([e for e in hub.events if e["type"] == "request.completed" and e["request_id"] == rid]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_releases_a_quota_wait_and_closes_the_requests_cards(tmp_path):
+    hub = Hub(_settings(tmp_path))
+    _request(hub, "r", results={"s1": TaskResult(task_id="t1", agent_id="worker", ok=True, text="표 완성",
+                                                 outputs=["outputs/qc.tsv"], workdir_id="w1").model_dump(mode="json")},
+             plan={"steps": [{"id": "s1", "agent_id": "worker"}, {"id": "s2", "agent_id": "worker"}]})
+    _request(hub, "other")
+    now = time.time()
+    held = hub.track_request("r", hub.wait_quota("r", "s2", "codex", resume_at=now + 3600, deadline_at=now + 7200,
+                                                  reason="usage limit"))
+    card = asyncio.create_task(hub.request_approval("budget", "계속할까요?", "r"))
+    others = asyncio.create_task(hub.request_approval("clarify", "다른 요청", "other"))
+    await _until(lambda: hub.requests["r"].get("quota_waits") and len(hub.approvals) == 2)
+
+    await hub.cancel_request("r")
+    assert held.cancelled() and hub.quota_hold("codex") is None
+    decision = await asyncio.wait_for(card, 1)
+    assert decision["state"] == "expired" and not decision["approved"]
+    assert [entry["approval"]["request_id"] for entry in hub.approvals.values()] == ["other"]
+    req = hub.requests["r"]
+    assert req["status"] == "cancelled" and "quota_waits" not in req and "pi_waits" not in req
+    assert "s1 (worker): 완료" in req["report"] and "w1/outputs/qc.tsv" in req["report"]
+    assert "s2 (worker): 실행하지 않음" in req["report"] and "한도 대기 중이던 단계: s2" in req["report"]
+    assert hub.requests["other"]["status"] == "waiting_pi"
+    others.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_interrupted_request_gets_no_resume_card_after_a_restart(tmp_path):
+    s = _settings(tmp_path)
+    hub = Hub(s)
+    _request(hub, "r", status="interrupted")
+    resume = hub.new_resume_approval("r")
+    await hub.cancel_request("r")
+    assert resume.id not in hub.approvals and hub.requests["r"]["status"] == "cancelled"
+    assert hub.store.get("approval_decision", resume.id)["state"] == "expired"
+    restarted = Hub(s)
+    assert restarted.requests["r"]["status"] == "cancelled" and not restarted.approvals
+
+
+def test_cancel_endpoint_and_cli(tmp_path, monkeypatch, capsys):
+    from fastapi.testclient import TestClient
+
+    from labhq import cli
+    from labhq.gateway.server import create_app
+
+    s = _settings(tmp_path)
+    app = create_app(s)
+    hub = app.state.hub
+    for rid, status in (("r", "interrupted"), ("finished", "done")):
+        hub.requests[rid] = {"id": rid, "text": rid, "mode": "orchestrate", "status": status, "created_at": 1.0}
+    auth = {"Authorization": f"Bearer {s.gateway.client_token}"}
+    with TestClient(app) as client:
+        assert client.post("/api/requests/r/cancel").status_code == 401
+        first = client.post("/api/requests/r/cancel", headers=auth)
+        assert first.status_code == 200 and first.json()["status"] == "cancelled" and not first.json()["already"]
+        again = client.post("/api/requests/r/cancel", headers=auth)
+        assert again.status_code == 200 and again.json()["already"] is True
+        assert client.post("/api/requests/finished/cancel", headers=auth).status_code == 409
+        assert client.post("/api/requests/nope/cancel", headers=auth).status_code == 404
+
+    calls = []
+
+    def api(_s, method, path, **kw):
+        calls.append((method, path))
+        return {"request_id": "req_x", "status": "cancelled", "already": False, "cancelled_tasks": ["t1", "t2"]}
+
+    monkeypatch.setattr(cli, "_api", api)
+    monkeypatch.setattr(Settings, "load", classmethod(lambda cls, path=None: s))
+    cli.main(["cancel", "req_x"])
+    assert calls == [("POST", "/api/requests/req_x/cancel")]
+    assert "req_x: 취소했습니다 · 멈춘 작업 2개" in capsys.readouterr().out

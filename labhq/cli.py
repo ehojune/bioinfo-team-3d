@@ -956,6 +956,8 @@ def main(argv: list[str] | None = None) -> None:
     note = sub.add_parser("note", help="send a note to later stages of a running request")
     note.add_argument("request_id")
     note.add_argument("text")
+    cancel = sub.add_parser("cancel", help="cancel a request: stop its tasks, waits and cards, keep partial results")
+    cancel.add_argument("request_id")
     resume = sub.add_parser("resume", help="retry a step waiting for quota or engine login")
     resume.add_argument("request_id")
     resume.add_argument("step_id")
@@ -1211,6 +1213,19 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_send_and_wait(s, body))
     elif args.cmd == "note":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/notes", json={"text": args.text}))
+    elif args.cmd == "cancel":
+        import httpx
+        from urllib.parse import quote
+
+        try:
+            out = _api(s, "POST", f"/api/requests/{quote(args.request_id, safe='')}/cancel", json={})
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.json().get("detail") if exc.response.headers.get(
+                "content-type", "").startswith("application/json") else exc.response.text
+            raise SystemExit(f"취소하지 못했습니다: {detail or exc.response.status_code}")
+        print(f"{out['request_id']}: 이미 취소된 요청입니다" if out.get("already") else
+              f"{out['request_id']}: 취소했습니다 · 멈춘 작업 {len(out.get('cancelled_tasks') or [])}개 · "
+              "부분 결과는 보고서에 있습니다")
     elif args.cmd == "resume":
         print(_api(s, "POST", f"/api/requests/{args.request_id}/steps/{args.step_id}/resume-quota", json={}))
     elif args.cmd == "watch":

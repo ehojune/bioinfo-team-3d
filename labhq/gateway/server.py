@@ -29,7 +29,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..costs import outcome_unknown_item, request_cost_summary, task_cost_item
 from ..models import ApprovalRequest, AskRequest, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..adapters import enforces_read_only, get_adapter, read_only_refusal
-from ..orchestrator.cso import Orchestrator, environment_problem, holds_session, solo_phase
+from ..orchestrator.cso import Orchestrator, _terminal_reports, environment_problem, holds_session, solo_phase
 from ..research.packs import check_configured_packs
 from ..request_status import is_active_request, is_terminal_request
 from ..settings import Settings
@@ -239,6 +239,7 @@ class Hub:
         self.login_events: dict[str, asyncio.Event] = {}
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
+        self.request_tasks: dict[str, asyncio.Task] = {}  # each request's orchestration, for request cancel (R13)
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
         self.login_notices: set[str] = set()  # computed after stale login waits are dropped below
@@ -568,6 +569,17 @@ class Hub:
             self.save_request(rid)
             return
         await self.resume_when_ready(rid)
+
+    def track_request(self, rid: str, coro) -> asyncio.Task:
+        """Run a request's orchestration as one task, so request cancel can stop it (R13)."""
+        task = asyncio.get_running_loop().create_task(coro)
+        self.request_tasks[rid] = task
+
+        def finished(done: asyncio.Task) -> None:
+            if self.request_tasks.get(rid) is done:
+                self.request_tasks.pop(rid, None)
+        task.add_done_callback(finished)
+        return task
 
     def _cancel_facilities_timeout(self, approval_id: str) -> None:
         task = self.facilities_timeout_tasks.pop(approval_id, None)
@@ -1056,11 +1068,15 @@ class Hub:
 
     async def resume_when_ready(self, rid: str) -> None:
         req = self.requests[rid]
+        if req.get("status") == "cancelled":
+            return
         req["status"] = "waiting_for_runner"
         self.save_request(rid)
         deadline = asyncio.get_running_loop().time() + self.s.gateway.resume_wait_s
         previous: set[str] | None = None
         while True:
+            if req.get("status") == "cancelled":
+                return
             missing = {aid for aid in self.resume_agents(rid)
                        if self.agent_runner.get(aid) not in self.runners}
             if not missing:
@@ -1489,6 +1505,10 @@ class Hub:
                           error=f"session belongs to runner {pinned}; {task.agent_id!r} is now on runner {target}")
 
     async def dispatch(self, task: Task) -> TaskResult:
+        if (self.requests.get(task.request_id or "") or {}).get("status") == "cancelled":
+            # A step still unwinding after request cancel retries or moves on; nothing more is sent (R13).
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
+                              error="request cancelled")
         sid = task.meta.get("step_id") or task.meta.get("kind")
         if sid and task.request_id in self.recovery_steps:
             matches = self._recovery_matches(task)
@@ -1854,6 +1874,9 @@ class Hub:
         A PI-decision card (PI_DECISION_KINDS) waits ``pi_decision_timeout_s`` (default 7 days) and parks its request
         as ``waiting_pi`` until it is answered (R5); the card stays answerable the whole time. Only when even that
         bound passes does it return ``state: timed_out``, which callers record as ``*_timed_out``, never as a deny."""
+        if (self.requests.get(request_id or "") or {}).get("status") == "cancelled":
+            return {"approved": False, "note": "request cancelled", "state": "cancelled", "approval_id": None,
+                    "decided_at": time.time()}  # a cancelled request opens no card (R13)
         rules = self.s.policy.approvals
         pi_decision = kind in PI_DECISION_KINDS
         req = ApprovalRequest(kind=kind, summary=summary, request_id=request_id, detail=detail or {},
@@ -1893,6 +1916,8 @@ class Hub:
     async def request_facilities_fix(self, rid: str, step_id: str, proposal: dict) -> dict:
         """Request one durable repair approval per step and reuse its decision after a restart."""
         req_state = self.requests[rid]
+        if req_state.get("status") == "cancelled":
+            return {"approved": False, "status": "cancelled", "note": "request cancelled", "state": "cancelled"}
         fixes = req_state.setdefault("facilities_fixes", {})
         saved = fixes.get(step_id)
         if saved and saved.get("status") in {"declined", "timed_out", "failed", "applied", "succeeded"}:
@@ -2005,7 +2030,7 @@ class Hub:
                 self.requests[rid]["status"] = "waiting_for_runner"
                 self.save_request(rid)
                 self._restart_request_asks(rid)
-                asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
+                self.track_request(rid, self.resume_when_ready(rid))
         elif entry["approval"].get("kind") == "facilities_fix":
             rid = entry["approval"]["request_id"]
             step_id = (entry["approval"].get("detail") or {}).get("step_id")
@@ -2016,7 +2041,7 @@ class Hub:
                 self._sync_hold_status(self.requests[rid])
                 self.save_request(rid)
             if facilities_hold:
-                asyncio.get_running_loop().create_task(self.resume_when_ready(rid))
+                self.track_request(rid, self.resume_when_ready(rid))
         a = entry["approval"]
         await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
                             "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
@@ -2025,6 +2050,125 @@ class Hub:
             rid = a["request_id"]
             self.requests[rid].update(status="failed", error="resume declined", finished_at=time.time())
             self.schedule_terminal(rid, "request.failed", {"error": "resume declined"})
+
+    async def close_approval(self, aid: str, note: str, *, notify_runner: bool = True) -> bool:
+        """Close a pending card without a PI answer: whoever waits on it hears "no" with state ``expired``.
+
+        A runner-origin card's hook is told too unless that runner process is gone (``notify_runner=False``)."""
+        self._cancel_facilities_timeout(aid)
+        self._cancel_resume_timer(aid)
+        entry = self.approvals.pop(aid, None)
+        if entry is None:
+            return False
+        self.store.delete("approval", aid)
+        origin = entry.get("origin")
+        answer = {"approved": False, "note": note, "state": "expired"}
+        self.store.put("approval_decision", aid, {"approval": entry["approval"], "origin": origin, **answer,
+                                                  "decided_at": time.time()})
+        if origin and notify_runner:
+            self.store.put("decision", aid, {"origin": origin, "approved": False, "note": note})
+            if origin in self.runners:
+                try:
+                    await self.flush_decisions(origin)
+                except RunnerUnavailable:
+                    pass  # kept: sent again when that runner reconnects
+        elif origin:
+            self.store.delete("decision", aid)
+        future = entry.get("future")
+        if future is not None and not future.done():
+            future.set_result(answer)
+        await self.publish({"type": "approval.expired", "ts": time.time(),
+                            "request_id": entry["approval"].get("request_id"), "data": {"id": aid, "note": note}})
+        return True
+
+    async def cancel_request(self, rid: str) -> dict:
+        """Stop a request for good (R13) and report what it finished.
+
+        Its orchestration stops (no retry, re-plan or card after this), every live task gets a cancel on its
+        runner, its quota/login waits and pending cards are released, and it ends as ``cancelled`` with a short
+        report of the partial results. Calling it again returns the same answer."""
+        req = self.requests[rid]
+        status = req.get("status")
+        if status == "cancelled":
+            return {"request_id": rid, "status": "cancelled", "already": True,
+                    "cancelled_tasks": list(req.get("cancelled_tasks") or [])}
+        if is_terminal_request(status):
+            raise ValueError(f"이미 끝난 요청입니다({status})")
+        now = time.time()
+        req.update(status="cancelled", outcome="cancelled", error="PI가 요청을 취소했습니다", cancelled_at=now,
+                   finished_at=now)
+        req.pop("pi_waits", None)
+        req.pop("runner_waits", None)
+        quota = req.pop("quota_waits", None) or {}
+        login = req.pop("login_waits", None) or {}
+        for fix in (req.get("facilities_fixes") or {}).values():
+            if fix.get("status") in {"waiting", "approved"}:
+                fix["status"] = "cancelled"
+        self.save_request(rid)
+        orchestration = self.request_tasks.pop(rid, None)
+        if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
+            orchestration.cancel()
+        cancelled = []
+        for tid, entry in self.store.all("task").items():
+            if entry.get("request_id") != rid:
+                continue
+            waiter = self.jobs_waiters.pop(tid, None)  # a step parked on HPC jobs stops waiting for them
+            if waiter is not None and not waiter.done():
+                waiter.cancel()
+            if (not entry.get("completed") or entry.get("abandoned")) and await self.cancel_task(tid):
+                cancelled.append(tid)
+        for aid, entry in list(self.approvals.items()):
+            if entry["approval"].get("request_id") == rid:
+                await self.close_approval(aid, "요청 취소로 닫힘")
+        for engine in sorted({str(entry.get("engine") or "") for entry in login.values()}):
+            await self.login_recovered(engine, reason="request cancelled")
+        if orchestration is not None and orchestration is not asyncio.current_task() and not orchestration.done():
+            await asyncio.wait([orchestration], timeout=5)  # let it unwind before the terminal record
+        req["cancelled_tasks"] = cancelled
+        report, appendix = self._cancel_report(req, cancelled, quota)
+        req.update(report=report, report_appendix=appendix)
+        data = {"ok": False, "status": "cancelled", "error": req["error"], **_terminal_reports(rid, report, appendix),
+                "cost_usd": req.get("cost_usd", 0), "cost_known": req.get("cost_known", True),
+                "cost_summary": req.get("cost_summary"), "usage": req.get("usage", {}),
+                "usage_known": req.get("usage_known", True)}
+        self.schedule_terminal(rid, "request.completed", data)
+        return {"request_id": rid, "status": "cancelled", "already": False, "cancelled_tasks": cancelled}
+
+    @staticmethod
+    def _cancel_report(req: dict, cancelled: list[str], quota: dict) -> tuple[str, str]:
+        """The PI's short report of a cancelled request: what finished, what did not."""
+        when = time.strftime("%m-%d %H:%M", time.localtime(float(req.get("cancelled_at") or time.time())))
+        results = req.get("results") or {}
+        steps = (req.get("plan") or {}).get("steps") or []
+        rows = []
+        for step in steps or [{"id": sid} for sid in results]:
+            sid = step.get("id")
+            outcome = results.get(sid)
+            who = f" ({step['agent_id']})" if step.get("agent_id") else ""
+            if not isinstance(outcome, dict):
+                rows.append(f"- {sid}{who}: 실행하지 않음")
+            elif outcome.get("ok"):
+                outputs = ", ".join(f"{outcome.get('workdir_id') or 'workdir'}/{path}"
+                                    for path in (outcome.get("outputs") or [])[:5])
+                text = short(" ".join(str(outcome.get("text") or "").split()), 300)
+                rows.append(f"- {sid}{who}: 완료" + (f" — 산출 {outputs}" if outputs else "") +
+                            (f"\n  {text}" if text else ""))
+            else:
+                rows.append(f"- {sid}{who}: 실패 — {short(str(outcome.get('error') or '원인 미기록'), 200)}")
+        done = sum(1 for outcome in results.values() if isinstance(outcome, dict) and outcome.get("ok"))
+        total = len(steps) or len(results)
+        report = "\n".join([
+            "## 결론과 권고",
+            f"PI가 {when}에 이 요청을 취소했습니다. 진행 중이던 작업 {len(cancelled)}개에 중단을 보냈고 남은 단계는 "
+            "실행하지 않았습니다. 이어서 하려면 새 요청을 보내세요.", "",
+            "## 결과",
+            f"끝난 단계 {done}개 / 전체 {total}개" if total else "끝난 단계가 없습니다.",
+            *rows, "",
+            "## 한계",
+            "취소 시점까지의 부분 결과입니다. HPC에 이미 낸 작업은 labhq가 멈추지 않으니 클러스터에서 확인하세요."
+            + (f" 한도 대기 중이던 단계: {', '.join(sorted(quota))}." if quota else "")])
+        appendix = "취소한 task: " + (", ".join(cancelled) if cancelled else "없음")
+        return report, appendix
 
     # ----- requests -----
     def create_request(self, body: RequestIn) -> str:
@@ -2053,7 +2197,7 @@ class Hub:
         if originals:
             self.store.put("reference_original", rid, {"references": originals})
         self.save_request(rid)
-        asyncio.get_running_loop().create_task(self._start_request(rid))
+        self.track_request(rid, self._start_request(rid))
         return rid
 
     def start_followup(self, rid: str, text: str) -> dict:
@@ -2202,7 +2346,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             if is_terminal_request(request.get("status")):
                 hub._restart_request_asks(rid)
             elif request.get("status") in {"waiting_quota", "waiting_login", "waiting_facilities_fix"}:
-                asyncio.create_task(hub.resume_held_request(rid))
+                hub.track_request(rid, hub.resume_held_request(rid))
 
     @app.on_event("shutdown")
     async def warn_running_on_shutdown() -> None:
@@ -2382,6 +2526,15 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except KeyError:
             raise HTTPException(404, "no such pending approval")
         return {"ok": True}
+
+    @app.post("/api/requests/{rid}/cancel", dependencies=[Depends(auth)])
+    async def cancel_request(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        try:
+            return {"ok": True, **await hub.cancel_request(rid)}
+        except ValueError as error:  # already done or failed
+            raise HTTPException(409, str(error))
 
     @app.post("/api/tasks/{tid}/cancel", dependencies=[Depends(auth)])
     async def cancel(tid: str) -> dict:

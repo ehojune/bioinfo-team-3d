@@ -3382,7 +3382,12 @@ class Orchestrator:
                 for sid in todo:
                     results[sid] = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="unmet dependencies")
                 break
-            done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+            try:
+                done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+            except asyncio.CancelledError:
+                for step_task in running.values():  # request cancel: its steps stop with it (R13)
+                    step_task.cancel()
+                raise
             for sid, t in list(running.items()):
                 if t in done:
                     running.pop(sid)
@@ -5308,6 +5313,8 @@ class Orchestrator:
     def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
                 error: str | None = None) -> None:
         req = self.hub.requests[rid]
+        if req.get("status") == "cancelled":
+            return  # request cancel already wrote its report and terminal record (R13)
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
         report, report_appendix = _split_report_appendix(report)
         if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
