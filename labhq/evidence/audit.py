@@ -184,12 +184,54 @@ async def _live_source_reports(req: Mapping[str, Any], settings: Any,
 
     resolver = LiveSourceResolver(contact=settings.research.live_source_contact,
                                   request_timeout_s=settings.research.live_source_timeout_s)
+    scoped_artifacts = _live_observed_artifacts(req, observed_artifacts)
     parsed = [ResearchResult.model_validate(ledger) for ledger in research_ledgers(req).values()
               if isinstance(ledger, Mapping)]
     return list(await asyncio.gather(*(verify_sources(
-        result, resolver, observed_artifacts=observed_artifacts.get(result.step_id),
+        result, resolver, observed_artifacts=scoped_artifacts.get(result.step_id),
         timeout_s=settings.research.live_source_timeout_s,
         deadline_s=settings.research.live_source_deadline_s) for result in parsed)))
+
+
+def _live_observed_artifacts(req: Mapping[str, Any],
+                             observed_artifacts: Mapping[str, Mapping[str, str]]) -> dict[str, dict[str, str]]:
+    """Each step's own observed files plus successful ancestors, using the same reachability rule as CP2."""
+    plan = req.get("plan") if isinstance(req.get("plan"), Mapping) else {}
+    raw_steps = [step for step in plan.get("steps") or [] if isinstance(step, Mapping)]
+    dependencies = {
+        str(step["id"]): [str(dep) for dep in step.get("depends_on") or [] if isinstance(dep, str)]
+        for step in raw_steps if isinstance(step.get("id"), str)
+    }
+    ancestors: dict[str, set[str]] = {}
+    for step_id in dependencies:
+        pending = list(dependencies[step_id])
+        found: set[str] = set()
+        while pending:
+            ancestor = pending.pop()
+            if ancestor in found or ancestor not in dependencies:
+                continue
+            found.add(ancestor)
+            pending.extend(dependencies[ancestor])
+        ancestors[step_id] = found
+
+    results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
+    scoped: dict[str, dict[str, str]] = {}
+    for step_id in dependencies:
+        combined = dict(observed_artifacts.get(step_id) or {})
+        available = step_id in observed_artifacts
+        for ancestor in ancestors[step_id]:
+            result = results.get(ancestor)
+            if not isinstance(result, Mapping) or not result.get("ok"):
+                continue
+            workdir_id = result.get("workdir_id")
+            observed = observed_artifacts.get(ancestor)
+            if not isinstance(workdir_id, str) or not workdir_id or not observed:
+                continue
+            available = True
+            combined.update({f"{workdir_id}/{path}": digest for path, digest in observed.items()})
+        if available:
+            scoped[step_id] = combined
+    return scoped
 
 
 def _run_live_source_reports(req: Mapping[str, Any], settings: Any,

@@ -80,6 +80,8 @@ TRIAL_CAT_SCRIPT = (
     ("Bash", 'git commit -m "move a -> /elsewhere/b"'),
     ("Bash", TRIAL_CURL_SED),
     ("Bash", TRIAL_CAT_SCRIPT),
+    ("Bash", "cat > outputs/x.py <<'EOF'\nprint('ok')\nEOF"),
+    ("Bash", "sed -i s/a/b/ outputs/x.tsv"),
 ])
 def test_text_that_only_looks_like_a_redirect_is_not_a_write(tool, command):
     assert _decide(tool, command).action == "allow"
@@ -214,10 +216,18 @@ def test_redirects_the_blanking_must_not_hide(tool, command):
     ("sed -e 'w /tmp/a' -e 'W /tmp/b' f", "/tmp/a"),
     ("sed -e 'w /tmp/a' -e 'W /tmp/b' f", "/tmp/b"),
     ("sed -i s/a/b/ /etc/hosts", "/etc/hosts"),
+    ("sed -i /etc/hosts -e 's/a/b/'", "/etc/hosts"),
+    ("sed -e 's/a/b/' -i /etc/hosts", "/etc/hosts"),
+    ("sed -i -f rules.sed /etc/hosts", "/etc/hosts"),
+    ('sed -i "$script" /etc/hosts', "/etc/hosts"),
+    ("sed --in-place=.bak -f r.sed a /etc/hosts", "/etc/hosts"),
     ("curl -o /tmp/x URL", "/tmp/x"),
+    ("curl -o'/etc/x' URL", "/etc/x"),
     ("curl --output=/tmp/x URL", "/tmp/x"),
+    ("curl --output='/etc/x' URL", "/etc/x"),
     ("curl --output-dir /tmp -O URL", "/tmp"),
     ("wget -O /tmp/x URL", "/tmp/x"),
+    ('wget -O"/etc/x" URL', "/etc/x"),
     ("wget -P /tmp URL", "/tmp"),
 ])
 def test_commands_that_execute_text_or_name_outputs_keep_their_write_targets(command, target):
@@ -263,6 +273,7 @@ def test_known_sed_option_forms_still_treat_a_literal_script_as_data(command):
     "curl -K config 'URL > /tmp/x'",
     "curl --config=config 'URL > /tmp/x'",
     "curl --unknown='URL > /tmp/x'",
+    "curl -o \"$path\" 'URL > /tmp/x'",
     "wget --unknown='URL > /tmp/x'",
 ])
 def test_commands_with_executable_or_unresolved_configuration_keep_the_raw_fallback(command):

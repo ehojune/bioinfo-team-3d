@@ -74,12 +74,33 @@ def environment_snapshot(hub: "Hub") -> dict:
             "state_dir_name": Path(hub.s.gateway.state_dir).name}
 
 
-def build_record(hub: "Hub", rid: str) -> dict:
+def record_sources(hub: "Hub") -> dict[str, dict[str, list[dict]]]:
+    """Tasks, events and approval decisions grouped by request, read from the state DB once.
+
+    Rebuilding many records (recovery at gateway start) must not decode the whole task ledger once per request:
+    on the 10-08 trial state (40 requests, 18 MB of task rows) that held the start for 7 s.
+    """
+    grouped: dict[str, dict[str, list[dict]]] = {"tasks": {}, "events": {}, "decisions": {}}
+    for task in hub.store.all("task").values():
+        grouped["tasks"].setdefault(str(task.get("request_id")), []).append(task)
+    for event in hub.store.events_since(0):
+        grouped["events"].setdefault(str(event.get("request_id")), []).append(event)
+    for decision in hub.store.all("approval_decision").values():
+        grouped["decisions"].setdefault(str((decision.get("approval") or {}).get("request_id")), []).append(decision)
+    return grouped
+
+
+def build_record(hub: "Hub", rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
     req = hub.requests[rid]
-    tasks = [v for v in hub.store.all("task").values() if v.get("request_id") == rid]
-    events = [v for v in hub.store.events_since(0) if v.get("request_id") == rid]
-    decisions = [v for v in hub.store.all("approval_decision").values()
-                 if (v.get("approval") or {}).get("request_id") == rid]
+    if sources is None:
+        tasks = [v for v in hub.store.all("task").values() if v.get("request_id") == rid]
+        events = [v for v in hub.store.events_since(0) if v.get("request_id") == rid]
+        decisions = [v for v in hub.store.all("approval_decision").values()
+                     if (v.get("approval") or {}).get("request_id") == rid]
+    else:
+        tasks = list(sources["tasks"].get(rid, []))
+        events = list(sources["events"].get(rid, []))
+        decisions = list(sources["decisions"].get(rid, []))
     decisions += [{"approval": v["approval"], "approved": None, "note": None,
                    "state": "pending"} for v in hub.approvals.values()
                   if v["approval"].get("request_id") == rid]
@@ -254,13 +275,13 @@ class RoundRecorder:
         if not self.s.dev_log.repo:
             log.warning("dev_log.repo is unset; rounds are recorded locally only")
 
-    def write(self, rid: str) -> dict:
+    def write(self, rid: str, sources: dict[str, dict[str, list[dict]]] | None = None) -> dict:
         req = self.hub.requests[rid]
         if not req.get("environment"):
             # Requests from before snapshots existed: keep what their first record stored, else stamp once now.
             req["environment"] = self._stored_environment(rid) or environment_snapshot(self.hub)
             self.hub.save_request(rid)
-        record = build_record(self.hub, rid)
+        record = build_record(self.hub, rid, sources)
         for suffix, body in (("json", json.dumps(record, ensure_ascii=False, indent=2, default=str) + "\n"),
                              ("md", render_record(record))):
             target = self.directory / f"{rid}.{suffix}"
@@ -295,9 +316,11 @@ class RoundRecorder:
         nothing. publish() skips the API when the stored body digest already matches.
         """
         pending = set(self.hub.store.all("round_delivery"))
+        sources = None
         for rid, req in self.hub.requests.items():
             if req.get("status") in {"interrupted", "done", "failed", "cancelled"}:
-                self.write(rid)
+                sources = sources or record_sources(self.hub)
+                self.write(rid, sources)
                 pending.add(rid)
         for rid in pending:
             delivery = self.hub.store.get("round_delivery", rid) or {}

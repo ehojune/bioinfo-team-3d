@@ -1,0 +1,8 @@
+pr: 492
+rows:
+  - sha: "6dd606c"
+    at: "2026-10-08 08:24"
+    text: "labhq doctor가 연구 lane이 끝까지 도는지 알리고(enabled만 켜면 CP1에서 멈춤), research 오타 키는 시작 오류로. 문서는 세 키 형태로, pi-qa 옛 창구·상태를 바로잡음(PI 점검 R1 R25)."
+  - sha: "116a693"
+    at: "2026-10-08 08:27"
+    text: "doctor 연구 lane 행이 gateway가 시작을 거부할 pack 설정(오타·없는 판)을 fail로 알린다(#492 리뷰)."

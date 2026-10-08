@@ -139,17 +139,96 @@ async def test_legacy_questions_keep_the_old_record_and_still_get_a_free_text_ca
 
 
 @pytest.mark.asyncio
-async def test_replan_that_still_asks_records_question_text_not_objects():
+async def test_replan_that_repeats_the_answered_question_proceeds_without_a_second_card():
+    calls = 0
+
     async def dispatch(task, hub):
-        return ok(task, structured={"steps": [STEP], "clarifying_questions": [COHORT]})
+        nonlocal calls
+        if task.meta["kind"] == "plan":
+            calls += 1
+            repeated = {**COHORT, "question": "  which   COHORT ? "}
+            return ok(task, structured={"steps": [STEP], "recruit": [], "notes": "",
+                                        "clarifying_questions": [COHORT] if calls == 1 else [repeated]})
+        return ok(task, text="done")
 
     hub = Hub(dispatch, note="Q1. a) cases")
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
-    assert req["status"] == "failed"
-    assert req["pending_questions"] == ["Which cohort?"]
-    assert "- Which cohort?" not in req["report"]
-    assert "- Which cohort?" in req["report_appendix"] and "{'question'" not in req["report_appendix"]
+    assert req["status"] == "done"
+    assert req["pending_questions"] == [] and len(hub.approvals) == 1
+    replan = [task for task in hub.calls if task.meta["kind"] == "plan"][1].prompt
+    assert "PI가 이미 답한 질문 — 다시 묻지 말 것" in replan and "PI answer: Q1. a) cases" in replan
+
+
+@pytest.mark.asyncio
+async def test_replan_with_a_new_question_opens_a_second_card():
+    plans = [[COHORT], [GENOME], []]
+
+    async def dispatch(task, hub):
+        if task.meta["kind"] == "plan":
+            questions = plans.pop(0)
+            return ok(task, structured={"steps": [STEP], "recruit": [], "notes": "",
+                                        "clarifying_questions": questions})
+        return ok(task, text="done")
+
+    hub = Hub(dispatch, note="selected")
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done"
+    assert len(hub.approvals) == 2
+    assert hub.approvals[1]["detail"]["questions"] == [GENOME]
+
+
+@pytest.mark.asyncio
+async def test_two_clarify_card_cap_reports_the_remaining_question_in_korean():
+    third = {"question": "Which output format?", "options": ["TSV", "CSV"], "allow_free_text": True}
+    plans = [[COHORT], [GENOME], [third]]
+
+    async def dispatch(task, hub):
+        questions = plans.pop(0)
+        return ok(task, structured={"steps": [STEP], "recruit": [], "notes": "",
+                                    "clarifying_questions": questions})
+
+    hub = Hub(dispatch, note="selected")
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+
+    assert req["status"] == "failed" and len(hub.approvals) == 2
+    assert req["pending_questions"] == ["Which output format?"]
+    assert "확인 질문을 두 번" in req["report"] and "남은 질문:\n- Which output format?" in req["report"]
+    assert req["error"], "the server must give the web feed a non-empty failure reason"
+
+
+def test_same_question_id_is_filtered_even_if_the_wording_changes():
+    from labhq.intake import unanswered_questions
+
+    answered = [{"questions": ["Original wording?"],
+                 "question_details": [{"id": "scope", "question": "Original wording?", "options": [],
+                                        "allow_free_text": True}],
+                 "answer": "yes"}]
+    returned = [{"id": "scope", "question": "Completely different wording?", "options": [],
+                 "allow_free_text": True}]
+    assert unanswered_questions(returned, answered) == []
+
+
+@pytest.mark.asyncio
+async def test_research_plan_uses_the_same_repeat_filter():
+    plan_calls = 0
+
+    async def dispatch(task, hub):
+        nonlocal plan_calls
+        if task.meta["kind"] == "plan":
+            plan_calls += 1
+            return ok(task, structured=minimal_plan([COHORT]))
+        return ok(task, text="done")
+
+    hub = Hub(dispatch, note="cases")
+    hub.s.research.enabled = True
+    hub.requests["r"]["work_kind"] = "research"
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["outcome"] == "plan_approved"
+    assert len([card for card in hub.approvals if card["kind"] == "clarify"]) == 1
 
 
 def test_qa_text_for_structured_and_legacy_entries():

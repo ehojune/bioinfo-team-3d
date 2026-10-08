@@ -4,6 +4,46 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · clarify 재질문과 실패 보고 원인을 보강 (PI 점검 R6 R12)
+
+- 결론: 답한 질문은 정규화한 본문이나 stable id가 같으면 다시 묻지 않는다. 새 질문만 두 번째 카드로 보내며, 요청당 카드 2장을 넘으면 남은 질문을 한국어 보고서에 적고 멈춘다.
+- 바뀐 것: 일반·연구 계획과 실패 재계획이 같은 질문 필터를 쓴다. 단계 실패 보고서 첫머리는 단계·담당·가린 원인·PI 조치를 세 줄로 보여 주고, 서버가 웹 feed용 실패 이유도 보낸다.
+- 실행한 것: 관련 pytest 286 passed, 보존 확인 14 passed. Windows 전체 pytest 4752 passed·59 skipped. `scripts/check_public.sh` 통과.
+- 미해결: 없음.
+- 근거: `tests/test_intake_questions.py`, `tests/test_cso.py`, `tests/test_research_cp2.py`.
+
+## 2026-10-08 · 연구 lane이 끝까지 도는지 doctor가 알리고, research 오타 키를 오류로 (PI 점검 R1 R25)
+
+- 결론: PI 시운전 전 점검(R1)에서 PI 설정에 `research` 블록이 없어 v0.5 연구 lane이 돌지 않는 것을 찾았다. 문서는 `enabled: true` 한 줄로 켠다고 했지만, 그러면 CP1 승인 뒤 단계를 실행하지 않고 끝난다. `labhq doctor`에 `research lane` 행(꺼짐 / CP1에서 멈춤 warn / 끝까지 감)을 넣고, `research` 아래 오타 키는 시작할 때 오류로 한다. `docs/research_protocol.md`와 예시 설정은 `enabled`·`evidence_checkpoint`·`active_packs` 세 키 형태로 고쳤다. R25: `docs/pi-qa.md`의 옛 창구(#298 → #435), #402 상태(병합됨), Codex 직원 보호 설명을 매뉴얼과 맞추고, 폰 접속 보류를 적었다.
+- 바뀐 것: `labhq/doctor.py`(`_research_row`), `labhq/settings.py`(`ResearchSettings` extra forbid), `docs/research_protocol.md`, `config/labhq.example.yaml`과 패키지 사본, `docs/manual.md` doctor 절 한 줄, `docs/pi-qa.md`, `tests/test_doctor.py` 2건(4 case).
+- 실행한 것: 관련 시험 99 passed. 전체 pytest(Windows)는 그림자 hook 표시 시험 1건만 실패(doctor가 semantics를 읽은 줄) → 그 부분을 빼고 그 파일 포함 관련 시험 재실행 통과. 나머지 4742 passed·59 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: PI 설정에 실제로 켜는 일은 PI 결정 3(#435)을 따른다.
+- 근거: `tests/test_doctor.py::test_doctor_says_whether_the_research_lane_runs_end_to_end`, `::test_a_misspelled_research_key_is_an_error_not_a_silent_default`.
+
+## 2026-10-08 · #495 — 웹 사무실이 붙을 때 gateway가 11초 멈추던 문제
+
+- 결론: 웹 사무실이 `/ws/client`에 붙으면 `hub.snapshot()`이 요청마다 task 원장 전체를 두 번 JSON으로 풀었다(`request_summary`→`running_tasks`, `request_step_details`). trial state는 요청 40건, task 472행 18.5 MB라 연결 한 번에 80번을 푼다. 그동안 event loop가 11.4초 멈췄고 `/api/health`도 응답하지 않았다(07:47 trial에서 본 증상). CPU를 쓰는 멈춤이다. 재현에서 11.4초 동안 CPU를 12.9초 썼다. 다른 프로세스가 같은 sqlite를 읽는 것은 원인이 아니었다. 읽기 프로세스 2개를 붙여도 11.3초로 같았다. 이제 snapshot과 `/api/requests`는 원장을 한 번만 읽어 넘긴다. `running_tasks`는 진행 중 요청이 없으면 원장을 읽지 않는다. gateway 시작 때 라운드 기록 복구도 같은 모양이었다(요청마다 원장·이벤트·결정 전체, 시작이 7.2초 늦음). 이것도 한 번 읽어 나눠 쓴다.
+- 바뀐 것: `labhq/gateway/server.py`(`running_tasks(tasks)`, `request_summary(req, running)`, `request_step_details(..., ledger)`, `snapshot`, `/api/requests`는 고른 요청만 요약), `labhq/integrations/rounds.py`(`record_sources`, `build_record(..., sources)`, `recover`), 시험 `tests/test_snapshot_ledger_reads.py` 4건, `tests/web_issue87.cjs`의 정적 검사를 새 코드 모양에 맞춤.
+- 실행한 것: trial state 복사본에 gateway를 띄우고 event loop가 1초 넘게 늦으면 스택을 남기는 감시 thread를 붙였다. 브라우저 순서(GET /, `/ws/client`, `/api/approvals/history`, 0.5초 간격 `/api/health`)를 재현했다. 고치기 전에는 ws 첫 frame이 11.4초, health timeout(4초) 2회였다. 스택은 `ws_client > snapshot > request_step_details·running_tasks > store.all`이다. 고친 뒤에는 ws 첫 frame 0.24초(동시 2개 0.42초), health 2 ms이고 1초 넘는 멈춤이 없다. 같은 복사본에서 snapshot·요청 요약·라운드 기록이 고치기 전과 JSON으로 같다(snapshot 10.07초 → 0.12초). 새 시험 4건은 고치기 전 코드에서 원장을 61·30·1·29번 읽어 실패했고 고친 뒤 통과한다. 전체 pytest(Windows) 4742 passed·59 skipped(main ec50530으로 rebase 전 head, rebase 뒤 관련 시험 280 passed). `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 진행 중 요청이 있으면 `/api/health`는 호출마다 원장을 한 번 푼다(이 state에서 약 0.1초). `ws_client`는 snapshot을 보내는 동안 `event_lock`을 쥔다. 느린 client가 이벤트 발행을 늦출 수 있지만 loop를 막지는 않는다.
+- 근거: `tests/test_snapshot_ledger_reads.py`.
+
+## 2026-10-08 · #491 — sed·curl·wget 출력 경로 해석 보강 (#482)
+
+- 결론: sed 옵션 순서와 script 출처에 상관없이 `-i` 입력 파일을 쓰기 대상으로 잡고, curl·wget 출력 인수의 붙은 따옴표를 해석한다.
+- 바뀐 것: `labhq/policy.py`의 sed 2단계 인수 분류와 download literal 해석, `docs/manual.md` 승인 게이트 한 줄, `tests/test_shell_write_quotes.py` 회귀 시험.
+- 실행한 것: 관련 policy test 263 passed. Windows 전체 pytest 4747 passed·59 skipped. 첫 전체 실행의 무관한 임시파일 잠금 2건은 개별 재실행과 두 번째 전체 실행에서 통과. `scripts/check_public.sh` 통과.
+- 미해결: 없음.
+- 근거: `tests/test_shell_write_quotes.py::test_commands_that_execute_text_or_name_outputs_keep_their_write_targets`, `::test_text_that_only_looks_like_a_redirect_is_not_a_write`.
+
+## 2026-10-08 · #490 — labhq verify가 조상 산출물 hash를 다시 확인 (#484)
+
+- 결론: live 출처 검증을 켠 `labhq verify`가 각 단계의 재해시 결과에 계획상 모든 조상 단계의 산출물을 `<workdir_id>/<path>`로 더한다. 비조상 단계와 실패한 단계는 제외한다. 원격 runner나 크기 상한으로 재해시하지 못한 파일의 기존 사유와 exit 판정은 유지한다.
+- 바뀐 것: `labhq/evidence/audit.py`, `tests/test_live_source_verify.py`, `tests/test_labhq_verify.py`, `docs/manual.md`.
+- 실행한 것: 관련 pytest 36 passed·2 skipped, 전체 pytest(Windows) 4740 passed·59 skipped. `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음.
+- 근거: `tests/test_labhq_verify.py::test_live_verify_resolves_a_grandparent_artifact`, `::test_live_verify_does_not_resolve_an_unrelated_step_artifact`, `::test_upstream_artifact_mapping_stays_off_with_live_check_disabled`.
+
 # labhq v0.5: PI가 자기 공개 데이터로 로컬에서 연구하는 판
 
 **통과 기준:** 연구 lane 요청 2건이 CP2 승인 → 리뷰 → 보고서까지 완주하고, `labhq verify`가 exit 0.

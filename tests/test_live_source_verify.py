@@ -12,6 +12,7 @@ import pytest
 from labhq.evidence.audit import render_verify, verify_request
 from labhq.evidence.verify import (LiveSourceResolver, LookupFailed, SourceRecord, SourceUpdate,
                                    StaticResolver, verify_sources)
+from labhq.research.contract import ResearchResult
 from labhq.settings import Settings
 from tests.test_evidence_verify import build, by_claim, claim, link, row
 
@@ -189,6 +190,22 @@ def test_missing_primary_records_are_not_found_defects(scheme, value, database):
             ("GET", "api.crossref.org"), ("HEAD", "doi.org")]
     else:
         assert seen == [("GET", "eutils.ncbi.nlm.nih.gov", database)]
+
+
+def test_artifact_manifest_accepts_a_namespaced_upstream_path():
+    digest = "a" * 64
+    cited = row("e1", artifact="a1", kind="experimental")
+    cited["source"]["version"] = digest
+    raw = build([claim("c1")], [cited], [link("c1", "e1")]).model_dump(mode="json")
+    raw["artifact_refs"] = [{"artifact_id": "a1", "path": "work-up/outputs/table.tsv"}]
+    result = ResearchResult.model_validate(raw)
+
+    report = asyncio.run(verify_sources(
+        result, StaticResolver({}), observed_artifacts={"work-up/outputs/table.tsv": digest}))
+
+    resolution = report.evidence[0].resolution
+    assert report.ok is True and resolution.status == "found"
+    assert resolution.record is not None and resolution.record.version == digest
 
 
 @pytest.mark.parametrize("missing", ["result", "requested_row"])

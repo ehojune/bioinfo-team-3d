@@ -27,6 +27,7 @@ from .recruit.paper2agent import skill_installed
 from .runner.daemon import check_data_boundary, check_job_group
 from .runner import codex_sandbox
 from .runner.versions import _probe, _version
+from .research.packs import check_configured_packs
 from .settings import Settings
 from .tools.scheduler import COMMANDS as SCHEDULER_COMMANDS
 from .util import parent_claude_markers
@@ -58,6 +59,27 @@ def _safe_path(path: str | Path) -> str:
     if Path(raw).is_absolute():
         raw = "<external>/" + Path(raw).name
     return re.sub(re.escape(Path.home().name), "<user>", raw, flags=re.IGNORECASE)
+
+
+def _research_row(settings: Settings) -> dict:
+    """Whether the v0.5 research lane runs end to end; `enabled` alone freezes the plan at CP1 and stops there
+    (readiness R1, 2026-10-08)."""
+    research = settings.research
+    try:
+        check_configured_packs(settings)  # the gateway refuses to start on the same error (#492 review)
+    except (ValueError, OSError) as exc:
+        return _row("config", "research lane", "fail", f"pack 설정 오류: {exc}",
+                    "research.active_packs를 고치세요. gateway는 이 설정으로 시작하지 않습니다.")
+    if not research.enabled:
+        return _row("config", "research lane", "ok", "꺼짐: 요청은 일반 lane으로 갑니다",
+                    "켜려면 research.enabled·evidence_checkpoint를 true로 하고 active_packs를 넣은 뒤 다시 시작하세요"
+                    " (docs/research_protocol.md).")
+    if not research.evidence_checkpoint:
+        return _row("config", "research lane", "warn",
+                    "research.enabled만 켜짐: CP1 승인 뒤 단계를 실행하지 않고 끝납니다",
+                    "research.evidence_checkpoint: true를 함께 켜세요.")
+    packs = ", ".join(research.active_packs) or "없음"
+    return _row("config", "research lane", "ok", f"켜짐: CP1 → 단계 → CP2 → 리뷰 → 보고서, pack {packs}", "")
 
 
 def _row(group: str, name: str, status: str, detail: str, hint: str) -> dict:
@@ -438,6 +460,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
         rows.append(_row("config", "runner config holds client token", "warn",
                          "gateway.client_token is set in the runner's config",
                          "Give the runner a config without gateway.client_token; see docs/runner-account.md."))
+    rows.append(_research_row(settings))
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
