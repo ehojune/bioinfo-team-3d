@@ -885,6 +885,8 @@ async def test_unknown_cost_is_held_at_the_per_task_budget_and_blocks_the_next_t
     assert third.ok and len(hub.approvals) == 1  # 3 x $4 = $12 may pass the $10 cap
     approval = hub.approvals[0]
     assert "예산 판정 불가" in approval["summary"] and "미집계 3건" in approval["summary"]
+    # The card says what 승인 and 거절 do (trial 2026-10-08), with the cap 승인 sets.
+    assert approval["summary"].endswith("승인하면 상한을 $20.00로 올리고, 거절하면 새 작업을 보내지 않습니다.")
     assert approval["detail"] == {"spent_usd": 0, "limit_usd": 10, "requested_budget_usd": 20,
                                   "unknown_count": 3, "unknown_reserve_usd": 4.0}
     with pytest.raises(BudgetExceeded, match="unaccounted"):

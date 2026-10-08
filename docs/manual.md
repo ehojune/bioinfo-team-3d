@@ -544,7 +544,7 @@ Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edi
 
 ### 승인·예산
 
-`policy.approvals`, `policy.budget`. `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. 임계값 아래여도 스크립트에 스케줄러 지시(`#SBATCH`·`#$`·`#PBS`·`#BSUB`)가 있으면 승인받습니다. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 보고되지 않은 비용은 0으로 더하지 않습니다(#270). Codex처럼 token만 보고하면 판본 있는 가격표(`labhq/costs.py`: 출처·확인일·모델 ID)로 `추정`하되, 모델 ID가 정확히 일치하고 과금 token 항목이 모두 있을 때만 환산합니다. 나머지는 `미집계 N건`으로 따로 셉니다. 웹·CLI·보고서는 `확인 $a + 추정 $b + 미집계 N건`과 엔진별 소계를 보여 주며, 추정은 청구액이 아닙니다. 단가는 OpenAI API Standard·짧은 문맥(호출당 입력 272K 이하, Codex 기본값) 기준이라 staff `CODEX_HOME`에서 `model_context_window`를 키우면 추정은 하한입니다. 요청 상한은 미집계 task마다 `per_task_usd`(0이면 요청 상한 전체)를 쓴 것으로 보고 판정해 넘으면 예산 승인을 받으며, 보고서는 미집계가 남은 요청을 예산 내로 적지 않습니다. 가격표 확인일이 90일을 넘으면 경고합니다. 연구 계획의 `budget_usd`는 CP1 승인 때 요청 상한이 되지만 설정 상한(요청 예산, 없으면 `per_request_usd`)을 넘지는 못합니다([연구 lane](#연구-lane과-검증)).
+`policy.approvals`, `policy.budget`. `hpc_core_hours_threshold: 0`이면 모든 제출을 승인받음. 임계값 아래여도 스크립트에 스케줄러 지시(`#SBATCH`·`#$`·`#PBS`·`#BSUB`)가 있으면 승인받습니다. `per_task_usd`는 Claude의 `--max-budget-usd`에서만 강제됩니다. Codex·Gemini·Antigravity에는 `runner.task_timeout_s`로 실행 시간을 제한합니다. 보고되지 않은 비용은 0으로 더하지 않습니다(#270). Codex처럼 token만 보고하면 판본 있는 가격표(`labhq/costs.py`: 출처·확인일·모델 ID)로 `추정`하되, 모델 ID가 정확히 일치하고 과금 token 항목이 모두 있을 때만 환산합니다. 나머지는 `미집계 N건`으로 따로 셉니다. 웹·CLI·보고서는 `확인 $a + 추정 $b + 미집계 N건`과 엔진별 소계를 보여 주며, 추정은 청구액이 아닙니다. 단가는 OpenAI API Standard·짧은 문맥(호출당 입력 272K 이하, Codex 기본값) 기준이라 staff `CODEX_HOME`에서 `model_context_window`를 키우면 추정은 하한입니다. 요청 상한은 미집계 task마다 `per_task_usd`(0이면 요청 상한 전체)를 쓴 것으로 보고 판정해 넘으면 예산 승인을 받으며(카드 요약에 승인하면 올라갈 상한, 보통 지금 상한의 두 배가 적힙니다), 보고서는 미집계가 남은 요청을 예산 내로 적지 않습니다. 가격표 확인일이 90일을 넘으면 경고합니다. 연구 계획의 `budget_usd`는 CP1 승인 때 요청 상한이 되지만 설정 상한(요청 예산, 없으면 `per_request_usd`)을 넘지는 못합니다([연구 lane](#연구-lane과-검증)).
 
 **결정 카드의 기한**(PI 점검 R5). 요청 자체를 정하는 카드(확인 질문 `clarify`, 직원 질문 `question`, 범위 `scope`, 예산 `budget`, CP1 `research_plan`, CP2 `research_evidence`, 이어 가기 `research_continue`, 재개 `resume`)는 `policy.approvals.pi_decision_timeout_s`(기본 604800초, 7일) 동안 기다립니다. 그동안 요청 상태는 `waiting_pi`이고 카드는 언제든 답할 수 있습니다. 기한을 넘기면 요청은 `clarify_timed_out`·`budget_timed_out`·`plan_timed_out`·`evidence_timed_out`·`out_of_scope_timed_out`·`resume_timed_out`으로 끝나며 거절과 구분됩니다. `policy.approvals.timeout_s`(기본 3600초)는 도구 권한·HPC 제출·대용량 다운로드 같은 gate 카드에만 씁니다. gateway를 다시 시작하면 열린 결정 카드는 닫히고 요청은 재개 카드로 돌아옵니다. 재개 카드에는 요청 문장 앞부분, 접수 시각, 남은 단계가 적힙니다. 단계가 모두 끝난 뒤(CP2·리뷰·이어 가기 카드·보고서 차례) 멈춘 요청은 남은 단계가 "없음"으로 적히고, 승인하면 멈춘 자리의 결정 카드가 다시 뜹니다. 러너가 다시 시작되거나 직원이 다른 러너로 옮기면, 이전 러너 프로세스가 띄운 도구 권한 카드는 새 러너가 붙을 때 `expired`로 닫힙니다(PI 점검 R2). 답할 프로세스가 이미 없기 때문입니다.
 
@@ -616,7 +616,7 @@ CP2 카드는 claim마다 단계·상태·근거 종류·표시(거부된 근거
 `artifact_refs` 경로가 그 단계가 모은 산출이나 끝난 조상 단계(직접 상위가 아니어도 됨)의 산출(`<workdir_id>/<path>`)이 아니면 그 evidence는 거부되고, 카드와 receipt에 이유가 남습니다.
 단계가 끝날 때 원장이 계약을 통과해도 이런 인용이 있으면, 교정 횟수가 남은 동안 한 번 모은 산출 목록을 주고 인용을 고치게 합니다(#485).
 이 교정이 실패하거나 모으지 않은 파일만 새로 쓰거나 그대로 두면 단계는 교정 전 결과로 통과하고 CP2가 그 행을 거부합니다.
-보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음).
+보고하지 않은 산출 목록에서 `__pycache__` 아래 파일은 뺍니다(관찰 기록에는 남음). 직원 실행 환경에는 `PYTHONDONTWRITEBYTECODE=1`을 넣어 처음부터 만들지 않습니다(설정이나 runner 환경에 값이 있으면 그 값을 씁니다).
 단계가 결정이 필요해 멈추면(`blocking_decision`) 산출·원장 검사 전에 CSO가 먼저 답하고, hard-stop 질문만 PI에게 올립니다. 답을 받으면 단계를 다시 실행합니다.
 연구 요청은 일반 재계획·리뷰·합성에 들어가지 않습니다.
 단계의 결과 원장이 교정(`research.result_corrections`, 기본 2회) 뒤에도 계약을 어기면, 잘못된 행(링크·evidence·claim)만 거부하고 나머지로 진행합니다.
@@ -640,7 +640,7 @@ P1 지적이 있어 revise면 고정된 계획을 그대로 다시 돌리지 않
 재사용한 결과는 새 계획의 `plan_sha256`으로 다시 묶은 사본이라 CP2·보고서·`labhq verify`가 새 계획 하나로 검사하고, 원래 돈 차수·계획·task는 `continuation.reused_from`에 남습니다.
 CP1·CP2 카드에 재사용·재실행 단계와 이유가 보입니다.
 이전 차수의 계획·결과·CP2·리뷰는 `research_contract.rounds`에 남습니다.
-이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하며 리뷰 revise와 CP2 수정 요청을 합쳐 셉니다. 비용은 같은 요청 예산에 쌓입니다.
+이어 가기 횟수는 `research.revise_continuations`(기본 2, 0이면 묻지 않음)로 정하며 리뷰 revise와 CP2 수정 요청을 합쳐 셉니다. 비용은 같은 요청 예산에 쌓입니다. 새 계획이 질문·protocol을 바꾸면 재사용되는 단계가 없어 1차와 비슷한 비용이 다시 들고, 1차가 상한 가까이 썼으면 이어 가자마자 예산 카드가 뜹니다(시운전 10-08: 1차 $25.86, 상한 $30).
 중간에 gateway가 다시 떠도 답한 카드는 다시 묻지 않습니다.
 새 계획이 이전 계획과 바이트까지 같아도(같은 `plan_sha256`) 새 CP1·CP2·리뷰를 다시 받고, 이전 차수의 승인을 쓰지 않습니다.
 이어 가기가 단계 실행 전에 끝나면(새 CP1 거절·시간 초과, 계획 실패, 예산 카드 거절, 오류) 이전 차수의 계획·hash·CP1 승인·pack snapshot·CP2 receipt·리뷰·결과·요청 집행 상한을 되돌린 채 `research_review_revise`(CP2 수정 요청에서 왔으면 `evidence_revision_requested`)로 끝납니다.

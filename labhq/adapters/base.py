@@ -774,6 +774,9 @@ class AgentAdapter(ABC):
         if ctx.read_only:
             engine = read_only_engine_env(engine)[0]
         env = without_windows_app_aliases(merge_staff_env(dict(os.environ), engine, ctx.env))
+        # No __pycache__ in staff outputs: staff then asked the PI to rm -rf it (trial 2026-10-08). An explicit value wins.
+        if not any(key.casefold() == "pythondontwritebytecode" for key in env):
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
         # Staff never hold a GitHub credential: gh reads GH_TOKEN before GITHUB_TOKEN, so drop every name it uses (#301).
         drop = {self.settings.github.token_env.casefold(), *(name.casefold() for name in GITHUB_TOKEN_NAMES)}
         return {key: value for key, value in env.items() if key.casefold() not in drop}

@@ -253,6 +253,8 @@ export function decisionChoice(approval, act) {
 }
 
 const DETAIL_LABELS = {
+  budget: { spent_usd: '지금까지 쓴 비용', limit_usd: '지금 상한', requested_budget_usd: '승인하면 새 상한',
+    unknown_count: '비용 미집계 작업', unknown_reserve_usd: '미집계 작업 1건당 가정 비용' },
   research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash', unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
   research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
@@ -307,6 +309,8 @@ function renderDetail(container, kind, detail, approval = null) {
         summary: `원장 JSON 전체 (${value.length}자) · 단계 ${Object.keys(detail.results || {}).length}개`});
     } else if (kind === 'research_evidence' && key === 'artifact_sha256')
       detailEntry(list, labels[key], value, {raw: true, fold: true, summary: `산출 파일 hash (${Object.keys(detail.artifact_sha256 || {}).length}개)`});
+    else if (kind === 'budget' && key.endsWith('_usd') && Number.isFinite(Number(detail[key])))
+      detailEntry(list, labels[key] || key, `$${Number(detail[key]).toFixed(2)}`, {raw: true});  // not 25.860455119999997
     else detailEntry(list, labels[key] || key, value, {raw: true});
   }
 }

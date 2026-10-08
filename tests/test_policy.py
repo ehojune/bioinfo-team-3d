@@ -257,6 +257,17 @@ def test_null_device_redirects_are_not_writes(tool, command):
     assert evaluate_tool(tool, {"command": command}, _policy(), ["/work", "C:/work"]).action == "allow"
 
 
+@pytest.mark.parametrize("command", [
+    'curl -s -o /dev/null -w "%{http_code}" "https://example.org/x"',  # trial 2026-10-08 asked the PI for this
+    "echo x | tee /dev/null", "cp out.txt /dev/null",
+])
+def test_a_command_writing_to_a_null_device_is_not_a_write(command):
+    assert evaluate_tool("Bash", {"command": command}, _policy(), ["/work", "C:/work"]).action == "allow"
+    # Any other target outside the roots still asks.
+    other = command.replace("/dev/null", "/elsewhere/out.txt")
+    assert evaluate_tool("Bash", {"command": other}, _policy(), ["/work", "C:/work"]).action == "ask"
+
+
 def test_non_recursive_rm_is_allowed():
     assert evaluate_tool("PowerShell", {"command": "rm C:/work/tmp.txt"}, _policy()).action == "allow"
 

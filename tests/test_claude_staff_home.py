@@ -366,3 +366,13 @@ def test_doctor_says_nothing_when_the_pi_folder_is_not_closed_to_claude_staff(tm
                                          pi_claude=case != "no_pi_folder",
                                          engine="codex" if case == "codex_only" else "claude_code")
     assert rows == []
+
+
+def test_staff_python_writes_no_bytecode_cache_unless_the_lab_sets_it(tmp_path, monkeypatch):
+    """Trial 2026-10-08: a staff member asked the PI to rm -rf the __pycache__ its own scripts left in outputs."""
+    _home_, _staff_dir, ws, _mine, _other, settings = _staff(tmp_path, monkeypatch)
+    _cmd, ctx = _command(tmp_path, _found(settings, ws), settings)
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    assert ClaudeCodeAdapter(settings).staff_env(ctx)["PYTHONDONTWRITEBYTECODE"] == "1"
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "")
+    assert ClaudeCodeAdapter(settings).staff_env(ctx)["PYTHONDONTWRITEBYTECODE"] == ""
