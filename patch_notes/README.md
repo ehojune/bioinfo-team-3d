@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:49 | [`a63bc7b`](https://github.com/ehojune/bioinfo-team-3d/pull/508/commits/a63bc7b) | 이어 가기 카드가 리뷰 P1 지적을 JSON 원문 대신 단계·문제·고칠 점 목록으로 보인다(웹 연구 시운전에서 발견). |
 | 13:32 | [`20f4e3a`](https://github.com/ehojune/bioinfo-team-3d/pull/507/commits/20f4e3a) | roster를 단정하는 registry 시험의 engineer 모델 기대값을 gpt-5.6-sol로 맞췄다(#507 리뷰). |
 | 13:30 | [`07cfcec`](https://github.com/ehojune/bioinfo-team-3d/pull/507/commits/07cfcec) | engineer 직원 모델을 v0.5를 통과한 구성과 같은 gpt-5.6-sol로 바꿨다(PI 결정 5A). |
 | 13:28 | [`fea7039`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/fea7039) | 끝에 /가 붙은 .tmp 아래 링크 대상도 재귀 삭제 카드로 돌리고, doctor는 직원이 실제로 실행되는 경로로 CLI 준비를 판정한다(#501 리뷰). |

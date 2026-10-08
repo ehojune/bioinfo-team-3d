@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 2026-10-08 · 이어 가기 카드가 리뷰 P1 지적을 읽을 수 있게 보인다
+
+- 결론: 리뷰 revise 뒤 뜨는 이어 가기 카드(`research_continue`)가 P1 지적을 단계·문제·고칠 점 목록으로 펼쳐 보인다. 전에는 JSON 원문(시운전에서 3,492자)이 접힌 채로만 있었다.
+- 바뀐 것: `labhq/web/ui/decide.js` `renderReviewIssues`. 지적 목록이 맨 위에 펼쳐지고, 원문 JSON은 그 아래 접혀 남는다. 내부 이름 `gate`는 숨기고 `round`·`limit`·`plan_sha256`은 이어 가기 차수·상한·지난 계획 plan hash로 보인다. `docs/manual.md` 리뷰·이어 가기 절 한 줄.
+- 실행한 것: 새 node test 1건이 main 코드에서 실패하고 이 branch에서 통과(`tests/web_decision_detail.cjs`). web node test 전체, `tests/test_web.py`, `scripts/check_public.sh`, `scripts/patch_notes.py check`.
+- 미해결: 없음. 카드 안 "승인하면 CSO가 새 계획을 쓰고 새 CP1을 받습니다" 문구는 그대로다.
+- 근거: 웹 연구 시운전 trial `req_d77e574f85`(GSE10072) 리뷰 revise 카드, `tests/web_decision_detail.cjs`.
+
 ## 2026-10-08 · engineer 직원 모델을 gpt-5.6-sol로 (PI 결정 5A)
 
 - 결론: 저장소 roster의 engineer는 `gpt-6.1-sol`이었고, v0.5를 통과한 trial roster는 `gpt-5.6-sol`이었다. 6.1-sol은 v0.5 시운전 3차의 환경 단계에서 마무리 응답 중 두 번 멈췄다(#473이 그 뒤 자동 재시도를 넣음). PI 결정 5A(#435)로 저장소도 통과한 구성에 맞춘다. 두 roster의 차이는 이 한 줄뿐이었다.
