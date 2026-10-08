@@ -431,6 +431,9 @@ Contract rules:
 - Freeze analysis unit, selection/exclusion, comparators, metrics, validation, resources, stop/approval
   conditions, data boundaries, and statistics applicability before execution. Every not_applicable item needs a reason.
   Applicable statistics needs estimand, analysis_unit, and primary_outcomes.
+- `budget_usd` (optional number): the most this whole request may spend in USD, earlier rounds included. On CP1
+  approval it becomes the enforced cap (never above the lab's per-request cap); spending past it waits for a PI
+  budget card. Write the same figure in protocol.resource_limits. Leave it out when you cannot estimate it.
 - Each step declares phase, claim_ids, input_refs, outputs, checks, evidence_slots, and depends_on. Every output is
   inside that step's own workspace outputs/ folder, written as outputs/<name>, and the instruction uses that exact
   path. Never declare an absolute path, home path, `..`, or a file at the workspace root.{output_types_rule}{topics_rule}
@@ -846,6 +849,69 @@ def with_pi_notes(task: Task, request: dict) -> Task:
                       "was not, give the reason and what new request is needed. If a note changed a choice listed "
                       "under 가정, list the choice that was actually used there and name the note that changed it."])
     return task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(lines)})
+
+
+# The longest card note one prompt carries (PI 점검 R11). The CP receipts and the audit appendix keep the whole note.
+APPROVAL_NOTE_CHARS = 2000
+
+
+def approval_note(note: Any) -> str:
+    """A note the PI typed on an approved research card, bounded for a prompt."""
+    text = str(note or "").strip()
+    if len(text) <= APPROVAL_NOTE_CHARS:
+        return text
+    return (text[:APPROVAL_NOTE_CHARS].rstrip() +
+            f" …(메모가 길어 {APPROVAL_NOTE_CHARS}자에서 잘랐습니다. 전문은 승인 기록에 있습니다.)")
+
+
+def approval_note_block(gate: str, notes: list[tuple[str, str]], rule: str) -> str:
+    """A prompt section with the PI's notes from approved ``gate`` cards ((label, note) pairs); "" without a note.
+
+    A note is read by the people who act next, never as a decision: the gate's structured choice decided."""
+    lines = [f"- {label}: {text}" if label else text
+             for label, text in ((label, approval_note(note)) for label, note in notes) if text]
+    if not lines:
+        return ""
+    return f"\n\n## PI 승인 메모 ({gate})\n" + "\n".join(lines) + "\n" + rule
+
+
+CP1_NOTE_RULE = ("The PI wrote this note when approving the frozen plan at CP1. Follow it where the frozen plan "
+                 "allows. It does not change the frozen plan: if it asks for something the plan does not allow, do "
+                 "the plan's work and name the conflict in `failures`.")
+CP2_REVIEW_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Check each point it raises against the "
+                        "ledgers and files and file an issue where one holds. It does not change the CP2 decision or "
+                        "the frozen plan.")
+CP2_REPORT_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Cover every point it asks of the report; "
+                        "a point the evidence cannot support goes under \"한계\" with the reason. It never makes an "
+                        "uncitable claim citable and does not change the frozen plan.")
+CONTINUE_NOTE_RULE = ("The PI wrote these on the previous round's cards. Use them in the new plan where they fit; the "
+                      "PI approves the new plan at its own CP1.")
+
+
+def _budget_line(budget: dict[str, Any]) -> str:
+    """The CP1 card's one line on the cap its approval enforces (PI 점검 R17)."""
+    origin = {"request": "요청 예산", "policy": "정책 per_request_usd"}
+    cap, planned = float(budget.get("cap_usd") or 0), budget.get("plan_budget_usd")
+    if not cap:
+        return "집행 상한 없음(정책 per_request_usd 0)."
+    if planned is None:
+        return f"집행 상한 ${cap:.2f}({origin.get(budget.get('source'), '요청 예산')}, 계획에 budget_usd 없음)."
+    if budget.get("source") == "plan":
+        return f"집행 상한 ${cap:.2f}(계획 budget_usd). 넘으면 예산 카드가 뜹니다."
+    return (f"집행 상한 ${cap:.2f}(계획 budget_usd ${float(planned):.2f}가 "
+            f"{origin.get(budget.get('source'), '요청 예산')}보다 커서 줄임).")
+
+
+def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
+    """The notes of every approved CP2 of this request, earlier rounds first: the PI approved each for its report."""
+    receipts = [(f"round {archived.get('round')}", archived.get("cp2"))
+                for archived in contract.get("rounds") or [] if isinstance(archived, dict)]
+    receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
+    notes = [(label, str(receipt.get("note") or "")) for label, receipt in receipts
+             if isinstance(receipt, dict) and receipt.get("decision") == "approved" and receipt.get("note")]
+    if len(notes) == 1 and not notes[0][0]:  # this round's note alone needs no round label
+        return notes
+    return [(label or f"round {contract.get('round') or 1}", note) for label, note in notes]
 
 
 _HEADING = re.compile(r"^#{1,6} \S", re.MULTILINE)
@@ -3099,6 +3165,45 @@ class Orchestrator:
                 if block:
                     raise BudgetExceeded(reason)
 
+    def _research_budget(self, req: dict, plan: dict) -> tuple[dict[str, Any], str]:
+        """The spending cap a CP1 approval of ``plan`` enforces (PI 점검 R17), and where its configured cap came from.
+
+        The configured cap is the request's own budget, else policy per_request_usd. It is fixed when a plan budget is
+        first applied (``research_contract.budget_cap``), so a later round's plan is held to it and not to an earlier
+        round's plan budget. A plan budget above it is cut to it. A plan without ``budget_usd`` keeps the request's
+        current cap; the card shows that cap either way."""
+        policy = float(self.hub.s.policy.budget.per_request_usd or 0)
+        own = float(req.get("budget_usd") or 0)
+        fixed = (req.get("research_contract") or {}).get("budget_cap") or {}
+        if fixed:
+            configured, source = float(fixed.get("configured_cap_usd") or 0), str(fixed.get("source") or "request")
+        else:
+            configured, source = (own, "request") if own else (policy, "policy")
+        planned = plan.get("budget_usd")
+        if not planned:
+            return {"cap_usd": own or policy, "source": "request" if own else "policy",
+                    "configured_cap_usd": configured}, source
+        planned = float(planned)
+        if configured and configured < planned:
+            return {"plan_budget_usd": planned, "cap_usd": configured, "source": source,
+                    "configured_cap_usd": configured}, source
+        return {"plan_budget_usd": planned, "cap_usd": planned, "source": "plan",
+                "configured_cap_usd": configured}, source
+
+    def _spending_cap_line(self, rid: str) -> str:
+        """The cap ``_check_budget`` enforces now, for research step and review prompts (#499): staff otherwise read
+        only the free-text protocol.resource_limits, which may name another amount. "" without a cap."""
+        req = self.hub.requests.get(rid) or {}
+        cap = float(req.get("budget_usd") or self.hub.s.policy.budget.per_request_usd or 0)
+        if not cap:
+            return ""
+        approved = (((req.get("research_contract") or {}).get("approval") or {}).get("budget") or {}).get("cap_usd")
+        origin = ("the plan's budget_usd approved at CP1" if approved == cap else
+                  f"CP1 approved ${float(approved):.2f}; the PI raised it on a budget card" if approved else
+                  "the lab's request cap; the plan states no budget_usd")
+        return (f"\n\nEnforced spending cap for this request: ${cap:.2f} ({origin}). It is the cap labhq enforces, "
+                "whatever amount protocol.resource_limits states; spending past it waits for a PI budget card.")
+
     def _unknown_reserve(self, limit: float) -> float:
         """What an unaccounted task is assumed to have spent for the cap (#270): the per-task budget, else the cap."""
         per_task = self.hub.s.policy.budget.per_task_usd
@@ -3192,6 +3297,10 @@ class Orchestrator:
                            "written. If the data force a different rule, use the closest workable one, record it in "
                            "method_changes (field, planned, actual, reason, affects_conclusion), and never describe "
                            "the result as following the pre-specified rule.")
+                cp1 = contract.get("approval") or {}
+                if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
+                    prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
+                prompt += self._spending_cap_line(rid)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             if declared:
                 prompt += STEP_OUTPUTS_RULE.format(paths=", ".join(f"./{rel}" for rel in declared))
@@ -3673,6 +3782,11 @@ class Orchestrator:
                       "policy.approvals.pi_decision_timeout_s).")
         if note:
             audit += f"\nPI note: {note}"
+        # An earlier round's CP2 note still reaches this round's review and report, so the record keeps it whole (#499).
+        for archived in contract.get("rounds") or []:
+            receipt = (archived.get("cp2") or {}) if isinstance(archived, dict) else {}
+            if receipt.get("decision") == "approved" and receipt.get("note"):
+                audit += f"\nPI note (round {archived.get('round')} CP2): {receipt['note']}"
         report = self.format_results(steps, results, n) + "\n\n" + audit
         reviewer = self.cfg.reviewer_agent
         if decided == "approved" and reviewer and reviewer in self.hub.agents:
@@ -3708,6 +3822,7 @@ class Orchestrator:
         reviewer = self.cfg.reviewer_agent
         lookups = failed_lookups(ledgers)
         lookup_section = [f"{FAILED_LOOKUP_TITLE}:\n" + "\n".join(failed_lookup_lines(lookups))] if lookups else []
+        cp2_notes = research_cp2_notes(contract)  # PI 점검 R11: the notes reach the reviewer and the report writer
 
         def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None) -> None:
             if failure is not None:
@@ -3737,6 +3852,7 @@ class Orchestrator:
             carried = contract.get("continuation") or {}
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [])
+            prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             reply: TaskResult | None = None
             for parse_attempt in (1, 2):
                 reply = await self.run_step(Task(
@@ -3786,7 +3902,8 @@ class Orchestrator:
                 gaps="\n".join(_research_gap_lines(ledgers, lookups)) or "(none)", verdict=review["verdict"],
                 issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
                 plan_report_context(req.get("plan"), topic_checklists.load(),
-                                    req.get("analysis_precedents")),
+                                    req.get("analysis_precedents")) +
+                approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE),
             meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
                   **({"workdir": workdir} if workdir else {})}))
         if not final.ok:
@@ -3861,8 +3978,10 @@ class Orchestrator:
                     "round": len(rounds) + 1})
                 contract["rounds"] = rounds
                 contract["round"] = round_no
+                # The note rides with the continuation: adopting the new plan drops continue_decision (R11).
                 contract["continuation"] = {"round": round_no, "from_plan_sha256": plan_hash, "p1_issues": issues,
-                                            "approval_id": decision.get("approval_id")}
+                                            "approval_id": decision.get("approval_id"),
+                                            **({"note": decided["note"]} if decided["note"] else {})}
             self.hub.save_request(rid)
         if decided.get("decision") != "approved":
             return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
@@ -4302,8 +4421,11 @@ class Orchestrator:
                         summary = (f"이어 가기 {carried.get('round')}차 계획(리뷰 P1 반영). 재사용: "
                                    f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
                                    f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + summary
+                    budget, configured_source = self._research_budget(req, plan)
+                    budget_line = _budget_line(budget)  # kept whole: the web shows the summary, not detail.budget
                     decision = await self.hub.request_approval(
-                        kind="research_plan", request_id=rid, summary=summary[:700],
+                        kind="research_plan", request_id=rid,
+                        summary=f"{summary[:699 - len(budget_line)]} {budget_line}",
                         detail={"gate": "research_plan", "target_sha256": plan_hash,
                                 "plan_canonical": canonical_plan_json(plan),
                                 "pack_applicability": plan.get("pack_applicability") or {},
@@ -4311,11 +4433,19 @@ class Orchestrator:
                                 "protocol_revision": plan["protocol"]["revision"],
                                 "packs": plan["protocol"]["packs"],
                                 "scope_status": plan["intake"]["scope_status"],
+                                "budget": budget,
                                 **({"continuation": {key: carried.get(key) for key in
                                                      ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")}}
                                    if reuse_pending else {})})
                     approval = freeze_plan(plan, decision)
                     approval.update(request_id=rid, protocol_revision=plan["protocol"]["revision"])
+                    if approval.get("approved") and "plan_budget_usd" in budget:
+                        # PI 점검 R17: the plan's budget becomes the enforced cap, in the save that records CP1, and
+                        # only here: a resume of an approved plan keeps a cap the PI raised on a budget card since.
+                        approval["budget"] = budget
+                        req["budget_usd"] = budget["cap_usd"]
+                        req["research_contract"].setdefault("budget_cap", {
+                            "configured_cap_usd": budget["configured_cap_usd"], "source": configured_source})
                     req["research_contract"]["approval"] = approval
                     self.hub.save_request(rid)
                 approved = bool(approval.get("approved"))
@@ -4331,6 +4461,18 @@ class Orchestrator:
                     self._finish(rid, "연구 계획을 승인하지 않아 단계를 실행하지 않았습니다. 계획을 바꾸려면 요청 문장을 "
                                  "고쳐 새로 보내세요." + (f"\nPI 메모: {note}" if note else ""), {}, ok=False,
                                  error="연구 계획(CP1) 거절")
+                    return False
+                # The cost so far is judged against the cap CP1 just set, before any end without dispatch: a plan_only
+                # or checkpoint-off request would otherwise finish over its approved budget without a card (#499).
+                await self._check_budget(rid, block=False)
+                if rid in self.budget_denials:
+                    req["research_contract"]["failure"] = {"steps": [], "plan_sha256": plan_hash, "stage": "cp1",
+                                                           "budget": self.budget_denials[rid]}
+                    req["outcome"] = "research_failed"
+                    self.hub.save_request(rid)
+                    self._finish(rid, "Research plan approved, but the cost so far passed its spending cap and the "
+                                 "budget card was not approved; no employee research step was dispatched.", {},
+                                 ok=False)
                     return False
                 if not execution_enabled:
                     req["outcome"] = "plan_approved"
@@ -4430,6 +4572,10 @@ class Orchestrator:
                 continuation_note = (research_continuation.plan_prompt(
                     rounds[-1]["plan"], rounds[-1]["plan_sha256"], carried.get("p1_issues") or [],
                     int(carried.get("round") or 2)) if continuation and research_lane and rounds else "")
+                if continuation_note:  # the previous round's CP2 note and the 이어 가기 note (PI 점검 R11)
+                    continuation_note += approval_note_block("이어 가기", [
+                        (f"CP2 (round {rounds[-1].get('round')})", (rounds[-1].get("cp2") or {}).get("note") or ""),
+                        ("이어 가기", carried.get("note") or "")], CONTINUE_NOTE_RULE)
                 precedent_job = None
                 precedent_agent = self.cfg.precedent_agent
                 if "analysis_precedents" not in req and precedent_agent:

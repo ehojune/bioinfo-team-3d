@@ -26,9 +26,11 @@ CANARY = "CANARY-research-91c2"
 # review requires every permitted path to write the same declared filename. #373 bench A now declares analysis
 # scripts and result-determining references under outputs/. #373 direction 2 adds the shared three-category question
 # rule and records research choices in protocol, so this fixed prompt hash changes again.
-RESEARCH_PLAN_SCHEMA_SHA = "de530d0fc5159c651f82b326df197635b4a114a043ebdcf3b46d9726906c06a9"
+# PI 점검 R17 adds the optional numeric `budget_usd` to the plan schema and its rule to the prompt; a plan without
+# it keeps its canonical JSON and hash (VALID_PLAN_SHA).
+RESEARCH_PLAN_SCHEMA_SHA = "1041c1742eacc125f697b3b4a95822eb71b63b7c77839d668e89367162321c00"
 RESEARCH_RESULT_SCHEMA_SHA = "9a767787fade091505fea149a8841845738ce30ce77cf6657cbca0aaa72af64d"
-RESEARCH_PROMPT_SHA = "988efbd3acb3195abc1d56261a8c941c7bf67c57dd353c107a9565fdc55a30b0"  # #458: explicit venv interpreter
+RESEARCH_PROMPT_SHA = "afc422989121a61de3b036e20152dc9d7f9b51edaabef628e4de5ab1fce04a9e"  # R17: budget_usd rule
 VALID_PLAN_SHA = "f611461cc2dbb17e39159ec1df6a75d8f7b661eb39bbe42c8ed0438c5c45e213"
 
 
