@@ -1,0 +1,8 @@
+pr: 504
+rows:
+- sha: "94f2f04"
+  at: 2026-10-08 10:13
+  text: "잘못된 웹 token을 accept 뒤 1008로 닫고 두 화면이 공통 경로에서 재시도를 멈추게 했다"
+- sha: "565061e"
+  at: 2026-10-08 10:13
+  text: "연구 verifier·CP2·blocking decision·Codex auto 설명과 artifact 거부 사유를 현재 동작에 맞췄다"
