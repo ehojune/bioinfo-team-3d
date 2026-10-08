@@ -243,6 +243,8 @@ class Hub:
         self.facilities_timeout_tasks: dict[str, asyncio.Task] = {}
         self.resume_timers: dict[str, asyncio.Task] = {}  # a resume card has no waiter; this ends it (R5)
         self.request_tasks: dict[str, asyncio.Task] = {}  # each request's orchestration, for request cancel (R13)
+        # Recruitments a runner is running (started here, ended by recruit.done/failed or a new runner process).
+        self.recruits_running: dict[str, int] = {}
         self.cancel_result_wait_s = CANCEL_RESULT_WAIT_S
         self.approvals: dict[str, dict] = self.store.all("approval")
         self.requests: dict[str, dict] = self.store.all("request")
@@ -689,6 +691,17 @@ class Hub:
         request then waits for that runner (R15); only a name none of them has is unknown."""
         return bool(agent_id) and (agent_id in self.agents or self.has_seen_agent(agent_id) or
                                    agent_id in self.configured_agent_ids())
+
+    def shutdown_readiness(self) -> dict:
+        """What `labhq down` would cut off (#500): active requests, follow-ups still running on finished requests (a
+        finished request is not active, so the request list missed them) and recruitments the runner is running."""
+        requests = [{"id": rid, "status": req.get("status"), "text": req.get("text")}
+                    for rid, req in self.requests.items() if is_active_request(req.get("status"))]
+        followups = [{"request_id": rid, "followup_id": entry.get("id"), "text": entry.get("text")}
+                     for rid, req in self.requests.items() for entry in req.get("followups") or []
+                     if entry.get("status") == "running"]
+        return {"requests": requests, "followups": followups, "recruits": sum(self.recruits_running.values()),
+                "ready": not (requests or followups or any(self.recruits_running.values()))}
 
     def running_tasks(self, tasks: Mapping[str, dict] | None = None) -> list[dict]:
         """Accepted tasks of running requests, including steps waiting for jobs or ask answers.
@@ -1184,6 +1197,8 @@ class Hub:
         if incarnation:
             self.store.runner_incarnation(runner_id, incarnation)
         self.runners[runner_id] = ws
+        if self.runner_incarnations.get(runner_id) != incarnation:
+            self.recruits_running.pop(runner_id, None)  # a new runner process: the old one's recruitments died with it
         self.runner_incarnations[runner_id] = incarnation
         self.runner_locks.setdefault(runner_id, asyncio.Lock())
         self.set_roster(runner_id, agents, capabilities)
@@ -1640,6 +1655,8 @@ class Hub:
                 self.store.put("task", tid, {**task, "accepted": True, "runner_id": runner_id,
                                                "runner_incarnation": self.runner_incarnations.get(runner_id)})
                 self._session_state_changed()
+        if typ in ("recruit.done", "recruit.failed") and self.recruits_running.get(runner_id):
+            self.recruits_running[runner_id] -= 1
         await self.publish(msg, runner_id=runner_id, runner_seq=runner_seq)
         if pipeline_event is not None:
             await self.publish(pipeline_event)
@@ -2762,6 +2779,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         if not rid:
             raise HTTPException(409, f"no runner hosts the recruiter agent {settings.recruit.agent_id!r}")
         await hub.send_runner(rid, {"type": "recruit.start", **body.model_dump()})
+        hub.recruits_running[rid] = hub.recruits_running.get(rid, 0) + 1
         return {"ok": True, "runner_id": rid}
 
     @app.post("/api/contracts/{agent_id}", dependencies=[Depends(auth)])
@@ -2782,6 +2800,10 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             snap["replay_gap"] = {"requested_since": since, "oldest_seq": oldest}
             return [snap]
         return hub.store.events_since(since, max(1, limit))
+
+    @app.get("/api/shutdown-readiness", dependencies=[Depends(auth)])
+    async def shutdown_readiness() -> dict:
+        return hub.shutdown_readiness()
 
     @app.get("/api/health")
     async def health() -> dict:

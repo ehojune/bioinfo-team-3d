@@ -537,11 +537,32 @@ def _active_request_line(request: dict) -> str:
     return f"{request.get('id', '?')} ({request.get('status', '?')}) {short(request.get('text'), 80)}{suffix}"
 
 
+def _shutdown_blockers(s: Settings) -> list[str] | None:
+    """Follow-ups on finished requests and recruitments `down` would cut off (#500); None when the gateway cannot say
+    (an older gateway without the endpoint, or no answer), so the request check alone decides as before."""
+    import httpx
+
+    try:
+        value = _api(s, "GET", "/api/shutdown-readiness", raw_errors=True)
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    lines = [f"진행 중 이어 묻기: {row.get('request_id')} · {short(row.get('text'), 60)}"
+             for row in value.get("followups") or [] if isinstance(row, dict)]
+    if value.get("recruits"):
+        lines.append(f"진행 중 채용: {value['recruits']}건")
+    return lines
+
+
 def _down(s: Settings, *, force: bool = False) -> None:
     active = _active_requests(s)
-    if active:
-        for request in active:
+    blockers = _shutdown_blockers(s) if active is not None else None
+    if active or blockers:
+        for request in active or []:
             print(f"진행 중 요청: {_active_request_line(request)}", file=sys.stderr)
+        for line in blockers or []:
+            print(line, file=sys.stderr)
         if not force:
             print(f"종료를 거부했습니다. 계속하려면 `{_config_command(s, 'down --force')}`를 쓰세요.",
                   file=sys.stderr)
