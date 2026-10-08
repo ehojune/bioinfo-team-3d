@@ -15,14 +15,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 13:28 | [`fea7039`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/fea7039) | 끝에 /가 붙은 .tmp 아래 링크 대상도 재귀 삭제 카드로 돌리고, doctor는 직원이 실제로 실행되는 경로로 CLI 준비를 판정한다(#501 리뷰). |
+| 13:24 | [`e78b9f4`](https://github.com/ehojune/bioinfo-team-3d/pull/505/commits/e78b9f4) | PowerShell 괄호 안에서 바꾼 R 라이브러리·위치를 되돌린 것으로 보던 회귀를 고쳐, 공유 라이브러리 설치가 main처럼 거부된다(#505 리뷰). |
 | 12:17 | [`efbbcc9`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/efbbcc9) | 패키지에 든 예제 설정(labhq/config/labhq.example.yaml)에도 revise_continuations 주석을 같게 고친다(PI 점검 R10). |
+| 12:10 | [`dbbe25a`](https://github.com/ehojune/bioinfo-team-3d/pull/505/commits/dbbe25a) | 따옴표 없는 동적 실행 파일과 셸 코드 재해석의 비리터럴을 인자와 무관하게 차단 |
 | 12:05 | [`c9cea6f`](https://github.com/ehojune/bioinfo-team-3d/pull/506/commits/c9cea6f) | CP2 수정 요청이 요청을 끝내지 않고 PI 메모로 새 계획·새 CP1을 거쳐 바뀐 단계만 다시 돌린다. 메모 없는 수정 요청은 다시 묻고(웹·CLI는 보내지 않음), 이어 가기 상한은 리뷰 revise와 합산한다. 웹 버튼은 '수정 요청'. 이어 가기를 되돌릴 때 집행 상한도 복원하고(#499 리뷰), CP1 카드 요약은 한국어로 hash 없이 보인다(PI 점검 R10). |
 | 12:05 | [`257c711`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/257c711) | 미선언 재현 기록은 요청 묶음에 보존하고 사람이 보는 미보고 산출 경고에서만 숨김 |
 | 11:29 | [`08486ea`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/08486ea) | 재귀 삭제 무승인 범위를 링크 없는 작업 폴더 .tmp 단일 명령으로 좁히고 CLI 직원의 실행 준비 판정을 바로잡음 |
 | 11:11 | [`3f6d449`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/3f6d449) | CP1 직후 새 집행 상한으로 지금까지 쓴 비용을 판정해 단계 없이 끝나는 요청도 예산 카드를 받는다. budget_usd true/false는 검증 오류, 단계·리뷰 prompt에 실제 집행 상한, 앞 차수 CP2 메모는 감사 부록에 차수와 함께(#499 리뷰). |
+| 11:10 | [`4c685e6`](https://github.com/ehojune/bioinfo-team-3d/pull/505/commits/4c685e6) | 인자 없는 동적 실행 파일과 eval 동적 본문을 설치 가능 명령으로 거부 |
 | 10:53 | [`f33d40a`](https://github.com/ehojune/bioinfo-team-3d/pull/499/commits/f33d40a) | 연구 카드 메모가 다음 일을 하는 prompt로 간다(CP1 → 단계, CP2 → 리뷰·보고서, 이어 가기 → 새 계획). 계획의 숫자 budget_usd가 CP1 승인 때 요청 집행 상한이 되어 넘으면 예산 카드가 뜨고, CP1 카드에 그 상한을 보인다(PI 점검 R11 R17). |
 | 10:51 | [`4da03a6`](https://github.com/ehojune/bioinfo-team-3d/pull/501/commits/4da03a6) | PowerShell provider·배열 삭제를 닫고 빈 roster·엔진 누락 doctor 준비 판정을 보강 |
 | 10:43 | [`d66947f`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/d66947f) | main 병합(#504): manual 연구 절을 나눈 판을 두고 이어 가기 카드 7일 기한 문장만 반영했다. |
+| 10:40 | [`a12d427`](https://github.com/ehojune/bioinfo-team-3d/pull/505/commits/a12d427) | 동적 installer와 cmd 지연 확장, PowerShell 작업 폴더를 설치 판별에 반영 |
 | 10:32 | [`506830b`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/506830b) | direct 요청은 연결된 runner·저장된 roster·agents_dir에 있는 직원이면 받아서 러너를 기다리고(없는 이름만 404), 재개 카드도 웹에 남은 시간을 보인다(#502 리뷰). |
 | 10:30 | [`78b8ec7`](https://github.com/ehojune/bioinfo-team-3d/pull/502/commits/78b8ec7) | main 병합(#498 #503): manual 연구 절 충돌을 풀어 단순 작업 판정 문장과 이어 가기 카드 7일 기한을 함께 남겼다. |
 | 10:17 | [`ff9212d`](https://github.com/ehojune/bioinfo-team-3d/pull/504/commits/ff9212d) | 최신 main의 연구 분류·웹 상태 변경을 보존하며 문서와 공통 WebSocket close 판정 충돌을 풀었다 |

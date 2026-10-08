@@ -29,6 +29,14 @@
 - 미해결: 웹 CP1 카드는 `detail.budget`을 이름표 없이 `budget` 키 그대로 보인다(#494 뒤의 일반 detail 표시). 한국어 이름표는 웹 쪽에서 붙인다. 상한은 카드 요약 끝줄에도 있다. 집계 못 한 task가 있으면 기존 규칙대로 건당 `per_task_usd`로 보므로, 작은 `budget_usd`에서는 예산 카드가 일찍 뜰 수 있다.
 - 근거: `tests/test_research_notes_budget.py`, `labhq/orchestrator/cso.py`(`approval_note_block`, `_research_budget`), `labhq/research/contract.py`(`ResearchPlan.budget_usd`).
 
+## 2026-10-08 · 동적 실행 파일을 인자와 무관하게 차단 (#472)
+
+- 결론: 따옴표 없는 변수·명령 치환·배열이 실행 파일 자리에 오면 뒤 인자가 리터럴이어도 설치 가능 명령으로 거부한다. cmd 확장과 PowerShell call operator·`Invoke-Expression`도 같은 원칙을 쓴다. `"$PY" script.py`처럼 따옴표로 감싼 단일 변수와 리터럴 분석 인자는 계속 허용한다.
+- 바뀐 것: `labhq/environment_install.py`, `tests/test_environment_install.py`, `docs/manual.md`.
+- 실행한 것: 새 회귀는 수정 전 12건 중 10건 실패(명령 치환 2건은 기존 차단), 수정 뒤 환경 설치 시험 344 passed·1 skipped. Windows 전체 pytest 첫 실행은 장시간 MCP mock 1건만 비결정적으로 실패했고 개별 재실행 1 passed, 최종 전체 실행 4865 passed·59 skipped. `scripts/check_public.sh`와 `scripts/patch_notes.py check` 통과.
+- 미해결: 없음.
+- 근거: `tests/test_environment_install.py::test_unquoted_dynamic_executables_fail_closed_with_literal_arguments`, `::test_dynamic_install_guards_keep_analysis_commands_allowed`.
+
 # 웹 token 오류와 연구 문서 어긋남 수정 (PI 점검 R23 R26)
 
 - 결론: PR #504에서 잘못된 token은 브라우저에 1008로 전달되고, 두 웹 화면은 재시도를 멈춘 뒤 token 입력창을 보인다. 연구 문서와 artifact 거부 사유도 현재 동작과 맞췄다.
